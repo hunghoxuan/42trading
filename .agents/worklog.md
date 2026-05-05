@@ -672,3 +672,25 @@
 - **Deploy Status**:
   - Not deployed (documentation/ticket-state change only).
 - [2026-05-05] Finalized SID-First Architecture refactor. Implemented Manual Trade Discovery and dedicated account health columns. Deployed build b1ae8f7.
+
+# Session Log: 2026-05-05 20:20
+- **Starting Task**:
+  - Review user-updated AI response schema in `ChartSnapshotsPage` and align save-to-DB + UI display paths.
+- **Work Accomplished**:
+  - Updated frontend schema normalization in `ChartSnapshotsPage` to map new `tradePlan` fields (`entry_model`, `tp/tp2/tp3`, `estimated_bars`, `confluence_checklist`, `action.*`, `confidence_pct`).
+  - Updated raw-text fallback parser to accept `dir`, `tp`, and `confidence`.
+  - Updated backend `normalizeAiAnalysisContract` to preserve the same new trade-plan fields before storage/consumption.
+  - Updated `SignalDetailCard` analysis summary to render timeframe events from new `strongEvents` (and normalized key breaks).
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/components/SignalDetailCard.jsx`
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Technical Decisions**:
+  - Keep backward compatibility for legacy AI shape while prioritizing new schema keys.
+  - Normalize once (`tradePlan -> trade_plan`) so Signals/Trades UI can reuse existing readers.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - `rtk node --check webhook/server.js` ✅
+- **Deploy Status**:
+  - Ready to deploy.

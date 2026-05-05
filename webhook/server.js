@@ -9874,28 +9874,49 @@ function normalizeAiAnalysisContract(input = {}) {
 
   if (!out.trade_plan && Array.isArray(out.tradePlan)) {
     out.trade_plan = out.tradePlan.map((x) => ({
-      direction: x?.dir ?? "",
+      direction: x?.direction ?? x?.dir ?? "",
       profile: x?.profile ?? "",
       type: x?.type ?? "",
       session_entry: x?.session ?? "",
-      entry_model: x?.model ?? "",
+      strategy: x?.strategy ?? "",
+      entry_model: x?.entry_model ?? x?.model ?? "",
       entry: x?.entry ?? null,
       sl: x?.sl ?? null,
       be_trigger: x?.be ?? null,
-      tp: Array.isArray(x?.tps) && x.tps[0] ? (x.tps[0].price ?? null) : null,
-      risk_pct: x?.riskPct ?? null,
+      tp:
+        x?.tp ??
+        (Array.isArray(x?.tps) && x.tps[0] ? (x.tps[0].price ?? null) : null),
+      tp2:
+        x?.tp2 ??
+        (Array.isArray(x?.tps) && x.tps[1] ? (x.tps[1].price ?? null) : null),
+      tp3:
+        x?.tp3 ??
+        (Array.isArray(x?.tps) && x.tps[2] ? (x.tps[2].price ?? null) : null),
+      estimated_bars: x?.estimated_bars ?? null,
+      risk_pct: x?.riskPct ?? x?.risk_pct ?? null,
       rr: x?.rr ?? null,
       partial_tps: (Array.isArray(x?.tps) ? x.tps : []).map((t) => ({
         price: t?.price ?? null,
         size_pct: t?.pct ?? null,
         rr: t?.rr ?? null,
       })),
-      reasons_to_skip: (Array.isArray(x?.skipReasons) ? x.skipReasons : []).map(
-        (r) => ({ reason: r?.reason ?? "", severity: r?.severity ?? "" }),
-      ),
-      skip_recommendation: x?.skip ?? "",
+      confluence_checklist: Array.isArray(x?.confluence_checklist)
+        ? x.confluence_checklist
+        : [],
+      reasons_to_skip: (
+        Array.isArray(x?.skipReasons)
+          ? x.skipReasons
+          : Array.isArray(x?.reasons_to_skip)
+            ? x.reasons_to_skip
+            : []
+      ).map((r) => ({ reason: r?.reason ?? "", severity: r?.severity ?? "" })),
+      skip_recommendation:
+        x?.skip_recommendation ?? x?.skip ?? x?.action?.recommendation ?? "",
+      entry_condition: x?.action?.entry_condition ?? "",
+      exit_condition: x?.action?.exit_condition ?? "",
+      risk_management: x?.action?.risk_management ?? "",
       invalidation: x?.invalidation ?? out.verdict?.invalidation ?? "",
-      confidence_pct: x?.confidence ?? null,
+      confidence_pct: x?.confidence_pct ?? x?.confidence ?? null,
       note: x?.note ?? "",
     }));
   }

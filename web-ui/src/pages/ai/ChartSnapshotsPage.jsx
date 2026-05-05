@@ -368,108 +368,44 @@ const AI_RESPONSE_SCHEMA = {
         "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
       bias: "Long|Short|Neutral",
       poiAlign: true,
-      did: "",
-      next: "",
-      keyBreaks: [
+      strongEvents: [
         {
-          event: "BOS|CHoCH|MSB|Retest|Sweep|Rejection",
+          event: "BOS|CHoCH|MSB|Retest|Sweep|Discount|Premium|Rejection|Doji|Engulfing|Cross_EMA|EQH|EQL|BSL|SSL",
           price: null,
+          time: null,
           direction: "Bull|Bear",
         },
       ],
-      path: [
-        {
-          step: 1,
-          action: "Retrace|Continue|Sweep|Reverse|Consolidate|Break",
-          target: null,
-          condition: "",
-        },
-      ],
     },
   ],
-  pdArrays: [
-    {
-      id: 1,
-      tf: "",
-      type: "OB|FVG|Breaker|Mitigation Block|Void|Rejection Block|Propulsion Block",
-      dir: "Bull|Bear",
-      strength: "Strong|Weak",
-      top: null,
-      bot: null,
-      status: "Fresh|Tested|Mitigated|Broken",
-      touched: 0,
-      note: "",
-    },
-  ],
-  keyLevels: [
-    {
-      name: "PDH|PDL|PWH|PWL|PMH|PML|WeeklyOpen|DailyOpen|MidnightOpen|NYOpen|EQH|EQL|BSL|SSL",
-      price: null,
-      swept: false,
-    },
-  ],
-  dol: { target: "", price: null, type: "BSL|SSL|FVG|OB|Void", tf: "" },
-  checklist: {
-    buy: {
-      score: 0,
-      highPassed: 0,
-      highTotal: 0,
-      items: [
-        {
-          category:
-            "Structure|PD_Arrays|Liquidity|Session|Correlation|VWAP|Fibonacci|Candle_Patterns|Indicators|Risk",
-          item: "",
-          weight: "High|Medium|Low",
-          passed: false,
-          pdRef: null,
-          note: "",
-        },
-      ],
-    },
-    sell: {
-      score: 0,
-      highPassed: 0,
-      highTotal: 0,
-      items: [
-        {
-          category:
-            "Structure|PD_Arrays|Liquidity|Session|Correlation|VWAP|Fibonacci|Candle_Patterns|Indicators|Risk",
-          item: "",
-          weight: "High|Medium|Low",
-          passed: false,
-          pdRef: null,
-          note: "",
-        },
-      ],
-    },
-  },
   tradePlan: [
     {
       dir: "BUY|SELL",
       profile: "Position|Swing|Intraday|Scalp",
       type: "Limit|Stop Limit|Market",
-      session: "Asian|London|NewYork|LondonClose|Overlap",
-      model: "",
+      strategy: "",
+      entry_model: "",
       entry: null,
       sl: null,
       be: null,
-      tps: [{ price: null, pct: null, rr: null }],
-      riskPct: null,
+      tp: null,
+      tp2: null,
+      tp3: null,
       rr: null,
-      skipReasons: [{ reason: "", severity: "High|Medium|Low" }],
-      skip: "Skip|Reduce|Proceed|Wait",
-      confidence: 0,
+      estimated_bars: null,
+      confluence_checklist: [
+        "Checklist1",
+        "Checklist2",
+      ],
+      action: {
+        exit_condition: "",
+        entry_condition: "",
+        risk_management: "none|low|normal|high",
+        recommendation: "Skip|Proceed|Wait"
+      },
       note: "",
     },
   ],
-  verdict: {
-    action: "BUY|SELL|WAIT",
-    tier: "A|B|C|NoTrade",
-    confidence: 0,
-    invalidation: "",
-    nextPoi: { price: null, tf: "", type: "" },
-    note: "",
-  },
 };
 
 const GUIDE_TEXT = `Compact ICT guide:
@@ -802,26 +738,47 @@ function normalizeAnalysisContract(parsed) {
   }
   if (!out.trade_plan && Array.isArray(out.tradePlan)) {
     out.trade_plan = out.tradePlan.map((x) => ({
-      direction: x?.dir || "",
+      direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.type || "",
       session_entry: x?.session || "",
-      entry_model: x?.model || "",
+      strategy: x?.strategy || "",
+      entry_model: x?.entry_model || x?.model || "",
       entry: x?.entry ?? null,
       sl: x?.sl ?? null,
       be_trigger: x?.be ?? null,
-      tp: Array.isArray(x?.tps) && x.tps[0] ? (x.tps[0].price ?? null) : null,
-      risk_pct: x?.riskPct ?? null,
+      tp:
+        x?.tp ??
+        (Array.isArray(x?.tps) && x.tps[0] ? (x.tps[0].price ?? null) : null),
+      tp2:
+        x?.tp2 ??
+        (Array.isArray(x?.tps) && x.tps[1] ? (x.tps[1].price ?? null) : null),
+      tp3:
+        x?.tp3 ??
+        (Array.isArray(x?.tps) && x.tps[2] ? (x.tps[2].price ?? null) : null),
+      estimated_bars: x?.estimated_bars ?? null,
+      risk_pct: x?.riskPct ?? x?.risk_pct ?? null,
       rr: x?.rr ?? null,
       partial_tps: (Array.isArray(x?.tps) ? x.tps : []).map((t) => ({
         price: t?.price ?? null,
         size_pct: t?.pct ?? null,
         rr: t?.rr ?? null,
       })),
-      reasons_to_skip: x?.skipReasons || [],
-      skip_recommendation: x?.skip || "",
+      confluence_checklist: Array.isArray(x?.confluence_checklist)
+        ? x.confluence_checklist
+        : [],
+      reasons_to_skip: Array.isArray(x?.skipReasons)
+        ? x.skipReasons
+        : Array.isArray(x?.reasons_to_skip)
+          ? x.reasons_to_skip
+          : [],
+      skip_recommendation:
+        x?.skip_recommendation || x?.skip || x?.action?.recommendation || "",
+      entry_condition: x?.action?.entry_condition || "",
+      exit_condition: x?.action?.exit_condition || "",
+      risk_management: x?.action?.risk_management || "",
       invalidation: x?.invalidation || out.verdict?.invalidation || "",
-      confidence_pct: x?.confidence ?? null,
+      confidence_pct: x?.confidence_pct ?? x?.confidence ?? null,
       note: x?.note || "",
     }));
   }
@@ -1287,7 +1244,9 @@ function parseTradePlanFromRaw(rawText) {
   const tp2 = inPlanNum(/"tp2"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const tp3 = inPlanNum(/"tp3"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const rr = inPlanNum(/"rr"\s*:\s*(-?\d+(?:\.\d+)?)/i);
-  const direction = inPlan(/"direction"\s*:\s*"([^"]+)"/i);
+  const direction =
+    inPlan(/"direction"\s*:\s*"([^"]+)"/i) ||
+    inPlan(/"dir"\s*:\s*"([^"]+)"/i);
   const note = getString(/"note"\s*:\s*"([^"]+)"/i);
 
   if (!symbol && !direction && !Number.isFinite(entry)) return null;
@@ -1301,11 +1260,18 @@ function parseTradePlanFromRaw(rawText) {
       tp1,
       tp2,
       tp3,
+      tp:
+        inPlanNum(/"tp"\s*:\s*(-?\d+(?:\.\d+)?)/i) ??
+        tp1 ??
+        tp2 ??
+        tp3,
       rr,
       type: inPlan(/"type"\s*:\s*"([^"]+)"/i),
       strategy: inPlan(/"strategy"\s*:\s*"([^"]+)"/i),
       entry_model: inPlan(/"entry_model"\s*:\s*"([^"]+)"/i),
-      confidence_pct: inPlanNum(/"confidence_pct"\s*:\s*(-?\d+(?:\.\d+)?)/i),
+      confidence_pct:
+        inPlanNum(/"confidence_pct"\s*:\s*(-?\d+(?:\.\d+)?)/i) ??
+        inPlanNum(/"confidence"\s*:\s*(-?\d+(?:\.\d+)?)/i),
       note: note || "",
     },
   };

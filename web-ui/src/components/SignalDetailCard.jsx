@@ -672,7 +672,28 @@ export function SignalDetailCard({
             const m = raw.market_analysis || {};
             const compactTfs = Array.isArray(raw.timeframes)
               ? raw.timeframes
-              : [];
+              : Array.isArray(m.timeframes)
+                ? m.timeframes.map((tf) => ({
+                    ...tf,
+                    phase: tf?.phase || tf?.market_phase || "",
+                    poiAlign:
+                      tf?.poiAlign === true || tf?.poiAlign === false
+                        ? String(tf.poiAlign)
+                        : tf?.poi_alignment === true || tf?.poi_alignment === false
+                          ? String(tf.poi_alignment)
+                          : "",
+                    keyBreaks: Array.isArray(tf?.strongEvents)
+                      ? tf.strongEvents
+                      : Array.isArray(tf?.price_action_summary?.key_breaks)
+                        ? tf.price_action_summary.key_breaks.map((kb) => ({
+                            event: kb?.event || "",
+                            price: kb?.price_level ?? kb?.price ?? null,
+                            direction: kb?.direction || "",
+                            time: kb?.time ?? null,
+                          }))
+                        : [],
+                  }))
+                : [];
             const primaryTf =
               Array.isArray(m.timeframes) && m.timeframes.length
                 ? m.timeframes.find((x) => x?.bias || x?.trend) || {}
