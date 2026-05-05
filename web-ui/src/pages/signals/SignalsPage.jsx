@@ -4,7 +4,7 @@ import { api } from "../../api";
 import { SignalDetailCard } from "../../components/SignalDetailCard";
 import { AuditCell, StatusPnlCell, StrategyTfCell, SymbolEntryCell } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
-import { asNum, buildHeaderMeta, renderHistoryItem, shouldShowPnl } from "../../utils/signalDetailUtils";
+import { asNum, buildHeaderMeta, renderHistoryItem } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
@@ -49,15 +49,6 @@ function formatTimeframe(min) {
   if (n < 43200) return `${n / 10080}W`;
   if (n === 43200) return "1M";
   return `${n / 43200}M`;
-}
-
-function PnlDisplay({ value }) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n === 0) return null;
-  const cls = n > 0 ? "money-pos" : "money-neg";
-  const abs = Math.abs(n);
-  const str = `$${abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return <div className={`cell-minor ${cls}`}>{n < 0 ? `-${str}` : str}</div>;
 }
 
 import { showDateTime } from "../../utils/format";
@@ -520,13 +511,6 @@ export default function SignalsPage() {
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sortDir === "asc" ? cmp : -cmp;
       }
-      if (sortKey === "pnl") {
-        const pa = asNum(a?.pnl_money_realized) ?? 0;
-        const pb = asNum(b?.pnl_money_realized) ?? 0;
-        cmp = pa - pb;
-        if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
-        return sortDir === "asc" ? cmp : -cmp;
-      }
       if (sortKey === "status") {
         cmp = sortDir === "asc" ? statusRankAsc(a?.status) - statusRankAsc(b?.status) : statusRankDesc(a?.status) - statusRankDesc(b?.status);
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
@@ -670,7 +654,7 @@ export default function SignalsPage() {
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
                   <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
-                  <th onClick={() => toggleSort("pnl")} style={{ cursor: "pointer" }}>STATUS / PNL{sortMarker("pnl")}</th>
+                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -726,11 +710,8 @@ export default function SignalsPage() {
                         <div className="cell-wrap">
                           <StatusPnlCell
                             statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
-                            pnl={asNum(t.pnl_money_realized)}
-                            showFilledDetails={String(t.status || "").toUpperCase() === "FILLED"}
-                            brokerVolume={asNum(t?.metadata?.broker_data?.volume_size) ?? "-"}
-                            brokerLots={asNum(t?.metadata?.broker_data?.lots) ?? "-"}
-                            brokerPips={asNum(t?.metadata?.broker_data?.pips) ?? "-"}
+                            pnl={null}
+                            showFilledDetails={false}
                           />
                           <button
                             type="button"
@@ -833,7 +814,7 @@ export default function SignalsPage() {
                 const reward = (risk != null && rr != null) ? (Math.abs(risk) * rr) : null;
                 const headerMeta = buildHeaderMeta({
                   statusRaw: selectedSignal.status,
-                  pnlRaw: selectedSignal.pnl_money_realized,
+                  pnlRaw: null,
                   rrRaw: rr,
                   volumeRaw: vol,
                   plannedVolRaw: asNum(raw.volume) ?? vol,
@@ -872,7 +853,7 @@ export default function SignalsPage() {
                 successMessage: detailPlanMsg.text && detailPlanMsg.type !== "error" ? detailPlanMsg.text : "",
                 status: statusUi(selectedSignal.status),
                 volume: `${Number(((asNum(selectedSignal.volume) || 0) * 100).toFixed(2))}% | ${asNum(selectedSignal.volume_lots) || 0.01} lots`,
-                pnl: <PnlDisplay value={selectedSignal.pnl_money_realized} />,
+                pnl: null,
               }}
               chart={{
                 enabled: true,
