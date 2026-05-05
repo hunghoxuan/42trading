@@ -9,7 +9,7 @@ import TradeSignalChart from "../../components/TradeSignalChart";
 import { SymbolChart } from "../../components/charts/ChartTile";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
-  STRATEGY_OPTIONS, STRATEGY_CHECKLIST, PROFILE_PRESETS, DEFAULT_CONFIG,
+  STRATEGY_OPTIONS, STRATEGY_ENTRY_MODELS, PROFILE_PRESETS, DEFAULT_CONFIG,
   AI_RESPONSE_SCHEMA, GUIDE_TEXT, getEffectiveTfConfig, buildPrompt, buildJsonConfig,
 } from "./AiPromptBuilder";
 
