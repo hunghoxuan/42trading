@@ -6672,17 +6672,16 @@ async function _mt5InitBackendInternal() {
           const ins = await client.query(
             `
             INSERT INTO trades (
-              trade_id, sid, account_id, user_id, signal_id, source_id,
+              sid, account_id, user_id, source_id,
               entry_model, signal_tf, chart_tf,
               symbol, action, order_type, entry, sl, tp, volume, note,
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at
-            ) VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'NEW','PENDING',$17::jsonb,$18::jsonb,$19,$19)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'NEW','PENDING',$16::jsonb,$17::jsonb,$18,$18)
           `,
             [
               tradeSid,
               aid,
               userId,
-              signalId,
               sourceId,
               payload.entry_model || null,
               payload.signal_tf || null,
@@ -6695,13 +6694,12 @@ async function _mt5InitBackendInternal() {
               payload.tp,
               payload.volume,
               payload.note,
-              JSON.stringify(
-                (() => {
-                  const m = { ...(payload.metadata || {}) };
-                  delete m.raw_json;
-                  return m;
-                })(),
-              ),
+              JSON.stringify((() => {
+                const m = { ...(payload.metadata || {}) };
+                delete m.raw_json;
+                if (signalId && !m.signal_sid) m.signal_sid = signalId;
+                return m;
+              })()),
               JSON.stringify(
                 payload.metadata?.raw_json || payload.raw_json || {},
               ),
@@ -7447,12 +7445,12 @@ async function _mt5InitBackendInternal() {
           await pool.query(
             `
             INSERT INTO trades (
-              trade_id, sid, account_id, user_id,
+              sid, account_id, user_id,
               symbol, action, volume, entry,
               execution_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               created_at, updated_at
-            ) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
             [
