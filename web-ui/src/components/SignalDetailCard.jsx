@@ -71,6 +71,37 @@ function toTradingViewSymbol(raw) {
   return `OANDA:${s.replace(/[^A-Z0-9]/g, "")}`;
 }
 
+function parseNumLoose(v) {
+  if (v == null) return null;
+  const n = Number(String(v).trim().replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatNum3(v) {
+  if (!Number.isFinite(v)) return "";
+  return String(Number(v.toFixed(3)));
+}
+
+function applyLinkedPlanChange(prevPlan, key, rawVal) {
+  const next = { ...(prevPlan || {}), [key]: rawVal };
+  const entry = parseNumLoose(next.entry);
+  const sl = parseNumLoose(next.sl);
+  const tp = parseNumLoose(next.tp);
+  const rr = parseNumLoose(next.rr);
+  const side = String(next.direction || "").toUpperCase();
+  const isBuy = side === "BUY";
+  const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
+  if (risk != null && risk > 0) {
+    if (key === "rr" && rr != null && entry != null && sl != null) {
+      const tpCalc = isBuy ? entry + risk * rr : entry - risk * rr;
+      next.tp = formatNum3(tpCalc);
+    } else if (entry != null && tp != null) {
+      next.rr = formatNum3(Math.abs(tp - entry) / risk);
+    }
+  }
+  return next;
+}
+
 function PlanHeader({
   plan,
   symbol,
@@ -160,7 +191,7 @@ function PlanHeader({
             {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>{plan.tp || "-"}</span> /{" "}
             <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
-            <span style={{ color: "var(--muted)", marginLeft: 8, fontWeight: 600 }}>
+            <span style={{ color: "var(--muted)", marginLeft: 8, fontWeight: 400 }}>
               {rrText}
             </span>
           </div>
@@ -523,7 +554,7 @@ export function SignalDetailCard({
                       } else {
                         setPlanDrafts((prev) => ({
                           ...prev,
-                          [planId]: { ...(prev[planId] || p), [k]: v },
+                          [planId]: applyLinkedPlanChange((prev[planId] || p), k, v),
                         }));
                       }
                     }}
