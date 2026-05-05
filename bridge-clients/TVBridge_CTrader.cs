@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.10 10:00 - simplified-sid";
+        private string BuildVersion = "v2026.05.05 19:14 - 09028b3";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -209,21 +209,32 @@ namespace cAlgo.Robots
 
                 var sl = ParseDouble(GetJsonValue(json, "sl"));
                 var tp = ParseDouble(GetJsonValue(json, "tp"));
-                var volumeUnits = symbol.QuantityToVolumeInUnits(lots);
-
-                // 1. RISK-BASED VOLUME ADJUSTMENT
                 var currentPrice = (action == "BUY") ? symbol.Ask : symbol.Bid;
+
+                // 1. DYNAMIC RISK CALCULATION
+                // Interpreting signal 'lots' as percentage of balance (0.01 = 1%)
+                double signalRiskPct = lots; 
+                double requestedRiskMoney = Account.Balance * signalRiskPct;
+                double finalRiskMoney = Math.Min(MaxRiskAmount, requestedRiskMoney);
+                
+                double volumeUnits = symbol.VolumeInUnitsMin; // Default to min
+
                 if (sl > 0)
                 {
                     double riskPerMinVolume = (Math.Abs(currentPrice - sl) / symbol.TickSize) * symbol.TickValue;
-                    double currentRisk = riskPerMinVolume * (volumeUnits / symbol.VolumeInUnitsMin);
-                    
-                    if (currentRisk > MaxRiskAmount && currentRisk > 0)
+                    if (riskPerMinVolume > 0)
                     {
-                        volumeUnits = volumeUnits * (MaxRiskAmount / currentRisk);
+                        volumeUnits = (finalRiskMoney / riskPerMinVolume) * symbol.VolumeInUnitsMin;
                         volumeUnits = symbol.NormalizeVolumeInUnits(volumeUnits, RoundingMode.Down);
-                        Print("Risk {0:F2} > Max {1}. Scaled volume to {2}.", currentRisk, MaxRiskAmount, volumeUnits);
+                        Print("Target Risk: {0:F2}. SL Distance: {1:F5}. Calculated Units: {2}", finalRiskMoney, Math.Abs(currentPrice - sl), volumeUnits);
                     }
+                }
+                else
+                {
+                    // Fallback if no SL: use 1% Notional Volume or similar if needed, 
+                    // but usually risk-based sizing requires an SL. 
+                    // For now, we will use the lot size provided as-is if no SL.
+                    volumeUnits = symbol.QuantityToVolumeInUnits(lots);
                 }
 
                 // 2. MAX VOLUME SIZE CAP (Default 1% of balance)
