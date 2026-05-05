@@ -100,7 +100,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 20:37 - 04a2307"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 20:58 - f01459e"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -4743,9 +4743,10 @@ function normalizeSignal(payload) {
   );
   const symbol = String(payload.symbol || payload.ticker || "").toUpperCase();
   const side = normalizeSide(payload.side || payload.action);
-  const tradeId = envStr(
+  const tradeIdRaw = envStr(
     payload.sid ?? payload.id ?? payload.trade_id ?? payload.tradeId,
   );
+  const tradeId = normalizePublicSidBase(tradeIdRaw, "TRD");
   const timeframe = String(payload.timeframe || payload.tf || "n/a");
   const orderTypeRaw = envStr(payload.order_type ?? payload.orderType);
   const orderType = orderTypeRaw ? mt5NormalizeOrderType(payload) : "market";
@@ -5198,9 +5199,12 @@ function mt5ParseNumericId(value) {
 }
 
 function mt5RenewSignalIdBase(oldId = "") {
-  const raw = String(oldId || "").trim();
-  if (!raw) return "renewed";
-  return raw.replace(/\.\d+$/, "");
+  const cleaned = String(oldId || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase();
+  if (cleaned.length === 9) return cleaned;
+  return mt5GenerateTimeSid();
 }
 
 function mt5RenewSignalIdFromExisting(baseId, existingIds) {
@@ -6246,9 +6250,13 @@ async function _mt5InitBackendInternal() {
       ).toUpperCase();
       const symbol = String(metadata.symbol || "").toUpperCase() || null;
 
-      const isEnabled = LOG_ENABLED_PREFIXES.some((p) =>
-        eventType.startsWith(p),
-      );
+      const isEnabled =
+        !LOG_ENABLED_PREFIXES ||
+        LOG_ENABLED_PREFIXES.length === 0 ||
+        LOG_ENABLED_PREFIXES.some((p) => eventType.startsWith(p)) ||
+        ["TRADE_", "SIGNAL_", "ACCOUNT_", "SYNC_"].some((p) =>
+          eventType.startsWith(p),
+        );
       if (!isEnabled) {
         return;
       }
@@ -6888,6 +6896,7 @@ async function _mt5InitBackendInternal() {
       );
       const uid = acc.rows[0]?.user_id || CFG.mt5DefaultUserId;
       const existingMeta = acc.rows[0]?.metadata || {};
+      console.log(`[brokerSyncV2] aid=${aid} positions=${payload?.positions?.length || 0} orders=${payload?.orders?.length || 0} history=${payload?.history?.length || 0}`);
 
       // Update metadata and explicit columns
       const newMeta = {
@@ -7148,6 +7157,7 @@ async function _mt5InitBackendInternal() {
               ],
             );
           }
+          console.log(`[brokerSyncV2] Matching it.ticket=${it.ticket} sid=${it.sid} candidates=${JSON.stringify(ticketCandidates)} symbol=${syncSymbol} action=${syncAction}`);
           res = await pool.query(
             `
             UPDATE trades
@@ -7156,7 +7166,8 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
+                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN
+                    CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN $1 ELSE execution_status END
                   WHEN execution_status = 'OPEN' AND $1 = 'PENDING' THEN execution_status
                   ELSE $1
                 END,
@@ -7215,7 +7226,7 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
+                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN $1
                   WHEN execution_status = 'OPEN' AND $1 = 'PENDING' THEN execution_status
                   ELSE $1
                 END,
@@ -7292,6 +7303,10 @@ async function _mt5InitBackendInternal() {
                 AND $9 <> ''
                 AND symbol = $9
                 AND ($10 = '' OR action = $10)
+                AND (
+                  $1 NOT IN ('CLOSED', 'CANCELLED', 'TP', 'SL')
+                  OR created_at <= COALESCE($8, NOW())
+                )
               ORDER BY created_at ASC
               LIMIT 1
             )
