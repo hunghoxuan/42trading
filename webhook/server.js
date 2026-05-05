@@ -100,7 +100,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 20:58 - f01459e"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:05 - 06e6151"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -6896,7 +6896,6 @@ async function _mt5InitBackendInternal() {
       );
       const uid = acc.rows[0]?.user_id || CFG.mt5DefaultUserId;
       const existingMeta = acc.rows[0]?.metadata || {};
-      console.log(`[brokerSyncV2] aid=${aid} positions=${payload?.positions?.length || 0} orders=${payload?.orders?.length || 0} history=${payload?.history?.length || 0}`);
 
       // Update metadata and explicit columns
       const newMeta = {
@@ -7157,7 +7156,6 @@ async function _mt5InitBackendInternal() {
               ],
             );
           }
-          console.log(`[brokerSyncV2] Matching it.ticket=${it.ticket} sid=${it.sid} status=${it.execution_status} candidates=${JSON.stringify(ticketCandidates)} symbol=${syncSymbol} action=${syncAction}`);
           res = await pool.query(
             `
             UPDATE trades
@@ -7217,11 +7215,9 @@ async function _mt5InitBackendInternal() {
               it.sid || "",
             ],
           );
-          console.log(`[brokerSyncV2] Query 1 rowCount=${res.rowCount}`);
         }
         if (it.sid) {
           if (res.rowCount === 0) {
-            console.log(`[brokerSyncV2] Attempting Query 2 for sid=${it.sid}`);
             res = await pool.query(
               `
             UPDATE trades
@@ -7274,12 +7270,10 @@ async function _mt5InitBackendInternal() {
                 ticketCandidates,
               ],
             );
-            console.log(`[brokerSyncV2] Query 2 rowCount=${res.rowCount}`);
           }
         }
         if (res.rowCount === 0 && ticketCandidates.length) {
           // Last-resort fallback: bind ticket to oldest unresolved trade for this account.
-          console.log(`[brokerSyncV2] Attempting Last-resort fallback for tickets=${JSON.stringify(ticketCandidates)}`);
           res = await pool.query(
             `
             UPDATE trades
