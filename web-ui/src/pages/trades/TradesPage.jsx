@@ -2,6 +2,7 @@ import { api } from "../../api";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { SignalDetailCard } from "../../components/SignalDetailCard";
+import { AuditCell, StatusPnlCell, StrategyTfCell, SymbolEntryCell } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import {
   asNum,
@@ -520,6 +521,18 @@ export default function TradesPage() {
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sortDir === "asc" ? cmp : -cmp;
       }
+      if (sortKey === "strategy") {
+        cmp = compactStrategy(a).localeCompare(compactStrategy(b));
+        if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      if (sortKey === "pnl") {
+        const pa = asNum(a?.pnl_realized) ?? 0;
+        const pb = asNum(b?.pnl_realized) ?? 0;
+        cmp = pa - pb;
+        if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
       if (sortKey === "status") {
         cmp = sortDir === "asc"
           ? statusRankAsc(a?.execution_status) - statusRankAsc(b?.execution_status)
@@ -695,9 +708,9 @@ export default function TradesPage() {
                     />
                   </th>
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
-                  <th>POSITION</th>
+                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
-                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
+                  <th onClick={() => toggleSort("pnl")} style={{ cursor: "pointer" }}>STATUS / PNL{sortMarker("pnl")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -753,74 +766,39 @@ export default function TradesPage() {
                         />
                       </td>
                       <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span className={`side-badge ${actionCls}`}>{action[0]}</span>
-                            <span style={{ fontWeight: 800 }}>{t.symbol}</span>
-                            <span className="minor-text" style={{ fontSize: '11px', fontWeight: 'normal', textTransform: 'lowercase', opacity: 0.8 }}>{t.order_type || "limit"}</span>
-                          </div>
-                          <div className="cell-minor" style={{ opacity: 0.7 }}>{accountName} | {brokerTicketOf(t)}</div>
-                        </div>
+                        <SymbolEntryCell
+                          side={action}
+                          symbol={t.symbol}
+                          orderType={t.order_type || "limit"}
+                          entry={t.entry || "-"}
+                          tp={t.tp || "-"}
+                          sl={t.sl || "-"}
+                          rr={rrDisplay}
+                        />
                       </td>
+                      <td><StrategyTfCell strategy={strategyLabel} entryModel={t.entry_model || "-"} tf={t.signal_tf || t.chart_tf} /></td>
+                      <td><AuditCell timeText={timeValue} sid={String(t.sid || "-")} brokerTradeId={brokerTicketOf(t)} /></td>
                       <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">{t.entry || "-"} → {t.tp || "-"} / {t.sl || "-"}</div>
-                          <div className="cell-minor">
-                            {(() => {
-                              const mr = moneyRiskReward(t);
-                              const meta = t?.metadata && typeof t.metadata === "object" ? t.metadata : {};
-                              const raw = t?.raw_json && typeof t.raw_json === "object" ? t.raw_json : {};
-                              const riskPct = asNum(
-                                meta.riskPct ?? meta.risk_pct ?? meta.volumePct ?? meta.volume_pct
-                                ?? raw.riskPct ?? raw.risk_pct ?? raw.volumePct ?? raw.volume_pct
-                              );
-                              // IMPORTANT: lots should prefer broker_lots column if it exists
-                              const lots = asNum(t.broker_lots) || asNum(meta.broker_data?.lots) || asNum(meta.broker_lots) || asNum(meta.lots) || asNum(t.volume);
-                              // plannedVol (the risk %) should NOT fall back to raw volume
-                              const plannedVol = asNum(meta.requested_lots) ?? asNum(meta.requested_volume) ?? asNum(raw.riskPct) ?? asNum(raw.risk_pct);
-
-                              return buildRrVolRiskText({
-                                rrRaw: rrDisplay,
-                                volumeRaw: lots,
-                                plannedVolRaw: plannedVol,
-                                riskSizeRaw: mr.risk,
-                                riskPctRaw: riskPct,
-                                rewardSizeRaw: mr.reward,
-                                volumeSizeRaw: asNum(meta.broker_data?.volume_size),
-                              });
-                            })()}
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">{timeValue}</div>
-                          <div className="cell-minor">{strategyLabel} | {t.entry_model || "-"}</div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">
-                            {pnl === 0 ? (
-                              <span
-                                className={`badge ${status.cls}`}
-                                style={{ cursor: "pointer" }}
-                                title="Edit trade status / PnL"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openTradeEditModal(t);
-                                }}
-                              >
-                                {status.label}
-                              </span>
-                            ) : null}
-                          </div>
-                          {showPnl ? (
-                            <div className={`cell-minor ${pnl < 0 ? "money-neg" : "money-pos"}`}>
-                              ${pnl.toFixed(2)}
-                            </div>
-                          ) : null}
-                        </div>
+                        <StatusPnlCell
+                          statusNode={
+                            <span
+                              className={`badge ${status.cls}`}
+                              style={{ cursor: "pointer" }}
+                              title="Edit trade status / PnL"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openTradeEditModal(t);
+                              }}
+                            >
+                              {status.label}
+                            </span>
+                          }
+                          pnl={pnl}
+                          showFilledDetails={String(t.execution_status || "").toUpperCase() === "OPEN" || String(t.execution_status || "").toUpperCase() === "FILLED"}
+                          brokerVolume={asNum(t.broker_volume) ?? asNum(t.metadata?.broker_data?.volume) ?? "-"}
+                          brokerLots={asNum(t.broker_lots) ?? asNum(t.metadata?.broker_data?.lots) ?? "-"}
+                          brokerPips={asNum(t.broker_pips) ?? asNum(t.metadata?.broker_data?.pips) ?? "-"}
+                        />
                       </td>
                     </tr>
                   );
@@ -929,15 +907,15 @@ export default function TradesPage() {
                   })(),
                 }}
                 metaItems={[
-                  { label: "Chart TF", value: formatTimeframe(selectedTrade.chart_tf || "-") },
-                  { label: "Signal TF", value: formatTimeframe(selectedTrade.signal_tf || "-") },
-                  { label: "Strategy", value: compactStrategy(selectedTrade) },
-                  { label: "Entry Model", value: selectedTrade.entry_model || "-" },
-                  { label: "Source", value: displaySource(selectedTrade) },
-                  { label: "Trade SID", value: selectedTrade.sid || "-" },
-                  { label: "Account", value: accountById.get(String(selectedTrade.account_id || ""))?.name || selectedTrade.account_id || "-" },
-                  { label: "Broker Ticket", value: brokerTicketOf(selectedTrade) },
-                  { label: "Broker Status", value: selectedTrade.metadata?.broker_data?.status || "-" },
+                  { label: "Chart TF", value: formatTimeframe(selectedTrade.chart_tf || "-"), group: "source" },
+                  { label: "Signal TF", value: formatTimeframe(selectedTrade.signal_tf || "-"), group: "source" },
+                  { label: "Strategy", value: compactStrategy(selectedTrade), group: "source" },
+                  { label: "Entry Model", value: selectedTrade.entry_model || "-", group: "source" },
+                  { label: "Source", value: displaySource(selectedTrade), group: "source" },
+                  { label: "Trade SID", value: selectedTrade.sid || "-", group: "source" },
+                  { label: "Account", value: accountById.get(String(selectedTrade.account_id || ""))?.name || selectedTrade.account_id || "-", group: "account" },
+                  { label: "Broker Ticket", value: brokerTicketOf(selectedTrade), group: "account" },
+                  { label: "Broker Status", value: selectedTrade.metadata?.broker_data?.status || "-", group: "account" },
                     ...(selectedTrade.metadata && typeof selectedTrade.metadata === "object" ? (() => {
                       const meta = selectedTrade.metadata;
                       const bData = meta.broker_data || {};
@@ -950,13 +928,13 @@ export default function TradesPage() {
                       const bSwap = asNum(selectedTrade.broker_swap) ?? asNum(bData.swap);
 
                       return [
-                        { label: "Broker Volume", value: bVol != null ? `${bVol.toLocaleString()} units` : null },
-                        { label: "Broker Lots", value: bLots != null ? `${bLots.toFixed(2)} lots` : null },
-                        { label: "Broker Pips", value: bPips != null ? `${bPips.toFixed(1)} pips` : null },
-                        { label: "Broker Net Profit", value: bProfit != null ? `$${bProfit.toFixed(2)}` : null },
-                        { label: "Commission", value: bComm != null ? `$${bComm.toFixed(2)}` : null },
-                        { label: "Swap", value: bSwap != null ? `$${bSwap.toFixed(2)}` : null },
-                        { label: "Position ID", value: selectedTrade.broker_trade_id || bData.position_id || bData.positionId || meta.broker_position_id || null },
+                        { label: "Broker Volume", value: bVol != null ? `${bVol.toLocaleString()} units` : null, group: "account" },
+                        { label: "Broker Lots", value: bLots != null ? `${bLots.toFixed(2)} lots` : null, group: "account" },
+                        { label: "Broker Pips", value: bPips != null ? `${bPips.toFixed(1)} pips` : null, group: "account" },
+                        { label: "Broker Net Profit", value: bProfit != null ? `$${bProfit.toFixed(2)}` : null, group: "account" },
+                        { label: "Commission", value: bComm != null ? `$${bComm.toFixed(2)}` : null, group: "account" },
+                        { label: "Swap", value: bSwap != null ? `$${bSwap.toFixed(2)}` : null, group: "account" },
+                        { label: "Position ID", value: selectedTrade.broker_trade_id || bData.position_id || bData.positionId || meta.broker_position_id || null, group: "account" },
                       ].filter(x => x.value !== null);
                     })() : []),
                   { label: "Note", value: selectedTrade.note || "-", fullWidth: true },

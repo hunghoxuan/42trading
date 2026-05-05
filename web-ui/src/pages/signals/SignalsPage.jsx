@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { SignalDetailCard } from "../../components/SignalDetailCard";
+import { AuditCell, StatusPnlCell, StrategyTfCell, SymbolEntryCell } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import { asNum, buildHeaderMeta, renderHistoryItem, shouldShowPnl } from "../../utils/signalDetailUtils";
 
@@ -514,10 +515,20 @@ export default function SignalsPage() {
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sortDir === "asc" ? cmp : -cmp;
       }
+      if (sortKey === "strategy") {
+        cmp = compactStrategy(a).localeCompare(compactStrategy(b));
+        if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      if (sortKey === "pnl") {
+        const pa = asNum(a?.pnl_money_realized) ?? 0;
+        const pb = asNum(b?.pnl_money_realized) ?? 0;
+        cmp = pa - pb;
+        if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
+        return sortDir === "asc" ? cmp : -cmp;
+      }
       if (sortKey === "status") {
-        cmp = sortDir === "asc"
-          ? statusRankAsc(a?.status) - statusRankAsc(b?.status)
-          : statusRankDesc(a?.status) - statusRankDesc(b?.status);
+        cmp = sortDir === "asc" ? statusRankAsc(a?.status) - statusRankAsc(b?.status) : statusRankDesc(a?.status) - statusRankDesc(b?.status);
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return cmp;
       }
@@ -657,9 +668,9 @@ export default function SignalsPage() {
                     />
                   </th>
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
-                  <th>POSITION</th>
+                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
-                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
+                  <th onClick={() => toggleSort("pnl")} style={{ cursor: "pointer" }}>STATUS / PNL{sortMarker("pnl")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -708,42 +719,19 @@ export default function SignalsPage() {
                           }}
                         />
                       </td>
+                      <td><SymbolEntryCell side={sideValue} symbol={t.symbol} orderType={t.order_type || "limit"} entry={fPrice(t.entry, t.target_price || t.entry_price)} tp={fPrice(t.tp)} sl={fPrice(t.sl)} rr={asNum(t.rr_planned)} /></td>
+                      <td><StrategyTfCell strategy={strategyLabel} entryModel={t.entry_model || "-"} tf={t.signal_tf} /></td>
+                      <td><AuditCell timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)} sid={signalShort} brokerTradeId={String(t?.broker_trade_id || "-")} /></td>
                       <td>
                         <div className="cell-wrap">
-                          <div className="cell-major" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span className={`side-badge ${sideCls}`}>{sideValue[0]}</span>
-                            <span style={{ fontWeight: 800 }}>{t.symbol}</span>
-                            <span className="minor-text" style={{ fontSize: '11px', fontWeight: 'normal', textTransform: 'lowercase', opacity: 0.8 }}>{t.order_type || "limit"}</span>
-                          </div>
-                          <div className="cell-minor" style={{ opacity: 0.7 }}>
-                            {sourceLabel}{sourceLabel !== sourceId ? ` | ${sourceId}` : ""} | {signalShort}
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">
-                            {fPrice(t.entry, t.target_price || t.entry_price)} → {fPrice(t.tp)} / {fPrice(t.sl)}
-                          </div>
-                          <div className="cell-minor">
-                            {formatTimeframe(t.signal_tf)} | vol {Number((asNum(t.metadata?.broker_data?.volume_size) ?? ((asNum(t.volume) || 0) * 100)).toFixed(2))}% | {(asNum(t.rr_planned) ?? 0).toFixed(2)} rr
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">{fDateTime(t.closed_at || t.opened_at || t.created_at)}</div>
-                          <div className="cell-minor">{strategyLabel} | {t.entry_model || "-"}</div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">
-                            {(!t.pnl_money_realized || asNum(t.pnl_money_realized) === 0) ? (
-                              <span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>
-                            ) : null}
-                          </div>
-                          {shouldShowPnl(t.status, t.pnl_money_realized) && <PnlDisplay value={t.pnl_money_realized} />}
+                          <StatusPnlCell
+                            statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
+                            pnl={asNum(t.pnl_money_realized)}
+                            showFilledDetails={String(t.status || "").toUpperCase() === "FILLED"}
+                            brokerVolume={asNum(t?.metadata?.broker_data?.volume_size) ?? "-"}
+                            brokerLots={asNum(t?.metadata?.broker_data?.lots) ?? "-"}
+                            brokerPips={asNum(t?.metadata?.broker_data?.pips) ?? "-"}
+                          />
                           <button
                             type="button"
                             className={`secondary-button ${detailPlanBusy.trade ? "btn-busy" : ""}`}

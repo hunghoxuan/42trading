@@ -623,66 +623,37 @@ export function SignalDetailCard({
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {/* Fields at the top of Info tab */}
-        {metaItems.length > 0 && (
-          <div
-            className="fields-grid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-              gap: "16px",
-              padding: "16px",
-              background: "rgba(255,255,255,0.02)",
-              borderRadius: "10px",
-              border: "1px solid var(--border)",
-              marginBottom: 20,
-            }}
-          >
-            {metaItems.map(
-              (item, i) =>
-                item.label !== "Raw JSON" && (
-                  <div
-                    key={i}
-                    style={{
-                      gridColumn: item.fullWidth ? "1 / -1" : "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "4px",
-                    }}
-                  >
-                    <span
-                      className="minor-text"
-                      style={{
-                        fontSize: "10px",
-                        textTransform: "uppercase",
-                        color: "var(--muted-bright)",
-                      }}
-                    >
-                      {item.label}
-                    </span>
-                    <div
-                      style={{
-                        fontSize: "12.5px",
-                        color: "var(--foreground)",
-                        wordBreak: "break-word",
-                        fontWeight: 500,
-                        ...(item.valueStyle || {}),
-                      }}
-                    >
-                      {String(item.label || "").toLowerCase() === "note" ? (
-                        <div
-                          dangerouslySetInnerHTML={{
-                            __html: formatNote(item.value),
-                          }}
-                        />
-                      ) : (
-                        item.value
-                      )}
-                    </div>
-                  </div>
-                ),
-            )}
-          </div>
-        )}
+        {metaItems.length > 0 && (() => {
+          const hasVal = (x) => x && x.value !== null && x.value !== undefined && String(x.value) !== "";
+          const sourceItems = metaItems.filter((x) => x?.group === "source" && x.label !== "Raw JSON" && hasVal(x));
+          const accountItems = metaItems.filter((x) => x?.group === "account" && x.label !== "Raw JSON" && hasVal(x));
+          const otherItems = metaItems.filter((x) => !x?.group && x.label !== "Raw JSON" && hasVal(x));
+          const renderField = (item, i) => (
+            <div key={`${item.label}-${i}`} style={{ gridColumn: item.fullWidth ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              <span className="minor-text" style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--muted-bright)" }}>{item.label}</span>
+              <div style={{ fontSize: "12.5px", color: "var(--foreground)", wordBreak: "break-word", fontWeight: 500, ...(item.valueStyle || {}) }}>
+                {String(item.label || "").toLowerCase() === "note" ? <div dangerouslySetInnerHTML={{ __html: formatNote(item.value) }} /> : item.value}
+              </div>
+            </div>
+          );
+          const card = (title, items) => (
+            <div className="fields-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16, padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid var(--border)", marginBottom: 12 }}>
+              <div style={{ gridColumn: "1 / -1", fontSize: 11, fontWeight: 800, color: "var(--muted-bright)", textTransform: "uppercase" }}>{title}</div>
+              {items.map(renderField)}
+            </div>
+          );
+          return (
+            <div style={{ marginBottom: 20 }}>
+              {sourceItems.length ? card("Source", sourceItems) : null}
+              {accountItems.length ? card("Account", accountItems) : null}
+              {otherItems.length ? (
+                <div className="fields-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16, padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid var(--border)" }}>
+                  {otherItems.map(renderField)}
+                </div>
+              ) : null}
+            </div>
+          );
+        })()}
 
         {/* Analysis content below fields */}
         <div
