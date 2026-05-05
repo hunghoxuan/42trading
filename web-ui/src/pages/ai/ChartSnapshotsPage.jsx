@@ -2223,6 +2223,10 @@ export default function ChartSnapshotsPage() {
       ]
         .filter(Boolean)
         .join("\n\n");
+      const contextFiles = Array.isArray(context?.context_files)
+        ? context.context_files
+        : [];
+      const useContextFiles = contextFiles.length > 0;
       const payload = {
         model: "claude-sonnet-4-0",
         prompt: composedPrompt,
@@ -2235,11 +2239,9 @@ export default function ChartSnapshotsPage() {
         provider,
         timeframes: snapshotTfs,
         bars_count: Number(cfg.lookbackBars || 300) || 300,
-        use_context_files: true,
-        context_mode: "claude",
-        context_files: Array.isArray(context?.context_files)
-          ? context.context_files
-          : [],
+        use_context_files: useContextFiles,
+        context_mode: useContextFiles ? "claude" : "none",
+        context_files: contextFiles,
       };
 
       if (Array.isArray(files) && files.length) payload.files = files;
@@ -2297,7 +2299,12 @@ export default function ChartSnapshotsPage() {
             : out?.claude_files_mode === "fallback_base64"
               ? " Claude Files failed; used base64 fallback."
               : "";
-      const msg = `Analyzed ${Array.isArray(out?.used_files) ? out.used_files.length : 0} screenshot(s).${fileMode}`;
+      const analyzedCount = Array.isArray(out?.used_files)
+        ? out.used_files.length
+        : Array.isArray(files)
+          ? files.length
+          : 0;
+      const msg = `Analyzed ${analyzedCount} screenshot(s).${fileMode}`;
       setStatus({ type: "success", text: msg });
       setActionMessage("analyze", "success", msg);
       return out;

@@ -1,3 +1,22 @@
+# Session Log: 2026-05-05 21:05
+- **Starting Task**: Resolve premature 'CLOSED' status discrepancies and standardize SIDs.
+- **Work Accomplished**:
+  - **Status Integrity**: Refactored `brokerSyncV2` to prevent active broker positions from matching against historical `CLOSED` records and implemented a trust-the-broker reopening mechanism.
+  - **Matching Fix**: Updated primary SQL update query to include alphanumeric SID (comment) matching, ensuring trades without numeric tickets yet are correctly synchronized.
+  - **SID Standardization**: Hard-enforced 9-character alphanumeric SIDs in `mt5RenewSignalIdBase` and `normalizeSignal`, removing legacy prefixes and suffixes.
+  - **Audit Observability**: Bypassed log level filters for critical `TRADE_`, `SIGNAL_`, `ACCOUNT_`, and `SYNC_` categories to ensure full auditability of synchronization state.
+  - **Verification**: Confirmed trade `TEL05JKO7` successfully reopened from `CLOSED` to `OPEN` on the dashboard after broker synchronization.
+- **Changed Files**:
+  - `webhook/server.js`
+  - `bridge-clients/TVBridgeEA.mq5`
+  - `bridge-clients/TVBridge_CTrader.cs`
+  - `.agents/.product/features/2-done/broker_sync_integrity.md`
+  - `.agents/.product/tickets/feature_tracker.md`
+- **Technical Decisions**:
+  - Prioritize broker-reported active state over local database `CLOSED` finality to allow for correction of erroneous sync cycles.
+  - Standardize on 9-character SIDs for all new and renewed trade identifiers.
+- **Deploy Status**: Deployed to VPS (Build v2026.05.05 21:05).
+
 # Session Log: 2026-05-05 19:18
 - **Starting Task**:
   - Enforce strict 9-char alphanumeric SID standardization and implement dynamic risk-based volume sizing in the cTrader bridge.
@@ -716,6 +735,22 @@
 - **Verification**:
   - `rtk npm --prefix web-ui run build` ✅
   - `rtk node --check webhook/server.js` ✅
+- **Deploy Status**:
+  - Ready to deploy.
+
+# Session Log: 2026-05-05 23:20
+- **Starting Task**:
+  - Investigate why Analyze reports `0 screenshot(s)` and `Claude context files: 0`.
+- **Work Accomplished**:
+  - Added frontend fallback in `analyzeFiles`:
+    - Use Claude `context_files` mode only when context has files.
+    - Auto-fallback to snapshot-file mode when context files are empty.
+  - Updated analyzed count message to reflect actual files used/fallback files.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
 - **Deploy Status**:
   - Ready to deploy.
 
