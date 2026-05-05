@@ -694,3 +694,19 @@
   - `rtk node --check webhook/server.js` ✅
 - **Deploy Status**:
   - Ready to deploy.
+
+# Session Log: 2026-05-05 20:42
+- **Starting Task**:
+  - Re-review why user-visible schema changes were not reflected after deploy.
+- **Work Accomplished**:
+  - Fixed backend AI schema prompt contract to v2 (`strongEvents`, simplified `tradePlan` fields with `entry_model`, `tp/tp2/tp3`, `action`, `confluence_checklist`).
+  - Fixed frontend + backend normalizers to also accept `tradePlan` as a single object (not only array).
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Ready to deploy.

@@ -736,8 +736,13 @@ function normalizeAnalysisContract(parsed) {
       },
     };
   }
-  if (!out.trade_plan && Array.isArray(out.tradePlan)) {
-    out.trade_plan = out.tradePlan.map((x) => ({
+  if (!out.trade_plan && out.tradePlan) {
+    const tradePlans = Array.isArray(out.tradePlan)
+      ? out.tradePlan
+      : out.tradePlan && typeof out.tradePlan === "object"
+        ? [out.tradePlan]
+        : [];
+    out.trade_plan = tradePlans.map((x) => ({
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.type || "",

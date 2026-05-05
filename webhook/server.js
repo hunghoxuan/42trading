@@ -477,7 +477,7 @@ const CFG = {
   ),
 };
 
-const AI_RESPONSE_SCHEMA_VERSION = "1.2.0";
+const AI_RESPONSE_SCHEMA_VERSION = "2.0.0";
 const AI_RESPONSE_SCHEMA = {
   symbol: "",
   timeframes: [
@@ -489,107 +489,41 @@ const AI_RESPONSE_SCHEMA = {
         "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
       bias: "Long|Short|Neutral",
       poiAlign: true,
-      did: "",
-      next: "",
-      keyBreaks: [
+      strongEvents: [
         {
-          event: "BOS|CHoCH|MSB|Retest|Sweep|Rejection",
+          event: "BOS|CHoCH|MSB|Retest|Sweep|Discount|Premium|Rejection|Doji|Engulfing|Cross_EMA|EQH|EQL|BSL|SSL",
           price: null,
+          time: null,
           direction: "Bull|Bear",
         },
       ],
-      path: [
-        {
-          step: 1,
-          action: "Retrace|Continue|Sweep|Reverse|Consolidate|Break",
-          target: null,
-          condition: "",
-        },
-      ],
     },
   ],
-  pdArrays: [
-    {
-      id: 1,
-      tf: "",
-      type: "OB|FVG|Breaker|Mitigation Block|Void|Rejection Block|Propulsion Block",
-      dir: "Bull|Bear",
-      strength: "Strong|Weak",
-      top: null,
-      bot: null,
-      status: "Fresh|Tested|Mitigated|Broken",
-      touched: 0,
-      note: "",
-    },
-  ],
-  keyLevels: [
-    {
-      name: "PDH|PDL|PWH|PWL|PMH|PML|WeeklyOpen|DailyOpen|MidnightOpen|NYOpen|EQH|EQL|BSL|SSL",
-      price: null,
-      swept: false,
-    },
-  ],
-  dol: { target: "", price: null, type: "BSL|SSL|FVG|OB|Void", tf: "" },
-  checklist: {
-    buy: {
-      score: 0,
-      highPassed: 0,
-      highTotal: 0,
-      items: [
-        {
-          category:
-            "Structure|PD_Arrays|Liquidity|Session|Correlation|VWAP|Fibonacci|Candle_Patterns|Indicators|Risk",
-          item: "",
-          weight: "High|Medium|Low",
-          passed: false,
-          pdRef: null,
-          note: "",
-        },
-      ],
-    },
-    sell: {
-      score: 0,
-      highPassed: 0,
-      highTotal: 0,
-      items: [
-        {
-          category: "",
-          item: "",
-          weight: "High|Medium|Low",
-          passed: false,
-          pdRef: null,
-          note: "",
-        },
-      ],
-    },
-  },
   tradePlan: [
     {
       dir: "BUY|SELL",
       profile: "Position|Swing|Intraday|Scalp",
       type: "Limit|Stop Limit|Market",
-      session: "Asian|London|NewYork|LondonClose|Overlap",
-      model: "",
+      strategy: "",
+      entry_model: "",
       entry: null,
       sl: null,
       be: null,
-      tps: [{ price: null, pct: null, rr: null }],
-      riskPct: null,
+      tp: null,
+      tp2: null,
+      tp3: null,
       rr: null,
-      skipReasons: [{ reason: "", severity: "High|Medium|Low" }],
-      skip: "Skip|Reduce|Proceed|Wait",
-      confidence: 0,
+      estimated_bars: null,
+      confluence_checklist: ["Checklist1", "Checklist2"],
+      action: {
+        exit_condition: "",
+        entry_condition: "",
+        risk_management: "none|low|normal|high",
+        recommendation: "Skip|Proceed|Wait",
+      },
       note: "",
     },
   ],
-  verdict: {
-    action: "BUY|SELL|WAIT",
-    tier: "A|B|C|NoTrade",
-    confidence: 0,
-    invalidation: "",
-    nextPoi: { price: null, tf: "", type: "" },
-    note: "",
-  },
 };
 
 const AI_CHECKLIST_BANK = [
@@ -619,9 +553,8 @@ function buildAiSchemaPromptText() {
   return `You are an expert ICT technical analyst.
 Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown, or trailing commas.
 All fields required. Enums must match. Use null only where price data is unavailable.
-Array limits: timeframes<=4, pdArrays<=6, keyLevels<=8, checklist.items<=12/side, tradePlan<=2, tps<=3, skipReasons<=3, keyBreaks<=3/tf, path<=3/tf.
-Checklist: output failed-High + passed-High + notable-Medium only. Omit passed-Low. score=(weighted earned/weighted total)*100.
-Trade plans only when highPassed/highTotal>=0.6. WAIT if no plan qualifies. did/next/note="" when not meaningful.
+Array limits: timeframes<=4, tradePlan<=2, strongEvents<=6/tf, confluence_checklist<=8/plan.
+Trade plans must be actionable and internally consistent (entry/sl/tp/rr aligned by direction). note="" when not meaningful.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
 CHECKLIST_BANK=${JSON.stringify(AI_CHECKLIST_BANK)}
 SCHEMA=${JSON.stringify(AI_RESPONSE_SCHEMA)}`;
@@ -9872,8 +9805,13 @@ function normalizeAiAnalysisContract(input = {}) {
     };
   }
 
-  if (!out.trade_plan && Array.isArray(out.tradePlan)) {
-    out.trade_plan = out.tradePlan.map((x) => ({
+  if (!out.trade_plan && out.tradePlan) {
+    const tradePlans = Array.isArray(out.tradePlan)
+      ? out.tradePlan
+      : out.tradePlan && typeof out.tradePlan === "object"
+        ? [out.tradePlan]
+        : [];
+    out.trade_plan = tradePlans.map((x) => ({
       direction: x?.direction ?? x?.dir ?? "",
       profile: x?.profile ?? "",
       type: x?.type ?? "",
