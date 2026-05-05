@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.05 21:25 - 3f35d4c";
+        private string BuildVersion = "v2026.05.05 21:40 - 9ff44ac";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -67,7 +67,7 @@ namespace cAlgo.Robots
         {
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
             Timer.Start(PollSeconds);
-            Print("[Bridge] Robot Started. Registry Initialized.");
+            Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
         }
 
@@ -81,20 +81,18 @@ namespace cAlgo.Robots
             var equity = Account.Equity;
             var margin = Account.Margin;
             var posList = new List<string>();
-            var posDisplay = new List<string>();
             var activeTicketIds = new HashSet<string>(Positions.Select(p => p.Id.ToString()));
             
-            foreach (var pos in Positions.Where(p => p.Label == MagicNumber.ToString())) {
+            // Sync ALL positions for Manual Discovery / Auto-Adopt
+            foreach (var pos in Positions) {
                 var sid = (pos.Comment ?? "").Replace("\"", "'");
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2}}}",
-                    sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), pos.VolumeInUnits, pos.NetProfit));
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2},\"label\":\"{6}\"}}",
+                    sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), pos.VolumeInUnits, pos.NetProfit, pos.Label));
             }
 
             var closedList = new List<string>();
-            var historicalDeals = History.Where(d => d.Label == MagicNumber.ToString())
-                                         .OrderByDescending(d => d.ClosingTime)
-                                         .ToList();
+            var historicalDeals = History.OrderByDescending(d => d.ClosingTime).ToList();
             
             foreach (var deal in historicalDeals) {
                 if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
@@ -102,8 +100,8 @@ namespace cAlgo.Robots
 
                 var sid = (deal.Comment ?? "").Replace("\"", "'");
                 closedList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2},\"status\":\"CLOSED\",\"closed_at\":\"{6:O}\"}}",
-                    sid, deal.PositionId, deal.SymbolName, deal.TradeType.ToString().ToUpper(), deal.VolumeInUnits, deal.NetProfit, deal.ClosingTime));
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"symbol_code\":\"{3}\",\"side\":\"{4}\",\"volume\":{5:F2},\"pnl\":{6:F2},\"status\":\"CLOSED\",\"closed_at\":\"{7:O}\",\"label\":\"{8}\"}}",
+                    sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), deal.VolumeInUnits, deal.NetProfit, deal.ClosingTime, deal.Label));
             }
 
             Task.Run(async () => {
@@ -131,10 +129,8 @@ namespace cAlgo.Robots
                     request.Headers.Add("x-api-key", EaApiKey);
                     var response = await _httpClient.SendAsync(request);
                     
-                    // Server is valid if it responds with anything < 500
                     _serverStatus = (int)response.StatusCode < 500 ? "OK" : "SERVER_ERR";
                     
-                    // API is valid only if 200 OK
                     if (response.IsSuccessStatusCode)
                     {
                         _apiStatus = "OK";
@@ -174,7 +170,7 @@ namespace cAlgo.Robots
         private void ExecuteSignal(string json)
         {
             var id = GetJsonValue(json, "sid");
-            if (string.IsNullOrEmpty(id)) id = GetJsonValue(json, "signal_sid");
+            if (string.IsNullOrEmpty(id)) id = GetJsonValue(json, "signal_id");
             var leaseToken = GetJsonValue(json, "lease_token");
             var action = GetJsonValue(json, "action").ToUpper();
             var symbolCode = GetJsonValue(json, "symbol");
@@ -182,7 +178,6 @@ namespace cAlgo.Robots
 
             if (string.IsNullOrEmpty(id)) return;
 
-            // REGISTRY CHECK: Never execute same ID twice
             if (_processedSignalIds.Contains(id)) return;
             _processedSignalIds.Add(id);
 
@@ -193,17 +188,18 @@ namespace cAlgo.Robots
                 if (symbol == null) return;
                 
                 if (action == "CLOSE") {
-                    foreach (var p in Positions.Where(x => x.SymbolName == symbolCode && x.Label == MagicNumber.ToString())) ClosePosition(p);
+                    // Close by SID (comment) or Magic Number (label)
+                    var targets = Positions.Where(p => p.SymbolName == symbolCode && (p.Comment == id || p.Label == MagicNumber.ToString())).ToList();
+                    foreach (var p in targets) ClosePosition(p);
                     _ = AckAsync(id, leaseToken, "CLOSED", "MANUAL", "");
                     return;
                 }
 
-                // PERSISTENT DEDUPLICATION: Check if we already have an open position for this Signal ID
-                if (Positions.Any(p => p.Comment == id && p.Label == MagicNumber.ToString()))
+                if (Positions.Any(p => p.Comment == id))
                 {
-                    Print("Signal {0} already open. Skipping execution.", id);
+                    Print("Signal {0} already open. Skipping.", id);
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_OPEN)");
-                    _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", ""); // Ack as filled so server stops sending
+                    _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
                     return;
                 }
 
@@ -211,13 +207,11 @@ namespace cAlgo.Robots
                 var tp = ParseDouble(GetJsonValue(json, "tp"));
                 var currentPrice = (action == "BUY") ? symbol.Ask : symbol.Bid;
 
-                // 1. DYNAMIC RISK CALCULATION
-                // Interpreting signal 'lots' as percentage of balance (0.01 = 1%)
+                // 1. RISK CALCULATION
                 double signalRiskPct = lots; 
                 double requestedRiskMoney = Account.Balance * signalRiskPct;
                 double finalRiskMoney = Math.Min(MaxRiskAmount, requestedRiskMoney);
-                
-                double volumeUnits = symbol.VolumeInUnitsMin; // Default to min
+                double volumeUnits = symbol.VolumeInUnitsMin;
 
                 if (sl > 0)
                 {
@@ -226,46 +220,33 @@ namespace cAlgo.Robots
                     {
                         volumeUnits = (finalRiskMoney / riskPerMinVolume) * symbol.VolumeInUnitsMin;
                         volumeUnits = symbol.NormalizeVolumeInUnits(volumeUnits, RoundingMode.Down);
-                        Print("Target Risk: {0:F2}. SL Distance: {1:F5}. Calculated Units: {2}", finalRiskMoney, Math.Abs(currentPrice - sl), volumeUnits);
                     }
                 }
-                else
-                {
-                    // Fallback if no SL: use 1% Notional Volume or similar if needed, 
-                    // but usually risk-based sizing requires an SL. 
-                    // For now, we will use the lot size provided as-is if no SL.
-                    volumeUnits = symbol.QuantityToVolumeInUnits(lots);
-                }
+                else volumeUnits = symbol.QuantityToVolumeInUnits(lots);
 
-                // 2. MAX VOLUME SIZE CAP (Default 1% of balance)
-                // Assuming lots parameter in cTrader is in units if we don't use LotSize, but here 'lots' comes from signal as standardized lot size.
-                // However, we convert to units using QuantityToVolumeInUnits(lots).
-                // We want to cap the total units to 1% of balance? Usually "Volume Size" means the notion value or just units.
-                // The user said "1% total balance". This usually means NotionValue = Balance * 0.01.
-                // VolumeUnits = NotionValue / Symbol.PipValue? No. NotionValue = VolumeUnits * Price.
-                // So VolumeUnits = (Balance * 0.01) / Price.
-                
+                // 2. CAP VOLUME
                 double maxNotional = Account.Balance * (MaxVolumePercent / 100.0);
                 double maxVolumeByBalance = maxNotional / currentPrice;
-                // Adjust for contract size if necessary, but QuantityToVolumeInUnits usually handles "standard lots".
-                // Let's stick to a simpler interpretation: 1% of balance means the risk or the margin? 
-                // Usually "Volume Size" 1% of balance means if balance is 10k, max volume is 100? No.
-                // Let's assume they mean 1% of balance as the notional value.
-                
-                if (volumeUnits > maxVolumeByBalance) {
-                    volumeUnits = symbol.NormalizeVolumeInUnits(maxVolumeByBalance, RoundingMode.Down);
-                    Print("Volume {0} > Max {1:F2}% Balance. Capped volume to {2}.", volumeUnits, MaxVolumePercent, volumeUnits);
-                }
+                if (volumeUnits > maxVolumeByBalance) volumeUnits = symbol.NormalizeVolumeInUnits(maxVolumeByBalance, RoundingMode.Down);
 
                 if (volumeUnits < symbol.VolumeInUnitsMin)
                 {
-                    var msg = string.Format("Rejected: volume {0} < min {1}", volumeUnits, symbol.VolumeInUnitsMin);
+                    var msg = string.Format("Rejected: vol {0} < min {1}", volumeUnits, symbol.VolumeInUnitsMin);
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
                     return;
                 }
 
-                var res = ExecuteMarketOrder(action == "BUY" ? TradeType.Buy : TradeType.Sell, symbol.Name, volumeUnits, MagicNumber.ToString(), sl, tp, id);
+                // Construct new-style label: {Source}_{EntryModel}
+                var sourceId = GetJsonValue(json, "source_id");
+                var entryModel = GetJsonValue(json, "entry_model");
+                if (string.IsNullOrEmpty(entryModel)) entryModel = GetJsonValue(json, "strategy");
+                
+                string label = MagicNumber.ToString();
+                if (!string.IsNullOrEmpty(sourceId) && !string.IsNullOrEmpty(entryModel))
+                    label = string.Format("{0}_{1}", sourceId, entryModel);
+
+                var res = ExecuteMarketOrder(action == "BUY" ? TradeType.Buy : TradeType.Sell, symbol.Name, volumeUnits, label, sl, tp, id);
                 if (res.IsSuccessful) {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
                     _ = AckAsync(id, leaseToken, "FILLED", res.Position.Id.ToString(), "");
@@ -279,7 +260,6 @@ namespace cAlgo.Robots
         private void UpdateSignalHistory(string id, string text)
         {
             var entry = string.Format("{0}: {1}", id, text);
-            // Remove existing entry for same ID to update it
             _signalHistory.RemoveAll(x => x.StartsWith(id + ":"));
             _signalHistory.Insert(0, entry);
             if (_signalHistory.Count > 8) _signalHistory.RemoveAt(8);
@@ -292,8 +272,8 @@ namespace cAlgo.Robots
             try
             {
                 var payload = string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"positions\":[{4}],\"orders\":[],\"closed\":[{5}]}}",
-                    accId, bal, eq, marg, string.Join(",", posList), string.Join(",", closedList));
+                    "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[],\"closed\":[{6}]}}",
+                    accId, bal, eq, marg, Account.BrokerName, string.Join(",", posList), string.Join(",", closedList));
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/sync", content);
@@ -337,13 +317,9 @@ namespace cAlgo.Robots
                     var act = GetJsonValue(obj, "action");
                     
                     if (status == "Ok") {
-                        // If it's a closed trade, memorize it so we stop sending
-                        if (!activeTicketIds.Contains(ticket)) {
-                            _syncedClosedTickets.Add(ticket);
-                        }
-                        continue; // Hide "Ok" from UI
+                        if (!activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
+                        continue;
                     }
-                    
                     var displaySid = string.IsNullOrEmpty(sid) ? "SKIP" : sid;
                     resList.Add(string.Format("{0} | {1} {2} {3} [{4}]", ticket, displaySid, act, sym, status));
                 }
@@ -365,14 +341,12 @@ namespace cAlgo.Robots
         {
             BeginInvokeOnMainThread(() =>
             {
-                // 1. TOP LEFT: CORE
                 var tl = new StringBuilder();
                 tl.AppendLine(string.Format("BUILD: {0}", BuildVersion));
                 tl.AppendLine(string.Format("TIME: {0}", DateTime.Now.ToString("HH:mm:ss")));
                 tl.AppendLine(string.Format("SERVER: {0} | API: {1}", _serverStatus, _apiStatus));
                 Chart.DrawStaticText("Panel_TL", tl.ToString(), VerticalAlignment.Top, HorizontalAlignment.Left, Color.Aqua);
 
-                // 2. BOTTOM LEFT: POLL EVENT
                 var bl = new StringBuilder();
                 var pollTimeStr = _lastPollTime == DateTime.MinValue ? "WAITING..." : _lastPollTime.ToString("HH:mm:ss");
                 bl.AppendLine(string.Format("EVENT POLL: {0}, {1}", _pollStatus, pollTimeStr));
@@ -384,7 +358,6 @@ namespace cAlgo.Robots
                                  (_pollStatus == "POLLING" ? Color.Yellow : Color.Red));
                 Chart.DrawStaticText("Panel_BL", bl.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Left, pollColor);
 
-                // 3. BOTTOM RIGHT: SYNC EVENT
                 var br = new StringBuilder();
                 var syncTimeStr = _lastSyncTime == DateTime.MinValue ? "WAITING..." : _lastSyncTime.ToString("HH:mm:ss");
                 br.AppendLine(string.Format("EVENT SYNC: {0}, {1}", _syncStatus, syncTimeStr));

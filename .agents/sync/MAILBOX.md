@@ -41,18 +41,18 @@ Successfully migrated to **SID-first identification architecture**.
 - [x] Discovery INSERT used `userId` (undefined) → fixed to `uid` (correct scope).
 - [x] Migrated 23 trades + 30 signals from `SIG_...` to clean 9-char SIDs.
 
-## 3. Current State
-- **Backend**: Deployed `v2026.05.05 04:53 - b1ae8f7` (efa3f99). Health: ✅
-- **DB**: All SIDs migrated. Balance/equity/margin columns populated (17764/17752/925).
-- **Bridge**: `TVBridge_CTrader.cs` updated locally — needs recompile in cTrader platform.
-- **broker_name**: Empty — will populate on next bridge sync cycle with new compiled bridge.
+## 4. Current State
+- **Backend**: Deployed `v2026.05.05 21:40 - 9ff44ac`. Health: ✅
+- **DB**: All SIDs migrated. Balance/equity/margin columns populated.
+- **Bridge**: `TVBridge_CTrader.cs` updated locally to support SID-first labels, full discovery, and broker_name reporting.
+- **EA**: `TVBridgeEA.mq5` version bumped to match system.
 
-## 4. Next Steps
-- [ ] **Recompile cTrader bridge** on broker platform with latest `TVBridge_CTrader.cs`. (USER action)
-- [ ] Verify `broker_name` populates after recompile + sync.
-- [ ] Open a manual trade in cTrader → verify Auto-Adopt creates a record with `source_id = [BrokerName]`.
-- [ ] Verify `ClosePositions()` in bridge handles new-style labels (currently only matches MagicNumber).
-- [ ] Evaluate phasing out `trade_id` and `signal_id` columns after grace period.
+## 5. Next Steps
+- [ ] **Recompile cTrader bridge**: User must paste the updated `TVBridge_CTrader.cs` into cTrader and recompile.
+- [ ] **Verify Sync**: Confirm `broker_name` (cTrader) populates on the dashboard.
+- [ ] **Test Discovery**: Open manual trade in cTrader → verify it appears on dashboard with `source_id = C_TRADER`.
+- [ ] **Verify Closing**: Confirm bridge correctly closes trades via SID (Comment) matching.
+- [ ] **Cleanup**: Evaluate phasing out `trade_id` and `signal_id` columns after grace period.
 
-## 5. Context for New Thread
-"Resuming SID-First Architecture. All backend bugs fixed and deployed (v2026.05.05 04:53). Read .agents/sync/MAILBOX.md. Focus: recompile cTrader bridge, verify manual discovery, and fix ClosePositions to match new-style labels."
+## 6. Context for New Thread
+"Resuming SID-First Architecture. Bridge logic updated for cTrader. User must recompile. Focus: verify manual discovery and broker_name population."

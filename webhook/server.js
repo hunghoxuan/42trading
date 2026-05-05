@@ -100,7 +100,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:25 - 3f35d4c"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:40 - 9ff44ac"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -15661,7 +15661,7 @@ const appHandler = async (req, res) => {
       const useContextFiles =
         body.use_context_files === true ||
         String(body.context_mode || "").toLowerCase() === "claude";
-      if (useContextFiles && UPLOAD_TO_CLAUDE) {
+      if (useContextFiles) {
         const symbol = String(body.symbol || "").trim();
         if (!symbol)
           return json(res, 400, {
