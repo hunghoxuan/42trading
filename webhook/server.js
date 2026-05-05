@@ -576,24 +576,18 @@ if (CFG.signalApiKey) {
   }
 }
 
-function mt5GenerateId(prefix = "ID") {
-  // Use timestamp for rough ordering + random suffix for uniqueness
-  const now = Date.now();
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `${prefix}_${now}_${rand}`;
-}
-
-/**
- * Generates a 9-char unique SID
- * Format: [TimePart (6 chars)] + [RandomPart (3 chars)]
- * Time-sortable by second precision
- */
+// Standard 9-char SID generator: [TimePart (6)] + [RandomPart (3)]
 function mt5GenerateTimeSid() {
   const seconds = Math.floor(Date.now() / 1000)
     .toString(36)
     .toUpperCase();
   const rand = Math.random().toString(36).substring(2, 5).toUpperCase();
-  return (seconds + rand).substring(0, 9);
+  return (seconds + rand).padEnd(9, 'X').substring(0, 9);
+}
+
+// Deprecated: use mt5GenerateTimeSid
+function mt5GenerateId(prefix = "ID") {
+  return mt5GenerateTimeSid();
 }
 
 function mt5NormalizeSymbol(s) {
@@ -2624,11 +2618,13 @@ function sanitizeSessionPrefix(value, fallback = "") {
 function normalizePublicSidBase(raw, fallbackPrefix = "ID") {
   const cleaned = String(raw || "")
     .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  if (cleaned) return cleaned.slice(0, 48);
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase();
+  
+  // If it's already a valid 9-char alphanumeric ID, keep it.
+  // Otherwise, ignore the messy input and generate a clean 9-char SID.
+  if (cleaned.length === 9) return cleaned;
+  
   return mt5GenerateTimeSid();
 }
 
@@ -6513,7 +6509,7 @@ async function _mt5InitBackendInternal() {
                 updated_at = NOW()
             WHERE sid = $2
           `,
-            [mt5GenerateId("LT"), row.sid],
+            [mt5GenerateTimeSid(), row.sid],
           );
 
           await client.query("COMMIT");
@@ -10284,10 +10280,7 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
   ).trim();
   const signalSid = sidBaseFromPayload
     ? normalizePublicSidBase(sidBaseFromPayload, "SIG")
-    : normalizePublicSidBase(
-        sessionPrefix ? `${symbol}_${sessionPrefix}` : signalId,
-        "SIG",
-      );
+    : mt5GenerateTimeSid();
   let rawJsonNormalized = {
     ...rawJson,
     session_prefix: sessionPrefix || undefined,
