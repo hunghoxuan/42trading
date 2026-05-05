@@ -6211,35 +6211,9 @@ async function _mt5InitBackendInternal() {
     baseRaw,
     fallbackPrefix = "ID",
   ) {
-    const allowed = new Set([
-      "users",
-      "accounts",
-      "user_accounts",
-      "signals",
-      "trades",
-      "sources",
-      "execution_profiles",
-    ]);
-    const tableName = String(table || "").trim();
-    if (!allowed.has(tableName)) {
-      return mt5GenerateTimeSid();
-    }
-    const base = normalizePublicSidBase(baseRaw, fallbackPrefix);
-    for (let i = 0; i < 120; i += 1) {
-      const candidate = i === 0 ? base : `${base}_${i + 1}`;
-      const exists = await client
-        .query(`SELECT 1 FROM ${tableName} WHERE sid = $1 LIMIT 1`, [candidate])
-        .catch(() => ({ rows: [{ exists: 1 }] }));
-      if (!exists.rows?.length) return candidate.slice(0, 64);
-    }
-    const fallbackRes = await client
-      .query(`SELECT gen_sid($1, 8) AS sid`, [
-        String(fallbackPrefix || "ID")
-          .slice(0, 6)
-          .toUpperCase(),
-      ])
-      .catch(() => ({ rows: [] }));
-    return String(fallbackRes.rows?.[0]?.sid || base.slice(0, 64));
+    // Standardize all system-wide identification to 9-character, prefix-free SIDs.
+    // We ignore suggested bases and prefixes to ensure total consistency.
+    return mt5GenerateTimeSid();
   }
 
   let LOG_ENABLED_PREFIXES = [];
@@ -6591,14 +6565,7 @@ async function _mt5InitBackendInternal() {
         const accountIds = [];
         for (const row of accounts.rows || []) {
           const aid = row.account_id;
-          const tradeSid = await allocateUniqueSid(
-            client,
-            "trades",
-            payload.trade_sid ||
-              payload.sid ||
-              `${payload.symbol || "TRD"}_${payload.session_prefix || ""}`,
-            "TRD",
-          );
+          const tradeSid = await allocateUniqueSid(client, "trades");
           const ins = await client.query(
             `
             INSERT INTO trades (
