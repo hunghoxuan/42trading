@@ -40,6 +40,10 @@ This file tracks the status of user-facing features and links them to technical 
 - **Feature Doc**: [../features/2-done/mt5_broker_bridge.md]
 - **Summary**: Bi-directional real-time sync between Web Dashboard and MT5 EA.
 
+## [x] cTrader Broker Bridge
+- **Status**: Done
+- **Summary**: Real-time trade execution and synchronization for cTrader, including dynamic risk-based volume sizing (min of MaxRisk vs % Balance) and prefix-free SID identification.
+
 ## [x] Dashboard & Analytics
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/dashboard_analytics.md]

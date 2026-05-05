@@ -1,3 +1,27 @@
+# Session Log: 2026-05-05 19:18
+- **Starting Task**:
+  - Enforce strict 9-char alphanumeric SID standardization and implement dynamic risk-based volume sizing in the cTrader bridge.
+- **Work Accomplished**:
+  - **SID Standardization**: Hard-enforced 9-character, prefix-free, time-sortable SIDs globally. Modified `allocateUniqueSid` in `server.js` to ignore suggested prefixes/suffixes (e.g., `EURUSD_`, `_0`).
+  - **Dynamic Risk Logic**: Refactored `TVBridge_CTrader.cs` to interpret signal volume as a balance percentage (e.g., 0.01 = 1%). Implemented risk-money capping: `min(MaxRiskAmount, SignalVolume% * Balance)`.
+  - **Synchronization Fix**: Resolved `400 Bad Request` in PostgreSQL sync fallback by fixing parameter count mismatch in `mt5BrokerSyncV2`.
+  - **Bridge Observability**: Improved UI status feedback in cTrader (`WAITING`, `OK`, `SERVER_ERR`, `KEY_INVALID`) and added `HttpClient` timeouts.
+  - **Multi-TP Design**: Defined the "Split-Execution" architecture for handling multiple Take Profits via separate trade records with unique SIDs.
+- **Changed Files**:
+  - `webhook/server.js`
+  - `bridge-clients/TVBridge_CTrader.cs`
+  - `.agents/worklog.md`
+  - `.agents/.product/tickets/feature_tracker.md`
+- **Technical Decisions**:
+  - Ignore all SID suggestions at the allocator level to prevent legacy prefix drift.
+  - Scale volume based on SL distance to hit exactly the target risk money.
+  - Treat each TP as a separate trade for clean 1-to-1 broker synchronization.
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `git commit -m "feat: hard-enforce 9-char prefix-free SIDs"` ✅
+- **Deploy Status**:
+  - Ready for cTrader build.
+
 # Session Log: 2026-05-05 17:08
 - **Starting Task**:
   - Add client-side timezone mode toggle (Local vs Selected) that updates all `showDateTime` outputs and align Live chart iframe timezone with the selected effective timezone.
