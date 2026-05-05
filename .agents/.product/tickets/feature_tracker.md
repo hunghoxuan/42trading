@@ -88,3 +88,7 @@ This file tracks the status of user-facing features and links them to technical 
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/trade_persistence.md]
 - **Summary**: Reliable storage of trade status and raw AI analysis JSON in PostgreSQL.
+## [x] Broker Trade Synchronization & Integrity
+- **Status**: Done
+- **Feature Doc**: [../features/2-done/broker_sync_integrity.md]
+- **Summary**: Resolved premature 'CLOSED' discrepancies, standardized 9-character SIDs, and implemented robust status transition validation with critical audit logging.

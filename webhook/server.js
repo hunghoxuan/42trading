@@ -100,7 +100,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:14 - b11cae5"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:25 - 3f35d4c"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -477,86 +477,62 @@ const CFG = {
   ),
 };
 
-const AI_RESPONSE_SCHEMA_VERSION = "2.0.0";
+const AI_RESPONSE_SCHEMA_VERSION = "2.2";
+
 const AI_RESPONSE_SCHEMA = {
   symbol: "",
-  timeframes: [
-    {
-      tf: "MN|W|D|4H|1H|15M|5M|1M",
+  ai_full_analysis: {
+    htf_context: [{
+      timeframe: "D|4H",
+      trend: "Bullish|Bearish|Ranging",
+      bias: "Long|Short|Neutral",
+      what_price_just_did: "",
+      what_price_likely_does_next: "",
+      draw_on_liquidity: { narrative: "", target_price: null, target_type: "BSL|SSL|FVG|OB" },
+      reference_zones: [{ id: "", type: "OB|FVG|KeyLevel", direction: "Bull|Bear", zone_top: null, zone_bottom: null, status: "active|mitigated", relevance: "TP2|TP3|Invalidation" }],
+    }],
+    ltf_analysis: [{
+      timeframe: "15M|5M|1M",
       trend: "Bullish|Bearish|Ranging",
       structure: "BOS|CHoCH|MSB|Continuation|Ranging",
-      phase:
-        "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
+      phase: "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
       bias: "Long|Short|Neutral",
-      poiAlign: true,
-      strongEvents: [
-        {
-          event: "BOS|CHoCH|MSB|Retest|Sweep|Discount|Premium|Rejection|Doji|Engulfing|Cross_EMA|EQH|EQL|BSL|SSL",
-          price: null,
-          time: null,
-          direction: "Bull|Bear",
-        },
-      ],
+      poi_aligned: true,
+      what_price_just_did: "",
+      what_price_likely_does_next: "",
+      key_events: [{ event: "BOS|CHoCH|Sweep|Rejection", price: null, direction: "Bull|Bear" }],
+      expected_path: [{ step: 1, action: "", target_price: null, required_condition: "" }],
+      pd_arrays: [{ id: "", type: "OB|FVG|Breaker|MB", direction: "Bull|Bear", strength: "High|Medium|Low", zone_top: null, zone_bottom: null, status: "active|mitigated", times_touched: 0, note: "" }],
+      key_levels: [{ name: "PDH|PDL|EQH|EQL|MidnightOpen", price: null, already_swept: false }],
+    }],
+    confluence_checklist: {
+      buy: { weighted_score: 0, high_weight_passed: 0, high_weight_total: 0, passed_items: [{ strategy: "", category: "", description: "", weight: "High|Medium|Low", linked_array_id: null }], failed_critical: [{ strategy: "", description: "", impact: "" }] },
+      sell: { weighted_score: 0, high_weight_passed: 0, high_weight_total: 0, passed_items: [], failed_critical: [] },
     },
-  ],
-  tradePlan: [
-    {
-      dir: "BUY|SELL",
-      profile: "Position|Swing|Intraday|Scalp",
-      type: "Limit|Stop Limit|Market",
-      strategy: "",
-      entry_model: "",
-      entry: null,
-      sl: null,
-      be: null,
-      tp: null,
-      tp2: null,
-      tp3: null,
-      rr: null,
-      estimated_bars: null,
-      confluence_checklist: ["Checklist1", "Checklist2"],
-      action: {
-        exit_condition: "",
-        entry_condition: "",
-        risk_management: "none|low|normal|high",
-        recommendation: "Skip|Proceed|Wait",
-      },
-      note: "",
-    },
-  ],
+  },
+  trade_plan: [{
+    direction: "BUY|SELL", profile: "Position|Swing|Intraday|Scalp", order_type: "Limit|Stop Limit|Market",
+    session: "London|NY|Asia", strategy: "", entry_model: "",
+    entry_price: null, stop_loss: null, breakeven_trigger: null,
+    take_profits: [{ price: null, close_position_pct: 50, reward_to_risk: null }],
+    risk_reward: null, risk_percent: null, estimated_candles_to_tp1: null,
+    confluence_score: null, trade_decision: "Proceed|Skip", grade: "A|B|C|NoTrade",
+    skip_reasons: [{ reason: "", severity: "critical|warning" }],
+    entry_trigger: "", pre_entry_invalidation: "", mid_trade_invalidation: "",
+    note: "",
+  }],
 };
 
-const AI_CHECKLIST_BANK = [
-  ["Structure", "HTF bias aligned (D/W)", "High"],
-  ["Structure", "ITF bias aligned (4H)", "High"],
-  ["Structure", "LTF CHoCH/BOS confirmed", "High"],
-  ["PD_Arrays", "Entry at fresh OB/FVG", "High"],
-  ["PD_Arrays", "OB+FVG overlap", "High"],
-  ["PD_Arrays", "POI within premium/discount", "High"],
-  ["Liquidity", "Clear draw on liquidity identified", "High"],
-  ["Liquidity", "BSL/SSL swept before entry", "High"],
-  ["Liquidity", "PDH/PDL or PWH/PWL as DOL", "Medium"],
-  ["Session", "Killzone active (London/NY)", "High"],
-  ["Session", "Power of 3 phase aligned", "High"],
-  ["Session", "No high-impact news within 30min", "High"],
-  ["Correlation", "SMT divergence confirmed", "High"],
-  ["VWAP", "VWAP aligns with OB/FVG", "High"],
-  ["Fibonacci", "Entry at 0.618-0.786 retracement", "High"],
-  ["Candle_Patterns", "Displacement or rejection candle at POI", "High"],
-  ["Indicators", "RSI/volume/ATR confirms setup", "Medium"],
-  ["Risk", "RR >= 2.5 and SL behind structure", "High"],
-  ["Risk", "Entry not late (POI <50% consumed)", "High"],
-  ["Risk", "Partial profit plan defined", "Medium"],
-];
+// Legacy checklist bank kept for reference
+const AI_CHECKLIST_BANK = [];
 
 function buildAiSchemaPromptText() {
   return `You are an expert ICT technical analyst.
 Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown, or trailing commas.
 All fields required. Enums must match. Use null only where price data is unavailable.
-Array limits: timeframes<=4, tradePlan<=2, strongEvents<=6/tf, confluence_checklist<=8/plan.
-Trade plans must be actionable and internally consistent (entry/sl/tp/rr aligned by direction). note="" when not meaningful.
+Array limits: htf_context<=2, ltf_analysis<=2, trade_plan<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
+Trade plans must be actionable and internally consistent.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
-CHECKLIST_BANK=${JSON.stringify(AI_CHECKLIST_BANK)}
 SCHEMA=${JSON.stringify(AI_RESPONSE_SCHEMA)}`;
 }
 
@@ -15749,6 +15725,44 @@ const appHandler = async (req, res) => {
           }
         }
         if (!usedSnapshotFiles.length) {
+          try {
+            const autoCreated = await captureTradingViewSnapshotsBatch({
+              symbol: contextBundle.symbol,
+              provider: String(body.provider || "ICMARKETS"),
+              sessionPrefix: reqSessionPrefix || sanitizeSessionPrefix("auto"),
+              tfs: (contextBundle.timeframes || [])
+                .map((x) => toTradingViewInterval(x.tf))
+                .filter(Boolean),
+              lookbackBars:
+                Number(
+                  body.bars_count || body.lookbackBars || body.lookback_bars || 300,
+                ) || 300,
+            });
+            for (const created of autoCreated || []) {
+              const fileName = String(created?.file_name || "").trim();
+              if (!fileName) continue;
+              const abs = path.join(CHART_SNAPSHOT_DIR, fileName);
+              if (!fs.existsSync(abs)) continue;
+              const mediaType = snapshotMimeByFileName(fileName);
+              if (!mediaType) continue;
+              content.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType,
+                  data: fs.readFileSync(abs).toString("base64"),
+                },
+              });
+              usedSnapshotFiles.push(fileName);
+            }
+          } catch (captureError) {
+            console.warn(
+              "[snapshot-analyze] context auto-capture fallback failed:",
+              captureError?.message || captureError,
+            );
+          }
+        }
+        if (!usedSnapshotFiles.length) {
           return json(res, 400, {
             ok: false,
             error:
@@ -15859,25 +15873,96 @@ const appHandler = async (req, res) => {
         });
       }
 
+      const normalizeTf = (value) => {
+        const raw = String(value || "").trim().toUpperCase();
+        if (!raw) return "";
+        if (raw === "1D") return "D";
+        if (raw === "1H") return "60";
+        if (raw === "15") return "15";
+        if (raw === "5") return "5";
+        return raw;
+      };
+      const parseRequestedTimeframes = () => {
+        if (Array.isArray(body.timeframes))
+          return body.timeframes.map(normalizeTf).filter(Boolean);
+        return String(body.tfs || body.timeframe || body.timeframes || "D,240,15,5")
+          .split(",")
+          .map(normalizeTf)
+          .filter(Boolean);
+      };
+      const requestedTfs = parseRequestedTimeframes();
+      const requestedSymbol = mt5NormalizeSymbol(body.symbol || "");
+      const requestedProvider = String(body.provider || "ICMARKETS")
+        .trim()
+        .toUpperCase();
+      const pickSnapshotFiles = (items) => {
+        if (!items.length) return [];
+        if (!requestedTfs.length) return items.slice(0, 4).map((x) => x.f);
+        const byTf = new Map();
+        for (const item of items) {
+          const parts = String(item.f || "").split("_");
+          const tfRaw = parts.length >= 3 ? parts[2] : "";
+          const tf = normalizeTf(tfRaw);
+          if (!tf || byTf.has(tf)) continue;
+          byTf.set(tf, item.f);
+          if (byTf.size >= requestedTfs.length) break;
+        }
+        const ordered = requestedTfs
+          .map((tf) => byTf.get(tf))
+          .filter(Boolean);
+        if (ordered.length) return ordered.slice(0, 4);
+        return items.slice(0, 4).map((x) => x.f);
+      };
       let files = Array.isArray(body.files)
         ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
       if (!files.length) {
-        files = fs
+        const allSnapshots = fs
           .readdirSync(CHART_SNAPSHOT_DIR)
           .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
-          .filter(
-            (f) => !reqSessionPrefix || f.includes(`_${reqSessionPrefix}_`),
-          )
           .map((f) => {
             const st = fs.statSync(path.join(CHART_SNAPSHOT_DIR, f));
             return { f, t: Number(st.mtimeMs || 0) };
           })
-          .sort((a, b) => b.t - a.t)
-          .slice(0, 3)
-          .map((x) => x.f);
+          .sort((a, b) => b.t - a.t);
+        const sessionMatched = reqSessionPrefix
+          ? allSnapshots.filter((x) => x.f.includes(`_${reqSessionPrefix}_`))
+          : [];
+        const symbolMatched = allSnapshots.filter((x) => {
+          const parts = String(x.f || "").split("_");
+          if (parts.length < 3) return false;
+          const providerOk = String(parts[0] || "").toUpperCase() === requestedProvider;
+          const symbolOk = mt5NormalizeSymbol(parts[1] || "") === requestedSymbol;
+          return providerOk && symbolOk;
+        });
+        const pool = sessionMatched.length
+          ? sessionMatched
+          : symbolMatched.length
+            ? symbolMatched
+            : allSnapshots;
+        files = pickSnapshotFiles(pool);
       }
-      files = files.slice(0, 3);
+      if (!files.length && requestedSymbol) {
+        try {
+          const created = await captureTradingViewSnapshotsBatch({
+            symbol: requestedSymbol,
+            provider: requestedProvider,
+            sessionPrefix: reqSessionPrefix || sanitizeSessionPrefix("auto"),
+            tfs: requestedTfs.length ? requestedTfs : ["D", "240", "15", "5"],
+            lookbackBars:
+              Number(
+                body.bars_count || body.lookbackBars || body.lookback_bars || 300,
+              ) || 300,
+          });
+          files = Array.isArray(created) ? created.map((x) => String(x.file_name || "")).filter(Boolean).slice(0, 4) : [];
+        } catch (captureError) {
+          console.warn(
+            "[snapshot-analyze] auto-capture fallback failed:",
+            captureError?.message || captureError,
+          );
+        }
+      }
+      files = files.slice(0, 4);
       if (!files.length)
         return json(res, 400, {
           ok: false,
