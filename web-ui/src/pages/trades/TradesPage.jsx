@@ -93,6 +93,10 @@ function tradeKeyOf(t) {
   return String(t?.sid || "").trim();
 }
 
+function auditTimestampRaw(t) {
+  return t?.updated_at || t?.created_at || t?.closed_at || t?.opened_at || null;
+}
+
 function rangeBounds(range) {
   const now = new Date();
   const start = new Date(now);
@@ -512,7 +516,7 @@ export default function TradesPage() {
       if (s === "CLOSED" || s === "CANCELLED") return 2;
       return 3;
     };
-    const valueOfAudit = (x) => new Date(x?.closed_at || x?.opened_at || x?.created_at || 0).getTime();
+    const valueOfAudit = (x) => new Date(auditTimestampRaw(x) || 0).getTime();
     const out = [...rows];
     out.sort((a, b) => {
       let cmp = 0;
@@ -731,7 +735,7 @@ export default function TradesPage() {
                   const stRaw = String(t.execution_status || "").toUpperCase();
                   const showPnl = stRaw !== "PENDING" && pnl != null && pnl !== 0;
                   const rrDisplay = asNum(t.rr_planned) ?? rr;
-                  const timeValue = fDateTime(t.closed_at || t.opened_at || t.created_at);
+                  const timeValue = fDateTime(auditTimestampRaw(t));
                   return (
                     <tr
                       key={tradeKeyOf(t)}

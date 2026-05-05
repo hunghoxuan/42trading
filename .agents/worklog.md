@@ -719,6 +719,20 @@
 - **Deploy Status**:
   - Ready to deploy.
 
+# Session Log: 2026-05-05 23:02
+- **Starting Task**:
+  - Fix Trades list audit timestamp mismatch and ordering inconsistency.
+- **Work Accomplished**:
+  - Updated trades list audit timestamp source to prefer `updated_at` then `created_at`.
+  - Removed dependence on `opened_at/closed_at` for list audit display/sort to keep recency behavior correct.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/trades/TradesPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Ready to deploy.
+
 # Session Log: 2026-05-05 20:42
 - **Starting Task**:
   - Re-review why user-visible schema changes were not reflected after deploy.
