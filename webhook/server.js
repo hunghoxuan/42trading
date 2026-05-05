@@ -100,7 +100,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:05 - 06e6151"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.05 21:14 - b11cae5"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -15697,7 +15697,7 @@ const appHandler = async (req, res) => {
             provider: String(body.provider || "ICMARKETS"),
             forceRefresh: body.force_refresh === true,
             forceSnapshot: body.snapshot_refresh === true,
-            includeSnapshots: false, // skip Playwright snapshots during analyze
+            includeSnapshots: true,
           }),
           new Promise((_, reject) =>
             setTimeout(
@@ -15726,6 +15726,7 @@ const appHandler = async (req, res) => {
         };
         finalPrompt += `\n\nCONTEXT_MANIFEST=${JSON.stringify(manifest)}\n\n${buildAiSchemaPromptText()}`;
         const content = [];
+        const usedSnapshotFiles = [];
         for (const item of contextBundle.timeframes || []) {
           const filesForTf = item.files || {};
           if (filesForTf.snapshot?.file_id) {
@@ -15733,6 +15734,11 @@ const appHandler = async (req, res) => {
               type: "image",
               source: { type: "file", file_id: filesForTf.snapshot.file_id },
             });
+            if (filesForTf.snapshot?.local_snapshot_file) {
+              usedSnapshotFiles.push(
+                String(filesForTf.snapshot.local_snapshot_file),
+              );
+            }
           }
           for (const type of ["bars", "analysis", "tradeplans"]) {
             const block = makeAiContextTextBlock(
@@ -15741,6 +15747,13 @@ const appHandler = async (req, res) => {
             );
             if (block) content.push(block);
           }
+        }
+        if (!usedSnapshotFiles.length) {
+          return json(res, 400, {
+            ok: false,
+            error:
+              "Snapshots are required for analysis, but no snapshot images were available.",
+          });
         }
         content.push({ type: "text", text: finalPrompt });
         const requestModel =
@@ -15833,7 +15846,7 @@ const appHandler = async (req, res) => {
           ok: true,
           model: resolvedModel,
           schema_version: AI_RESPONSE_SCHEMA_VERSION,
-          used_files: [],
+          used_files: usedSnapshotFiles,
           claude_files_mode: "context_files",
           claude_files: contextBundle.context_files,
           analysis_files: analysisFileUploads,

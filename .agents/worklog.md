@@ -738,6 +738,22 @@
 - **Deploy Status**:
   - Ready to deploy.
 
+# Session Log: 2026-05-05 23:31
+- **Starting Task**:
+  - Enforce mandatory snapshots for AI analyze in both context and fallback modes.
+- **Work Accomplished**:
+  - Backend `/v2/chart/snapshots/analyze` context path now requests snapshots (`includeSnapshots: true`).
+  - Added hard guard: if no snapshot images are available in context mode, API returns `400` with explicit error instead of analyzing without snapshots.
+  - Context-mode analyze response now returns `used_files` with snapshot file names.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Ready to deploy.
+
 # Session Log: 2026-05-05 23:20
 - **Starting Task**:
   - Investigate why Analyze reports `0 screenshot(s)` and `Claude context files: 0`.
