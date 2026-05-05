@@ -1215,17 +1215,22 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
         note: typeof s?.note === "string" ? s.note : "",
         source,
         strategy,
-        rr: parseNum(s?.rr),
+        rr: parseNum(s?.rr ?? s?.risk_reward),
+        risk_pct: parseNum(s?.risk_pct ?? s?.risk_percent),
+        grade: String(s?.grade || "").trim(),
         profile: String(s?.profile || parsed?.profile || "").trim(),
         confidence_pct: parseNum(s?.confidence_pct),
         invalidation: String(
           s?.invalidation || parsed?.invalidation || "",
         ).trim(),
+        trade_decision: String(s?.trade_decision || "").trim(),
       };
     })
     .filter(
       (x) =>
+        x &&
         x.symbol &&
+        x.trade_decision !== "Skip" &&
         Number.isFinite(x.entry) &&
         Number.isFinite(x.sl) &&
         Number.isFinite(x.tp) &&

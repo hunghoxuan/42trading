@@ -2620,11 +2620,11 @@ function normalizePublicSidBase(raw, fallbackPrefix = "ID") {
     .trim()
     .replace(/[^a-zA-Z0-9]/g, "")
     .toUpperCase();
-  
+
   // If it's already a valid 9-char alphanumeric ID, keep it.
   // Otherwise, ignore the messy input and generate a clean 9-char SID.
   if (cleaned.length === 9) return cleaned;
-  
+
   return mt5GenerateTimeSid();
 }
 
@@ -9641,6 +9641,112 @@ function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
 
+  // NEW schema (v2.2): ai_full_analysis wrapper
+  if (out.ai_full_analysis && typeof out.ai_full_analysis === "object") {
+    const a = out.ai_full_analysis;
+    // Flatten HTF + LTF timeframes
+    const htfTfs = Array.isArray(a.htf_context) ? a.htf_context : [];
+    const ltfTfs = Array.isArray(a.ltf_analysis) ? a.ltf_analysis : [];
+    const allTfs = [...htfTfs, ...ltfTfs];
+    // Merge PD arrays and key levels from LTF only
+    const pdArrays = ltfTfs.flatMap(t => Array.isArray(t.pd_arrays) ? t.pd_arrays.map(p => ({ ...p, timeframe: t.timeframe })) : []);
+    const keyLevels = ltfTfs.flatMap(t => Array.isArray(t.key_levels) ? t.key_levels : []);
+    // HTF reference zones → key levels with type prefix
+    const htfZones = htfTfs.flatMap(t => Array.isArray(t.reference_zones) ? t.reference_zones.map(z => ({ ...z, name: `HTF_${z.type}_${z.id || ""}`, zone_type: z.type })) : []);
+    const allKeyLevels = [...keyLevels, ...htfZones];
+    // First HTF DOL
+    const dol = htfTfs.find(t => t.draw_on_liquidity?.target_price)?.draw_on_liquidity || null;
+
+    out.market_analysis = {
+      timeframes: allTfs.map(t => ({
+        tf: t.timeframe || "",
+        trend: t.trend || "",
+        structure: t.structure || "",
+        market_phase: t.phase || "",
+        bias: t.bias || "",
+        poi_alignment: Boolean(t.poi_aligned),
+        price_action_summary: {
+          recent_move: t.what_price_just_did || "",
+          key_breaks: (Array.isArray(t.key_events) ? t.key_events : []).map(e => ({
+            event: e.event || "", price_level: e.price, direction: e.direction === "Bull" ? "Bullish" : e.direction === "Bear" ? "Bearish" : e.direction || "",
+          })),
+        },
+        price_prediction: {
+          narrative: t.what_price_likely_does_next || "",
+          expected_path: (Array.isArray(t.expected_path) ? t.expected_path : []).map(p => ({
+            step: p.step, action: p.action || "", target_price: p.target_price, condition: p.required_condition || "",
+          })),
+        },
+      })),
+      pd_arrays: pdArrays.map(p => ({
+        id: p.id, type: p.type || "", direction: p.direction === "Bull" ? "Bullish" : p.direction === "Bear" ? "Bearish" : p.direction || "",
+        strength: p.strength || "", price_top: p.zone_top, price_bottom: p.zone_bottom,
+        status: p.status || "", touched: p.times_touched || 0, timeframe: p.timeframe || "", note: p.note || "",
+      })),
+      key_levels: allKeyLevels.map(k => ({
+        name: k.name || "", price: k.price, type: k.zone_type || k.type || "", swept: Boolean(k.already_swept),
+      })),
+      institutional_filters: { draw_on_liquidity: { target: dol?.narrative || "", price: dol?.target_price, type: dol?.target_type || "" } },
+      confluence_checklist: {
+        buy: {
+          items: (Array.isArray(a.confluence_checklist?.buy?.passed_items) ? a.confluence_checklist.buy.passed_items : []).map(c => ({
+            category: c.category || "", item: c.description || "", weight: c.weight || "", checked: true, pd_array_ref: c.linked_array_id || null,
+          })),
+          score: a.confluence_checklist?.buy?.weighted_score ?? 0, total: 100,
+          high_weight_passed: a.confluence_checklist?.buy?.high_weight_passed ?? 0,
+          high_weight_total: a.confluence_checklist?.buy?.high_weight_total ?? 0,
+        },
+        sell: {
+          items: (Array.isArray(a.confluence_checklist?.sell?.passed_items) ? a.confluence_checklist.sell.passed_items : []).map(c => ({
+            category: c.category || "", item: c.description || "", weight: c.weight || "", checked: true, pd_array_ref: c.linked_array_id || null,
+          })),
+          score: a.confluence_checklist?.sell?.weighted_score ?? 0, total: 100,
+          high_weight_passed: a.confluence_checklist?.sell?.high_weight_passed ?? 0,
+          high_weight_total: a.confluence_checklist?.sell?.high_weight_total ?? 0,
+        },
+      },
+    };
+
+    // Normalize trade_plan
+    if (!out.trade_plan && Array.isArray(out.tradePlan)) {
+      out.trade_plan = out.tradePlan;
+    }
+    if (Array.isArray(out.trade_plan)) {
+      out.trade_plan = out.trade_plan.map(x => ({
+        direction: x?.direction || x?.dir || "",
+        profile: x?.profile || "",
+        type: x?.order_type || x?.type || "",
+        session_entry: x?.session || "",
+        strategy: x?.strategy || "",
+        entry_model: x?.entry_model || "",
+        entry: x?.entry_price ?? x?.entry ?? null,
+        sl: x?.stop_loss ?? x?.sl ?? null,
+        be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
+        tp: Array.isArray(x?.take_profits) && x.take_profits[0] ? x.take_profits[0].price : (x?.tp ?? null),
+        tp2: Array.isArray(x?.take_profits) && x.take_profits[1] ? x.take_profits[1].price : (x?.tp2 ?? null),
+        tp3: Array.isArray(x?.take_profits) && x.take_profits[2] ? x.take_profits[2].price : (x?.tp3 ?? null),
+        estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
+        risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
+        rr: x?.risk_reward ?? x?.rr ?? null,
+        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(t => ({ price: t.price, size_pct: t.close_position_pct, rr: t.reward_to_risk })),
+        confluence_checklist: Array.isArray(x?.confluence_checklist) ? x.confluence_checklist : [],
+        reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map(r => ({ reason: r.reason || "", severity: r.severity || "" })),
+        skip_recommendation: x?.trade_decision === "Proceed" ? "" : (x?.trade_decision || ""),
+        entry_condition: x?.entry_trigger || "",
+        exit_condition: x?.mid_trade_invalidation || "",
+        risk_management: x?.grade === "A" ? "normal" : x?.grade === "B" ? "low" : "high",
+        invalidation: x?.pre_entry_invalidation || "",
+        confidence_pct: x?.confidence_pct ?? x?.confluence_score ?? null,
+        note: x?.note || "",
+      }));
+    }
+
+    // Remove raw wrapper to avoid duplication
+    delete out.ai_full_analysis;
+    return out;
+  }
+
+  // OLD schema (flat format)
   if (
     !out.market_analysis &&
     (Array.isArray(out.timeframes) ||
