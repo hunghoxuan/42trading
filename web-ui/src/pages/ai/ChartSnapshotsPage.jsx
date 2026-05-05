@@ -365,6 +365,29 @@ function parseSnapshotMeta(it) {
   };
 }
 
+function inferSymbolFromSnapshotToken(token) {
+  const raw = String(token || "")
+    .trim()
+    .toUpperCase();
+  if (!raw) return "";
+  const parts = raw.split("_").filter(Boolean);
+  if (!parts.length) return "";
+  const KNOWN_PROVIDERS = new Set([
+    "ICMARKETS",
+    "OANDA",
+    "FOREXCOM",
+    "EIGHTCAP",
+    "PEPPERSTONE",
+    "FXCM",
+    "BINANCE",
+    "BYBIT",
+  ]);
+  if (parts.length >= 2 && KNOWN_PROVIDERS.has(parts[0])) {
+    return parts.slice(1).join("_");
+  }
+  return raw;
+}
+
 function makeSessionPrefix() {
   const now = Date.now().toString(36).toUpperCase();
   const rnd = Math.random().toString(36).slice(2, 7).toUpperCase();
@@ -2232,9 +2255,13 @@ export default function ChartSnapshotsPage() {
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
-        symbol: String(tvSymbol || cfg.symbol || "")
-          .split(":")
-          .pop(),
+        symbol:
+          String(tvSymbol || cfg.symbol || "")
+            .split(":")
+            .pop() ||
+          inferSymbolFromSnapshotToken(
+            parseSnapshotMeta(items[0] || {})?.symbolToken || "",
+          ),
         timeframe,
         provider,
         timeframes: snapshotTfs,

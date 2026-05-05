@@ -15642,6 +15642,64 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       const body = await readJson(req);
+      const inferSymbolFromSnapshotFile = (fileNameRaw) => {
+        const safe = String(fileNameRaw || "").trim();
+        if (!safe) return "";
+        const base = path
+          .basename(safe)
+          .replace(/\.(png|jpe?g)$/i, "")
+          .toUpperCase();
+        const parts = base.split("_").filter(Boolean);
+        if (parts.length < 3) return "";
+        let symbolParts = [];
+        if (
+          parts.length >= 5 &&
+          /^\d{8}$/.test(parts[0]) &&
+          /^\d{2}$/.test(parts[1]) &&
+          /^\d{2}$/.test(parts[2])
+        ) {
+          const rest = parts.slice(3);
+          const hasDup = rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
+          symbolParts = rest.slice(0, hasDup ? -2 : -1);
+        } else {
+          const hasDup = parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
+          symbolParts = parts.slice(0, hasDup ? -3 : -2);
+        }
+        if (!symbolParts.length) return "";
+        const KNOWN_PROVIDERS = new Set([
+          "ICMARKETS",
+          "OANDA",
+          "FOREXCOM",
+          "EIGHTCAP",
+          "PEPPERSTONE",
+          "FXCM",
+          "BINANCE",
+          "BYBIT",
+        ]);
+        if (symbolParts.length >= 2 && KNOWN_PROVIDERS.has(symbolParts[0])) {
+          return symbolParts.slice(1).join("_");
+        }
+        return symbolParts.join("_");
+      };
+      const inferSymbolFromRecentSnapshots = () => {
+        try {
+          const files = fs
+            .readdirSync(CHART_SNAPSHOT_DIR)
+            .filter((f) => /\.(png|jpe?g)$/i.test(f))
+            .map((f) => {
+              const st = fs.statSync(path.join(CHART_SNAPSHOT_DIR, f));
+              return { f, t: Number(st.mtimeMs || 0) };
+            })
+            .sort((a, b) => b.t - a.t);
+          for (const item of files) {
+            const inferred = inferSymbolFromSnapshotFile(item.f);
+            if (inferred) return inferred;
+          }
+          return "";
+        } catch {
+          return "";
+        }
+      };
       const reqSessionPrefix = sanitizeSessionPrefix(
         body.session_prefix || body.sessionPrefix || "",
       );
@@ -15662,7 +15720,14 @@ const appHandler = async (req, res) => {
         body.use_context_files === true ||
         String(body.context_mode || "").toLowerCase() === "claude";
       if (useContextFiles) {
-        const symbol = String(body.symbol || "").trim();
+        const symbol =
+          String(body.symbol || "").trim() ||
+          (Array.isArray(body.files)
+            ? body.files
+                .map((f) => inferSymbolFromSnapshotFile(f))
+                .find(Boolean) || ""
+            : "") ||
+          inferSymbolFromRecentSnapshots();
         if (!symbol)
           return json(res, 400, {
             ok: false,
