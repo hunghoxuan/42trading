@@ -7157,7 +7157,7 @@ async function _mt5InitBackendInternal() {
               ],
             );
           }
-          console.log(`[brokerSyncV2] Matching it.ticket=${it.ticket} sid=${it.sid} candidates=${JSON.stringify(ticketCandidates)} symbol=${syncSymbol} action=${syncAction}`);
+          console.log(`[brokerSyncV2] Matching it.ticket=${it.ticket} sid=${it.sid} status=${it.execution_status} candidates=${JSON.stringify(ticketCandidates)} symbol=${syncSymbol} action=${syncAction}`);
           res = await pool.query(
             `
             UPDATE trades
@@ -7189,6 +7189,7 @@ async function _mt5InitBackendInternal() {
               AND ($11 = '' OR symbol = $11)
               AND (
                 sid = ANY($4::text[])
+                OR (sid = $18 AND $18 <> '')
                 OR broker_trade_id = ANY($4::text[])
                 OR metadata->>'broker_position_id' = ANY($4::text[])
                 OR metadata->>'position_ticket' = ANY($4::text[])
@@ -7213,11 +7214,14 @@ async function _mt5InitBackendInternal() {
               it.commission || 0,
               it.swap || 0,
               it.volume || 0,
+              it.sid || "",
             ],
           );
+          console.log(`[brokerSyncV2] Query 1 rowCount=${res.rowCount}`);
         }
         if (it.sid) {
           if (res.rowCount === 0) {
+            console.log(`[brokerSyncV2] Attempting Query 2 for sid=${it.sid}`);
             res = await pool.query(
               `
             UPDATE trades
@@ -7270,10 +7274,12 @@ async function _mt5InitBackendInternal() {
                 ticketCandidates,
               ],
             );
+            console.log(`[brokerSyncV2] Query 2 rowCount=${res.rowCount}`);
           }
         }
         if (res.rowCount === 0 && ticketCandidates.length) {
           // Last-resort fallback: bind ticket to oldest unresolved trade for this account.
+          console.log(`[brokerSyncV2] Attempting Last-resort fallback for tickets=${JSON.stringify(ticketCandidates)}`);
           res = await pool.query(
             `
             UPDATE trades
