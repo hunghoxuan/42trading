@@ -154,6 +154,10 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
 );
 const ANTHROPIC_FILES_BETA = "files-api-2025-04-14";
 
+// Toggle: upload context files + snapshots to Claude Files API (file_id refs)
+// false = use base64 inline images + text blocks (no Claude Files dependency)
+const UPLOAD_TO_CLAUDE = false;
+
 function readDiskStats(mountPath = "/") {
   try {
     const out = execFileSync("df", ["-Pk", mountPath], {
@@ -3674,6 +3678,14 @@ async function upsertClaudeContextFile({
   tf,
   barEnd,
 }) {
+  // Skip Claude Files upload when toggle is off — file still written to disk for inline use
+  if (!UPLOAD_TO_CLAUDE) {
+    return {
+      context_key: contextKey, symbol, tf, type, bar_end: barEnd || null,
+      vps_file: fileName, vps_path: absPath, file_id: null, reused: false,
+      skipped: true,
+    };
+  }
   const map = readClaudeContextFileMap();
   const key = `${contextKey}:${type}`;
   const hash = sha256File(absPath);
@@ -15999,17 +16011,21 @@ const appHandler = async (req, res) => {
       let imagePayload = null;
       let claudeFilesMode = "base64";
       let claudeFilesError = "";
-      try {
-        imagePayload = await buildClaudeFileSnapshotContent({
-          apiKey: claudeKey,
-          snapshotFiles,
-        });
-        claudeFilesMode = "files_api";
-      } catch (error) {
-        claudeFilesError =
-          error instanceof Error ? error.message : String(error);
+      if (UPLOAD_TO_CLAUDE) {
+        try {
+          imagePayload = await buildClaudeFileSnapshotContent({
+            apiKey: claudeKey,
+            snapshotFiles,
+          });
+          claudeFilesMode = "files_api";
+        } catch (error) {
+          claudeFilesError =
+            error instanceof Error ? error.message : String(error);
+          imagePayload = buildBase64SnapshotContent(snapshotFiles);
+          claudeFilesMode = "fallback_base64";
+        }
+      } else {
         imagePayload = buildBase64SnapshotContent(snapshotFiles);
-        claudeFilesMode = "fallback_base64";
       }
 
       const content = [...imagePayload.content];
