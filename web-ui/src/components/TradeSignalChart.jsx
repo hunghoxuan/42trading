@@ -327,6 +327,10 @@ export default function TradeSignalChart({
             // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
             const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
             
+            if (!apiSym) {
+              setLoading(false);
+              return;
+            }
             const r = await fetch(`/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`, {
               credentials: "include",
               cache: "no-store",

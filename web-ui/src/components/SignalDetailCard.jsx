@@ -632,7 +632,11 @@ export function SignalDetailCard({
             <div key={`${item.label}-${i}`} style={{ gridColumn: item.fullWidth ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 4 }}>
               <span className="minor-text" style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--muted-bright)" }}>{item.label}</span>
               <div style={{ fontSize: "12.5px", color: "var(--foreground)", wordBreak: "break-word", fontWeight: 500, ...(item.valueStyle || {}) }}>
-                {String(item.label || "").toLowerCase() === "note" ? <div dangerouslySetInnerHTML={{ __html: formatNote(item.value) }} /> : item.value}
+                {String(item.label || "").toLowerCase() === "note" ? (
+                  <div dangerouslySetInnerHTML={{ __html: formatNote(item.value) }} />
+                ) : (
+                  typeof item.value === "object" ? JSON.stringify(item.value, null, 2) : item.value
+                )}
               </div>
             </div>
           );
@@ -869,7 +873,7 @@ export function SignalDetailCard({
                         lineHeight: 1.6,
                       }}
                     >
-                      {analysis}
+                      {typeof analysis === "object" ? JSON.stringify(analysis, null, 2) : analysis}
                     </div>
                   </div>
                 )}
@@ -887,7 +891,7 @@ export function SignalDetailCard({
                       Confluence
                     </div>
                     <div style={{ whiteSpace: "pre-wrap", marginBottom: 12 }}>
-                      {confluence}
+                      {typeof confluence === "object" ? JSON.stringify(confluence, null, 2) : confluence}
                     </div>
                   </div>
                 )}
@@ -979,7 +983,7 @@ export function SignalDetailCard({
                                         : "var(--muted)",
                                     }}
                                   >
-                                    {label}
+                                    {typeof label === "object" ? JSON.stringify(label, null, 2) : label}
                                   </span>
                                 </div>
                               );
@@ -1054,7 +1058,7 @@ export function SignalDetailCard({
                                         : "var(--muted)",
                                     }}
                                   >
-                                    {label}
+                                    {typeof label === "object" ? JSON.stringify(label, null, 2) : label}
                                   </span>
                                 </div>
                               );
