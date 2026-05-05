@@ -15367,7 +15367,7 @@ const appHandler = async (req, res) => {
           errors: [],
         };
 
-        if (wantsContext) {
+        if (wantsContext && UPLOAD_TO_CLAUDE) {
           try {
             row.context = await buildAiContextBundle({
               userId,
@@ -15580,17 +15580,19 @@ const appHandler = async (req, res) => {
         url.searchParams.get("include_snapshots"),
         false,
       );
-      const bundle = await buildAiContextBundle({
-        userId,
-        apiKey: claudeKey,
-        symbol,
-        timeframes,
-        bars,
-        provider,
-        forceRefresh,
-        forceSnapshot,
-        includeSnapshots,
-      });
+      const bundle = UPLOAD_TO_CLAUDE
+        ? await buildAiContextBundle({
+            userId,
+            apiKey: claudeKey,
+            symbol,
+            timeframes,
+            bars,
+            provider,
+            forceRefresh,
+            forceSnapshot,
+            includeSnapshots,
+          })
+        : { symbol, timeframes: [], context_files: [] };
       return json(res, 200, { ok: true, ...bundle });
     } catch (error) {
       return json(res, 500, {
@@ -15659,7 +15661,7 @@ const appHandler = async (req, res) => {
       const useContextFiles =
         body.use_context_files === true ||
         String(body.context_mode || "").toLowerCase() === "claude";
-      if (useContextFiles) {
+      if (useContextFiles && UPLOAD_TO_CLAUDE) {
         const symbol = String(body.symbol || "").trim();
         if (!symbol)
           return json(res, 400, {
