@@ -139,7 +139,8 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
     NOTIFICATION_PULSE.user[userId][typeKey] = Date.now();
   }
   // Also emit SSE
-  emitNotification({ user_id: userId || null, page: null, event: itemType === "trade" ? "trade_updated" : itemType === "signal" ? "signal_added" : "system_event", message: `${itemType} ${action}`, type: "info", notification: false, console_log: false, ticker: true, need_refresh: false, comp_refresh: false, action: null, sound: null, position: "bottom-right" });
+  const evType = itemType === "trade" ? "trade_added" : itemType === "signal" ? "signal_added" : "system_event";
+  emitNotification({ user_id: userId || null, page: null, event: evType, message: `${itemType} ${action}`, type: "info", notification: true, console_log: false, ticker: true, need_refresh: false, comp_refresh: false, action: null, sound: itemType === "signal" ? "NEW_SIGNAL" : null, position: "bottom-right" });
 }
 const CHART_SNAPSHOT_DIR = path.resolve(__dirname, "snapshots");
 const CHART_SNAPSHOT_CLAUDE_MAP_FILE = path.join(
@@ -7566,6 +7567,23 @@ async function _mt5InitBackendInternal() {
           await finalizeSnapshotClosures(closeRes.rows || []);
         }
       }
+
+      // Emit SSE notification
+      emitNotification({
+        user_id: uid,
+        page: "/trades",
+        event: "broker_sync",
+        message: `Broker sync: ${matched} updated, ${synced} matched, ${closed_by_snapshot || 0} closed`,
+        type: "info",
+        notification: false,
+        console_log: false,
+        ticker: true,
+        need_refresh: false,
+        comp_refresh: matched > 0,
+        action: "trades",
+        sound: null,
+        position: "bottom-right",
+      });
 
       return {
         ok: true,
