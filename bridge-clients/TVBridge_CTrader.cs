@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.05 21:40 - 9ff44ac";
+        private string BuildVersion = "v2026.05.06 04:47 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
