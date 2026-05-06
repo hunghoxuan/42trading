@@ -3322,15 +3322,13 @@ let _claudeFilesCache = { data: [], expiresAt: 0 };
 function bustClaudeFilesCache() { _claudeFilesCache = { data: [], expiresAt: 0 }; }
 async function anthropicListFiles(apiKey) {
   if (!apiKey) return [];
-  if (Date.now() < _claudeFilesCache.expiresAt) return _claudeFilesCache.data;
   try {
     const res = await anthropicFilesRequest({ apiKey, pathName: "/v1/files" });
     const list = Array.isArray(res.data) ? res.data : [];
-    _claudeFilesCache = { data: list, expiresAt: Date.now() + 60000 };
     return list;
   } catch (e) {
     console.error("[anthropic] Failed to list files:", e.message);
-    return _claudeFilesCache.data || [];
+    return [];
   }
 }
 
@@ -16552,7 +16550,6 @@ const appHandler = async (req, res) => {
         if (fileId) fileIds.push(fileId);
       } else {
         const body = await readJson(req);
-        console.log("[claude-delete] body:", JSON.stringify(body).slice(0, 200));
         fileIds = Array.isArray(body?.file_ids)
           ? body.file_ids.map((x) => String(x || "").trim()).filter(Boolean)
           : [];
@@ -16569,7 +16566,6 @@ const appHandler = async (req, res) => {
         }
       }
       fileIds = [...new Set(fileIds)];
-      console.log(`[claude-delete] deleting ${fileIds.length} files:`, fileIds.slice(0, 5));
       if (!fileIds.length)
         return json(res, 400, {
           ok: false,
