@@ -770,6 +770,19 @@
   - Commit pushed: `1e6169b`
   - Note: `scripts/test/test_remote_api_default.sh` and `scripts/test/test_remote_ui.sh` currently fail locally because they expect missing path `scripts/webhook/.env`; direct live curls were used instead.
 
+# Session Log: 2026-05-06 09:40
+- **Starting Task**:
+  - Fix AI page chart still falling through to TwelveData 400s even when warmed bars cache exists.
+- **Work Accomplished**:
+  - Updated `ChartSnapshotsPage.jsx` to pass a merged snapshot object into `TradeSignalChart`, combining cached bars from `currentBarsSnapshot` with parsed AI analysis payload.
+  - This keeps the AI response chart on cached bars first and avoids the repeated TwelveData fallback path when bars are already available locally.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Pending deploy.
+
 # Session Log: 2026-05-05 23:31
 - **Starting Task**:
   - Enforce mandatory snapshots for AI analyze in both context and fallback modes.

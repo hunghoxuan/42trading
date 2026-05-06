@@ -1826,6 +1826,32 @@ export default function ChartSnapshotsPage() {
     return current;
   }, [analysisParsed, analysisJson, analysisRaw, currentBarsSnapshot]);
 
+  const effectiveChartSnapshot = useMemo(() => {
+    const barsSnapshot =
+      currentBarsSnapshot && typeof currentBarsSnapshot === "object"
+        ? currentBarsSnapshot
+        : null;
+    const parsed =
+      effectiveParsed && typeof effectiveParsed === "object"
+        ? effectiveParsed
+        : null;
+    if (!barsSnapshot && !parsed) return null;
+    const mergedSummary = {
+      ...(barsSnapshot?.summary && typeof barsSnapshot.summary === "object"
+        ? barsSnapshot.summary
+        : {}),
+      ...(parsed?.summary && typeof parsed.summary === "object"
+        ? parsed.summary
+        : {}),
+    };
+    return {
+      ...(barsSnapshot || {}),
+      ...(parsed || {}),
+      bars: Array.isArray(barsSnapshot?.bars) ? barsSnapshot.bars : [],
+      summary: mergedSummary,
+    };
+  }, [currentBarsSnapshot, effectiveParsed]);
+
   const hasResponse = useMemo(
     () =>
       Boolean(
@@ -4571,7 +4597,7 @@ export default function ChartSnapshotsPage() {
                   <TradeSignalChart
                     symbol={cfg.symbol}
                     interval={timeframe}
-                    analysisSnapshot={effectiveParsed}
+                    analysisSnapshot={effectiveChartSnapshot}
                     entryPrice={position.entry}
                     slPrice={position.sl}
                     tpPrice={position.tp}
