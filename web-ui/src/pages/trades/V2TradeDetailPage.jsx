@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
-import { SignalDetailCard } from "../../components/SignalDetailCard";
+
+const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import { 
   asNum, 
@@ -263,66 +264,68 @@ export default function TradeDetailPage() {
     <section className="stack-layout" style={{ gap: 14 }}>
       <p style={{ marginBottom: 0 }}><Link to="/trades" className="minor-text">← BACK TO TRADES</Link></p>
       <div className="panel">
-        <SignalDetailCard
-          mode="trade"
-          header={header}
-          response={trade}
-          tradePlan={{
-            enabled: true,
-            hideEditor: false,
-            mode: "trade",
-            tradeId: trade.sid || trade.id,
-            value: detailPlan,
-            onChange: (k, v) => applyPlanChange(k, v),
-            onSave: onUpdateTradePlan,
-            onAddTrade: onReEntryTrade,
-            showAddSignalButton: false,
-            showSaveButton: !isClosed,
-            viewOnly: isClosed,
-            error: planError,
-            status: statusUi(trade.execution_status),
-            volume: `${trade.volume ?? "-"} lots`,
-            pnl: <PnlDisplay value={trade.pnl_realized} />,
-          }}
-          chart={{
-            enabled: true,
-            detailTfTab,
-            onDetailTfTabChange: setDetailTfTab,
-            iframeTitle: `trade-detail-tv-${detailTfTab}`,
-            symbol: trade.symbol,
-            interval: trade.signal_tf || trade.chart_tf || "1h",
-            live: true,
-            entryPrice: asNum(detailPlan.entry) ?? asNum(trade.entry),
-            slPrice: asNum(detailPlan.sl) ?? asNum(trade.sl),
-            tpPrice: asNum(detailPlan.tp) ?? asNum(trade.tp),
-            onPlanLevelChange: (levelKey, levelValue) => applyPlanChange(levelKey, formatNum3(levelValue)),
-            createdAt: trade.created_at,
-            openedAt: trade.opened_at,
-            closedAt: trade.closed_at,
-            analysisSnapshot: trade?.metadata?.analysis_snapshot || trade?.raw_json?.analysis_snapshot || null,
-          }}
-          metaItems={[
-            { label: "Trade SID", value: trade.sid || "-" },
-            { label: "Signal SID", value: trade.signal_sid || "-" },
-            { label: "Strategy", value: trade.strategy || trade.metadata?.strategy || trade.raw_json?.strategy || "-" },
-            { label: "Entry Model", value: trade.entry_model || trade.metadata?.entry_model || trade.raw_json?.entry_model || "-" },
-            { label: "Broker Ticket", value: brokerTicketOf(trade) },
-            { label: "Account", value: trade.account_id || "-" },
-            { label: "Source", value: trade.source_id || "-" },
-            { label: "Status", value: statusUi(trade.execution_status).label },
-            { label: "Signal TF", value: formatTimeframe(trade.signal_tf || "-") },
-            { label: "Chart TF", value: formatTimeframe(trade.chart_tf || "-") },
-            { label: "Volume", value: `${trade.volume ?? "-"} lots` },
-            { label: "Created", value: fDateTime(trade.created_at) },
-            { label: "Note", value: trade.note || "-", fullWidth: true },
-            { label: "Raw JSON", value: JSON.stringify(trade.raw_json || {}, null, 2), fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-          ]}
-          history={{
-            enabled: true,
-            items: [...events].sort((a, b) => new Date(b.event_time || b.created_at || 0).getTime() - new Date(a.event_time || a.created_at || 0).getTime()),
-            renderItem: (ev, idx) => renderHistoryItem(ev, idx, { formatDateTime: fDateTime, includeTicket: true }),
-          }}
-        />
+        <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+          <SignalDetailCard
+            mode="trade"
+            header={header}
+            response={trade}
+            tradePlan={{
+              enabled: true,
+              hideEditor: false,
+              mode: "trade",
+              tradeId: trade.sid || trade.id,
+              value: detailPlan,
+              onChange: (k, v) => applyPlanChange(k, v),
+              onSave: onUpdateTradePlan,
+              onAddTrade: onReEntryTrade,
+              showAddSignalButton: false,
+              showSaveButton: !isClosed,
+              viewOnly: isClosed,
+              error: planError,
+              status: statusUi(trade.execution_status),
+              volume: `${trade.volume ?? "-"} lots`,
+              pnl: <PnlDisplay value={trade.pnl_realized} />,
+            }}
+            chart={{
+              enabled: true,
+              detailTfTab,
+              onDetailTfTabChange: setDetailTfTab,
+              iframeTitle: `trade-detail-tv-${detailTfTab}`,
+              symbol: trade.symbol,
+              interval: trade.signal_tf || trade.chart_tf || "1h",
+              live: true,
+              entryPrice: asNum(detailPlan.entry) ?? asNum(trade.entry),
+              slPrice: asNum(detailPlan.sl) ?? asNum(trade.sl),
+              tpPrice: asNum(detailPlan.tp) ?? asNum(trade.tp),
+              onPlanLevelChange: (levelKey, levelValue) => applyPlanChange(levelKey, formatNum3(levelValue)),
+              createdAt: trade.created_at,
+              openedAt: trade.opened_at,
+              closedAt: trade.closed_at,
+              analysisSnapshot: trade?.metadata?.analysis_snapshot || trade?.raw_json?.analysis_snapshot || null,
+            }}
+            metaItems={[
+              { label: "Trade SID", value: trade.sid || "-" },
+              { label: "Signal SID", value: trade.signal_sid || "-" },
+              { label: "Strategy", value: trade.strategy || trade.metadata?.strategy || trade.raw_json?.strategy || "-" },
+              { label: "Entry Model", value: trade.entry_model || trade.metadata?.entry_model || trade.raw_json?.entry_model || "-" },
+              { label: "Broker Ticket", value: brokerTicketOf(trade) },
+              { label: "Account", value: trade.account_id || "-" },
+              { label: "Source", value: trade.source_id || "-" },
+              { label: "Status", value: statusUi(trade.execution_status).label },
+              { label: "Signal TF", value: formatTimeframe(trade.signal_tf || "-") },
+              { label: "Chart TF", value: formatTimeframe(trade.chart_tf || "-") },
+              { label: "Volume", value: `${trade.volume ?? "-"} lots` },
+              { label: "Created", value: fDateTime(trade.created_at) },
+              { label: "Note", value: trade.note || "-", fullWidth: true },
+              { label: "Raw JSON", value: JSON.stringify(trade.raw_json || {}, null, 2), fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
+            ]}
+            history={{
+              enabled: true,
+              items: [...events].sort((a, b) => new Date(b.event_time || b.created_at || 0).getTime() - new Date(a.event_time || a.created_at || 0).getTime()),
+              renderItem: (ev, idx) => renderHistoryItem(ev, idx, { formatDateTime: fDateTime, includeTicket: true }),
+            }}
+          />
+        </Suspense>
       </div>
     </section>
   );

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
-import { SignalDetailCard } from "../../components/SignalDetailCard";
+
+const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import { AuditCell, StatusPnlCell, StrategyTfCell, SymbolEntryCell } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import { asNum, buildHeaderMeta, renderHistoryItem } from "../../utils/signalDetailUtils";
@@ -814,7 +815,8 @@ export default function SignalsPage() {
           ) : !selectedSignal ? (
             <div className="empty-state minor-text">SELECT A SIGNAL TO INSPECT HISTORY</div>
           ) : (
-            <SignalDetailCard
+            <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+              <SignalDetailCard
               key={signalRefOf(selectedSignal)}
               mode="signal"
               header={(() => {
@@ -935,7 +937,8 @@ export default function SignalsPage() {
                 metadata: selectedSignal?.metadata,
               }}
             />
-          )}
+          </Suspense>
+        )}
         </div>
       </div>
     </section>

@@ -7,7 +7,7 @@ import {
   renderHistoryItem,
   shouldShowPnl,
 } from "../utils/signalDetailUtils";
-import { SymbolChart } from "./charts/ChartTile";
+import SymbolChart from "./charts/SymbolChart";
 import { SmartContent } from "./SmartContent";
 import { sortTimeframes } from "../utils/format";
 
@@ -279,7 +279,7 @@ function ExtraPlanBlock({
   );
 }
 
-export function SignalDetailCard({
+export default function SignalDetailCard({
   mode = "generic",
   emptyText = "Select an item to inspect details.",
   showWhenEmpty = false,

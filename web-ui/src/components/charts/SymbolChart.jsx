@@ -20,153 +20,75 @@ const STATUS_COLORS = {
   ERROR: "#ef4444",
 };
 
+function normSym(s) {
+  return String(s || "").toUpperCase().replace("/", "").replace(".", "");
+}
+
 function liveTfToTvInterval(tf) {
   const t = String(tf || "").toUpperCase();
-  if (t === "W" || t === "1W") return "W";
-  if (t === "D" || t === "1D") return "D";
-  if (t === "4H") return "240";
-  if (t === "1H") return "60";
-  if (t === "30M") return "30";
-  if (t === "15M") return "15";
-  if (t === "5M") return "5";
   if (t === "1M") return "1";
-  return t; // fallback to original (D, W, etc)
-}
-function normSym(s) {
-  const raw = String(s || "")
-    .trim()
-    .toUpperCase();
-  if (raw.includes(":")) return raw.split(":").pop().trim().toUpperCase();
-  return raw;
-}
-function timeAgo(ms) {
-  if (!ms) return null;
-  const diff = Date.now() - ms;
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
-  if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
-  return Math.floor(diff / 86400000) + "d ago";
+  if (t === "5M") return "5";
+  if (t === "15M") return "15";
+  if (t === "1H") return "60";
+  if (t === "4H") return "240";
+  if (t === "D") return "D";
+  if (t === "W") return "W";
+  return "15";
 }
 
 function toTradingViewTimezone() {
-  const effective = getEffectiveDisplayTimezone();
-  if (effective === "Local") {
-    try {
-      return Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
-    } catch {
-      return "Etc/UTC";
-    }
-  }
-  return effective;
+  const mode = localStorage.getItem("ui_display_timezone") || "UTC";
+  if (mode === "UTC") return "Etc/UTC";
+  if (mode === "Local") return Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
+  return mode;
+}
+
+function timeAgo(ts) {
+  if (!ts) return "";
+  const sec = Math.floor((Date.now() - Number(ts)) / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + "m ago";
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return hrs + "h ago";
+  return Math.floor(hrs / 24) + "d ago";
 }
 
 function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
-  // Get per-TF data from analysis snapshot when context is missing (skipFetch mode)
-  const tfData =
-    context ||
-    (analysisSnapshot?.timeframes || []).find(
-      (x) => String(x?.tf || "").toLowerCase() === String(tf).toLowerCase(),
-    ) ||
-    {};
-  const price = Number(tfData?.last_price);
-  const change = Number(tfData?.summary?.close_change_20);
-  const previousClose =
-    Number.isFinite(price) && Number.isFinite(change) ? price - change : null;
-  const pct =
-    Number.isFinite(previousClose) && Math.abs(previousClose) > 0
-      ? change / previousClose
-      : null;
+  const showSnapshotBadge = useMemo(() => {
+    if (mode !== "snapshots") return false;
+    const snap = master?.snapshots?.[tf.toLowerCase()];
+    return !!snap?.file_name;
+  }, [master, tf, mode]);
 
-  const pctLabel =
-    Number.isFinite(pct) && Math.abs(pct) < 1
-      ? `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(2)}%`
-      : "";
-  const pctColor = Number.isFinite(pct)
-    ? pct > 0
-      ? "#26a69a"
-      : pct < 0
-        ? "#ef5350"
-        : "var(--muted)"
-    : "inherit";
-
-  const cachedAt =
-    tfData?.freshness?.updated_time || tfData?.fetched_at || null;
-
-  const trend = tfData?.summary?.trend || "";
-  const bias = tfData?.summary?.bias || "";
-  const isBullishTrend = String(trend).toLowerCase().includes("bull");
-  const isBearishTrend = String(trend).toLowerCase().includes("bear");
-  const isLongBias =
-    String(bias).toLowerCase().includes("long") ||
-    String(bias).toLowerCase().includes("buy");
-  const isShortBias =
-    String(bias).toLowerCase().includes("short") ||
-    String(bias).toLowerCase().includes("sell");
+  const htfBias = useMemo(() => {
+    const rawBias = context?.bias || analysisSnapshot?.htf_context?.bias;
+    if (!rawBias) return null;
+    const b = String(rawBias).toUpperCase();
+    if (b === "LONG" || b === "BULLISH") return { label: "BULL", color: "#10b981" };
+    if (b === "SHORT" || b === "BEARISH") return { label: "BEAR", color: "#ef4444" };
+    return { label: "NEUT", color: "var(--muted)" };
+  }, [context, analysisSnapshot]);
 
   return (
-    <div
-      style={{
-        fontSize: 10,
-        color: "var(--muted)",
-        marginBottom: 4,
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      <span style={{ fontWeight: 800, color: "var(--foreground)" }}>
-        {tf.toUpperCase()}
-      </span>
-      {trend && (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+      <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
+      {htfBias && (
         <span
           style={{
-            fontWeight: 600,
             fontSize: 9,
-            color: isBullishTrend
-              ? "#26a69a"
-              : isBearishTrend
-                ? "#ef5350"
-                : "inherit",
-          }}
-        >
-          {trend}
-        </span>
-      )}
-      {bias && (
-        <span
-          style={{
             fontWeight: 800,
-            fontSize: 11,
-            color: isLongBias ? "#26a69a" : isShortBias ? "#ef5350" : "inherit",
+            color: htfBias.color,
+            background: htfBias.color + "15",
+            padding: "0 4px",
+            borderRadius: 3,
+            border: `1px solid ${htfBias.color}30`,
           }}
         >
-          {isLongBias ? "↑" : isShortBias ? "↓" : ""}
+          {htfBias.label}
         </span>
       )}
-      {cachedAt && (
-        <>
-          <span style={{ opacity: 0.3 }}>|</span>
-          <span>{`cached ${showDateTime(cachedAt)}`}</span>
-        </>
-      )}
-      {Number.isFinite(price) && (
-        <>
-          <span style={{ opacity: 0.3 }}>|</span>
-          <span style={{ fontWeight: 600, color: "var(--foreground)" }}>
-            {price.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </span>
-        </>
-      )}
-      {pctLabel && (
-        <>
-          <span style={{ opacity: 0.3 }}>|</span>
-          <span style={{ color: pctColor, fontWeight: 700 }}>{pctLabel}</span>
-        </>
-      )}
-      {mode === "snapshots" && master?.snapshots?.[tf.toLowerCase()] && (
+      {showSnapshotBadge && (
         <span style={{ marginLeft: "auto", color: "#10b981", fontSize: 9 }}>
           📷 {master.snapshots[tf.toLowerCase()].file_name || "snap"}
         </span>
@@ -175,7 +97,7 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
   );
 }
 
-export function SymbolChart({
+export default function SymbolChart({
   symbol,
   timeframes = ["D", "4h", "15m", "5m"],
   defaultMode = "live",
@@ -218,32 +140,26 @@ export function SymbolChart({
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
-
   useEffect(() => {
     if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
       setGridCols(Number(initialGridCols));
     } else {
-      // Default to timeframe count if no master override
       setGridCols(Math.max(1, timeframes?.length || 1));
     }
   }, [initialGridCols, timeframes?.length]);
 
   useEffect(() => {
     if (!rootRef.current) return;
-
     const updateWidth = () => {
       if (!rootRef.current) return;
       setContainerWidth(rootRef.current.clientWidth || 0);
     };
-
     updateWidth();
-
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => updateWidth());
       observer.observe(rootRef.current);
       return () => observer.disconnect();
     }
-
     window.addEventListener("resize", updateWidth);
     return () => window.removeEventListener("resize", updateWidth);
   }, []);
@@ -261,7 +177,6 @@ export function SymbolChart({
     [timeframes],
   );
 
-  // Track per-mode cached time (bars vs snapshots)
   const barsCachedAt = useMemo(() => {
     const hasBars = Object.values(master?.bars || {}).some(
       (b) => Array.isArray(b) && b.length > 0,
@@ -274,7 +189,6 @@ export function SymbolChart({
       (s) => s?.uploaded_at,
     );
     if (!hasSnaps) return null;
-    // Find latest uploaded_at among all snapshots
     let latest = 0;
     for (const s of Object.values(master?.snapshots || {})) {
       if (s?.uploaded_at && s.uploaded_at > latest) latest = s.uploaded_at;
@@ -282,12 +196,10 @@ export function SymbolChart({
     return latest || null;
   }, [master]);
 
-  // When loading finishes, either switch to pending mode or record error
   const prevStatus = useRef(status);
   useEffect(() => {
     if (prevStatus.current === "LOADING" && status !== "LOADING") {
       if (status === "READY" || status === "STALE") {
-        // Data loaded — switch to pending mode
         if (pendingMode) {
           setMode(pendingMode);
           setPendingMode(null);
@@ -312,8 +224,6 @@ export function SymbolChart({
   const needsFallback =
     mode !== "live" && !skipFetch && !hasAnyBars && status !== "LOADING";
 
-  // Auto-switch to TradePlan mode when hasTradePlan and bars are ready,
-  // BUT fall back to live if trade plan has no data.
   useEffect(() => {
     if (hasTradePlan && hasAnyBars) {
       if (hasTradePlan && !entryPrice && !tpPrice && !slPrice) {
@@ -331,7 +241,6 @@ export function SymbolChart({
       setLastError(null);
       return;
     }
-    // Just set pending — hook detects mode change, checks cache, fetches if needed
     setPendingMode(newMode);
     setLastError(null);
   }, []);
@@ -388,7 +297,6 @@ export function SymbolChart({
       className="browser-card-v1"
       style={{ position: "relative", width: "100%" }}
     >
-      {/* ── Header ── */}
       <div
         style={{
           display: "flex",
@@ -424,7 +332,6 @@ export function SymbolChart({
               -
             </button>
           )}
-          {/* Status inline */}
           {(pendingMode || mode) === "snapshots" &&
             snapshotState?.message &&
             snapshotState.stage !== "idle" && (
@@ -469,7 +376,6 @@ export function SymbolChart({
               >
                 TradePlan
               </button>
-              {/* Overlay toggles for TradePlan chart */}
               <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
                 |
               </span>
@@ -593,7 +499,6 @@ export function SymbolChart({
         </div>
       </div>
 
-      {/* ── Charts row ── */}
       <div
         style={{
           display: "grid",
@@ -651,7 +556,6 @@ export function SymbolChart({
         })}
       </div>
 
-      {/* Error display */}
       {(lastError || error) && (
         <div style={{ marginTop: 4, fontSize: 9, color: "#ef4444" }}>
           {lastError || error}

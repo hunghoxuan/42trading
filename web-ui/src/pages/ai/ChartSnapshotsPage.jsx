@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { createChart } from "lightweight-charts";
 import {
@@ -9,10 +9,11 @@ import {
 } from "../../utils/format";
 
 import { api } from "../../api";
-import { SignalDetailCard } from "../../components/SignalDetailCard";
 import TradeSignalChart from "../../components/TradeSignalChart";
-import { SymbolChart } from "../../components/charts/ChartTile";
 import { chartFetchManager } from "../../services/chartFetchManager";
+
+const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
+const SymbolChart = lazy(() => import("../../components/charts/SymbolChart"));
 import {
   STRATEGY_OPTIONS,
   STRATEGY_ENTRY_MODELS,
@@ -4688,15 +4689,16 @@ export default function ChartSnapshotsPage() {
                         }}
                       >
                         {group.symbols.map((sym) => (
-                          <SymbolChart
-                            key={sym}
-                            symbol={sym}
-                            timeframes={browserTfs}
-                            defaultMode="live"
-                            initialGridCols={masterGridCols}
-                            onAnalyze={(s) => setCfgField("symbol", s)}
-                            onRemove={null}
-                          />
+                          <Suspense key={sym} fallback={<div className="loading-card">Loading Chart...</div>}>
+                            <SymbolChart
+                              symbol={sym}
+                              timeframes={browserTfs}
+                              defaultMode="live"
+                              initialGridCols={masterGridCols}
+                              onAnalyze={(s) => setCfgField("symbol", s)}
+                              onRemove={null}
+                            />
+                          </Suspense>
                         ))}
                       </div>
                     </div>
@@ -4704,15 +4706,16 @@ export default function ChartSnapshotsPage() {
                 : symbolsByTab
                     .slice(0, visibleCount)
                     .map((sym) => (
-                      <SymbolChart
-                        key={sym}
-                        symbol={sym}
-                        timeframes={browserTfs}
-                        defaultMode="live"
-                        initialGridCols={masterGridCols}
-                        onAnalyze={(s) => setCfgField("symbol", s)}
-                        onRemove={(s) => removeFromWatchlist(s)}
-                      />
+                      <Suspense key={sym} fallback={<div className="loading-card">Loading Chart...</div>}>
+                        <SymbolChart
+                          symbol={sym}
+                          timeframes={browserTfs}
+                          defaultMode="live"
+                          initialGridCols={masterGridCols}
+                          onAnalyze={(s) => setCfgField("symbol", s)}
+                          onRemove={(s) => removeFromWatchlist(s)}
+                        />
+                      </Suspense>
                     ))}
             </div>{" "}
           </div>
@@ -4720,104 +4723,108 @@ export default function ChartSnapshotsPage() {
 
         {!hasResponse && cfg.symbol && (
           <div style={{ marginBottom: 20 }}>
-            <SymbolChart
-              symbol={cfg.symbol}
-              timeframes={widgetTfs}
-              defaultMode="live"
-              onAnalyze={() => handleAnalyze()}
-              onRemove={null}
-            />
+            <Suspense fallback={<div className="loading-card">Loading Chart...</div>}>
+              <SymbolChart
+                symbol={cfg.symbol}
+                timeframes={widgetTfs}
+                defaultMode="live"
+                onAnalyze={() => handleAnalyze()}
+                onRemove={null}
+              />
+            </Suspense>
           </div>
         )}
 
         {cfg.symbol && (
-          <SignalDetailCard
-            mode="ai"
-            hideTabsBeforeResponse={true}
-            chart={{
-              enabled: true,
-              symbol: cfg.symbol,
-              interval: timeframe,
-              entryPrice: position.entry,
-              slPrice: position.sl,
-              tpPrice: position.tp,
-              detailTfTab: timeframe,
-              profileTfs: [
-                ...(PROFILE_PRESETS[cfg.profile]?.htf_tfs || []),
-                ...(PROFILE_PRESETS[cfg.profile]?.exec_tfs || []),
-                ...(PROFILE_PRESETS[cfg.profile]?.conf_tfs || []),
-              ],
-              onDetailTfTabChange: setSelectedEntryTf,
-              entryNode: (
-                <div className="snapshot-live-card-v3">
-                  <div className="minor-text" style={{ marginBottom: 12 }}>
-                    Chart ({timeframe}): Twelve + PD Arrays
+          <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+            <SignalDetailCard
+              mode="ai"
+              hideTabsBeforeResponse={true}
+              chart={{
+                enabled: true,
+                symbol: cfg.symbol,
+                interval: timeframe,
+                entryPrice: position.entry,
+                slPrice: position.sl,
+                tpPrice: position.tp,
+                detailTfTab: timeframe,
+                profileTfs: [
+                  ...(PROFILE_PRESETS[cfg.profile]?.htf_tfs || []),
+                  ...(PROFILE_PRESETS[cfg.profile]?.exec_tfs || []),
+                  ...(PROFILE_PRESETS[cfg.profile]?.conf_tfs || []),
+                ],
+                onDetailTfTabChange: setSelectedEntryTf,
+                entryNode: (
+                  <div className="snapshot-live-card-v3">
+                    <div className="minor-text" style={{ marginBottom: 12 }}>
+                      Chart ({timeframe}): Twelve + PD Arrays
+                    </div>
+                    <TradeSignalChart
+                      symbol={cfg.symbol}
+                      interval={timeframe}
+                      analysisSnapshot={effectiveChartSnapshot}
+                      entryPrice={position.entry}
+                      slPrice={position.sl}
+                      tpPrice={position.tp}
+                    />
+                    <div className="minor-text" style={{ marginTop: 8 }}>
+                      {barsLoading
+                        ? "Loading bars..."
+                        : currentBarsSnapshot?.normalized_symbol ||
+                          currentBarsSnapshot?.symbol ||
+                          "No bars cache yet"}
+                    </div>
                   </div>
-                  <TradeSignalChart
-                    symbol={cfg.symbol}
-                    interval={timeframe}
-                    analysisSnapshot={effectiveChartSnapshot}
-                    entryPrice={position.entry}
-                    slPrice={position.sl}
-                    tpPrice={position.tp}
-                  />
-                  <div className="minor-text" style={{ marginTop: 8 }}>
-                    {barsLoading
-                      ? "Loading bars..."
-                      : currentBarsSnapshot?.normalized_symbol ||
-                        currentBarsSnapshot?.symbol ||
-                        "No bars cache yet"}
-                  </div>
-                </div>
-              ),
-            }}
-            response={{
-              enabled: true,
-              hasData: hasResponse,
-              label: "Response",
-              tab: responseTab,
-              onTabChange: setResponseTab,
-              text: responseText,
-              raw: effectiveParsed || analysisRaw || analysisJson,
-              bars: JSON.stringify(
-                currentBarsSnapshot || { status: "no_cached_bars" },
-                null,
-                2,
-              ),
-              tradePlans: analysisTradePlans,
-              snapshotFiles: chartFiles,
-            }}
-            tradePlan={{
-              enabled: true,
-              signalId: null,
-              tradeId: null,
-              value: position,
-              onChange: updatePositionField,
-              onAddSignal: (pos, planId = "main") =>
-                addBySelection("signal", pos, planId),
-              onAddTrade: (pos, planId = "main") =>
-                addBySelection("trade", pos, planId),
-              showSaveButton: false,
-              showAddSignalButton: true,
-              showAddTradeButton: true,
-              showResetButton: true,
-              onReset: resetPositionLocal,
-              busy: {
-                signal: addingSignal && submittingPlanId === "main",
-                trade: addingSignal && submittingPlanId === "main",
-              },
-              submittingPlanId: submittingPlanId,
-              disabled: false,
-              error: !canAddSignal ? validatePosition(position) : "",
-              successMessage:
-                actionStatus.action === "add" &&
-                actionStatus.text &&
-                actionStatus.type !== "error" &&
-                actionStatus.type !== "warning"
-                  ? actionStatus.text
-                  : "",
-            }}
-          />
+                ),
+              }}
+              response={{
+                enabled: true,
+                hasData: hasResponse,
+                label: "Response",
+                tab: responseTab,
+                onTabChange: setResponseTab,
+                text: responseText,
+                raw: effectiveParsed || analysisRaw || analysisJson,
+                bars: JSON.stringify(
+                  currentBarsSnapshot || { status: "no_cached_bars" },
+                  null,
+                  2,
+                ),
+                tradePlans: analysisTradePlans,
+                snapshotFiles: chartFiles,
+              }}
+              tradePlan={{
+                enabled: true,
+                signalId: null,
+                tradeId: null,
+                value: position,
+                onChange: updatePositionField,
+                onAddSignal: (pos, planId = "main") =>
+                  addBySelection("signal", pos, planId),
+                onAddTrade: (pos, planId = "main") =>
+                  addBySelection("trade", pos, planId),
+                showSaveButton: false,
+                showAddSignalButton: true,
+                showAddTradeButton: true,
+                showResetButton: true,
+                onReset: resetPositionLocal,
+                busy: {
+                  signal: addingSignal && submittingPlanId === "main",
+                  trade: addingSignal && submittingPlanId === "main",
+                },
+                submittingPlanId: submittingPlanId,
+                disabled: false,
+                error: !canAddSignal ? validatePosition(position) : "",
+                successMessage:
+                  actionStatus.action === "add" &&
+                  actionStatus.text &&
+                  actionStatus.type !== "error" &&
+                  actionStatus.type !== "warning"
+                    ? actionStatus.text
+                    : "",
+              }}
+            />
+          </Suspense>
         )}
         {actionStatus.action === "add" &&
         actionStatus.text &&

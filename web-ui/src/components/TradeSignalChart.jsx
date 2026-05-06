@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 import { asNumValue, showDateTime } from "../utils/format";
 
-const asNum = (v) => {
+const parsePosNum = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
 };
@@ -31,14 +31,14 @@ function parseSnapshotBars(snapshot) {
 }
 
 function parsePdZoneBounds(item) {
-  const asNum = (v) => {
+  const localAsNum = (v) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   };
-  const lowRaw = asNum(
+  const lowRaw = localAsNum(
     item?.low ?? item?.bottom ?? item?.price_bottom ?? item?.bot,
   );
-  const highRaw = asNum(item?.high ?? item?.top ?? item?.price_top);
+  const highRaw = localAsNum(item?.high ?? item?.top ?? item?.price_top);
   if (lowRaw != null && highRaw != null) {
     return { low: Math.min(lowRaw, highRaw), high: Math.max(lowRaw, highRaw) };
   }
@@ -486,9 +486,9 @@ export default function TradeSignalChart({
           const levelPriceMap = { entry: null, tp: null, sl: null };
 
           const drawPlan = (p, index = 0) => {
-            const ep = asNum(p.entry);
-            const sp = asNum(p.sl);
-            const tp = asNum(p.tp);
+            const ep = parsePosNum(p.entry);
+            const sp = parsePosNum(p.sl);
+            const tp = parsePosNum(p.tp);
             if (!ep) return;
 
             const isPrimary = index === 0;

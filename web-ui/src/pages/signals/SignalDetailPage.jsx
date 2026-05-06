@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
-import { SignalDetailCard } from "../../components/SignalDetailCard";
+
+const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import { 
   asNum, 
@@ -133,53 +134,55 @@ export default function SignalDetailPage() {
     <section className="stack-layout" style={{ gap: 14 }}>
       <p style={{ marginBottom: 0 }}><Link to="/signals" className="minor-text">← BACK TO SIGNALS</Link></p>
       <div className="panel">
-        <SignalDetailCard
-          mode="signal"
-          header={header}
-          response={t}
-          tradePlan={{
-            enabled: true,
-            hideEditor: false,
-            value: detailPlan,
-            onChange: (k, v) => setDetailPlan(p => ({ ...p, [k]: v })),
-            onSave: onSaveSignalPlan,
-            showSaveButton: !isClosed,
-            viewOnly: isClosed,
-            status: statusUi(t.status),
-            volume: `${t.volume ?? "-"} lots`,
-            pnl: <PnlDisplay value={t.pnl_money_realized} />,
-          }}
-          chart={{
-            enabled: true,
-            detailTfTab,
-            onDetailTfTabChange: setDetailTfTab,
-            iframeTitle: `signal-detail-tv-${detailTfTab}`,
-            symbol: t.symbol,
-            interval: t.signal_tf || t.chart_tf || "1h",
-            live: true,
-            entryPrice: asNum(t.entry_price || t.raw_json?.entry || t.entry),
-            slPrice: asNum(t.sl_price || t.raw_json?.sl || t.sl),
-            tpPrice: asNum(t.tp_price || t.raw_json?.tp || t.tp),
-            analysisSnapshot: t?.raw_json?.analysis_snapshot || null,
-          }}
-          metaItems={[
-            { label: "Signal SID", value: t.sid || "-" },
-            { label: "Strategy", value: t.strategy || t.raw_json?.strategy || "-" },
-            { label: "Entry Model", value: t.entry_model || t.raw_json?.entry_model || "-" },
-            { label: "Status", value: statusUi(t.status).label },
-            { label: "Order Type", value: String(t?.raw_json?.order_type || t?.raw_json?.orderType || "limit").toUpperCase() },
-            { label: "Signal TF", value: formatTimeframe(t.signal_tf || "-") },
-            { label: "Volume", value: `${t.volume ?? "-"} lots` },
-            { label: "Created", value: fDateTime(t.created_at) },
-            { label: "Note", value: t.note || "-", fullWidth: true },
-            { label: "Raw JSON", value: JSON.stringify(t.raw_json || {}, null, 2), fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-          ]}
-          history={{
-            enabled: true,
-            items: [...events].sort((a, b) => new Date(b.event_time || 0).getTime() - new Date(a.event_time || 0).getTime()),
-            renderItem: (ev, idx) => renderHistoryItem(ev, idx, { formatDateTime: fDateTime, includeTicket: true }),
-          }}
-        />
+        <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+          <SignalDetailCard
+            mode="signal"
+            header={header}
+            response={t}
+            tradePlan={{
+              enabled: true,
+              hideEditor: false,
+              value: detailPlan,
+              onChange: (k, v) => setDetailPlan(p => ({ ...p, [k]: v })),
+              onSave: onSaveSignalPlan,
+              showSaveButton: !isClosed,
+              viewOnly: isClosed,
+              status: statusUi(t.status),
+              volume: `${t.volume ?? "-"} lots`,
+              pnl: <PnlDisplay value={t.pnl_money_realized} />,
+            }}
+            chart={{
+              enabled: true,
+              detailTfTab,
+              onDetailTfTabChange: setDetailTfTab,
+              iframeTitle: `signal-detail-tv-${detailTfTab}`,
+              symbol: t.symbol,
+              interval: t.signal_tf || t.chart_tf || "1h",
+              live: true,
+              entryPrice: asNum(t.entry_price || t.raw_json?.entry || t.entry),
+              slPrice: asNum(t.sl_price || t.raw_json?.sl || t.sl),
+              tpPrice: asNum(t.tp_price || t.raw_json?.tp || t.tp),
+              analysisSnapshot: t?.raw_json?.analysis_snapshot || null,
+            }}
+            metaItems={[
+              { label: "Signal SID", value: t.sid || "-" },
+              { label: "Strategy", value: t.strategy || t.raw_json?.strategy || "-" },
+              { label: "Entry Model", value: t.entry_model || t.raw_json?.entry_model || "-" },
+              { label: "Status", value: statusUi(t.status).label },
+              { label: "Order Type", value: String(t?.raw_json?.order_type || t?.raw_json?.orderType || "limit").toUpperCase() },
+              { label: "Signal TF", value: formatTimeframe(t.signal_tf || "-") },
+              { label: "Volume", value: `${t.volume ?? "-"} lots` },
+              { label: "Created", value: fDateTime(t.created_at) },
+              { label: "Note", value: t.note || "-", fullWidth: true },
+              { label: "Raw JSON", value: JSON.stringify(t.raw_json || {}, null, 2), fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
+            ]}
+            history={{
+              enabled: true,
+              items: [...events].sort((a, b) => new Date(b.event_time || 0).getTime() - new Date(a.event_time || 0).getTime()),
+              renderItem: (ev, idx) => renderHistoryItem(ev, idx, { formatDateTime: fDateTime, includeTicket: true }),
+            }}
+          />
+        </Suspense>
       </div>
     </section>
   );

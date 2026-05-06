@@ -1,8 +1,9 @@
 import { api } from "../../api";
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useRealtimeData } from "../../hooks/useRealtimeData";
-import { SignalDetailCard } from "../../components/SignalDetailCard";
+
+const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import {
   AuditCell,
   StatusPnlCell,
@@ -1183,7 +1184,8 @@ export default function TradesPage() {
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
-              <SignalDetailCard
+              <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+                <SignalDetailCard
                 mode="trade"
                 tradePlan={{
                   enabled: true,
@@ -1478,7 +1480,8 @@ export default function TradesPage() {
                   metadata: selectedTrade?.metadata,
                 }}
               />
-              {createMode ? (
+            </Suspense>
+            {createMode ? (
                 <div className="panel" style={{ padding: 12 }}>
                   <div className="panel-label">CREATE TRADE</div>
                   <div
