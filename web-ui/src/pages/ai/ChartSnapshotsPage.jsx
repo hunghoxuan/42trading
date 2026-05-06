@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { createChart } from "lightweight-charts";
-import { showDateTime, isSameDay, asNum, formatNumber } from "../../utils/format";
+import {
+  showDateTime,
+  isSameDay,
+  asNum,
+  formatNumber,
+} from "../../utils/format";
 
 import { api } from "../../api";
 import { SignalDetailCard } from "../../components/SignalDetailCard";
@@ -23,49 +28,6 @@ import {
   SymbolEntryCell,
   StatusPnlCell,
 } from "../../components/TradeSignalListCells";
-
-const DEFAULT_AI_MODELS = {
-  providers: {
-    ai_claude: {
-      label: "Claude",
-      models: [
-        { value: "claude-sonnet-4-0", label: "Claude 3.5 Sonnet" },
-        { value: "claude-opus-4-0", label: "Claude Opus 4" },
-      ],
-    },
-    ai_gpt4o: {
-      label: "OpenAI",
-      models: [
-        { value: "gpt-4o", label: "GPT-4o" },
-        { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-      ],
-    },
-    ai_deepseek: {
-      label: "DeepSeek",
-      models: [
-        { value: "deepseek-chat", label: "DeepSeek V3" },
-        { value: "deepseek-reasoner", label: "DeepSeek R1" },
-      ],
-    },
-    ai_gemini: {
-      label: "Gemini",
-      models: [
-        { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-        { value: "gemini-2.0-pro", label: "Gemini 2.0 Pro" },
-      ],
-    },
-    ai_openrouter: {
-      label: "OpenRouter",
-      models: [
-        { value: "openai/gpt-4o", label: "GPT-4o" },
-        { value: "anthropic/claude-sonnet-4-0", label: "Claude Sonnet 4" },
-        { value: "google/gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-        { value: "deepseek/deepseek-chat", label: "DeepSeek V3" },
-      ],
-    },
-  },
-  default_provider: "ai_claude",
-};
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
@@ -1700,7 +1662,30 @@ export default function ChartSnapshotsPage() {
   const [selectedModel, setSelectedModel] = useState(
     () => localStorage.getItem("ai_model_name") || "claude-sonnet-4-0",
   );
-  const [aiModelConfig, setAiModelConfig] = useState(DEFAULT_AI_MODELS);
+  const [aiModelConfig, setAiModelConfig] = useState(() => ({
+    providers: {
+      ai_claude: {
+        label: "Claude",
+        models: [{ value: "claude-sonnet-4-0", label: "Claude 3.5 Sonnet" }],
+      },
+      ai_gpt4o: {
+        label: "OpenAI",
+        models: [{ value: "gpt-4o", label: "GPT-4o" }],
+      },
+      ai_deepseek: {
+        label: "DeepSeek",
+        models: [{ value: "deepseek-chat", label: "DeepSeek V3" }],
+      },
+      ai_gemini: {
+        label: "Gemini",
+        models: [{ value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" }],
+      },
+      ai_openrouter: {
+        label: "OpenRouter",
+        models: [{ value: "openai/gpt-4o", label: "GPT-4o" }],
+      },
+    },
+  }));
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
   const [visibleCount, setVisibleCount] = useState(8);
