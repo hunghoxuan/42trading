@@ -1870,6 +1870,7 @@ const ALLOWED_AI_API_KEY_NAMES = new Set([
   "DEEPSEEK_API_KEY",
   "CLAUDE_API_KEY",
   "TWELVE_DATA_API_KEY",
+  "OPENROUTER_API_KEY",
 ]);
 
 function normalizeAiApiKeyName(rawName) {
@@ -1880,6 +1881,7 @@ function normalizeAiApiKeyName(rawName) {
     return "GEMINI_API_KEY";
   if (name === "OPENAI" || name === "OPENAI_KEY") return "OPENAI_API_KEY";
   if (name === "DEEPSEEK" || name === "DEEPSEEK_KEY") return "DEEPSEEK_API_KEY";
+  if (name === "OPENROUTER" || name === "OPENROUTER_KEY") return "OPENROUTER_API_KEY";
   if (
     name === "CLAUDE" ||
     name === "ANTHROPIC" ||
@@ -4571,7 +4573,7 @@ async function callAiProvider({
   const provider =
     modelLower.includes("gpt") || modelLower.includes("openai")
       ? "openai"
-      : modelLower.includes("deepseek")
+      : modelLower.includes("openrouter") || modelLower.includes("deepseek")
         ? "deepseek"
         : "gemini";
 
@@ -4579,6 +4581,8 @@ async function callAiProvider({
   const apiKey =
     provider === "deepseek"
       ? cfg.DEEPSEEK_API_KEY
+      : provider === "openrouter"
+      ? (cfg.OPENROUTER_API_KEY || "")
       : provider === "openai"
         ? cfg.OPENAI_API_KEY
         : cfg.GEMINI_API_KEY;
@@ -4588,7 +4592,9 @@ async function callAiProvider({
     );
 
   const endpoint =
-    provider === "deepseek"
+    provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : provider === "deepseek"
       ? "https://api.deepseek.com/chat/completions"
       : provider === "openai"
         ? "https://api.openai.com/v1/chat/completions"
@@ -15195,7 +15201,7 @@ const appHandler = async (req, res) => {
           return json(res, 400, {
             ok: false,
             error:
-              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, TWELVE_DATA_API_KEY",
+              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY",
           });
         }
         const rawValue = String(payloadData.value || "").trim();
@@ -15358,10 +15364,13 @@ const appHandler = async (req, res) => {
         finalPrompt += `\n\nIMPORTANT: Keep enum values exactly as specified, but write narrative fields such as note, recent_move, narrative, condition, and reasons_to_skip.reason in ${userLang}.`;
       }
 
-      const provider = (bodyProvider || service || "gemini").toLowerCase();
+      let provider = (bodyProvider || service || "gemini").toLowerCase();
+      if (requestModel && (requestModel.includes("openrouter") || requestModel.includes("open-router"))) provider = "openrouter";
       const apiKey =
         provider === "deepseek"
           ? config.DEEPSEEK_API_KEY
+          : provider === "openrouter"
+          ? (config.OPENROUTER_API_KEY || "")
           : provider === "openai"
             ? config.OPENAI_API_KEY
             : provider === "claude"
@@ -15393,6 +15402,11 @@ const appHandler = async (req, res) => {
           messages: [{ role: "user", content: finalPrompt }],
           response_format: { type: "json_object" },
         };
+      } else if (provider === "openrouter") {
+        endpoint = "https://openrouter.ai/api/v1/chat/completions";
+        authHeader = `Bearer ${apiKey}`;
+        if (!requestModel) requestModel = "openai/gpt-4o";
+        bodyData = { model: requestModel, messages: [{ role: "user", content: finalPrompt }], response_format: { type: "json_object" } };
       } else if (provider === "openai") {
         endpoint = "https://api.openai.com/v1/chat/completions";
         authHeader = `Bearer ${apiKey}`;

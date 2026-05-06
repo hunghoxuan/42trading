@@ -9,10 +9,20 @@ import TradeSignalChart from "../../components/TradeSignalChart";
 import { SymbolChart } from "../../components/charts/ChartTile";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
-  STRATEGY_OPTIONS, STRATEGY_ENTRY_MODELS, PROFILE_PRESETS, DEFAULT_CONFIG,
-  AI_RESPONSE_SCHEMA, GUIDE_TEXT, getEffectiveTfConfig, buildPrompt, buildJsonConfig,
+  STRATEGY_OPTIONS,
+  STRATEGY_ENTRY_MODELS,
+  PROFILE_PRESETS,
+  DEFAULT_CONFIG,
+  AI_RESPONSE_SCHEMA,
+  GUIDE_TEXT,
+  getEffectiveTfConfig,
+  buildPrompt,
+  buildJsonConfig,
 } from "./AiPromptBuilder";
-import { SymbolEntryCell, StatusPnlCell } from "../../components/TradeSignalListCells";
+import {
+  SymbolEntryCell,
+  StatusPnlCell,
+} from "../../components/TradeSignalListCells";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
@@ -496,7 +506,11 @@ function getPlanPrimaryTp(plan = {}) {
   // Fallback: choose the last valid TP-like value from any available list.
   const all = getPlanTpCandidates(plan)
     .map((candidate) =>
-      parseNum(candidate && typeof candidate === "object" ? candidate.price : candidate),
+      parseNum(
+        candidate && typeof candidate === "object"
+          ? candidate.price
+          : candidate,
+      ),
     )
     .filter((n) => Number.isFinite(n));
   return all.length ? all[all.length - 1] : NaN;
@@ -506,7 +520,11 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
-  if (!out.ai_full_analysis && Array.isArray(out.trade_plan) && !out.market_analysis) {
+  if (
+    !out.ai_full_analysis &&
+    Array.isArray(out.trade_plan) &&
+    !out.market_analysis
+  ) {
     out.trade_plan = out.trade_plan.map((x) => ({
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
@@ -517,11 +535,13 @@ function normalizeAnalysisContract(parsed) {
       entry: x?.entry_price ?? x?.entry ?? null,
       sl: x?.stop_loss ?? x?.sl ?? null,
       be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-      tp: Array.isArray(x?.take_profits) && x.take_profits[2]
-        ? x.take_profits[2].price
-        : Array.isArray(x?.take_profits) && x.take_profits[x.take_profits.length - 1]
-          ? x.take_profits[x.take_profits.length - 1].price
-          : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+      tp:
+        Array.isArray(x?.take_profits) && x.take_profits[2]
+          ? x.take_profits[2].price
+          : Array.isArray(x?.take_profits) &&
+              x.take_profits[x.take_profits.length - 1]
+            ? x.take_profits[x.take_profits.length - 1].price
+            : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
       tp2: Array.isArray(x?.take_profits)
         ? (x.take_profits[1]?.price ?? null)
         : (x?.tp2 ?? null),
@@ -531,15 +551,20 @@ function normalizeAnalysisContract(parsed) {
       estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
       rr: x?.risk_reward ?? x?.rr ?? null,
       risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
-      partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map((t) => ({
-        price: t?.price ?? null,
-        size_pct: t?.close_position_pct ?? null,
-        rr: t?.reward_to_risk ?? null,
-      })),
+      partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
+        (t) => ({
+          price: t?.price ?? null,
+          size_pct: t?.close_position_pct ?? null,
+          rr: t?.reward_to_risk ?? null,
+        }),
+      ),
       confidence_pct: x?.confidence_pct ?? null,
       skip_recommendation:
-        x?.trade_decision === "Proceed" ? "" : (x?.trade_decision || ""),
-      reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map((r) => ({
+        x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
+      reasons_to_skip: (Array.isArray(x?.skip_reasons)
+        ? x.skip_reasons
+        : []
+      ).map((r) => ({
         reason: r?.reason || "",
         severity: r?.severity || "",
       })),
@@ -574,8 +599,8 @@ function normalizeAnalysisContract(parsed) {
     );
     const allKeyLevels = [...keyLevels, ...htfZones];
     const dol =
-      htfTfs.find((t) => t.draw_on_liquidity?.target_price)?.draw_on_liquidity ||
-      null;
+      htfTfs.find((t) => t.draw_on_liquidity?.target_price)
+        ?.draw_on_liquidity || null;
     out.market_analysis = {
       timeframes: allTfs.map((t) => ({
         tf: t.timeframe || "",
@@ -586,20 +611,25 @@ function normalizeAnalysisContract(parsed) {
         poi_alignment: Boolean(t.poi_aligned),
         price_action_summary: {
           recent_move: t.what_price_just_did || "",
-          key_breaks: (Array.isArray(t.key_events) ? t.key_events : []).map((e) => ({
-            event: e.event || "",
-            price_level: e.price,
-            direction:
-              e.direction === "Bull"
-                ? "Bullish"
-                : e.direction === "Bear"
-                  ? "Bearish"
-                  : (e.direction || ""),
-          })),
+          key_breaks: (Array.isArray(t.key_events) ? t.key_events : []).map(
+            (e) => ({
+              event: e.event || "",
+              price_level: e.price,
+              direction:
+                e.direction === "Bull"
+                  ? "Bullish"
+                  : e.direction === "Bear"
+                    ? "Bearish"
+                    : e.direction || "",
+            }),
+          ),
         },
         price_prediction: {
           narrative: t.what_price_likely_does_next || "",
-          expected_path: (Array.isArray(t.expected_path) ? t.expected_path : []).map((p) => ({
+          expected_path: (Array.isArray(t.expected_path)
+            ? t.expected_path
+            : []
+          ).map((p) => ({
             step: p.step,
             action: p.action || "",
             target_price: p.target_price,
@@ -615,7 +645,7 @@ function normalizeAnalysisContract(parsed) {
             ? "Bullish"
             : p.direction === "Bear"
               ? "Bearish"
-              : (p.direction || ""),
+              : p.direction || "",
         strength: p.strength || "",
         price_top: p.zone_top,
         price_bottom: p.zone_bottom,
@@ -639,10 +669,9 @@ function normalizeAnalysisContract(parsed) {
       },
       confluence_checklist: {
         buy: {
-          items: (
-            Array.isArray(a.confluence_checklist?.buy?.passed_items)
-              ? a.confluence_checklist.buy.passed_items
-              : []
+          items: (Array.isArray(a.confluence_checklist?.buy?.passed_items)
+            ? a.confluence_checklist.buy.passed_items
+            : []
           ).map((c) => ({
             category: c.category || "",
             item: c.description || "",
@@ -652,14 +681,15 @@ function normalizeAnalysisContract(parsed) {
           })),
           score: a.confluence_checklist?.buy?.weighted_score ?? 0,
           total: 100,
-          high_weight_passed: a.confluence_checklist?.buy?.high_weight_passed ?? 0,
-          high_weight_total: a.confluence_checklist?.buy?.high_weight_total ?? 0,
+          high_weight_passed:
+            a.confluence_checklist?.buy?.high_weight_passed ?? 0,
+          high_weight_total:
+            a.confluence_checklist?.buy?.high_weight_total ?? 0,
         },
         sell: {
-          items: (
-            Array.isArray(a.confluence_checklist?.sell?.passed_items)
-              ? a.confluence_checklist.sell.passed_items
-              : []
+          items: (Array.isArray(a.confluence_checklist?.sell?.passed_items)
+            ? a.confluence_checklist.sell.passed_items
+            : []
           ).map((c) => ({
             category: c.category || "",
             item: c.description || "",
@@ -671,7 +701,8 @@ function normalizeAnalysisContract(parsed) {
           total: 100,
           high_weight_passed:
             a.confluence_checklist?.sell?.high_weight_passed ?? 0,
-          high_weight_total: a.confluence_checklist?.sell?.high_weight_total ?? 0,
+          high_weight_total:
+            a.confluence_checklist?.sell?.high_weight_total ?? 0,
         },
       },
     };
@@ -689,34 +720,44 @@ function normalizeAnalysisContract(parsed) {
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
         be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-        tp: Array.isArray(x?.take_profits) && x.take_profits[2]
-          ? x.take_profits[2].price
-          : Array.isArray(x?.take_profits) && x.take_profits[x.take_profits.length - 1]
-            ? x.take_profits[x.take_profits.length - 1].price
-            : (x?.tp3 ?? x?.tp ?? null),
-        tp2: Array.isArray(x?.take_profits) && x.take_profits[1]
-          ? x.take_profits[1].price
-          : (x?.tp2 ?? null),
-        tp3: Array.isArray(x?.take_profits) && x.take_profits[2]
-          ? x.take_profits[2].price
-          : (x?.tp3 ?? null),
-        estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
+        tp:
+          Array.isArray(x?.take_profits) && x.take_profits[2]
+            ? x.take_profits[2].price
+            : Array.isArray(x?.take_profits) &&
+                x.take_profits[x.take_profits.length - 1]
+              ? x.take_profits[x.take_profits.length - 1].price
+              : (x?.tp3 ?? x?.tp ?? null),
+        tp2:
+          Array.isArray(x?.take_profits) && x.take_profits[1]
+            ? x.take_profits[1].price
+            : (x?.tp2 ?? null),
+        tp3:
+          Array.isArray(x?.take_profits) && x.take_profits[2]
+            ? x.take_profits[2].price
+            : (x?.tp3 ?? null),
+        estimated_bars:
+          x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
         rr: x?.risk_reward ?? x?.rr ?? null,
-        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map((t) => ({
-          price: t.price,
-          size_pct: t.close_position_pct,
-          rr: t.reward_to_risk,
-        })),
+        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
+          (t) => ({
+            price: t.price,
+            size_pct: t.close_position_pct,
+            rr: t.reward_to_risk,
+          }),
+        ),
         confluence_checklist: Array.isArray(x?.confluence_checklist)
           ? x.confluence_checklist
           : [],
-        reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map((r) => ({
+        reasons_to_skip: (Array.isArray(x?.skip_reasons)
+          ? x.skip_reasons
+          : []
+        ).map((r) => ({
           reason: r.reason || "",
           severity: r.severity || "",
         })),
         skip_recommendation:
-          x?.trade_decision === "Proceed" ? "" : (x?.trade_decision || ""),
+          x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
         entry_condition: x?.entry_trigger || "",
         exit_condition: x?.mid_trade_invalidation || "",
         risk_management:
@@ -993,6 +1034,8 @@ function aiSourceFromModel(modelRaw) {
   if (model.includes("gpt") || model.includes("openai")) return "ai_openai";
   if (model.includes("gemini")) return "ai_gemini";
   if (model.includes("deepseek")) return "ai_deepseek";
+  if (model.includes("openrouter") || model.includes("open-router"))
+    return "ai_openrouter";
   if (model.includes("claude")) return "ai_claude";
   return "ai_claude";
 }
@@ -1332,8 +1375,7 @@ function parseTradePlanFromRaw(rawText) {
   const tp3 = inPlanNum(/"tp3"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const rr = inPlanNum(/"rr"\s*:\s*(-?\d+(?:\.\d+)?)/i);
   const direction =
-    inPlan(/"direction"\s*:\s*"([^"]+)"/i) ||
-    inPlan(/"dir"\s*:\s*"([^"]+)"/i);
+    inPlan(/"direction"\s*:\s*"([^"]+)"/i) || inPlan(/"dir"\s*:\s*"([^"]+)"/i);
   const note = getString(/"note"\s*:\s*"([^"]+)"/i);
 
   if (!symbol && !direction && !Number.isFinite(entry)) return null;
@@ -1347,11 +1389,7 @@ function parseTradePlanFromRaw(rawText) {
       tp1,
       tp2,
       tp3,
-      tp:
-        inPlanNum(/"tp"\s*:\s*(-?\d+(?:\.\d+)?)/i) ??
-        tp1 ??
-        tp2 ??
-        tp3,
+      tp: inPlanNum(/"tp"\s*:\s*(-?\d+(?:\.\d+)?)/i) ?? tp1 ?? tp2 ?? tp3,
       rr,
       type: inPlan(/"type"\s*:\s*"([^"]+)"/i),
       strategy: inPlan(/"strategy"\s*:\s*"([^"]+)"/i),
@@ -1614,7 +1652,7 @@ export default function ChartSnapshotsPage() {
   const [analysisJson, setAnalysisJson] = useState("");
   const [analysisParsed, setAnalysisParsed] = useState(null);
   const [analysisSource, setAnalysisSource] = useState(
-    () => localStorage.getItem("ai_model") || "ai_claude"
+    () => localStorage.getItem("ai_model") || "ai_claude",
   );
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
@@ -2527,6 +2565,7 @@ export default function ChartSnapshotsPage() {
         ai_gpt4o: "gpt-4o",
         ai_deepseek: "deepseek-chat",
         ai_gemini: "gemini-2.0-flash",
+        ai_openrouter: "openai/gpt-4o",
       };
       const payload = {
         model: modelMap[analysisSource] || "claude-sonnet-4-0",
@@ -4108,13 +4147,20 @@ export default function ChartSnapshotsPage() {
                   <article
                     key={`${x.kind}_${x.id}`}
                     className="snapshot-activity-card-v4"
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: "pointer" }}
                     onClick={() => {
                       if (x.kind === "trade") navigate(`/trades/${x.id}`);
                       else navigate(`/signals/${x.id}`);
                     }}
                   >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr auto",
+                        alignItems: "center",
+                        gap: 8,
+                      }}
+                    >
                       <SymbolEntryCell
                         side={x.side}
                         symbol={x.symbol}
@@ -4310,6 +4356,7 @@ export default function ChartSnapshotsPage() {
                 <option value="ai_gpt4o">GPT-4o</option>
                 <option value="ai_deepseek">DeepSeek V3</option>
                 <option value="ai_gemini">Gemini 1.5 Pro</option>
+                <option value="ai_openrouter">OpenRouter</option>
               </select>
 
               <button
@@ -4487,7 +4534,9 @@ export default function ChartSnapshotsPage() {
                         borderRadius: 6,
                       }}
                       onClick={() =>
-                        setMasterGridCols((prev) => Math.max(1, (prev ?? 2) - 1))
+                        setMasterGridCols((prev) =>
+                          Math.max(1, (prev ?? 2) - 1),
+                        )
                       }
                       title="All: Larger charts"
                     >
@@ -4504,7 +4553,9 @@ export default function ChartSnapshotsPage() {
                         borderRadius: 6,
                       }}
                       onClick={() =>
-                        setMasterGridCols((prev) => Math.min(6, (prev ?? 2) + 1))
+                        setMasterGridCols((prev) =>
+                          Math.min(6, (prev ?? 2) + 1),
+                        )
                       }
                       title="All: Smaller charts"
                     >
