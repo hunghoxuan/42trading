@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 08:14 - 4459e1b";
+        private string BuildVersion = "v2026.05.06 10:56 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -94,7 +94,9 @@ namespace cAlgo.Robots
             var closedList = new List<string>();
             var historicalDeals = History.OrderByDescending(d => d.ClosingTime).ToList();
             
+            var limit = DateTime.UtcNow.AddDays(-2);
             foreach (var deal in historicalDeals) {
+                if (deal.ClosingTime < limit) continue;
                 if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
                 if (closedList.Count >= 20) break;
 
@@ -189,40 +191,17 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
                 
-                // Aggressive Search: Try every possible combination of separators, prefixes, and suffixes
+                // Simplified Match: Just try exact and slash variation (e.g., GBP/JPY)
                 if (symbol == null && symbolCode.Length == 6) {
-                    var baseCCY = symbolCode.Substring(0, 3);
-                    var quoteCCY = symbolCode.Substring(3, 3);
-                    var variations = new List<string> { 
-                        symbolCode, 
-                        baseCCY + "/" + quoteCCY, 
-                        baseCCY + "-" + quoteCCY, 
-                        baseCCY + " " + quoteCCY,
-                        baseCCY + quoteCCY,
-                        symbolCode.ToLower(),
-                        (baseCCY + "/" + quoteCCY).ToLower()
-                    };
-                    
-                    var suffixes = new[] { "", ".ecn", ".m", ".i", "_i", ".", "-i", "_SB", ".raw", ".std" };
-                    var prefixes = new[] { "", "e-", "m-", "i-", "f-", "Forex\\", "Spot\\" };
-
-                    foreach (var p in prefixes) {
-                        foreach (var v in variations) {
-                            foreach (var s in suffixes) {
-                                symbol = Symbols.GetSymbol(p + v + s);
-                                if (symbol != null) break;
-                            }
-                            if (symbol != null) break;
-                        }
-                        if (symbol != null) break;
-                    }
+                    var slashName = symbolCode.Substring(0, 3) + "/" + symbolCode.Substring(3, 3);
+                    symbol = Symbols.GetSymbol(slashName);
                 }
 
                 if (symbol == null) {
                     var msg = "Symbol not found: " + symbolCode;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
-                    Print("[Error] Symbol '{0}' not found. Please manually search for '{0}' in cTrader and tell me the exact name.", symbolCode);
+                    Print("[Error] Symbol '{0}' not found in your platform.", symbolCode);
                     return;
                 }
                 
@@ -358,8 +337,8 @@ namespace cAlgo.Robots
                     var sym = GetJsonValue(obj, "symbol");
                     var act = GetJsonValue(obj, "action");
                     
-                    if (status == "Ok") {
-                        if (!activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
+                    if (status == "Ok" || status == "Skip") {
+                        if (status == "Ok" && !activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
                         continue;
                     }
                     var displaySid = string.IsNullOrEmpty(sid) ? "SKIP" : sid;

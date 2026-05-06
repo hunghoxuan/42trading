@@ -16269,6 +16269,34 @@ const appHandler = async (req, res) => {
         String(body.prompt || "").trim() ||
         "Analyze these chart snapshots and return only JSON.";
 
+      // For text-only models (DeepSeek), inject bar data as text since they can't see images
+      const requestModel =
+        String(body.model || "claude-sonnet-4-0").trim() || "claude-sonnet-4-0";
+      if (requestModel.toLowerCase().includes("deepseek")) {
+        try {
+          const symbol = String(body.symbol || "").trim();
+          if (symbol) {
+            const db = await mt5InitBackend();
+            const { rows } = await db.query(
+              `SELECT symbol, tf, bar_start, bar_end, data FROM market_data
+               WHERE symbol = $1 ORDER BY tf, bar_end DESC LIMIT 20`,
+              [symbol],
+            );
+            if (rows.length) {
+              const barLines = rows.map(r => {
+                const bars = typeof r.data === "string" ? JSON.parse(r.data) : (r.data?.bars || []);
+                const lastBar = Array.isArray(bars) ? bars[bars.length - 1] : null;
+                const lastPrice = lastBar?.c ?? lastBar?.close ?? null;
+                return `${r.tf}: ${bars.length} bars, latest close=${lastPrice}`;
+              });
+              finalPrompt += `\n\n## MARKET DATA (text-only model — chart images not visible)\nSymbol: ${symbol}\n${barLines.join("\n")}`;
+            }
+          }
+        } catch (e) {
+          console.warn("[deepseek] Failed to load bar data:", e.message);
+        }
+      }
+
       finalPrompt += `\n\n${buildAiSchemaPromptText()}`;
 
       let imagePayload = null;
@@ -16296,9 +16324,6 @@ const appHandler = async (req, res) => {
         type: "text",
         text: finalPrompt,
       });
-
-      const requestModel =
-        String(body.model || "claude-sonnet-4-0").trim() || "claude-sonnet-4-0";
 
       const aiResult = await callAiProvider({
         model: requestModel,
