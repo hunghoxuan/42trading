@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 04:47 - 4459e1b";
+        private string BuildVersion = "v2026.05.06 05:11 - 2e2465e";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -104,10 +104,12 @@ namespace cAlgo.Robots
                     sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), deal.VolumeInUnits, deal.NetProfit, deal.ClosingTime, deal.Label));
             }
 
+            var brokerName = Account.BrokerName;
+
             Task.Run(async () => {
                 try {
                     await PollSignalsAsync(accId);
-                    await SyncWithVpsAsync(accId, balance, equity, margin, posList, closedList, activeTicketIds);
+                    await SyncWithVpsAsync(accId, balance, equity, margin, brokerName, posList, closedList, activeTicketIds);
                 } catch (Exception ex) {
                     _lastSyncErr = ex.Message;
                 } finally {
@@ -266,14 +268,14 @@ namespace cAlgo.Robots
             RefreshDebugPanel();
         }
 
-        private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, List<string> posList, List<string> closedList, HashSet<string> activeTicketIds)
+        private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> closedList, HashSet<string> activeTicketIds)
         {
             _syncStatus = "SYNCING";
             try
             {
                 var payload = string.Format(CultureInfo.InvariantCulture, 
                     "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[],\"closed\":[{6}]}}",
-                    accId, bal, eq, marg, Account.BrokerName, string.Join(",", posList), string.Join(",", closedList));
+                    accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", closedList));
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/sync", content);
