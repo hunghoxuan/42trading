@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 07:14 - ai-sot1";
+        private string BuildVersion = "v2026.05.06 07:43 - unwrap1";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -188,18 +188,28 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
                 
-                // Smart Match: Try suffixes
-                if (symbol == null) {
-                    foreach (var s in new[] { ".ecn", ".m", ".i", "_i", ".", "-i" }) {
-                        symbol = Symbols.GetSymbol(symbolCode + s);
-                        if (symbol != null) break;
-                    }
-                }
-                
-                // Prefix Match: Try common prefixes
-                if (symbol == null) {
-                    foreach (var p in new[] { "e-", "m-", "i-", "f-" }) {
-                        symbol = Symbols.GetSymbol(p + symbolCode);
+                // If not found, try common variations (e.g., GBP/JPY, GBP-JPY, GBP JPY)
+                if (symbol == null && symbolCode.Length == 6) {
+                    var baseCCY = symbolCode.Substring(0, 3);
+                    var quoteCCY = symbolCode.Substring(3, 3);
+                    var variations = new[] { 
+                        symbolCode, 
+                        baseCCY + "/" + quoteCCY, 
+                        baseCCY + "-" + quoteCCY, 
+                        baseCCY + " " + quoteCCY 
+                    };
+                    
+                    var suffixes = new[] { "", ".ecn", ".m", ".i", "_i", ".", "-i", "_SB" };
+                    var prefixes = new[] { "", "e-", "m-", "i-", "f-" };
+
+                    foreach (var p in prefixes) {
+                        foreach (var v in variations) {
+                            foreach (var s in suffixes) {
+                                symbol = Symbols.GetSymbol(p + v + s);
+                                if (symbol != null) break;
+                            }
+                            if (symbol != null) break;
+                        }
                         if (symbol != null) break;
                     }
                 }
@@ -208,7 +218,7 @@ namespace cAlgo.Robots
                     var msg = "Symbol not found: " + symbolCode;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
-                    Print("[Error] Symbol '{0}' not found. Please ensure it is visible in your Market Watch.", symbolCode);
+                    Print("[Error] Symbol '{0}' not found. Tried variations like GBP/JPY, GBP-JPY, etc.", symbolCode);
                     return;
                 }
                 
