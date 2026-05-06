@@ -24,330 +24,387 @@ export const STRATEGY_OPTIONS = [
 // STRATEGY → ENTRY MODELS → CHECKLIST
 //
 // RELATIONSHIP:
-//   Strategy   = the framework that defines HOW you read the market.
-//                Owns the checklist — conditions that must pass BEFORE
-//                any entry model is evaluated.
+//   Strategy    = the framework that defines HOW you read the market.
+//                 Owns the checklist — gate conditions evaluated BEFORE
+//                 any entry model is considered.
+//   Checklist   = strategy-level gate. Scored by weight:
+//                   High   = 3 pts. Blocker if failed.
+//                   Medium = 2 pts. Reduces score only.
+//                   Low    = 1 pt.  Minor supporting evidence.
 //   Entry Model = the specific trigger pattern within that strategy.
-//                 Only evaluated AFTER the strategy checklist score is sufficient.
-//   Checklist   = strategy-level gate. Each item has a weight:
-//                   High   = blocker if failed (trade must be skipped)
-//                   Medium = reduces confidence score
-//                   Low    = minor supporting evidence
+//                 Only evaluated AFTER checklist gate is passed.
 //
-// RULE:
-//   high_weight_passed / high_weight_total >= 0.75  →  proceed to entry model scan
-//   weighted_score >= 85                            →  riskPct = 1.0%
-//   weighted_score 65–84                            →  riskPct = 0.5%
-//   weighted_score < 65                             →  skip or riskPct = 0.25%
+// GATE RULE:
+//   high_weight_passed / high_weight_total >= 0.75 → scan entry models
+//   If gate fails → no trade plan regardless of total score
+//
+// SCORE → RISK TIER:
+//   >= 85 → risk 1.0% (Grade A requires RR >= min_rr * 1.5)
+//   65–84 → risk 0.5% (Grade B requires RR >= min_rr)
+//   50–64 → risk 0.25% (Grade C — marginal, consider skipping)
+//   < 50  → no trade
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const STRATEGY_ENTRY_MODELS = {
   ICT: {
-    description: "Inner Circle Trader methodology. Focuses on institutional order flow, liquidity engineering, and precision entry via PD arrays during killzone windows.",
+    description:
+      "Inner Circle Trader methodology. Focuses on institutional order flow, liquidity engineering, and precision entry via PD arrays during London/NY killzone windows.",
     checklist: [
-      { description: "London or NY killzone active (London 02:00-05:00 EST / NY 07:00-10:00 EST)", weight: "High", category: "Session" },
-      { description: "HTF bias confirmed — D and 4H trend aligned in same direction", weight: "High", category: "Structure" },
-      { description: "BOS or CHoCH confirmed on execution timeframe", weight: "High", category: "Structure" },
-      { description: "Price entering from premium (sell) or discount (buy) zone — below/above 0.5 fib of HTF range", weight: "High", category: "PD_Arrays" },
-      { description: "DOL identified — BSL/SSL or unfilled HTF FVG within ADR reach", weight: "High", category: "Liquidity" },
-      { description: "Displacement candle present — strong impulsive move leaving imbalance", weight: "Medium", category: "PD_Arrays" },
-      { description: "SMT divergence confirmed on correlated asset (e.g. FTSE vs DAX / DXY vs DJI)", weight: "Medium", category: "Correlation" },
-      { description: "ADR not already exhausted — remaining ADR range covers TP1 at minimum", weight: "Medium", category: "Risk" },
-      { description: "No major news event within 30 minutes of entry", weight: "Low", category: "Risk" },
+      { description: "London or NY killzone active — London 02:00-05:00 EST / NY 07:00-10:00 EST", weight: "High", category: "Session" },
+      { description: "HTF bias confirmed — D and 4H trend aligned in the same direction", weight: "High", category: "Structure" },
+      { description: "BOS or CHoCH confirmed on the execution timeframe (15M)", weight: "High", category: "Structure" },
+      { description: "Price in discount zone for buys (below 0.5 fib) or premium zone for sells (above 0.5 fib) of HTF swing range", weight: "High", category: "PD_Arrays" },
+      { description: "Draw on Liquidity (DOL) identified — unswept BSL/SSL or unfilled HTF FVG reachable within ADR", weight: "High", category: "Liquidity" },
+      { description: "Displacement candle present on LTF — strong impulsive move with visible imbalance (FVG) left behind", weight: "Medium", category: "PD_Arrays" },
+      { description: "SMT divergence confirmed on correlated asset (e.g. FTSE vs DAX, DXY vs DJI)", weight: "Medium", category: "Correlation" },
+      { description: "ADR not already exhausted — remaining daily range is sufficient to reach TP1", weight: "Medium", category: "Risk" },
+      { description: "No high-impact news event within 30 minutes of planned entry", weight: "Low", category: "Risk" },
     ],
     entry_models: [
       {
         name: "OB + FVG Confluence",
-        trigger: "Price retraces into HTF or LTF OB zone that contains an unfilled FVG. BOS already confirmed above/below. Entry on 15M candle close inside OB with rejection wick present.",
-        sl_logic: "Below OB zone bottom (buy) or above OB zone top (sell) + 2-5 pip buffer.",
-        tp_logic: "TP1 = nearest EQH/EQL. TP2 = HTF BSL/SSL. TP3 = HTF DOL target (PDH/PDL or weekly level).",
+        trigger: "Price retraces into an OB zone (HTF or LTF) that contains an unfilled FVG. BOS already confirmed on 15M. Entry on 15M candle close inside OB with rejection wick present. The FVG inside the OB is the precise entry zone.",
+        sl_logic: "Below OB zone bottom for buys, above OB zone top for sells. Add 2-5 pip buffer beyond zone extreme.",
+        tp_logic: "TP1 = nearest LTF EQH/EQL. TP2 = HTF BSL/SSL. TP3 = HTF DOL target (PDH/PDL or weekly level).",
+        consistency_rules: "Must be in London or NY killzone. BOS must already be confirmed before entry — not anticipated.",
       },
       {
         name: "Breaker Block Retest",
-        trigger: "Former bullish OB that was broken and became a bearish breaker (or vice versa). Price returns to retest the breaker zone. Entry on rejection candle close at breaker boundary.",
-        sl_logic: "Beyond the breaker zone by 3-5 pips.",
-        tp_logic: "TP1 = most recent swing high/low. TP2 = HTF FVG fill. TP3 = HTF liquidity.",
+        trigger: "A former bullish OB that price broke through becomes a bearish breaker (vice versa for bull). Price returns to retest the breaker zone. Entry on rejection candle close at the breaker boundary.",
+        sl_logic: "Beyond the breaker zone extreme by 3-5 pips.",
+        tp_logic: "TP1 = most recent swing high/low. TP2 = HTF FVG fill. TP3 = HTF liquidity pool.",
+        consistency_rules: "The original OB must have already been broken and flipped — not just tapped. Retest must respect the breaker zone.",
       },
       {
         name: "Silver Bullet",
-        trigger: "10:00-11:00 AM EST window only. Displacement candle creates a FVG on 5M/15M. Price retraces back into that FVG. Entry on 5M candle close inside the FVG.",
-        sl_logic: "Below the low of the displacement candle that created the FVG.",
-        tp_logic: "TP1/TP2 within session range. Not held overnight.",
+        trigger: "VALID ONLY 10:00-11:00 AM EST. Displacement candle creates a FVG on 5M or 15M. Price retraces into that FVG. Entry on 5M candle close inside FVG. Do not enter if FVG was already fully filled before 10:00.",
+        sl_logic: "Below the low of the displacement candle that created the FVG (buy). Above the high for sells.",
+        tp_logic: "TP1 and TP2 within session range only. Do not hold Silver Bullet positions overnight.",
+        consistency_rules: "HARD TIME RULE: only valid between 10:00 and 11:00 AM EST. Outside this window this model is invalid regardless of setup quality.",
       },
       {
         name: "Power of 3 (AMD)",
-        trigger: "Accumulation range identified in Asian session. London open manipulates (sweeps) range high or low (Judas swing). 15M closes back inside the accumulation range. Entry on close back inside range.",
-        sl_logic: "Beyond the sweep extreme + 5 pips.",
-        tp_logic: "TP targets are the opposing side of the daily range (NY distribution leg).",
+        trigger: "Accumulation range identified in Asian session. London open creates manipulation leg — sweeps the range high (bear) or range low (bull) trapping early entries. 15M candle closes back inside the accumulation range. Entry on that close-back candle.",
+        sl_logic: "Beyond the manipulation sweep extreme + 5 pips.",
+        tp_logic: "TP targets are the opposing end of the daily range — the NY distribution leg completes the move.",
+        consistency_rules: "Entry only AFTER London manipulation leg completes and price closes back inside range. Never enter on the sweep itself. Asian accumulation range must be identifiable first.",
       },
       {
         name: "Judas Swing",
-        trigger: "London open creates false move sweeping Asian session liquidity. 15M CHoCH forms in opposite direction. Entry on first pullback after CHoCH — ideally into a fresh 5M OB or FVG.",
-        sl_logic: "Beyond the sweep high/low.",
-        tp_logic: "NY session target levels — PDH/PDL or weekly open.",
+        trigger: "At London open, price makes a false directional move sweeping Asian session liquidity. 15M CHoCH forms confirming direction reversal. Entry on first pullback after CHoCH into a fresh 5M OB or FVG formed during the reversal.",
+        sl_logic: "Beyond the Judas swing extreme — the false move high/low.",
+        tp_logic: "NY session target levels — PDH, PDL, or weekly open on the opposite side.",
+        consistency_rules: "Entry only AFTER CHoCH confirms — never on the sweep itself. Session must be London open context (02:00-05:00 EST or overlap).",
       },
       {
         name: "CISD (Change In State of Delivery)",
-        trigger: "A displacement candle shifts delivery from bearish to bullish (or opposite). Entry on retest of the candle that caused the CISD — this candle becomes a micro OB.",
-        sl_logic: "Below the CISD candle low.",
-        tp_logic: "Next HTF PD array or liquidity pool.",
+        trigger: "A displacement candle on 5M/15M shifts price delivery from bearish to bullish (or reverse). The shifting candle becomes a micro OB. Entry on retest of that candle's open/body range — not a wick retest.",
+        sl_logic: "Below the CISD candle low for buys. Above the high for sells.",
+        tp_logic: "Next HTF PD array above (buy) or below (sell). Then HTF liquidity.",
+        consistency_rules: "Delivery state must visibly shift — impulsive candle with clear directional change. Body retest only, not wick.",
       },
       {
         name: "Midnight Open Rejection",
-        trigger: "Price sweeps the midnight open level (00:00 EST), sharp rejection candle closes back through it. Entry on the close of the rejection candle.",
-        sl_logic: "Beyond midnight open sweep extreme.",
-        tp_logic: "Opposing session high/low or nearest HTF FVG.",
+        trigger: "Price sweeps the 00:00 EST Midnight Open level. Rejection candle closes back through the level. Entry on the close of that candle.",
+        sl_logic: "Beyond the wick extreme that swept the Midnight Open.",
+        tp_logic: "Opposing session high/low or nearest HTF FVG in direction of rejection.",
+        consistency_rules: "Midnight Open level must be clearly identifiable at 00:00 EST. The sweep must be a wick — not a full candle body — through the level.",
       },
     ],
   },
 
   SMC: {
-    description: "Smart Money Concepts. Tracks institutional footprints via order blocks, imbalances, and liquidity grabs. Closely related to ICT but focuses more on structural breaks and mitigation.",
+    description:
+      "Smart Money Concepts. Tracks institutional footprints via order blocks, imbalances, and liquidity grabs. Broader than ICT — valid outside strict killzone windows.",
     checklist: [
-      { description: "HTF liquidity grab confirmed — price swept a visible EQH/EQL or PDH/PDL", weight: "High", category: "Liquidity" },
-      { description: "Structure break (BOS) on HTF in direction of trade", weight: "High", category: "Structure" },
-      { description: "Order block identified and unmitigated on execution TF", weight: "High", category: "PD_Arrays" },
-      { description: "Imbalance (FVG) present between impulsive legs and aligns with entry zone", weight: "High", category: "PD_Arrays" },
-      { description: "HTF bias alignment — LTF setup agrees with D/4H direction", weight: "High", category: "Structure" },
-      { description: "Choch on LTF confirms reversal intent at OB", weight: "Medium", category: "Structure" },
-      { description: "Volume or momentum spike on displacement candle", weight: "Medium", category: "Candle_Patterns" },
-      { description: "No opposing OB or FVG within the TP path", weight: "Low", category: "Risk" },
+      { description: "HTF liquidity grab confirmed — price swept a visible EQH/EQL or PDH/PDL before reversing", weight: "High", category: "Liquidity" },
+      { description: "Structure break (BOS) confirmed on HTF in the direction of the trade", weight: "High", category: "Structure" },
+      { description: "Unmitigated order block identified on execution TF — fresh, not previously tapped", weight: "High", category: "PD_Arrays" },
+      { description: "FVG present between impulsive legs and overlaps or is adjacent to the OB entry zone", weight: "High", category: "PD_Arrays" },
+      { description: "HTF bias alignment — LTF setup direction agrees with D/4H trend", weight: "High", category: "Structure" },
+      { description: "CHoCH on LTF confirms reversal intent at or before the entry OB", weight: "Medium", category: "Structure" },
+      { description: "Momentum or volume spike visible on the displacement candle", weight: "Medium", category: "Candle_Patterns" },
+      { description: "No opposing unmitigated OB or unfilled FVG blocking the TP path", weight: "Low", category: "Risk" },
     ],
     entry_models: [
       {
         name: "OB Mitigation Entry",
-        trigger: "Price returns to an unmitigated OB. Entry when price touches OB 50% level and a rejection candle forms (pin bar or engulfing) on 5M/15M.",
-        sl_logic: "Beyond the full OB zone.",
-        tp_logic: "TP1 = opposing structure. TP2 = HTF imbalance fill. TP3 = HTF liquidity.",
+        trigger: "Price returns to an unmitigated OB. A rejection candle (pin bar or engulfing) forms when price touches the 50% midpoint of the OB on 5M or 15M. Entry on close of that rejection candle.",
+        sl_logic: "Beyond the full OB zone extreme — not just the 50% level.",
+        tp_logic: "TP1 = opposing swing structure. TP2 = HTF imbalance fill. TP3 = HTF liquidity level.",
+        consistency_rules: "OB must be unmitigated — times_touched = 0. A previously tapped OB has reduced probability.",
       },
       {
         name: "FVG Fill + Rejection",
-        trigger: "Price retraces into an open FVG zone. Entry on 15M close at the 50% midpoint of FVG with a rejection wick.",
-        sl_logic: "Below/above the full FVG range.",
-        tp_logic: "Previous swing high/low then HTF targets.",
+        trigger: "Price retraces into an open FVG. Entry when price touches the 50% midpoint of the FVG and a rejection wick forms on 15M close. The wick must not fully close beyond FVG boundaries.",
+        sl_logic: "Below/above the full FVG range — the complete gap boundary.",
+        tp_logic: "Previous swing high/low as TP1. HTF OB or liquidity as TP2/TP3.",
+        consistency_rules: "FVG must still be open — not already filled on any TF. Full fill before entry invalidates the model.",
       },
       {
         name: "Liquidity Sweep Reversal",
-        trigger: "Price spikes through visible EQH/EQL (2-10 pip overshoot), immediately closes back below/above on the same or next candle. Entry on that close.",
-        sl_logic: "Beyond the wick extreme.",
-        tp_logic: "Opposing liquidity pool or OB.",
+        trigger: "Price spikes through a visible EQH or EQL by 2-10 pips. Price immediately closes back below/above the EQH/EQL on the same candle or the next. Entry on that closing candle.",
+        sl_logic: "Beyond the wick extreme of the sweep candle.",
+        tp_logic: "Opposing liquidity pool. Then HTF OB or FVG.",
+        consistency_rules: "Overshoot must be small (2-10 pips / 0.05-0.2%). A large break-through is a breakout, not a sweep reversal.",
       },
       {
         name: "BOS Retest",
-        trigger: "Candle closes beyond a key swing high/low (BOS). Price returns to retest the broken level. Entry on rejection candle at retest zone.",
-        sl_logic: "Beyond retest zone.",
-        tp_logic: "Next major liquidity above/below.",
+        trigger: "A candle body closes cleanly beyond a key swing high or low (confirmed BOS — body close required, not just a wick). Price returns to retest the broken level. A rejection candle forms at the retest. Entry on close.",
+        sl_logic: "Beyond the retest zone by 3-5 pips.",
+        tp_logic: "Next major structural liquidity above (buy) or below (sell).",
+        consistency_rules: "BOS requires a full candle body close beyond the swing — wick-only breaks do not qualify. Retest must touch the former swing level.",
       },
     ],
   },
 
   "Price Action": {
-    description: "Pure candlestick and structure reading without indicators. Focuses on key level reactions, candlestick patterns, and trend context.",
+    description:
+      "Pure candlestick and price structure reading without indicators. Focuses on key level reactions, candlestick pattern psychology, and trend context.",
     checklist: [
-      { description: "HTF trend context clear — D/4H showing consistent HH/HL (bull) or LH/LL (bear)", weight: "High", category: "Structure" },
-      { description: "Price reacting at a key S/R level — not in middle of range", weight: "High", category: "PD_Arrays" },
-      { description: "Candlestick confirmation present at the level (pin bar, engulfing, inside bar)", weight: "High", category: "Candle_Patterns" },
-      { description: "RR >= minimum configured (default 2.0)", weight: "High", category: "Risk" },
-      { description: "No major scheduled news within 30 minutes", weight: "Medium", category: "Risk" },
-      { description: "Volume supports the move (if available)", weight: "Medium", category: "Candle_Patterns" },
-      { description: "Pattern not forming in a choppy/ranging HTF environment", weight: "Low", category: "Structure" },
+      { description: "HTF trend context clear — D/4H showing consistent HH/HL sequence (bull) or LH/LL sequence (bear)", weight: "High", category: "Structure" },
+      { description: "Price reacting at a defined key S/R level — not in the middle of a range", weight: "High", category: "PD_Arrays" },
+      { description: "Candlestick confirmation present at the level (pin bar, engulfing, or inside bar)", weight: "High", category: "Candle_Patterns" },
+      { description: "RR meets or exceeds the configured minimum", weight: "High", category: "Risk" },
+      { description: "No high-impact scheduled news within 30 minutes of entry", weight: "Medium", category: "Risk" },
+      { description: "Volume supports the move — confirmation candle has higher volume than preceding candles (if available)", weight: "Medium", category: "Candle_Patterns" },
+      { description: "Pattern not forming inside a choppy/ranging HTF environment — trend must be established", weight: "Low", category: "Structure" },
     ],
     entry_models: [
       {
         name: "Pin Bar Rejection",
-        trigger: "Candle with wick > 2x body size at a key level. Wick points into the level, body closes away. Entry on the open of the next candle or on retest of pin bar 50%.",
-        sl_logic: "Beyond the pin bar wick tip.",
-        tp_logic: "Next key S/R level. TP2/TP3 at HTF swing levels.",
+        trigger: "Candle wick is more than 2x the body size. Wick pierces into the key level, body closes away. Entry on open of the next candle, or on retest of the pin bar 50% body level.",
+        sl_logic: "Beyond the pin bar wick tip — the absolute extreme of the rejection.",
+        tp_logic: "TP1 = next key S/R level. TP2/TP3 = HTF swing high/low or DOL.",
+        consistency_rules: "Wick-to-body ratio must be confirmed — small pin bars at non-key levels do not qualify. The level must be pre-identified, not drawn after the fact.",
       },
       {
         name: "Engulfing at Structure",
-        trigger: "Full body engulf of the previous candle at a key HTF level. The engulfing candle must close decisively beyond the prior candle's body. Entry on close or retest.",
-        sl_logic: "Beyond the low/high of the engulfing candle.",
-        tp_logic: "Nearest opposing structure level.",
+        trigger: "Current candle body fully engulfs the previous candle body at a key HTF level. Must close decisively beyond the prior candle's body. Entry on close or on retest of the engulfing candle midpoint.",
+        sl_logic: "Beyond the low (bull engulf) or high (bear engulf) of the engulfing candle.",
+        tp_logic: "Nearest opposing structure level as TP1. HTF swing targets for TP2/TP3.",
+        consistency_rules: "Body engulf only — the current candle body must exceed the prior body on both sides. Wick-to-wick engulf alone is insufficient.",
       },
       {
         name: "Inside Bar Breakout",
-        trigger: "Candle range fully inside the prior candle (mother bar). Consolidation complete. Entry on breakout candle close beyond mother bar high/low.",
-        sl_logic: "Opposite side of the mother bar.",
-        tp_logic: "1x or 2x mother bar range projected forward.",
+        trigger: "Current candle full range is contained within the prior candle (mother bar). Entry on the breakout candle that closes beyond the mother bar high (buy) or low (sell).",
+        sl_logic: "Opposite side of the mother bar — beyond mother bar low for buys, above high for sells.",
+        tp_logic: "TP1 = 1x mother bar range projected. TP2 = 2x projection or next S/R.",
+        consistency_rules: "Mother bar must be identifiable as a consolidation — not a small candle inside a trend. Inside bar low/high must not have been breached before breakout.",
       },
       {
         name: "Fakey (False Breakout)",
-        trigger: "Inside bar setup breaks out but immediately reverses back inside the mother bar range within 1-2 candles. Entry on close back inside the range. This is a trap for breakout traders.",
-        sl_logic: "Beyond the false break wick extreme.",
-        tp_logic: "Opposing side of mother bar and beyond.",
+        trigger: "An inside bar forms at a key level. Price breaks out beyond the mother bar trapping breakout traders, then reverses and closes back inside the mother bar range within 1-2 candles. Entry on the candle that closes back inside.",
+        sl_logic: "Beyond the false break wick extreme — the furthest point of the failed breakout.",
+        tp_logic: "Opposing side of the mother bar (TP1) and prior swing beyond it (TP2).",
+        consistency_rules: "Inside bar must have formed FIRST before the false breakout. The reverse-back candle must close INSIDE the mother bar range — not just retrace.",
       },
       {
         name: "Quasimodo (QM)",
-        trigger: "Failed higher high in an uptrend — price makes HH then fails to make a higher low, forms a lower low. Entry at retest of the last HL (which becomes resistance). Opposite for downtrend.",
-        sl_logic: "Beyond the failed HH extreme.",
-        tp_logic: "The lower low formed, then next major S/R.",
+        trigger: "In uptrend: price makes HH then fails to make a higher low — instead forms a lower low. Entry at retest of the last HL (now resistance). Mirror for downtrend.",
+        sl_logic: "Beyond the failed HH extreme (buy QM) or failed LL extreme (sell QM).",
+        tp_logic: "TP1 = the LL that confirmed QM. TP2 = next major S/R below.",
+        consistency_rules: "QM requires a prior established trend with at least 2 HH/HL (bull) or LH/LL (bear) before the failure. The lower low must be confirmed — not just forming.",
       },
       {
         name: "V-Shape Reversal",
-        trigger: "Sharp impulsive drop (or rally) followed by an equally sharp recovery candle that closes above the midpoint of the drop. Entry on the recovery candle close.",
-        sl_logic: "Below the V-shape reversal low.",
-        tp_logic: "Origin of the initial drop (full retracement target).",
+        trigger: "Sharp impulsive drop with no consolidation. Within 1-2 candles a recovery candle closes above the 50% midpoint of the drop. Entry on the close of the recovery candle.",
+        sl_logic: "Below the absolute low of the V-shape reversal.",
+        tp_logic: "Full retracement to the origin of the drop. HTF resistance as TP2.",
+        consistency_rules: "Drop must be sharp and impulsive — gradual declines do not produce valid V-shapes. Recovery must happen quickly (1-2 candles). Slow recoveries are retracements, not reversals.",
       },
     ],
   },
 
   "Market Structure": {
-    description: "Reads the market through sequence of highs and lows. Identifies trend via BOS/CHoCH chains and maps premium/discount zones for entries aligned with institutional narrative.",
+    description:
+      "Reads market through swing high/low sequences. Trend confirmed via BOS/CHoCH chains across timeframes. Entries inside premium/discount zones aligned with institutional narrative.",
     checklist: [
-      { description: "HTF narrative clear — consistent BOS sequence confirms trend direction on D/4H", weight: "High", category: "Structure" },
-      { description: "BOS/CHoCH sequence valid and unbroken on execution TF", weight: "High", category: "Structure" },
-      { description: "Entry positioned in premium (sell) or discount (buy) — 0.5 fib or better", weight: "High", category: "PD_Arrays" },
-      { description: "DOL target mapped and reachable within current ADR", weight: "High", category: "Liquidity" },
-      { description: "No conflicting structure on intermediate TF (e.g. 1H opposing 15M)", weight: "High", category: "Structure" },
-      { description: "Retracement depth proportional — not overextended beyond 0.79 fib", weight: "Medium", category: "Fibonacci" },
-      { description: "Momentum of the structural move aligns with entry direction", weight: "Medium", category: "Candle_Patterns" },
+      { description: "HTF narrative clear — consistent BOS sequence confirms trend on D and 4H timeframes", weight: "High", category: "Structure" },
+      { description: "BOS/CHoCH sequence valid and unbroken on execution timeframe (15M)", weight: "High", category: "Structure" },
+      { description: "Entry in discount zone for buys or premium zone for sells relative to swing range", weight: "High", category: "PD_Arrays" },
+      { description: "DOL target mapped — next unswept liquidity pool reachable within ADR", weight: "High", category: "Liquidity" },
+      { description: "No conflicting structure on intermediate TF — e.g. 1H not opposing 15M direction", weight: "High", category: "Structure" },
+      { description: "Retracement proportional — not overextended beyond 0.79 fib of last impulsive leg", weight: "Medium", category: "Fibonacci" },
+      { description: "Momentum of the most recent structural move confirms entry direction", weight: "Medium", category: "Candle_Patterns" },
     ],
     entry_models: [
       {
         name: "BOS + Retest",
-        trigger: "Clean BOS candle closes beyond a key swing point. Price returns to retest the broken structure level. Entry on rejection candle (pin bar or engulfing) at retest.",
-        sl_logic: "Beyond the retest level by 3-5 pips.",
-        tp_logic: "Next structural target in the BOS chain direction.",
+        trigger: "A candle body closes clearly beyond a key swing high/low confirming BOS. Price then returns to retest the broken structural level. A rejection candle forms at the retest zone. Entry on close of that rejection candle.",
+        sl_logic: "Beyond the retest zone extreme by 3-5 pips.",
+        tp_logic: "TP1 = next swing high/low in BOS chain direction. TP2/TP3 = HTF liquidity and DOL.",
+        consistency_rules: "BOS requires body close beyond the swing — wick-only breaks do not confirm BOS. Retest must touch the former swing level and show rejection, not just approach it.",
       },
       {
         name: "CHoCH Entry",
-        trigger: "First CHoCH after a downtrend (or uptrend). LTF confirms: pullback to CHoCH origin forms a fresh OB or FVG. Entry at that zone on rejection.",
-        sl_logic: "Below the CHoCH swing low that triggered the change.",
-        tp_logic: "Previous swing high (HTF). TP2/TP3 extend to HTF BOS targets.",
+        trigger: "First CHoCH forms after an established trend — first higher high in a downtrend or first lower low in an uptrend. LTF pullback to CHoCH origin where a fresh OB or FVG has formed. Entry at that zone on rejection.",
+        sl_logic: "Below the CHoCH swing low that triggered the structural change (buy). Above for sells.",
+        tp_logic: "TP1 = previous significant swing high. TP2/TP3 = HTF BOS targets above.",
+        consistency_rules: "Requires a prior established trend to change FROM — CHoCH is not valid in ranging markets. Must be the FIRST CHoCH of the reversal, not a continuation CHoCH.",
       },
       {
         name: "EQH/EQL Sweep + Reverse",
-        trigger: "Price spikes through equal highs or equal lows by a small margin (liquidity grab). Immediate close back through the EQH/EQL level. Entry on that closing candle.",
-        sl_logic: "Beyond the sweep wick.",
-        tp_logic: "Opposing EQL/EQH. Then HTF structural targets.",
+        trigger: "Two or more swing highs/lows at nearly the same price create visible EQH/EQL liquidity. Price spikes through them by a small margin. Next candle immediately closes back through the EQH/EQL. Entry on that closing candle.",
+        sl_logic: "Beyond the sweep wick extreme — highest/lowest point of the spike.",
+        tp_logic: "TP1 = opposing EQL/EQH. TP2/TP3 = HTF structural targets.",
+        consistency_rules: "EQH/EQL requires at least 2 visible price touches at approximately the same level. Overshoot must be small — a large break is a breakout not a sweep.",
       },
       {
         name: "MSB Confirmation",
-        trigger: "Major structure break confirmed on HTF. LTF shows a CHoCH in the same direction. Entry on LTF pullback after CHoCH — into a fresh OB or FVG on LTF.",
-        sl_logic: "Below the LTF CHoCH low.",
-        tp_logic: "HTF structural targets defined by the MSB.",
+        trigger: "Major Structure Break (MSB) already confirmed on HTF (D or 4H) — a significant swing break that changes macro trend. LTF (15M) shows CHoCH in same direction. Entry on LTF pullback after CHoCH into fresh LTF OB or FVG.",
+        sl_logic: "Below the LTF CHoCH swing low (buy) or above CHoCH swing high (sell).",
+        tp_logic: "HTF structural targets from the MSB measured move.",
+        consistency_rules: "HTF MSB must ALREADY be confirmed — not anticipated. Do not use this model to predict MSBs. LTF CHoCH must align directionally with the HTF MSB.",
       },
       {
         name: "Displacement + Rebalance",
-        trigger: "Strong impulsive move leaves a visible FVG (imbalance). Entry when price returns to fill the 50% of that gap with a rejection reaction.",
-        sl_logic: "Below the full FVG range.",
-        tp_logic: "Prior swing high/low and HTF liquidity.",
+        trigger: "Strong impulsive candle sequence leaves a visible FVG (gap between candle 1 high and candle 3 low, or vice versa). Entry when price retraces to the 50% midpoint of that FVG with a rejection visible on 5M.",
+        sl_logic: "Below the full FVG range — below the lowest point of the gap for buys.",
+        tp_logic: "TP1 = prior swing high/low before displacement. TP2/TP3 = HTF liquidity.",
+        consistency_rules: "FVG must be created by an impulsive move — not by a small choppy candle. The gap must be clearly visible — no candle body fills the gap between creation candles.",
       },
     ],
   },
 
   Wyckoff: {
-    description: "Volume-based institutional accumulation and distribution cycle analysis. Identifies markup/markdown phases via Wyckoff schematics.",
+    description:
+      "Volume-price relationship methodology. Identifies institutional accumulation and distribution cycles via Wyckoff schematics. Volume confirmation is mandatory for every signal.",
     checklist: [
-      { description: "Wyckoff phase clearly identified — Accumulation, Markup, Distribution, or Markdown", weight: "High", category: "Structure" },
-      { description: "Spring (accumulation) or Upthrust (distribution) event confirmed", weight: "High", category: "Candle_Patterns" },
-      { description: "Volume confirmation — volume spike on spring/upthrust, dry-up on test", weight: "High", category: "Candle_Patterns" },
-      { description: "Sign of Strength (SOS) or Sign of Weakness (SOW) candle present", weight: "High", category: "Structure" },
-      { description: "Markup or markdown continuation phase aligned with entry", weight: "Medium", category: "Structure" },
-      { description: "No climactic volume against the trade direction", weight: "Medium", category: "Risk" },
+      { description: "Wyckoff phase clearly identified — Accumulation, Markup, Distribution, or Markdown — with supporting volume evidence", weight: "High", category: "Structure" },
+      { description: "Spring (accumulation) or Upthrust (distribution) event confirmed with volume signature", weight: "High", category: "Candle_Patterns" },
+      { description: "Volume confirmation present — spike on spring/upthrust, volume dry-up on subsequent test", weight: "High", category: "Candle_Patterns" },
+      { description: "Sign of Strength (SOS) or Sign of Weakness (SOW) candle visible", weight: "High", category: "Structure" },
+      { description: "Markup or Markdown phase continuation aligns with entry direction", weight: "Medium", category: "Structure" },
+      { description: "No climactic volume against the trade direction in the last 10 candles", weight: "Medium", category: "Risk" },
     ],
     entry_models: [
       {
         name: "Spring Reversal",
-        trigger: "Price breaks below support (BC/SC zone) on low volume — the spring. Immediately recovers above support. Entry on the test candle after spring with volume dry-up.",
-        sl_logic: "Below the spring low.",
-        tp_logic: "UAR (upper area of resistance) then prior swing high.",
+        trigger: "Price breaks below the support zone (BC/SC area) on declining volume — the Spring. Price immediately recovers back above support. A Test of the Spring follows on very low volume with a higher low. Entry on close of the Test candle.",
+        sl_logic: "Below the Spring low — the absolute lowest point of the spring wick.",
+        tp_logic: "TP1 = UAR (Upper Area of Resistance — top of the trading range). TP2 = prior swing high above the range.",
+        consistency_rules: "Volume on the Spring break must be declining or climactic — not expanding. Test candle volume must be clearly lower than the Spring candle volume.",
       },
       {
         name: "LPS Entry (Last Point of Support)",
-        trigger: "After SOS break, price retests the broken resistance (now support) on declining volume. Entry at LPS zone on rejection candle.",
-        sl_logic: "Below LPS zone.",
-        tp_logic: "Measured move from the TR (trading range) depth.",
+        trigger: "After a Sign of Strength breaks above resistance, price pulls back to the Last Point of Support — former resistance now acting as support. Volume declines on pullback. Entry on rejection candle at LPS zone.",
+        sl_logic: "Below the LPS zone low.",
+        tp_logic: "Measured move from the Trading Range depth projected upward from the LPS.",
+        consistency_rules: "SOS must already be confirmed before looking for LPS. Volume must decline on the pullback to LPS — high-volume pullbacks are warning signs.",
       },
     ],
   },
 
   "EMA Trend": {
-    description: "Trend-following using EMA stack alignment. Entries on pullbacks to EMA zone in direction of trend.",
+    description:
+      "Trend-following using EMA stack alignment. Entries on pullbacks to the EMA zone in the direction of the established trend.",
     checklist: [
-      { description: "EMA stack aligned — fast EMA above slow EMA (bull) or below (bear) on HTF", weight: "High", category: "Structure" },
-      { description: "Price pulled back to EMA zone — not extended far from EMAs", weight: "High", category: "PD_Arrays" },
-      { description: "Trend continuation candle forms at EMA zone (pin bar, engulfing)", weight: "High", category: "Candle_Patterns" },
-      { description: "Momentum indicator confirms (RSI > 50 for bull, < 50 for bear)", weight: "Medium", category: "Indicators" },
-      { description: "Market not in chop — ADR expanding not contracting", weight: "Medium", category: "Risk" },
+      { description: "EMA stack aligned on HTF — fast EMA above slow EMA (bull) or below (bear) on D or 4H", weight: "High", category: "Structure" },
+      { description: "Price has pulled back to the fast EMA zone — not extended far above/below", weight: "High", category: "PD_Arrays" },
+      { description: "Trend continuation candle forms at EMA zone — pin bar or engulfing touching EMA", weight: "High", category: "Candle_Patterns" },
+      { description: "Momentum confirms — RSI above 50 for bull entries, below 50 for bear entries", weight: "Medium", category: "Indicators" },
+      { description: "ADR expanding, not contracting — avoid entries in tightening range environments", weight: "Medium", category: "Risk" },
     ],
     entry_models: [
       {
         name: "EMA Pullback Continuation",
-        trigger: "Price in uptrend pulls back to the fast EMA zone. Rejection candle forms touching or piercing EMA. Entry on close of rejection candle.",
-        sl_logic: "Below the slow EMA + buffer.",
-        tp_logic: "Previous swing high. Extend to HTF resistance.",
+        trigger: "Price in established uptrend pulls back to touch or slightly pierce the fast EMA. A rejection candle (pin bar or engulfing) forms at the EMA. Entry on close of that rejection candle. Fast EMA must be above slow EMA.",
+        sl_logic: "Below the slow EMA plus a small buffer — not just below the fast EMA.",
+        tp_logic: "TP1 = previous swing high. TP2/TP3 = next HTF resistance levels.",
+        consistency_rules: "EMA stack must be confirmed — fast above slow (bull), fast below slow (bear). A recent EMA cross makes this model invalid until stack is re-established.",
       },
       {
         name: "EMA Cross Retest",
-        trigger: "Fast EMA crosses above/below slow EMA (trend shift). Price retests the cross level. Entry on rejection at the cross zone.",
-        sl_logic: "Beyond the cross zone.",
-        tp_logic: "1.5-2x the distance from SL to entry, extended to next S/R.",
+        trigger: "Fast EMA crosses above the slow EMA (bull) or below (bear) — a trend shift signal. Price rallies then pulls back to retest the cross zone. Entry on rejection candle at the cross zone.",
+        sl_logic: "Beyond the cross zone — below the slow EMA for bull cross entries.",
+        tp_logic: "TP1 = 1.5-2x SL distance. TP2/TP3 = next S/R levels.",
+        consistency_rules: "Cross must be confirmed — the fast EMA must have closed on the other side of the slow EMA. The retest must respect the cross zone, not simply drift back through.",
       },
     ],
   },
 
   Breakout: {
-    description: "Identifies range boundaries and enters on confirmed breakout candle close with retest validation.",
+    description:
+      "Identifies clearly defined consolidation ranges and enters on confirmed candle body breakout, validated by retest hold.",
     checklist: [
-      { description: "Range clearly defined — at least 3 touches on both boundaries", weight: "High", category: "Structure" },
-      { description: "Breakout candle closes decisively beyond range boundary (not just a wick)", weight: "High", category: "Candle_Patterns" },
-      { description: "Retest of broken boundary holds — closes back on breakout side", weight: "High", category: "Structure" },
-      { description: "Volume expansion on breakout candle relative to range candles", weight: "Medium", category: "Candle_Patterns" },
-      { description: "False-break risk checked — no major S/R just beyond the breakout level", weight: "Medium", category: "Risk" },
+      { description: "Range clearly defined — at least 3 touches on both upper and lower boundaries", weight: "High", category: "Structure" },
+      { description: "Breakout candle body closes decisively beyond range boundary — wick-only breakouts do not qualify", weight: "High", category: "Candle_Patterns" },
+      { description: "Retest of broken boundary holds — at least one candle closes back on the breakout side", weight: "High", category: "Structure" },
+      { description: "Volume expands on the breakout candle relative to average range candles", weight: "Medium", category: "Candle_Patterns" },
+      { description: "No major HTF S/R level sitting immediately beyond the breakout point", weight: "Medium", category: "Risk" },
     ],
     entry_models: [
       {
         name: "Breakout Retest Entry",
-        trigger: "Price breaks range cleanly with body close. Retests the breakout level. Rejection candle confirms hold. Entry on confirmation candle close.",
-        sl_logic: "Back inside the range beyond the boundary.",
-        tp_logic: "1x range height projected from breakout point.",
+        trigger: "Price breaks range boundary with a candle body close. Price pulls back to retest the boundary. A rejection candle confirms the level holds. Entry on close of confirmation candle at the retest.",
+        sl_logic: "Back inside the range — beyond the breakout boundary on the range side.",
+        tp_logic: "TP1 = 1x range height from breakout point. TP2 = 1.5-2x.",
+        consistency_rules: "Range must have at least 3 touches on each boundary — 2-touch ranges are too weak. Retest candle must close on the breakout side, not just touch and reverse.",
       },
       {
         name: "Anticipatory Breakout",
-        trigger: "Price compressing near boundary with decreasing candle size (triangle/wedge). Entry on close beyond boundary — no retest wait.",
-        sl_logic: "Back inside range midpoint.",
-        tp_logic: "Range height measured from the first touch of the boundary.",
+        trigger: "Price compressing near the boundary with progressively smaller candle bodies (triangle/wedge). Entry on the candle that closes beyond the boundary — no retest wait. Only when compression is extreme and momentum is building.",
+        sl_logic: "Back to the range midpoint — wider than retest entry due to no confirmation.",
+        tp_logic: "Range height measured from first boundary touch, projected from entry.",
+        consistency_rules: "Use only when compression is clear and candle bodies are visibly shrinking over 5+ candles. Avoid if compression is not obvious — use Breakout Retest Entry instead.",
       },
     ],
   },
 
   VWAP: {
-    description: "Session-anchored VWAP used as dynamic S/R. Entries on reclaim or rejection of VWAP in context of session bias.",
+    description:
+      "Session-anchored VWAP used as dynamic institutional reference. Entries on VWAP reclaim or rejection with supporting PD array or S/R confluence.",
     checklist: [
-      { description: "Price vs VWAP bias clear — above VWAP (bull) or below (bear) for the session", weight: "High", category: "Structure" },
-      { description: "VWAP reclaim (bull) or VWAP rejection (bear) candle confirmed", weight: "High", category: "Candle_Patterns" },
-      { description: "Session anchor context aligned — not using prior session VWAP for current session", weight: "High", category: "Session" },
-      { description: "VWAP confluence with nearby S/R or PD array", weight: "Medium", category: "PD_Arrays" },
-      { description: "Risk controlled — SL beyond VWAP deviation band not just VWAP line", weight: "Medium", category: "Risk" },
+      { description: "Session VWAP bias clear — price spending majority of session above VWAP (bull) or below (bear)", weight: "High", category: "Structure" },
+      { description: "VWAP reclaim candle (bull) or VWAP rejection candle (bear) confirmed with candle close", weight: "High", category: "Candle_Patterns" },
+      { description: "Correct session VWAP used — anchored to current session open, not prior session", weight: "High", category: "Session" },
+      { description: "VWAP level coincides with nearby S/R, OB, or FVG — not VWAP alone", weight: "Medium", category: "PD_Arrays" },
+      { description: "SL placed beyond VWAP standard deviation band, not just the VWAP line", weight: "Medium", category: "Risk" },
     ],
     entry_models: [
       {
         name: "VWAP Reclaim",
-        trigger: "Price dips below VWAP intraday, then candle closes back above VWAP. Entry on the reclaim close.",
+        trigger: "In a bullish session, price temporarily dips below VWAP. A candle then closes back above VWAP — the reclaim. Entry on that reclaim close, ideally at a confluence zone (OB or S/R near VWAP).",
         sl_logic: "Below the low of the reclaim candle.",
-        tp_logic: "VWAP +1 standard deviation band. Then prior high.",
+        tp_logic: "TP1 = VWAP +1 standard deviation band. TP2 = session high or prior swing.",
+        consistency_rules: "Session must have established a bullish bias before the dip. A session that opened below VWAP and has not reclaimed it is not a reclaim setup.",
       },
       {
         name: "VWAP Rejection",
-        trigger: "Price rallies to VWAP from below (in downtrend) and fails — rejection candle closes back below. Entry on close.",
-        sl_logic: "Above VWAP + small buffer.",
-        tp_logic: "Session low. Then VWAP -1 deviation.",
+        trigger: "In bearish session (price below VWAP), price rallies to VWAP. A rejection candle closes back below VWAP. Entry on that close.",
+        sl_logic: "Above VWAP plus a small buffer.",
+        tp_logic: "TP1 = session low. TP2 = VWAP -1 standard deviation.",
+        consistency_rules: "Session must have established a bearish bias below VWAP. Rally to VWAP must be a retracement, not a trend change. If price reclaims VWAP convincingly, this setup is invalid.",
       },
     ],
   },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BACKWARD COMPATIBILITY — STRATEGY_CHECKLIST
+// FIX: Previous version returned STRATEGY_ENTRY_MODELS directly, which broke
+// any existing code expecting flat string arrays. Now correctly derived.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const STRATEGY_CHECKLIST = Object.fromEntries(
+  Object.entries(STRATEGY_ENTRY_MODELS).map(([strategy, data]) => [
+    strategy,
+    data.checklist.map((item) => item.description),
+  ])
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PROFILE PRESETS
+// FIX: day rr raised from "1" to "2". scalper from "1" to "1.5".
+//      min_rr of 1.0 allowed Grade A at 1:1 RR which is unacceptably low.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PROFILE_PRESETS = {
-  position: { label: "Position (w+d / 4h / 1h)", htf_tfs: ["w", "d"], exec_tfs: ["4h"], conf_tfs: ["1h"], sessions: "Any", rr: "3" },
-  swing:    { label: "Swing (d+4h / 1h / 15m)",  htf_tfs: ["d", "4h"], exec_tfs: ["1h"], conf_tfs: ["15m"], sessions: "Any", rr: "2" },
-  day:      { label: "Daily (d+4h / 15m / 5m)",  htf_tfs: ["d", "4h"], exec_tfs: ["15m"], conf_tfs: ["5m"], sessions: "Any", rr: "1" },
-  scalper:  { label: "Scalping (4h+1h / 5m / 1m)", htf_tfs: ["4h", "1h"], exec_tfs: ["5m"], conf_tfs: ["1m"], sessions: "Any", rr: "1" },
+  position: { label: "Position (w+d / 4h / 1h)",   htf_tfs: ["w", "d"],   exec_tfs: ["4h"],  conf_tfs: ["1h"],  sessions: "Any", rr: "3"   },
+  swing:    { label: "Swing (d+4h / 1h / 15m)",    htf_tfs: ["d", "4h"],  exec_tfs: ["1h"],  conf_tfs: ["15m"], sessions: "Any", rr: "2"   },
+  day:      { label: "Daily (d+4h / 15m / 5m)",    htf_tfs: ["d", "4h"],  exec_tfs: ["15m"], conf_tfs: ["5m"],  sessions: "Any", rr: "2"   },
+  scalper:  { label: "Scalping (4h+1h / 5m / 1m)", htf_tfs: ["4h", "1h"], exec_tfs: ["5m"],  conf_tfs: ["1m"],  sessions: "Any", rr: "1.5" },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -368,19 +425,25 @@ export const DEFAULT_CONFIG = {
 // AI RESPONSE SCHEMA
 //
 // DESIGN PRINCIPLES:
-//   1. HTF (D, 4H etc.) — bias, reference zones, and DOL ONLY.
-//      HTF zones are included only when they serve a specific role:
-//      TP_Target | Entry_Boundary | DOL | Invalidation.
-//      No full PD array listing, no checklist, no path steps at HTF.
-//   2. LTF (15M, 5M etc.) — full detail: structure, PD arrays, key levels,
-//      expected path, and key events. This is the execution layer.
+//   1. HTF (D, 4H, W) — bias, price narrative, DOL, and reference zones ONLY.
+//      Every reference zone must have a relevance tag — no zone listed without purpose.
+//      No PD array listings, no confluence scoring, no path steps at HTF level.
+//   2. LTF (15M, 5M, 1M) — full execution detail: structure, PD arrays,
+//      key levels, expected path, key events.
 //   3. Confluence checklist belongs to the STRATEGY, not the entry model.
-//      Only PASSED items are listed. Failed HIGH-weight items are listed
-//      separately as failed_critical (blockers). Medium/Low failures omitted.
-//   4. Trade plan is pure execution output. Entry, SL, TP all derived from
-//      LTF analysis anchored to HTF reference zones.
-//   5. estimate_candles_that_entry_happens = 0 means entry condition is
-//      already met (e.g. price already inside OB). Higher = further away.
+//      Only PASSED items in passed_items[]. Only failed HIGH-weight items in
+//      failed_critical[]. Medium/Low failures silently reflected in score only.
+//   4. Trade plan is pure execution output.
+//      Entry from LTF PD array. SL from entry model sl_logic. TP1 from LTF levels.
+//      TP2/TP3 anchored to HTF reference_zones by ID.
+//   5. estimate_candles_that_entry_happens = 0 means entry condition is already
+//      met right now. Use Market order. Higher = further away.
+//   6. skip_reasons[] only populated when trade_decision is NOT "Proceed".
+//   7. Multiple active strategies: score each independently. Use the best
+//      individual strategy score. Name the winning strategy in trade_plan[].strategy.
+//
+// NOTE: JS comments in this object are for developer reference only.
+//       JSON.stringify strips them — the AI receives clean JSON.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AI_RESPONSE_SCHEMA = {
@@ -388,30 +451,25 @@ export const AI_RESPONSE_SCHEMA = {
 
   ai_full_analysis: {
 
-    // ── HTF LAYER ─────────────────────────────────────────────────
-    // Purpose: define bias, price narrative, DOL, and zones that
-    //          anchor TP levels or define entry region boundaries.
-    // Do NOT: list full PD arrays, key events, or path steps here.
-    // ─────────────────────────────────────────────────────────────
+    // HTF LAYER
+    // One entry per HTF timeframe from config.
+    // Purpose: bias, narrative, DOL, and reference zones that anchor TP levels.
+    // Do NOT include: full PD array lists, confluence scoring, path steps.
     htf_context: [
       {
         timeframe: "D|4H|W",
         trend: "Bullish|Bearish|Ranging",
         bias: "Long|Short|Neutral",
-        what_price_just_did: "",       // factual — last confirmed structural move
-        what_price_likely_does_next: "", // forward narrative — one sentence
-
+        what_price_just_did: "",
+        what_price_likely_does_next: "",
         draw_on_liquidity: {
-          narrative: "",               // WHY this is the target
+          narrative: "",
           target_price: null,
-          target_type: "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL",
+          target_type: "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL|WeeklyOpen",
         },
-
-        // HTF zones included ONLY if they play a specific role in the trade.
-        // Each zone must have a relevance tag — do not list zones without one.
         reference_zones: [
           {
-            id: "",                    // e.g. "D-OB-1", "4H-FVG-2"
+            id: "",
             type: "OB|FVG|Breaker|Void|BSL|SSL|PDH|PDL|EQH|EQL|WeeklyOpen|DailyOpen|MidnightOpen",
             direction: "Bullish|Bearish",
             zone_top: null,
@@ -423,11 +481,11 @@ export const AI_RESPONSE_SCHEMA = {
       },
     ],
 
-    // ── LTF LAYER ─────────────────────────────────────────────────
-    // Purpose: identify exact entry structure, PD arrays, key levels,
-    //          confirmation events, and step-by-step expected path.
-    // This is the execution and confirmation timeframe detail.
-    // ─────────────────────────────────────────────────────────────
+    // LTF LAYER
+    // One entry per execution and confirmation TF from config.
+    // Purpose: full detail for entry identification and confirmation.
+    // Only include PD arrays within ~1-2% of current price.
+    // Only include key levels relevant to entry, SL, or TP1.
     ltf_analysis: [
       {
         timeframe: "15M|5M|1M",
@@ -435,35 +493,28 @@ export const AI_RESPONSE_SCHEMA = {
         structure: "BOS|CHoCH|MSB|Continuation|Ranging",
         phase: "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
         bias: "Long|Short|Neutral",
-        poi_aligned: true,              // true if price is at or approaching a valid POI
-        what_price_just_did: "",        // factual last structural event on this TF
+        poi_aligned: true,
+        what_price_just_did: "",
         what_price_likely_does_next: "",
-
-        // Significant structural or candle events on this LTF
         key_events: [
           {
             event: "BOS|CHoCH|MSB|Sweep|Rejection|Engulfing|PinBar|Doji|EQH|EQL|BSL|SSL",
             price: null,
-            time: null,                 // ISO string or unix if available
+            time: null,
             direction: "Bullish|Bearish",
           },
         ],
-
-        // Step-by-step path price must take before entry is valid.
-        // entry model is only triggered when step conditions are met in sequence.
         expected_path: [
           {
             step: 1,
             action: "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
             target_price: null,
-            required_condition: "",     // exact condition needed before next step
+            required_condition: "",
           },
         ],
-
-        // LTF PD arrays near current price that directly influence entry/SL
         pd_arrays: [
           {
-            id: "",                     // e.g. "15M-OB-1", "5M-FVG-1"
+            id: "",
             type: "OB|FVG|Breaker|Mitigation|Void|Rejection|Propulsion",
             direction: "Bullish|Bearish",
             strength: "Strong|Weak",
@@ -474,8 +525,6 @@ export const AI_RESPONSE_SCHEMA = {
             note: "",
           },
         ],
-
-        // Key price levels on LTF relevant to entry/SL/TP1
         key_levels: [
           {
             name: "PDH|PDL|WeeklyOpen|DailyOpen|MidnightOpen|NYOpen|EQH|EQL|BSL|SSL",
@@ -486,39 +535,31 @@ export const AI_RESPONSE_SCHEMA = {
       },
     ],
 
-    // ── CONFLUENCE CHECKLIST ──────────────────────────────────────
-    // Belongs to the STRATEGY, not the entry model.
-    // Evaluated before entry model is considered.
-    //
-    // passed_items   : only items that ARE confirmed. Do not list unmet items here.
-    // failed_critical: only High-weight items that are NOT met (blockers).
-    //                  Medium/Low failures are omitted — they are reflected in score only.
-    //
-    // weighted_score calculation:
-    //   High item passed   = 3 points
-    //   Medium item passed = 2 points
-    //   Low item passed    = 1 point
-    //   Score = (sum of passed points / sum of all possible points) * 100
-    // ─────────────────────────────────────────────────────────────
+    // CONFLUENCE CHECKLIST
+    // Scored independently for buy and sell.
+    // passed_items: ONLY confirmed items. Never list unmet items here.
+    // failed_critical: ONLY High-weight items NOT met. Medium/Low failures omitted.
+    // linked_array_id references: htf_context[].reference_zones[].id
+    //                          or ltf_analysis[].pd_arrays[].id
     confluence_checklist: {
       buy: {
-        weighted_score: 0,            // 0-100
-        high_weight_passed: 0,        // count of High-weight items that passed
-        high_weight_total: 0,         // total High-weight items for this strategy
+        weighted_score: 0,
+        high_weight_passed: 0,
+        high_weight_total: 0,
         passed_items: [
           {
             strategy: "ICT|SMC|Price Action|Market Structure|Wyckoff|EMA Trend|Breakout|VWAP",
-            category: "Structure|PD_Arrays|Liquidity|Session|Fibonacci|Candle|Correlation|Risk",
-            description: "",          // what condition was confirmed — be specific
+            category: "Structure|PD_Arrays|Liquidity|Session|Fibonacci|Candle_Patterns|Correlation|Risk|Indicators",
+            description: "",
             weight: "High|Medium|Low",
-            linked_array_id: null,    // references htf reference_zones.id or ltf pd_arrays.id
+            linked_array_id: null,
           },
         ],
         failed_critical: [
           {
             strategy: "",
-            description: "",          // which High-weight condition was NOT met
-            impact: "",               // why this matters — consequence of missing it
+            description: "",
+            impact: "",
           },
         ],
       },
@@ -532,208 +573,210 @@ export const AI_RESPONSE_SCHEMA = {
     },
   },
 
-  // ── TRADE PLAN ────────────────────────────────────────────────
-  // Pure execution output. Only populated when:
-  //   - high_weight_passed / high_weight_total >= 0.75
-  //   - weighted_score >= 65
-  //   - RR >= min_rr configured
-  //   - ADR has room for TP1 minimum
-  // Return empty array [] if no valid setup exists.
-  // Max 2 plans, sorted by confidence_pct descending.
-  //
-  // Entry, SL, and TP must be derived from LTF pd_arrays and
-  // anchored to HTF reference_zones. Never arbitrary.
-  // ─────────────────────────────────────────────────────────────
+  // TRADE PLAN
+  // Pure execution output.
+  // Populate ONLY when all gate conditions are met (see GUIDE_TEXT Step 5).
+  // Return empty array [] if no valid setup.
+  // Max 2 plans. Sort by confidence_pct descending.
   trade_plan: [
     {
-      // ── IDENTITY ──────────────────────────────────────────────
       direction: "BUY|SELL",
       profile: "Position|Swing|Intraday|Scalp",
       order_type: "Limit|Stop Limit|Market",
-      // Use Market only when entry condition is already met and
-      // waiting risks missing the trade entirely.
       session: "Asian|London|NewYork|Overlap",
       strategy: "ICT|SMC|Price Action|Market Structure|Wyckoff|EMA Trend|Breakout|VWAP",
-      entry_model: "",  // exact name from STRATEGY_ENTRY_MODELS e.g. "OB + FVG Confluence"
-
-      // ── LEVELS ────────────────────────────────────────────────
+      entry_model: "",
       entry_price: null,
       stop_loss: null,
-      breakeven_trigger: null,    // price at which to move SL to entry (usually after TP1 hit)
+      breakeven_trigger: null,
       take_profits: [
-        {
-          price: null,
-          close_position_pct: 50, // partial close percentage
-          reward_to_risk: null,
-          reference: "",          // HTF reference_zones.id that justifies this TP level
-        },
-        {
-          price: null,
-          close_position_pct: 30,
-          reward_to_risk: null,
-          reference: "",
-        },
-        {
-          price: null,
-          close_position_pct: 20,
-          reward_to_risk: null,
-          reference: "",
-        },
+        { price: null, close_position_pct: 50, reward_to_risk: null, reference: "" },
+        { price: null, close_position_pct: 30, reward_to_risk: null, reference: "" },
+        { price: null, close_position_pct: 20, reward_to_risk: null, reference: "" },
       ],
-
-      // ── RISK ──────────────────────────────────────────────────
-      risk_reward: null,          // calculated from entry to SL vs entry to TP1
-      risk_percent: null,         // 1.0 if score>=85 | 0.5 if score 65-84 | 0.25 if score<65
-      estimated_candles_to_tp1: null, // expected candle count on execution TF to reach TP1
-
-      // ── TIMING ────────────────────────────────────────────────
-      // 0 = entry condition already met right now — act immediately or use Market.
-      // 1-5 = within a few candles on execution TF.
-      // 6+ = setup needs more time to develop — set limit order and wait.
+      risk_reward: null,
+      risk_percent: null,
+      estimated_candles_to_tp1: null,
       estimate_candles_that_entry_happens: null,
-
-      // ── CONDITIONS ────────────────────────────────────────────
-      entry_trigger: "",          // exact condition: "15M candle closes inside 15M-OB-1 with rejection wick"
-      mid_trade_invalidation: "", // condition that cancels trade AFTER entry e.g. "15M closes below OB zone"
-      pre_entry_invalidation: "", // condition that cancels setup BEFORE entry e.g. "price closes above 4H-OB-1"
-
-      // ── DECISION ──────────────────────────────────────────────
-      confluence_score: 0,        // mirrors confluence_checklist buy/sell weighted_score
+      entry_trigger: "",
+      mid_trade_invalidation: "",
+      pre_entry_invalidation: "",
+      confluence_score: 0,
       trade_decision: "Proceed|Wait|Reduce|Skip",
       skip_reasons: [
-        {
-          reason: "",
-          severity: "High|Medium|Low",
-        },
+        { reason: "", severity: "High|Medium|Low" },
       ],
-
-      // ── VERDICT ───────────────────────────────────────────────
-      grade: "A|B|C|NoTrade",     // A = score>=85 + all high passed | B = score 65-84 | C = marginal
-      confidence_pct: 0,          // 0-100 overall conviction including timing and context
+      grade: "A|B|C|NoTrade",
+      confidence_pct: 0,
       note: "",
     },
   ],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GUIDE TEXT
-// This is injected into the prompt. It is the most critical instruction block.
+// GUIDE TEXT — injected directly into the prompt.
+// This is the most critical instruction block.
+// Every rule must be unambiguous. The AI reads this as its operating procedure.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GUIDE_TEXT = `
-ANALYSIS APPROACH — READ THIS CAREFULLY BEFORE ANALYZING:
+You are a Senior ICT + Price Action + Market Structure institutional trader.
+Analyze the uploaded chart(s) by following ALL steps below IN ORDER.
+Return STRICT JSON only. No markdown. No prose. No explanation outside JSON.
 
-═══════════════════════════════════════════════════
-STEP 1 — HTF ANALYSIS (Bias, Direction, Targets)
-═══════════════════════════════════════════════════
-Use D and 4H charts ONLY to establish:
-  1. Trend direction — sequence of HH/HL (bull) or LH/LL (bear).
-  2. Where price is in the macro range — premium (above 0.5 fib) or discount (below).
-  3. Draw on Liquidity (DOL) — the nearest unswept BSL or SSL, or an unfilled HTF FVG / OB that price is being pulled toward. This becomes TP2 or TP3.
-  4. Reference zones — HTF OB/FVG/key levels that act as TP targets, entry region boundaries, or invalidation levels. ONLY map zones with a clear role. Do not list every zone you see.
-  5. What price just did and what it is likely to do next — one sentence each.
+═══════════════════════════════════════════════════════════
+STEP 1 — HTF ANALYSIS (Bias, Direction, TP Anchors)
+═══════════════════════════════════════════════════════════
+Analyze each HTF timeframe from config. For each:
 
-HTF defines the CONTEXT. It tells you WHERE entries are valid and WHERE TPs should be anchored.
-Do not look for entries on HTF. Do not score confluence on HTF.
+1.1 TREND — read the sequence of swing highs and lows:
+  Bullish = series of Higher Highs and Higher Lows confirmed.
+  Bearish = series of Lower Highs and Lower Lows confirmed.
+  Ranging = no clear directional sequence.
 
-═══════════════════════════════════════════════════
-STEP 2 — LTF ANALYSIS (Entry, Confirmation, Precision)
-═══════════════════════════════════════════════════
-Use 15M (execution) and 5M (confirmation) to identify:
-  1. Current LTF structure — BOS/CHoCH chain confirming alignment with HTF bias.
-  2. PD arrays near current price — OB, FVG, Breaker. Only those within 1-2% of current price.
-  3. Key levels — PDH, PDL, MidnightOpen, EQH, EQL. Only those directly relevant to the setup.
-  4. Expected path — step by step what price must do before entry is valid.
-  5. Key events — BOS, CHoCH, sweeps, rejection candles. Include price and time.
+1.2 BIAS — based on most recent structural event:
+  Long    = last confirmed event was a BOS upward or CHoCH from bear to bull.
+  Short   = last confirmed event was a BOS downward or CHoCH from bull to bear.
+  Neutral = price at equilibrium or no recent structural confirmation.
 
-LTF defines the ENTRY TIMING. Entry, SL, and TP1 must come from LTF zones.
-TP2 and TP3 must be anchored to HTF reference zones mapped in Step 1.
+1.3 PRICE NARRATIVE (one sentence each):
+  what_price_just_did: factual past tense. Example: "Swept PDH at 8220, bearish CHoCH formed on 4H."
+  what_price_likely_does_next: forward looking. Example: "Expected to retrace to 4H OB at 8140-8155 then continue higher."
 
-═══════════════════════════════════════════════════
+1.4 DRAW ON LIQUIDITY:
+  Identify the single nearest unswept liquidity pool or unfilled PD array price is drawn toward.
+  Becomes TP2 or TP3. Explain WHY in the narrative field — not just the price.
+
+1.5 REFERENCE ZONES:
+  Map ONLY zones with a specific role in this trade. Assign relevance carefully:
+    TP_Target     = level used as TP2 or TP3
+    Entry_Boundary = defines the valid zone for LTF entries
+    DOL           = draw on liquidity anchor
+    Invalidation  = trade cancelled if price closes beyond this before entry
+  Assign IDs in format TF-TYPE-N: "D-OB-1", "4H-FVG-2", "D-PDH-1"
+
+HTF DOES NOT provide entry signals, score confluence, or list every PD array visible.
+
+═══════════════════════════════════════════════════════════
+STEP 2 — LTF ANALYSIS (Entry Structure, Confirmation)
+═══════════════════════════════════════════════════════════
+Analyze each execution and confirmation TF from config. For each:
+
+2.1 STRUCTURE — BOS/CHoCH chain on LTF must align with HTF bias.
+  If LTF structure conflicts with HTF bias — this is a red flag. Note it in what_price_just_did.
+
+2.2 PD ARRAYS — list only zones within ~1-2% of current price.
+  ID format: "15M-OB-1", "5M-FVG-1". These IDs are referenced in trade_plan and checklist.
+
+2.3 KEY LEVELS — only those relevant to entry, SL, or TP1.
+
+2.4 EXPECTED PATH — step-by-step what price must do before entry trigger fires.
+  Each step has a required_condition. Entry model triggers only after all steps complete.
+
+2.5 KEY EVENTS — record BOS candles, CHoCH candles, sweeps, rejections.
+  Include price and time if visible.
+
+═══════════════════════════════════════════════════════════
 STEP 3 — STRATEGY CHECKLIST SCORING
-═══════════════════════════════════════════════════
-For each active strategy, score buy and sell independently.
-  - High item passed = 3 points. Medium = 2 points. Low = 1 point.
-  - weighted_score = (passed points / total possible points) * 100.
-  - List ONLY passed items in passed_items[].
-  - List ONLY failed High-weight items in failed_critical[] with impact explanation.
-  - Do not list failed Medium or Low items — they are noise.
+═══════════════════════════════════════════════════════════
+For each active strategy, score BUY and SELL independently.
+Multiple active strategies: score each separately. Use the BEST individual score.
 
-GATE: high_weight_passed / high_weight_total must be >= 0.75 to proceed.
-If gate fails → trade_plan = [] regardless of score.
+SCORING:
+  High item confirmed   = 3 points
+  Medium item confirmed = 2 points
+  Low item confirmed    = 1 point
+  weighted_score = ROUND( sum_passed_points / sum_total_possible_points * 100 )
 
-═══════════════════════════════════════════════════
+passed_items[]: list ONLY confirmed items. Each must reference the zone that confirmed it.
+  Be specific in description — not "BOS confirmed" but "BOS confirmed at 8142 on 15M, candle body close above prior swing at 8138."
+
+failed_critical[]: list ONLY High-weight items NOT met.
+  Include impact — why this missing condition matters for this specific trade.
+  Medium and Low failures are NOT listed — silently reflected in score.
+
+GATE CHECK — must pass before Step 4:
+  high_weight_passed / high_weight_total >= 0.75
+  If this gate fails → trade_plan = []  STOP. Do not evaluate entry models.
+
+═══════════════════════════════════════════════════════════
 STEP 4 — ENTRY MODEL SELECTION
-═══════════════════════════════════════════════════
-Only scan for entry models AFTER checklist gate is passed.
-Select the entry model that best matches current LTF conditions.
-The entry model name MUST exactly match a name from the ACTIVE ENTRY MODELS section above.
-Do not use entry models not listed there.
+═══════════════════════════════════════════════════════════
+Only reach this step AFTER Step 3 gate has passed.
 
-The strategy, entry_model, profile, order_type, session, and trade direction must ALL be internally consistent.
+Select the entry model from the active strategy that best matches LTF conditions from Step 2.
+The entry_model field MUST exactly match a name listed in ACTIVE STRATEGIES section of this prompt.
 
+INTERNAL CONSISTENCY RULES — ALL of the following must be true simultaneously:
+  ✓ Strategy + entry_model must be from the same strategy family
+  ✓ ICT strategy → session must be London (02:00-05:00 EST) or NY (07:00-10:00 EST)
+  ✓ Silver Bullet → ONLY valid between 10:00-11:00 AM EST. Invalid at any other time.
+  ✓ Power of 3 (AMD) → entry ONLY after London manipulation leg completes and price closes back inside Asian range. Never on the sweep.
+  ✓ Judas Swing → entry ONLY after 15M CHoCH confirms reversal. Never on the Judas swing itself.
+  ✓ CISD → entry on body retest only — not wick retest.
+  ✓ BOS + Retest → requires confirmed BOS candle body close FIRST, then retest. Cannot anticipate BOS.
+  ✓ MSB Confirmation → HTF MSB must already be confirmed, not anticipated.
+  ✓ CHoCH Entry → requires a prior established trend to change FROM. Invalid in ranging markets.
+  ✓ Fakey → requires a prior inside bar to have formed. Cannot apply to random reversals.
+  ✓ profile Scalp → do not hold trade beyond session close. estimated_candles_to_tp1 must be small.
+  ✓ order_type = Market → only when estimate_candles_that_entry_happens = 0 AND missing entry is costly.
+  ✓ order_type = Stop Limit → only when entry requires a breakout candle close confirmation.
+  ✓ order_type = Limit → default when price has not yet reached the entry zone.
+
+═══════════════════════════════════════════════════════════
 STEP 5 — TRADE PLAN CONSTRUCTION
-═══════════════════════════════════════════════════
-Only construct a trade plan when ALL of the following are true:
-  ✓ Checklist gate passed (high_weight_passed / high_weight_total >= 0.75)
+═══════════════════════════════════════════════════════════
+Only construct a trade plan when ALL of the following are satisfied:
+  ✓ Checklist gate passed: high_weight_passed / high_weight_total >= 0.75
   ✓ weighted_score >= 65
-  ✓ A valid entry model trigger is identifiable on LTF
-  ✓ RR >= configured min_rr (use the MinRR value from CONTEXT above)
+  ✓ Entry model trigger identifiable on LTF now or imminently
+  ✓ risk_reward >= min_rr from config (RR = TP1 distance / SL distance)
   ✓ ADR has sufficient remaining range to reach TP1
-  ✓ No conflicting HTF structure opposing the trade direction
+  ✓ No unresolved conflicting HTF structure directly opposing the trade
 
-If any condition fails → return trade_plan as empty array []. Do not force a setup.
+If ANY condition fails → return trade_plan = []. Never force a setup.
 
-ENTRY PRICE: from LTF PD array (OB top/bottom, FVG midpoint).
-STOP LOSS: beyond the LTF PD array extreme + buffer. Derived from entry model SL logic.
-TP1: nearest LTF liquidity target (EQH/EQL or PDH/PDL). Must be reachable within ADR.
-TP2: HTF reference zone mapped in htf_context (BSL/SSL or HTF FVG/OB).
-TP3: HTF DOL target (draw_on_liquidity.target_price).
+ENTRY PRICE: from LTF pd_array zone (OB top/bottom for buys/sells, FVG 50% midpoint).
+STOP LOSS: from entry model sl_logic — beyond zone extreme plus buffer. Never inside the zone.
+TP1: nearest LTF liquidity (EQH/EQL, PDH/PDL) reachable within remaining ADR.
+TP2: HTF reference_zone — reference field must contain the zone ID from htf_context.
+TP3: HTF DOL target — reference field must contain the zone ID from htf_context.
+All take_profits[].reference fields must link to a real htf_context reference_zones[].id.
 
-TP references must link to htf_context.reference_zones[].id — never arbitrary.
-
-ORDER TYPE RULES:
-  - Limit: use when price has not yet reached the entry zone.
-  - Stop Limit: use when entry requires a breakout confirmation before filling.
-  - Market: ONLY when estimate_candles_that_entry_happens = 0 AND waiting risks missing the trade.
+ORDER TYPE:
+  Limit      → price has not yet reached the entry zone (default)
+  Stop Limit → entry requires a breakout candle close first
+  Market     → estimate_candles_that_entry_happens = 0 AND Limit order would miss the trade
 
 ESTIMATE CANDLES THAT ENTRY HAPPENS:
-  0 = entry condition met RIGHT NOW — can use Market order.
-  1-5 = entry expected within a few candles — set Limit order.
-  6+ = setup needs development — set Limit and monitor.
+  0   = entry condition met RIGHT NOW — price is in or at the zone, trigger may have fired
+  1–5 = entry expected within next few execution TF candles — set Limit order
+  6+  = setup needs more development — set Limit and monitor
 
-RISK SIZING:
-  weighted_score >= 85 AND grade = A → risk_percent = 1.0%
-  weighted_score 65-84 AND grade = B → risk_percent = 0.5%
-  weighted_score < 65 OR grade = C  → risk_percent = 0.25% (or skip)
+RISK SIZING — use best active strategy's weighted_score:
+  score >= 85 AND grade A → risk_percent = 1.0%
+  score 65–84 AND grade B → risk_percent = 0.5%
+  score 50–64 AND grade C → risk_percent = 0.25% (consider skipping)
 
-GRADE RULES:
-  A = score >= 85 AND all High-weight items passed AND RR >= configured min_rr
-  B = score 65-84 AND high_weight_passed/high_weight_total >= 0.75 AND RR >= configured min_rr
-  C = score 50-64 OR RR borderline — reduce size, consider skipping
-  NoTrade = score < 50 OR high gate failed OR RR < configured min_rr
+GRADE RULES — use min_rr from CONTEXT above:
+  A = weighted_score >= 85 AND all High-weight items passed AND risk_reward >= (min_rr * 1.5)
+  B = weighted_score 65–84 AND gate passed AND risk_reward >= min_rr
+  C = weighted_score 50–64 OR risk_reward borderline within 0.3 of min_rr
+  NoTrade = weighted_score < 50 OR gate failed OR risk_reward < min_rr
 
-SKIP REASONS (skip_reasons[]):
-  Only populate when trade_decision !== "Proceed". Leave empty [] when Proceed.
-  Each entry: { reason: "...", severity: "critical" | "warning" }
-  Critical = gate/score/RR failure. Warning = borderline ADR, uncertain model trigger.
+SKIP REASONS: populate skip_reasons[] ONLY when trade_decision is Wait, Reduce, or Skip.
+  Leave skip_reasons as empty array [] when trade_decision is Proceed.
 
-MULTI-STRATEGY SCORING:
-  When multiple strategies are active, score each independently for both BUY and SELL.
-  Do NOT average scores across strategies. Each direction's score is the BEST among active strategies.
-  If one strategy passes the gate and another fails, only the passing strategy's direction is valid.
-  The winning strategy must be listed in trade_plan[].strategy.
-
-═══════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════
 GENERAL RULES
-═══════════════════════════════════════════════════
-- Analyze HTF to LTF in sequence. Never reverse this order.
-- Maximum 2 trade plans. Sort by confidence_pct descending.
-- what_price_just_did must be factual (past tense). what_price_likely_does_next is forward-looking.
-- Do not generate plans for both BUY and SELL unless both pass the checklist gate independently.
-- Keep only relevant PD arrays near current price. Do not list every array visible on chart.
-- Use empty string "" for narrative fields when evidence is weak — do not fabricate narrative.
-- Return STRICT JSON only. No markdown, no prose, no explanation outside the JSON.
+═══════════════════════════════════════════════════════════
+- Analyze HTF → LTF in sequence. Never reverse this order.
+- Maximum 2 trade plans. Sort descending by confidence_pct.
+- Do not generate BUY and SELL plans simultaneously unless both pass the gate independently.
+- PD array IDs must be consistent across ltf_analysis, confluence checklist, and trade plan.
+- Every TP2 and TP3 reference field must contain a real ID from htf_context.reference_zones[].
+- Use empty string "" for narrative fields when evidence is weak. Never fabricate narrative.
+- Return STRICT JSON only. No markdown. No prose. No commentary outside the JSON.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -745,12 +788,81 @@ export function getEffectiveTfConfig(cfg) {
   const preset = PROFILE_PRESETS[profileKey] || PROFILE_PRESETS.day;
   return {
     profile: PROFILE_PRESETS[profileKey] ? profileKey : "day",
-    htf_tfs: Array.isArray(cfg?.htf_tfs) && cfg.htf_tfs.length ? cfg.htf_tfs : [...preset.htf_tfs],
+    htf_tfs:  Array.isArray(cfg?.htf_tfs)  && cfg.htf_tfs.length  ? cfg.htf_tfs  : [...preset.htf_tfs],
     exec_tfs: Array.isArray(cfg?.exec_tfs) && cfg.exec_tfs.length ? cfg.exec_tfs : [...preset.exec_tfs],
     conf_tfs: Array.isArray(cfg?.conf_tfs) && cfg.conf_tfs.length ? cfg.conf_tfs : [...preset.conf_tfs],
     sessions: cfg?.session || preset.sessions,
     rr: cfg?.rr || preset.rr,
   };
+}
+
+// Builds the active strategy block injected into the prompt.
+// CRITICAL: includes checklist items with weights AND full entry model details —
+// not just names. Without this the AI cannot score confluence or validate triggers.
+function buildStrategyContext(strategies) {
+  return strategies
+    .filter((s) => STRATEGY_ENTRY_MODELS[s])
+    .map((s) => {
+      const data = STRATEGY_ENTRY_MODELS[s];
+
+      const checklistBlock = data.checklist
+        .map((item) => `    [${item.weight}] (${item.category}) ${item.description}`)
+        .join("\n");
+
+      const modelsBlock = data.entry_models
+        .map((m) =>
+          `    • ${m.name}\n` +
+          `      Trigger: ${m.trigger}\n` +
+          `      SL: ${m.sl_logic}\n` +
+          `      TP: ${m.tp_logic}\n` +
+          `      Rules: ${m.consistency_rules}`
+        )
+        .join("\n\n");
+
+      return (
+        `━━━ STRATEGY: ${s} ━━━\n` +
+        `  ${data.description}\n\n` +
+        `  CHECKLIST (score buy and sell independently against these):\n${checklistBlock}\n\n` +
+        `  ENTRY MODELS (evaluate only after checklist gate passes):\n${modelsBlock}`
+      );
+    })
+    .join("\n\n");
+}
+
+// FIX: now serializes the actual AI_RESPONSE_SCHEMA so the AI sees the exact
+// output field structure. Previous version only returned enums — the AI had
+// to guess field names.
+export function buildSchemaString() {
+  return JSON.stringify(AI_RESPONSE_SCHEMA, null, 2);
+}
+
+// Builds enum and constraint reference appended after the schema.
+export function buildEnumString() {
+  return JSON.stringify({
+    schema_version: "2.3",
+    enums: {
+      tf:             ["MN", "W", "D", "4H", "1H", "15M", "5M", "1M"],
+      trend:          ["Bullish", "Bearish", "Ranging"],
+      structure:      ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
+      phase:          ["Trending", "Retracement", "Reversal", "Consolidation", "Breakout", "Breakdown", "Distribution", "Accumulation"],
+      bias:           ["Long", "Short", "Neutral"],
+      direction:      ["Bullish", "Bearish"],
+      weight:         ["High", "Medium", "Low"],
+      order_type:     ["Limit", "Stop Limit", "Market"],
+      trade_decision: ["Proceed", "Wait", "Reduce", "Skip"],  // FIX: was ["Proceed","Skip"] — missing Wait, Reduce
+      severity:       ["High", "Medium", "Low"],              // FIX: was ["critical","warning"] — now matches schema
+      grade:          ["A", "B", "C", "NoTrade"],
+      relevance:      ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"],
+    },
+    limits: {
+      max_trade_plans:    2,
+      max_pd_arrays:      6,
+      max_key_levels:     6,
+      max_reference_zones: 6,
+      max_key_events:     8,
+      max_expected_path:  5,
+    },
+  }, null, 2);
 }
 
 export function buildPrompt(cfg) {
@@ -760,50 +872,42 @@ export function buildPrompt(cfg) {
   const strategy = cfg.strategies.join(", ") || "ICT";
 
   const context = [];
-  if (cfg.htfbias) context.push(`htf_bias_override: "${cfg.htfbias}"`);
-  if (cfg.dir)     context.push(`direction: "${cfg.dir}"`);
-  if (cfg.news)    context.push(`news_risk: "${cfg.news}"`);
+  if (cfg.htfbias)                          context.push(`htf_bias_override: "${cfg.htfbias}"`);
+  if (cfg.dir)                              context.push(`direction: "${cfg.dir}"`);
+  if (cfg.news)                             context.push(`news_risk: "${cfg.news}"`);
   if (cfg.session && cfg.session !== "Any") context.push(`session: "${cfg.session}"`);
-  if (cfg.notes)   context.push(`notes: "${cfg.notes}"`);
+  if (cfg.notes)                            context.push(`notes: "${cfg.notes}"`);
 
-  // Build active strategy reference with checklist items and entry model details
-  const strategyRef = cfg.strategies
-    .filter((s) => STRATEGY_ENTRY_MODELS[s])
-    .map((s) => {
-      const def = STRATEGY_ENTRY_MODELS[s];
-      const checkItems = def.checklist
-        .map((c) => `  [${c.weight}] ${c.description}`)
-        .join("\n");
-      const models = def.entry_models
-        .map((m) => `  ${m.name} | Trigger: ${m.trigger} | SL: ${m.sl_logic} | TP: ${m.tp_logic}`)
-        .join("\n");
-      return `${s}:
-Checklist:\n${checkItems}\nEntry Models:\n${models}`;
-    })
-    .join("\n\n  ");
+  const strategyContext = buildStrategyContext(cfg.strategies);
 
-  return `## CONTEXT
-Symbol:${symbol} | Class:${cfg.asset} | Session:${cfg.session || "Any"} | Profile:${profileLabel} | MinRR:${cfg.rr} | MaxRisk:${cfg.risk}%
-HTF:${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(",")} | Execution:${tfConfig.exec_tfs.map((x) => String(x).toUpperCase()).join(",")} | Confirmation:${tfConfig.conf_tfs.map((x) => String(x).toUpperCase()).join(",")}
-Strategies: ${strategy}
-${context.length ? `Overrides: ${context.join("; ")}` : ""}
+  return `## SESSION CONFIG
+Symbol: ${symbol} | Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
+MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}%
+HTF: ${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
+Execution: ${tfConfig.exec_tfs.map((x) => String(x).toUpperCase()).join(", ")}
+Confirmation: ${tfConfig.conf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
+Active Strategies: ${strategy}
+${context.length ? `Overrides: ${context.join(" | ")}` : ""}
 
-## ACTIVE ENTRY MODELS
-  ${strategyRef}
+## ACTIVE STRATEGIES — CHECKLISTS AND ENTRY MODELS
+${strategyContext}
 
-## INSTRUCTIONS
+## ANALYSIS INSTRUCTIONS
 ${GUIDE_TEXT}
 
-## OUTPUT
-Return strict JSON matching the AI_RESPONSE_SCHEMA. No markdown. No prose. JSON only.
-Backend appends full schema, enums, and array limits separately.`;
+## EXPECTED OUTPUT SCHEMA
+Return your response as JSON exactly matching this structure:
+${buildSchemaString()}
+
+## FIELD CONSTRAINTS
+${buildEnumString()}`;
 }
 
 export function buildJsonConfig(cfg) {
   const tfConfig = getEffectiveTfConfig(cfg);
   return JSON.stringify(
     {
-      version: "2.2",
+      version: "2.3",
       saved_at: new Date().toISOString(),
       config: {
         symbol: cfg.symbol,
@@ -812,7 +916,7 @@ export function buildJsonConfig(cfg) {
         strategy: cfg.strategies.join(" + "),
         strategies: cfg.strategies,
         session: cfg.session,
-        min_rr: Number(cfg.rr),
+        min_rr: Number(tfConfig.rr),
         max_risk_pct: Number(cfg.risk),
         daily_adr_filter: true,
         killzones_est: ["02:00-05:00", "07:00-10:00"],
@@ -824,6 +928,11 @@ export function buildJsonConfig(cfg) {
         checklist_gate: {
           min_high_weight_ratio: 0.75,
           min_weighted_score: 65,
+        },
+        grade_thresholds: {
+          A: { min_score: 85, rr_multiplier: 1.5 },
+          B: { min_score: 65, rr_multiplier: 1.0 },
+          C: { min_score: 50, rr_multiplier: 0.9 },
         },
         lookback_bars: Number(cfg.lookbackBars),
         timeframe_array: {
@@ -837,27 +946,3 @@ export function buildJsonConfig(cfg) {
     2
   );
 }
-
-/** Build compact schema/enum string for backend to append to prompt */
-export function buildSchemaString() {
-  return JSON.stringify({
-    schema_version: "2.2",
-    enums: {
-      tf: ["MN","W","D","4H","1H","15M","5M","1M"],
-      trend: ["Bullish","Bearish","Ranging"],
-      structure: ["BOS","CHoCH","MSB","Continuation","Ranging"],
-      phase: ["Trending","Retracement","Reversal","Consolidation","Breakout","Breakdown","Distribution","Accumulation"],
-      bias: ["Long","Short","Neutral"],
-      direction: ["Bull","Bear"],
-      weight: ["High","Medium","Low"],
-      order_type: ["Limit","Stop Limit","Market"],
-      trade_decision: ["Proceed","Skip"],
-      severity: ["critical","warning"],
-      grade: ["A","B","C","NoTrade"],
-    },
-    arrays: { max_trade_plans: 2, max_pd_arrays: 6, max_key_levels: 6, max_reference_zones: 6 },
-  });
-}
-
-// Backward compatibility alias
-export const STRATEGY_CHECKLIST = STRATEGY_ENTRY_MODELS;
