@@ -25,6 +25,21 @@ function isValidIanaTimezone(value) {
   }
 }
 
+export function asNumValue(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function formatNumValue(val, decimals = 2) {
+  const n = asNumValue(val);
+  if (n === null) return "-";
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
 export function normalizeDisplayTimezone(value) {
   const raw = String(value || "").trim();
   if (!raw) return "Local";
@@ -212,20 +227,5 @@ export function sortTimeframes(tfs, order = "desc") {
     const wa = TF_WEIGHTS[String(a).toLowerCase()] ?? 0;
     const wb = TF_WEIGHTS[String(b).toLowerCase()] ?? 0;
     return order === "desc" ? wb - wa : wa - wb;
-  });
-}
-
-export function asNum(val) {
-  if (val === null || val === undefined || val === "") return null;
-  const n = Number(val);
-  return Number.isFinite(n) ? n : null;
-}
-
-export function formatNumber(val, decimals = 2) {
-  const n = asNum(val);
-  if (n === null) return "-";
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
   });
 }

@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
-import { asNum, showDateTime } from "../utils/format";
+import { showDateTime } from "../utils/format";
+
+const asNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 function parseSnapshotBars(snapshot) {
   const bars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
@@ -792,12 +797,10 @@ export default function TradeSignalChart({
             snapshotEnd > snapshotStart
           ) {
             const dur = snapshotEnd - snapshotStart;
-            chart
-              .timeScale()
-              .setVisibleRange({
-                from: snapshotStart - dur * 0.06,
-                to: snapshotEnd + dur * 0.06,
-              });
+            chart.timeScale().setVisibleRange({
+              from: snapshotStart - dur * 0.06,
+              to: snapshotEnd + dur * 0.06,
+            });
           } else if (createdAt) {
             const rangeStart = Math.floor(new Date(createdAt).getTime() / 1000);
             const rangeEndRaw = closedAt || openedAt;
@@ -805,22 +808,18 @@ export default function TradeSignalChart({
               ? Math.floor(new Date(rangeEndRaw).getTime() / 1000)
               : rangeStart + 86400; // fallback: +1 day
             const dur = Math.max(rangeEnd - rangeStart, 3600);
-            chart
-              .timeScale()
-              .setVisibleRange({
-                from: rangeStart - dur * 0.1,
-                to: rangeEnd + dur * 0.1,
-              });
+            chart.timeScale().setVisibleRange({
+              from: rangeStart - dur * 0.1,
+              to: rangeEnd + dur * 0.1,
+            });
           } else if (openedAt && closedAt) {
             const rangeStart = Math.floor(new Date(openedAt).getTime() / 1000);
             const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
             const dur = rangeEnd - rangeStart;
-            chart
-              .timeScale()
-              .setVisibleRange({
-                from: rangeStart - dur * 0.2,
-                to: rangeEnd + dur * 0.2,
-              });
+            chart.timeScale().setVisibleRange({
+              from: rangeStart - dur * 0.2,
+              to: rangeEnd + dur * 0.2,
+            });
           }
         }
       } catch (err) {
@@ -881,7 +880,6 @@ export default function TradeSignalChart({
       seriesRef.current,
     );
   }, [chartId, syncedCrosshair]);
-
 
   return (
     <div

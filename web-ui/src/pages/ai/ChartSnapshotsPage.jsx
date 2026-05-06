@@ -4,8 +4,8 @@ import { createChart } from "lightweight-charts";
 import {
   showDateTime,
   isSameDay,
-  asNum,
-  formatNumber,
+  asNumValue,
+  formatNumValue,
 } from "../../utils/format";
 
 import { api } from "../../api";
