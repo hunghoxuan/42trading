@@ -906,13 +906,12 @@ export default function SignalsPage() {
                     },
               }}
               metaItems={[
+                { label: "Source", value: displaySource(selectedSignal) },
+                { label: "Signal SID", value: selectedSignal.sid || "-" },
                 { label: "Chart TF", value: formatTimeframe(selectedSignal.chart_tf || "-") },
                 { label: "Signal TF", value: formatTimeframe(selectedSignal.signal_tf || "-") },
                 { label: "Strategy", value: compactStrategy(selectedSignal) },
                 { label: "Entry Model", value: selectedSignal.entry_model || "-" },
-                { label: "Source", value: displaySource(selectedSignal) },
-                { label: "Signal SID", value: selectedSignal.sid || "-" },
-                { label: "Note", value: selectedSignal.note || "-", fullWidth: true },
               ]}
               history={{
                 enabled: true,

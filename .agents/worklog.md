@@ -1,4 +1,29 @@
-# Session Log: 2026-05-05 21:05
+# Session Log: 2026-05-06 16:37
+- **Starting Task**: Optimize Trade Dashboard UI for high-density information and responsive charting.
+- **Work Accomplished**:
+  - **High-Density UI**: Consolidated Signal Detail Card metadata into the Account section and removed redundant card headers and identifiers (Position ID, Source header).
+  - **Metadata Priority**: Reordered metadata fields on Trades and Signals pages to prioritize Source and SID for operational retrieval.
+  - **Tab Auto-selection**: Implemented auto-selection of the 'Live' chart tab for signals lacking trade plan data.
+  - **Responsive Charting**: Precision canvas scaling fix via ResizeObserver and explicit `chart.resize()` in `TradeSignalChart` for 100% width/height alignment.
+  - **Deployment**: Bumped SERVER and EA versions to `v2026.05.06 16:36 - 1d04ded` and deployed to production VPS.
+- **Changed Files**:
+  - `web-ui/src/pages/trades/TradesPage.jsx`
+  - `web-ui/src/pages/signals/SignalsPage.jsx`
+  - `web-ui/src/components/SignalDetailCard.jsx`
+  - `web-ui/src/components/charts/ChartTile.jsx`
+  - `web-ui/src/components/TradeSignalChart.jsx`
+  - `webhook/server.js`
+  - `bridge-clients/TVBridgeEA.mq5`
+  - `.agents/.product/features/2-done/high_density_ui_refinements.md`
+  - `.agents/worklog.md`
+- **Technical Decisions**:
+  - Merge JSON metadata into existing cards to reduce vertical footprint without losing information depth.
+  - Use ResizeObserver for chart scaling to handle dynamic layout shifts (panel expansion/contraction).
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - `rtk bash scripts/deploy/deploy_webhook.sh` ✅
+- **Deploy Status**:
+  - Deployed (Build v2026.05.06 16:36).
 - **Starting Task**: Resolve premature 'CLOSED' status discrepancies and standardize SIDs.
 - **Work Accomplished**:
   - **Status Integrity**: Refactored `brokerSyncV2` to prevent active broker positions from matching against historical `CLOSED` records and implemented a trust-the-broker reopening mechanism.

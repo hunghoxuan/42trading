@@ -293,6 +293,22 @@ export default function TradeSignalChart({
       },
     });
 
+    const handleResize = () => {
+      if (!chartContainerRef.current || !chart) return;
+      // Use explicit resize for better reliability
+      chart.resize(
+        chartContainerRef.current.clientWidth,
+        chartContainerRef.current.clientHeight || height,
+      );
+    };
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(chartContainerRef.current);
+    }
+    window.addEventListener("resize", handleResize);
+
     const candleSeries = chart.addCandlestickSeries({
       upColor: "#26a69a",
       downColor: "#ef5350",
@@ -821,6 +837,8 @@ export default function TradeSignalChart({
 
     return () => {
       isMounted = false;
+      window.removeEventListener("resize", handleResize);
+      if (resizeObserver) resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       removeDragListeners();
       chartRef.current = null;
@@ -867,27 +885,6 @@ export default function TradeSignalChart({
     );
   }, [chartId, syncedCrosshair]);
 
-  useEffect(() => {
-    if (!chartRef.current || !chartContainerRef.current) return;
-
-    const applySize = () => {
-      if (!chartRef.current || !chartContainerRef.current) return;
-      const width = chartContainerRef.current.clientWidth;
-      const nextHeight = chartContainerRef.current.clientHeight || height;
-      chartRef.current.applyOptions({ width, height: nextHeight });
-    };
-
-    applySize();
-
-    if (typeof ResizeObserver !== "undefined") {
-      const resizeObserver = new ResizeObserver(() => applySize());
-      resizeObserver.observe(chartContainerRef.current);
-      return () => resizeObserver.disconnect();
-    }
-
-    window.addEventListener("resize", applySize);
-    return () => window.removeEventListener("resize", applySize);
-  }, [height]);
 
   return (
     <div

@@ -114,7 +114,7 @@ loadEnvFile();
 
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.06 11:38 - 8dfdd8a",
+  "v2026.05.06 16:36 - 1d04ded",
 ); // fix route params same component
 
 // --- SSE Notification Bus ---
@@ -7227,10 +7227,11 @@ async function _mt5InitBackendInternal() {
               ticket_candidates: ticketCandidates,
               pnl: pnlVal,
               net_pnl: pnlVal,
+              pnl_realized: raw.status === "CLOSED" ? pnlVal : null,
               commission,
               swap,
               pips: pipsVal,
-              lots: volumeVal / 100000,
+              lots: Number(raw.lots ?? volumeVal / 100000),
               volume: volumeVal,
               symbol,
               action,
@@ -7673,7 +7674,7 @@ async function _mt5InitBackendInternal() {
         }
       }
 
-      // Collect trade updates for realtime UI patching
+      // Collect trade diffs for realtime UI
       const tradeUpdates = [];
       for (const it of items) {
         if (!it.sid) continue;
@@ -7689,22 +7690,17 @@ async function _mt5InitBackendInternal() {
         });
       }
 
-      // Emit SSE notification
+      // Emit SSE — generic pattern: page_id + data
       emitNotification({
         user_id: uid,
-        page: "/trades",
+        page_id: "trades",
         event: "broker_sync",
+        data: tradeUpdates,
         message: `Broker sync: ${matched} updated, ${synced} matched, ${closed_by_snapshot || 0} closed`,
         type: "info",
-        notification: false,
-        console_log: false,
-        ticker: true,
+        notification_settings: { toast: false, ticker: true, sound: false },
         need_refresh: false,
         comp_refresh: matched > 0,
-        action: "trades",
-        sound: null,
-        position: "bottom-right",
-        trade_updates: tradeUpdates,
       });
 
       return {

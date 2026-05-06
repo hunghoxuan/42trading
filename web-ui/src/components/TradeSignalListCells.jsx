@@ -80,12 +80,16 @@ export function StatusPnlCell({
   return (
     <div className="cell-wrap">
       {!hideStatus && <div className="cell-major">{statusNode}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        {pnlNum != null && pnlNum !== 0 ? (
-          <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontWeight: 800 }}>${pnlNum.toFixed(2)}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+        {pnlNum != null ? (
+          <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontWeight: 800, fontSize: '14px', lineHeight: 1 }}>
+            ${pnlNum.toFixed(2)}
+          </div>
         ) : null}
         {brokerPips != null && brokerPips !== 0 ? (
-          <div className="minor-text" style={{ fontSize: '10px', opacity: 0.6 }}>({num(brokerPips).toFixed(1)} bips)</div>
+          <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6, marginTop: 2 }}>
+            {num(brokerPips).toFixed(1)} bips
+          </div>
         ) : null}
       </div>
       {showFilledDetails ? (

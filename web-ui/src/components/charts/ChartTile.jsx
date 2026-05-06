@@ -306,12 +306,17 @@ export function SymbolChart({
   const needsFallback =
     mode !== "live" && !skipFetch && !hasAnyBars && status !== "LOADING";
 
-  // Auto-switch to TradePlan mode when hasTradePlan and bars are ready
+  // Auto-switch to TradePlan mode when hasTradePlan and bars are ready,
+  // BUT fall back to live if trade plan has no data.
   useEffect(() => {
-    if (hasTradePlan && mode === "live" && hasAnyBars) {
-      setMode("cache");
+    if (hasTradePlan && hasAnyBars) {
+      if (hasTradePlan && !entryPrice && !tpPrice && !slPrice) {
+        setMode("live");
+      } else if (mode === "live") {
+        setMode("cache");
+      }
     }
-  }, [hasTradePlan, hasAnyBars]);
+  }, [hasTradePlan, hasAnyBars, entryPrice, tpPrice, slPrice]);
 
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {

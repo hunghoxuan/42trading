@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 11:38 - 8dfdd8a";
+        private string BuildVersion = "v2026.05.06 16:36 - 1d04ded";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -86,10 +86,14 @@ namespace cAlgo.Robots
             // Sync ALL positions for Manual Discovery / Auto-Adopt
             foreach (var pos in Positions) {
                 var sid = (pos.Comment ?? "").Replace("\"", "'");
+                var s = Symbols.GetSymbol(pos.SymbolName);
+                double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
+
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2},\"pips\":{6:F2},\"commission\":{7:F2},\"swap\":{8:F2},\"label\":\"{9}\"}}",
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"label\":\"{10}\"}}",
                     sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
                     double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
+                    double.IsNaN(lotsVal) ? 0 : lotsVal,
                     double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit, 
                     double.IsNaN(pos.Pips) ? 0 : pos.Pips,
                     double.IsNaN(pos.Commissions) ? 0 : pos.Commissions,

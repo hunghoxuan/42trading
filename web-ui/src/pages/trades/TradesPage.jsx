@@ -1,6 +1,7 @@
 import { api } from "../../api";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useRealtimeData } from "../../hooks/useRealtimeData";
 import { SignalDetailCard } from "../../components/SignalDetailCard";
 import {
   AuditCell,
@@ -457,24 +458,18 @@ export default function TradesPage() {
     loadMeta();
   }, []);
 
-  // Realtime trade data patch from SSE broker_sync
-  useEffect(() => {
-    const handler = (e) => {
-      const updates = e.detail || [];
-      if (!updates.length) return;
-      setRows((prev) => {
-        const map = new Map(updates.map((u) => [u.sid, u]));
-        if (!prev.some((r) => map.has(tradeKeyOf(r)))) return prev; // no match
-        return prev.map((r) => {
-          const update = map.get(tradeKeyOf(r));
-          if (!update) return r;
-          return { ...r, ...update };
-        });
+  // Realtime data patch from SSE (generic page_id="trades")
+  useRealtimeData("trades", (data) => {
+    if (!Array.isArray(data) || !data.length) return;
+    setRows((prev) => {
+      const map = new Map(data.map((u) => [u.sid, u]));
+      if (!prev.some((r) => map.has(tradeKeyOf(r)))) return prev;
+      return prev.map((r) => {
+        const update = map.get(tradeKeyOf(r));
+        return update ? { ...r, ...update } : r;
       });
-    };
-    window.addEventListener("trade-update", handler);
-    return () => window.removeEventListener("trade-update", handler);
-  }, []);
+    });
+  });
 
   // Select trade from URL param on load
   useEffect(() => {
@@ -1032,7 +1027,8 @@ export default function TradesPage() {
                       acc?.name || t.account_id || "-",
                     );
                     const brokerName = brokerNameFromAccount(acc);
-                    const pnl = asNum(t.pnl_realized);
+                    const pnl =
+                      asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl);
                     const stRaw = String(
                       t.execution_status || "",
                     ).toUpperCase();
@@ -1120,6 +1116,9 @@ export default function TradesPage() {
                             }
                             hideStatus={true}
                             pnl={pnl}
+                            brokerPips={t.pips}
+                            brokerVolume={t.volume}
+                            brokerLots={t.lots}
                             showFilledDetails={
                               String(t.execution_status || "").toUpperCase() ===
                                 "OPEN" ||
@@ -1338,6 +1337,16 @@ export default function TradesPage() {
                 }}
                 metaItems={[
                   {
+                    label: "Source",
+                    value: displaySource(selectedTrade),
+                    group: "source",
+                  },
+                  {
+                    label: "Trade SID",
+                    value: selectedTrade.sid || "-",
+                    group: "source",
+                  },
+                  {
                     label: "Chart TF",
                     value: formatTimeframe(selectedTrade.chart_tf || "-"),
                     group: "source",
@@ -1355,16 +1364,6 @@ export default function TradesPage() {
                   {
                     label: "Entry Model",
                     value: selectedTrade.entry_model || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Source",
-                    value: displaySource(selectedTrade),
-                    group: "source",
-                  },
-                  {
-                    label: "Trade SID",
-                    value: selectedTrade.sid || "-",
                     group: "source",
                   },
                   {
@@ -1447,24 +1446,9 @@ export default function TradesPage() {
                               bSwap != null ? `$${bSwap.toFixed(2)}` : null,
                             group: "account",
                           },
-                          {
-                            label: "Position ID",
-                            value:
-                              selectedTrade.broker_trade_id ||
-                              bData.position_id ||
-                              bData.positionId ||
-                              meta.broker_position_id ||
-                              null,
-                            group: "account",
-                          },
                         ].filter((x) => x.value !== null);
                       })()
                     : []),
-                  {
-                    label: "Note",
-                    value: selectedTrade.note || "-",
-                    fullWidth: true,
-                  },
                   {
                     label: "Raw Metadata",
                     fullWidth: true,

@@ -28,17 +28,25 @@ export default function NotificationWatcher() {
         fn(`[${p.event}] ${p.message}`);
       }
 
+      // Resolve notification settings: new format (notification_settings) or legacy
+      const ns = p.notification_settings || {};
+      const showToast = ns.toast !== false && p.notification !== false;
+      const showTicker = ns.ticker !== false && p.ticker !== false;
+      const playAudio = ns.sound !== false && p.sound;
+
       // 2. In-app toast
-      if (p.notification) {
+      if (showToast) {
         showToast({
-          message: `[${p.event.replace(/_/g, " ").toUpperCase()}] ${p.message}`,
+          message:
+            p.message ||
+            `[${(p.event || "").replace(/_/g, " ").toUpperCase()}]`,
           type: p.type,
           position: p.position || "bottom-right",
         });
       }
 
       // 3. Ticker
-      if (p.ticker) {
+      if (showTicker) {
         window.__tickerEvents.push({
           ts: Date.now(),
           event: p.event,
@@ -61,7 +69,16 @@ export default function NotificationWatcher() {
         }
       }
 
-      // 4b. Component/datasource refresh (without page reload)
+      // 5. Generic data update — any page can listen
+      if (p.page_id && p.data != null) {
+        window.dispatchEvent(
+          new CustomEvent("data-update", {
+            detail: { page_id: p.page_id, data: p.data },
+          }),
+        );
+      }
+
+      // 6. Component refresh (legacy)
       if (p.comp_refresh) {
         window.dispatchEvent(
           new CustomEvent("comp-refresh", {
@@ -70,19 +87,8 @@ export default function NotificationWatcher() {
         );
       }
 
-      // 4c. Broker sync trade data — patch rows in-place
-      if (
-        p.event === "broker_sync" &&
-        Array.isArray(p.trade_updates) &&
-        p.trade_updates.length > 0
-      ) {
-        window.dispatchEvent(
-          new CustomEvent("trade-update", { detail: p.trade_updates }),
-        );
-      }
-
-      // 5. Sound
-      if (p.sound && SoundEvents[p.sound]) {
+      // 7. Sound
+      if (playAudio && SoundEvents[p.sound]) {
         playSound(p.sound);
       }
     } catch (e) {

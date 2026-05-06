@@ -345,6 +345,20 @@ export function SignalDetailCard({
   ]);
 
   const [mainTab, setMainTab] = useState("chart");
+  
+  const hasTradePlanData = useMemo(() => {
+    const p = plans[0] || {};
+    return Boolean(p.entry || p.tp || p.sl);
+  }, [plans]);
+
+  useEffect(() => {
+    if (!hasTradePlanData && mainTab === "json") {
+       // stay on json if user explicitly went there
+    } else if (!hasTradePlanData && mainTab !== "chart") {
+       setMainTab("chart");
+    }
+  }, [hasTradePlanData]);
+
   useEffect(() => {
     if (!availableTabs.includes(mainTab))
       setMainTab(availableTabs[0] || "info");
@@ -630,21 +644,52 @@ export function SignalDetailCard({
               </div>
             </div>
           );
-          const card = (title, items) => (
-            <div className="fields-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16, padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid var(--border)", marginBottom: 12 }}>
-              <div style={{ gridColumn: "1 / -1", fontSize: 11, fontWeight: 800, color: "var(--muted-bright)", textTransform: "uppercase" }}>{title}</div>
-              {items.map(renderField)}
-            </div>
-          );
+          const card = (title, items) => {
+            const isAccount = title === "Account";
+            const rawJsonItem = metaItems.find(x => x.label === "Raw Metadata" || x.label === "Raw JSON");
+            
+            return (
+              <div className="fields-grid" style={{ 
+                display: "grid", 
+                gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", 
+                gap: 16, 
+                padding: 16, 
+                background: "rgba(255,255,255,0.02)", 
+                borderRadius: 10, 
+                border: "1px solid var(--border)", 
+                marginBottom: 12,
+                position: 'relative'
+              }}>
+                {items.map(renderField)}
+                {isAccount && rawJsonItem && (
+                  <div style={{ gridColumn: "1 / -1", marginTop: 8 }}>
+                    <span className="minor-text" style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--muted-bright)" }}>METADATA</span>
+                    <div style={{ 
+                      marginTop: 6,
+                      padding: 10,
+                      background: "rgba(0,0,0,0.2)",
+                      borderRadius: 6,
+                      border: "1px solid rgba(255,255,255,0.05)",
+                      fontSize: '10px',
+                      fontFamily: 'monospace',
+                      color: '#8be9fd',
+                      overflowX: 'auto',
+                      maxHeight: '200px'
+                    }}>
+                      {typeof rawJsonItem.value === 'object' 
+                        ? JSON.stringify(rawJsonItem.value, null, 2) 
+                        : String(rawJsonItem.value)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          };
           return (
             <div style={{ marginBottom: 20 }}>
               {sourceItems.length ? card("Source", sourceItems) : null}
               {accountItems.length ? card("Account", accountItems) : null}
-              {otherItems.length ? (
-                <div className="fields-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 16, padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid var(--border)" }}>
-                  {otherItems.map(renderField)}
-                </div>
-              ) : null}
+              {otherItems.length ? card("Other", otherItems) : null}
             </div>
           );
         })()}
