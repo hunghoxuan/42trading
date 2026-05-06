@@ -15716,23 +15716,21 @@ const appHandler = async (req, res) => {
           error: "CLAUDE_API_KEY is missing in Settings.",
         });
 
-      const useContextFiles =
+      let useContextFiles =
         body.use_context_files === true ||
         String(body.context_mode || "").toLowerCase() === "claude";
+      const contextSymbol =
+        String(body.symbol || "").trim() ||
+        (Array.isArray(body.files)
+          ? body.files.map((f) => inferSymbolFromSnapshotFile(f)).find(Boolean) || ""
+          : "") ||
+        inferSymbolFromRecentSnapshots();
+      // If symbol cannot be inferred, fall back to non-context analyze instead of hard-failing.
+      if (useContextFiles && !contextSymbol) {
+        useContextFiles = false;
+      }
       if (useContextFiles) {
-        const symbol =
-          String(body.symbol || "").trim() ||
-          (Array.isArray(body.files)
-            ? body.files
-                .map((f) => inferSymbolFromSnapshotFile(f))
-                .find(Boolean) || ""
-            : "") ||
-          inferSymbolFromRecentSnapshots();
-        if (!symbol)
-          return json(res, 400, {
-            ok: false,
-            error: "symbol is required for context analysis.",
-          });
+        const symbol = contextSymbol;
         const timeframes = Array.isArray(body.timeframes)
           ? body.timeframes
           : String(body.tfs || body.timeframes || "D,4H,1H,15M").split(",");
@@ -15969,8 +15967,14 @@ const appHandler = async (req, res) => {
           .map(normalizeTf)
           .filter(Boolean);
       };
+      const normalizeSymbolLoose = (value) =>
+        String(value || "")
+          .trim()
+          .toUpperCase()
+          .replace(/^[A-Z0-9_-]+:/, "")
+          .replace(/[^A-Z0-9]/g, "");
       const requestedTfs = parseRequestedTimeframes();
-      const requestedSymbol = mt5NormalizeSymbol(body.symbol || "");
+      const requestedSymbol = normalizeSymbolLoose(body.symbol || "");
       const requestedProvider = String(body.provider || "ICMARKETS")
         .trim()
         .toUpperCase();
@@ -16011,7 +16015,7 @@ const appHandler = async (req, res) => {
           const parts = String(x.f || "").split("_");
           if (parts.length < 3) return false;
           const providerOk = String(parts[0] || "").toUpperCase() === requestedProvider;
-          const symbolOk = mt5NormalizeSymbol(parts[1] || "") === requestedSymbol;
+          const symbolOk = normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
           return providerOk && symbolOk;
         });
         const pool = sessionMatched.length
