@@ -8,6 +8,8 @@ Optimized signal and trade detail interfaces for professional high-density infor
 - **Strategic Header Removal**: Removed explicit "ACCOUNT" and "SOURCE" card headers for a cleaner, unified UI.
 - **Priority Metadata Mapping**: Standardized Trades and Signals pages to show Source and SID as primary identification fields.
 - **Intelligent Navigation**: Auto-selection of the "Live" tab when TradePlan data is unavailable, reducing workflow friction.
+- **Reversed Timeframes**: Reordered Timeframe pills (D to 1m) for faster top-down navigation.
+- **Global Density Master Controls**: Added "+" and "-" master buttons to adjust chart column count across all symbols simultaneously.
 - **Responsive Charting**: Precision canvas scaling using ResizeObserver to ensure 100% width/height container alignment.
 
 ## Technical Details

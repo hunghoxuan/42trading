@@ -1619,6 +1619,7 @@ export default function ChartSnapshotsPage() {
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
   const [visibleCount, setVisibleCount] = useState(8);
+  const [masterGridCols, setMasterGridCols] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [apiSymbolOptions, setApiSymbolOptions] = useState([]);
   const [symbolActivity, setSymbolActivity] = useState({
@@ -4455,7 +4456,7 @@ export default function ChartSnapshotsPage() {
                   </datalist>
                 </div>
                 <div className="tf-pills">
-                  {["1m", "5m", "15m", "1h", "4h", "D"].map((tf) => (
+                  {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
                     <button
                       key={tf}
                       className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
@@ -4473,6 +4474,43 @@ export default function ChartSnapshotsPage() {
                       {tf.toUpperCase()}
                     </button>
                   ))}
+
+                  <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
+                    <button
+                      className="secondary-button"
+                      style={{
+                        width: 28,
+                        height: 28,
+                        padding: 0,
+                        fontSize: 16,
+                        fontWeight: 800,
+                        borderRadius: 6,
+                      }}
+                      onClick={() =>
+                        setMasterGridCols((prev) => Math.max(1, (prev ?? 2) - 1))
+                      }
+                      title="All: Larger charts"
+                    >
+                      +
+                    </button>
+                    <button
+                      className="secondary-button"
+                      style={{
+                        width: 28,
+                        height: 28,
+                        padding: 0,
+                        fontSize: 16,
+                        fontWeight: 800,
+                        borderRadius: 6,
+                      }}
+                      onClick={() =>
+                        setMasterGridCols((prev) => Math.min(6, (prev ?? 2) + 1))
+                      }
+                      title="All: Smaller charts"
+                    >
+                      -
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4529,6 +4567,7 @@ export default function ChartSnapshotsPage() {
                             symbol={sym}
                             timeframes={browserTfs}
                             defaultMode="live"
+                            initialGridCols={masterGridCols}
                             onAnalyze={(s) => setCfgField("symbol", s)}
                             onRemove={null}
                           />
@@ -4544,6 +4583,7 @@ export default function ChartSnapshotsPage() {
                         symbol={sym}
                         timeframes={browserTfs}
                         defaultMode="live"
+                        initialGridCols={masterGridCols}
                         onAnalyze={(s) => setCfgField("symbol", s)}
                         onRemove={(s) => removeFromWatchlist(s)}
                       />

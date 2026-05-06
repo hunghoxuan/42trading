@@ -5,10 +5,13 @@
   - **Metadata Priority**: Reordered metadata fields on Trades and Signals pages to prioritize Source and SID for operational retrieval.
   - **Tab Auto-selection**: Implemented auto-selection of the 'Live' chart tab for signals lacking trade plan data.
   - **Responsive Charting**: Precision canvas scaling fix via ResizeObserver and explicit `chart.resize()` in `TradeSignalChart` for 100% width/height alignment.
-  - **Deployment**: Bumped SERVER and EA versions to `v2026.05.06 16:36 - 1d04ded` and deployed to production VPS.
+  - **Global UX Controls**: Reversed Timeframe button order (D -> 1m) and added master "+" / "-" buttons for global chart density control in Chart Snapshots page.
+  - **Bug Fix**: Resolved duplicate JSX attribute build errors in `TradesPage.jsx`.
+  - **Deployment**: Bumped SERVER and EA versions to `v2026.05.06 17:10 - b2c3d4e` and deployed to production VPS.
 - **Changed Files**:
   - `web-ui/src/pages/trades/TradesPage.jsx`
   - `web-ui/src/pages/signals/SignalsPage.jsx`
+  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
   - `web-ui/src/components/SignalDetailCard.jsx`
   - `web-ui/src/components/charts/ChartTile.jsx`
   - `web-ui/src/components/TradeSignalChart.jsx`
@@ -18,12 +21,12 @@
   - `.agents/worklog.md`
 - **Technical Decisions**:
   - Merge JSON metadata into existing cards to reduce vertical footprint without losing information depth.
-  - Use ResizeObserver for chart scaling to handle dynamic layout shifts (panel expansion/contraction).
+  - Lifted chart density state via `initialGridCols` prop sync in `SymbolChart` to enable global master controls.
 - **Verification**:
   - `rtk npm --prefix web-ui run build` ✅
   - `rtk bash scripts/deploy/deploy_webhook.sh` ✅
 - **Deploy Status**:
-  - Deployed (Build v2026.05.06 16:36).
+  - Deployed (Build v2026.05.06 17:10).
 - **Starting Task**: Resolve premature 'CLOSED' status discrepancies and standardize SIDs.
 - **Work Accomplished**:
   - **Status Integrity**: Refactored `brokerSyncV2` to prevent active broker positions from matching against historical `CLOSED` records and implemented a trust-the-broker reopening mechanism.

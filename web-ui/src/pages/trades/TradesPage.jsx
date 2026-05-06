@@ -1116,9 +1116,6 @@ export default function TradesPage() {
                             }
                             hideStatus={true}
                             pnl={pnl}
-                            brokerPips={t.pips}
-                            brokerVolume={t.volume}
-                            brokerLots={t.lots}
                             showFilledDetails={
                               String(t.execution_status || "").toUpperCase() ===
                                 "OPEN" ||

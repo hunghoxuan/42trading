@@ -1,40 +1,42 @@
 # Feature: SSE Notification System
 
+## Status: DONE ✅
+
 ## User Flow
-Real-time push notifications for all trading events, displayed as in-app toasts, a marquee ticker under the DayClock bar, browser notifications, console logs, and sounds — all configurable per event type.
+Real-time push notifications for all trading events, displayed as in-app toasts, a marquee ticker under the DayClock bar, browser notifications, console logs, and sounds — all configurable per event type. Settings in **User → Settings → Notifications** tab.
 
 ## Key Capabilities
-- **SSE Stream**: Server-Sent Events replacing 10s polling. One persistent `GET /v2/notifications/stream` connection per user.
-- **Event Types**: trade_added, trade_updated, signal_added, broker_sync, news_alert, system_event, page_refresh, error.
-- **Multi-Channel Output**: Each event can independently trigger: browser notification, console log, ticker marquee, page refresh, sound.
-- **Ticker Bar**: Light gray scrolling text marquee under the SessionClock/DayClock bar, showing latest event messages.
-- **Events Management Page**: `/system/events` — table of all event types with per-event toggles for each output channel.
-- **User Settings Persistence**: Notification preferences stored as JSON in `user_settings` (type=`notification`, name=`preferences`).
+- **SSE Stream**: `GET /v2/notifications/stream` — one persistent connection per user, 30s heartbeat, auto-reconnect on disconnect.
+- **9 Event Types**: trade_added, trade_updated, signal_added, broker_sync, news_alert, system_event, page_refresh, component_refresh, error.
+- **Per-Event Channels**: Each event type has independent toggles: Toast, Console Log, Ticker, Refresh, Component Refresh, Sound, Position.
+- **User Settings Intersection**: SSE sends `notification_settings` (max capability). Frontend intersects with user's saved preferences from `user_settings` table. User can mute any event type.
+- **Generic Data Updates**: SSE payload has `page_id` + `data` fields. Frontend `useRealtimeData(pageId, callback)` hook dispatches to any page. Currently TradesPage patches PnL/pips/status in-place on broker sync.
+- **Ticker Bar**: Light gray scrolling CSS marquee under the SessionClock bar.
 
-## Payload Schema
+## Payload Schema (current)
 ```json
 {
   "user_id": "string",
-  "page": "string | null",
-  "event": "trade_added | trade_updated | signal_added | broker_sync | news_alert | system_event | page_refresh | error",
+  "page_id": "trades | signals | dashboard | ai",
+  "event": "trade_added | trade_updated | signal_added | broker_sync | news_alert | system_event | page_refresh | component_refresh | error",
+  "data": [...],
   "message": "string",
   "type": "info | warning | error | success",
-  "notification": true,
-  "console_log": false,
-  "ticker": true,
+  "notification_settings": { "toast": true, "ticker": true, "sound": false },
   "need_refresh": false,
-  "sound": "NEW_SIGNAL | TRADE_FILLED | TRADE_CLOSED | NEWS_ALERT | SESSION_START | null"
+  "comp_refresh": false
 }
 ```
 
 ## Technical Details
-- **Endpoints**: `GET /v2/notifications/stream` (SSE, text/event-stream), `POST /v2/notifications/emit` (internal trigger), `GET /v2/notifications/events` (event type list), `GET/POST /v2/notifications/settings` (user prefs)
-- **Backend**: In-memory event bus + `bumpPulse` refactored to emit SSE events. Redis pub/sub for cross-process fanout.
-- **Frontend**: `EventSource` in `NotificationWatcher` replaces `setInterval(checkPulse)`. New `TickerBar` component. New `EventsPage` in system menu.
+- **Endpoints**: `GET /v2/notifications/stream` (SSE), `POST /v2/notifications/emit`, `POST /v2/notifications/test`, `GET /v2/notifications/events`, `GET/POST /v2/notifications/settings`
+- **Backend**: `emitNotification(payload)` fans to in-memory SSE clients. `bumpPulse` refactored to emit SSE. Broker sync emits `page_id: "trades"` with trade diffs.
+- **Frontend**: `NotificationWatcher` uses `EventSource`, loads user prefs on mount, intersects with SSE `notification_settings`. `useRealtimeData` hook for page-level data patching.
 - **Storage**: `user_settings` row: type=`notification`, name=`preferences`, data=JSON of per-event toggles.
 
 ## UI Impact
-- **New**: Ticker marquee bar under DayClock
-- **New**: `/system/events` page in System dropdown
-- **Modified**: `NotificationWatcher` (poll → SSE)
-- **Modified**: `App.jsx` (System menu + TickerBar mount)
+- **New**: Ticker bar under DayClock
+- **New**: `User → Settings → Notifications` tab — per-event toggles with ▶ test button
+- **Modified**: `NotificationWatcher` (poll → SSE, user pref intersection)
+- **Modified**: `TradesPage` (realtime PnL/pips patch via `useRealtimeData`)
+- **New**: `useRealtimeData` hook for any page

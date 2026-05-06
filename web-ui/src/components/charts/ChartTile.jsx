@@ -217,6 +217,12 @@ export function SymbolChart({
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
   useEffect(() => {
+    if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
+      setGridCols(Number(initialGridCols));
+    }
+  }, [initialGridCols]);
+
+  useEffect(() => {
     setGridCols((prev) =>
       Math.min(Math.max(1, prev), Math.max(1, timeframes?.length || 4)),
     );
