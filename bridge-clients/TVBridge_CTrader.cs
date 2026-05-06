@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 05:16 - 4459e1b";
+        private string BuildVersion = "v2026.05.06 05:25 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -188,10 +188,18 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
                 
-                // Smart Match: Try common suffixes if exact match fails
+                // Smart Match: Try suffixes
                 if (symbol == null) {
-                    foreach (var s in new[] { ".ecn", ".m", ".i", "_i", "." }) {
+                    foreach (var s in new[] { ".ecn", ".m", ".i", "_i", ".", "-i" }) {
                         symbol = Symbols.GetSymbol(symbolCode + s);
+                        if (symbol != null) break;
+                    }
+                }
+                
+                // Prefix Match: Try common prefixes
+                if (symbol == null) {
+                    foreach (var p in new[] { "e-", "m-", "i-", "f-" }) {
+                        symbol = Symbols.GetSymbol(p + symbolCode);
                         if (symbol != null) break;
                     }
                 }
@@ -200,11 +208,12 @@ namespace cAlgo.Robots
                     var msg = "Symbol not found: " + symbolCode;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
-                    Print("[Error] Failed to get symbol '{0}': Symbol not found in your platform.", symbolCode);
+                    Print("[Error] Symbol '{0}' not found. Please ensure it is visible in your Market Watch.", symbolCode);
                     return;
                 }
                 
-                symbolCode = symbol.Name; // Use the actual name found (e.g., GBPJPY.ecn)
+                symbolCode = symbol.Name; 
+                Print("[Info] Found matching symbol: {0}", symbolCode);
                 
                 if (action == "CLOSE") {
                     // Close by SID (comment) or Magic Number (label)

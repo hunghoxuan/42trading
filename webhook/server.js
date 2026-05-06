@@ -3319,6 +3319,7 @@ function removeMappedClaudeSnapshotFiles(fileNames = []) {
 }
 
 let _claudeFilesCache = { data: [], expiresAt: 0 };
+function bustClaudeFilesCache() { _claudeFilesCache = { data: [], expiresAt: 0 }; }
 async function anthropicListFiles(apiKey) {
   if (!apiKey) return [];
   if (Date.now() < _claudeFilesCache.expiresAt) return _claudeFilesCache.data;
@@ -16616,6 +16617,7 @@ const appHandler = async (req, res) => {
         writeClaudeSnapshotFileMap(snapMap);
         writeClaudeContextFileMap(ctxMap);
       }
+      bustClaudeFilesCache();
       return json(res, 200, {
         ok: true,
         deleted_count: deleted.length,
@@ -16926,6 +16928,7 @@ const appHandler = async (req, res) => {
           }
         }
       }
+      bustClaudeFilesCache();
       return json(res, 200, {
         ok: true,
         deleted_count: deleted.length,
