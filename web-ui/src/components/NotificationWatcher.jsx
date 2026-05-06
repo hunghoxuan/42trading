@@ -48,7 +48,7 @@ export default function NotificationWatcher() {
       // Resolve: intersect SSE capability with user preferences
       const ns = p.notification_settings || {};
       const userPref = prefsRef.current[p.event] || {};
-      const showToast =
+      const shouldShowToast =
         ns.toast !== false &&
         p.notification !== false &&
         userPref.notification !== false;
@@ -60,7 +60,7 @@ export default function NotificationWatcher() {
       const playAudio = !!sseSound && SoundEvents[sseSound];
 
       // 2. In-app toast
-      if (showToast) {
+      if (shouldShowToast) {
         showToast({
           message:
             p.message ||

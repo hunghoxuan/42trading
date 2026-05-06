@@ -1,3 +1,4 @@
+import React from "react";
 import { showDateTime } from "./format";
 
 export function asNum(v) {

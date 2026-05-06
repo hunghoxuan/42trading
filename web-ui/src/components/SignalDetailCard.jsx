@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { TradePlanEditor } from "./TradePlanEditor";
 import {
-  asNum,
   buildHeaderMeta,
   formatNote,
   renderHistoryItem,
   shouldShowPnl,
 } from "../utils/signalDetailUtils";
-import SymbolChart from "./charts/SymbolChart";
+const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
 import { sortTimeframes } from "../utils/format";
 
@@ -1272,27 +1271,29 @@ export default function SignalDetailCard({
 
       {/* CHART TAB */}
       <div style={{ display: mainTab === "chart" ? "block" : "none" }}>
-        <SymbolChart
-          symbol={chart?.symbol}
-          timeframes={selectedTfs}
-          defaultMode={chart?.mode || "cache"}
-          initialGridCols={Math.min(2, selectedTfs.length || 1)}
-          entryPrice={chart?.entryPrice}
-          slPrice={chart?.slPrice}
-          tpPrice={chart?.tpPrice}
-          createdAt={chart?.createdAt}
-          openedAt={chart?.openedAt}
-          closedAt={chart?.closedAt}
-          onPlanLevelChange={chart?.onPlanLevelChange}
-          analysisSnapshot={rawData}
-          hasTradePlan={Boolean(
-            tradePlan?.value?.entry ||
-            tradePlan?.value?.tp ||
-            tradePlan?.value?.sl,
-          )}
-          hasAnalysis={Boolean(rawData && Object.keys(rawData).length > 0)}
-          skipFetch={true}
-        />
+        <Suspense fallback={<div className="loading-container">Loading chart...</div>}>
+          <SymbolChart
+            symbol={chart?.symbol}
+            timeframes={selectedTfs}
+            defaultMode={chart?.mode || "cache"}
+            initialGridCols={Math.min(2, selectedTfs.length || 1)}
+            entryPrice={chart?.entryPrice}
+            slPrice={chart?.slPrice}
+            tpPrice={chart?.tpPrice}
+            createdAt={chart?.createdAt}
+            openedAt={chart?.openedAt}
+            closedAt={chart?.closedAt}
+            onPlanLevelChange={chart?.onPlanLevelChange}
+            analysisSnapshot={rawData}
+            hasTradePlan={Boolean(
+              tradePlan?.value?.entry ||
+              tradePlan?.value?.tp ||
+              tradePlan?.value?.sl,
+            )}
+            hasAnalysis={Boolean(rawData && Object.keys(rawData).length > 0)}
+            skipFetch={true}
+          />
+        </Suspense>
       </div>
 
       {/* JSON TAB */}

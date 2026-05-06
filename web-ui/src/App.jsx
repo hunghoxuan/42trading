@@ -1,24 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
-import ChartSnapshotsPage from "./pages/ai/ChartSnapshotsPage";
-import SignalsPage from "./pages/signals/SignalsPage";
-import SignalDetailPage from "./pages/signals/SignalDetailPage";
-import TradesPage from "./pages/trades/TradesPage";
-import V2TradeDetailPage from "./pages/trades/V2TradeDetailPage";
-import SettingsPage from "./pages/settings/SettingsPage";
-import LogsPage from "./pages/system/LogsPage";
-import DatabasePage from "./pages/system/DatabasePage";
-import UsersPage from "./pages/system/UsersPage";
-import SourcesPage from "./pages/system/SourcesPage";
-import AccountsV2Page from "./pages/system/AccountsV2Page";
-import SnapshotsPage from "./pages/system/SnapshotsPage";
-import StoragePage from "./pages/system/StoragePage";
-import CachePage from "./pages/system/CachePage";
-import EventsPage from "./pages/system/EventsPage";
-import ToolsPage from "./pages/tools/ToolsPage";
+const ChartSnapshotsPage = lazy(() => import("./pages/ai/ChartSnapshotsPage"));
+const SignalsPage = lazy(() => import("./pages/signals/SignalsPage"));
+const SignalDetailPage = lazy(() => import("./pages/signals/SignalDetailPage"));
+const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
+const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
+const LogsPage = lazy(() => import("./pages/system/LogsPage"));
+const DatabasePage = lazy(() => import("./pages/system/DatabasePage"));
+const UsersPage = lazy(() => import("./pages/system/UsersPage"));
+const SourcesPage = lazy(() => import("./pages/system/SourcesPage"));
+const AccountsV2Page = lazy(() => import("./pages/system/AccountsV2Page"));
+const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
+const StoragePage = lazy(() => import("./pages/system/StoragePage"));
+const CachePage = lazy(() => import("./pages/system/CachePage"));
+const EventsPage = lazy(() => import("./pages/system/EventsPage"));
+const ToolsPage = lazy(() => import("./pages/tools/ToolsPage"));
 import { api, getRuntimeActiveUserId, setRuntimeActiveUserId } from "./api";
-import LoginPage from "./pages/LoginPage";
+const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
 import NotificationWatcher from "./components/NotificationWatcher";
 import TickerBar from "./components/TickerBar";
@@ -237,44 +236,43 @@ export default function App() {
       <SessionClockBar displayTimezone={displayTimezone} />
       <TickerBar />
       <main className="page-wrap">
-        <Routes>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/signals" element={<SignalsPage />} />
-          <Route path="/signals/:signalId" element={<SignalsPage />} />
-          <Route path="/trades" element={<TradesPage />} />
-          <Route path="/trades/:tradeId" element={<TradesPage />} />
-          <Route path="/ai" element={<Navigate to="/ai/browser" replace />} />
-          <Route path="/ai/browser" element={<ChartSnapshotsPage />} />
-          <Route path="/ai/browser/:symbol" element={<ChartSnapshotsPage />} />
-          <Route path="/settings" element={<SettingsPage authUser={authUser} onUserUpdate={handleUserUpdate} mode="settings" />} />
-          <Route path="/settings/profile" element={<SettingsPage authUser={authUser} onUserUpdate={handleUserUpdate} mode="profile" />} />
-          <Route path="/system/files" element={canAccessSystemPages ? <SnapshotsPage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/snapshots" element={<Navigate to="/system/files" replace />} />
-          <Route path="/system/storage" element={canAccessSystemPages ? <StoragePage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/cache" element={canAccessSystemPages ? <CachePage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/logs" element={canAccessSystemPages ? <LogsPage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/db" element={canAccessSystemPages ? <DatabasePage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/users" element={canAccessSystemPages ? <UsersPage authUser={authUser} /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/accounts" element={canAccessSystemPages ? <AccountsV2Page /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/system/sources" element={canAccessSystemPages ? <SourcesPage /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/tools" element={<ToolsPage />} />
-          <Route path="/tools/notification" element={<EventsPage />} />
-          <Route path="/settings/notifications" element={<EventsPage />} />
-          <Route path="/snapshots" element={<Navigate to="/system/files" replace />} />
-          <Route path="/storage" element={<Navigate to="/system/storage" replace />} />
-          <Route path="/cache" element={<Navigate to="/system/cache" replace />} />
-          <Route path="/logs" element={<Navigate to="/system/logs" replace />} />
-          <Route path="/db" element={<Navigate to="/system/db" replace />} />
-          <Route path="/users" element={<Navigate to="/system/users" replace />} />
-          <Route path="/accounts-v2" element={<Navigate to="/system/accounts" replace />} />
-          <Route path="/sources" element={<Navigate to="/system/sources" replace />} />
-          <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />
-          <Route path="/settings" element={<Navigate to="/settings/profile" replace />} />
-          <Route path="/settings/profile" element={<SettingsPage authUser={authUser} mode="profile" />} />
-          <Route path="/settings/general" element={<SettingsPage authUser={authUser} />} />
-          <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <Suspense fallback={<div className="loading-container">Loading page...</div>}>
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/signals" element={<SignalsPage />} />
+            <Route path="/signals/:signalId" element={<SignalsPage />} />
+            <Route path="/trades" element={<TradesPage />} />
+            <Route path="/trades/:tradeId" element={<TradesPage />} />
+            <Route path="/ai" element={<Navigate to="/ai/browser" replace />} />
+            <Route path="/ai/browser" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/browser/:symbol" element={<ChartSnapshotsPage />} />
+            <Route path="/settings" element={<SettingsPage authUser={authUser} onUserUpdate={handleUserUpdate} mode="settings" />} />
+            <Route path="/settings/profile" element={<SettingsPage authUser={authUser} onUserUpdate={handleUserUpdate} mode="profile" />} />
+            <Route path="/system/files" element={canAccessSystemPages ? <SnapshotsPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/snapshots" element={<Navigate to="/system/files" replace />} />
+            <Route path="/system/storage" element={canAccessSystemPages ? <StoragePage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/cache" element={canAccessSystemPages ? <CachePage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/logs" element={canAccessSystemPages ? <LogsPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/db" element={canAccessSystemPages ? <DatabasePage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/users" element={canAccessSystemPages ? <UsersPage authUser={authUser} /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/accounts" element={canAccessSystemPages ? <AccountsV2Page /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/system/sources" element={canAccessSystemPages ? <SourcesPage /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/tools" element={<ToolsPage />} />
+            <Route path="/tools/notification" element={<EventsPage />} />
+            <Route path="/settings/notifications" element={<EventsPage />} />
+            <Route path="/snapshots" element={<Navigate to="/system/files" replace />} />
+            <Route path="/storage" element={<Navigate to="/system/storage" replace />} />
+            <Route path="/cache" element={<Navigate to="/system/cache" replace />} />
+            <Route path="/logs" element={<Navigate to="/system/logs" replace />} />
+            <Route path="/db" element={<Navigate to="/system/db" replace />} />
+            <Route path="/users" element={<Navigate to="/system/users" replace />} />
+            <Route path="/accounts-v2" element={<Navigate to="/system/accounts" replace />} />
+            <Route path="/sources" element={<Navigate to="/system/sources" replace />} />
+            <Route path="/profile" element={<Navigate to="/settings/profile" replace />} />
+            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );
