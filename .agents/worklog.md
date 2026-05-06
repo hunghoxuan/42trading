@@ -783,6 +783,19 @@
 - **Deploy Status**:
   - Pending deploy.
 
+# Session Log: 2026-05-06 09:55
+- **Starting Task**:
+  - Fix `/v2/chart/snapshots/analyze` returning full `raw_response` but near-empty `parsed_json`.
+- **Work Accomplished**:
+  - Hardened `extractJsonFromAiText` in `webhook/server.js` to unwrap nested JSON-string responses before passing them into AI analysis normalization.
+  - This covers provider outputs where the model returns a JSON object serialized inside a JSON string, which previously degraded `parsed_json` to `{ schema_version }` only.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+- **Deploy Status**:
+  - Pending deploy.
+
 # Session Log: 2026-05-05 23:31
 - **Starting Task**:
   - Enforce mandatory snapshots for AI analyze in both context and fallback modes.

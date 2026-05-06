@@ -4322,12 +4322,22 @@ function extractJsonFromAiText(rawText) {
     .replace(/^```json/, "")
     .replace(/```$/, "")
     .trim();
-  try {
-    const parsed = JSON.parse(clean);
-    return { parsed, clean };
-  } catch {
-    return { parsed: null, clean };
+  const tryParse = (value) => {
+    try {
+      return JSON.parse(String(value || "").trim());
+    } catch {
+      return null;
+    }
+  };
+  let parsed = tryParse(clean);
+  // Some providers return a JSON string whose contents are another JSON object.
+  for (let i = 0; i < 2; i += 1) {
+    if (typeof parsed !== "string") break;
+    const reparsed = tryParse(parsed);
+    if (reparsed == null) break;
+    parsed = reparsed;
   }
+  return { parsed, clean };
 }
 
 async function anthropicListModels(apiKey) {
