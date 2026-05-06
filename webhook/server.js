@@ -16552,6 +16552,7 @@ const appHandler = async (req, res) => {
         if (fileId) fileIds.push(fileId);
       } else {
         const body = await readJson(req);
+        console.log("[claude-delete] body:", JSON.stringify(body).slice(0, 200));
         fileIds = Array.isArray(body?.file_ids)
           ? body.file_ids.map((x) => String(x || "").trim()).filter(Boolean)
           : [];
@@ -16568,6 +16569,7 @@ const appHandler = async (req, res) => {
         }
       }
       fileIds = [...new Set(fileIds)];
+      console.log(`[claude-delete] deleting ${fileIds.length} files:`, fileIds.slice(0, 5));
       if (!fileIds.length)
         return json(res, 400, {
           ok: false,
