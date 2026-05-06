@@ -15904,6 +15904,10 @@ const appHandler = async (req, res) => {
           : String(aiJson?.content || "");
         const extracted = extractJsonFromAiText(rawResponse);
         const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+      console.log('[ai-response] symbol=' + (parsedJson?.symbol || '?') + ' plans=' + (Array.isArray(parsedJson?.trade_plan) ? parsedJson.trade_plan.length : 0) + ' has_analysis=' + (!!parsedJson?.market_analysis));
+      if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
+        console.log('[ai-response] WARN: bare trade_plan. raw:', rawResponse.slice(0, 500));
+      }
         if (
           parsedJson &&
           typeof parsedJson === "object" &&
@@ -16188,6 +16192,10 @@ const appHandler = async (req, res) => {
         : String(aiJson?.content || "");
       const extracted = extractJsonFromAiText(rawResponse);
       const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+      console.log('[ai-response] symbol=' + (parsedJson?.symbol || '?') + ' plans=' + (Array.isArray(parsedJson?.trade_plan) ? parsedJson.trade_plan.length : 0) + ' has_analysis=' + (!!parsedJson?.market_analysis));
+      if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
+        console.log('[ai-response] WARN: bare trade_plan. raw:', rawResponse.slice(0, 500));
+      }
       if (
         parsedJson &&
         typeof parsedJson === "object" &&
