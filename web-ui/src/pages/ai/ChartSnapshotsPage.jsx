@@ -1462,8 +1462,8 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
       const entryModel =
         String(s?.entry_model || s?.model || "ai_claude").trim() || "ai_claude";
       const source =
-        String(s?.source || fallback.source || "ai_claude").trim() ||
-        "ai_claude";
+        String(s?.source || fallback.source || fallback.model || "ai").trim() ||
+        "ai";
       return {
         symbol: normalizeSignalSymbol(s?.symbol || fallback.symbol || ""),
         action,
@@ -1566,8 +1566,8 @@ function validatePosition(pos = {}) {
   if (!Number.isFinite(entry) || !Number.isFinite(tp) || !Number.isFinite(sl)) {
     return "Entry/TP/SL must be numeric values.";
   }
-  if (Number.isFinite(rr) && (rr < 0.3 || rr > 5)) {
-    return "RR must be between 0.3 and 5.";
+  if (rr != null && !Number.isFinite(rr)) {
+    return "RR must be a valid number.";
   }
   if (direction === "BUY") {
     if (!(tp > entry)) return "For BUY, TP must be greater than Entry.";
@@ -1894,6 +1894,7 @@ export default function ChartSnapshotsPage() {
         timeframe,
         strategy: cfg.strategies.join("+") || "ai",
         source: analysisSource,
+        model: analysisSource,
       }).length > 0;
     if (fromAi) return true;
     const err = validatePosition(position);
@@ -2890,6 +2891,7 @@ export default function ChartSnapshotsPage() {
             timeframe,
             strategy: cfg.strategies.join("+") || "ai",
             source: analysisSource,
+            model: analysisSource,
           });
 
       if (!signals.length) {
