@@ -598,6 +598,21 @@ button:disabled {
     box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
 }
 
+.side-badge.status-blur {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+.side-badge.status-blur.side-buy {
+    background: rgba(16, 185, 129, 0.1) !important;
+    color: #10b981 !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+.side-badge.status-blur.side-sell {
+    background: rgba(239, 68, 68, 0.1) !important;
+    color: #ef4444 !important;
+    border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
 .order-type-label {
     text-transform: capitalize;
     font-weight: 600;

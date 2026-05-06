@@ -112,7 +112,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.06 07:43 - unwrap1"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.06 11:38 - 8dfdd8a"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -6984,6 +6984,9 @@ async function _mt5InitBackendInternal() {
         broker_name: String(
           payload.broker_name || existingMeta.broker_name || "",
         ),
+        symbol_metrics: Array.isArray(payload.symbol_metrics) 
+          ? payload.symbol_metrics 
+          : (existingMeta.symbol_metrics || []),
         health_updated_at: new Date().toISOString(),
       };
 

@@ -180,3 +180,38 @@ export function isSameDay(aMs, bMs) {
     return a.getUTCDate() === b.getUTCDate() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCFullYear() === b.getUTCFullYear();
   }
 }
+
+export const TF_WEIGHTS = {
+  "m1": 1,
+  "1m": 1,
+  "m5": 5,
+  "5m": 5,
+  "m15": 15,
+  "15m": 15,
+  "m30": 30,
+  "30m": 30,
+  "h1": 60,
+  "1h": 60,
+  "h4": 240,
+  "4h": 240,
+  "d1": 1440,
+  "1d": 1440,
+  "d": 1440,
+  "w1": 10080,
+  "1w": 10080,
+  "w": 10080,
+  "mn1": 43200,
+  "1mn": 43200,
+  "mn": 43200,
+  "manual": 0,
+};
+
+export function sortTimeframes(tfs, order = "desc") {
+  if (!Array.isArray(tfs)) return [];
+  return [...tfs].sort((a, b) => {
+    const wa = TF_WEIGHTS[String(a).toLowerCase()] ?? 0;
+    const wb = TF_WEIGHTS[String(b).toLowerCase()] ?? 0;
+    return order === "desc" ? wb - wa : wa - wb;
+  });
+}
+

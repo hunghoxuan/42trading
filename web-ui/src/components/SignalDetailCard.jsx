@@ -9,6 +9,7 @@ import {
 } from "../utils/signalDetailUtils";
 import { SymbolChart } from "./charts/ChartTile";
 import { SmartContent } from "./SmartContent";
+import { sortTimeframes } from "../utils/format";
 
 const TF_WEIGHTS = {
   "1m": 1,
@@ -218,11 +219,7 @@ function PlanHeader({
         {pnl ? (
           <span style={{ fontSize: "11px", fontWeight: 700 }}>{pnl}</span>
         ) : null}
-        {skipText ? (
-          <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px", color: "#ef5350", borderColor: "#ef535066" }}>
-            {skipText}
-          </span>
-        ) : null}
+        {/* skipText removed per request */}
         {confidenceText ? (
           <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px" }}>
             {confidenceText}
@@ -410,13 +407,7 @@ export function SignalDetailCard({
         if (t && t !== "entry" && !initial.includes(t)) initial.push(t);
       });
 
-      setSelectedTfs(
-        initial.sort(
-          (a, b) =>
-            (TF_WEIGHTS[a.toLowerCase()] || 0) -
-            (TF_WEIGHTS[b.toLowerCase()] || 0),
-        ),
-      );
+      setSelectedTfs(sortTimeframes(initial, "desc"));
     }
   }, [chart?.enabled, chart?.interval]);
 
@@ -451,11 +442,7 @@ export function SignalDetailCard({
       const next = prev.includes(t)
         ? prev.filter((x) => x !== t)
         : [...prev, t];
-      return next.sort(
-        (a, b) =>
-          (TF_WEIGHTS[a.toLowerCase()] || 0) -
-          (TF_WEIGHTS[b.toLowerCase()] || 0),
-      );
+      return sortTimeframes(next, "desc");
     });
   };
 
@@ -1244,7 +1231,7 @@ export function SignalDetailCard({
           symbol={chart?.symbol}
           timeframes={selectedTfs}
           defaultMode={chart?.mode || "cache"}
-          initialGridCols={mode === "trade" ? 2 : chart?.defaultGridCols}
+          initialGridCols={Math.min(2, selectedTfs.length || 1)}
           entryPrice={chart?.entryPrice}
           slPrice={chart?.slPrice}
           tpPrice={chart?.tpPrice}

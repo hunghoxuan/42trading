@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { showDateTime } from "../utils/format";
+import { showDateTime, sortTimeframes } from "../utils/format";
+import { SizeCalculator } from "../components/SizeCalculator";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
@@ -195,6 +195,8 @@ export default function DashboardPage() {
           Last refreshed: {lastRefreshAt ? showDateTime(lastRefreshAt) : "-"} (auto {Math.round(AUTO_REFRESH_MS/1000)}s)
         </span>
       </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start' }}>
+        <div className="stack-layout" style={{ gap: 18 }}>
       {/* Heartbeat cards removed per request, info moved to Accounts table */}
 
       <div className="toolbar-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px' }}>
@@ -245,11 +247,11 @@ export default function DashboardPage() {
           </select>
           <select value={filters.chart_tf} onChange={(e) => setFilters((prev) => ({ ...prev, chart_tf: e.target.value }))}>
             <option value="">Chart TF</option>
-            {(f.chart_tfs || []).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
+            {(sortTimeframes(f.chart_tfs || [], "desc")).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
           </select>
           <select value={filters.signal_tf} onChange={(e) => setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))}>
             <option value="">Signal TF</option>
-            {(f.signal_tfs || []).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
+            {(sortTimeframes(f.signal_tfs || [], "desc")).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
           </select>
           <select value={filters.range} onChange={(e) => setFilters((prev) => ({ ...prev, range: e.target.value }))}>
             {RANGE_OPTIONS.map((r) => <option key={r.val} value={r.val}>{r.lab}</option>)}
@@ -309,7 +311,10 @@ export default function DashboardPage() {
             </div>
           );
         }} />
+        </div>
       </div>
-    </section>
-  );
+      <SizeCalculator accountId={filters.account_id} initialSymbol={filters.symbol} />
+    </div>
+  </section>
+);
 }

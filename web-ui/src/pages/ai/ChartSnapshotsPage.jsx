@@ -12,6 +12,7 @@ import {
   STRATEGY_OPTIONS, STRATEGY_ENTRY_MODELS, PROFILE_PRESETS, DEFAULT_CONFIG,
   AI_RESPONSE_SCHEMA, GUIDE_TEXT, getEffectiveTfConfig, buildPrompt, buildJsonConfig,
 } from "./AiPromptBuilder";
+import { SymbolEntryCell, StatusPnlCell } from "../../components/TradeSignalListCells";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
@@ -4106,51 +4107,29 @@ export default function ChartSnapshotsPage() {
                   <article
                     key={`${x.kind}_${x.id}`}
                     className="snapshot-activity-card-v4"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (x.kind === "trade") navigate(`/trades/${x.id}`);
+                      else navigate(`/signals/${x.id}`);
+                    }}
                   >
-                    <div className="snapshot-activity-top-v4">
-                      <span
-                        className={`side-badge ${x.side === "SELL" ? "side-sell" : "side-buy"}`}
-                      >
-                        {x.side === "SELL" ? "S" : "B"}
-                      </span>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "baseline",
-                          gap: 6,
-                          minWidth: 0,
-                        }}
-                      >
-                        <span
-                          className="mini-name"
-                          style={{
-                            margin: 0,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {x.symbol || "-"}
-                        </span>
-                        <span
-                          className="minor-text"
-                          style={{
-                            fontSize: 10,
-                            textTransform: "lowercase",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {x.type}
-                        </span>
-                      </div>
-                      <span
-                        className={`badge ${x.status === "OPEN" ? "FILLED" : x.status}`}
-                      >
-                        {x.status === "OPEN" ? "FILLED" : x.status}
-                      </span>
-                    </div>
-                    <div className="minor-text" style={{ paddingLeft: 24 }}>
-                      {x.entry ?? "-"} → {x.tp ?? "-"} / {x.sl ?? "-"}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 8 }}>
+                      <SymbolEntryCell
+                        side={x.side}
+                        symbol={x.symbol}
+                        orderType={x.type}
+                        entry={x.entry}
+                        tp={x.tp}
+                        sl={x.sl}
+                        rr={x.rr}
+                        status={x.status}
+                      />
+                      <StatusPnlCell
+                        hideStatus={true}
+                        pnl={x.pnl}
+                        brokerPips={x.pips}
+                        showFilledDetails={false}
+                      />
                     </div>
                   </article>
                 ))}

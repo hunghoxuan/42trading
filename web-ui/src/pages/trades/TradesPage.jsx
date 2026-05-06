@@ -714,7 +714,7 @@ export default function TradesPage() {
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
                   <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
-                  <th onClick={() => toggleSort("pnl")} style={{ cursor: "pointer" }}>STATUS / PNL{sortMarker("pnl")}</th>
+                  <th onClick={() => toggleSort("pnl")} style={{ cursor: "pointer" }}>PNL / VOLUME{sortMarker("pnl")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -778,6 +778,7 @@ export default function TradesPage() {
                           tp={t.tp || "-"}
                           sl={t.sl || "-"}
                           rr={rrDisplay}
+                          status={t.execution_status}
                         />
                       </td>
                       <td><StrategyTfCell strategy={strategyLabel} entryModel={t.entry_model || "-"} tf={t.signal_tf || t.chart_tf} /></td>
@@ -797,6 +798,7 @@ export default function TradesPage() {
                               {status.label}
                             </span>
                           }
+                          hideStatus={true}
                           pnl={pnl}
                           showFilledDetails={String(t.execution_status || "").toUpperCase() === "OPEN" || String(t.execution_status || "").toUpperCase() === "FILLED"}
                           brokerVolume={asNum(t.broker_volume) ?? asNum(t.metadata?.broker_data?.volume) ?? "-"}

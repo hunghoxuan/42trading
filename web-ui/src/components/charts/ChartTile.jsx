@@ -5,6 +5,7 @@ import { chartFetchManager } from "../../services/chartFetchManager";
 import {
   getEffectiveDisplayTimezone,
   showDateTime,
+  sortTimeframes,
 } from "../../utils/format";
 
 const MODES = ["live", "cache", "snapshots"];
@@ -250,22 +251,7 @@ export function SymbolChart({
     });
 
   const sortedTfs = useMemo(
-    () =>
-      [...timeframes].sort((a, b) => {
-        const order = {
-          d: 0,
-          w: 0,
-          "4h": 1,
-          "1h": 2,
-          "15m": 3,
-          "5m": 4,
-          "1m": 5,
-        };
-        return (
-          (order[String(a).toLowerCase()] ?? 9) -
-          (order[String(b).toLowerCase()] ?? 9)
-        );
-      }),
+    () => sortTimeframes(timeframes, "desc"),
     [timeframes],
   );
 

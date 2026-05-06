@@ -93,18 +93,7 @@ export function TradePlanEditor({
     { label: "Estimated Bars", value: value.estimated_bars ?? "-" },
     { label: "Entry Model", value: value.entry_model || value.entryModel || "-" },
     { label: "Strategy", value: value.strategy || "-" },
-    {
-      label: "Reasons To Skip",
-      value: Array.isArray(value.reasons_to_skip)
-        ? value.reasons_to_skip.join(", ")
-        : (Array.isArray(value.skipReasons)
-          ? value.skipReasons
-              .map((x) => (typeof x === "string" ? x : x?.reason))
-              .filter(Boolean)
-              .join(", ")
-          : (value.reasons_to_skip || "-")),
-    },
-    { label: "Skip Recommendation", value: value.skip_recommendation || value.skip || "-" },
+    // Skip rows removed per request
   ];
 
   const NumericInline = ({ label, k, step = "0.001", min, max, sliderOverride = null }) => {
@@ -307,28 +296,7 @@ export function TradePlanEditor({
             Strategic Note
           </label>
           <SmartContent content={value.note || ""} mode="editable" />
-          {(value.reasons_to_skip || value.skip_recommendation) && (
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--text)",
-                opacity: 0.7,
-                marginTop: 4,
-              }}
-            >
-              {value.reasons_to_skip ? (
-                <div>
-                  Skip:{" "}
-                  {Array.isArray(value.reasons_to_skip)
-                    ? value.reasons_to_skip.join(", ")
-                    : value.reasons_to_skip}
-                </div>
-              ) : null}
-              {value.skip_recommendation && (
-                <div>{value.skip_recommendation}</div>
-              )}
-            </div>
-          )}
+          {/* Skip info removed per request */}
         </div>
 
         <div

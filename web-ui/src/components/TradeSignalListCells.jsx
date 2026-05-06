@@ -25,14 +25,19 @@ export function SymbolEntryCell({
   tp = "-",
   sl = "-",
   rr = null,
+  status = "PENDING",
 }) {
   const sideUp = String(side || "-").toUpperCase();
   const sideCls = sideUp === "BUY" ? "side-buy" : "side-sell";
+  const st = String(status || "PENDING").toUpperCase();
+  const isFilled = st === "FILLED" || st === "OPEN";
+  const statusCls = isFilled ? "status-solid" : "status-blur";
   const rrNum = num(rr);
+
   return (
     <div className="cell-wrap">
       <div className="cell-major" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span className={`side-badge ${sideCls}`}>{sideUp[0] || "-"}</span>
+        <span className={`side-badge ${sideCls} ${statusCls}`}>{sideUp[0] || "-"}</span>
         <span style={{ fontWeight: 800 }}>{symbol}</span>
         <span className="minor-text" style={{ fontSize: 11, textTransform: "lowercase", opacity: 0.8 }}>{orderType || "limit"}</span>
       </div>
@@ -69,18 +74,24 @@ export function StatusPnlCell({
   brokerVolume = null,
   brokerLots = null,
   brokerPips = null,
+  hideStatus = false,
 }) {
   const pnlNum = num(pnl);
   return (
     <div className="cell-wrap">
-      <div className="cell-major">{statusNode}</div>
+      {!hideStatus && <div className="cell-major">{statusNode}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {pnlNum != null && pnlNum !== 0 ? (
+          <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontWeight: 800 }}>${pnlNum.toFixed(2)}</div>
+        ) : null}
+        {brokerPips != null && brokerPips !== 0 ? (
+          <div className="minor-text" style={{ fontSize: '10px', opacity: 0.6 }}>({num(brokerPips).toFixed(1)} bips)</div>
+        ) : null}
+      </div>
       {showFilledDetails ? (
-        <div className="cell-minor">
-          {brokerVolume ?? "-"} | {brokerLots ?? "-"} lots | {brokerPips ?? "-"} pips
+        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7 }}>
+          {brokerVolume ?? "-"} | {brokerLots ?? "-"} lots
         </div>
-      ) : null}
-      {pnlNum != null && pnlNum !== 0 ? (
-        <div className={`cell-minor ${pnlNum < 0 ? "money-neg" : "money-pos"}`}>${pnlNum.toFixed(2)}</div>
       ) : null}
     </div>
   );

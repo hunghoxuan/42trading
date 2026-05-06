@@ -51,7 +51,7 @@ function formatTimeframe(min) {
   return `${n / 43200}M`;
 }
 
-import { showDateTime } from "../../utils/format";
+import { showDateTime, sortTimeframes } from "../../utils/format";
 
 function fDateTime(v) {
   return showDateTime(v);
@@ -587,11 +587,11 @@ export default function SignalsPage() {
           </select>
           <select value={filter.chart_tf} onChange={(e) => setFilter(f => ({ ...f, chart_tf: e.target.value, page: 1 }))}>
             <option value="">CHART TF</option>
-            {advFilters.chart_tfs.map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
+            {sortTimeframes(advFilters.chart_tfs, "desc").map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
           </select>
           <select value={filter.signal_tf} onChange={(e) => setFilter(f => ({ ...f, signal_tf: e.target.value, page: 1 }))}>
             <option value="">SIGNAL TF</option>
-            {advFilters.signal_tfs.map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
+            {sortTimeframes(advFilters.signal_tfs, "desc").map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
           </select>
           <select value={filter.range} onChange={(e) => setFilter(f => ({ ...f, range: e.target.value, page: 1 }))}>
             {RANGE_OPTIONS.map(r => <option key={r.val} value={r.val}>{r.lab}</option>)}
@@ -654,7 +654,7 @@ export default function SignalsPage() {
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
                   <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
-                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
+                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATE{sortMarker("status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -703,13 +703,25 @@ export default function SignalsPage() {
                           }}
                         />
                       </td>
-                      <td><SymbolEntryCell side={sideValue} symbol={t.symbol} orderType={t.order_type || "limit"} entry={fPrice(t.entry, t.target_price || t.entry_price)} tp={fPrice(t.tp)} sl={fPrice(t.sl)} rr={asNum(t.rr_planned)} /></td>
+                      <td>
+                        <SymbolEntryCell
+                          side={sideValue}
+                          symbol={t.symbol}
+                          orderType={t.order_type || "limit"}
+                          entry={fPrice(t.entry, t.target_price || t.entry_price)}
+                          tp={fPrice(t.tp)}
+                          sl={fPrice(t.sl)}
+                          rr={asNum(t.rr_planned)}
+                          status={t.status}
+                        />
+                      </td>
                       <td><StrategyTfCell strategy={strategyLabel} entryModel={t.entry_model || "-"} tf={t.signal_tf} /></td>
                       <td><AuditCell timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)} sid={signalShort} brokerTradeId={String(t?.broker_trade_id || "-")} /></td>
                       <td>
                         <div className="cell-wrap">
                           <StatusPnlCell
                             statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
+                            hideStatus={true}
                             pnl={null}
                             showFilledDetails={false}
                           />
