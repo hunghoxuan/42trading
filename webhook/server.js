@@ -16590,12 +16590,32 @@ const appHandler = async (req, res) => {
           });
         }
       }
-      const map = readClaudeSnapshotFileMap();
-      for (const [localFile, item] of Object.entries(map)) {
-        if (fileIds.includes(String(item?.file_id || "")))
-          delete map[localFile];
+      // Clean both snapshot and context file maps
+      const snapMap = readClaudeSnapshotFileMap();
+      const ctxMap = readClaudeContextFileMap();
+      let mapChanged = false;
+      for (const [localFile, item] of Object.entries(snapMap)) {
+        if (fileIds.includes(String(item?.file_id || ""))) {
+          delete snapMap[localFile];
+          mapChanged = true;
+          // Also delete local file from disk
+          const abs = path.join(CHART_SNAPSHOT_DIR, path.basename(String(item?.vps_file || localFile)));
+          try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch {}
+        }
       }
-      writeClaudeSnapshotFileMap(map);
+      for (const [key, item] of Object.entries(ctxMap)) {
+        if (fileIds.includes(String(item?.file_id || ""))) {
+          delete ctxMap[key];
+          mapChanged = true;
+          // Also delete local context file from disk
+          const abs = String(item?.vps_path || "").trim();
+          try { if (abs && fs.existsSync(abs)) fs.unlinkSync(abs); } catch {}
+        }
+      }
+      if (mapChanged) {
+        writeClaudeSnapshotFileMap(snapMap);
+        writeClaudeContextFileMap(ctxMap);
+      }
       return json(res, 200, {
         ok: true,
         deleted_count: deleted.length,

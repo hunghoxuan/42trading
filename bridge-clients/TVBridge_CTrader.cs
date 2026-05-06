@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 05:11 - 2e2465e";
+        private string BuildVersion = "v2026.05.06 05:16 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -187,7 +187,24 @@ namespace cAlgo.Robots
 
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
-                if (symbol == null) return;
+                
+                // Smart Match: Try common suffixes if exact match fails
+                if (symbol == null) {
+                    foreach (var s in new[] { ".ecn", ".m", ".i", "_i", "." }) {
+                        symbol = Symbols.GetSymbol(symbolCode + s);
+                        if (symbol != null) break;
+                    }
+                }
+
+                if (symbol == null) {
+                    var msg = "Symbol not found: " + symbolCode;
+                    UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
+                    _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
+                    Print("[Error] Failed to get symbol '{0}': Symbol not found in your platform.", symbolCode);
+                    return;
+                }
+                
+                symbolCode = symbol.Name; // Use the actual name found (e.g., GBPJPY.ecn)
                 
                 if (action == "CLOSE") {
                     // Close by SID (comment) or Magic Number (label)
