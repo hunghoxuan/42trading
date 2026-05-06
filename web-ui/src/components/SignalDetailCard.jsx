@@ -117,11 +117,15 @@ function PlanHeader({
   const sideBg = isBuy ? "rgba(38,166,154,0.1)" : "rgba(239,83,80,0.1)";
   const confidenceRaw = plan.confidence ?? plan.confidence_pct;
   const confidenceNum = Number(String(confidenceRaw ?? "").replace(",", "."));
-  const confidenceText = Number.isFinite(confidenceNum) ? `${confidenceNum.toFixed(1)}%` : "";
+  const confidenceText = Number.isFinite(confidenceNum)
+    ? `${confidenceNum.toFixed(1)}%`
+    : "";
   const skipText = String(
     plan.skip_recommendation ||
       plan.skip ||
-      (Array.isArray(plan.skipReasons) && plan.skipReasons.length ? "skip" : ""),
+      (Array.isArray(plan.skipReasons) && plan.skipReasons.length
+        ? "skip"
+        : ""),
   ).trim();
 
   return (
@@ -191,7 +195,9 @@ function PlanHeader({
             {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>{plan.tp || "-"}</span> /{" "}
             <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
-            <span style={{ color: "var(--muted)", marginLeft: 8, fontWeight: 400 }}>
+            <span
+              style={{ color: "var(--muted)", marginLeft: 8, fontWeight: 400 }}
+            >
               {rrText}
             </span>
           </div>
@@ -220,7 +226,10 @@ function PlanHeader({
         ) : null}
         {/* skipText removed per request */}
         {confidenceText ? (
-          <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px" }}>
+          <span
+            className="badge badge-mini"
+            style={{ padding: "2px 6px", fontSize: "9px" }}
+          >
             {confidenceText}
           </span>
         ) : null}
@@ -344,24 +353,6 @@ export default function SignalDetailCard({
   ]);
 
   const [mainTab, setMainTab] = useState("chart");
-  
-  const hasTradePlanData = useMemo(() => {
-    const p = plans[0] || {};
-    return Boolean(p.entry || p.tp || p.sl);
-  }, [plans]);
-
-  useEffect(() => {
-    if (!hasTradePlanData && mainTab === "json") {
-       // stay on json if user explicitly went there
-    } else if (!hasTradePlanData && mainTab !== "chart") {
-       setMainTab("chart");
-    }
-  }, [hasTradePlanData]);
-
-  useEffect(() => {
-    if (!availableTabs.includes(mainTab))
-      setMainTab(availableTabs[0] || "info");
-  }, [availableTabs, mainTab]);
   const [selectedTfs, setSelectedTfs] = useState([]);
   const [chartModes, setChartModes] = useState(["static", "live"]);
   const [multiChartData, setMultiChartData] = useState({});
@@ -381,6 +372,24 @@ export default function SignalDetailCard({
     },
   ];
 
+  const hasTradePlanData = useMemo(() => {
+    const p = plans[0] || {};
+    return Boolean(p.entry || p.tp || p.sl);
+  }, [plans]);
+
+  useEffect(() => {
+    if (!hasTradePlanData && mainTab === "json") {
+      // stay on json if user explicitly went there
+    } else if (!hasTradePlanData && mainTab !== "chart") {
+      setMainTab("chart");
+    }
+  }, [hasTradePlanData]);
+
+  useEffect(() => {
+    if (!availableTabs.includes(mainTab))
+      setMainTab(availableTabs[0] || "info");
+  }, [availableTabs, mainTab]);
+
   useEffect(() => {
     const next = {};
     plans.forEach((p, i) => {
@@ -394,7 +403,9 @@ export default function SignalDetailCard({
         invalidation: p.invalidation || "",
         reasons_to_skip: Array.isArray(p.reasons_to_skip)
           ? p.reasons_to_skip
-          : (Array.isArray(p.skipReasons) ? p.skipReasons : []),
+          : Array.isArray(p.skipReasons)
+            ? p.skipReasons
+            : [],
         skip_recommendation: p.skip_recommendation || p.skip || "",
       };
     });
@@ -517,7 +528,9 @@ export default function SignalDetailCard({
             const isSelected = selectedPlanId === planId;
             const isBuy = String(p.direction).toUpperCase() === "BUY";
             const isSimplified = !isSelected;
-            const planValue = isMain ? tradePlan.value : (planDrafts[planId] || p);
+            const planValue = isMain
+              ? tradePlan.value
+              : planDrafts[planId] || p;
             return (
               <div
                 key={planId}
@@ -557,7 +570,11 @@ export default function SignalDetailCard({
                       } else {
                         setPlanDrafts((prev) => ({
                           ...prev,
-                          [planId]: applyLinkedPlanChange((prev[planId] || p), k, v),
+                          [planId]: applyLinkedPlanChange(
+                            prev[planId] || p,
+                            k,
+                            v,
+                          ),
                         }));
                       }
                     }}
@@ -583,11 +600,19 @@ export default function SignalDetailCard({
                 ) : (
                   <TradePlanEditor
                     value={planValue}
-                    onAddSignal={(pos) => tradePlan.onAddSignal?.(pos || planValue, planId)}
-                    onAddTrade={(pos) => tradePlan.onAddTrade?.(pos || planValue, planId)}
+                    onAddSignal={(pos) =>
+                      tradePlan.onAddSignal?.(pos || planValue, planId)
+                    }
+                    onAddTrade={(pos) =>
+                      tradePlan.onAddTrade?.(pos || planValue, planId)
+                    }
                     showSaveButton={false}
-                    showAddSignalButton={mode === "ai" && tradePlan.showAddSignalButton}
-                    showAddTradeButton={mode === "ai" && tradePlan.showAddTradeButton}
+                    showAddSignalButton={
+                      mode === "ai" && tradePlan.showAddSignalButton
+                    }
+                    showAddTradeButton={
+                      mode === "ai" && tradePlan.showAddTradeButton
+                    }
                     showActionsInView={mode === "ai"}
                     showResetButton={false}
                     busy={tradePlan.busy || {}}
@@ -626,72 +651,133 @@ export default function SignalDetailCard({
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {/* Fields at the top of Info tab */}
-        {metaItems.length > 0 && (() => {
-          const hasVal = (x) => x && x.value !== null && x.value !== undefined && String(x.value) !== "";
-          const sourceItems = metaItems.filter((x) => x?.group === "source" && x.label !== "Raw JSON" && hasVal(x));
-          const accountItems = metaItems.filter((x) => x?.group === "account" && x.label !== "Raw JSON" && hasVal(x));
-          const otherItems = metaItems.filter((x) => !x?.group && x.label !== "Raw JSON" && hasVal(x));
-          const renderField = (item, i) => (
-            <div key={`${item.label}-${i}`} style={{ gridColumn: item.fullWidth ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 4 }}>
-              <span className="minor-text" style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--muted-bright)" }}>{item.label}</span>
-              <div style={{ fontSize: "12.5px", color: "var(--foreground)", wordBreak: "break-word", fontWeight: 500, ...(item.valueStyle || {}) }}>
-                {String(item.label || "").toLowerCase() === "note" ? (
-                  <div dangerouslySetInnerHTML={{ __html: formatNote(item.value) }} />
-                ) : (
-                  typeof item.value === "object" ? JSON.stringify(item.value, null, 2) : item.value
-                )}
-              </div>
-            </div>
-          );
-          const card = (title, items) => {
-            const isAccount = title === "Account";
-            const rawJsonItem = metaItems.find(x => x.label === "Raw Metadata" || x.label === "Raw JSON");
-            
-            return (
-              <div className="fields-grid" style={{ 
-                display: "grid", 
-                gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", 
-                gap: 16, 
-                padding: 16, 
-                background: "rgba(255,255,255,0.02)", 
-                borderRadius: 10, 
-                border: "1px solid var(--border)", 
-                marginBottom: 12,
-                position: 'relative'
-              }}>
-                {items.map(renderField)}
-                {isAccount && rawJsonItem && (
-                  <div style={{ gridColumn: "1 / -1", marginTop: 8 }}>
-                    <span className="minor-text" style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--muted-bright)" }}>METADATA</span>
-                    <div style={{ 
-                      marginTop: 6,
-                      padding: 10,
-                      background: "rgba(0,0,0,0.2)",
-                      borderRadius: 6,
-                      border: "1px solid rgba(255,255,255,0.05)",
-                      fontSize: '10px',
-                      fontFamily: 'monospace',
-                      color: '#8be9fd',
-                      overflowX: 'auto',
-                      maxHeight: '200px'
-                    }}>
-                      {typeof rawJsonItem.value === 'object' 
-                        ? JSON.stringify(rawJsonItem.value, null, 2) 
-                        : String(rawJsonItem.value)}
-                    </div>
-                  </div>
-                )}
+        {metaItems.length > 0 &&
+          (() => {
+            const hasVal = (x) =>
+              x &&
+              x.value !== null &&
+              x.value !== undefined &&
+              String(x.value) !== "";
+            const sourceItems = metaItems.filter(
+              (x) =>
+                x?.group === "source" && x.label !== "Raw JSON" && hasVal(x),
+            );
+            const accountItems = metaItems.filter(
+              (x) =>
+                x?.group === "account" && x.label !== "Raw JSON" && hasVal(x),
+            );
+            const otherItems = metaItems.filter(
+              (x) => !x?.group && x.label !== "Raw JSON" && hasVal(x),
+            );
+            const renderField = (item, i) => (
+              <div
+                key={`${item.label}-${i}`}
+                style={{
+                  gridColumn: item.fullWidth ? "1 / -1" : "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <span
+                  className="minor-text"
+                  style={{
+                    fontSize: "10px",
+                    textTransform: "uppercase",
+                    color: "var(--muted-bright)",
+                  }}
+                >
+                  {item.label}
+                </span>
+                <div
+                  style={{
+                    fontSize: "12.5px",
+                    color: "var(--foreground)",
+                    wordBreak: "break-word",
+                    fontWeight: 500,
+                    ...(item.valueStyle || {}),
+                  }}
+                >
+                  {String(item.label || "").toLowerCase() === "note" ? (
+                    <div
+                      dangerouslySetInnerHTML={{
+                        __html: formatNote(item.value),
+                      }}
+                    />
+                  ) : typeof item.value === "object" ? (
+                    JSON.stringify(item.value, null, 2)
+                  ) : (
+                    item.value
+                  )}
+                </div>
               </div>
             );
-          };
-          return (
-            <div style={{ marginBottom: 20 }}>
-              {sourceItems.length ? card("Source", sourceItems) : null}
-              {accountItems.length ? card("Account", accountItems) : null}
-              {otherItems.length ? card("Other", otherItems) : null}
-            </div>
-          );
-        })()}
+            const card = (title, items) => {
+              const isAccount = title === "Account";
+              const rawJsonItem = metaItems.find(
+                (x) => x.label === "Raw Metadata" || x.label === "Raw JSON",
+              );
+
+              return (
+                <div
+                  className="fields-grid"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(180px, 1fr))",
+                    gap: 16,
+                    padding: 16,
+                    background: "rgba(255,255,255,0.02)",
+                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    marginBottom: 12,
+                    position: "relative",
+                  }}
+                >
+                  {items.map(renderField)}
+                  {isAccount && rawJsonItem && (
+                    <div style={{ gridColumn: "1 / -1", marginTop: 8 }}>
+                      <span
+                        className="minor-text"
+                        style={{
+                          fontSize: "10px",
+                          textTransform: "uppercase",
+                          color: "var(--muted-bright)",
+                        }}
+                      >
+                        METADATA
+                      </span>
+                      <div
+                        style={{
+                          marginTop: 6,
+                          padding: 10,
+                          background: "rgba(0,0,0,0.2)",
+                          borderRadius: 6,
+                          border: "1px solid rgba(255,255,255,0.05)",
+                          fontSize: "10px",
+                          fontFamily: "monospace",
+                          color: "#8be9fd",
+                          overflowX: "auto",
+                          maxHeight: "200px",
+                        }}
+                      >
+                        {typeof rawJsonItem.value === "object"
+                          ? JSON.stringify(rawJsonItem.value, null, 2)
+                          : String(rawJsonItem.value)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            };
+            return (
+              <div style={{ marginBottom: 20 }}>
+                {sourceItems.length ? card("Source", sourceItems) : null}
+                {accountItems.length ? card("Account", accountItems) : null}
+                {otherItems.length ? card("Other", otherItems) : null}
+              </div>
+            );
+          })()}
 
         {/* Analysis content below fields */}
         <div
@@ -717,7 +803,8 @@ export default function SignalDetailCard({
                     poiAlign:
                       tf?.poiAlign === true || tf?.poiAlign === false
                         ? String(tf.poiAlign)
-                        : tf?.poi_alignment === true || tf?.poi_alignment === false
+                        : tf?.poi_alignment === true ||
+                            tf?.poi_alignment === false
                           ? String(tf.poi_alignment)
                           : "",
                     keyBreaks: Array.isArray(tf?.strongEvents)
@@ -907,7 +994,9 @@ export default function SignalDetailCard({
                         lineHeight: 1.6,
                       }}
                     >
-                      {typeof analysis === "object" ? JSON.stringify(analysis, null, 2) : analysis}
+                      {typeof analysis === "object"
+                        ? JSON.stringify(analysis, null, 2)
+                        : analysis}
                     </div>
                   </div>
                 )}
@@ -925,7 +1014,9 @@ export default function SignalDetailCard({
                       Confluence
                     </div>
                     <div style={{ whiteSpace: "pre-wrap", marginBottom: 12 }}>
-                      {typeof confluence === "object" ? JSON.stringify(confluence, null, 2) : confluence}
+                      {typeof confluence === "object"
+                        ? JSON.stringify(confluence, null, 2)
+                        : confluence}
                     </div>
                   </div>
                 )}
@@ -1017,7 +1108,9 @@ export default function SignalDetailCard({
                                         : "var(--muted)",
                                     }}
                                   >
-                                    {typeof label === "object" ? JSON.stringify(label, null, 2) : label}
+                                    {typeof label === "object"
+                                      ? JSON.stringify(label, null, 2)
+                                      : label}
                                   </span>
                                 </div>
                               );
@@ -1092,7 +1185,9 @@ export default function SignalDetailCard({
                                         : "var(--muted)",
                                     }}
                                   >
-                                    {typeof label === "object" ? JSON.stringify(label, null, 2) : label}
+                                    {typeof label === "object"
+                                      ? JSON.stringify(label, null, 2)
+                                      : label}
                                   </span>
                                 </div>
                               );
@@ -1271,7 +1366,9 @@ export default function SignalDetailCard({
 
       {/* CHART TAB */}
       <div style={{ display: mainTab === "chart" ? "block" : "none" }}>
-        <Suspense fallback={<div className="loading-container">Loading chart...</div>}>
+        <Suspense
+          fallback={<div className="loading-container">Loading chart...</div>}
+        >
           <SymbolChart
             symbol={chart?.symbol}
             timeframes={selectedTfs}
