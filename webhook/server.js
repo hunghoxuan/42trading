@@ -9643,6 +9643,30 @@ function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
 
+  // BARE trade_plan: AI returned trade_plan directly (no ai_full_analysis wrapper)
+  // Normalize old field names → legacy market_analysis format
+  if (!out.ai_full_analysis && Array.isArray(out.trade_plan) && !out.market_analysis) {
+    out.trade_plan = out.trade_plan.map(x => ({
+      direction: x?.direction || x?.dir || "",
+      profile: x?.profile || "",
+      type: x?.order_type || x?.type || "",
+      strategy: x?.strategy || "",
+      entry_model: x?.entry_model || "",
+      entry: x?.entry_price ?? x?.entry ?? null,
+      sl: x?.stop_loss ?? x?.sl ?? null,
+      tp: Array.isArray(x?.take_profits)
+        ? (x.take_profits[0]?.price ?? null)
+        : (x?.tp1 ?? x?.tp ?? null),
+      tp2: Array.isArray(x?.take_profits) ? (x.take_profits[1]?.price ?? null) : (x?.tp2 ?? null),
+      tp3: Array.isArray(x?.take_profits) ? (x.take_profits[2]?.price ?? null) : (x?.tp3 ?? null),
+      rr: x?.risk_reward ?? x?.rr ?? null,
+      risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
+      confidence_pct: x?.confidence_pct ?? null,
+      note: x?.note || "",
+    }));
+    return out;
+  }
+
   // NEW schema (v2.2): ai_full_analysis wrapper
   if (out.ai_full_analysis && typeof out.ai_full_analysis === "object") {
     const a = out.ai_full_analysis;
