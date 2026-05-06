@@ -474,13 +474,31 @@ function getPlanTpCandidates(plan = {}) {
 }
 
 function getPlanPrimaryTp(plan = {}) {
-  for (const candidate of getPlanTpCandidates(plan)) {
+  const terminalCandidates = [
+    plan?.tp3,
+    Array.isArray(plan?.tps) && plan.tps[2]
+      ? (plan.tps[2].price ?? plan.tps[2])
+      : null,
+    Array.isArray(plan?.partial_tps) && plan.partial_tps[2]
+      ? (plan.partial_tps[2].price ?? plan.partial_tps[2])
+      : null,
+    Array.isArray(plan?.take_profits) && plan.take_profits[2]
+      ? (plan.take_profits[2].price ?? plan.take_profits[2])
+      : null,
+  ];
+  for (const candidate of terminalCandidates) {
     const value =
       candidate && typeof candidate === "object" ? candidate.price : candidate;
     const n = parseNum(value);
     if (Number.isFinite(n)) return n;
   }
-  return NaN;
+  // Fallback: choose the last valid TP-like value from any available list.
+  const all = getPlanTpCandidates(plan)
+    .map((candidate) =>
+      parseNum(candidate && typeof candidate === "object" ? candidate.price : candidate),
+    )
+    .filter((n) => Number.isFinite(n));
+  return all.length ? all[all.length - 1] : NaN;
 }
 
 function normalizeAnalysisContract(parsed) {
@@ -3363,6 +3381,17 @@ export default function ChartSnapshotsPage() {
           tp,
           rr,
           note: String(p?.note || "").trim(),
+          trade_type: String(p?.type || p?.order_type || "limit")
+            .trim()
+            .toLowerCase(),
+          be_trigger: p?.be_trigger ?? p?.be ?? null,
+          invalidation: String(p?.invalidation || "").trim(),
+          confidence_pct: parseNum(p?.confidence_pct),
+          estimated_bars: p?.estimated_bars ?? null,
+          reasons_to_skip: Array.isArray(p?.reasons_to_skip)
+            ? p.reasons_to_skip
+            : [],
+          skip_recommendation: p?.skip_recommendation || p?.skip || "",
         };
       })
       .filter((x) => x.raw && typeof x.raw === "object");

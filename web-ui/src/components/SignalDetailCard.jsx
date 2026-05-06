@@ -175,7 +175,7 @@ function PlanHeader({
                   opacity: 0.8,
                 }}
               >
-                {plan.strategy || "market"}
+                {plan.trade_type || plan.order_type || "limit"}
               </span>
             )}
           </div>
@@ -379,6 +379,9 @@ export function SignalDetailCard({
         ...p,
         entry_model: p.entry_model || p.entryModel || "",
         confidence_pct: p.confidence_pct ?? p.confidence ?? null,
+        estimated_bars: p.estimated_bars ?? null,
+        be_trigger: p.be_trigger ?? p.be ?? null,
+        invalidation: p.invalidation || "",
         reasons_to_skip: Array.isArray(p.reasons_to_skip)
           ? p.reasons_to_skip
           : (Array.isArray(p.skipReasons) ? p.skipReasons : []),

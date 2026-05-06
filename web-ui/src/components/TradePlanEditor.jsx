@@ -81,7 +81,16 @@ export function TradePlanEditor({
 
   const summaryRows = [
     { label: "Note", value: value.note || "-" },
+    { label: "BE", value: value.be_trigger || value.be || "-" },
     { label: "Invalidation", value: value.invalidation || "-" },
+    {
+      label: "Confidence",
+      value:
+        value.confidence_pct === null || value.confidence_pct === undefined
+          ? "-"
+          : `${Number(value.confidence_pct).toFixed(1)}%`,
+    },
+    { label: "Estimated Bars", value: value.estimated_bars ?? "-" },
     { label: "Entry Model", value: value.entry_model || value.entryModel || "-" },
     { label: "Strategy", value: value.strategy || "-" },
     {

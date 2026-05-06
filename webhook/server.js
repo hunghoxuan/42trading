@@ -9725,7 +9725,11 @@ function normalizeAiAnalysisContract(input = {}) {
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
         be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-        tp: Array.isArray(x?.take_profits) && x.take_profits[0] ? x.take_profits[0].price : (x?.tp ?? null),
+        tp: Array.isArray(x?.take_profits) && x.take_profits[2]
+          ? x.take_profits[2].price
+          : (Array.isArray(x?.take_profits) && x.take_profits[x.take_profits.length - 1]
+            ? x.take_profits[x.take_profits.length - 1].price
+            : (x?.tp3 ?? x?.tp ?? null)),
         tp2: Array.isArray(x?.take_profits) && x.take_profits[1] ? x.take_profits[1].price : (x?.tp2 ?? null),
         tp3: Array.isArray(x?.take_profits) && x.take_profits[2] ? x.take_profits[2].price : (x?.tp3 ?? null),
         estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
@@ -9894,8 +9898,12 @@ function normalizeAiAnalysisContract(input = {}) {
       sl: x?.sl ?? null,
       be_trigger: x?.be ?? null,
       tp:
-        x?.tp ??
-        (Array.isArray(x?.tps) && x.tps[0] ? (x.tps[0].price ?? null) : null),
+        x?.tp3 ??
+        (Array.isArray(x?.tps) && x.tps[2]
+          ? (x.tps[2].price ?? null)
+          : (Array.isArray(x?.tps) && x.tps.length
+            ? (x.tps[x.tps.length - 1]?.price ?? null)
+            : (x?.tp ?? null))),
       tp2:
         x?.tp2 ??
         (Array.isArray(x?.tps) && x.tps[1] ? (x.tps[1].price ?? null) : null),
