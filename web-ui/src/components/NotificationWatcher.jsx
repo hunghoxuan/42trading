@@ -12,6 +12,23 @@ window.__tickerEvents = window.__tickerEvents || [];
 export default function NotificationWatcher() {
   const esRef = useRef(null);
   const reconnectTimer = useRef(null);
+  const prefsRef = useRef({}); // user's per-event notification prefs
+
+  // Load user notification preferences once on mount
+  useEffect(() => {
+    api
+      .notificationEvents()
+      .then((res) => {
+        if (res?.events) {
+          const map = {};
+          res.events.forEach((ev) => {
+            map[ev.event] = ev;
+          });
+          prefsRef.current = map;
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleEvent = useCallback((payload) => {
     try {
@@ -28,11 +45,19 @@ export default function NotificationWatcher() {
         fn(`[${p.event}] ${p.message}`);
       }
 
-      // Resolve notification settings: new format (notification_settings) or legacy
+      // Resolve: intersect SSE capability with user preferences
       const ns = p.notification_settings || {};
-      const showToast = ns.toast !== false && p.notification !== false;
-      const showTicker = ns.ticker !== false && p.ticker !== false;
-      const playAudio = ns.sound !== false && p.sound;
+      const userPref = prefsRef.current[p.event] || {};
+      const showToast =
+        ns.toast !== false &&
+        p.notification !== false &&
+        userPref.notification !== false;
+      const showTicker =
+        ns.ticker !== false && p.ticker !== false && userPref.ticker !== false;
+      // Sound: only play if SSE allows, user has a sound selected AND sound event key is valid
+      const userSound = userPref.sound;
+      const sseSound = ns.sound !== false ? p.sound || userSound : null;
+      const playAudio = !!sseSound && SoundEvents[sseSound];
 
       // 2. In-app toast
       if (showToast) {
@@ -88,8 +113,8 @@ export default function NotificationWatcher() {
       }
 
       // 7. Sound
-      if (playAudio && SoundEvents[p.sound]) {
-        playSound(p.sound);
+      if (playAudio) {
+        playSound(sseSound);
       }
     } catch (e) {
       console.warn("[NotificationWatcher] Failed to handle event:", e);
