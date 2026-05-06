@@ -18,9 +18,9 @@ All AI agents in this repo must load project context in this exact order before 
     - `architecture/`: Tech stack, Schema, API Design.
     - `features/`: Capability "Source of Truth" (Done/Plan).
     - `tickets/`: Lifecycle of active work and history.
-    - `wiki/`: Distilled project lessons.
 - **`.agents/.raw/`**: The "Memory" domain (Not for AI logic).
     - Append-only raw logs and data.
+- **`.agents/wiki/`: Distilled project lessons.
 - **`.agents/rules/`**: **READ ON BOOT.** Mandatory boundaries and constraints.
 - **`.agents/skills/`**: **READ ON DEMAND.** Step-by-step playbooks for specific tasks.
 - **`.agents/sync/`**: Inter-agent communication (Mailbox).

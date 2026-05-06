@@ -457,6 +457,25 @@ export default function TradesPage() {
     loadMeta();
   }, []);
 
+  // Realtime trade data patch from SSE broker_sync
+  useEffect(() => {
+    const handler = (e) => {
+      const updates = e.detail || [];
+      if (!updates.length) return;
+      setRows((prev) => {
+        const map = new Map(updates.map((u) => [u.sid, u]));
+        if (!prev.some((r) => map.has(tradeKeyOf(r)))) return prev; // no match
+        return prev.map((r) => {
+          const update = map.get(tradeKeyOf(r));
+          if (!update) return r;
+          return { ...r, ...update };
+        });
+      });
+    };
+    window.addEventListener("trade-update", handler);
+    return () => window.removeEventListener("trade-update", handler);
+  }, []);
+
   // Select trade from URL param on load
   useEffect(() => {
     if (tradeId && rows.length > 0) {

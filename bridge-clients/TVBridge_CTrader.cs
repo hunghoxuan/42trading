@@ -87,8 +87,14 @@ namespace cAlgo.Robots
             foreach (var pos in Positions) {
                 var sid = (pos.Comment ?? "").Replace("\"", "'");
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2},\"label\":\"{6}\"}}",
-                    sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), pos.VolumeInUnits, pos.NetProfit, pos.Label));
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"pnl\":{5:F2},\"pips\":{6:F2},\"commission\":{7:F2},\"swap\":{8:F2},\"label\":\"{9}\"}}",
+                    sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
+                    double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
+                    double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit, 
+                    double.IsNaN(pos.Pips) ? 0 : pos.Pips,
+                    double.IsNaN(pos.Commissions) ? 0 : pos.Commissions,
+                    double.IsNaN(pos.Swap) ? 0 : pos.Swap,
+                    pos.Label));
             }
 
             var closedList = new List<string>();
@@ -102,16 +108,40 @@ namespace cAlgo.Robots
 
                 var sid = (deal.Comment ?? "").Replace("\"", "'");
                 closedList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"symbol_code\":\"{3}\",\"side\":\"{4}\",\"volume\":{5:F2},\"pnl\":{6:F2},\"status\":\"CLOSED\",\"closed_at\":\"{7:O}\",\"label\":\"{8}\"}}",
-                    sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), deal.VolumeInUnits, deal.NetProfit, deal.ClosingTime, deal.Label));
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"symbol_code\":\"{3}\",\"side\":\"{4}\",\"volume\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"status\":\"CLOSED\",\"closed_at\":\"{10:O}\",\"label\":\"{11}\"}}",
+                    sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), 
+                    double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits, 
+                    double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit, 
+                    0.0, // Historical deals don't have a direct 'Pips' property in some versions, defaulting to 0 for now
+                    double.IsNaN(deal.Commissions) ? 0 : deal.Commissions,
+                    double.IsNaN(deal.Swap) ? 0 : deal.Swap,
+                    deal.ClosingTime, deal.Label));
             }
 
             var metricsList = new List<string>();
-            var visibleSymbols = Symbols.Where(s => s.IsVisible).Take(50).ToList();
-            foreach (var s in visibleSymbols) {
+            var symbolsToSync = new HashSet<string>();
+            symbolsToSync.Add(Symbol.Name);
+            int count = 0;
+            foreach (var name in Symbols) {
+                symbolsToSync.Add(name);
+                if (++count >= 50) break;
+            }
+            foreach (var pos in Positions) symbolsToSync.Add(pos.SymbolName);
+            
+            foreach (var symbolName in symbolsToSync.Take(100)) {
+                var s = Symbols.GetSymbol(symbolName);
+                if (s == null) continue;
+                
+                // Use CultureInfo.InvariantCulture and check for NaN to avoid invalid JSON
                 metricsList.Add(string.Format(CultureInfo.InvariantCulture, 
                     "{{\"symbol\":\"{0}\",\"pip_value\":{1:F5},\"spread\":{2:F2},\"min_vol\":{3:F2},\"step_vol\":{4:F2},\"pip_size\":{5:F8},\"digits\":{6}}}",
-                    s.Name, s.PipValue, s.Spread, s.VolumeInUnitsMin, s.VolumeInUnitsStep, s.PipSize, s.Digits));
+                    s.Name, 
+                    double.IsNaN(s.PipValue) ? 0 : s.PipValue, 
+                    double.IsNaN(s.Spread) ? 0 : s.Spread, 
+                    double.IsNaN(s.VolumeInUnitsMin) ? 0 : s.VolumeInUnitsMin, 
+                    double.IsNaN(s.VolumeInUnitsStep) ? 0 : s.VolumeInUnitsStep, 
+                    double.IsNaN(s.PipSize) ? 0 : s.PipSize, 
+                    s.Digits));
             }
 
             var brokerName = Account.BrokerName;

@@ -9,7 +9,7 @@
 ## Runtime
 - Backend: `webhook/server.js`.
 - UI: `web-ui`.
-- EA: `mql5/TVBridgeEA.mq5`.
+- Broker clients: `bridge-clients`.
 - DB: Postgres.
 
 ## Stable Contracts
@@ -45,4 +45,3 @@
 - Hide pagination controls when only one page exists.
 - Grid actions prefer icon-only buttons.
 - Detail/forms can use icon + text.
-

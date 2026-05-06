@@ -92,3 +92,14 @@ This file tracks the status of user-facing features and links them to technical 
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/broker_sync_integrity.md]
 - **Summary**: Resolved premature 'CLOSED' discrepancies, standardized 9-character SIDs, and implemented robust status transition validation with critical audit logging.
+
+## [ ] API Key Management & Credit Tracking
+- **Status**: Planned
+- **Feature Doc**: [../features/1-plan/api_key_credit_tracking.md]
+- **Summary**: Support for `{ api_key, credits }` schema in user settings with automated and manual credit refresh from providers (OpenRouter, Google, etc.).
+
+## [ ] Advanced Order Entry
+- **Status**: Planned
+- **Feature Doc**: [../features/1-plan/advanced_order_entry.md]
+- **Ticket**: [./1-backlog/2026-05-06-advanced-order-panel.md]
+- **Summary**: Integrated professional order entry panel with real-time risk-based sizing, broker metrics sync, and one-click execution.

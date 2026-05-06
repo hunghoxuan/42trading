@@ -112,7 +112,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.06 11:38 - 8dfdd8a"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.06 11:38 - 8dfdd8a",
+); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -122,7 +125,10 @@ function sseRegisterClient(userId, res) {
 }
 function sseRemoveClient(userId, res) {
   const set = SSE_CLIENTS.get(userId);
-  if (set) { set.delete(res); if (!set.size) SSE_CLIENTS.delete(userId); }
+  if (set) {
+    set.delete(res);
+    if (!set.size) SSE_CLIENTS.delete(userId);
+  }
 }
 function emitNotification(payload) {
   const data = `data: ${JSON.stringify(payload)}\n\n`;
@@ -130,13 +136,17 @@ function emitNotification(payload) {
   // user-specific clients
   if (payload.user_id) {
     const userClients = SSE_CLIENTS.get(payload.user_id);
-    if (userClients) userClients.forEach(r => targets.add(r));
+    if (userClients) userClients.forEach((r) => targets.add(r));
   }
   // global clients (admin/system listeners)
   const globalClients = SSE_CLIENTS.get("*");
-  if (globalClients) globalClients.forEach(r => targets.add(r));
+  if (globalClients) globalClients.forEach((r) => targets.add(r));
   for (const res of targets) {
-    try { res.write(data); } catch (e) { /* client disconnected */ }
+    try {
+      res.write(data);
+    } catch (e) {
+      /* client disconnected */
+    }
   }
 }
 
@@ -146,13 +156,33 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
   NOTIFICATION_PULSE.global += 1;
   if (userId && userId !== "default") {
     if (!NOTIFICATION_PULSE.user[userId]) NOTIFICATION_PULSE.user[userId] = {};
-    NOTIFICATION_PULSE.user[userId].total = (NOTIFICATION_PULSE.user[userId].total || 0) + 1;
+    NOTIFICATION_PULSE.user[userId].total =
+      (NOTIFICATION_PULSE.user[userId].total || 0) + 1;
     const typeKey = `${itemType}_${action}`;
     NOTIFICATION_PULSE.user[userId][typeKey] = Date.now();
   }
   // Also emit SSE
-  const evType = itemType === "trade" ? "trade_added" : itemType === "signal" ? "signal_added" : "system_event";
-  emitNotification({ user_id: userId || null, page: null, event: evType, message: `${itemType} ${action}`, type: "info", notification: true, console_log: false, ticker: true, need_refresh: false, comp_refresh: false, action: null, sound: itemType === "signal" ? "NEW_SIGNAL" : null, position: "bottom-right" });
+  const evType =
+    itemType === "trade"
+      ? "trade_added"
+      : itemType === "signal"
+        ? "signal_added"
+        : "system_event";
+  emitNotification({
+    user_id: userId || null,
+    page: null,
+    event: evType,
+    message: `${itemType} ${action}`,
+    type: "info",
+    notification: true,
+    console_log: false,
+    ticker: true,
+    need_refresh: false,
+    comp_refresh: false,
+    action: null,
+    sound: itemType === "signal" ? "NEW_SIGNAL" : null,
+    position: "bottom-right",
+  });
 }
 const CHART_SNAPSHOT_DIR = path.resolve(__dirname, "snapshots");
 const CHART_SNAPSHOT_CLAUDE_MAP_FILE = path.join(
@@ -532,7 +562,7 @@ function mt5GenerateTimeSid() {
     .toString(36)
     .toUpperCase();
   const rand = Math.random().toString(36).substring(2, 5).toUpperCase();
-  return (seconds + rand).padEnd(9, 'X').substring(0, 9);
+  return (seconds + rand).padEnd(9, "X").substring(0, 9);
 }
 
 // Deprecated: use mt5GenerateTimeSid
@@ -3289,7 +3319,9 @@ function removeMappedClaudeSnapshotFiles(fileNames = []) {
 }
 
 let _claudeFilesCache = { data: [], expiresAt: 0 };
-function bustClaudeFilesCache() { _claudeFilesCache = { data: [], expiresAt: 0 }; }
+function bustClaudeFilesCache() {
+  _claudeFilesCache = { data: [], expiresAt: 0 };
+}
 async function anthropicListFiles(apiKey) {
   if (!apiKey) return [];
   try {
@@ -3650,8 +3682,15 @@ async function upsertClaudeContextFile({
   // Skip Claude Files upload when toggle is off — file still written to disk for inline use
   if (!UPLOAD_TO_CLAUDE) {
     return {
-      context_key: contextKey, symbol, tf, type, bar_end: barEnd || null,
-      vps_file: fileName, vps_path: absPath, file_id: null, reused: false,
+      context_key: contextKey,
+      symbol,
+      tf,
+      type,
+      bar_end: barEnd || null,
+      vps_file: fileName,
+      vps_path: absPath,
+      file_id: null,
+      reused: false,
       skipped: true,
     };
   }
@@ -4490,13 +4529,20 @@ async function loadAiConfig() {
   const cfg = {};
   for (const row of rows) {
     const name = normalizeAiApiKeyName(row?.name);
-    const dec = decryptObject(row?.data && typeof row.data === "object" ? row.data : {});
+    const dec = decryptObject(
+      row?.data && typeof row.data === "object" ? row.data : {},
+    );
     cfg[name] = String(dec?.value || "").trim();
   }
   return cfg;
 }
 
-async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 180000 }) {
+async function callAiProvider({
+  model,
+  messages,
+  maxTokens = 4500,
+  timeoutMs = 180000,
+}) {
   const modelLower = String(model || "").toLowerCase();
 
   // Claude → use Anthropic Messages API
@@ -4516,42 +4562,62 @@ async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 1
     }
     const json = await out.response.json();
     const rawText = Array.isArray(json?.content)
-      ? json.content.filter(x => x?.type === "text").map(x => String(x?.text || "")).join("\n")
+      ? json.content
+          .filter((x) => x?.type === "text")
+          .map((x) => String(x?.text || ""))
+          .join("\n")
       : String(json?.content || "");
     return { rawText, modelUsed: out.modelUsed || model, provider: "claude" };
   }
 
   // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
-  const provider = modelLower.includes("gpt") || modelLower.includes("openai") ? "openai"
-    : modelLower.includes("deepseek") ? "deepseek"
-    : "gemini";
+  const provider =
+    modelLower.includes("gpt") || modelLower.includes("openai")
+      ? "openai"
+      : modelLower.includes("deepseek")
+        ? "deepseek"
+        : "gemini";
 
   const cfg = await loadAiConfig();
-  const apiKey = provider === "deepseek" ? cfg.DEEPSEEK_API_KEY
-    : provider === "openai" ? cfg.OPENAI_API_KEY
-    : cfg.GEMINI_API_KEY;
-  if (!apiKey) throw new Error(`${provider.toUpperCase()}_API_KEY is missing in Settings.`);
+  const apiKey =
+    provider === "deepseek"
+      ? cfg.DEEPSEEK_API_KEY
+      : provider === "openai"
+        ? cfg.OPENAI_API_KEY
+        : cfg.GEMINI_API_KEY;
+  if (!apiKey)
+    throw new Error(
+      `${provider.toUpperCase()}_API_KEY is missing in Settings.`,
+    );
 
-  const endpoint = provider === "deepseek" ? "https://api.deepseek.com/chat/completions"
-    : provider === "openai" ? "https://api.openai.com/v1/chat/completions"
-    : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+  const endpoint =
+    provider === "deepseek"
+      ? "https://api.deepseek.com/chat/completions"
+      : provider === "openai"
+        ? "https://api.openai.com/v1/chat/completions"
+        : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
   // Convert image format: Anthropic base64 → OpenAI image_url
   // DeepSeek does NOT support images — strip them and warn
   const isDeepSeek = provider === "deepseek";
   let imageCount = 0;
-  const convertedMessages = messages.map(m => {
+  const convertedMessages = messages.map((m) => {
     if (typeof m.content === "string") return m;
     if (!Array.isArray(m.content)) return m;
-    const parts = m.content.map(block => {
+    const parts = m.content.map((block) => {
       if (block?.type === "image" && block?.source?.type === "base64") {
         imageCount++;
         if (isDeepSeek) {
-          return { type: "text", text: "[Chart image attached — analyze based on the symbol/timeframe context above]" };
+          return {
+            type: "text",
+            text: "[Chart image attached — analyze based on the symbol/timeframe context above]",
+          };
         }
         return {
           type: "image_url",
-          image_url: { url: `data:${block.source.media_type || "image/jpeg"};base64,${block.source.data}` }
+          image_url: {
+            url: `data:${block.source.media_type || "image/jpeg"};base64,${block.source.data}`,
+          },
         };
       }
       return block;
@@ -4560,10 +4626,17 @@ async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 1
   });
 
   const body = JSON.stringify({
-    model: model || (provider === "deepseek" ? "deepseek-chat" : provider === "openai" ? "gpt-4o" : "gemini-2.0-flash"),
+    model:
+      model ||
+      (provider === "deepseek"
+        ? "deepseek-chat"
+        : provider === "openai"
+          ? "gpt-4o"
+          : "gemini-2.0-flash"),
     messages: convertedMessages,
     max_tokens: maxTokens,
-    response_format: provider !== "gemini" ? { type: "json_object" } : undefined,
+    response_format:
+      provider !== "gemini" ? { type: "json_object" } : undefined,
   });
 
   const ctrl = new AbortController();
@@ -4572,7 +4645,10 @@ async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 1
     const res = await fetch(endpoint, {
       method: "POST",
       signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body,
     });
     if (!res.ok) {
@@ -6673,12 +6749,14 @@ async function _mt5InitBackendInternal() {
               payload.tp,
               payload.volume,
               payload.note,
-              JSON.stringify((() => {
-                const m = { ...(payload.metadata || {}) };
-                delete m.raw_json;
-                if (signalId && !m.signal_sid) m.signal_sid = signalId;
-                return m;
-              })()),
+              JSON.stringify(
+                (() => {
+                  const m = { ...(payload.metadata || {}) };
+                  delete m.raw_json;
+                  if (signalId && !m.signal_sid) m.signal_sid = signalId;
+                  return m;
+                })(),
+              ),
               JSON.stringify(
                 payload.metadata?.raw_json || payload.raw_json || {},
               ),
@@ -6984,9 +7062,31 @@ async function _mt5InitBackendInternal() {
         broker_name: String(
           payload.broker_name || existingMeta.broker_name || "",
         ),
-        symbol_metrics: Array.isArray(payload.symbol_metrics) 
-          ? payload.symbol_metrics 
-          : (existingMeta.symbol_metrics || []),
+        symbol_metrics: (() => {
+          const incoming = Array.isArray(payload.symbol_metrics)
+            ? payload.symbol_metrics
+            : [];
+          const existing = Array.isArray(existingMeta.symbol_metrics)
+            ? existingMeta.symbol_metrics
+            : [];
+
+          // Create a map by symbol name for merging
+          const map = new Map();
+          existing.forEach((m) => {
+            if (m.symbol) map.set(m.symbol.toUpperCase(), m);
+          });
+          incoming.forEach((m) => {
+            if (m.symbol) {
+              map.set(m.symbol.toUpperCase(), {
+                ...map.get(m.symbol.toUpperCase()),
+                ...m,
+                updated_at: new Date().toISOString(),
+              });
+            }
+          });
+
+          return Array.from(map.values());
+        })(),
         health_updated_at: new Date().toISOString(),
       };
 
@@ -7107,11 +7207,11 @@ async function _mt5InitBackendInternal() {
           ) {
             executionStatus = "CLOSED";
           }
-          const commission = Number(raw.commission || 0);
-          const swap = Number(raw.swap || 0);
-          const netPnl = Number(raw.net_pnl || 0);
-          const pipsVal = Number(raw.pips || 0);
-          const lots = Number(raw.lots || 0);
+          const commission = Number(raw.commission ?? 0);
+          const swap = Number(raw.swap ?? 0);
+          const pipsVal = Number(raw.pips ?? 0);
+          const pnlVal = Number(raw.pnl ?? raw.net_pnl ?? 0);
+          const volumeVal = Number(raw.volume || raw.lots || 0);
           const brokerComment = String(raw.comment || "").trim();
 
           // Use broker comment as SID if it looks like an ID
@@ -7125,13 +7225,13 @@ async function _mt5InitBackendInternal() {
               signal_id: effectiveSignalId || null,
               ticket,
               ticket_candidates: ticketCandidates,
-              pnl,
-              net_pnl: netPnl,
+              pnl: pnlVal,
+              net_pnl: pnlVal,
               commission,
               swap,
               pips: pipsVal,
-              lots,
-              volume,
+              lots: volumeVal / 100000,
+              volume: volumeVal,
               symbol,
               action,
               order_type: raw.order_type || null,
@@ -7144,8 +7244,7 @@ async function _mt5InitBackendInternal() {
           } else {
             // Keep existing fields and merge new ones
             Object.assign(prev, raw);
-            if (!prev.sid && effectiveSignalId)
-              prev.sid = effectiveSignalId;
+            if (!prev.sid && effectiveSignalId) prev.sid = effectiveSignalId;
             prev.ticket_candidates = Array.from(
               new Set([...(prev.ticket_candidates || []), ...ticketCandidates]),
             );
@@ -7409,7 +7508,13 @@ async function _mt5InitBackendInternal() {
           matched += res.rowCount;
           synced++;
           const tid = String(res.rows?.[0]?.sid || "").trim();
-          results.push({ ticket: it.ticket, sid: tid, status: 'Ok', symbol: it.symbol, action: it.action });
+          results.push({
+            ticket: it.ticket,
+            sid: tid,
+            status: "Ok",
+            symbol: it.symbol,
+            action: it.action,
+          });
           if (tid) {
             await this.log(
               tid,
@@ -7461,9 +7566,21 @@ async function _mt5InitBackendInternal() {
             ],
           );
           matched++;
-          results.push({ ticket: it.ticket, sid: discoverySid, status: 'Added', symbol: it.symbol, action: it.action });
+          results.push({
+            ticket: it.ticket,
+            sid: discoverySid,
+            status: "Added",
+            symbol: it.symbol,
+            action: it.action,
+          });
         } else {
-          results.push({ ticket: it.ticket, sid: null, status: 'Skip', symbol: it.symbol, action: it.action });
+          results.push({
+            ticket: it.ticket,
+            sid: null,
+            status: "Skip",
+            symbol: it.symbol,
+            action: it.action,
+          });
         }
       }
       const finalizeSnapshotClosures = async (rows = []) => {
@@ -7556,6 +7673,22 @@ async function _mt5InitBackendInternal() {
         }
       }
 
+      // Collect trade updates for realtime UI patching
+      const tradeUpdates = [];
+      for (const it of items) {
+        if (!it.sid) continue;
+        const matchedResult = results.find((r) => r.sid === it.sid);
+        if (!matchedResult || matchedResult.status === "Skip") continue;
+        tradeUpdates.push({
+          sid: it.sid,
+          symbol: it.symbol,
+          pnl_realized: it.pnl,
+          broker_pips: it.pips,
+          execution_status: it.execution_status,
+          last_price: it.last_price,
+        });
+      }
+
       // Emit SSE notification
       emitNotification({
         user_id: uid,
@@ -7571,6 +7704,7 @@ async function _mt5InitBackendInternal() {
         action: "trades",
         sound: null,
         position: "bottom-right",
+        trade_updates: tradeUpdates,
       });
 
       return {
@@ -7960,9 +8094,7 @@ async function _mt5InitBackendInternal() {
           updated: Number(delRes.rowCount || 0),
           action: act,
           sids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
-          signal_ids: rows
-            .map((r) => String(r?.sid || ""))
-            .filter(Boolean),
+          signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
         };
       }
       const res = await pool.query(
@@ -8559,7 +8691,10 @@ async function _mt5InitBackendInternal() {
       if (!row || typeof row !== "object")
         throw new Error("row object is required");
       const schema = await this.getTableSchema(table);
-      const pkCol = (await this.getTablePrimaryKey(table)) || schema[0]?.column_name || "id";
+      const pkCol =
+        (await this.getTablePrimaryKey(table)) ||
+        schema[0]?.column_name ||
+        "id";
       const idVal = row[pkCol];
       if (idVal == null) throw new Error(`row must contain ${pkCol} column`);
       // Only allow updating columns that exist in schema
@@ -8841,14 +8976,7 @@ async function _mt5InitBackendInternal() {
               updated_at = NOW()
           WHERE sid = $6
         `,
-          [
-            tradeExec,
-            String(u.ticket || ""),
-            pnlVal,
-            hasPnl,
-            isClosed,
-            u.sid,
-          ],
+          [tradeExec, String(u.ticket || ""), pnlVal, hasPnl, isClosed, u.sid],
         );
         count += res.rowCount;
       }
@@ -9278,9 +9406,7 @@ async function _mt5InitBackendInternal() {
           );
 
           if ((ins.rowCount || 0) > 0) {
-            await client.query(`DELETE FROM signals WHERE sid = $1`, [
-              oldId,
-            ]);
+            await client.query(`DELETE FROM signals WHERE sid = $1`, [oldId]);
             updatedIds.push(renewedId);
           }
         }
@@ -9735,8 +9861,12 @@ function normalizeAiAnalysisContract(input = {}) {
 
   // BARE trade_plan: AI returned trade_plan directly (no ai_full_analysis wrapper)
   // Normalize old field names → legacy market_analysis format
-  if (!out.ai_full_analysis && Array.isArray(out.trade_plan) && !out.market_analysis) {
-    out.trade_plan = out.trade_plan.map(x => ({
+  if (
+    !out.ai_full_analysis &&
+    Array.isArray(out.trade_plan) &&
+    !out.market_analysis
+  ) {
+    out.trade_plan = out.trade_plan.map((x) => ({
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.order_type || x?.type || "",
@@ -9746,24 +9876,36 @@ function normalizeAiAnalysisContract(input = {}) {
       entry: x?.entry_price ?? x?.entry ?? null,
       sl: x?.stop_loss ?? x?.sl ?? null,
       be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-      tp: Array.isArray(x?.take_profits) && x.take_profits[2]
-        ? x.take_profits[2].price
-        : (Array.isArray(x?.take_profits) && x.take_profits[x.take_profits.length - 1]
-          ? x.take_profits[x.take_profits.length - 1].price
-          : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null)),
-      tp2: Array.isArray(x?.take_profits) ? (x.take_profits[1]?.price ?? null) : (x?.tp2 ?? null),
-      tp3: Array.isArray(x?.take_profits) ? (x.take_profits[2]?.price ?? null) : (x?.tp3 ?? null),
+      tp:
+        Array.isArray(x?.take_profits) && x.take_profits[2]
+          ? x.take_profits[2].price
+          : Array.isArray(x?.take_profits) &&
+              x.take_profits[x.take_profits.length - 1]
+            ? x.take_profits[x.take_profits.length - 1].price
+            : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+      tp2: Array.isArray(x?.take_profits)
+        ? (x.take_profits[1]?.price ?? null)
+        : (x?.tp2 ?? null),
+      tp3: Array.isArray(x?.take_profits)
+        ? (x.take_profits[2]?.price ?? null)
+        : (x?.tp3 ?? null),
       estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
       rr: x?.risk_reward ?? x?.rr ?? null,
       risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
-      partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(t => ({
-        price: t?.price ?? null,
-        size_pct: t?.close_position_pct ?? null,
-        rr: t?.reward_to_risk ?? null,
-      })),
+      partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
+        (t) => ({
+          price: t?.price ?? null,
+          size_pct: t?.close_position_pct ?? null,
+          rr: t?.reward_to_risk ?? null,
+        }),
+      ),
       confidence_pct: x?.confidence_pct ?? null,
-      skip_recommendation: x?.trade_decision === "Proceed" ? "" : (x?.trade_decision || ""),
-      reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map(r => ({ reason: r?.reason || "", severity: r?.severity || "" })),
+      skip_recommendation:
+        x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
+      reasons_to_skip: (Array.isArray(x?.skip_reasons)
+        ? x.skip_reasons
+        : []
+      ).map((r) => ({ reason: r?.reason || "", severity: r?.severity || "" })),
       entry_condition: x?.entry_trigger || "",
       exit_condition: x?.mid_trade_invalidation || "",
       invalidation: x?.pre_entry_invalidation || "",
@@ -9780,16 +9922,32 @@ function normalizeAiAnalysisContract(input = {}) {
     const ltfTfs = Array.isArray(a.ltf_analysis) ? a.ltf_analysis : [];
     const allTfs = [...htfTfs, ...ltfTfs];
     // Merge PD arrays and key levels from LTF only
-    const pdArrays = ltfTfs.flatMap(t => Array.isArray(t.pd_arrays) ? t.pd_arrays.map(p => ({ ...p, timeframe: t.timeframe })) : []);
-    const keyLevels = ltfTfs.flatMap(t => Array.isArray(t.key_levels) ? t.key_levels : []);
+    const pdArrays = ltfTfs.flatMap((t) =>
+      Array.isArray(t.pd_arrays)
+        ? t.pd_arrays.map((p) => ({ ...p, timeframe: t.timeframe }))
+        : [],
+    );
+    const keyLevels = ltfTfs.flatMap((t) =>
+      Array.isArray(t.key_levels) ? t.key_levels : [],
+    );
     // HTF reference zones → key levels with type prefix
-    const htfZones = htfTfs.flatMap(t => Array.isArray(t.reference_zones) ? t.reference_zones.map(z => ({ ...z, name: `HTF_${z.type}_${z.id || ""}`, zone_type: z.type })) : []);
+    const htfZones = htfTfs.flatMap((t) =>
+      Array.isArray(t.reference_zones)
+        ? t.reference_zones.map((z) => ({
+            ...z,
+            name: `HTF_${z.type}_${z.id || ""}`,
+            zone_type: z.type,
+          }))
+        : [],
+    );
     const allKeyLevels = [...keyLevels, ...htfZones];
     // First HTF DOL
-    const dol = htfTfs.find(t => t.draw_on_liquidity?.target_price)?.draw_on_liquidity || null;
+    const dol =
+      htfTfs.find((t) => t.draw_on_liquidity?.target_price)
+        ?.draw_on_liquidity || null;
 
     out.market_analysis = {
-      timeframes: allTfs.map(t => ({
+      timeframes: allTfs.map((t) => ({
         tf: t.timeframe || "",
         trend: t.trend || "",
         structure: t.structure || "",
@@ -9798,42 +9956,98 @@ function normalizeAiAnalysisContract(input = {}) {
         poi_alignment: Boolean(t.poi_aligned),
         price_action_summary: {
           recent_move: t.what_price_just_did || "",
-          key_breaks: (Array.isArray(t.key_events) ? t.key_events : []).map(e => ({
-            event: e.event || "", price_level: e.price, direction: e.direction === "Bull" ? "Bullish" : e.direction === "Bear" ? "Bearish" : e.direction || "",
-          })),
+          key_breaks: (Array.isArray(t.key_events) ? t.key_events : []).map(
+            (e) => ({
+              event: e.event || "",
+              price_level: e.price,
+              direction:
+                e.direction === "Bull"
+                  ? "Bullish"
+                  : e.direction === "Bear"
+                    ? "Bearish"
+                    : e.direction || "",
+            }),
+          ),
         },
         price_prediction: {
           narrative: t.what_price_likely_does_next || "",
-          expected_path: (Array.isArray(t.expected_path) ? t.expected_path : []).map(p => ({
-            step: p.step, action: p.action || "", target_price: p.target_price, condition: p.required_condition || "",
+          expected_path: (Array.isArray(t.expected_path)
+            ? t.expected_path
+            : []
+          ).map((p) => ({
+            step: p.step,
+            action: p.action || "",
+            target_price: p.target_price,
+            condition: p.required_condition || "",
           })),
         },
       })),
-      pd_arrays: pdArrays.map(p => ({
-        id: p.id, type: p.type || "", direction: p.direction === "Bull" ? "Bullish" : p.direction === "Bear" ? "Bearish" : p.direction || "",
-        strength: p.strength || "", price_top: p.zone_top, price_bottom: p.zone_bottom,
-        status: p.status || "", touched: p.times_touched || 0, timeframe: p.timeframe || "", note: p.note || "",
+      pd_arrays: pdArrays.map((p) => ({
+        id: p.id,
+        type: p.type || "",
+        direction:
+          p.direction === "Bull"
+            ? "Bullish"
+            : p.direction === "Bear"
+              ? "Bearish"
+              : p.direction || "",
+        strength: p.strength || "",
+        price_top: p.zone_top,
+        price_bottom: p.zone_bottom,
+        status: p.status || "",
+        touched: p.times_touched || 0,
+        timeframe: p.timeframe || "",
+        note: p.note || "",
       })),
-      key_levels: allKeyLevels.map(k => ({
-        name: k.name || "", price: k.price, type: k.zone_type || k.type || "", swept: Boolean(k.already_swept),
+      key_levels: allKeyLevels.map((k) => ({
+        name: k.name || "",
+        price: k.price,
+        type: k.zone_type || k.type || "",
+        swept: Boolean(k.already_swept),
       })),
-      institutional_filters: { draw_on_liquidity: { target: dol?.narrative || "", price: dol?.target_price, type: dol?.target_type || "" } },
+      institutional_filters: {
+        draw_on_liquidity: {
+          target: dol?.narrative || "",
+          price: dol?.target_price,
+          type: dol?.target_type || "",
+        },
+      },
       confluence_checklist: {
         buy: {
-          items: (Array.isArray(a.confluence_checklist?.buy?.passed_items) ? a.confluence_checklist.buy.passed_items : []).map(c => ({
-            category: c.category || "", item: c.description || "", weight: c.weight || "", checked: true, pd_array_ref: c.linked_array_id || null,
+          items: (Array.isArray(a.confluence_checklist?.buy?.passed_items)
+            ? a.confluence_checklist.buy.passed_items
+            : []
+          ).map((c) => ({
+            category: c.category || "",
+            item: c.description || "",
+            weight: c.weight || "",
+            checked: true,
+            pd_array_ref: c.linked_array_id || null,
           })),
-          score: a.confluence_checklist?.buy?.weighted_score ?? 0, total: 100,
-          high_weight_passed: a.confluence_checklist?.buy?.high_weight_passed ?? 0,
-          high_weight_total: a.confluence_checklist?.buy?.high_weight_total ?? 0,
+          score: a.confluence_checklist?.buy?.weighted_score ?? 0,
+          total: 100,
+          high_weight_passed:
+            a.confluence_checklist?.buy?.high_weight_passed ?? 0,
+          high_weight_total:
+            a.confluence_checklist?.buy?.high_weight_total ?? 0,
         },
         sell: {
-          items: (Array.isArray(a.confluence_checklist?.sell?.passed_items) ? a.confluence_checklist.sell.passed_items : []).map(c => ({
-            category: c.category || "", item: c.description || "", weight: c.weight || "", checked: true, pd_array_ref: c.linked_array_id || null,
+          items: (Array.isArray(a.confluence_checklist?.sell?.passed_items)
+            ? a.confluence_checklist.sell.passed_items
+            : []
+          ).map((c) => ({
+            category: c.category || "",
+            item: c.description || "",
+            weight: c.weight || "",
+            checked: true,
+            pd_array_ref: c.linked_array_id || null,
           })),
-          score: a.confluence_checklist?.sell?.weighted_score ?? 0, total: 100,
-          high_weight_passed: a.confluence_checklist?.sell?.high_weight_passed ?? 0,
-          high_weight_total: a.confluence_checklist?.sell?.high_weight_total ?? 0,
+          score: a.confluence_checklist?.sell?.weighted_score ?? 0,
+          total: 100,
+          high_weight_passed:
+            a.confluence_checklist?.sell?.high_weight_passed ?? 0,
+          high_weight_total:
+            a.confluence_checklist?.sell?.high_weight_total ?? 0,
         },
       },
     };
@@ -9843,7 +10057,7 @@ function normalizeAiAnalysisContract(input = {}) {
       out.trade_plan = out.tradePlan;
     }
     if (Array.isArray(out.trade_plan)) {
-      out.trade_plan = out.trade_plan.map(x => ({
+      out.trade_plan = out.trade_plan.map((x) => ({
         direction: x?.direction || x?.dir || "",
         profile: x?.profile || "",
         type: x?.order_type || x?.type || "",
@@ -9853,23 +10067,45 @@ function normalizeAiAnalysisContract(input = {}) {
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
         be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-        tp: Array.isArray(x?.take_profits) && x.take_profits[2]
-          ? x.take_profits[2].price
-          : (Array.isArray(x?.take_profits) && x.take_profits[x.take_profits.length - 1]
-            ? x.take_profits[x.take_profits.length - 1].price
-            : (x?.tp3 ?? x?.tp ?? null)),
-        tp2: Array.isArray(x?.take_profits) && x.take_profits[1] ? x.take_profits[1].price : (x?.tp2 ?? null),
-        tp3: Array.isArray(x?.take_profits) && x.take_profits[2] ? x.take_profits[2].price : (x?.tp3 ?? null),
-        estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
+        tp:
+          Array.isArray(x?.take_profits) && x.take_profits[2]
+            ? x.take_profits[2].price
+            : Array.isArray(x?.take_profits) &&
+                x.take_profits[x.take_profits.length - 1]
+              ? x.take_profits[x.take_profits.length - 1].price
+              : (x?.tp3 ?? x?.tp ?? null),
+        tp2:
+          Array.isArray(x?.take_profits) && x.take_profits[1]
+            ? x.take_profits[1].price
+            : (x?.tp2 ?? null),
+        tp3:
+          Array.isArray(x?.take_profits) && x.take_profits[2]
+            ? x.take_profits[2].price
+            : (x?.tp3 ?? null),
+        estimated_bars:
+          x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
         rr: x?.risk_reward ?? x?.rr ?? null,
-        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(t => ({ price: t.price, size_pct: t.close_position_pct, rr: t.reward_to_risk })),
-        confluence_checklist: Array.isArray(x?.confluence_checklist) ? x.confluence_checklist : [],
-        reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map(r => ({ reason: r.reason || "", severity: r.severity || "" })),
-        skip_recommendation: x?.trade_decision === "Proceed" ? "" : (x?.trade_decision || ""),
+        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
+          (t) => ({
+            price: t.price,
+            size_pct: t.close_position_pct,
+            rr: t.reward_to_risk,
+          }),
+        ),
+        confluence_checklist: Array.isArray(x?.confluence_checklist)
+          ? x.confluence_checklist
+          : [],
+        reasons_to_skip: (Array.isArray(x?.skip_reasons)
+          ? x.skip_reasons
+          : []
+        ).map((r) => ({ reason: r.reason || "", severity: r.severity || "" })),
+        skip_recommendation:
+          x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
         entry_condition: x?.entry_trigger || "",
         exit_condition: x?.mid_trade_invalidation || "",
-        risk_management: x?.grade === "A" ? "normal" : x?.grade === "B" ? "low" : "high",
+        risk_management:
+          x?.grade === "A" ? "normal" : x?.grade === "B" ? "low" : "high",
         invalidation: x?.pre_entry_invalidation || "",
         confidence_pct: x?.confidence_pct ?? x?.confluence_score ?? null,
         note: x?.note || "",
@@ -10029,9 +10265,9 @@ function normalizeAiAnalysisContract(input = {}) {
         x?.tp3 ??
         (Array.isArray(x?.tps) && x.tps[2]
           ? (x.tps[2].price ?? null)
-          : (Array.isArray(x?.tps) && x.tps.length
+          : Array.isArray(x?.tps) && x.tps.length
             ? (x.tps[x.tps.length - 1]?.price ?? null)
-            : (x?.tp ?? null))),
+            : (x?.tp ?? null)),
       tp2:
         x?.tp2 ??
         (Array.isArray(x?.tps) && x.tps[1] ? (x.tps[1].price ?? null) : null),
@@ -10049,12 +10285,11 @@ function normalizeAiAnalysisContract(input = {}) {
       confluence_checklist: Array.isArray(x?.confluence_checklist)
         ? x.confluence_checklist
         : [],
-      reasons_to_skip: (
-        Array.isArray(x?.skipReasons)
-          ? x.skipReasons
-          : Array.isArray(x?.reasons_to_skip)
-            ? x.reasons_to_skip
-            : []
+      reasons_to_skip: (Array.isArray(x?.skipReasons)
+        ? x.skipReasons
+        : Array.isArray(x?.reasons_to_skip)
+          ? x.reasons_to_skip
+          : []
       ).map((r) => ({ reason: r?.reason ?? "", severity: r?.severity ?? "" })),
       skip_recommendation:
         x?.skip_recommendation ?? x?.skip ?? x?.action?.recommendation ?? "",
@@ -11561,7 +11796,10 @@ function mt5ResolveSignalIds(url, payload = null) {
         ? payload.ids
         : null;
   const fromQuery =
-    url.searchParams.get("sids") || url.searchParams.get("signal_ids") || url.searchParams.get("ids") || "";
+    url.searchParams.get("sids") ||
+    url.searchParams.get("signal_ids") ||
+    url.searchParams.get("ids") ||
+    "";
   const raw = fromPayload !== null ? fromPayload : fromQuery;
   if (Array.isArray(raw)) {
     return [...new Set(raw.map((s) => String(s || "").trim()).filter(Boolean))];
@@ -12368,14 +12606,18 @@ const appHandler = async (req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
+      Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     });
     res.write(":ok\n\n"); // initial comment to establish connection
     sseRegisterClient(userId, res);
     // heartbeat every 30s
     const heartbeat = setInterval(() => {
-      try { res.write(":ping\n\n"); } catch (e) { clearInterval(heartbeat); }
+      try {
+        res.write(":ping\n\n");
+      } catch (e) {
+        clearInterval(heartbeat);
+      }
     }, 30000);
     req.on("close", () => {
       clearInterval(heartbeat);
@@ -14121,7 +14363,10 @@ const appHandler = async (req, res) => {
         url.pathname.slice("/mt5/trades/".length),
       );
       if (!signalId)
-        return json(res, 400, { ok: false, error: "sid (signal_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
       const rows = await mt5ListSignals(50000, "");
       const trade = rows.find((r) => String(r.sid) === signalId);
       if (!trade)
@@ -15791,9 +16036,15 @@ const appHandler = async (req, res) => {
         timeframe: String(body?.timeframe || ""),
         timeframes: Array.isArray(body?.timeframes)
           ? body.timeframes
-          : String(body?.tfs || body?.timeframes || "").split(",").filter(Boolean),
-        session_prefix: String(body?.session_prefix || body?.sessionPrefix || ""),
-        bars_count: Number(body?.bars_count || body?.lookbackBars || body?.lookback_bars || 300),
+          : String(body?.tfs || body?.timeframes || "")
+              .split(",")
+              .filter(Boolean),
+        session_prefix: String(
+          body?.session_prefix || body?.sessionPrefix || "",
+        ),
+        bars_count: Number(
+          body?.bars_count || body?.lookbackBars || body?.lookback_bars || 300,
+        ),
         files_count: Array.isArray(body?.files) ? body.files.length : 0,
         context_files_count: Array.isArray(body?.context_files)
           ? body.context_files.length
@@ -15819,10 +16070,12 @@ const appHandler = async (req, res) => {
           /^\d{2}$/.test(parts[2])
         ) {
           const rest = parts.slice(3);
-          const hasDup = rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
+          const hasDup =
+            rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
           symbolParts = rest.slice(0, hasDup ? -2 : -1);
         } else {
-          const hasDup = parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
+          const hasDup =
+            parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
           symbolParts = parts.slice(0, hasDup ? -3 : -2);
         }
         if (!symbolParts.length) return "";
@@ -15869,12 +16122,9 @@ const appHandler = async (req, res) => {
       await (
         await mt5Backend()
       ).log(sessionId, "ai", { event: "AI_ANALYSIS", payload: body }, userId);
-      await (await mt5Backend()).log(
-        sessionId,
-        "ai",
-        analyzeReqSummary,
-        userId,
-      );
+      await (
+        await mt5Backend()
+      ).log(sessionId, "ai", analyzeReqSummary, userId);
       const claudeKey = await loadClaudeApiKeyForUser(userId);
       if (!claudeKey)
         return json(res, 400, {
@@ -15888,7 +16138,9 @@ const appHandler = async (req, res) => {
       const contextSymbol =
         String(body.symbol || "").trim() ||
         (Array.isArray(body.files)
-          ? body.files.map((f) => inferSymbolFromSnapshotFile(f)).find(Boolean) || ""
+          ? body.files
+              .map((f) => inferSymbolFromSnapshotFile(f))
+              .find(Boolean) || ""
           : "") ||
         inferSymbolFromRecentSnapshots();
       // If symbol cannot be inferred, fall back to non-context analyze instead of hard-failing.
@@ -15978,7 +16230,10 @@ const appHandler = async (req, res) => {
                 .filter(Boolean),
               lookbackBars:
                 Number(
-                  body.bars_count || body.lookbackBars || body.lookback_bars || 300,
+                  body.bars_count ||
+                    body.lookbackBars ||
+                    body.lookback_bars ||
+                    300,
                 ) || 300,
             });
             for (const created of autoCreated || []) {
@@ -16039,10 +16294,22 @@ const appHandler = async (req, res) => {
           : String(aiJson?.content || "");
         const extracted = extractJsonFromAiText(rawResponse);
         const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
-      console.log('[ai-response] symbol=' + (parsedJson?.symbol || '?') + ' plans=' + (Array.isArray(parsedJson?.trade_plan) ? parsedJson.trade_plan.length : 0) + ' has_analysis=' + (!!parsedJson?.market_analysis));
-      if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
-        console.log('[ai-response] WARN: bare trade_plan. raw:', rawResponse.slice(0, 500));
-      }
+        console.log(
+          "[ai-response] symbol=" +
+            (parsedJson?.symbol || "?") +
+            " plans=" +
+            (Array.isArray(parsedJson?.trade_plan)
+              ? parsedJson.trade_plan.length
+              : 0) +
+            " has_analysis=" +
+            !!parsedJson?.market_analysis,
+        );
+        if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
+          console.log(
+            "[ai-response] WARN: bare trade_plan. raw:",
+            rawResponse.slice(0, 500),
+          );
+        }
         if (
           parsedJson &&
           typeof parsedJson === "object" &&
@@ -16103,7 +16370,9 @@ const appHandler = async (req, res) => {
           },
           userId,
         );
-        await (await mt5Backend()).log(
+        await (
+          await mt5Backend()
+        ).log(
           sessionId,
           "ai",
           {
@@ -16146,7 +16415,9 @@ const appHandler = async (req, res) => {
       }
 
       const normalizeTf = (value) => {
-        const raw = String(value || "").trim().toUpperCase();
+        const raw = String(value || "")
+          .trim()
+          .toUpperCase();
         if (!raw) return "";
         if (raw === "1D") return "D";
         if (raw === "1H") return "60";
@@ -16157,7 +16428,9 @@ const appHandler = async (req, res) => {
       const parseRequestedTimeframes = () => {
         if (Array.isArray(body.timeframes))
           return body.timeframes.map(normalizeTf).filter(Boolean);
-        return String(body.tfs || body.timeframe || body.timeframes || "D,240,15,5")
+        return String(
+          body.tfs || body.timeframe || body.timeframes || "D,240,15,5",
+        )
           .split(",")
           .map(normalizeTf)
           .filter(Boolean);
@@ -16185,9 +16458,7 @@ const appHandler = async (req, res) => {
           byTf.set(tf, item.f);
           if (byTf.size >= requestedTfs.length) break;
         }
-        const ordered = requestedTfs
-          .map((tf) => byTf.get(tf))
-          .filter(Boolean);
+        const ordered = requestedTfs.map((tf) => byTf.get(tf)).filter(Boolean);
         if (ordered.length) return ordered.slice(0, 4);
         return items.slice(0, 4).map((x) => x.f);
       };
@@ -16209,8 +16480,10 @@ const appHandler = async (req, res) => {
         const symbolMatched = allSnapshots.filter((x) => {
           const parts = String(x.f || "").split("_");
           if (parts.length < 3) return false;
-          const providerOk = String(parts[0] || "").toUpperCase() === requestedProvider;
-          const symbolOk = normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
+          const providerOk =
+            String(parts[0] || "").toUpperCase() === requestedProvider;
+          const symbolOk =
+            normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
           return providerOk && symbolOk;
         });
         const pool = sessionMatched.length
@@ -16229,10 +16502,18 @@ const appHandler = async (req, res) => {
             tfs: requestedTfs.length ? requestedTfs : ["D", "240", "15", "5"],
             lookbackBars:
               Number(
-                body.bars_count || body.lookbackBars || body.lookback_bars || 300,
+                body.bars_count ||
+                  body.lookbackBars ||
+                  body.lookback_bars ||
+                  300,
               ) || 300,
           });
-          files = Array.isArray(created) ? created.map((x) => String(x.file_name || "")).filter(Boolean).slice(0, 4) : [];
+          files = Array.isArray(created)
+            ? created
+                .map((x) => String(x.file_name || ""))
+                .filter(Boolean)
+                .slice(0, 4)
+            : [];
         } catch (captureError) {
           console.warn(
             "[snapshot-analyze] auto-capture fallback failed:",
@@ -16286,9 +16567,14 @@ const appHandler = async (req, res) => {
               [symbol],
             );
             if (rows.length) {
-              const barLines = rows.map(r => {
-                const bars = typeof r.data === "string" ? JSON.parse(r.data) : (r.data?.bars || []);
-                const lastBar = Array.isArray(bars) ? bars[bars.length - 1] : null;
+              const barLines = rows.map((r) => {
+                const bars =
+                  typeof r.data === "string"
+                    ? JSON.parse(r.data)
+                    : r.data?.bars || [];
+                const lastBar = Array.isArray(bars)
+                  ? bars[bars.length - 1]
+                  : null;
                 const lastPrice = lastBar?.c ?? lastBar?.close ?? null;
                 return `${r.tf}: ${bars.length} bars, latest close=${lastPrice}`;
               });
@@ -16337,12 +16623,27 @@ const appHandler = async (req, res) => {
 
       const rawResponse = aiResult.rawText;
       const resolvedModel = aiResult.modelUsed;
-      claudeFilesMode = aiResult.provider === "claude" ? (claudeFilesMode || "base64") : aiResult.provider;
+      claudeFilesMode =
+        aiResult.provider === "claude"
+          ? claudeFilesMode || "base64"
+          : aiResult.provider;
       const extracted = extractJsonFromAiText(rawResponse);
       const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
-      console.log('[ai-response] symbol=' + (parsedJson?.symbol || '?') + ' plans=' + (Array.isArray(parsedJson?.trade_plan) ? parsedJson.trade_plan.length : 0) + ' has_analysis=' + (!!parsedJson?.market_analysis));
+      console.log(
+        "[ai-response] symbol=" +
+          (parsedJson?.symbol || "?") +
+          " plans=" +
+          (Array.isArray(parsedJson?.trade_plan)
+            ? parsedJson.trade_plan.length
+            : 0) +
+          " has_analysis=" +
+          !!parsedJson?.market_analysis,
+      );
       if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
-        console.log('[ai-response] WARN: bare trade_plan. raw:', rawResponse.slice(0, 500));
+        console.log(
+          "[ai-response] WARN: bare trade_plan. raw:",
+          rawResponse.slice(0, 500),
+        );
       }
       if (
         parsedJson &&
@@ -16414,7 +16715,9 @@ const appHandler = async (req, res) => {
         },
         userId,
       );
-      await (await mt5Backend()).log(
+      await (
+        await mt5Backend()
+      ).log(
         sessionId,
         "ai",
         {
@@ -16457,7 +16760,9 @@ const appHandler = async (req, res) => {
     } catch (error) {
       try {
         const userId = sess.user_id || CFG.mt5DefaultUserId;
-        await (await mt5Backend()).log(
+        await (
+          await mt5Backend()
+        ).log(
           `ai_analyze_error_${Date.now()}`,
           "ai",
           {
@@ -16817,8 +17122,13 @@ const appHandler = async (req, res) => {
           delete snapMap[localFile];
           mapChanged = true;
           // Also delete local file from disk
-          const abs = path.join(CHART_SNAPSHOT_DIR, path.basename(String(item?.vps_file || localFile)));
-          try { if (fs.existsSync(abs)) fs.unlinkSync(abs); } catch {}
+          const abs = path.join(
+            CHART_SNAPSHOT_DIR,
+            path.basename(String(item?.vps_file || localFile)),
+          );
+          try {
+            if (fs.existsSync(abs)) fs.unlinkSync(abs);
+          } catch {}
         }
       }
       for (const [key, item] of Object.entries(ctxMap)) {
@@ -16827,7 +17137,9 @@ const appHandler = async (req, res) => {
           mapChanged = true;
           // Also delete local context file from disk
           const abs = String(item?.vps_path || "").trim();
-          try { if (abs && fs.existsSync(abs)) fs.unlinkSync(abs); } catch {}
+          try {
+            if (abs && fs.existsSync(abs)) fs.unlinkSync(abs);
+          } catch {}
         }
       }
       if (mapChanged) {
@@ -16901,7 +17213,8 @@ const appHandler = async (req, res) => {
     if (!requireSystemRoleForUi(req, res)) return;
     try {
       const payload = await readJson(req);
-      if (!payload.event) return json(res, 400, { ok: false, error: "event is required" });
+      if (!payload.event)
+        return json(res, 400, { ok: false, error: "event is required" });
       emitNotification({
         user_id: payload.user_id || null,
         page: payload.page || null,
@@ -16932,7 +17245,8 @@ const appHandler = async (req, res) => {
         user_id: sess.user_id,
         page: payload.page || null,
         event: payload.event || "system_event",
-        message: payload.message || "🧪 Test notification — all channels firing",
+        message:
+          payload.message || "🧪 Test notification — all channels firing",
         type: payload.type || "info",
         notification: payload.notification !== false,
         console_log: payload.console_log !== false,
@@ -16951,15 +17265,96 @@ const appHandler = async (req, res) => {
   }
 
   const DEFAULT_EVENT_TYPES = [
-    { event: "trade_added", notification: true, console_log: false, ticker: true, refresh: false, comp_refresh: false, sound: "NEW_SIGNAL", position: "bottom-right" },
-    { event: "trade_updated", notification: false, console_log: false, ticker: true, refresh: false, comp_refresh: false, sound: null, position: "bottom-right" },
-    { event: "signal_added", notification: true, console_log: false, ticker: true, refresh: false, comp_refresh: false, sound: "NEW_SIGNAL", position: "bottom-right" },
-    { event: "broker_sync", notification: false, console_log: false, ticker: true, refresh: false, comp_refresh: false, sound: null, position: "bottom-right" },
-    { event: "news_alert", notification: true, console_log: false, ticker: true, refresh: false, comp_refresh: false, sound: "NEWS_ALERT", position: "bottom-right" },
-    { event: "system_event", notification: false, console_log: true, ticker: true, refresh: false, comp_refresh: false, sound: null, position: "bottom-right" },
-    { event: "page_refresh", notification: false, console_log: false, ticker: false, refresh: true, comp_refresh: false, sound: null, position: "bottom-right" },
-    { event: "component_refresh", notification: false, console_log: false, ticker: false, refresh: false, comp_refresh: true, sound: null, position: "bottom-right" },
-    { event: "error", notification: true, console_log: true, ticker: true, refresh: false, comp_refresh: false, sound: null, position: "bottom-right" },
+    {
+      event: "trade_added",
+      notification: true,
+      console_log: false,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: "NEW_SIGNAL",
+      position: "bottom-right",
+    },
+    {
+      event: "trade_updated",
+      notification: false,
+      console_log: false,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: null,
+      position: "bottom-right",
+    },
+    {
+      event: "signal_added",
+      notification: true,
+      console_log: false,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: "NEW_SIGNAL",
+      position: "bottom-right",
+    },
+    {
+      event: "broker_sync",
+      notification: false,
+      console_log: false,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: null,
+      position: "bottom-right",
+    },
+    {
+      event: "news_alert",
+      notification: true,
+      console_log: false,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: "NEWS_ALERT",
+      position: "bottom-right",
+    },
+    {
+      event: "system_event",
+      notification: false,
+      console_log: true,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: null,
+      position: "bottom-right",
+    },
+    {
+      event: "page_refresh",
+      notification: false,
+      console_log: false,
+      ticker: false,
+      refresh: true,
+      comp_refresh: false,
+      sound: null,
+      position: "bottom-right",
+    },
+    {
+      event: "component_refresh",
+      notification: false,
+      console_log: false,
+      ticker: false,
+      refresh: false,
+      comp_refresh: true,
+      sound: null,
+      position: "bottom-right",
+    },
+    {
+      event: "error",
+      notification: true,
+      console_log: true,
+      ticker: true,
+      refresh: false,
+      comp_refresh: false,
+      sound: null,
+      position: "bottom-right",
+    },
   ];
 
   if (req.method === "GET" && url.pathname === "/v2/notifications/events") {
@@ -16974,9 +17369,12 @@ const appHandler = async (req, res) => {
           "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
           [userId],
         );
-        if (rows[0]?.data && typeof rows[0].data === "object") overrides = rows[0].data;
-      } catch (e) { /* use defaults */ }
-      const events = DEFAULT_EVENT_TYPES.map(ev => ({
+        if (rows[0]?.data && typeof rows[0].data === "object")
+          overrides = rows[0].data;
+      } catch (e) {
+        /* use defaults */
+      }
+      const events = DEFAULT_EVENT_TYPES.map((ev) => ({
         ...ev,
         ...(overrides[ev.event] || {}),
       }));
@@ -16996,7 +17394,8 @@ const appHandler = async (req, res) => {
         "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
         [sess.user_id],
       );
-      if (rows[0]?.data && typeof rows[0].data === "object") data = rows[0].data;
+      if (rows[0]?.data && typeof rows[0].data === "object")
+        data = rows[0].data;
       return json(res, 200, { ok: true, settings: data });
     } catch (e) {
       return json(res, 200, { ok: true, settings: {} });
@@ -17477,7 +17876,9 @@ const appHandler = async (req, res) => {
         .toLowerCase();
       const filters = {
         user_id: userId,
-        sids: Array.isArray(payload.sids || payload.trade_ids) ? payload.sids || payload.trade_ids : [],
+        sids: Array.isArray(payload.sids || payload.trade_ids)
+          ? payload.sids || payload.trade_ids
+          : [],
         account_id: payload.account_id || "",
         source_id: payload.source_id || "",
         execution_status: payload.execution_status || "",
@@ -17514,7 +17915,10 @@ const appHandler = async (req, res) => {
       const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/events$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
-        return json(res, 400, { ok: false, error: "sid (trade_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
       const userId = uiEffectiveUserId(req, url);
       const resolved = await mt5ResolveTradeRefV2(tradeRef, userId || null);
       if (!resolved?.sid)
@@ -17555,7 +17959,10 @@ const appHandler = async (req, res) => {
       const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/update$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
-        return json(res, 400, { ok: false, error: "sid (trade_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
       const userId = uiEffectiveUserId(req, url, payload);
       const out = await mt5UpdateTradeManualV2(
         tradeRef,
@@ -17588,7 +17995,10 @@ const appHandler = async (req, res) => {
       );
       const signalRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!signalRef)
-        return json(res, 400, { ok: false, error: "sid (signal_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
       const userId = uiEffectiveUserId(req, url, payload);
       const resolvedSignal = await mt5ResolveSignalRefV2(
         signalRef,
@@ -17692,7 +18102,10 @@ const appHandler = async (req, res) => {
       const m = url.pathname.match(/^\/v2\/signals\/([^/]+)\/trade$/);
       const signalRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!signalRef)
-        return json(res, 400, { ok: false, error: "sid (signal_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
       const userId = uiEffectiveUserId(req, url, payload);
       const resolvedSignal = await mt5ResolveSignalRefV2(
         signalRef,
@@ -17815,7 +18228,10 @@ const appHandler = async (req, res) => {
       const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/trade-plan\/save$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
-        return json(res, 400, { ok: false, error: "sid (trade_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
       const userId = uiEffectiveUserId(req, url, payload);
       const resolvedTrade = await mt5ResolveTradeRefV2(
         tradeRef,
@@ -18197,7 +18613,9 @@ const appHandler = async (req, res) => {
             t.metadata && typeof t.metadata === "object" ? t.metadata : {},
         })),
       };
-      console.log(`[v2/broker/pull] aid=${account.account_id} items=${resp.items.length}`);
+      console.log(
+        `[v2/broker/pull] aid=${account.account_id} items=${resp.items.length}`,
+      );
       return json(res, 200, resp);
     } catch (error) {
       return json(res, 400, {
@@ -18259,7 +18677,9 @@ const appHandler = async (req, res) => {
       if (!account) return;
       const result = await mt5BrokerSyncV2(account.account_id, payload || {});
       const statusCode = result?.ok ? 200 : 400;
-      console.log(`[v2/broker/sync] aid=${account.account_id} items=${(payload.items || []).length} results=${(result.results || []).length}`);
+      console.log(
+        `[v2/broker/sync] aid=${account.account_id} items=${(payload.items || []).length} results=${(result.results || []).length}`,
+      );
       return json(res, statusCode, result);
     } catch (error) {
       console.error("[v2/broker/sync] failed", {
@@ -18617,7 +19037,10 @@ const appHandler = async (req, res) => {
 
       const signalId = String(payload.sid || "");
       if (!signalId) {
-        return json(res, 400, { ok: false, error: "sid (signal_id) is required" });
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
       }
 
       const sig = await mt5FindSignalById(signalId);

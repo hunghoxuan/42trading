@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { showDateTime, sortTimeframes } from "../utils/format";
-import { SizeCalculator } from "../components/SizeCalculator";
+import { AdvancedOrderPanel } from "../components/AdvancedOrderPanel";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
@@ -314,7 +314,7 @@ export default function DashboardPage() {
         }} />
         </div>
       </div>
-      <SizeCalculator accountId={filters.account_id} initialSymbol={filters.symbol} />
+      <AdvancedOrderPanel accountId={filters.account_id} initialSymbol={filters.symbol} />
     </div>
   </section>
 );
