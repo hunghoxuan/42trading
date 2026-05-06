@@ -56,3 +56,30 @@ Successfully migrated to **SID-first identification architecture**.
 
 ## 6. Context for New Thread
 "Resuming SID-First Architecture. Bridge logic updated for cTrader. User must recompile. Focus: verify manual discovery and broker_name population."
+
+# Handoff: AI Schema Single-Source Fix (DEPLOYED)
+- From agent: Codex
+- To agent: Next reviewer / maintenance agent
+- Timestamp: 2026-05-06 09:25 (Europe/Berlin)
+- Status: DONE
+- Work Description:
+  - Inspected live production `logs` rows for `object_table='ai'`.
+  - Confirmed latest production rows are `AI_ANALYSIS` and `AI_RESPONSE`; no latest `AI_ANALYZE_*` rows were present in the live window.
+  - Moved AI response schema source of truth to `/Users/macmini/Trade/Bot/trading/shared/ai_response_schema.json`.
+  - Wired both backend `webhook/server.js` and frontend `web-ui/src/pages/ai/AiPromptBuilder.js` to that shared schema.
+  - Updated `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` fallback normalizer to understand the current `ai_full_analysis` contract already normalized by the backend.
+  - Updated logs API/UI contract handling so canonical `logs` fields remain available in the frontend.
+  - Deployed to production successfully.
+- Checks:
+  - `rtk node --check webhook/server.js`
+  - `rtk npm --prefix web-ui run build`
+  - `rtk env BUILD_GIT_ID=ai-sot1 bash scripts/deploy/bump_build_versions.sh`
+  - `rtk git push origin main`
+  - `rtk env PUSH_FIRST=0 VPS_APP_DIR=/opt/trading bash scripts/deploy/deploy_webhook.sh`
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/health`
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/webhook/health`
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/webhook/mt5/health`
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/ui/`
+- Residual Notes:
+  - Deploy script still probes `http://139.59.211.192:80`; that direct probe is unreliable even when public HTTPS is healthy.
+  - `scripts/test/test_remote_api_default.sh` and `scripts/test/test_remote_ui.sh` currently expect missing path `scripts/webhook/.env`; fix those scripts before depending on them for smoke coverage.

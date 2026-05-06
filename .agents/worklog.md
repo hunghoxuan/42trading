@@ -760,8 +760,15 @@
 - **Verification**:
   - `rtk node --check webhook/server.js` ✅
   - `rtk npm --prefix web-ui run build` ✅
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/health` ✅
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/webhook/health` ✅
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/webhook/mt5/health` ✅
+  - `rtk curl -sS --max-time 15 https://trade.mozasolution.com/ui/` ✅
 - **Deploy Status**:
-  - Pending version bump and deploy.
+  - Deployed.
+  - Build version: `v2026.05.06 07:14 - ai-sot1`
+  - Commit pushed: `1e6169b`
+  - Note: `scripts/test/test_remote_api_default.sh` and `scripts/test/test_remote_ui.sh` currently fail locally because they expect missing path `scripts/webhook/.env`; direct live curls were used instead.
 
 # Session Log: 2026-05-05 23:31
 - **Starting Task**:
