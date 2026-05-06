@@ -4480,6 +4480,106 @@ async function anthropicMessagesWithFallback({
   return { ok: res.ok, response: res, modelUsed: useModel };
 }
 
+// Multi-provider AI call — routes to Claude, OpenAI, DeepSeek, or Gemini based on model name
+async function loadAiConfig() {
+  const db = await mt5InitBackend();
+  const { rows } = await db.query(
+    "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
+    [CFG.mt5DefaultUserId],
+  );
+  const cfg = {};
+  for (const row of rows) {
+    const name = normalizeAiApiKeyName(row?.name);
+    const dec = decryptObject(row?.data && typeof row.data === "object" ? row.data : {});
+    cfg[name] = String(dec?.value || "").trim();
+  }
+  return cfg;
+}
+
+async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 180000 }) {
+  const modelLower = String(model || "").toLowerCase();
+
+  // Claude → use Anthropic Messages API
+  if (modelLower.includes("claude")) {
+    const claudeKey = await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId);
+    if (!claudeKey) throw new Error("CLAUDE_API_KEY is missing in Settings.");
+    const out = await anthropicMessagesWithFallback({
+      apiKey: claudeKey,
+      model: model || "claude-sonnet-4-0",
+      messages,
+      maxTokens,
+      timeoutMs,
+    });
+    if (!out.response.ok) {
+      const errText = await out.response.text();
+      throw new Error(`Claude API Error (${out.response.status}): ${errText}`);
+    }
+    const json = await out.response.json();
+    const rawText = Array.isArray(json?.content)
+      ? json.content.filter(x => x?.type === "text").map(x => String(x?.text || "")).join("\n")
+      : String(json?.content || "");
+    return { rawText, modelUsed: out.modelUsed || model, provider: "claude" };
+  }
+
+  // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
+  const provider = modelLower.includes("gpt") || modelLower.includes("openai") ? "openai"
+    : modelLower.includes("deepseek") ? "deepseek"
+    : "gemini";
+
+  const cfg = await loadAiConfig();
+  const apiKey = provider === "deepseek" ? cfg.DEEPSEEK_API_KEY
+    : provider === "openai" ? cfg.OPENAI_API_KEY
+    : cfg.GEMINI_API_KEY;
+  if (!apiKey) throw new Error(`${provider.toUpperCase()}_API_KEY is missing in Settings.`);
+
+  const endpoint = provider === "deepseek" ? "https://api.deepseek.com/chat/completions"
+    : provider === "openai" ? "https://api.openai.com/v1/chat/completions"
+    : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+
+  // Convert image format: Anthropic base64 → OpenAI image_url
+  const convertedMessages = messages.map(m => {
+    if (typeof m.content === "string") return m;
+    if (!Array.isArray(m.content)) return m;
+    const parts = m.content.map(block => {
+      if (block?.type === "image" && block?.source?.type === "base64") {
+        return {
+          type: "image_url",
+          image_url: { url: `data:${block.source.media_type || "image/jpeg"};base64,${block.source.data}` }
+        };
+      }
+      return block;
+    });
+    return { ...m, content: parts };
+  });
+
+  const body = JSON.stringify({
+    model: model || (provider === "deepseek" ? "deepseek-chat" : provider === "openai" ? "gpt-4o" : "gemini-2.0-flash"),
+    messages: convertedMessages,
+    max_tokens: maxTokens,
+    response_format: provider !== "gemini" ? { type: "json_object" } : undefined,
+  });
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body,
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`${provider} API Error (${res.status}): ${errText}`);
+    }
+    const json = await res.json();
+    const rawText = json.choices?.[0]?.message?.content || "";
+    return { rawText, modelUsed: model, provider };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function normalizeHostHeader(hostRaw) {
   return String(hostRaw || "")
     .split(",")[0]
@@ -15117,16 +15217,7 @@ const appHandler = async (req, res) => {
         throw new Error(`AI Provider Error (${aiRes.status}): ${errText}`);
       }
 
-      const aiJson = await aiRes.json();
-      const rawResponse =
-        provider === "claude"
-          ? Array.isArray(aiJson?.content)
-            ? aiJson.content
-                .filter((x) => x?.type === "text")
-                .map((x) => String(x?.text || ""))
-                .join("\n")
-            : String(aiJson?.content || "")
-          : aiJson.choices?.[0]?.message?.content || "";
+      const aiJson = await finalAiRes.json();
 
       // Robust JSON extraction
       let cleanJson = rawResponse.trim();
@@ -16201,54 +16292,17 @@ const appHandler = async (req, res) => {
 
       const requestModel =
         String(body.model || "claude-sonnet-4-0").trim() || "claude-sonnet-4-0";
-      let out = await anthropicMessagesWithFallback({
-        apiKey: claudeKey,
+
+      const aiResult = await callAiProvider({
         model: requestModel,
         messages: [{ role: "user", content }],
         maxTokens: Number(body.max_tokens || 4500),
         timeoutMs: 180000,
-        beta: claudeFilesMode === "files_api" ? ANTHROPIC_FILES_BETA : "",
       });
-      const aiRes = out.response;
-      let resolvedModel = out.modelUsed || requestModel;
-      let finalAiRes = aiRes;
-      if (!finalAiRes.ok && claudeFilesMode === "files_api") {
-        const errText = await finalAiRes.text().catch(() => "");
-        claudeFilesError =
-          errText ||
-          `Claude Messages rejected file references (${finalAiRes.status}).`;
-        removeMappedClaudeSnapshotFiles(snapshotFiles.map((x) => x.fileName));
-        const fallbackPayload = buildBase64SnapshotContent(snapshotFiles);
-        const fallbackContent = [
-          ...fallbackPayload.content,
-          { type: "text", text: finalPrompt },
-        ];
-        imagePayload = {
-          ...fallbackPayload,
-          claudeFiles: imagePayload.claudeFiles || [],
-        };
-        claudeFilesMode = "fallback_base64";
-        out = await anthropicMessagesWithFallback({
-          apiKey: claudeKey,
-          model: resolvedModel,
-          messages: [{ role: "user", content: fallbackContent }],
-          maxTokens: Number(body.max_tokens || 4500),
-          timeoutMs: 180000,
-        });
-        finalAiRes = out.response;
-        resolvedModel = out.modelUsed || resolvedModel;
-      }
-      if (!finalAiRes.ok) {
-        const errText = await finalAiRes.text();
-        throw new Error(`Claude API Error (${finalAiRes.status}): ${errText}`);
-      }
-      const aiJson = await finalAiRes.json();
-      const rawResponse = Array.isArray(aiJson?.content)
-        ? aiJson.content
-            .filter((x) => x?.type === "text")
-            .map((x) => String(x?.text || ""))
-            .join("\n")
-        : String(aiJson?.content || "");
+
+      const rawResponse = aiResult.rawText;
+      const resolvedModel = aiResult.modelUsed;
+      claudeFilesMode = aiResult.provider === "claude" ? (claudeFilesMode || "base64") : aiResult.provider;
       const extracted = extractJsonFromAiText(rawResponse);
       const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
       console.log('[ai-response] symbol=' + (parsedJson?.symbol || '?') + ' plans=' + (Array.isArray(parsedJson?.trade_plan) ? parsedJson.trade_plan.length : 0) + ' has_analysis=' + (!!parsedJson?.market_analysis));

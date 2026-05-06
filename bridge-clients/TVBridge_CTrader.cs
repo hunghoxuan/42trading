@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 07:43 - unwrap1";
+        private string BuildVersion = "v2026.05.06 08:10 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -188,19 +188,22 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
                 
-                // If not found, try common variations (e.g., GBP/JPY, GBP-JPY, GBP JPY)
+                // Aggressive Search: Try every possible combination of separators, prefixes, and suffixes
                 if (symbol == null && symbolCode.Length == 6) {
                     var baseCCY = symbolCode.Substring(0, 3);
                     var quoteCCY = symbolCode.Substring(3, 3);
-                    var variations = new[] { 
+                    var variations = new List<string> { 
                         symbolCode, 
                         baseCCY + "/" + quoteCCY, 
                         baseCCY + "-" + quoteCCY, 
-                        baseCCY + " " + quoteCCY 
+                        baseCCY + " " + quoteCCY,
+                        baseCCY + quoteCCY,
+                        symbolCode.ToLower(),
+                        (baseCCY + "/" + quoteCCY).ToLower()
                     };
                     
-                    var suffixes = new[] { "", ".ecn", ".m", ".i", "_i", ".", "-i", "_SB" };
-                    var prefixes = new[] { "", "e-", "m-", "i-", "f-" };
+                    var suffixes = new[] { "", ".ecn", ".m", ".i", "_i", ".", "-i", "_SB", ".raw", ".std" };
+                    var prefixes = new[] { "", "e-", "m-", "i-", "f-", "Forex\\", "Spot\\" };
 
                     foreach (var p in prefixes) {
                         foreach (var v in variations) {
@@ -218,7 +221,7 @@ namespace cAlgo.Robots
                     var msg = "Symbol not found: " + symbolCode;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
-                    Print("[Error] Symbol '{0}' not found. Tried variations like GBP/JPY, GBP-JPY, etc.", symbolCode);
+                    Print("[Error] Symbol '{0}' not found. Please manually search for '{0}' in cTrader and tell me the exact name.", symbolCode);
                     return;
                 }
                 

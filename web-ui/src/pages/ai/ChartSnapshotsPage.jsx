@@ -1612,7 +1612,9 @@ export default function ChartSnapshotsPage() {
   const [analysisRaw, setAnalysisRaw] = useState("");
   const [analysisJson, setAnalysisJson] = useState("");
   const [analysisParsed, setAnalysisParsed] = useState(null);
-  const [analysisSource, setAnalysisSource] = useState("ai_claude");
+  const [analysisSource, setAnalysisSource] = useState(
+    () => localStorage.getItem("ai_model") || "ai_claude"
+  );
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
   const [visibleCount, setVisibleCount] = useState(8);
@@ -2517,8 +2519,14 @@ export default function ChartSnapshotsPage() {
         ? context.context_files
         : [];
       const useContextFiles = contextFiles.length > 0;
+      const modelMap = {
+        ai_claude: "claude-sonnet-4-0",
+        ai_gpt4o: "gpt-4o",
+        ai_deepseek: "deepseek-chat",
+        ai_gemini: "gemini-2.0-flash",
+      };
       const payload = {
-        model: "claude-sonnet-4-0",
+        model: modelMap[analysisSource] || "claude-sonnet-4-0",
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
@@ -3548,7 +3556,7 @@ export default function ChartSnapshotsPage() {
     setAnalysisRaw("");
     setAnalysisJson("");
     setAnalysisParsed(null);
-    setAnalysisSource("ai_claude");
+    // Keep analysisSource — user's model preference
     setUsedFiles([]);
     setAnalysisFilesDisplay([]);
     setResponseTab("text");
@@ -4308,7 +4316,11 @@ export default function ChartSnapshotsPage() {
             >
               <select
                 value={analysisSource}
-                onChange={(e) => setAnalysisSource(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAnalysisSource(v);
+                  localStorage.setItem("ai_model", v);
+                }}
                 className="secondary-button"
                 style={{ padding: "0 10px", height: 34, fontSize: "12px" }}
               >
