@@ -24,6 +24,49 @@ import {
   StatusPnlCell,
 } from "../../components/TradeSignalListCells";
 
+const DEFAULT_AI_MODELS = {
+  providers: {
+    ai_claude: {
+      label: "Claude",
+      models: [
+        { value: "claude-sonnet-4-0", label: "Claude 3.5 Sonnet" },
+        { value: "claude-opus-4-0", label: "Claude Opus 4" },
+      ],
+    },
+    ai_gpt4o: {
+      label: "OpenAI",
+      models: [
+        { value: "gpt-4o", label: "GPT-4o" },
+        { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+      ],
+    },
+    ai_deepseek: {
+      label: "DeepSeek",
+      models: [
+        { value: "deepseek-chat", label: "DeepSeek V3" },
+        { value: "deepseek-reasoner", label: "DeepSeek R1" },
+      ],
+    },
+    ai_gemini: {
+      label: "Gemini",
+      models: [
+        { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+        { value: "gemini-2.0-pro", label: "Gemini 2.0 Pro" },
+      ],
+    },
+    ai_openrouter: {
+      label: "OpenRouter",
+      models: [
+        { value: "openai/gpt-4o", label: "GPT-4o" },
+        { value: "anthropic/claude-sonnet-4-0", label: "Claude Sonnet 4" },
+        { value: "google/gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+        { value: "deepseek/deepseek-chat", label: "DeepSeek V3" },
+      ],
+    },
+  },
+  default_provider: "ai_claude",
+};
+
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
 const DEFAULT_TEMPLATE_ID = "__default__";
@@ -1654,6 +1697,10 @@ export default function ChartSnapshotsPage() {
   const [analysisSource, setAnalysisSource] = useState(
     () => localStorage.getItem("ai_model") || "ai_claude",
   );
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem("ai_model_name") || "claude-sonnet-4-0",
+  );
+  const [aiModelConfig, setAiModelConfig] = useState(DEFAULT_AI_MODELS);
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
   const [visibleCount, setVisibleCount] = useState(8);
@@ -2560,15 +2607,8 @@ export default function ChartSnapshotsPage() {
         ? context.context_files
         : [];
       const useContextFiles = contextFiles.length > 0;
-      const modelMap = {
-        ai_claude: "claude-sonnet-4-0",
-        ai_gpt4o: "gpt-4o",
-        ai_deepseek: "deepseek-chat",
-        ai_gemini: "gemini-2.0-flash",
-        ai_openrouter: "openai/gpt-4o",
-      };
       const payload = {
-        model: modelMap[analysisSource] || "claude-sonnet-4-0",
+        model: selectedModel,
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
@@ -3295,6 +3335,17 @@ export default function ChartSnapshotsPage() {
   useEffect(() => {
     loadWatchlist();
     loadTemplatesFromDb();
+    // Load AI model config from user settings
+    api
+      .getSettings()
+      .then((res) => {
+        const list = Array.isArray(res?.settings) ? res.settings : [];
+        const cfg = list.find(
+          (s) => s?.type === "system_config" && s?.name === "AI_MODELS",
+        );
+        if (cfg?.data?.providers) setAiModelConfig(cfg.data);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -4342,21 +4393,59 @@ export default function ChartSnapshotsPage() {
                 flexWrap: "wrap",
               }}
             >
+              {/* Provider select */}
               <select
                 value={analysisSource}
                 onChange={(e) => {
                   const v = e.target.value;
                   setAnalysisSource(v);
                   localStorage.setItem("ai_model", v);
+                  // Reset model to first available for this provider
+                  const models = aiModelConfig.providers[v]?.models || [];
+                  if (models.length) {
+                    setSelectedModel(models[0].value);
+                    localStorage.setItem("ai_model_name", models[0].value);
+                  }
                 }}
                 className="secondary-button"
-                style={{ padding: "0 10px", height: 34, fontSize: "12px" }}
+                style={{
+                  padding: "0 8px",
+                  height: 34,
+                  fontSize: "12px",
+                  minWidth: 100,
+                }}
               >
-                <option value="ai_claude">Claude 3.5 Sonnet</option>
-                <option value="ai_gpt4o">GPT-4o</option>
-                <option value="ai_deepseek">DeepSeek V3</option>
-                <option value="ai_gemini">Gemini 1.5 Pro</option>
-                <option value="ai_openrouter">OpenRouter</option>
+                {Object.entries(aiModelConfig.providers).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+
+              {/* Model select */}
+              <select
+                value={selectedModel}
+                onChange={(e) => {
+                  setSelectedModel(e.target.value);
+                  localStorage.setItem("ai_model_name", e.target.value);
+                }}
+                className="secondary-button"
+                style={{
+                  padding: "0 8px",
+                  height: 34,
+                  fontSize: "11px",
+                  minWidth: 140,
+                }}
+              >
+                {(
+                  aiModelConfig.providers[analysisSource]?.models ||
+                  aiModelConfig.providers["ai_claude"]?.models ||
+                  []
+                ).map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
               </select>
 
               <button
