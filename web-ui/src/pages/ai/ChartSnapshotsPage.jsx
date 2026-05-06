@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { createChart } from "lightweight-charts";
-import { showDateTime, isSameDay } from "../../utils/format";
+import { showDateTime, isSameDay, asNum, formatNumber } from "../../utils/format";
 
 import { api } from "../../api";
 import { SignalDetailCard } from "../../components/SignalDetailCard";

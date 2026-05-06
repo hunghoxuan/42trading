@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
+import { asNum, showDateTime } from "../utils/format";
 
 function parseSnapshotBars(snapshot) {
   const bars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
