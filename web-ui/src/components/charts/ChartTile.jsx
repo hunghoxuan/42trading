@@ -216,17 +216,15 @@ export function SymbolChart({
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
+
   useEffect(() => {
     if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
       setGridCols(Number(initialGridCols));
+    } else {
+      // Default to timeframe count if no master override
+      setGridCols(Math.max(1, timeframes?.length || 1));
     }
-  }, [initialGridCols]);
-
-  useEffect(() => {
-    setGridCols((prev) =>
-      Math.min(Math.max(1, prev), Math.max(1, timeframes?.length || 4)),
-    );
-  }, [timeframes?.length]);
+  }, [initialGridCols, timeframes?.length]);
 
   useEffect(() => {
     if (!rootRef.current) return;

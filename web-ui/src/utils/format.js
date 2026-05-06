@@ -215,3 +215,17 @@ export function sortTimeframes(tfs, order = "desc") {
   });
 }
 
+export function asNum(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function formatNumber(val, decimals = 2) {
+  const n = asNum(val);
+  if (n === null) return "-";
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}

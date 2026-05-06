@@ -4525,6 +4525,7 @@ export default function ChartSnapshotsPage() {
                       : browserTfs.length === 2
                         ? "repeat(2, 1fr)"
                         : "1fr",
+                gap: 12,
               }}
             >
               {symbolFilterTab === "SMT"

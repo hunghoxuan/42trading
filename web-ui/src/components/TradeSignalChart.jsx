@@ -463,10 +463,6 @@ export default function TradeSignalChart({
           if (markers.length > 0) candleSeries.setMarkers(markers);
 
           // --- ENTRY / TP / SL for all plans ---
-          const asNum = (v) => {
-            const n = Number(v);
-            return Number.isFinite(n) && n > 0 ? n : null;
-          };
           const boxAnchorTs = openedAt
             ? Math.floor(new Date(openedAt).getTime() / 1000)
             : candles.length
