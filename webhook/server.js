@@ -112,7 +112,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.06 06:59 - 3aa6919"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.06 07:14 - ai-sot1"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -493,51 +493,9 @@ const CFG = {
   ),
 };
 
-const AI_RESPONSE_SCHEMA_VERSION = "2.2";
-
-const AI_RESPONSE_SCHEMA = {
-  symbol: "",
-  ai_full_analysis: {
-    htf_context: [{
-      timeframe: "D|4H",
-      trend: "Bullish|Bearish|Ranging",
-      bias: "Long|Short|Neutral",
-      what_price_just_did: "",
-      what_price_likely_does_next: "",
-      draw_on_liquidity: { narrative: "", target_price: null, target_type: "BSL|SSL|FVG|OB" },
-      reference_zones: [{ id: "", type: "OB|FVG|KeyLevel", direction: "Bull|Bear", zone_top: null, zone_bottom: null, status: "active|mitigated", relevance: "TP2|TP3|Invalidation" }],
-    }],
-    ltf_analysis: [{
-      timeframe: "15M|5M|1M",
-      trend: "Bullish|Bearish|Ranging",
-      structure: "BOS|CHoCH|MSB|Continuation|Ranging",
-      phase: "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
-      bias: "Long|Short|Neutral",
-      poi_aligned: true,
-      what_price_just_did: "",
-      what_price_likely_does_next: "",
-      key_events: [{ event: "BOS|CHoCH|Sweep|Rejection", price: null, direction: "Bull|Bear" }],
-      expected_path: [{ step: 1, action: "", target_price: null, required_condition: "" }],
-      pd_arrays: [{ id: "", type: "OB|FVG|Breaker|MB", direction: "Bull|Bear", strength: "High|Medium|Low", zone_top: null, zone_bottom: null, status: "active|mitigated", times_touched: 0, note: "" }],
-      key_levels: [{ name: "PDH|PDL|EQH|EQL|MidnightOpen", price: null, already_swept: false }],
-    }],
-    confluence_checklist: {
-      buy: { weighted_score: 0, high_weight_passed: 0, high_weight_total: 0, passed_items: [{ strategy: "", category: "", description: "", weight: "High|Medium|Low", linked_array_id: null }], failed_critical: [{ strategy: "", description: "", impact: "" }] },
-      sell: { weighted_score: 0, high_weight_passed: 0, high_weight_total: 0, passed_items: [], failed_critical: [] },
-    },
-  },
-  trade_plan: [{
-    direction: "BUY|SELL", profile: "Position|Swing|Intraday|Scalp", order_type: "Limit|Stop Limit|Market",
-    session: "London|NY|Asia", strategy: "", entry_model: "",
-    entry_price: null, stop_loss: null, breakeven_trigger: null,
-    take_profits: [{ price: null, close_position_pct: 50, reward_to_risk: null }],
-    risk_reward: null, risk_percent: null, estimated_candles_to_tp1: null,
-    confluence_score: null, trade_decision: "Proceed|Skip", grade: "A|B|C|NoTrade",
-    skip_reasons: [{ reason: "", severity: "critical|warning" }],
-    entry_trigger: "", pre_entry_invalidation: "", mid_trade_invalidation: "",
-    note: "",
-  }],
-};
+const AI_SCHEMA_SPEC = require("../shared/ai_response_schema.json");
+const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "2.3");
+const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
 
 // Legacy checklist bank kept for reference
 const AI_CHECKLIST_BANK = [];
@@ -14256,6 +14214,11 @@ const appHandler = async (req, res) => {
         );
         return {
           id: Number(r.log_id || 0),
+          log_id: Number(r.log_id || 0),
+          object_id: signalId,
+          object_table: String(r.object_table || ""),
+          created_at: eventTime,
+          metadata: payload,
           event_time: eventTime,
           event_type: eventType,
           signal_id: signalId,
@@ -14286,11 +14249,13 @@ const appHandler = async (req, res) => {
           }
           if (q) {
             const haystack = [
-              ev.sid,
+              ev.object_id,
+              ev.signal_id,
               ev.ack_ticket,
               ev.symbol,
+              ev.object_table,
               ev.event_type,
-              JSON.stringify(ev.payload_json || {}),
+              JSON.stringify(ev.metadata || ev.payload_json || {}),
             ]
               .join(" ")
               .toLowerCase();

@@ -14,3 +14,5 @@ The heart of the system. It transforms raw market data into actionable trade pla
 - **Endpoints**: `/v2/ai/generate`, `/v2/ai/multi-generate`, `/v2/ai/templates`.
 - **Logic**: Prompt engineering via `signal_generator.prompt`, context gathering from TwelveData/Binance.
 - **Audit**: Every AI request and response is logged in the `logs` table for review.
+- **Schema Source of Truth**: Backend prompt-building and frontend AI schema display both consume `/Users/macmini/Trade/Bot/trading/shared/ai_response_schema.json`.
+- **Compatibility**: Frontend analysis parsing supports the current `ai_full_analysis` wrapper and legacy flat payloads so stored AI outputs render consistently.

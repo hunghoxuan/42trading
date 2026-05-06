@@ -738,6 +738,31 @@
 - **Deploy Status**:
   - Ready to deploy.
 
+# Session Log: 2026-05-06 09:10
+- **Starting Task**:
+  - Resume handoff, inspect live `object_table='ai'` logs, fix frontend/backend schema drift to a single source of truth, verify, and deploy.
+- **Work Accomplished**:
+  - Queried the live VPS database and confirmed production currently has `AI_ANALYSIS` and `AI_RESPONSE` rows under `object_table='ai'`, with no latest `AI_ANALYZE_*` rows present.
+  - Moved the AI response schema into shared contract file `shared/ai_response_schema.json` and wired both backend prompt-building and frontend schema display to that file.
+  - Brought frontend analysis normalization up to parity with the backend `ai_full_analysis` contract and legacy fallback handling.
+  - Extended the logs API/UI to preserve canonical log-row fields (`object_id`, `object_table`, `created_at`, `metadata`) while remaining backward-compatible with older UI keys.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/shared/ai_response_schema.json`
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/AiPromptBuilder.js`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/system/LogsPage.jsx`
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/2-done/ai_signal_engine.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/2-done/system_logging.md`
+- **Technical Decisions**:
+  - Treat the AI schema file as the frontend/backend single source of truth.
+  - Keep backend-normalized `parsed_json` as the preferred runtime contract and make the frontend fallback normalizer understand the same modern shape.
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Pending version bump and deploy.
+
 # Session Log: 2026-05-05 23:31
 - **Starting Task**:
   - Enforce mandatory snapshots for AI analyze in both context and fallback modes.

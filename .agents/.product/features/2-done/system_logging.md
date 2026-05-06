@@ -18,3 +18,5 @@ Users can track every stage of a trade or signal lifecycle via the "History" and
 ## Implementation Details
 - **Storage**: `logs` table (JSONB metadata).
 - **Triggers**: MT5 EA polling and Webhook AI generation.
+- **Canonical Row Shape**: Logs API responses expose `log_id`, `object_id`, `object_table`, `created_at`, and `metadata`, while keeping legacy aliases for existing UI flows.
+- **AI Audit Note**: Production `object_table='ai'` rows inspected on 2026-05-06 contained `AI_ANALYSIS` and `AI_RESPONSE`; no live `AI_ANALYZE_*` rows were present in the latest window.

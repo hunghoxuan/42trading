@@ -22,6 +22,22 @@ function fDateTime(v) {
   return showDateTime(v);
 }
 
+function getEventId(ev) {
+  return ev?.log_id ?? ev?.id ?? "";
+}
+
+function getEventObjectId(ev) {
+  return ev?.object_id || ev?.signal_id || ev?.sid || "";
+}
+
+function getEventTime(ev) {
+  return ev?.created_at || ev?.event_time || "";
+}
+
+function getEventPayload(ev) {
+  return ev?.metadata || ev?.payload_json || {};
+}
+
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
 const BULK_ACTIONS = ["", "Delete All Log"];
 const RANGE_OPTIONS = [
@@ -327,8 +343,10 @@ export default function LogsPage() {
               <tbody>
                 {events.map((ev) => (
                   <tr
-                    key={ev.id}
-                    className={selectedEvent?.id === ev.id ? "active" : ""}
+                    key={getEventId(ev)}
+                    className={
+                      getEventId(selectedEvent) === getEventId(ev) ? "active" : ""
+                    }
                     onClick={() => {
                       setSelectedEvent(ev);
                     }}
@@ -346,7 +364,10 @@ export default function LogsPage() {
                     </td>
                     <td>
                       <div className="cell-wrap">
-                        <div className="minor-text">{ev.sid}</div>
+                        <div className="minor-text">{getEventObjectId(ev)}</div>
+                        {!!ev.object_table && (
+                          <div className="minor-text">{ev.object_table}</div>
+                        )}
                         {ev.ack_ticket && (
                           <div
                             className="minor-text"
@@ -359,7 +380,7 @@ export default function LogsPage() {
                     </td>
                     <td>
                       <span className="minor-text">
-                        {fDateTime(ev.event_time)}
+                        {fDateTime(getEventTime(ev))}
                       </span>
                     </td>
                   </tr>
@@ -381,10 +402,10 @@ export default function LogsPage() {
                 }}
               >
                 <div className="panel-label" style={{ margin: 0 }}>
-                  EVENT DETAILS #{selectedEvent.id}
+                  EVENT DETAILS #{getEventId(selectedEvent)}
                 </div>
                 <div className="minor-text">
-                  {fDateTime(selectedEvent.event_time)}
+                  {fDateTime(getEventTime(selectedEvent))}
                 </div>
               </div>
               <div className="panel" style={{ margin: 0, padding: 12 }}>
@@ -400,7 +421,7 @@ export default function LogsPage() {
                     lineHeight: 1.45,
                   }}
                 >
-                  {JSON.stringify(selectedEvent.payload_json || {}, null, 2)}
+                  {JSON.stringify(getEventPayload(selectedEvent), null, 2)}
                 </pre>
               </div>
             </div>
