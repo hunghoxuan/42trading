@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createChart } from "lightweight-charts";
-import { showDateTime } from "../utils/format";
+import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
+import { asNumValue, showDateTime } from "../utils/format";
 
 const asNum = (v) => {
   const n = Number(v);

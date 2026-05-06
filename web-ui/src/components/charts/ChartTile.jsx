@@ -6,8 +6,8 @@ import {
   getEffectiveDisplayTimezone,
   showDateTime,
   sortTimeframes,
-  asNum,
-  formatNumber,
+  asNumValue,
+  formatNumValue,
 } from "../../utils/format";
 
 const MODES = ["live", "cache", "snapshots"];
