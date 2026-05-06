@@ -4537,11 +4537,18 @@ async function callAiProvider({ model, messages, maxTokens = 4500, timeoutMs = 1
     : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
   // Convert image format: Anthropic base64 → OpenAI image_url
+  // DeepSeek does NOT support images — strip them and warn
+  const isDeepSeek = provider === "deepseek";
+  let imageCount = 0;
   const convertedMessages = messages.map(m => {
     if (typeof m.content === "string") return m;
     if (!Array.isArray(m.content)) return m;
     const parts = m.content.map(block => {
       if (block?.type === "image" && block?.source?.type === "base64") {
+        imageCount++;
+        if (isDeepSeek) {
+          return { type: "text", text: "[Chart image attached — analyze based on the symbol/timeframe context above]" };
+        }
         return {
           type: "image_url",
           image_url: { url: `data:${block.source.media_type || "image/jpeg"};base64,${block.source.data}` }
@@ -16375,7 +16382,7 @@ const appHandler = async (req, res) => {
         {
           event: "AI_RESPONSE",
           schema_version: AI_RESPONSE_SCHEMA_VERSION,
-          raw_json: aiJson,
+          raw_json: parsedJson,
         },
         userId,
       );

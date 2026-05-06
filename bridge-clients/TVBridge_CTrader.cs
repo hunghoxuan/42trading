@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.06 08:10 - 4459e1b";
+        private string BuildVersion = "v2026.05.06 08:14 - 4459e1b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -175,14 +175,15 @@ namespace cAlgo.Robots
             if (string.IsNullOrEmpty(id)) id = GetJsonValue(json, "signal_id");
             var leaseToken = GetJsonValue(json, "lease_token");
             var action = GetJsonValue(json, "action").ToUpper();
-            var symbolCode = GetJsonValue(json, "symbol");
+            var symbolCode = GetJsonValue(json, "symbol").ToUpper();
             var lots = ParseDouble(GetJsonValue(json, "volume"));
 
             if (string.IsNullOrEmpty(id)) return;
-
             if (_processedSignalIds.Contains(id)) return;
+            
+            Print("[Debug] Signal Received: {0} {1} (ID: {2})", action, symbolCode, id);
+            
             _processedSignalIds.Add(id);
-
             UpdateSignalHistory(id, action + " " + symbolCode + " (PENDING)");
 
             BeginInvokeOnMainThread(() => {
@@ -414,8 +415,8 @@ namespace cAlgo.Robots
         }
 
         private string GetJsonValue(string json, string key) {
-            var m = Regex.Match(json, string.Format("\"{0}\"\\s*:\\s*\"?(.*?)\"?[,}}]", key));
-            return m.Success ? m.Groups[1].Value.Trim('\"') : "";
+            var m = Regex.Match(json, string.Format("\"{0}\"\\s*:\\s*\"?([^,\"]*)\"?", key));
+            return m.Success ? m.Groups[1].Value.Trim() : "";
         }
         private double ParseDouble(string val) { double r; return double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out r) ? r : 0; }
     }
