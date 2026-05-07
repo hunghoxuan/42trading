@@ -138,7 +138,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 08:15 - 69dfc15"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 08:15 - 69dfc15",
+); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -14530,30 +14533,41 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "sid (signal_id) is required",
         });
-      const rows = await mt5ListSignals(50000, "");
-      const trade = rows.find((r) => String(r.sid) === signalId);
-      if (!trade)
-        return json(res, 404, { ok: false, error: "signal not found" });
       const eventLimitRaw = Number(url.searchParams.get("event_limit") || 200);
       const eventLimit = Math.max(
         1,
         Math.min(2000, Number.isFinite(eventLimitRaw) ? eventLimitRaw : 200),
       );
-      const events = await mt5ListSignalEvents(signalId, eventLimit);
-      return json(res, 200, {
-        ok: true,
-        trade: mt5PublicState(trade),
-        events,
-        chart: {
-          symbol: trade.symbol,
-          action: trade.action,
-          entry: trade.entry_price_exec ?? null,
-          sl: trade.sl_exec ?? trade.sl ?? null,
-          tp: trade.tp_exec ?? trade.tp ?? null,
-          opened_at: trade.opened_at ?? trade.ack_at ?? trade.created_at,
-          closed_at: trade.closed_at ?? null,
+      const detail = await StateRepo.get(
+        "SIGNAL_DETAIL",
+        signalId,
+        async () => {
+          try {
+            const rows = await mt5ListSignals(50000, "");
+            const trade = rows.find((r) => String(r.sid) === signalId);
+            if (!trade) return null;
+            const events = await mt5ListSignalEvents(signalId, eventLimit);
+            return {
+              trade: mt5PublicState(trade),
+              events,
+              chart: {
+                symbol: trade.symbol,
+                action: trade.action,
+                entry: trade.entry_price_exec ?? null,
+                sl: trade.sl_exec ?? trade.sl ?? null,
+                tp: trade.tp_exec ?? trade.tp ?? null,
+                opened_at: trade.opened_at ?? trade.ack_at ?? trade.created_at,
+                closed_at: trade.closed_at ?? null,
+              },
+            };
+          } catch {
+            return null;
+          }
         },
-      });
+      );
+      if (!detail || !detail.trade)
+        return json(res, 404, { ok: false, error: "signal not found" });
+      return json(res, 200, { ok: true, ...detail });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return json(res, 400, { ok: false, error: message });
@@ -18121,22 +18135,28 @@ const appHandler = async (req, res) => {
           error: "sid (trade_id) is required",
         });
       const userId = uiEffectiveUserId(req, url);
-      const resolved = await mt5ResolveTradeRefV2(tradeRef, userId || null);
-      if (!resolved?.sid)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      const limitRaw = Number(url.searchParams.get("limit") || 200);
-      const limit = Math.max(
-        1,
-        Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
-      );
-      const rows = await mt5ListTradeEventsV2(resolved.sid, limit);
-      return json(res, 200, {
-        ok: true,
-        sid: resolved.sid,
-        id: resolved.id || null,
-        sid: resolved.sid || null,
-        items: rows,
+      const detail = await StateRepo.get("TRADE_DETAIL", tradeRef, async () => {
+        try {
+          const resolved = await mt5ResolveTradeRefV2(tradeRef, userId || null);
+          if (!resolved?.sid) return null;
+          const limitRaw = Number(url.searchParams.get("limit") || 200);
+          const limit = Math.max(
+            1,
+            Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
+          );
+          const rows = await mt5ListTradeEventsV2(resolved.sid, limit);
+          return {
+            sid: resolved.sid,
+            id: resolved.id || null,
+            items: rows,
+          };
+        } catch {
+          return null;
+        }
       });
+      if (!detail)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      return json(res, 200, { ok: true, ...detail });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -18170,6 +18190,8 @@ const appHandler = async (req, res) => {
         userId || null,
         payload || {},
       );
+      StateRepo.del("SIGNAL_DETAIL", tradeRef);
+      StateRepo.del("TRADE_DETAIL", tradeRef);
       return json(res, out?.ok ? 200 : 400, out);
     } catch (error) {
       return json(res, 400, {
@@ -18279,6 +18301,7 @@ const appHandler = async (req, res) => {
         { event_type: "SIGNAL_TRADE_PLAN_SAVED", data: rawPatch },
         row.user_id || userId || CFG.mt5DefaultUserId,
       );
+      StateRepo.del("SIGNAL_DETAIL", signalRef);
       return json(res, 200, { ok: true, item: mt5MapDbRow(row) });
     } catch (error) {
       return json(res, 400, {

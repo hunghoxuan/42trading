@@ -1093,6 +1093,7 @@ export default function TradesPage() {
                         </td>
                         <td>
                           <StatusPnlCell
+                            status={t.execution_status}
                             statusNode={
                               <span
                                 className={`badge ${status.cls}`}
@@ -1470,28 +1471,27 @@ export default function TradesPage() {
                         ].filter((x) => x.value !== null);
                       })()
                     : []),
-                  {
+                   {
                     label: "Metadata",
                     fullWidth: true,
                     value: (() => {
                       const meta = selectedTrade.metadata || {};
+                      const bData = meta.broker_data || {};
+                      
                       const cleaned = {};
                       const junk = [
-                        "props",
-                        "children",
-                        "ref",
-                        "key",
-                        "type",
-                        "_owner",
-                        "_store",
-                        "_self",
-                        "_source",
+                        "props", "children", "ref", "key", "type", "_owner", "_store", "_self", "_source",
+                        "market_analysis", "analysis_snapshot", "pd_arrays", "key_levels", "labels"
                       ];
-                      Object.keys(meta).forEach((k) => {
+                      
+                      // If we have broker data, it's usually the most important
+                      const source = Object.keys(bData).length > 0 ? bData : meta;
+                      
+                      Object.keys(source).forEach((k) => {
                         if (junk.includes(k)) return;
-                        if (meta[k] === null || meta[k] === undefined || meta[k] === "")
-                          return;
-                        cleaned[k] = meta[k];
+                        const val = source[k];
+                        if (val === null || val === undefined || val === "") return;
+                        cleaned[k] = val;
                       });
                       return cleaned;
                     })(),

@@ -731,17 +731,19 @@ export default function SignalsPage() {
                         />
                       </td>
                       <td>
-                        <div className="cell-wrap">
+                        <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>
                           <StatusPnlCell
+                            status={t.status}
                             statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
                             hideStatus={true}
+                            hidePnl={true}
                             pnl={null}
                             showFilledDetails={false}
                           />
                           <button
                             type="button"
-                            className={`secondary-button ${detailPlanBusy.trade ? "btn-busy" : ""}`}
-                            style={{ marginTop: 6, width: "fit-content" }}
+                            className={`secondary-button icon-button ${detailPlanBusy.trade ? "btn-busy" : ""}`}
+                            style={{ marginTop: 4, width: "fit-content", fontSize: '10px', height: '22px' }}
                             onClick={(e) => {
                               e.stopPropagation();
                               addTradeFromSignal(t);
@@ -749,7 +751,7 @@ export default function SignalsPage() {
                             disabled={detailPlanBusy.trade || (t.execution_status && t.execution_status !== "")}
                             title={t.execution_status ? `Trade already exists (${t.execution_status})` : ""}
                           >
-                            {detailPlanBusy.trade ? <div className="spinner" style={{ width: 12, height: 12 }} /> : "+ Trade"}
+                            {detailPlanBusy.trade ? <div className="spinner" style={{ width: 10, height: 10 }} /> : "+ Trade"}
                           </button>
                         </div>
                       </td>
@@ -926,6 +928,26 @@ export default function SignalsPage() {
                 { label: "Signal TF", value: formatTimeframe(selectedSignal.signal_tf || "-") },
                 { label: "Strategy", value: compactStrategy(selectedSignal) },
                 { label: "Entry Model", value: selectedSignal.entry_model || "-" },
+                {
+                  label: "Metadata",
+                  fullWidth: true,
+                  group: "account",
+                  value: (() => {
+                    const meta = selectedSignal.metadata || selectedSignal.raw_json || {};
+                    const cleaned = {};
+                    const junk = [
+                      "props", "children", "ref", "key", "type", "_owner", "_store", "_self", "_source",
+                      "market_analysis", "analysis_snapshot", "pd_arrays", "key_levels", "labels", "raw_json"
+                    ];
+                    Object.keys(meta).forEach((k) => {
+                      if (junk.includes(k)) return;
+                      const val = meta[k];
+                      if (val === null || val === undefined || val === "") return;
+                      cleaned[k] = val;
+                    });
+                    return cleaned;
+                  })(),
+                },
               ]}
               history={{
                 enabled: true,

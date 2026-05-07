@@ -56,10 +56,17 @@ export function PositionAuditCell({
   sid = "-",
   brokerId = "-",
 }) {
-  const major = [source, strategy, timeText].filter((x) => x && x !== "-").join(" | ");
+  const sourceStrategy = [source, strategy].filter((x) => x && x !== "-").join(" | ");
   return (
     <div className="cell-wrap">
-      <div className="cell-major">{major || "-"}</div>
+      <div className="cell-major">
+        {sourceStrategy || "-"}{" "}
+        {timeText !== "-" && (
+          <span className="minor-text" style={{ fontSize: 11, opacity: 0.8, marginLeft: 4 }}>
+            {timeText}
+          </span>
+        )}
+      </div>
       <div className="cell-minor">
         {sid} {brokerId && brokerId !== "-" ? `| ${brokerId}` : ""}
       </div>
@@ -77,28 +84,37 @@ export function StatusPnlCell({
   hideStatus = false,
   tpPnl = null,
   slPnl = null,
+  status = "",
+  hidePnl = false,
 }) {
   const pnlNum = num(pnl);
+  const st = String(status || "").toUpperCase();
+  const shouldShowMetrics = st === "FILLED" || st === "CLOSED" || st === "OPEN";
+  
   return (
-    <div className="cell-wrap">
+    <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>
       {!hideStatus && <div className="cell-major">{statusNode}</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-        {pnlNum != null ? (
-          <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontWeight: 800, fontSize: '14px', lineHeight: 1 }}>
-            ${pnlNum.toFixed(2)}
-          </div>
-        ) : null}
-        {brokerPips != null && brokerPips !== 0 ? (
-          <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6, marginTop: 2 }}>
-            {Math.round(num(brokerPips))} pips
-          </div>
-        ) : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end', height: 16 }}>
+        {shouldShowMetrics && !hidePnl && (
+          <>
+            {brokerPips != null && (
+              <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6 }}>
+                {Math.round(num(brokerPips))} pips
+              </div>
+            )}
+            {pnlNum != null && (
+              <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontSize: '12px', lineHeight: 1 }}>
+                ${Math.abs(pnlNum).toFixed(2)}
+              </div>
+            )}
+          </>
+        )}
       </div>
-      {showFilledDetails ? (
-        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7, marginTop: 2 }}>
-          {tpPnl != null ? <span className="money-pos" style={{ fontWeight: 600 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
+      {showFilledDetails && !hidePnl ? (
+        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7, marginTop: 2, textAlign: 'right' }}>
+          {tpPnl != null ? <span className="money-pos">+${num(tpPnl).toFixed(1)}</span> : "-"} 
           {" "}/{" "}
-          {slPnl != null ? <span className="money-neg" style={{ fontWeight: 600 }}>-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
+          {slPnl != null ? <span className="money-neg">-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
         </div>
       ) : null}
     </div>
