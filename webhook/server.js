@@ -46,6 +46,32 @@ function loadEnvFile() {
   }
 }
 
+let GLOBAL_API_STATS = {
+  last_updates: [],
+  counters: {
+    twelve_data: 0,
+    claude: 0,
+    openai: 0,
+    deepseek: 0,
+  },
+};
+
+function trackApiCall(apiName) {
+  const name = String(apiName || "unknown").toLowerCase();
+  if (GLOBAL_API_STATS.counters[name] !== undefined) {
+    GLOBAL_API_STATS.counters[name]++;
+  } else {
+    GLOBAL_API_STATS.counters[name] = 1;
+  }
+  GLOBAL_API_STATS.last_updates.unshift({
+    api: apiName,
+    time: Date.now(),
+  });
+  if (GLOBAL_API_STATS.last_updates.length > 50) {
+    GLOBAL_API_STATS.last_updates.pop();
+  }
+}
+
 function asBool(value, fallback = false) {
   if (value === undefined || value === null) {
     return fallback;
@@ -4546,6 +4572,7 @@ async function callAiProvider({
 
   // Claude → use Anthropic Messages API
   if (modelLower.includes("claude")) {
+    trackApiCall("Claude");
     const claudeKey = await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId);
     if (!claudeKey) throw new Error("CLAUDE_API_KEY is missing in Settings.");
     const out = await anthropicMessagesWithFallback({
@@ -4577,6 +4604,7 @@ async function callAiProvider({
         ? "deepseek"
         : "gemini";
 
+  trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
   const cfg = await loadAiConfig();
   const apiKey =
     provider === "deepseek"
@@ -10500,6 +10528,13 @@ async function buildAnalysisSnapshotFromTwelve({
         cached.bar_end || cached.bars[cached.bars.length - 1].time,
       );
       if (s <= reqRange.start && e >= reqRange.end) {
+        await logEvent(tid, "FETCH_API", {
+          step: "cache_hit",
+          symbol: symbolNorm,
+          tf: tfNorm,
+          bars: cached.bars.length,
+          source: "memory",
+        });
         return {
           ...cached,
           symbol: symbolNorm,
@@ -10511,12 +10546,6 @@ async function buildAnalysisSnapshotFromTwelve({
           status: "ok",
           cache_source: "memory",
         };
-        await logEvent(tid, "FETCH_API", {
-          step: "cache_hit",
-          symbol: symbolNorm,
-          tf: tfNorm,
-          bars: cached.bars.length,
-        });
       }
     }
     // Fallback to DB
@@ -10526,9 +10555,20 @@ async function buildAnalysisSnapshotFromTwelve({
       tfNorm,
       reqRange.start,
       reqRange.end,
-    ).catch(() => null);
+    ).catch((e) => {
+      console.error(`[twelve] DB_ERROR: ${e.message}`);
+      return null;
+    });
+
     if (dbHit && Array.isArray(dbHit.bars) && dbHit.bars.length) {
       tfCacheSet(symbolNorm, tfNorm, dbHit);
+      await logEvent(tid, "FETCH_API", {
+        step: "cache_hit",
+        symbol: symbolNorm,
+        tf: tfNorm,
+        bars: dbHit.bars.length,
+        source: "db",
+      });
       return {
         ...dbHit,
         cache_source: "db",
@@ -10536,6 +10576,13 @@ async function buildAnalysisSnapshotFromTwelve({
         tf_norm: tfNorm,
       };
     }
+    
+    await logEvent(tid, "FETCH_API", {
+      step: "cache_miss",
+      symbol: symbolNorm,
+      tf: tfNorm,
+      reason: forceRefresh ? "force_refresh" : "not_in_cache",
+    });
   }
 
   const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
@@ -10548,6 +10595,8 @@ async function buildAnalysisSnapshotFromTwelve({
       status: "skipped",
       reason: "TWELVE_DATA_API_KEY missing",
     };
+
+  trackApiCall("TwelveData");
 
   const tvCandidates = await resolveTwelveSymbol(symbol, twelveKey);
   if (!tvCandidates || !tvCandidates.length)
@@ -12962,6 +13011,10 @@ const appHandler = async (req, res) => {
     });
     await Promise.all(tasks);
     return json(res, 200, { ok: true, symbol, data: results });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/system/stats") {
+    return json(res, 200, { ok: true, stats: GLOBAL_API_STATS });
   }
 
   if (req.method === "GET" && url.pathname === "/auth/users") {

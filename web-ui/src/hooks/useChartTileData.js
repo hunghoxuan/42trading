@@ -60,6 +60,8 @@ export function useSymbolChartData({
           bar_start: row?.bar_start || row?.bars?.[0]?.time,
           bar_end: row?.bar_end || row?.bars?.[row?.bars?.length - 1]?.time,
           last_price: row?.last_price ?? null,
+          cache_source: row?.cache_source || null,
+          reason: row?.reason || null,
         };
       }
       const snapItems = Array.isArray(symbolData?.snapshots?.items)
@@ -184,6 +186,8 @@ export function useSymbolChartData({
       context[tf] = {
         last_price: entry.last_price,
         freshness: entry.freshness,
+        cache_source: entry.cache_source,
+        reason: entry.reason,
       };
       if (entry.snapshot) snapshots[tf] = entry.snapshot;
     }

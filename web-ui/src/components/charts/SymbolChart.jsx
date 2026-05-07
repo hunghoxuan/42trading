@@ -73,6 +73,24 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
       <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
+      {context?.cache_source && (
+        <span
+          style={{
+            fontSize: 8,
+            fontWeight: 600,
+            color: context.cache_source === "memory" || context.cache_source === "db" ? "#10b981" : "#f59e0b",
+            background: "rgba(0,0,0,0.2)",
+            padding: "0 3px",
+            borderRadius: 2,
+            marginLeft: 4,
+            textTransform: "uppercase",
+            border: `1px solid ${context.cache_source === "memory" || context.cache_source === "db" ? "#10b98140" : "#f59e0b40"}`,
+          }}
+          title={context.reason || ""}
+        >
+          {context.cache_source === "memory" ? "MEM" : context.cache_source === "db" ? "DB" : "API"}
+        </span>
+      )}
       {htfBias && (
         <span
           style={{
