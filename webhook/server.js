@@ -346,8 +346,8 @@ class NotificationManager {
       payload._force_ticker ||
       payload._force_sound;
     if (hasSSE) {
-      merged.toast = settings.toast;
-      merged.ticker = settings.ticker;
+      merged.toast = payload._force_toast ? true : settings.toast;
+      merged.ticker = payload._force_ticker ? true : settings.ticker;
       merged.sound = merged.sound || settings.sound || null;
       try {
         emitNotification(merged);
@@ -360,7 +360,7 @@ class NotificationManager {
     }
 
     // 3) db_log channel → enqueue for batch INSERT
-    if (settings.db_log) {
+    if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
       this.queue.push({
         object_id: null,
@@ -17788,6 +17788,10 @@ const appHandler = async (req, res) => {
           action: payload.action || null,
           sound: payload.sound || null,
           position: payload.position || "bottom-right",
+          _force_toast: true,
+          _force_ticker: true,
+          _force_sound: true,
+          _force_db_log: true,
         },
       );
       return json(res, 200, {
