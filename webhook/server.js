@@ -197,9 +197,18 @@ function appendEventLog(eventType, payload) {
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const date = new Date().toISOString().slice(0, 10);
     const filePath = path.join(logDir, "events_" + date + ".log");
-    const line = "[" + new Date().toISOString() + "] [" + eventType + "] " + JSON.stringify(payload) + "\n";
+    const line =
+      "[" +
+      new Date().toISOString() +
+      "] [" +
+      eventType +
+      "] " +
+      JSON.stringify(payload) +
+      "\n";
     fs.appendFileSync(filePath, line);
-  } catch (e) { /* ignore file log errors */ }
+  } catch (e) {
+    /* ignore file log errors */
+  }
 }
 
 // --- NotificationManager (unified notification routing) ---
@@ -5001,6 +5010,7 @@ function isApiPath(pathname) {
     p.startsWith("/webhook") ||
     p === "/system/storage/stats" ||
     p === "/system/cache" ||
+    p === "/api/system/stats" ||
     p === "/system/storage/cleanup"
   );
 }
