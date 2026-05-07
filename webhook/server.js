@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:34 - 77f9e8f"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 17:34 - 77f9e8f",
+); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -336,10 +339,11 @@ class NotificationManager {
     }
 
     // 2) SSE delivery (toast / ticker / sound)
-    const hasSSE = settings.toast || settings.ticker || settings.sound;
+    // Force flags override settings (used by test button)
+    const hasSSE = settings.toast || settings.ticker || settings.sound || payload._force_toast || payload._force_ticker || payload._force_sound;
     if (hasSSE) {
-      merged.toast = settings.toast;
-      merged.ticker = settings.ticker;
+      merged.toast = payload._force_toast ? true : settings.toast;
+      merged.ticker = payload._force_ticker ? true : settings.ticker;
       merged.sound = merged.sound || settings.sound || null;
       try {
         emitNotification(merged);
@@ -352,7 +356,7 @@ class NotificationManager {
     }
 
     // 3) db_log channel → enqueue for batch INSERT
-    if (settings.db_log) {
+    if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
       this.queue.push({
         object_id: null,
@@ -7589,7 +7593,7 @@ async function _mt5InitBackendInternal() {
           const pipsVal = Number(raw.pips ?? 0);
           const pnlVal = Number(raw.pnl ?? raw.net_pnl ?? 0);
           const volumeVal = Number(raw.volume || raw.lots || 0);
-          const lotsVal = Number(raw.lots ?? (volumeVal / 100000));
+          const lotsVal = Number(raw.lots ?? volumeVal / 100000);
           const brokerComment = String(raw.comment || "").trim();
 
           // Use broker comment as SID if it looks like an ID
@@ -11005,19 +11009,29 @@ async function buildAnalysisSnapshotFromTwelve({
       lastError = "";
       console.log(`[twelve-success] candidate=${candidate}`);
       if (notificationManager) {
-        notificationManager.handle("REMOTE_API_CALL", "twelve_success", {
-          message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
-          api: "TwelveData", symbol: symbolNorm, tf: tfNorm, bars_count: vals.length,
-        }).catch(() => {});
+        notificationManager
+          .handle("REMOTE_API_CALL", "twelve_success", {
+            message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
+            api: "TwelveData",
+            symbol: symbolNorm,
+            tf: tfNorm,
+            bars_count: vals.length,
+          })
+          .catch(() => {});
       }
       break;
     }
     if (!data || !Array.isArray(data?.values) || !data.values.length) {
       if (notificationManager) {
-        notificationManager.handle("REMOTE_API_CALL", "twelve_error", {
-          message: `TwelveData FAIL ${symbolNorm} ${tfNorm} ${lastError || "provider error"}`,
-          api: "TwelveData", symbol: symbolNorm, tf: tfNorm, error: lastError,
-        }).catch(() => {});
+        notificationManager
+          .handle("REMOTE_API_CALL", "twelve_error", {
+            message: `TwelveData FAIL ${symbolNorm} ${tfNorm} ${lastError || "provider error"}`,
+            api: "TwelveData",
+            symbol: symbolNorm,
+            tf: tfNorm,
+            error: lastError,
+          })
+          .catch(() => {});
       }
       return {
         provider: "twelvedata",
@@ -16336,10 +16350,14 @@ const appHandler = async (req, res) => {
       }
 
       if (notificationManager) {
-        notificationManager.handle("SYSTEM_EVENT", "chart_refresh", {
-          message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
-          symbols: symbols.length, timeframes: timeframes.length, duration_ms: Date.now() - t0,
-        }).catch(() => {});
+        notificationManager
+          .handle("SYSTEM_EVENT", "chart_refresh", {
+            message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
+            symbols: symbols.length,
+            timeframes: timeframes.length,
+            duration_ms: Date.now() - t0,
+          })
+          .catch(() => {});
       }
       return json(res, 200, {
         ok: true,
@@ -17760,6 +17778,10 @@ const appHandler = async (req, res) => {
           action: payload.action || null,
           sound: payload.sound || null,
           position: payload.position || "bottom-right",
+          _force_toast: true,
+          _force_ticker: true,
+          _force_sound: true,
+          _force_db_log: true,
         },
       );
       return json(res, 200, {
@@ -20008,10 +20030,13 @@ async function marketDataFetchJob({
 }) {
   const cronTraceId = genTraceId("cron_md_");
   if (notificationManager) {
-    notificationManager.handle("SYSTEM_EVENT", "cron_md", {
-      message: `Market data cron: ${symbol} ${tf}`,
-      symbol, tf,
-    }).catch(() => {});
+    notificationManager
+      .handle("SYSTEM_EVENT", "cron_md", {
+        message: `Market data cron: ${symbol} ${tf}`,
+        symbol,
+        tf,
+      })
+      .catch(() => {});
   }
   const symbolNorm = normalizeMarketDataSymbol(symbol);
   const tfNorm = normalizeMarketDataTf(tf);
