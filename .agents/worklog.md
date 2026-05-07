@@ -1,3 +1,82 @@
+# Session Log: 2026-05-06 23:10
+- **Starting Task**: Fix persistent error pages on /ai/browser/GBPJPY, /trades, /signals/39 by applying uncommitted lazy-load changes.
+- **Work Accomplished**:
+  - **Root Cause**: The deployed HEAD c3e392e had partially-implemented lazy loading. The uncommitted working tree had the full fix: lazy-load all page components in App.jsx, make SymbolChart lazy inside SignalDetailCard, add missing React imports in signalDetailUtils.jsx and SignalDetailHeaderBuilder.jsx.
+  - **Fix**: Committed 5 files: App.jsx (wrap all Routes in Suspense, lazy-load all page components), SignalDetailCard.jsx (lazy-load SymbolChart, remove dead asNum import), signalDetailUtils.jsx (add React import), SignalDetailHeaderBuilder.jsx (add React import), NotificationWatcher.jsx (rename showToast to shouldShowToast).
+  - **Bundle result**: Main bundle reduced from 711KB to 225KB with proper per-page code splitting (26 chunks).
+  - **Deployment**: Bumped versions to v2026.05.06 21:03 - 2ae4a00 and deployed to VPS.
+- **Changed Files**: web-ui/src/App.jsx, web-ui/src/components/SignalDetailCard.jsx, web-ui/src/components/SignalDetailHeaderBuilder.jsx, web-ui/src/components/NotificationWatcher.jsx, web-ui/src/utils/signalDetailUtils.jsx, webhook/server.js, bridge-clients/TVBridgeEA.mq5
+- **Technical Decisions**: Full lazy loading of all route-level components eliminates module-initialization-order ReferenceErrors.
+- **Verification**: rtK npm build OK (225KB main + 25 chunks), deploy OK, new bundle /assets/index-DXMUMeWR.js live on VPS.
+- **Deploy Status**: Deployed (Build v2026.05.06 21:03).
+
+# Session Log: 2026-05-06 23:05
+- **Starting Task**: Rebuild `web-ui` from source directly on VPS and re-verify `/trades` runtime after persistent `SignalDetailCard` ReferenceError report.
+- **Work Accomplished**:
+  - Rebuilt `web-ui` directly on VPS source tree `/opt/trading` at commit `9a23a6c`.
+  - Reinstalled web UI dependencies on VPS, rebuilt production bundle, and restarted `webhook` via PM2.
+  - Confirmed the VPS build emits the same asset set as local build: `index-BFR1piDZ.js`, `SignalDetailCard-sLd3tzqN.js`, `SymbolChart-BPjEaqx0.js`.
+  - Confirmed VPS `web-ui/dist/index.html` points at `/assets/index-BFR1piDZ.js`.
+  - Confirmed public health endpoint still returns `v2026.05.06 19:12 - c3e392e`.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Technical Decisions**:
+  - Rebuild from source on VPS completed cleanly, so any remaining blank-page/runtime issue is no longer attributable to stale VPS artifacts alone.
+- **Verification**:
+  - `rtk ssh root@139.59.211.192 "cd /opt/trading && ... npm --prefix web-ui run build && pm2 restart webhook ..."` ✅
+  - `/bin/zsh -lc "curl -sS --max-time 15 https://trade.mozasolution.com/health | sed -n '1,120p'"` ✅ -> `v2026.05.06 19:12 - c3e392e`
+- **Deploy Status**:
+  - Rebuilt from source on VPS and restarted service.
+
+# Session Log: 2026-05-06 22:40
+- **Starting Task**: Refresh context and restore the production fix for `SignalDetailCard` ReferenceError on `/ai/browser/GBPJPY`, `/trades`, and `/signals/39`.
+- **Work Accomplished**:
+  - Refreshed the required AI/bootstrap/rule context before action.
+  - Confirmed local `main` and `origin/main` already contained the prior fix (`c3e392e`) and matching version bump commit (`9a23a6c`).
+  - Rebuilt locally and verified the expected split bundles still emit: `index-BFR1piDZ.js`, `SignalDetailCard-sLd3tzqN.js`, `SymbolChart-BPjEaqx0.js`.
+  - Redeployed current `main` to the VPS; no source-code patch was required because production had drifted back to older build `v2026.05.06 18:59 - 2fab46d`.
+  - Updated feature/handoff docs to reflect the lazy-load stability hardening and the production rollback mismatch.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/2-done/high_density_ui_refinements.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/1-plan/chart_snapshots_componentized_async_charts.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Technical Decisions**:
+  - Treat this incident as a deployment-state mismatch, not a new frontend regression.
+  - Use public HTTPS health/UI verification because local direct-IP health checks were unreliable from this machine after deploy.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - `/bin/zsh -lc "curl -sS --max-time 15 https://trade.mozasolution.com/health | sed -n '1,120p'"` ✅ -> `v2026.05.06 19:12 - c3e392e`
+  - `/bin/zsh -lc "curl -sS --max-time 15 https://trade.mozasolution.com/ui/ | sed -n '1,80p'"` ✅ -> references `/assets/index-BFR1piDZ.js`
+  - `/bin/zsh -lc 'cd /Users/macmini/Trade/Bot/trading && PUSH_FIRST=0 VPS_APP_DIR=/opt/trading bash scripts/deploy/deploy_webhook.sh'` ✅
+- **Deploy Status**:
+  - Redeployed existing fixed build `v2026.05.06 19:12 - c3e392e`.
+
+# Session Log: 2026-05-06 19:12
+- **Starting Task**: Fix error pages on /ai/browser/GBPJPY, /trades, /signals/39.
+- **Work Accomplished**:
+  - **Root Cause**: Deployed version (`2fab46d`) was missing the comprehensive lazy-loading refactor from `c3e392e` that fixed remaining ReferenceError/TDZ issues in SignalDetailCard, SymbolChart, and TradeSignalChart.
+  - **Deployment**: Deployed HEAD (`v2026.05.06 19:12 - c3e392e`) which includes: standardized asNum exports, extracted SymbolChart from ChartTile, converted SignalDetailCard to default export, implemented React.lazy + Suspense for heavy components (SignalDetailCard, SymbolChart) across SignalsPage, TradesPage, ChartSnapshotsPage, SignalDetailPage, V2TradeDetailPage.
+- **Changed Files**:
+  - `web-ui/src/components/SignalDetailCard.jsx`
+  - `web-ui/src/components/TradeSignalChart.jsx`
+  - `web-ui/src/components/charts/SymbolChart.jsx` (extracted from ChartTile.jsx)
+  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `web-ui/src/pages/signals/SignalDetailPage.jsx`
+  - `web-ui/src/pages/signals/SignalsPage.jsx`
+  - `web-ui/src/pages/trades/TradesPage.jsx`
+  - `web-ui/src/pages/trades/V2TradeDetailPage.jsx`
+- **Technical Decisions**:
+  - Lazy-load SignalDetailCard and SymbolChart to reduce main bundle (711KB vs 755KB) and avoid module-initialization-order ReferenceErrors.
+  - Use default export for SignalDetailCard and SymbolChart to align with React.lazy requirements.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅ (code-split: SymbolChart 12KB, SignalDetailCard 32KB, main 711KB)
+  - `rtk bash scripts/deploy/deploy_webhook.sh` ✅
+  - Health check: `{"ok":true,"version":"v2026.05.06 19:12 - c3e392e"}` ✅
+- **Deploy Status**:
+  - Deployed (Build v2026.05.06 19:12).
+
 # Session Log: 2026-05-06 16:37
 - **Starting Task**: Optimize Trade Dashboard UI for high-density information and responsive charting.
 - **Work Accomplished**:

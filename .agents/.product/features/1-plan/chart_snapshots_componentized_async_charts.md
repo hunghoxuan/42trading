@@ -8,7 +8,7 @@ Replace monolithic all-timeframe bars/context fetch flow with independent per-ch
 ## What Was Built
 
 ### SymbolChart Component
-- File: `web-ui/src/components/charts/ChartTile.jsx` (exported as `SymbolChart`)
+- File: `web-ui/src/components/charts/SymbolChart.jsx`
 - Multi-TF per symbol: one card shows all TFs in a horizontal row
 - Props: `symbol`, `timeframes[]`, `defaultMode`, `onAnalyze`, `onRemove`, `entryPrice`, `slPrice`, `tpPrice`, `analysisSnapshot`, `hasTradePlan`, `hasAnalysis`, `skipFetch`
 - Modes: Live TV (iframe), Cache (TradeSignalChart), Snapshots (bars + snapshot pipeline)
@@ -58,7 +58,7 @@ Replace monolithic all-timeframe bars/context fetch flow with independent per-ch
 ## Files Created/Modified
 | File | Change |
 |------|--------|
-| `web-ui/src/components/charts/ChartTile.jsx` | SymbolChart component |
+| `web-ui/src/components/charts/SymbolChart.jsx` | SymbolChart component |
 | `web-ui/src/hooks/useChartTileData.js` | useSymbolChartData hook |
 | `web-ui/src/services/chartFetchManager.js` | Per-TF fetch manager |
 | `web-ui/src/components/SmartContent.jsx` | Smart content renderer |

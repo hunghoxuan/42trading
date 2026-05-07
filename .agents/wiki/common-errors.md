@@ -7,6 +7,53 @@ Record confirmed bugs here after fixing. Format per entry:
 
 ---
 
+## [JS/React] TDZ ReferenceError: `const` used before declaration in same component
+
+**Date:** 2026-05-06
+**Files:** `web-ui/src/components/SignalDetailCard.jsx`
+**Impacts:** `/ai/browser/:symbol`, `/trades`, `/signals/:id` — blank page on all three routes.
+**Error signature:** Minified bundle throws `ReferenceError` at `useEffect(() => { !L && b === "json" ... })` where `L` and `b` are minified names for variables declared later.
+
+**Cause:** JavaScript `const` declarations are hoisted but remain in the **Temporal Dead Zone (TDZ)** until the line where they are initialized. If a hook like `useMemo` or `useEffect` references a `const` variable that is declared **below** the hook in source order, the closure captures the TDZ reference and throws at runtime.
+
+Specifically:
+```javascript
+// ❌ BROKEN — plans used in useMemo before it's declared
+const hasTradePlanData = useMemo(() => {
+    const p = plans[0] || {};   // ReferenceError: Cannot access 'plans' before initialization
+    return Boolean(p.entry || p.tp || p.sl);
+}, [plans]);
+
+// ... other hooks ...
+
+const plans = response?.tradePlans || [...];  // declared too late
+```
+
+**Fix:** Move the `const plans = ...` declaration **above** all hooks that reference it:
+```javascript
+// ✅ CORRECT — plans declared first
+const plans = response?.tradePlans || [...];
+
+const hasTradePlanData = useMemo(() => {
+    const p = plans[0] || {};
+    return Boolean(p.entry || p.tp || p.sl);
+}, [plans]);
+```
+
+**Why this is easy to miss:**
+- ESLint's `no-use-before-define` rule does NOT catch this when the variable is used inside a callback (closure), because ESLint only checks direct lexical references, not closure captures.
+- The error only manifests at **runtime**, and only when the component actually mounts (the lazy-loaded chunk resolves).
+- `npm run build` (Vite) succeeds without warnings — bundlers don't analyze TDZ ordering.
+- The minified error trace is cryptic: `!L && b === "json"` gives no hint about which variable is uninitialized.
+
+**Prevention:**
+- **Rule: All `const` data derivations (`plans`, `accountById`, etc.) must be declared BEFORE any `useMemo`/`useEffect`/`useCallback` that references them.**
+- When reviewing a component, scan top-to-bottom: state → derived data → hooks → render.
+- If a hook's dependency array references a name, verify that name is declared above the hook.
+- For complex components, prefer extracting derived data into a `useMemo` positioned after all source `useState`/props but before consuming hooks.
+
+---
+
 ## [Pine Compile] `strategy.*` variables cannot be passed to imported library functions
 
 **Date:** 2026-04-07

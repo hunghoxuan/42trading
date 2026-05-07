@@ -614,8 +614,8 @@ export default function TradesPage() {
         return sortDir === "asc" ? cmp : -cmp;
       }
       if (sortKey === "pnl") {
-        const pa = asNum(a?.pnl_realized) ?? 0;
-        const pb = asNum(b?.pnl_realized) ?? 0;
+        const pa = asNum(a?.broker_pnl) ?? asNum(a?.pnl_realized) ?? asNum(a?.net_pnl) ?? 0;
+        const pb = asNum(b?.broker_pnl) ?? asNum(b?.pnl_realized) ?? asNum(b?.net_pnl) ?? 0;
         cmp = pa - pb;
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sortDir === "asc" ? cmp : -cmp;
@@ -1029,7 +1029,10 @@ export default function TradesPage() {
                     );
                     const brokerName = brokerNameFromAccount(acc);
                     const pnl =
-                      asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl);
+                      asNum(t.broker_pnl) ??
+                      asNum(t.pnl_realized) ??
+                      asNum(t.net_pnl) ??
+                      asNum(t.pnl);
                     const stRaw = String(
                       t.execution_status || "",
                     ).toUpperCase();
@@ -1225,7 +1228,7 @@ export default function TradesPage() {
                     selectedTrade.action || selectedTrade.side || "-",
                   ).toUpperCase();
                   const actionCls = action === "BUY" ? "side-buy" : "side-sell";
-                  const pnl = asNum(selectedTrade.pnl_realized);
+                  const pnl = asNum(selectedTrade.broker_pnl) ?? asNum(selectedTrade.pnl_realized);
                   const rr = calcRr(selectedTrade);
                   const riskSize = tradeRiskSize(selectedTrade);
                   const meta =
@@ -1398,8 +1401,10 @@ export default function TradesPage() {
                         const bPips =
                           asNum(selectedTrade.broker_pips) ?? asNum(bData.pips);
                         const bProfit =
+                          asNum(selectedTrade.broker_pnl) ??
                           asNum(selectedTrade.pnl_realized) ??
-                          asNum(bData.net_pnl);
+                          asNum(bData.net_pnl) ??
+                          asNum(bData.pnl);
                         const bComm =
                           asNum(selectedTrade.broker_commission) ??
                           asNum(bData.commission);

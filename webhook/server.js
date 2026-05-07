@@ -6157,6 +6157,36 @@ async function _mt5InitBackendInternal() {
   await pool
     .query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS raw_json JSONB NULL`)
     .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_pips DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_lots DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_commission DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_swap DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_volume DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_pnl DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
 
   // Performance Indexes
   const idxSql = [
@@ -7350,6 +7380,7 @@ async function _mt5InitBackendInternal() {
                   ELSE $1
                 END,
                 pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $2,
                 volume = COALESCE($7, volume),
                 broker_pips = $13,
                 broker_lots = $14,
@@ -7372,7 +7403,7 @@ async function _mt5InitBackendInternal() {
                 OR metadata->>'broker_position_id' = ANY($4::text[])
                 OR metadata->>'position_ticket' = ANY($4::text[])
               )
-            RETURNING sid
+            RETURNING sid, pnl_realized
           `,
             [
               it.execution_status,
@@ -7412,7 +7443,13 @@ async function _mt5InitBackendInternal() {
                 END,
                 broker_trade_id = COALESCE(NULLIF($2, ''), broker_trade_id),
                 pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $3,
                 volume = COALESCE($6, volume),
+                broker_pips = $12,
+                broker_lots = $13,
+                broker_commission = $14,
+                broker_swap = $15,
+                broker_volume = $16,
                 order_type = COALESCE($11, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
@@ -7426,7 +7463,7 @@ async function _mt5InitBackendInternal() {
                 AND (
                   (sid = $5 AND $5 <> '')
                   OR (broker_trade_id = $2 AND $2 <> '')
-                  OR (broker_trade_id = ANY($12::text[]))
+                  OR (broker_trade_id = ANY($17::text[]))
                 )
               ORDER BY
                 CASE WHEN broker_trade_id IS NULL OR broker_trade_id = '' THEN 0 ELSE 1 END,
@@ -7447,6 +7484,11 @@ async function _mt5InitBackendInternal() {
                 it.opened_at || null,
                 it.closed_at || null,
                 it.order_type || null,
+                it.pips || 0,
+                it.lots || 0,
+                it.commission || 0,
+                it.swap || 0,
+                it.volume || 0,
                 ticketCandidates,
               ],
             );
@@ -7468,7 +7510,13 @@ async function _mt5InitBackendInternal() {
                 END,
                 broker_trade_id = COALESCE(NULLIF($2, ''), broker_trade_id),
                 pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $3,
                 volume = COALESCE($5, volume),
+                broker_pips = $12,
+                broker_lots = $13,
+                broker_commission = $14,
+                broker_swap = $15,
+                broker_volume = $16,
                 order_type = COALESCE($11, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
@@ -7504,6 +7552,11 @@ async function _mt5InitBackendInternal() {
               syncSymbol,
               syncAction,
               it.order_type || null,
+              it.pips || 0,
+              it.lots || 0,
+              it.commission || 0,
+              it.swap || 0,
+              it.volume || 0,
             ],
           );
         }
@@ -7530,6 +7583,11 @@ async function _mt5InitBackendInternal() {
                 ticket: it.ticket || null,
                 signal_id: it.sid || null,
                 pnl: it.pnl,
+                pips: it.pips,
+                lots: it.lots,
+                commission: it.commission,
+                swap: it.swap,
+                volume: it.volume,
               },
               uid,
             );
@@ -7547,8 +7605,9 @@ async function _mt5InitBackendInternal() {
               symbol, action, volume, entry,
               execution_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
+              broker_pnl,
               created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
             [
@@ -7567,6 +7626,7 @@ async function _mt5InitBackendInternal() {
               it.commission || 0,
               it.swap || 0,
               it.volume || 0,
+              it.pnl || 0,
             ],
           );
           matched++;
