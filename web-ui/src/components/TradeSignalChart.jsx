@@ -277,570 +277,600 @@ export default function TradeSignalChart({
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    const container = chartContainerRef.current;
+    if (!container.clientWidth || !container.clientHeight) return;
 
     let isMounted = true;
+    let chart;
 
-    // 1. Initialize Chart
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight || height,
-      layout: {
-        background: { color: "#0d1117" },
-        textColor: "#d1d4dc",
-      },
-      grid: {
-        vertLines: { color: "rgba(42, 46, 57, 0.1)" },
-        horzLines: { color: "rgba(42, 46, 57, 0.1)" },
-      },
-      timeScale: {
-        borderColor: "rgba(197, 203, 206, 0.4)",
-        timeVisible: true,
-        secondsVisible: false,
-      },
-    });
-
-    const handleResize = () => {
-      if (!chartContainerRef.current || !chart) return;
-      // Use explicit resize for better reliability
-      chart.resize(
-        chartContainerRef.current.clientWidth,
-        chartContainerRef.current.clientHeight || height,
-      );
-    };
-
-    let resizeObserver = null;
-    if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(handleResize);
-      resizeObserver.observe(chartContainerRef.current);
-    }
-    window.addEventListener("resize", handleResize);
-
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#26a69a",
-      downColor: "#ef5350",
-      borderVisible: false,
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
-    });
-
-    chartRef.current = chart;
-    seriesRef.current = candleSeries;
-
-    const handleCrosshairMove = (param) => {
-      if (suppressCrosshairSyncRef.current) {
-        suppressCrosshairSyncRef.current = false;
-        return;
-      }
-      if (typeof onCrosshairSync !== "function") return;
-      if (!param?.point || !param?.time) {
-        onCrosshairSync({ sourceId: chartId, active: false });
-        return;
-      }
-
-      const candleData = param.seriesData?.get?.(candleSeries);
-      const rawPrice =
-        candleData?.close ??
-        candleData?.value ??
-        (param.point ? candleSeries.coordinateToPrice(param.point.y) : null);
-      const price = Number(rawPrice);
-      if (!Number.isFinite(price)) return;
-
-      onCrosshairSync({
-        sourceId: chartId,
-        active: true,
-        time: param.time,
-        price,
+    try {
+      // 1. Initialize Chart
+      chart = createChart(container, {
+        width: container.clientWidth,
+        height: container.clientHeight || height,
+        layout: {
+          background: { color: "#0d1117" },
+          textColor: "#d1d4dc",
+        },
+        grid: {
+          vertLines: { color: "rgba(42, 46, 57, 0.1)" },
+          horzLines: { color: "rgba(42, 46, 57, 0.1)" },
+        },
+        timeScale: {
+          borderColor: "rgba(197, 203, 206, 0.4)",
+          timeVisible: true,
+          secondsVisible: false,
+        },
       });
-    };
 
-    chart.subscribeCrosshairMove(handleCrosshairMove);
-    const chartElement = chart.chartElement();
-    const dragState = { activeKey: null };
-    let removeDragListeners = () => {};
+      const handleResize = () => {
+        if (!chartContainerRef.current || !chart) return;
+        // Use explicit resize for better reliability
+        chart.resize(
+          chartContainerRef.current.clientWidth,
+          chartContainerRef.current.clientHeight || height,
+        );
+      };
 
-    // 3. Fetch History + Start Live
-    async function initData() {
-      let snapshot = extractAnalysisSnapshot(analysisSnapshot);
-      let snapshotBars = parseSnapshotBars(snapshot);
-      let hasSnapshotBars = snapshotBars.length > 0;
-      try {
-        setLoading(true);
-        let candles = [];
-        if (historicalData && historicalData.length > 0) {
-          candles = historicalData;
-          setDataSource("historical");
-        } else if (hasSnapshotBars) {
-          candles = snapshotBars;
-          setDataSource("snapshot");
-        } else {
-          // Try Twelve Data on-demand (for old trades without stored snapshot)
-          try {
-            // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
-            const apiTf =
-              String(interval).toUpperCase() === "ENTRY" ? "15m" : interval;
-            // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
-            const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
+      let resizeObserver = null;
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(handleResize);
+        resizeObserver.observe(chartContainerRef.current);
+      }
+      window.addEventListener("resize", handleResize);
 
-            if (!apiSym) {
-              setLoading(false);
-              return;
-            }
-            const r = await fetch(
-              `/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`,
-              {
-                credentials: "include",
-                cache: "no-store",
-              },
-            );
-            const j = await r.json().catch(() => ({}));
-            const snap =
-              j?.snapshot && typeof j.snapshot === "object" ? j.snapshot : null;
-            const bars = parseSnapshotBars(snap);
-            if (r.ok && bars.length > 0) {
-              // Merge: keep original snapshot analysis (plans, levels) but use new bars
-              snapshot = { ...snapshot, ...(snap || {}) };
-              snapshotBars = bars;
-              hasSnapshotBars = true;
-              candles = bars;
-              setDataSource("twelve");
-            }
-          } catch {
-            // Twelve fetch failed
-          }
+      const candleSeries = chart.addCandlestickSeries({
+        upColor: "#26a69a",
+        downColor: "#ef5350",
+        borderVisible: false,
+        wickUpColor: "#26a69a",
+        wickDownColor: "#ef5350",
+      });
+
+      chartRef.current = chart;
+      seriesRef.current = candleSeries;
+
+      const handleCrosshairMove = (param) => {
+        if (suppressCrosshairSyncRef.current) {
+          suppressCrosshairSyncRef.current = false;
+          return;
         }
-
-        if (!candles.length) {
-          console.warn(
-            "No snapshot/Twelve bars available for this symbol/timeframe.",
-          );
-          setLoading(false);
+        if (typeof onCrosshairSync !== "function") return;
+        if (!param?.point || !param?.time) {
+          onCrosshairSync({ sourceId: chartId, active: false });
           return;
         }
 
-        if (isMounted) {
-          candleSeries.setData(candles);
+        const candleData = param.seriesData?.get?.(candleSeries);
+        const rawPrice =
+          candleData?.close ??
+          candleData?.value ??
+          (param.point ? candleSeries.coordinateToPrice(param.point.y) : null);
+        const price = Number(rawPrice);
+        if (!Number.isFinite(price)) return;
 
-          // --- MARKERS: creation/open/close arrows, NO text overlays ---
-          const markers = [];
-          let createdTs = null;
-          if (createdAt) {
-            createdTs = Math.floor(new Date(createdAt).getTime() / 1000);
-            if (Number.isFinite(createdTs)) {
-              markers.push({
-                time: createdTs,
-                position: "belowBar",
-                color: "#9ca3af",
-                shape: "arrowUp",
-                text: "",
-              });
+        onCrosshairSync({
+          sourceId: chartId,
+          active: true,
+          time: param.time,
+          price,
+        });
+      };
+
+      chart.subscribeCrosshairMove(handleCrosshairMove);
+      const chartElement = chart.chartElement();
+      const dragState = { activeKey: null };
+      let removeDragListeners = () => {};
+
+      // 3. Fetch History + Start Live
+      async function initData() {
+        let snapshot = extractAnalysisSnapshot(analysisSnapshot);
+        let snapshotBars = parseSnapshotBars(snapshot);
+        let hasSnapshotBars = snapshotBars.length > 0;
+        try {
+          setLoading(true);
+          let candles = [];
+          if (historicalData && historicalData.length > 0) {
+            candles = historicalData;
+            setDataSource("historical");
+          } else if (hasSnapshotBars) {
+            candles = snapshotBars;
+            setDataSource("snapshot");
+          } else {
+            // Try Twelve Data on-demand (for old trades without stored snapshot)
+            try {
+              // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
+              const apiTf =
+                String(interval).toUpperCase() === "ENTRY" ? "15m" : interval;
+              // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
+              const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
+
+              if (!apiSym) {
+                setLoading(false);
+                return;
+              }
+              const r = await fetch(
+                `/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`,
+                {
+                  credentials: "include",
+                  cache: "no-store",
+                },
+              );
+              const j = await r.json().catch(() => ({}));
+              const snap =
+                j?.snapshot && typeof j.snapshot === "object"
+                  ? j.snapshot
+                  : null;
+              const bars = parseSnapshotBars(snap);
+              if (r.ok && bars.length > 0) {
+                // Merge: keep original snapshot analysis (plans, levels) but use new bars
+                snapshot = { ...snapshot, ...(snap || {}) };
+                snapshotBars = bars;
+                hasSnapshotBars = true;
+                candles = bars;
+                setDataSource("twelve");
+              }
+            } catch {
+              // Twelve fetch failed
             }
           }
-          if (openedAt) {
-            const openTs = Math.floor(new Date(openedAt).getTime() / 1000);
-            const nearCreated =
-              Number.isFinite(createdTs) && Math.abs(openTs - createdTs) <= 60;
-            if (!nearCreated) {
-              markers.push({
-                time: openTs,
-                position: "belowBar",
-                color: "#2196f3",
-                shape: "arrowUp",
-                text: "",
-              });
-            }
 
-            // Vertical line at creation
-            const creationLine = new SignalCreationLinePrimitive(
-              openTs,
-              "rgba(33, 150, 243, 0.5)",
+          if (!candles.length) {
+            console.warn(
+              "No snapshot/Twelve bars available for this symbol/timeframe.",
             );
-            candleSeries.attachPrimitive(creationLine);
+            setLoading(false);
+            return;
           }
-          if (closedAt) {
-            const closeTs = Math.floor(new Date(closedAt).getTime() / 1000);
-            markers.push({
-              time: closeTs,
-              position: "aboveBar",
-              color: "#f68410",
-              shape: "arrowDown",
-              text: "",
-            });
-          }
-          if (markers.length > 0) candleSeries.setMarkers(markers);
 
-          // --- ENTRY / TP / SL for all plans ---
-          const boxAnchorTs = openedAt
-            ? Math.floor(new Date(openedAt).getTime() / 1000)
-            : candles.length
-              ? Number(candles[0]?.time)
-              : null;
+          if (isMounted) {
+            candleSeries.setData(candles);
 
-          const PLAN_COLORS = [
-            "#2196f3", // Blue (Primary)
-            "#a855f7", // Purple
-            "#f59e0b", // Amber
-            "#ec4899", // Pink
-            "#10b981", // Emerald
-          ];
-
-          const levelPriceMap = { entry: null, tp: null, sl: null };
-
-          const drawPlan = (p, index = 0) => {
-            const ep = parsePosNum(p.entry);
-            const sp = parsePosNum(p.sl);
-            const tp = parsePosNum(p.tp);
-            if (!ep) return;
-
-            const isPrimary = index === 0;
-            const isBuy =
-              String(p.direction || "").toUpperCase() === "SELL" ? false : true;
-            const actionLabel = isBuy ? "Buy" : "Sell";
-            const pNum = index + 1;
-
-            // Standard colors
-            const greenColor = "#26a69a";
-            const redColor = "#ef5350";
-
-            const alpha = isPrimary ? 1.0 : 0.6;
-            const lineWidth = isPrimary ? 2 : 1;
-
-            // Entry line: solid
-            candleSeries.createPriceLine({
-              price: ep,
-              color: isPrimary ? "#d1d4dc" : "rgba(209, 212, 220, 0.6)",
-              lineWidth,
-              lineStyle: 0,
-              axisLabelVisible: true,
-              title: `${actionLabel}${pNum}`,
-            });
-            if (isPrimary) levelPriceMap.entry = ep;
-            // SL line: dashed, always RED
-            if (sp)
-              candleSeries.createPriceLine({
-                price: sp,
-                color: `rgba(239, 83, 80, ${alpha})`,
-                lineWidth,
-                lineStyle: 2,
-                axisLabelVisible: true,
-                title: `SL${pNum}`,
-              });
-            if (isPrimary && sp) levelPriceMap.sl = sp;
-            // TP line: dotted, always GREEN
-            if (tp)
-              candleSeries.createPriceLine({
-                price: tp,
-                color: `rgba(38, 166, 154, ${alpha})`,
-                lineWidth,
-                lineStyle: 1,
-                axisLabelVisible: true,
-                title: `TP${pNum}`,
-              });
-            if (isPrimary && tp) levelPriceMap.tp = tp;
-
-            // Entry → TP zone box: Reward zone = Green
-            if (ep && tp && boxAnchorTs) {
-              const primitive = new PdArrayBoxPrimitive(
-                boxAnchorTs,
-                Math.min(ep, tp),
-                Math.max(ep, tp),
-                greenColor,
-              );
-              candleSeries.attachPrimitive(primitive);
+            // --- MARKERS: creation/open/close arrows, NO text overlays ---
+            const markers = [];
+            let createdTs = null;
+            if (createdAt) {
+              createdTs = Math.floor(new Date(createdAt).getTime() / 1000);
+              if (Number.isFinite(createdTs)) {
+                markers.push({
+                  time: createdTs,
+                  position: "belowBar",
+                  color: "#9ca3af",
+                  shape: "arrowUp",
+                  text: "",
+                });
+              }
             }
-            // Entry → SL zone box: Risk zone = Red
-            if (ep && sp && boxAnchorTs) {
-              const primitive = new PdArrayBoxPrimitive(
-                boxAnchorTs,
-                Math.min(ep, sp),
-                Math.max(ep, sp),
-                redColor,
+            if (openedAt) {
+              const openTs = Math.floor(new Date(openedAt).getTime() / 1000);
+              const nearCreated =
+                Number.isFinite(createdTs) &&
+                Math.abs(openTs - createdTs) <= 60;
+              if (!nearCreated) {
+                markers.push({
+                  time: openTs,
+                  position: "belowBar",
+                  color: "#2196f3",
+                  shape: "arrowUp",
+                  text: "",
+                });
+              }
+
+              // Vertical line at creation
+              const creationLine = new SignalCreationLinePrimitive(
+                openTs,
+                "rgba(33, 150, 243, 0.5)",
               );
-              candleSeries.attachPrimitive(primitive);
+              candleSeries.attachPrimitive(creationLine);
             }
-          };
+            if (closedAt) {
+              const closeTs = Math.floor(new Date(closedAt).getTime() / 1000);
+              markers.push({
+                time: closeTs,
+                position: "aboveBar",
+                color: "#f68410",
+                shape: "arrowDown",
+                text: "",
+              });
+            }
+            if (markers.length > 0) candleSeries.setMarkers(markers);
 
-          // Get all plans: manual one + analysis ones
-          const allPlans = [];
+            // --- ENTRY / TP / SL for all plans ---
+            const boxAnchorTs = openedAt
+              ? Math.floor(new Date(openedAt).getTime() / 1000)
+              : candles.length
+                ? Number(candles[0]?.time)
+                : null;
 
-          const rawPlans = Array.isArray(snapshot?.trade_plan)
-            ? snapshot.trade_plan
-            : Array.isArray(snapshot?.trade_plans)
-              ? snapshot.trade_plans
-              : Array.isArray(snapshot?.tradePlans)
-                ? snapshot.tradePlans
-                : [];
+            const PLAN_COLORS = [
+              "#2196f3", // Blue (Primary)
+              "#a855f7", // Purple
+              "#f59e0b", // Amber
+              "#ec4899", // Pink
+              "#10b981", // Emerald
+            ];
 
-          // Helper to check if a plan roughly matches an existing one
-          const isMatching = (p1, p2) => {
-            const e1 = Number(p1.entry),
-              e2 = Number(p2.entry);
-            const t1 = Number(p1.tp),
-              t2 = Number(p2.tp);
-            if (!e1 || !e2) return false;
-            // Proximity check (0.01% difference allowed)
-            const entryMatch = Math.abs(e1 - e2) / Math.max(e1, e2) < 0.0001;
-            const tpMatch =
-              t1 && t2 ? Math.abs(t1 - t2) / Math.max(t1, t2) < 0.0001 : true;
-            return entryMatch && tpMatch;
-          };
+            const levelPriceMap = { entry: null, tp: null, sl: null };
 
-          if (showPrimaryPlan && entryPrice) {
-            const primary = {
-              entry: entryPrice,
-              sl: slPrice,
-              tp: tpPrice,
-              direction: tpPrice > entryPrice ? "BUY" : "SELL",
-            };
-            allPlans.push(primary);
-          }
-
-          if (showExtraPlans) {
-            rawPlans.forEach((p) => {
-              const ep = Number(p.entry);
+            const drawPlan = (p, index = 0) => {
+              const ep = parsePosNum(p.entry);
+              const sp = parsePosNum(p.sl);
+              const tp = parsePosNum(p.tp);
               if (!ep) return;
-              // Avoid duplicate of primary if already added
-              const isDuplicate = allPlans.some((x) => isMatching(x, p));
-              if (!isDuplicate) allPlans.push(p);
-            });
-          }
 
-          allPlans.forEach((p, idx) => drawPlan(p, idx));
+              const isPrimary = index === 0;
+              const isBuy =
+                String(p.direction || "").toUpperCase() === "SELL"
+                  ? false
+                  : true;
+              const actionLabel = isBuy ? "Buy" : "Sell";
+              const pNum = index + 1;
 
-          const enableLevelDrag =
-            typeof onPlanLevelChange === "function" &&
-            Number.isFinite(levelPriceMap.entry) &&
-            Number.isFinite(levelPriceMap.tp) &&
-            Number.isFinite(levelPriceMap.sl);
+              // Standard colors
+              const greenColor = "#26a69a";
+              const redColor = "#ef5350";
 
-          const pickNearestLevel = (mouseY) => {
-            const candidates = [
-              { key: "entry", price: levelPriceMap.entry },
-              { key: "tp", price: levelPriceMap.tp },
-              { key: "sl", price: levelPriceMap.sl },
-            ]
-              .map((x) => ({
-                ...x,
-                y: candleSeries.priceToCoordinate(x.price),
-              }))
-              .filter((x) => Number.isFinite(x.y))
-              .map((x) => ({ ...x, dist: Math.abs(x.y - mouseY) }))
-              .sort((a, b) => a.dist - b.dist);
-            if (!candidates.length || candidates[0].dist > 12) return null;
-            return candidates[0].key;
-          };
+              const alpha = isPrimary ? 1.0 : 0.6;
+              const lineWidth = isPrimary ? 2 : 1;
 
-          const emitLevelAtMouse = (evt) => {
-            if (!dragState.activeKey) return;
-            const rect = chartElement.getBoundingClientRect();
-            const y = evt.clientY - rect.top;
-            const nextPrice = candleSeries.coordinateToPrice(y);
-            if (!Number.isFinite(nextPrice)) return;
-            onPlanLevelChange(dragState.activeKey, Number(nextPrice));
-          };
-
-          const onMouseMove = (evt) => {
-            if (!dragState.activeKey || !enableLevelDrag) return;
-            emitLevelAtMouse(evt);
-          };
-
-          const onMouseUp = () => {
-            dragState.activeKey = null;
-            window.removeEventListener("mousemove", onMouseMove);
-            window.removeEventListener("mouseup", onMouseUp);
-          };
-
-          const onMouseDown = (evt) => {
-            if (!enableLevelDrag) return;
-            const rect = chartElement.getBoundingClientRect();
-            const y = evt.clientY - rect.top;
-            const nearest = pickNearestLevel(y);
-            if (!nearest) return;
-            dragState.activeKey = nearest;
-            window.addEventListener("mousemove", onMouseMove);
-            window.addEventListener("mouseup", onMouseUp);
-            evt.preventDefault();
-          };
-
-          chartElement.addEventListener("mousedown", onMouseDown);
-          removeDragListeners = () => {
-            onMouseUp();
-            chartElement.removeEventListener("mousedown", onMouseDown);
-          };
-
-          // --- PD ARRAYS as boxes ---
-          // Support both old signal format (nested under market_analysis) and new (top-level)
-          const rawPdArrays = Array.isArray(snapshot?.pd_arrays)
-            ? snapshot.pd_arrays
-            : Array.isArray(snapshot?.pdArrays)
-              ? snapshot.pdArrays
-              : Array.isArray(snapshot?.market_analysis?.pd_arrays)
-                ? snapshot.market_analysis.pd_arrays
-                : [];
-
-          // HTF tfs from snapshot or fall back to timeframe magnitude ordering
-          const htfTfsRaw = Array.isArray(snapshot?.htf_tfs)
-            ? snapshot.htf_tfs
-            : [];
-          const normTf = (v) =>
-            String(v || "")
-              .trim()
-              .toUpperCase()
-              .replace(/\s+/g, "");
-
-          // Color by TF magnitude when htf_tfs not stored:
-          // D/W/M → yellow (HTF1), 4H/1H/2H → purple (HTF2), else blue
-          const tfToMagnitudeMinutes = (tf) => {
-            const t = normTf(tf);
-            if (t === "M" || t === "1M" || t === "MN") return 43200;
-            if (t === "W" || t === "1W") return 10080;
-            if (t === "D" || t === "1D") return 1440;
-            if (t === "4H") return 240;
-            if (t === "2H") return 120;
-            if (t === "1H") return 60;
-            if (t === "30M") return 30;
-            if (t === "15M") return 15;
-            if (t === "5M") return 5;
-            if (t === "1M") return 1;
-            const m = t.match(/^(\d+)M$/);
-            if (m) return Number(m[1]);
-            const h = t.match(/^(\d+)H$/);
-            if (h) return Number(h[1]) * 60;
-            return 15;
-          };
-
-          const COLOR_HTF1 = "#f59e0b"; // yellow
-          const COLOR_HTF2 = "#a855f7"; // purple
-          const COLOR_EXEC = "#60a5fa"; // blue
-
-          const colorForTf = (pdTf) => {
-            if (htfTfsRaw.length > 0) {
-              // Use stored htf_tfs list
-              if (normTf(htfTfsRaw[0]) === normTf(pdTf)) return COLOR_HTF1;
-              if (htfTfsRaw.length > 1 && normTf(htfTfsRaw[1]) === normTf(pdTf))
-                return COLOR_HTF2;
-              return COLOR_EXEC;
-            }
-            // Fallback: color by magnitude
-            const mag = tfToMagnitudeMinutes(pdTf);
-            if (mag >= 1440) return COLOR_HTF1; // D and above → yellow
-            if (mag >= 60) return COLOR_HTF2; // 1H–4H → purple
-            return COLOR_EXEC; // sub-hour → blue
-          };
-
-          const activePdArrays = rawPdArrays.filter((pd) => {
-            const status = String(pd?.status || "")
-              .toLowerCase()
-              .trim();
-            return (
-              status === "active" ||
-              status === "fresh" ||
-              status === "tested" ||
-              status === ""
-            );
-          });
-
-          if (showPdArrays) {
-            activePdArrays.slice(0, 50).forEach((pd) => {
-              const bounds = parsePdZoneBounds(pd);
-              if (!bounds || bounds.low == null || bounds.high == null) return;
-              if (bounds.low === bounds.high) return; // skip degenerate
-
-              const color = colorForTf(pd?.timeframe || "");
-
-              const barStartRaw = Number(pd?.bar_start);
-              const barStart =
-                Number.isFinite(barStartRaw) && barStartRaw > 100000
-                  ? barStartRaw
-                  : candles.length
-                    ? Number(candles[0]?.time)
-                    : null;
-
-              if (!barStart) return;
-
-              const primitive = new PdArrayBoxPrimitive(
-                barStart,
-                bounds.low,
-                bounds.high,
-                color,
-              );
-              candleSeries.attachPrimitive(primitive);
-            });
-          }
-
-          // --- KEY LEVELS as orange dotted lines ---
-          const keyLevels = parseKeyLevels(
-            snapshot?.key_levels
-              ? snapshot
-              : snapshot?.market_analysis
-                ? snapshot.market_analysis
-                : snapshot,
-          );
-          if (showKeyLevels) {
-            keyLevels.forEach((k) => {
+              // Entry line: solid
               candleSeries.createPriceLine({
-                price: k.price,
-                color: "#f97316",
-                lineWidth: 1,
-                lineStyle: 4,
-                axisLabelVisible: false,
-                title: "",
+                price: ep,
+                color: isPrimary ? "#d1d4dc" : "rgba(209, 212, 220, 0.6)",
+                lineWidth,
+                lineStyle: 0,
+                axisLabelVisible: true,
+                title: `${actionLabel}${pNum}`,
               });
-            });
-          }
+              if (isPrimary) levelPriceMap.entry = ep;
+              // SL line: dashed, always RED
+              if (sp)
+                candleSeries.createPriceLine({
+                  price: sp,
+                  color: `rgba(239, 83, 80, ${alpha})`,
+                  lineWidth,
+                  lineStyle: 2,
+                  axisLabelVisible: true,
+                  title: `SL${pNum}`,
+                });
+              if (isPrimary && sp) levelPriceMap.sl = sp;
+              // TP line: dotted, always GREEN
+              if (tp)
+                candleSeries.createPriceLine({
+                  price: tp,
+                  color: `rgba(38, 166, 154, ${alpha})`,
+                  lineWidth,
+                  lineStyle: 1,
+                  axisLabelVisible: true,
+                  title: `TP${pNum}`,
+                });
+              if (isPrimary && tp) levelPriceMap.tp = tp;
 
-          // --- FIT VIEW ---
-          const snapshotStart = Number(snapshot?.bar_start);
-          const snapshotEnd = Number(snapshot?.bar_end);
-          if (
-            Number.isFinite(snapshotStart) &&
-            Number.isFinite(snapshotEnd) &&
-            snapshotEnd > snapshotStart
-          ) {
-            const dur = snapshotEnd - snapshotStart;
-            chart.timeScale().setVisibleRange({
-              from: snapshotStart - dur * 0.06,
-              to: snapshotEnd + dur * 0.06,
+              // Entry → TP zone box: Reward zone = Green
+              if (ep && tp && boxAnchorTs) {
+                const primitive = new PdArrayBoxPrimitive(
+                  boxAnchorTs,
+                  Math.min(ep, tp),
+                  Math.max(ep, tp),
+                  greenColor,
+                );
+                candleSeries.attachPrimitive(primitive);
+              }
+              // Entry → SL zone box: Risk zone = Red
+              if (ep && sp && boxAnchorTs) {
+                const primitive = new PdArrayBoxPrimitive(
+                  boxAnchorTs,
+                  Math.min(ep, sp),
+                  Math.max(ep, sp),
+                  redColor,
+                );
+                candleSeries.attachPrimitive(primitive);
+              }
+            };
+
+            // Get all plans: manual one + analysis ones
+            const allPlans = [];
+
+            const rawPlans = Array.isArray(snapshot?.trade_plan)
+              ? snapshot.trade_plan
+              : Array.isArray(snapshot?.trade_plans)
+                ? snapshot.trade_plans
+                : Array.isArray(snapshot?.tradePlans)
+                  ? snapshot.tradePlans
+                  : [];
+
+            // Helper to check if a plan roughly matches an existing one
+            const isMatching = (p1, p2) => {
+              const e1 = Number(p1.entry),
+                e2 = Number(p2.entry);
+              const t1 = Number(p1.tp),
+                t2 = Number(p2.tp);
+              if (!e1 || !e2) return false;
+              // Proximity check (0.01% difference allowed)
+              const entryMatch = Math.abs(e1 - e2) / Math.max(e1, e2) < 0.0001;
+              const tpMatch =
+                t1 && t2 ? Math.abs(t1 - t2) / Math.max(t1, t2) < 0.0001 : true;
+              return entryMatch && tpMatch;
+            };
+
+            if (showPrimaryPlan && entryPrice) {
+              const primary = {
+                entry: entryPrice,
+                sl: slPrice,
+                tp: tpPrice,
+                direction: tpPrice > entryPrice ? "BUY" : "SELL",
+              };
+              allPlans.push(primary);
+            }
+
+            if (showExtraPlans) {
+              rawPlans.forEach((p) => {
+                const ep = Number(p.entry);
+                if (!ep) return;
+                // Avoid duplicate of primary if already added
+                const isDuplicate = allPlans.some((x) => isMatching(x, p));
+                if (!isDuplicate) allPlans.push(p);
+              });
+            }
+
+            allPlans.forEach((p, idx) => drawPlan(p, idx));
+
+            const enableLevelDrag =
+              typeof onPlanLevelChange === "function" &&
+              Number.isFinite(levelPriceMap.entry) &&
+              Number.isFinite(levelPriceMap.tp) &&
+              Number.isFinite(levelPriceMap.sl);
+
+            const pickNearestLevel = (mouseY) => {
+              const candidates = [
+                { key: "entry", price: levelPriceMap.entry },
+                { key: "tp", price: levelPriceMap.tp },
+                { key: "sl", price: levelPriceMap.sl },
+              ]
+                .map((x) => ({
+                  ...x,
+                  y: candleSeries.priceToCoordinate(x.price),
+                }))
+                .filter((x) => Number.isFinite(x.y))
+                .map((x) => ({ ...x, dist: Math.abs(x.y - mouseY) }))
+                .sort((a, b) => a.dist - b.dist);
+              if (!candidates.length || candidates[0].dist > 12) return null;
+              return candidates[0].key;
+            };
+
+            const emitLevelAtMouse = (evt) => {
+              if (!dragState.activeKey) return;
+              const rect = chartElement.getBoundingClientRect();
+              const y = evt.clientY - rect.top;
+              const nextPrice = candleSeries.coordinateToPrice(y);
+              if (!Number.isFinite(nextPrice)) return;
+              onPlanLevelChange(dragState.activeKey, Number(nextPrice));
+            };
+
+            const onMouseMove = (evt) => {
+              if (!dragState.activeKey || !enableLevelDrag) return;
+              emitLevelAtMouse(evt);
+            };
+
+            const onMouseUp = () => {
+              dragState.activeKey = null;
+              window.removeEventListener("mousemove", onMouseMove);
+              window.removeEventListener("mouseup", onMouseUp);
+            };
+
+            const onMouseDown = (evt) => {
+              if (!enableLevelDrag) return;
+              const rect = chartElement.getBoundingClientRect();
+              const y = evt.clientY - rect.top;
+              const nearest = pickNearestLevel(y);
+              if (!nearest) return;
+              dragState.activeKey = nearest;
+              window.addEventListener("mousemove", onMouseMove);
+              window.addEventListener("mouseup", onMouseUp);
+              evt.preventDefault();
+            };
+
+            chartElement.addEventListener("mousedown", onMouseDown);
+            removeDragListeners = () => {
+              onMouseUp();
+              chartElement.removeEventListener("mousedown", onMouseDown);
+            };
+
+            // --- PD ARRAYS as boxes ---
+            // Support both old signal format (nested under market_analysis) and new (top-level)
+            const rawPdArrays = Array.isArray(snapshot?.pd_arrays)
+              ? snapshot.pd_arrays
+              : Array.isArray(snapshot?.pdArrays)
+                ? snapshot.pdArrays
+                : Array.isArray(snapshot?.market_analysis?.pd_arrays)
+                  ? snapshot.market_analysis.pd_arrays
+                  : [];
+
+            // HTF tfs from snapshot or fall back to timeframe magnitude ordering
+            const htfTfsRaw = Array.isArray(snapshot?.htf_tfs)
+              ? snapshot.htf_tfs
+              : [];
+            const normTf = (v) =>
+              String(v || "")
+                .trim()
+                .toUpperCase()
+                .replace(/\s+/g, "");
+
+            // Color by TF magnitude when htf_tfs not stored:
+            // D/W/M → yellow (HTF1), 4H/1H/2H → purple (HTF2), else blue
+            const tfToMagnitudeMinutes = (tf) => {
+              const t = normTf(tf);
+              if (t === "M" || t === "1M" || t === "MN") return 43200;
+              if (t === "W" || t === "1W") return 10080;
+              if (t === "D" || t === "1D") return 1440;
+              if (t === "4H") return 240;
+              if (t === "2H") return 120;
+              if (t === "1H") return 60;
+              if (t === "30M") return 30;
+              if (t === "15M") return 15;
+              if (t === "5M") return 5;
+              if (t === "1M") return 1;
+              const m = t.match(/^(\d+)M$/);
+              if (m) return Number(m[1]);
+              const h = t.match(/^(\d+)H$/);
+              if (h) return Number(h[1]) * 60;
+              return 15;
+            };
+
+            const COLOR_HTF1 = "#f59e0b"; // yellow
+            const COLOR_HTF2 = "#a855f7"; // purple
+            const COLOR_EXEC = "#60a5fa"; // blue
+
+            const colorForTf = (pdTf) => {
+              if (htfTfsRaw.length > 0) {
+                // Use stored htf_tfs list
+                if (normTf(htfTfsRaw[0]) === normTf(pdTf)) return COLOR_HTF1;
+                if (
+                  htfTfsRaw.length > 1 &&
+                  normTf(htfTfsRaw[1]) === normTf(pdTf)
+                )
+                  return COLOR_HTF2;
+                return COLOR_EXEC;
+              }
+              // Fallback: color by magnitude
+              const mag = tfToMagnitudeMinutes(pdTf);
+              if (mag >= 1440) return COLOR_HTF1; // D and above → yellow
+              if (mag >= 60) return COLOR_HTF2; // 1H–4H → purple
+              return COLOR_EXEC; // sub-hour → blue
+            };
+
+            const activePdArrays = rawPdArrays.filter((pd) => {
+              const status = String(pd?.status || "")
+                .toLowerCase()
+                .trim();
+              return (
+                status === "active" ||
+                status === "fresh" ||
+                status === "tested" ||
+                status === ""
+              );
             });
-          } else if (createdAt) {
-            const rangeStart = Math.floor(new Date(createdAt).getTime() / 1000);
-            const rangeEndRaw = closedAt || openedAt;
-            const rangeEnd = rangeEndRaw
-              ? Math.floor(new Date(rangeEndRaw).getTime() / 1000)
-              : rangeStart + 86400; // fallback: +1 day
-            const dur = Math.max(rangeEnd - rangeStart, 3600);
-            chart.timeScale().setVisibleRange({
-              from: rangeStart - dur * 0.1,
-              to: rangeEnd + dur * 0.1,
-            });
-          } else if (openedAt && closedAt) {
-            const rangeStart = Math.floor(new Date(openedAt).getTime() / 1000);
-            const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
-            const dur = rangeEnd - rangeStart;
-            chart.timeScale().setVisibleRange({
-              from: rangeStart - dur * 0.2,
-              to: rangeEnd + dur * 0.2,
-            });
+
+            if (showPdArrays) {
+              activePdArrays.slice(0, 50).forEach((pd) => {
+                const bounds = parsePdZoneBounds(pd);
+                if (!bounds || bounds.low == null || bounds.high == null)
+                  return;
+                if (bounds.low === bounds.high) return; // skip degenerate
+
+                const color = colorForTf(pd?.timeframe || "");
+
+                const barStartRaw = Number(pd?.bar_start);
+                const barStart =
+                  Number.isFinite(barStartRaw) && barStartRaw > 100000
+                    ? barStartRaw
+                    : candles.length
+                      ? Number(candles[0]?.time)
+                      : null;
+
+                if (!barStart) return;
+
+                const primitive = new PdArrayBoxPrimitive(
+                  barStart,
+                  bounds.low,
+                  bounds.high,
+                  color,
+                );
+                candleSeries.attachPrimitive(primitive);
+              });
+            }
+
+            // --- KEY LEVELS as orange dotted lines ---
+            const keyLevels = parseKeyLevels(
+              snapshot?.key_levels
+                ? snapshot
+                : snapshot?.market_analysis
+                  ? snapshot.market_analysis
+                  : snapshot,
+            );
+            if (showKeyLevels) {
+              keyLevels.forEach((k) => {
+                candleSeries.createPriceLine({
+                  price: k.price,
+                  color: "#f97316",
+                  lineWidth: 1,
+                  lineStyle: 4,
+                  axisLabelVisible: false,
+                  title: "",
+                });
+              });
+            }
+
+            // --- FIT VIEW ---
+            const snapshotStart = Number(snapshot?.bar_start);
+            const snapshotEnd = Number(snapshot?.bar_end);
+            if (
+              Number.isFinite(snapshotStart) &&
+              Number.isFinite(snapshotEnd) &&
+              snapshotEnd > snapshotStart
+            ) {
+              const dur = snapshotEnd - snapshotStart;
+              chart.timeScale().setVisibleRange({
+                from: snapshotStart - dur * 0.06,
+                to: snapshotEnd + dur * 0.06,
+              });
+            } else if (createdAt) {
+              const rangeStart = Math.floor(
+                new Date(createdAt).getTime() / 1000,
+              );
+              const rangeEndRaw = closedAt || openedAt;
+              const rangeEnd = rangeEndRaw
+                ? Math.floor(new Date(rangeEndRaw).getTime() / 1000)
+                : rangeStart + 86400; // fallback: +1 day
+              const dur = Math.max(rangeEnd - rangeStart, 3600);
+              chart.timeScale().setVisibleRange({
+                from: rangeStart - dur * 0.1,
+                to: rangeEnd + dur * 0.1,
+              });
+            } else if (openedAt && closedAt) {
+              const rangeStart = Math.floor(
+                new Date(openedAt).getTime() / 1000,
+              );
+              const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
+              const dur = rangeEnd - rangeStart;
+              chart.timeScale().setVisibleRange({
+                from: rangeStart - dur * 0.2,
+                to: rangeEnd + dur * 0.2,
+              });
+            }
           }
+        } catch (err) {
+          console.error("Chart data fetch failed:", err);
+        } finally {
+          if (isMounted) setLoading(false);
         }
-      } catch (err) {
-        console.error("Chart data fetch failed:", err);
-      } finally {
-        if (isMounted) setLoading(false);
       }
+
+      initData();
+
+      return () => {
+        isMounted = false;
+        window.removeEventListener("resize", handleResize);
+        if (resizeObserver) resizeObserver.disconnect();
+        try {
+          chart.unsubscribeCrosshairMove(handleCrosshairMove);
+        } catch {}
+        removeDragListeners();
+        chartRef.current = null;
+        seriesRef.current = null;
+        try {
+          chart.remove();
+        } catch {}
+      };
+    } catch (err) {
+      console.error("TradeSignalChart init failed:", err);
+      if (chart)
+        try {
+          chart.remove();
+        } catch {}
+    } finally {
+      if (isMounted) setLoading(false);
     }
-
-    initData();
-
-    return () => {
-      isMounted = false;
-      window.removeEventListener("resize", handleResize);
-      if (resizeObserver) resizeObserver.disconnect();
-      chart.unsubscribeCrosshairMove(handleCrosshairMove);
-      removeDragListeners();
-      chartRef.current = null;
-      seriesRef.current = null;
-      chart.remove();
-    };
   }, [
     symbol,
     interval,
