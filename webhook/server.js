@@ -70,6 +70,13 @@ function trackApiCall(apiName) {
   if (GLOBAL_API_STATS.last_updates.length > 50) {
     GLOBAL_API_STATS.last_updates.pop();
   }
+  // Route through NotificationManager
+  if (notificationManager) {
+    notificationManager.handle("REMOTE_API_CALL", "call", {
+      api: apiName,
+      message: name,
+    }).catch(() => {});
+  }
 }
 
 function asBool(value, fallback = false) {
@@ -815,12 +822,23 @@ function mt5NormalizeSymbol(s) {
 
 async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
   const b = await mt5Backend();
-  if (b.log) return await b.log(objectId, objectTable, metadata, userId);
-  // Fallback for non-postgres or bootstrapping
-  const now = mt5NowIso();
-  console.log(
-    `[LOG][${objectTable}][${objectId}] user=${userId} metadata=${JSON.stringify(metadata)}`,
-  );
+  if (b.log) await b.log(objectId, objectTable, metadata, userId).catch(() => {});
+  // Route through NotificationManager for matching event types
+  if (notificationManager && metadata?.event) {
+    const ev = String(metadata.event || "").toUpperCase();
+    let eventType = null, subType = "";
+    if (ev.startsWith("TRADE_")) { eventType = "TRADE_ACTIVITY"; subType = ev.replace("TRADE_", "").toLowerCase(); }
+    else if (ev.startsWith("SIGNAL_")) { eventType = "SIGNAL_ACTIVITY"; subType = ev.replace("SIGNAL_", "").toLowerCase(); }
+    if (eventType) {
+      notificationManager.handle(eventType, subType, {
+        object_id: objectId,
+        object_table: objectTable,
+        user_id: userId,
+        message: metadata.event || "",
+        ...metadata,
+      }).catch(() => {});
+    }
+  }
 }
 
 function json(res, statusCode, data) {
@@ -5641,13 +5659,15 @@ function mt5MapDbRow(row) {
       ? null
       : Number(row.entry_price_exec);
   const execSl =
-    row.sl_exec === null || row.sl_exec === undefined
-      ? null
-      : Number(row.sl_exec);
+    asNum(row.sl_exec) ??
+    asNum(row.metadata?.sl_exec) ??
+    asNum(row.metadata?.broker_data?.sl) ??
+    null;
   const execTp =
-    row.tp_exec === null || row.tp_exec === undefined
-      ? null
-      : Number(row.tp_exec);
+    asNum(row.tp_exec) ??
+    asNum(row.metadata?.tp_exec) ??
+    asNum(row.metadata?.broker_data?.tp) ??
+    null;
   const rowEntry =
     row.entry === null || row.entry === undefined ? null : Number(row.entry);
   const entryFromRaw = Number(raw.entry ?? raw.price);
@@ -5862,7 +5882,6 @@ async function _mt5InitBackendInternal() {
       sid TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      broker_id TEXT NULL,
       signal_id TEXT NULL REFERENCES signals(sid) ON DELETE SET NULL,
       source_id TEXT NULL,
       strategy TEXT NULL,
@@ -5885,8 +5904,15 @@ async function _mt5InitBackendInternal() {
       rejection_reason TEXT NULL,
       broker_trade_id TEXT NULL,
       entry_exec FLOAT8 NULL,
-      sl_exec FLOAT8 NULL,
-      tp_exec FLOAT8 NULL,
+      broker_pips FLOAT8 NULL,
+      broker_lots FLOAT8 NULL,
+      broker_commission FLOAT8 NULL,
+      broker_swap FLOAT8 NULL,
+      broker_volume FLOAT8 NULL,
+      broker_pnl FLOAT8 NULL,
+      broker_margin FLOAT8 NULL,
+      broker_tp_pnl FLOAT8 NULL,
+      broker_sl_pnl FLOAT8 NULL,
       opened_at TIMESTAMPTZ NULL,
       closed_at TIMESTAMPTZ NULL,
       pnl_realized FLOAT8 NULL,
@@ -6435,6 +6461,15 @@ async function _mt5InitBackendInternal() {
     .catch(() => {});
   await pool
     .query(`ALTER TABLE trades DROP COLUMN IF EXISTS error_message`)
+    .catch(() => {});
+  await pool
+    .query(`ALTER TABLE trades DROP COLUMN IF EXISTS broker_id`)
+    .catch(() => {});
+  await pool
+    .query(`ALTER TABLE trades DROP COLUMN IF EXISTS sl_exec`)
+    .catch(() => {});
+  await pool
+    .query(`ALTER TABLE trades DROP COLUMN IF EXISTS tp_exec`)
     .catch(() => {});
   await pool
     .query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS raw_json JSONB NULL`)
@@ -14909,8 +14944,16 @@ const appHandler = async (req, res) => {
                 symbol: trade.symbol,
                 action: trade.action,
                 entry: trade.entry_price_exec ?? null,
-                sl: trade.sl_exec ?? trade.sl ?? null,
-                tp: trade.tp_exec ?? trade.tp ?? null,
+                sl:
+                  asNum(trade.sl_exec) ??
+                  asNum(trade.metadata?.sl_exec) ??
+                  asNum(trade.sl) ??
+                  null,
+                tp:
+                  asNum(trade.tp_exec) ??
+                  asNum(trade.metadata?.tp_exec) ??
+                  asNum(trade.tp) ??
+                  null,
                 opened_at: trade.opened_at ?? trade.ack_at ?? trade.created_at,
                 closed_at: trade.closed_at ?? null,
               },
@@ -17923,18 +17966,38 @@ const appHandler = async (req, res) => {
     try {
       const notificationsManager = global.__notificationManager;
       // Return all event types with merged settings (defaults + DB overrides)
-      const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(([event, defaults]) => {
-        const dbSettings = notificationsManager?.settingsCache?.get(event) || {};
-        return {
-          event,
-          label: event.replace(/_/g, " ").replace(/\w/g, c => c.toUpperCase()),
-          toast: dbSettings.toast !== undefined ? dbSettings.toast : defaults.toast,
-          console_log: dbSettings.console_log !== undefined ? dbSettings.console_log : (defaults.console_log || false),
-          ticker: dbSettings.ticker !== undefined ? dbSettings.ticker : defaults.ticker,
-          sound: dbSettings.sound !== undefined ? dbSettings.sound : (defaults.sound || null),
-          db_log: dbSettings.db_log !== undefined ? dbSettings.db_log : defaults.db_log,
-        };
-      });
+      const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(
+        ([event, defaults]) => {
+          const dbSettings =
+            notificationsManager?.settingsCache?.get(event) || {};
+          return {
+            event,
+            label: event
+              .replace(/_/g, " ")
+              .replace(/\w/g, (c) => c.toUpperCase()),
+            toast:
+              dbSettings.toast !== undefined
+                ? dbSettings.toast
+                : defaults.toast,
+            console_log:
+              dbSettings.console_log !== undefined
+                ? dbSettings.console_log
+                : defaults.console_log || false,
+            ticker:
+              dbSettings.ticker !== undefined
+                ? dbSettings.ticker
+                : defaults.ticker,
+            sound:
+              dbSettings.sound !== undefined
+                ? dbSettings.sound
+                : defaults.sound || null,
+            db_log:
+              dbSettings.db_log !== undefined
+                ? dbSettings.db_log
+                : defaults.db_log,
+          };
+        },
+      );
       return json(res, 200, { ok: true, events });
     } catch (e) {
       return json(res, 400, { ok: false, error: e.message });
@@ -17968,7 +18031,9 @@ const appHandler = async (req, res) => {
       const db = await mt5InitBackend();
       // Save each event type as a separate notification_config row
       for (const [eventName, config] of Object.entries(settings)) {
-        const eventKey = String(eventName).toUpperCase().replace(/[^A-Z_]/g, "");
+        const eventKey = String(eventName)
+          .toUpperCase()
+          .replace(/[^A-Z_]/g, "");
         if (!eventKey) continue;
         await db.query(
           `INSERT INTO user_settings (user_id, type, name, data)
