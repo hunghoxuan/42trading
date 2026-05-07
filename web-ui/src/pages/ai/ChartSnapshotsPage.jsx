@@ -1679,7 +1679,7 @@ export default function ChartSnapshotsPage() {
       },
       ai_gemini: {
         label: "Gemini",
-        models: [{ value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" }],
+        models: [{ value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" }],
       },
       ai_openrouter: {
         label: "OpenRouter",
@@ -2595,6 +2595,7 @@ export default function ChartSnapshotsPage() {
       const useContextFiles = contextFiles.length > 0;
       const payload = {
         model: selectedModel,
+        ai_provider: analysisSource,
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
