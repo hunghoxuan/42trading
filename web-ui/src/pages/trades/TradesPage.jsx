@@ -222,7 +222,7 @@ export default function TradesPage() {
   const [error, setError] = useState("");
   const [accounts, setAccounts] = useState([]);
   const [sources, setSources] = useState([]);
-  const [highlightedSids, setHighlightedSids] = useState(() => new Set());
+  const [changedFields, setChangedFields] = useState(() => new Map()); // sid -> Set<fieldName>
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [tradeEvents, setTradeEvents] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -479,41 +479,55 @@ export default function TradesPage() {
   }, []);
 
   // Realtime data patch from SSE (generic page_id="trades")
-  // NOTE: match by `sid` (UUID) — SSE updates carry sid from broker sync,
-  // while `tradeKeyOf(r)` returns `r.id` (integer), which would never match.
-  // Also flashes updated rows via `.realtime-flash` CSS animation.
+  // Detects per-field changes and triggers subtle .value-flash on each changed value.
   useRealtimeData("trades", (data) => {
     if (!Array.isArray(data) || !data.length) return;
     const updateMap = new Map(data.map((u) => [String(u.sid || "").trim(), u]));
-    let updatedSids = [];
+    const diffBySid = new Map(); // sid -> Set of changed field names
     setRows((prev) => {
-      updatedSids = [];
+      diffBySid.clear();
       if (!prev.some((r) => updateMap.has(String(r.sid || "").trim())))
         return prev;
       return prev.map((r) => {
         const key = String(r.sid || "").trim();
         const update = updateMap.get(key);
-        if (update) {
-          updatedSids.push(key);
-          return { ...r, ...update };
+        if (!update) return r;
+        // Detect which fields actually changed
+        const changed = new Set();
+        for (const [field, newVal] of Object.entries(update)) {
+          if (field === "sid" || field === "symbol") continue;
+          if (JSON.stringify(r[field]) !== JSON.stringify(newVal)) {
+            changed.add(field);
+          }
         }
-        return r;
+        if (changed.size > 0) diffBySid.set(key, changed);
+        return { ...r, ...update };
       });
     });
-    // Flash updated rows briefly
-    if (updatedSids.length > 0) {
-      setHighlightedSids((prev) => {
-        const next = new Set(prev);
-        updatedSids.forEach((sid) => next.add(sid));
+    // Flash changed values briefly
+    if (diffBySid.size > 0) {
+      setChangedFields((prev) => {
+        const next = new Map(prev);
+        for (const [sid, fields] of diffBySid) {
+          const existing = next.get(sid) || new Set();
+          for (const f of fields) existing.add(f);
+          next.set(sid, existing);
+        }
         return next;
       });
       setTimeout(() => {
-        setHighlightedSids((prev) => {
-          const next = new Set(prev);
-          updatedSids.forEach((sid) => next.delete(sid));
+        setChangedFields((prev) => {
+          const next = new Map(prev);
+          for (const [sid, fields] of diffBySid) {
+            const existing = next.get(sid);
+            if (existing) {
+              for (const f of fields) existing.delete(f);
+              if (!existing.size) next.delete(sid);
+            }
+          }
           return next;
         });
-      }, 1200);
+      }, 800);
     }
   });
 
@@ -1109,19 +1123,13 @@ export default function TradesPage() {
                     const timeValue = fDateTime(auditTimestampRaw(t));
                     const isSelected =
                       tradeKeyOf(selectedTrade) === tradeKeyOf(t);
-                    const isFlashing = highlightedSids.has(
-                      String(t.sid || "").trim(),
-                    );
-                    const rowClass = [
-                      isSelected ? "active" : "",
-                      isFlashing ? "realtime-flash" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ");
+                    const flashFields =
+                      changedFields.get(String(t.sid || "").trim()) ||
+                      new Set();
                     return (
                       <tr
                         key={tradeKeyOf(t)}
-                        className={rowClass}
+                        className={isSelected ? "active" : ""}
                         onClick={() => {
                           const k = tradeKeyOf(t);
                           if (tradeKeyOf(selectedTrade) === k) {
@@ -1233,6 +1241,7 @@ export default function TradesPage() {
                               asNum(t.metadata?.broker_data?.pips) ??
                               "-"
                             }
+                            flashFields={flashFields}
                           />
                         </td>
                       </tr>
