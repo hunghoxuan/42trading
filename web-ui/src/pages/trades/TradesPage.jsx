@@ -1124,7 +1124,6 @@ export default function TradesPage() {
                                 {status.label}
                               </span>
                             }
-                            hideStatus={false}
                             pnl={pnl}
                             showFilledDetails={
                               String(t.execution_status || "").toUpperCase() ===
