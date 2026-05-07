@@ -222,6 +222,7 @@ export default function TradesPage() {
   const [error, setError] = useState("");
   const [accounts, setAccounts] = useState([]);
   const [sources, setSources] = useState([]);
+  const [highlightedSids, setHighlightedSids] = useState(() => new Set());
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [tradeEvents, setTradeEvents] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -480,17 +481,40 @@ export default function TradesPage() {
   // Realtime data patch from SSE (generic page_id="trades")
   // NOTE: match by `sid` (UUID) — SSE updates carry sid from broker sync,
   // while `tradeKeyOf(r)` returns `r.id` (integer), which would never match.
+  // Also flashes updated rows via `.realtime-flash` CSS animation.
   useRealtimeData("trades", (data) => {
     if (!Array.isArray(data) || !data.length) return;
+    const updateMap = new Map(data.map((u) => [String(u.sid || "").trim(), u]));
+    let updatedSids = [];
     setRows((prev) => {
-      const map = new Map(data.map((u) => [String(u.sid || "").trim(), u]));
-      if (!prev.some((r) => map.has(String(r.sid || "").trim()))) return prev;
+      updatedSids = [];
+      if (!prev.some((r) => updateMap.has(String(r.sid || "").trim())))
+        return prev;
       return prev.map((r) => {
         const key = String(r.sid || "").trim();
-        const update = map.get(key);
-        return update ? { ...r, ...update } : r;
+        const update = updateMap.get(key);
+        if (update) {
+          updatedSids.push(key);
+          return { ...r, ...update };
+        }
+        return r;
       });
     });
+    // Flash updated rows briefly
+    if (updatedSids.length > 0) {
+      setHighlightedSids((prev) => {
+        const next = new Set(prev);
+        updatedSids.forEach((sid) => next.add(sid));
+        return next;
+      });
+      setTimeout(() => {
+        setHighlightedSids((prev) => {
+          const next = new Set(prev);
+          updatedSids.forEach((sid) => next.delete(sid));
+          return next;
+        });
+      }, 1200);
+    }
   });
 
   // Select trade from URL param on load
@@ -1083,14 +1107,21 @@ export default function TradesPage() {
                       stRaw !== "PENDING" && pnl != null && pnl !== 0;
                     const rrDisplay = asNum(t.rr_planned) ?? rr;
                     const timeValue = fDateTime(auditTimestampRaw(t));
+                    const isSelected =
+                      tradeKeyOf(selectedTrade) === tradeKeyOf(t);
+                    const isFlashing = highlightedSids.has(
+                      String(t.sid || "").trim(),
+                    );
+                    const rowClass = [
+                      isSelected ? "active" : "",
+                      isFlashing ? "realtime-flash" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
                     return (
                       <tr
                         key={tradeKeyOf(t)}
-                        className={
-                          tradeKeyOf(selectedTrade) === tradeKeyOf(t)
-                            ? "active"
-                            : ""
-                        }
+                        className={rowClass}
                         onClick={() => {
                           const k = tradeKeyOf(t);
                           if (tradeKeyOf(selectedTrade) === k) {
@@ -1171,12 +1202,16 @@ export default function TradesPage() {
                             pnl={pnl}
                             margin={tradeRiskSize(t)}
                             tpPnl={
-                              stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                              stRaw === "CLOSED" ||
+                              stRaw === "TP" ||
+                              stRaw === "SL"
                                 ? t.entry_exec || t.entry
                                 : t.broker_tp_pnl
                             }
                             slPnl={
-                              stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                              stRaw === "CLOSED" ||
+                              stRaw === "TP" ||
+                              stRaw === "SL"
                                 ? t.last_price || t.tp
                                 : t.broker_sl_pnl
                             }

@@ -494,6 +494,41 @@ button:disabled {
 .events-table tr.active {
     background: var(--accent-soft);
 }
+
+/* Realtime SSE update flash highlight */
+@keyframes realtimeFlash {
+    0% {
+        background: var(--accent);
+        color: var(--text-inverse);
+    }
+    15% {
+        background: var(--accent);
+        color: var(--text-inverse);
+    }
+    100% {
+        background: transparent;
+        color: inherit;
+    }
+}
+.events-table tr.realtime-flash {
+    animation: realtimeFlash 1.2s ease-out forwards;
+}
+.events-table tr.realtime-flash td {
+    /* allow cell text color to respond to flash */
+    animation: realtimeFlashCell 1.2s ease-out forwards;
+}
+@keyframes realtimeFlashCell {
+    0% {
+        color: var(--text-inverse);
+    }
+    15% {
+        color: var(--text-inverse);
+    }
+    100% {
+        color: inherit;
+    }
+}
+
 .selected-row {
     background: var(--accent-soft) !important;
     border-left: 3px solid var(--accent) !important;
