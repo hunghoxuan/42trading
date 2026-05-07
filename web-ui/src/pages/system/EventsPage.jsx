@@ -16,6 +16,11 @@ function useNotificationState() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+
+  async function fire(overrides = {}) {
+    try { setTestMsg(""); const res = await api.notificationTest(overrides); setTestMsg('Sent: ' + res.sent.event); setTimeout(() => setTestMsg(""), 3000); } catch (e) { setTestMsg('Failed: ' + (e?.message || e)); }
+  }
 
   async function load() {
     try {
@@ -72,10 +77,10 @@ function useNotificationState() {
     });
   }
 
-  return { events, loading, saving, msg, error, load, save, toggle, setField };
+  return { events, loading, saving, msg, error, testMsg, fire, load, save, toggle, setField };
 }
 
-function EventRow({ event, idx, toggle, setField }) {
+function EventRow({ event, idx, toggle, setField, state = {} }) {
   return (
     <tr>
       <td>
@@ -124,6 +129,20 @@ function EventRow({ event, idx, toggle, setField }) {
           ))}
         </select>
       </td>
+      <td style={{ textAlign: "center" }}>
+        <button
+          className="secondary-button"
+          style={{ fontSize: 10, padding: "2px 5px" }}
+          title="Test this event"
+          onClick={() => {
+            state.fire({
+              event: event.event,
+              message: "Test: " + (event.label || event.event),
+              sound: event.sound || undefined,
+            });
+          }}
+        >▶</button>
+      </td>
     </tr>
   );
 }
@@ -140,14 +159,58 @@ export function EventsPageContent() {
             Configure channels per event type
           </span>
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginBottom: 12 }}>
-          {msg && <span className="badge FILLED" style={{ padding: "4px 10px", fontSize: 11 }}>{msg}</span>}
-          {error && <span className="badge SL" style={{ padding: "4px 10px", fontSize: 11 }}>{error}</span>}
-          <button className="secondary-button" onClick={load} disabled={loading} style={{ fontSize: 11 }}>{loading ? "..." : "REFRESH"}</button>
-          <button className="primary-button" onClick={save} disabled={state.saving} style={{ fontSize: 11 }}>{state.saving ? "..." : "💾 SAVE"}</button>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 10,
+            marginBottom: 12,
+          }}
+        >
+          {msg && (
+            <span
+              className="badge FILLED"
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              {msg}
+            </span>
+          )}
+          {error && (
+            <span
+              className="badge SL"
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
+              {error}
+            </span>
+          )}
+          <button
+            className="secondary-button"
+            onClick={load}
+            disabled={loading}
+            style={{ fontSize: 11 }}
+          >
+            {loading ? "..." : "REFRESH"}
+          </button>
+          <button
+            className="primary-button"
+            onClick={save}
+            disabled={state.saving}
+            style={{ fontSize: 11 }}
+          >
+            {state.saving ? "..." : "💾 SAVE"}
+          </button>
+          {state.testMsg && (
+            <span className="badge FILLED" style={{ padding: "4px 10px", fontSize: 11 }}>
+              {state.testMsg}
+            </span>
+          )}
+          </button>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table className="events-table" style={{ width: "100%", minWidth: 600 }}>
+          <table
+            className="events-table"
+            style={{ width: "100%", minWidth: 600 }}
+          >
             <thead>
               <tr>
                 <th>EVENT</th>
@@ -156,19 +219,52 @@ export function EventsPageContent() {
                 <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
                 <th style={{ width: 60, textAlign: "center" }}>DB LOG</th>
                 <th style={{ width: 110 }}>SOUND</th>
+                <th style={{ width: 40 }}>TEST</th>
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={6} style={{ textAlign: "center", padding: 30 }} className="minor-text">Loading...</td></tr>}
-              {!loading && events.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", padding: 30 }} className="minor-text">No events configured.</td></tr>}
-              {!loading && events.map((ev, idx) => (
-                <EventRow key={ev.event} event={ev} idx={idx} toggle={toggle} setField={setField} />
-              ))}
+              {loading && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{ textAlign: "center", padding: 30 }}
+                    className="minor-text"
+                  >
+                    Loading...
+                  </td>
+                </tr>
+              )}
+              {!loading && events.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{ textAlign: "center", padding: 30 }}
+                    className="minor-text"
+                  >
+                    No events configured.
+                  </td>
+                </tr>
+              )}
+              {!loading &&
+                events.map((ev, idx) => (
+                  <EventRow
+                    key={ev.event}
+                    event={ev}
+                    idx={idx}
+                    toggle={toggle}
+                    setField={setField}
+                    state={state}
+                  />
+                ))}
             </tbody>
           </table>
         </div>
-        <div className="minor-text" style={{ marginTop: 12, fontSize: 10, lineHeight: 1.6 }}>
-          <strong>Events:</strong> TRADE_ACTIVITY · SIGNAL_ACTIVITY · BROKER_POLL · BROKER_SYNC · SYSTEM_EVENT · REMOTE_API_CALL
+        <div
+          className="minor-text"
+          style={{ marginTop: 12, fontSize: 10, lineHeight: 1.6 }}
+        >
+          <strong>Events:</strong> TRADE_ACTIVITY · SIGNAL_ACTIVITY ·
+          BROKER_POLL · BROKER_SYNC · SYSTEM_EVENT · REMOTE_API_CALL
           <br />
           <strong>Channels:</strong> Toast · Console · Ticker · DB Log · Sound
         </div>
@@ -230,6 +326,12 @@ export default function EventsPage() {
           >
             {state.saving ? "..." : "💾 SAVE"}
           </button>
+          {state.testMsg && (
+            <span className="badge FILLED" style={{ padding: "4px 10px", fontSize: 11 }}>
+              {state.testMsg}
+            </span>
+          )}
+          </button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table
@@ -244,6 +346,7 @@ export default function EventsPage() {
                 <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
                 <th style={{ width: 60, textAlign: "center" }}>DB LOG</th>
                 <th style={{ width: 110 }}>SOUND</th>
+                <th style={{ width: 40 }}>TEST</th>
               </tr>
             </thead>
             <tbody>
@@ -277,6 +380,7 @@ export default function EventsPage() {
                     idx={idx}
                     toggle={toggle}
                     setField={setField}
+                    state={state}
                   />
                 ))}
             </tbody>
