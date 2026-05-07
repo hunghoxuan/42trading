@@ -12,7 +12,9 @@ import { api } from "../../api";
 import TradeSignalChart from "../../components/TradeSignalChart";
 import { chartFetchManager } from "../../services/chartFetchManager";
 
-const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
+const SignalDetailCard = lazy(
+  () => import("../../components/SignalDetailCard"),
+);
 const SymbolChart = lazy(() => import("../../components/charts/SymbolChart"));
 import {
   STRATEGY_OPTIONS,
@@ -2646,7 +2648,6 @@ export default function ChartSnapshotsPage() {
       }
       const raw = String(out?.raw_response || "");
       setAnalysisRaw(raw);
-      setAnalysisSource(aiSourceFromModel(out?.model));
       const parsed = enrichParsedAnalysis(
         raw,
         out?.parsed_json || tryParseJsonLoose(raw),
@@ -4690,7 +4691,14 @@ export default function ChartSnapshotsPage() {
                         }}
                       >
                         {group.symbols.map((sym) => (
-                          <Suspense key={sym} fallback={<div className="loading-card">Loading Chart...</div>}>
+                          <Suspense
+                            key={sym}
+                            fallback={
+                              <div className="loading-card">
+                                Loading Chart...
+                              </div>
+                            }
+                          >
                             <SymbolChart
                               symbol={sym}
                               timeframes={browserTfs}
@@ -4704,27 +4712,32 @@ export default function ChartSnapshotsPage() {
                       </div>
                     </div>
                   ))
-                : symbolsByTab
-                    .slice(0, visibleCount)
-                    .map((sym) => (
-                      <Suspense key={sym} fallback={<div className="loading-card">Loading Chart...</div>}>
-                        <SymbolChart
-                          symbol={sym}
-                          timeframes={browserTfs}
-                          defaultMode="live"
-                          initialGridCols={masterGridCols}
-                          onAnalyze={(s) => setCfgField("symbol", s)}
-                          onRemove={(s) => removeFromWatchlist(s)}
-                        />
-                      </Suspense>
-                    ))}
+                : symbolsByTab.slice(0, visibleCount).map((sym) => (
+                    <Suspense
+                      key={sym}
+                      fallback={
+                        <div className="loading-card">Loading Chart...</div>
+                      }
+                    >
+                      <SymbolChart
+                        symbol={sym}
+                        timeframes={browserTfs}
+                        defaultMode="live"
+                        initialGridCols={masterGridCols}
+                        onAnalyze={(s) => setCfgField("symbol", s)}
+                        onRemove={(s) => removeFromWatchlist(s)}
+                      />
+                    </Suspense>
+                  ))}
             </div>{" "}
           </div>
         )}
 
         {!hasResponse && cfg.symbol && (
           <div style={{ marginBottom: 20 }}>
-            <Suspense fallback={<div className="loading-card">Loading Chart...</div>}>
+            <Suspense
+              fallback={<div className="loading-card">Loading Chart...</div>}
+            >
               <SymbolChart
                 symbol={cfg.symbol}
                 timeframes={widgetTfs}
@@ -4737,7 +4750,9 @@ export default function ChartSnapshotsPage() {
         )}
 
         {cfg.symbol && (
-          <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+          <Suspense
+            fallback={<div className="loading-card">Loading Details...</div>}
+          >
             <SignalDetailCard
               mode="ai"
               hideTabsBeforeResponse={true}
