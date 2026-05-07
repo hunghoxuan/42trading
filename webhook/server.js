@@ -144,11 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.07 19:08 - 8dc773d",
-); // fix broker sync SSE missing broker_pnl
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 19:08 - 8dc773d"); // fix broker sync SSE missing broker_pnl
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
