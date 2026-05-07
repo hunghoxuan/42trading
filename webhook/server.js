@@ -562,6 +562,7 @@ Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown,
 All fields required. Enums must match. Use null only where price data is unavailable.
 Array limits: htf_context<=2, ltf_analysis<=2, trade_plan<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
 Trade plans must be actionable and internally consistent.
+IMPORTANT: You MUST include a trade_plan array with at least 1 actionable plan (direction, entry_price, stop_loss, take_profits). trade_plan is REQUIRED.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
 SCHEMA=${JSON.stringify(AI_RESPONSE_SCHEMA)}`;
 }
@@ -4598,16 +4599,15 @@ async function callAiProvider({
 
   // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
   // Determine provider: explicit overrides model-based detection
-  const provider =
-    explicitProvider
-      ? explicitProvider.toLowerCase()
-      : modelLower.includes("openrouter") || modelLower.includes("open-router")
-        ? "openrouter"
-        : modelLower.includes("gpt") || modelLower.includes("openai")
-          ? "openai"
-          : modelLower.includes("deepseek")
-            ? "deepseek"
-            : "gemini";
+  const provider = explicitProvider
+    ? explicitProvider.toLowerCase()
+    : modelLower.includes("openrouter") || modelLower.includes("open-router")
+      ? "openrouter"
+      : modelLower.includes("gpt") || modelLower.includes("openai")
+        ? "openai"
+        : modelLower.includes("deepseek")
+          ? "deepseek"
+          : "gemini";
 
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
   const cfg = await loadAiConfig();
@@ -16892,7 +16892,10 @@ const appHandler = async (req, res) => {
       });
 
       // Map ai_provider (ai_claude/ai_openrouter/ai_*) to provider name for callAiProvider
-      const aiProviderRaw = String(body.ai_provider || "").replace(/^ai_/i, "").trim().toLowerCase();
+      const aiProviderRaw = String(body.ai_provider || "")
+        .replace(/^ai_/i, "")
+        .trim()
+        .toLowerCase();
       const aiResult = await callAiProvider({
         model: requestModel,
         provider: aiProviderRaw || "",
