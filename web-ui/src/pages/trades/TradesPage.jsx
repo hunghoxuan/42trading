@@ -1198,20 +1198,6 @@ export default function TradesPage() {
                               asNum(t.metadata?.broker_data?.pips) ??
                               "-"
                             }
-                            tpPnl={
-                              asNum(t.broker_tp_pnl) ??
-                              asNum(t.metadata?.broker_data?.tp_pnl) ??
-                              asNum(t.metadata?.broker_data?.pnl_tp)
-                            }
-                            slPnl={
-                              asNum(t.broker_sl_pnl) ??
-                              asNum(t.metadata?.broker_data?.sl_pnl) ??
-                              asNum(t.metadata?.broker_data?.pnl_sl)
-                            }
-                            margin={
-                              asNum(t.broker_margin) ??
-                              asNum(t.metadata?.broker_data?.margin)
-                            }
                           />
                         </td>
                       </tr>
