@@ -233,6 +233,14 @@ function PlanHeader({
             {confidenceText}
           </span>
         ) : null}
+        {plan.risk_management ? (
+          <span
+            className="badge badge-mini"
+            style={{ padding: "2px 6px", fontSize: "9px", color: "#f59e0b", border: "1px solid #f59e0b40" }}
+          >
+            RM: {plan.risk_management}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -369,6 +377,16 @@ export default function SignalDetailCard({
       strategy: tradePlan?.value?.strategy,
       entryModel: tradePlan?.value?.entry_model,
       confidence: tradePlan?.value?.confidence_pct,
+      risk_management: tradePlan?.value?.risk_management,
+      entry_condition: tradePlan?.value?.entry_condition,
+      exit_condition: tradePlan?.value?.exit_condition,
+      confluence_checklist: tradePlan?.value?.confluence_checklist,
+      partial_tps: tradePlan?.value?.partial_tps,
+      reasons_to_skip: tradePlan?.value?.reasons_to_skip,
+      skip_recommendation: tradePlan?.value?.skip_recommendation,
+      be_trigger: tradePlan?.value?.be_trigger,
+      invalidation: tradePlan?.value?.invalidation,
+      estimated_bars: tradePlan?.value?.estimated_bars,
     },
   ];
 
@@ -401,6 +419,10 @@ export default function SignalDetailCard({
         estimated_bars: p.estimated_bars ?? null,
         be_trigger: p.be_trigger ?? p.be ?? null,
         invalidation: p.invalidation || "",
+        risk_management: p.risk_management || "",
+        entry_condition: p.entry_condition || "",
+        exit_condition: p.exit_condition || "",
+        confluence_checklist: Array.isArray(p.confluence_checklist) ? p.confluence_checklist : [],
         reasons_to_skip: Array.isArray(p.reasons_to_skip)
           ? p.reasons_to_skip
           : Array.isArray(p.skipReasons)

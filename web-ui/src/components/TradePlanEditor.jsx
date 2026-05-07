@@ -84,6 +84,11 @@ export function TradePlanEditor({
     { label: "BE", value: value.be_trigger || value.be || "-" },
     { label: "Invalidation", value: value.invalidation || "-" },
     { label: "Confidence", value: value.confidence_pct != null ? `${Number(value.confidence_pct).toFixed(1)}%` : "-" },
+    { label: "Risk Mgmt", value: value.risk_management || "-" },
+    { label: "Partial TPs", value: Array.isArray(value.partial_tps) && value.partial_tps.length > 0 
+        ? value.partial_tps.map((t, i) => `${(t.price || "-")}@${t.rr || "-"}r(${t.size_pct || "-"}%)`).join(" | ") 
+        : "-" 
+    },
     { label: "Estimated Bars", value: value.estimated_bars ?? "-" },
     { label: "Entry Model", value: value.entry_model || value.entryModel || "-" },
     { label: "Strategy", value: value.strategy || "-" },

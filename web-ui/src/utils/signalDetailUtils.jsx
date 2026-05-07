@@ -206,14 +206,21 @@ export function calcRrFromSignal(s) {
   // Use highest TP from partials if available, else signal.tp
   const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
   const plan = raw?.trade_plan || raw?.tradePlan || {};
-  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : (Array.isArray(s?.partial_tps) ? s.partial_tps : []);
+  const partials = Array.isArray(plan?.partial_tps)
+    ? plan.partial_tps
+    : Array.isArray(s?.partial_tps)
+      ? s.partial_tps
+      : [];
   let tp = asNum(s?.tp || s?.tp_price || s?.tp_price_raw);
   // Override with highest partial TP if higher
   if (partials.length > 0) {
     let highestPartial = tp;
     for (const p of partials) {
       const pPrice = p && typeof p === "object" ? asNum(p.price) : null;
-      if (pPrice != null && (highestPartial == null || pPrice > highestPartial)) {
+      if (
+        pPrice != null &&
+        (highestPartial == null || pPrice > highestPartial)
+      ) {
         highestPartial = pPrice;
       }
     }
@@ -282,12 +289,44 @@ export function extractTradePlanFromSignal(signal = {}) {
         raw.be_trigger_raw,
     ),
     profile: String(signal.profile || raw.profile || tradePlan.profile || ""),
-    exit_condition: String(signal.exit_condition || raw.exit_condition || tradePlan.exit_condition || ""),
-    entry_condition: String(signal.entry_condition || raw.entry_condition || tradePlan.entry_condition || ""),
-    confluence_checklist: Array.isArray(signal.confluence_checklist || raw.confluence_checklist || tradePlan.confluence_checklist) 
-      ? (signal.confluence_checklist || raw.confluence_checklist || tradePlan.confluence_checklist)
+    exit_condition: String(
+      signal.exit_condition ||
+        raw.exit_condition ||
+        tradePlan.exit_condition ||
+        "",
+    ),
+    entry_condition: String(
+      signal.entry_condition ||
+        raw.entry_condition ||
+        tradePlan.entry_condition ||
+        "",
+    ),
+    confluence_checklist: Array.isArray(
+      signal.confluence_checklist ||
+        raw.confluence_checklist ||
+        tradePlan.confluence_checklist,
+    )
+      ? signal.confluence_checklist ||
+        raw.confluence_checklist ||
+        tradePlan.confluence_checklist
       : [],
-    skip_recommendation: String(signal.skip_recommendation || raw.skip_recommendation || tradePlan.skip_recommendation || ""),
+    skip_recommendation: String(
+      signal.skip_recommendation ||
+        raw.skip_recommendation ||
+        tradePlan.skip_recommendation ||
+        "",
+    ),
+    risk_management: String(tradePlan.risk_management || raw.risk_management || ""),
+    partial_tps: Array.isArray(tradePlan.partial_tps)
+      ? tradePlan.partial_tps
+      : Array.isArray(raw.partial_tps)
+        ? raw.partial_tps
+        : [],
+    reasons_to_skip: Array.isArray(tradePlan.reasons_to_skip)
+      ? tradePlan.reasons_to_skip
+      : Array.isArray(raw.reasons_to_skip)
+        ? raw.reasons_to_skip
+        : [],
   };
 }
 
@@ -334,12 +373,41 @@ export function extractTradePlanFromTrade(trade = {}) {
     ),
     be_trigger: asNum(trade.be_trigger ?? meta.be_trigger ?? raw.be_trigger),
     profile: String(trade.profile || meta.profile || raw.profile || ""),
-    exit_condition: String(trade.exit_condition || meta.exit_condition || raw.exit_condition || ""),
-    entry_condition: String(trade.entry_condition || meta.entry_condition || raw.entry_condition || ""),
-    confluence_checklist: Array.isArray(trade.confluence_checklist || meta.confluence_checklist || raw.confluence_checklist)
-      ? (trade.confluence_checklist || meta.confluence_checklist || raw.confluence_checklist)
+    exit_condition: String(
+      trade.exit_condition || meta.exit_condition || raw.exit_condition || "",
+    ),
+    entry_condition: String(
+      trade.entry_condition ||
+        meta.entry_condition ||
+        raw.entry_condition ||
+        "",
+    ),
+    confluence_checklist: Array.isArray(
+      trade.confluence_checklist ||
+        meta.confluence_checklist ||
+        raw.confluence_checklist,
+    )
+      ? trade.confluence_checklist ||
+        meta.confluence_checklist ||
+        raw.confluence_checklist
       : [],
-    skip_recommendation: String(trade.skip_recommendation || meta.skip_recommendation || raw.skip_recommendation || ""),
+    skip_recommendation: String(
+      trade.skip_recommendation ||
+        meta.skip_recommendation ||
+        raw.skip_recommendation ||
+        "",
+    ),
+    risk_management: String(meta.risk_management || raw.risk_management || ""),
+    partial_tps: Array.isArray(meta.partial_tps)
+      ? meta.partial_tps
+      : Array.isArray(raw.partial_tps)
+        ? raw.partial_tps
+        : [],
+    reasons_to_skip: Array.isArray(meta.reasons_to_skip)
+      ? meta.reasons_to_skip
+      : Array.isArray(raw.reasons_to_skip)
+        ? raw.reasons_to_skip
+        : [],
   };
 }
 
