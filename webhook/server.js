@@ -145,7 +145,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 18:50 - 6c6e8eb"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 19:08 - 8dc773d",
+); // fix broker sync SSE missing broker_pnl
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -8120,6 +8123,7 @@ async function _mt5InitBackendInternal() {
           sid: it.sid,
           symbol: it.symbol,
           pnl_realized: it.pnl,
+          broker_pnl: it.pnl,
           broker_pips: it.pips,
           execution_status: it.execution_status,
           last_price: it.last_price,
