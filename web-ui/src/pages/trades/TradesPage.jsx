@@ -1481,19 +1481,30 @@ export default function TradesPage() {
                       })()
                     : []),
                   {
-                    label: "Raw Metadata",
+                    label: "Metadata",
                     fullWidth: true,
-                    value: (
-                      <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-800 overflow-hidden mt-2">
-                        <pre className="text-[10px] text-blue-300 font-mono overflow-auto max-h-[300px] whitespace-pre-wrap">
-                          {JSON.stringify(
-                            selectedTrade.metadata || {},
-                            null,
-                            2,
-                          )}
-                        </pre>
-                      </div>
-                    ),
+                    value: (() => {
+                      const meta = selectedTrade.metadata || {};
+                      const cleaned = {};
+                      const junk = [
+                        "props",
+                        "children",
+                        "ref",
+                        "key",
+                        "type",
+                        "_owner",
+                        "_store",
+                        "_self",
+                        "_source",
+                      ];
+                      Object.keys(meta).forEach((k) => {
+                        if (junk.includes(k)) return;
+                        if (meta[k] === null || meta[k] === undefined || meta[k] === "")
+                          return;
+                        cleaned[k] = meta[k];
+                      });
+                      return cleaned;
+                    })(),
                   },
                 ]}
                 history={{

@@ -658,16 +658,18 @@ export default function SignalDetailCard({
               x.value !== null &&
               x.value !== undefined &&
               String(x.value) !== "";
+            const isMeta = (x) =>
+              x.label === "Metadata" ||
+              x.label === "Raw Metadata" ||
+              x.label === "Raw JSON";
             const sourceItems = metaItems.filter(
-              (x) =>
-                x?.group === "source" && x.label !== "Raw JSON" && hasVal(x),
+              (x) => x?.group === "source" && !isMeta(x) && hasVal(x),
             );
             const accountItems = metaItems.filter(
-              (x) =>
-                x?.group === "account" && x.label !== "Raw JSON" && hasVal(x),
+              (x) => x?.group === "account" && !isMeta(x) && hasVal(x),
             );
             const otherItems = metaItems.filter(
-              (x) => !x?.group && x.label !== "Raw JSON" && hasVal(x),
+              (x) => !x?.group && !isMeta(x) && hasVal(x),
             );
             const renderField = (item, i) => (
               <div
@@ -715,7 +717,10 @@ export default function SignalDetailCard({
             const card = (title, items) => {
               const isAccount = title === "Account";
               const rawJsonItem = metaItems.find(
-                (x) => x.label === "Raw Metadata" || x.label === "Raw JSON",
+                (x) =>
+                  x.label === "Metadata" ||
+                  x.label === "Raw Metadata" ||
+                  x.label === "Raw JSON",
               );
 
               return (
