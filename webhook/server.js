@@ -138,7 +138,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 07:40 - a0ea722"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 07:40 - a0ea722",
+); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -1907,7 +1910,8 @@ function normalizeAiApiKeyName(rawName) {
     return "GEMINI_API_KEY";
   if (name === "OPENAI" || name === "OPENAI_KEY") return "OPENAI_API_KEY";
   if (name === "DEEPSEEK" || name === "DEEPSEEK_KEY") return "DEEPSEEK_API_KEY";
-  if (name === "OPENROUTER" || name === "OPENROUTER_KEY") return "OPENROUTER_API_KEY";
+  if (name === "OPENROUTER" || name === "OPENROUTER_KEY")
+    return "OPENROUTER_API_KEY";
   if (
     name === "CLAUDE" ||
     name === "ANTHROPIC" ||
@@ -4610,10 +4614,10 @@ async function callAiProvider({
     provider === "deepseek"
       ? cfg.DEEPSEEK_API_KEY
       : provider === "openrouter"
-      ? (cfg.OPENROUTER_API_KEY || "")
-      : provider === "openai"
-        ? cfg.OPENAI_API_KEY
-        : cfg.GEMINI_API_KEY;
+        ? cfg.OPENROUTER_API_KEY || ""
+        : provider === "openai"
+          ? cfg.OPENAI_API_KEY
+          : cfg.GEMINI_API_KEY;
   if (!apiKey)
     throw new Error(
       `${provider.toUpperCase()}_API_KEY is missing in Settings.`,
@@ -4623,10 +4627,10 @@ async function callAiProvider({
     provider === "openrouter"
       ? "https://openrouter.ai/api/v1/chat/completions"
       : provider === "deepseek"
-      ? "https://api.deepseek.com/chat/completions"
-      : provider === "openai"
-        ? "https://api.openai.com/v1/chat/completions"
-        : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+        ? "https://api.deepseek.com/chat/completions"
+        : provider === "openai"
+          ? "https://api.openai.com/v1/chat/completions"
+          : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
   // Convert image format: Anthropic base64 → OpenAI image_url
   // DeepSeek does NOT support images — strip them and warn
@@ -6251,6 +6255,7 @@ async function _mt5InitBackendInternal() {
     `CREATE INDEX IF NOT EXISTS idx_logs_user ON logs(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_logs_symbol ON logs(symbol)`,
     `CREATE INDEX IF NOT EXISTS idx_logs_event_type ON logs(event_type)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_object_event ON logs(object_id, event_type)`,
     `CREATE INDEX IF NOT EXISTS idx_signals_user ON signals(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)`,
   ];
@@ -6484,6 +6489,29 @@ async function _mt5InitBackendInternal() {
           eventType.startsWith(p),
         );
       if (!isEnabled) {
+        return;
+      }
+      if (eventType === "TRADE_SYNC_UPDATE") {
+        // Keep only 1 latest row per trade: upsert by object_id + event_type
+        await pool.query(
+          `
+          INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, NOW())
+          ON CONFLICT (object_id, event_type) DO UPDATE SET
+            metadata = EXCLUDED.metadata,
+            created_at = NOW(),
+            symbol = EXCLUDED.symbol,
+            user_id = EXCLUDED.user_id
+        `,
+          [
+            objectId,
+            objectTable,
+            symbol,
+            eventType,
+            JSON.stringify(metadata),
+            userId,
+          ],
+        );
         return;
       }
       await pool.query(
@@ -10576,7 +10604,7 @@ async function buildAnalysisSnapshotFromTwelve({
         tf_norm: tfNorm,
       };
     }
-    
+
     await logEvent(tid, "FETCH_API", {
       step: "cache_miss",
       symbol: symbolNorm,
@@ -15517,17 +15545,22 @@ const appHandler = async (req, res) => {
       }
 
       let provider = (bodyProvider || service || "gemini").toLowerCase();
-      if (requestModel && (requestModel.includes("openrouter") || requestModel.includes("open-router"))) provider = "openrouter";
+      if (
+        requestModel &&
+        (requestModel.includes("openrouter") ||
+          requestModel.includes("open-router"))
+      )
+        provider = "openrouter";
       const apiKey =
         provider === "deepseek"
           ? config.DEEPSEEK_API_KEY
           : provider === "openrouter"
-          ? (config.OPENROUTER_API_KEY || "")
-          : provider === "openai"
-            ? config.OPENAI_API_KEY
-            : provider === "claude"
-              ? config.CLAUDE_API_KEY || config.ANTHROPIC_API_KEY
-              : config.GEMINI_API_KEY;
+            ? config.OPENROUTER_API_KEY || ""
+            : provider === "openai"
+              ? config.OPENAI_API_KEY
+              : provider === "claude"
+                ? config.CLAUDE_API_KEY || config.ANTHROPIC_API_KEY
+                : config.GEMINI_API_KEY;
 
       if (!apiKey) {
         return json(res, 400, {
@@ -15558,7 +15591,11 @@ const appHandler = async (req, res) => {
         endpoint = "https://openrouter.ai/api/v1/chat/completions";
         authHeader = `Bearer ${apiKey}`;
         if (!requestModel) requestModel = "openai/gpt-4o";
-        bodyData = { model: requestModel, messages: [{ role: "user", content: finalPrompt }], response_format: { type: "json_object" } };
+        bodyData = {
+          model: requestModel,
+          messages: [{ role: "user", content: finalPrompt }],
+          response_format: { type: "json_object" },
+        };
       } else if (provider === "openai") {
         endpoint = "https://api.openai.com/v1/chat/completions";
         authHeader = `Bearer ${apiKey}`;
