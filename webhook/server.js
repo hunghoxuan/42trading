@@ -6252,7 +6252,6 @@ async function _mt5InitBackendInternal() {
     `CREATE INDEX IF NOT EXISTS idx_logs_user ON logs(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_logs_symbol ON logs(symbol)`,
     `CREATE INDEX IF NOT EXISTS idx_logs_event_type ON logs(event_type)`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_object_event ON logs(object_id, event_type)`,
     `CREATE INDEX IF NOT EXISTS idx_signals_user ON signals(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)`,
   ];
