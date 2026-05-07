@@ -7,7 +7,7 @@ export default function ApiUsageTicker() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await fetch("/webhook/api/system/stats");
+        const res = await fetch("/api/system/stats");
         const data = await res.json();
         if (data.ok) {
           setStats(data.stats);
@@ -45,7 +45,13 @@ export default function ApiUsageTicker() {
         {Object.entries(stats.counters || {}).map(([name, count]) => (
           <div key={name} style={{ opacity: count > 0 ? 1 : 0.4 }}>
             <span style={{ color: "var(--muted)" }}>{name.toUpperCase()}:</span>
-            <span style={{ marginLeft: 4, fontWeight: "bold", color: count > 0 ? "#f59e0b" : "inherit" }}>
+            <span
+              style={{
+                marginLeft: 4,
+                fontWeight: "bold",
+                color: count > 0 ? "#f59e0b" : "inherit",
+              }}
+            >
               {count}
             </span>
           </div>
@@ -65,7 +71,14 @@ export default function ApiUsageTicker() {
           <span style={{ color: "#10b981" }}>●</span>
           <span>LAST: {lastUpdate.api.toUpperCase()}</span>
           <span style={{ opacity: 0.5 }}>
-            ({new Date(lastUpdate.time).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })})
+            (
+            {new Date(lastUpdate.time).toLocaleTimeString([], {
+              hour12: false,
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
+            )
           </span>
         </div>
       )}

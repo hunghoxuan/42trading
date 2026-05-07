@@ -119,7 +119,6 @@ export default function LogsPage() {
 
   useEffect(() => {
     loadSymbols();
-    loadLogConfig();
   }, []);
   useEffect(() => {
     loadEvents();
