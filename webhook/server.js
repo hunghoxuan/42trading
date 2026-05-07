@@ -11006,15 +11006,21 @@ async function buildAnalysisSnapshotFromTwelve({
       usedSymbol = candidate;
       lastError = "";
       console.log(`[twelve-success] candidate=${candidate}`);
-      console.log(
-        `[twelve-api] OK ${symbolNorm} ${tfNorm} ${vals.length} bars ${Date.now() - t0}ms`,
-      );
+      if (notificationManager) {
+        notificationManager.handle("REMOTE_API_CALL", "twelve_success", {
+          message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
+          api: "TwelveData", symbol: symbolNorm, tf: tfNorm, bars_count: vals.length,
+        }).catch(() => {});
+      }
       break;
     }
     if (!data || !Array.isArray(data?.values) || !data.values.length) {
-      console.log(
-        `[twelve-api] FAIL ${symbolNorm} ${tfNorm} error=${lastError || "provider error"}`,
-      );
+      if (notificationManager) {
+        notificationManager.handle("REMOTE_API_CALL", "twelve_error", {
+          message: `TwelveData FAIL ${symbolNorm} ${tfNorm} ${lastError || "provider error"}`,
+          api: "TwelveData", symbol: symbolNorm, tf: tfNorm, error: lastError,
+        }).catch(() => {});
+      }
       return {
         provider: "twelvedata",
         status: "error",
@@ -16331,9 +16337,12 @@ const appHandler = async (req, res) => {
         results.push(row);
       }
 
-      console.log(
-        `[CHART_API] done symbols=${symbols.length} tfs=${timeframes.length} ${Date.now() - t0}ms`,
-      );
+      if (notificationManager) {
+        notificationManager.handle("SYSTEM_EVENT", "chart_refresh", {
+          message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
+          symbols: symbols.length, timeframes: timeframes.length, duration_ms: Date.now() - t0,
+        }).catch(() => {});
+      }
       return json(res, 200, {
         ok: true,
         generated_at: new Date().toISOString(),
@@ -20000,7 +20009,12 @@ async function marketDataFetchJob({
   timezone,
 }) {
   const cronTraceId = genTraceId("cron_md_");
-  console.log(`[CRON_MD] start ${symbol} ${tf}`);
+  if (notificationManager) {
+    notificationManager.handle("SYSTEM_EVENT", "cron_md", {
+      message: `Market data cron: ${symbol} ${tf}`,
+      symbol, tf,
+    }).catch(() => {});
+  }
   const symbolNorm = normalizeMarketDataSymbol(symbol);
   const tfNorm = normalizeMarketDataTf(tf);
   if (!symbolNorm || !tfNorm)
