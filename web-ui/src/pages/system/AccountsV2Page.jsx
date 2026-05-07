@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
@@ -18,6 +19,8 @@ function prettyMetadata(v) {
 }
 
 export default function AccountsV2Page() {
+  const { accountId } = useParams();
+  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -50,28 +53,49 @@ export default function AccountsV2Page() {
   });
 
   const filtered = useMemo(() => {
-    const needle = String(q || "").trim().toLowerCase();
+    const needle = String(q || "")
+      .trim()
+      .toLowerCase();
     return rows.filter((r) => {
-      if (statusFilter && String(r.status || "").toUpperCase() !== statusFilter) return false;
+      if (statusFilter && String(r.status || "").toUpperCase() !== statusFilter)
+        return false;
       if (userFilter && String(r.user_id || "") !== userFilter) return false;
       if (!needle) return true;
       return (
-        String(r.account_id || "").toLowerCase().includes(needle)
-        || String(r.user_id || "").toLowerCase().includes(needle)
-        || String(r.name || "").toLowerCase().includes(needle)
+        String(r.account_id || "")
+          .toLowerCase()
+          .includes(needle) ||
+        String(r.user_id || "")
+          .toLowerCase()
+          .includes(needle) ||
+        String(r.name || "")
+          .toLowerCase()
+          .includes(needle)
       );
     });
   }, [rows, q, statusFilter, userFilter]);
 
-  const userOptions = useMemo(() => Array.from(new Set(rows.map((r) => String(r.user_id || "")).filter(Boolean))).sort(), [rows]);
+  const userOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map((r) => String(r.user_id || "")).filter(Boolean)),
+      ).sort(),
+    [rows],
+  );
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.max(1, Math.min(page, pages));
-  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageRows = filtered.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize,
+  );
 
   async function loadBase() {
     setLoading(true);
     try {
-      const [aOut, sOut] = await Promise.all([api.v2Accounts(), api.v2Sources()]);
+      const [aOut, sOut] = await Promise.all([
+        api.v2Accounts(),
+        api.v2Sources(),
+      ]);
       const accounts = Array.isArray(aOut?.items) ? aOut.items : [];
       const sourceItems = Array.isArray(sOut?.items) ? sOut.items : [];
       setRows(accounts);
@@ -122,7 +146,11 @@ export default function AccountsV2Page() {
     });
     try {
       const out = await api.v2GetSubscriptions(accountId);
-      const sourceIds = new Set((Array.isArray(out?.items) ? out.items : []).map((x) => String(x.source_id || "")).filter(Boolean));
+      const sourceIds = new Set(
+        (Array.isArray(out?.items) ? out.items : [])
+          .map((x) => String(x.source_id || ""))
+          .filter(Boolean),
+      );
       setSelectedSourceIds(sourceIds);
     } catch {
       setSelectedSourceIds(new Set());
@@ -149,10 +177,31 @@ export default function AccountsV2Page() {
     });
   }
 
-  useEffect(() => { loadBase(); }, []);
-  useEffect(() => { setPage(1); }, [q, statusFilter, userFilter, pageSize]);
   useEffect(() => {
-    if (mode === "edit" && selectedAccountId && !rows.some((r) => String(r.account_id || "") === String(selectedAccountId))) {
+    if (accountId && rows.length > 0 && !selectedAccountId) {
+      const match = rows.find(
+        (r) => String(r.account_id || "") === String(accountId),
+      );
+      if (match) {
+        openEditMode(match);
+      }
+    }
+  }, [accountId, rows, selectedAccountId]);
+
+  useEffect(() => {
+    loadBase();
+  }, []);
+  useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter, userFilter, pageSize]);
+  useEffect(() => {
+    if (
+      mode === "edit" &&
+      selectedAccountId &&
+      !rows.some(
+        (r) => String(r.account_id || "") === String(selectedAccountId),
+      )
+    ) {
       setMode("view");
       setSelectedAccountId("");
     }
@@ -162,12 +211,16 @@ export default function AccountsV2Page() {
     const txt = String(raw || "").trim();
     if (!txt) return {};
     const parsed = JSON.parse(txt);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("metadata must be a JSON object");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("metadata must be a JSON object");
     return parsed;
   }
 
   async function saveSubscriptions(accountId) {
-    const items = Array.from(selectedSourceIds).map((source_id) => ({ source_id, is_active: true }));
+    const items = Array.from(selectedSourceIds).map((source_id) => ({
+      source_id,
+      is_active: true,
+    }));
     await api.v2PutSubscriptions(accountId, items);
   }
 
@@ -210,7 +263,12 @@ export default function AccountsV2Page() {
 
   async function onRevokeAndRegenerateApiKey() {
     if (mode === "create") return;
-    if (!window.confirm(`Revoke current API key and generate a new API key for account ${form.account_id}?`)) return;
+    if (
+      !window.confirm(
+        `Revoke current API key and generate a new API key for account ${form.account_id}?`,
+      )
+    )
+      return;
     setSaving(true);
     try {
       const out = await api.v2RotateAccountApiKey(form.account_id);
@@ -223,7 +281,10 @@ export default function AccountsV2Page() {
       setMsg({ type: "warning", text: "API key replaced with a new one." });
       await loadBase();
     } catch (e) {
-      setMsg({ type: "error", text: e?.message || "Failed to replace API key" });
+      setMsg({
+        type: "error",
+        text: e?.message || "Failed to replace API key",
+      });
     } finally {
       setSaving(false);
     }
@@ -231,7 +292,10 @@ export default function AccountsV2Page() {
 
   async function onCopyApiKey() {
     if (!apiKeyPlain) {
-      setMsg({ type: "warning", text: "No plaintext API key available. Revoke to generate one, then copy." });
+      setMsg({
+        type: "warning",
+        text: "No plaintext API key available. Revoke to generate one, then copy.",
+      });
       return;
     }
     try {
@@ -245,7 +309,10 @@ export default function AccountsV2Page() {
 
   async function onToggleStatus() {
     if (mode === "create") return;
-    const nextStatus = String(form.status || "").toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    const nextStatus =
+      String(form.status || "").toUpperCase() === "ACTIVE"
+        ? "INACTIVE"
+        : "ACTIVE";
     setSaving(true);
     try {
       await api.v2UpdateAccount(form.account_id, {
@@ -259,7 +326,10 @@ export default function AccountsV2Page() {
       setMsg({ type: "success", text: `Account ${nextStatus}.` });
       await loadBase();
     } catch (e) {
-      setMsg({ type: "error", text: e?.message || "Failed to update account status" });
+      setMsg({
+        type: "error",
+        text: e?.message || "Failed to update account status",
+      });
     } finally {
       setSaving(false);
       window.setTimeout(() => setMsg(EMPTY_MSG), 2200);
@@ -275,7 +345,10 @@ export default function AccountsV2Page() {
       setMsg({ type: "success", text: "Account archived." });
       await loadBase();
     } catch (e) {
-      setMsg({ type: "error", text: e?.message || "Failed to archive account" });
+      setMsg({
+        type: "error",
+        text: e?.message || "Failed to archive account",
+      });
     } finally {
       setSaving(false);
       window.setTimeout(() => setMsg(EMPTY_MSG), 2200);
@@ -292,38 +365,87 @@ export default function AccountsV2Page() {
             <strong>{filtered.length}</strong>
             {pages > 1 ? (
               <div className="pager-mini">
-                <button className="secondary-button" disabled={safePage <= 1} onClick={() => setPage((p) => p - 1)}>&lt;</button>
-                <span className="minor-text">{safePage}/{pages}</span>
-                <button className="secondary-button" disabled={safePage >= pages} onClick={() => setPage((p) => p + 1)}>&gt;</button>
+                <button
+                  className="secondary-button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  &lt;
+                </button>
+                <span className="minor-text">
+                  {safePage}/{pages}
+                </span>
+                <button
+                  className="secondary-button"
+                  disabled={safePage >= pages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  &gt;
+                </button>
               </div>
             ) : null}
-            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
             </select>
           </div>
         </div>
 
-        <div className="toolbar-group toolbar-search-filter" style={{ flexWrap: "wrap" }}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search account/user/name..." style={{ width: 220 }} />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <div
+          className="toolbar-group toolbar-search-filter"
+          style={{ flexWrap: "wrap" }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search account/user/name..."
+            style={{ width: 220 }}
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
             <option value="">ALL STATUS</option>
             <option value="ACTIVE">ACTIVE</option>
             <option value="INACTIVE">INACTIVE</option>
             <option value="PAUSED">PAUSED</option>
             <option value="ARCHIVED">ARCHIVED</option>
           </select>
-          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
+          <select
+            value={userFilter}
+            onChange={(e) => setUserFilter(e.target.value)}
+          >
             <option value="">ALL USERS</option>
-            {userOptions.map((u) => <option key={u} value={u}>{u}</option>)}
+            {userOptions.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
           </select>
         </div>
 
         <div className="toolbar-group toolbar-bulk-action">
-          <button className="primary-button" onClick={openCreateMode} disabled={saving}>+ ADD ACCOUNT</button>
+          <button
+            className="primary-button"
+            onClick={openCreateMode}
+            disabled={saving}
+          >
+            + ADD ACCOUNT
+          </button>
         </div>
       </div>
 
-      {msg?.text ? <div className={`form-message msg-${msg.type || "error"}`}>{msg.text}</div> : null}
+      {msg?.text ? (
+        <div className={`form-message msg-${msg.type || "error"}`}>
+          {msg.text}
+        </div>
+      ) : null}
 
       <div className="logs-layout-split">
         <div className="logs-list-pane">
@@ -339,22 +461,51 @@ export default function AccountsV2Page() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={4} className="loading">Loading accounts...</td></tr>
-                ) : pageRows.length === 0 ? (
-                  <tr><td colSpan={4} className="empty-state">No accounts found.</td></tr>
-                ) : pageRows.map((row) => (
-                  <tr key={row.account_id} className={selectedAccountId === row.account_id ? "active" : ""} onClick={() => openEditMode(row)}>
-                    <td>
-                      <div className="cell-wrap">
-                        <div className="cell-major">{row.name || row.account_id}</div>
-                        <div className="cell-minor">{row.account_id}</div>
-                      </div>
+                  <tr>
+                    <td colSpan={4} className="loading">
+                      Loading accounts...
                     </td>
-                    <td>{row.user_id || "-"}</td>
-                    <td><span className={`badge ${String(row.status || "").toUpperCase()}`}>{String(row.status || "-").toUpperCase()}</span></td>
-                    <td>{row.api_key_last4 ? `****${row.api_key_last4}` : "-"}</td>
                   </tr>
-                ))}
+                ) : pageRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="empty-state">
+                      No accounts found.
+                    </td>
+                  </tr>
+                ) : (
+                  pageRows.map((row) => (
+                    <tr
+                      key={row.account_id}
+                      className={
+                        selectedAccountId === row.account_id ? "active" : ""
+                      }
+                      onClick={() => {
+                        openEditMode(row);
+                        navigate(`/system/accounts/${row.account_id}`);
+                      }}
+                    >
+                      <td>
+                        <div className="cell-wrap">
+                          <div className="cell-major">
+                            {row.name || row.account_id}
+                          </div>
+                          <div className="cell-minor">{row.account_id}</div>
+                        </div>
+                      </td>
+                      <td>{row.user_id || "-"}</td>
+                      <td>
+                        <span
+                          className={`badge ${String(row.status || "").toUpperCase()}`}
+                        >
+                          {String(row.status || "-").toUpperCase()}
+                        </span>
+                      </td>
+                      <td>
+                        {row.api_key_last4 ? `****${row.api_key_last4}` : "-"}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -362,144 +513,266 @@ export default function AccountsV2Page() {
 
         <div className="logs-detail-pane">
           {!(mode === "create" || (mode === "edit" && selectedAccountId)) ? (
-            <div className="empty-state minor-text">SELECT AN ACCOUNT TO INSPECT DETAIL</div>
+            <div className="empty-state minor-text">
+              SELECT AN ACCOUNT TO INSPECT DETAIL
+            </div>
           ) : (
             <div className="stack-layout" style={{ gap: 14 }}>
-              <div className="panel-label" style={{ marginBottom: 0 }}>{mode === "create" ? "CREATE ACCOUNT" : "EDIT ACCOUNT"}</div>
+              <div className="panel-label" style={{ marginBottom: 0 }}>
+                {mode === "create" ? "CREATE ACCOUNT" : "EDIT ACCOUNT"}
+              </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div className="minor-text">Account ID</div>
-                <input value={form.account_id} onChange={(e) => setForm((p) => ({ ...p, account_id: e.target.value }))} disabled={mode === "edit"} />
-              </label>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div className="minor-text">User ID</div>
-                <input value={form.user_id} onChange={(e) => setForm((p) => ({ ...p, user_id: e.target.value }))} />
-              </label>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div className="minor-text">Name</div>
-                <input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} placeholder="Display name" />
-              </label>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div className="minor-text">Status</div>
-                <select value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}>
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="INACTIVE">INACTIVE</option>
-                  <option value="PAUSED">PAUSED</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
-                </select>
-              </label>
-            </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))",
+                  gap: 10,
+                }}
+              >
+                <label
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                >
+                  <div className="minor-text">Account ID</div>
+                  <input
+                    value={form.account_id}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, account_id: e.target.value }))
+                    }
+                    disabled={mode === "edit"}
+                  />
+                </label>
+                <label
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                >
+                  <div className="minor-text">User ID</div>
+                  <input
+                    value={form.user_id}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, user_id: e.target.value }))
+                    }
+                  />
+                </label>
+                <label
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                >
+                  <div className="minor-text">Name</div>
+                  <input
+                    value={form.name}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, name: e.target.value }))
+                    }
+                    placeholder="Display name"
+                  />
+                </label>
+                <label
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                >
+                  <div className="minor-text">Status</div>
+                  <select
+                    value={form.status}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, status: e.target.value }))
+                    }
+                  >
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="INACTIVE">INACTIVE</option>
+                    <option value="PAUSED">PAUSED</option>
+                    <option value="ARCHIVED">ARCHIVED</option>
+                  </select>
+                </label>
+              </div>
 
-            <div className="panel" style={{ padding: 12 }}>
-              <div className="panel-label" style={{ marginBottom: 8 }}>SUBSCRIPTIONS</div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Enabled</th>
-                      <th>Source</th>
-                      <th>Kind</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sources.length === 0 ? (
-                      <tr><td colSpan={3} className="muted">No sources found.</td></tr>
-                    ) : sources.map((s) => {
-                      const sourceId = String(s.source_id || "");
-                      return (
-                        <tr key={sourceId}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={selectedSourceIds.has(sourceId)}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setSelectedSourceIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (checked) next.add(sourceId);
-                                  else next.delete(sourceId);
-                                  return next;
-                                });
-                              }}
-                            />
+              <div className="panel" style={{ padding: 12 }}>
+                <div className="panel-label" style={{ marginBottom: 8 }}>
+                  SUBSCRIPTIONS
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Enabled</th>
+                        <th>Source</th>
+                        <th>Kind</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sources.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="muted">
+                            No sources found.
                           </td>
-                          <td>
-                            <div className="cell-wrap">
-                              <div className="cell-major">{s.name || sourceId}</div>
-                              <div className="cell-minor">{sourceId}</div>
-                            </div>
-                          </td>
-                          <td>{s.kind || "-"}</td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                      ) : (
+                        sources.map((s) => {
+                          const sourceId = String(s.source_id || "");
+                          return (
+                            <tr key={sourceId}>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedSourceIds.has(sourceId)}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setSelectedSourceIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (checked) next.add(sourceId);
+                                      else next.delete(sourceId);
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </td>
+                              <td>
+                                <div className="cell-wrap">
+                                  <div className="cell-major">
+                                    {s.name || sourceId}
+                                  </div>
+                                  <div className="cell-minor">{sourceId}</div>
+                                </div>
+                              </td>
+                              <td>{s.kind || "-"}</td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
 
-            <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div className="minor-text">Metadata JSON</div>
-              <textarea value={form.metadata_json} onChange={(e) => setForm((p) => ({ ...p, metadata_json: e.target.value }))} rows={4} />
-            </label>
+              <label
+                style={{ display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                <div className="minor-text">Metadata JSON</div>
+                <textarea
+                  value={form.metadata_json}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, metadata_json: e.target.value }))
+                  }
+                  rows={4}
+                />
+              </label>
 
-            <div className="panel" style={{ padding: 12 }}>
-              <div className="panel-label" style={{ marginBottom: 8 }}>API KEY</div>
-              <div className="minor-text" style={{ marginBottom: 10 }}>
-                Last4: {apiKeyLast4 ? `****${apiKeyLast4}` : "(not set)"}
+              <div className="panel" style={{ padding: 12 }}>
+                <div className="panel-label" style={{ marginBottom: 8 }}>
+                  API KEY
+                </div>
+                <div className="minor-text" style={{ marginBottom: 10 }}>
+                  Last4: {apiKeyLast4 ? `****${apiKeyLast4}` : "(not set)"}
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto auto auto auto",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  {updateKeyMode ? (
+                    <>
+                      <input
+                        type="text"
+                        value={manualKeyInput}
+                        onChange={(e) => setManualKeyInput(e.target.value)}
+                        placeholder="Enter new manual API key..."
+                      />
+                      <button
+                        className="primary-button"
+                        onClick={onSaveManualKey}
+                        disabled={saving}
+                      >
+                        SAVE
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => {
+                          setUpdateKeyMode(false);
+                          setManualKeyInput("");
+                        }}
+                      >
+                        CANCEL
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type={revealApiKey ? "text" : "password"}
+                        value={apiKeyPlain || ""}
+                        readOnly
+                        placeholder="No plaintext API key. Revoke to generate a new one."
+                      />
+                      <button
+                        className="secondary-button"
+                        onClick={() => setRevealApiKey((v) => !v)}
+                        disabled={!apiKeyPlain}
+                        title={revealApiKey ? "Hide" : "Show"}
+                      >
+                        {revealApiKey ? "👁️" : "👁️"}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={onCopyApiKey}
+                        disabled={saving || !apiKeyPlain}
+                        title={apiKeyPlain ? "Copy" : "No plaintext key."}
+                      >
+                        📋
+                      </button>
+                      {mode === "edit" ? (
+                        <>
+                          <button
+                            className="secondary-button"
+                            onClick={() => setUpdateKeyMode(true)}
+                            disabled={saving}
+                            title="Manual Update"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            className="danger-button"
+                            onClick={onRevokeAndRegenerateApiKey}
+                            disabled={saving}
+                          >
+                            REVOKE
+                          </button>
+                        </>
+                      ) : null}
+                    </>
+                  )}
+                </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto auto", gap: 8, alignItems: "center" }}>
-                {updateKeyMode ? (
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  className="primary-button"
+                  onClick={onSave}
+                  disabled={saving || loading}
+                >
+                  {mode === "create" ? "ADD" : "SAVE"}
+                </button>
+                {mode === "edit" ? (
                   <>
-                    <input
-                      type="text"
-                      value={manualKeyInput}
-                      onChange={(e) => setManualKeyInput(e.target.value)}
-                      placeholder="Enter new manual API key..."
-                    />
-                    <button className="primary-button" onClick={onSaveManualKey} disabled={saving}>SAVE</button>
-                    <button className="secondary-button" onClick={() => { setUpdateKeyMode(false); setManualKeyInput(""); }}>CANCEL</button>
-                  </>
-                ) : (
-                  <>
-                    <input
-                      type={revealApiKey ? "text" : "password"}
-                      value={apiKeyPlain || ""}
-                      readOnly
-                      placeholder="No plaintext API key. Revoke to generate a new one."
-                    />
-                    <button className="secondary-button" onClick={() => setRevealApiKey((v) => !v)} disabled={!apiKeyPlain} title={revealApiKey ? "Hide" : "Show"}>
-                      {revealApiKey ? "👁️" : "👁️"}
-                    </button>
                     <button
                       className="secondary-button"
-                      onClick={onCopyApiKey}
-                      disabled={saving || !apiKeyPlain}
-                      title={apiKeyPlain ? "Copy" : "No plaintext key."}
+                      onClick={onToggleStatus}
+                      disabled={saving}
                     >
-                      📋
+                      {String(form.status || "").toUpperCase() === "ACTIVE"
+                        ? "DEACTIVATE"
+                        : "ACTIVATE"}
                     </button>
-                    {mode === "edit" ? (
-                      <>
-                        <button className="secondary-button" onClick={() => setUpdateKeyMode(true)} disabled={saving} title="Manual Update">✏️</button>
-                        <button className="danger-button" onClick={onRevokeAndRegenerateApiKey} disabled={saving}>REVOKE</button>
-                      </>
-                    ) : null}
+                    <button
+                      className="danger-button"
+                      onClick={onArchive}
+                      disabled={
+                        saving ||
+                        String(form.status || "").toUpperCase() === "ARCHIVED"
+                      }
+                    >
+                      ARCHIVE
+                    </button>
                   </>
-                )}
+                ) : null}
               </div>
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              <button className="primary-button" onClick={onSave} disabled={saving || loading}>{mode === "create" ? "ADD" : "SAVE"}</button>
-              {mode === "edit" ? (
-                <>
-                  <button className="secondary-button" onClick={onToggleStatus} disabled={saving}>{String(form.status || "").toUpperCase() === "ACTIVE" ? "DEACTIVATE" : "ACTIVATE"}</button>
-                  <button className="danger-button" onClick={onArchive} disabled={saving || String(form.status || "").toUpperCase() === "ARCHIVED"}>ARCHIVE</button>
-                </>
-              ) : null}
-            </div>
             </div>
           )}
         </div>

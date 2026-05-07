@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 
@@ -23,6 +24,23 @@ function getEventPayload(ev) {
 }
 
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
+const EVENT_TYPE_BUTTONS = [
+  "FETCH_API",
+  "CRON_MD",
+  "CHART_API",
+  "ANALYZE",
+  "CACHE",
+  "DB",
+  "ORDER",
+  "SYNC",
+  "ERROR",
+  "EA",
+  "SIGNAL",
+  "TRADE",
+  "TRADE_FILLED",
+  "BROKER_SYNC",
+];
+
 const BULK_ACTIONS = ["", "Delete All Log"];
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
@@ -36,6 +54,8 @@ const RANGE_OPTIONS = [
 ];
 
 export default function LogsPage() {
+  const { logId } = useParams();
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [symbols, setSymbols] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -50,6 +70,7 @@ export default function LogsPage() {
     range: "all",
   });
   const [bulkAction, setBulkAction] = useState("");
+  const [initialAutoSelectDone, setInitialAutoSelectDone] = useState(false);
 
   const query = useMemo(
     () => ({
@@ -101,10 +122,24 @@ export default function LogsPage() {
     }
   }
 
+  // Auto-select the log entry when logId param is provided after data loads
+  useEffect(() => {
+    if (logId && events.length > 0 && !initialAutoSelectDone) {
+      const match = events.find(
+        (ev) => String(getEventId(ev)) === String(logId),
+      );
+      if (match) {
+        setSelectedEvent(match);
+        setInitialAutoSelectDone(true);
+      }
+    }
+  }, [logId, events, initialAutoSelectDone]);
+
   useEffect(() => {
     loadSymbols();
   }, []);
   useEffect(() => {
+    setInitialAutoSelectDone(false);
     loadEvents();
   }, [query]);
 
@@ -215,6 +250,41 @@ export default function LogsPage() {
           </select>
         </div>
 
+        <div
+          className="toolbar-group toolbar-search-filter"
+          style={{ flexWrap: "wrap" }}
+        >
+          <span
+            className="minor-text"
+            style={{ fontWeight: 600, fontSize: 10 }}
+          >
+            TYPE:
+          </span>
+          <button
+            className={`secondary-button ${!filter.type ? "active" : ""}`}
+            style={{ fontSize: 10, padding: "2px 8px" }}
+            onClick={() => {
+              setFilter((f) => ({ ...f, type: "" }));
+              setPage(0);
+            }}
+          >
+            ALL
+          </button>
+          {EVENT_TYPE_BUTTONS.map((et) => (
+            <button
+              key={et}
+              className={`secondary-button ${filter.type === et ? "active" : ""}`}
+              style={{ fontSize: 10, padding: "2px 8px" }}
+              onClick={() => {
+                setFilter((f) => ({ ...f, type: f.type === et ? "" : et }));
+                setPage(0);
+              }}
+            >
+              {et}
+            </button>
+          ))}
+        </div>
+
         <div className="toolbar-group toolbar-bulk-action">
           <select
             value={bulkAction}
@@ -261,6 +331,7 @@ export default function LogsPage() {
                     }
                     onClick={() => {
                       setSelectedEvent(ev);
+                      navigate(`/system/logs/${getEventId(ev)}`);
                     }}
                   >
                     <td>

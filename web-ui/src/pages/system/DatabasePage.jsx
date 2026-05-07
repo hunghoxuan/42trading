@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 
 import { showDateTime } from "../../utils/format";
@@ -225,8 +226,10 @@ function DynamicForm({
 }
 
 export default function DatabasePage() {
+  const { tableName } = useParams();
+  const navigate = useNavigate();
   const [tables, setTables] = useState([]);
-  const [selectedTable, setSelectedTable] = useState("signals");
+  const [selectedTable, setSelectedTable] = useState(tableName || "signals");
   const [rows, setRows] = useState([]);
   const [schema, setSchema] = useState([]);
   const [showSchema, setShowSchema] = useState(false);
@@ -290,6 +293,15 @@ export default function DatabasePage() {
       inFlightRef.current = false;
     }
   }
+
+  useEffect(() => {
+    if (tableName && tableName !== selectedTable) {
+      setSelectedTable(tableName);
+      setFilter((prev) => ({ ...prev, page: 1 }));
+      setSelectedRow(null);
+      setCreateMode(false);
+    }
+  }, [tableName]);
 
   useEffect(() => {
     loadTables();
@@ -609,6 +621,7 @@ export default function DatabasePage() {
                         setCreateMode(false);
                         setEditMode(false);
                         setSelectedRow(row);
+                        navigate(`/system/db/${selectedTable}`);
                       }}
                       className={selectedRow === row ? "active" : ""}
                     >

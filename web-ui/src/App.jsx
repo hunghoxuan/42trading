@@ -365,10 +365,30 @@ export default function App() {
               }
             />
             <Route
+              path="/system/logs/:logId"
+              element={
+                canAccessSystemPages ? (
+                  <LogsPage />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
               path="/system/logs"
               element={
                 canAccessSystemPages ? (
                   <LogsPage />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
+              path="/system/db/:tableName"
+              element={
+                canAccessSystemPages ? (
+                  <DatabasePage />
                 ) : (
                   <Navigate to="/dashboard" replace />
                 )
@@ -385,6 +405,16 @@ export default function App() {
               }
             />
             <Route
+              path="/system/users/:userId"
+              element={
+                canAccessSystemPages ? (
+                  <UsersPage authUser={authUser} />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
               path="/system/users"
               element={
                 canAccessSystemPages ? (
@@ -395,10 +425,30 @@ export default function App() {
               }
             />
             <Route
+              path="/system/accounts/:accountId"
+              element={
+                canAccessSystemPages ? (
+                  <AccountsV2Page />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
               path="/system/accounts"
               element={
                 canAccessSystemPages ? (
                   <AccountsV2Page />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
+              path="/system/sources/:sourceId"
+              element={
+                canAccessSystemPages ? (
+                  <SourcesPage />
                 ) : (
                   <Navigate to="/dashboard" replace />
                 )

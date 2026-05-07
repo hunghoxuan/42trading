@@ -340,7 +340,13 @@ class NotificationManager {
 
     // 2) SSE delivery (toast / ticker / sound)
     // Force flags override settings (used by test button)
-    const hasSSE = settings.toast || settings.ticker || settings.sound || payload._force_toast || payload._force_ticker || payload._force_sound;
+    const hasSSE =
+      settings.toast ||
+      settings.ticker ||
+      settings.sound ||
+      payload._force_toast ||
+      payload._force_ticker ||
+      payload._force_sound;
     if (hasSSE) {
       merged.toast = payload._force_toast ? true : settings.toast;
       merged.ticker = payload._force_ticker ? true : settings.ticker;
@@ -8132,7 +8138,21 @@ async function _mt5InitBackendInternal() {
         page_id: "trades",
         event: "broker_sync",
         data: tradeUpdates,
-        message: `Broker sync: ${matched} updated, ${synced} matched, ${closed_by_snapshot || 0} closed`,
+        message: (() => {
+          const changedSymbols = [
+            ...new Set(
+              (tradeUpdates || []).map((u) => u.symbol).filter(Boolean),
+            ),
+          ].slice(0, 3);
+          const symbolSummary = changedSymbols.length
+            ? changedSymbols.join(", ")
+            : "none";
+          const extra =
+            (tradeUpdates || []).length > 3
+              ? ` +${(tradeUpdates || []).length - 3} more`
+              : "";
+          return `BROKER SYNC: ${symbolSummary}${extra} (${matched} updated)`;
+        })(),
         type: "info",
         need_refresh: false,
         comp_refresh: matched > 0,
