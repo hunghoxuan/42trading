@@ -5,9 +5,8 @@ import { useRealtimeData } from "../../hooks/useRealtimeData";
 
 const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import {
-  AuditCell,
+  PositionAuditCell,
   StatusPnlCell,
-  StrategyTfCell,
   SymbolEntryCell,
 } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
@@ -987,12 +986,6 @@ export default function TradesPage() {
                     POSITION | INFO | Status{sortMarker("strategy")}
                   </th>
                   <th
-                    onClick={() => toggleSort("audit")}
-                    style={{ cursor: "pointer" }}
-                  >
-                    AUDIT{sortMarker("audit")}
-                  </th>
-                  <th
                     onClick={() => toggleSort("pnl")}
                     style={{ cursor: "pointer" }}
                   >
@@ -1003,13 +996,13 @@ export default function TradesPage() {
               <tbody>
                 {loading && rows.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="loading">
+                    <td colSpan="4" className="loading">
                       Loading trades...
                     </td>
                   </tr>
                 ) : sortedRows.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="empty-state">
+                    <td colSpan="4" className="empty-state">
                       No trades found.
                     </td>
                   </tr>
@@ -1090,17 +1083,12 @@ export default function TradesPage() {
                           />
                         </td>
                         <td>
-                          <StrategyTfCell
+                          <PositionAuditCell
+                            source={displaySource(t)}
                             strategy={strategyLabel}
-                            entryModel={t.entry_model || "-"}
-                            tf={t.signal_tf || t.chart_tf}
-                          />
-                        </td>
-                        <td>
-                          <AuditCell
                             timeText={timeValue}
                             sid={String(t.sid || "-")}
-                            brokerTradeId={brokerTicketOf(t)}
+                            brokerId={brokerTicketOf(t)}
                           />
                         </td>
                         <td>

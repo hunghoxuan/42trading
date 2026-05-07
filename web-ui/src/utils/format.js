@@ -111,14 +111,13 @@ export function showDateTime(val) {
   const nowMs = Date.now();
   const diffMs = nowMs - date.getTime();
   if (diffMs >= 0 && diffMs < 60 * 60 * 1000) {
-    const mins = Math.max(1, Math.floor(diffMs / (60 * 1000)));
-    return `${mins} mins ago`;
+    const mins = Math.max(0, Math.floor(diffMs / (60 * 1000)));
+    return `${mins}'`;
   }
 
   const tzConfig = getSafeTimezoneConfig();
 
   try {
-    // Use Intl.DateTimeFormat to convert the date to the desired timezone
     const fmt = new Intl.DateTimeFormat('en-GB', {
       timeZone: tzConfig.intlTimeZone,
       year: 'numeric',
@@ -126,7 +125,6 @@ export function showDateTime(val) {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit',
       hour12: false
     });
 
@@ -139,7 +137,6 @@ export function showDateTime(val) {
     const hh = getPart('hour');
     const mm = getPart('minute');
 
-    // For relative date comparison (Today/Yesterday), we also need to get "now" in that same timezone
     const now = new Date();
     const fmtShort = new Intl.DateTimeFormat('en-GB', {
       timeZone: tzConfig.intlTimeZone,
@@ -149,29 +146,21 @@ export function showDateTime(val) {
     });
     
     const nowParts = fmtShort.formatToParts(now);
-    const todayStr = `${nowParts.find(p => p.type === 'day').value}.${nowParts.find(p => p.type === 'month').value}.${nowParts.find(p => p.type === 'year').value}`;
+    const todayDay = nowParts.find(p => p.type === 'day').value;
+    const todayMonth = nowParts.find(p => p.type === 'month').value;
+    const todayYear = nowParts.find(p => p.type === 'year').value;
     
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const yestParts = fmtShort.formatToParts(yesterday);
-    const yesterdayStr = `${yestParts.find(p => p.type === 'day').value}.${yestParts.find(p => p.type === 'month').value}.${yestParts.find(p => p.type === 'year').value}`;
+    const isToday = (d === todayDay && m === todayMonth && y === todayYear);
 
-    const targetStr = `${d}.${m}.${y}`;
-
-    let datePart = "";
-    if (targetStr === todayStr) {
-      datePart = "Today";
-    } else if (targetStr === yesterdayStr) {
-      datePart = "Yesterday";
-    } else if (y === nowParts.find(p => p.type === 'year').value) {
-      datePart = `${d}.${m}`;
+    if (isToday) {
+      return `${hh}:${mm}`;
+    } else if (y === todayYear) {
+      return `${d}.${m} ${hh}:${mm}`;
     } else {
-      datePart = `${d}.${m}.${y}`;
+      return `${d}.${m}.${y} ${hh}:${mm}`;
     }
-
-    return `${datePart} ${hh}:${mm}`;
   } catch (err) {
     console.error("Format error with timezone:", tzConfig.storageValue, err);
-    // Final fallback to basic UTC if formatting still fails.
     return date.toISOString().replace('T', ' ').substring(0, 16);
   }
 }

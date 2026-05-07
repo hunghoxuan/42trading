@@ -49,21 +49,20 @@ export function SymbolEntryCell({
   );
 }
 
-export function StrategyTfCell({ strategy = "-", entryModel = "-", tf = "-" }) {
-  const displayStrategy = strategy === "-" ? entryModel : `${strategy} | ${entryModel}`;
+export function PositionAuditCell({
+  source = "-",
+  strategy = "-",
+  timeText = "-",
+  sid = "-",
+  brokerId = "-",
+}) {
+  const major = [source, strategy, timeText].filter((x) => x && x !== "-").join(" | ");
   return (
     <div className="cell-wrap">
-      <div className="cell-major">{displayStrategy}</div>
-      <div className="cell-minor">{formatTf(tf)}</div>
-    </div>
-  );
-}
-
-export function AuditCell({ timeText = "-", sid = "-", brokerTradeId = "-" }) {
-  return (
-    <div className="cell-wrap">
-      <div className="cell-major">{timeText}</div>
-      <div className="cell-minor">{sid} | {brokerTradeId}</div>
+      <div className="cell-major">{major || "-"}</div>
+      <div className="cell-minor">
+        {sid} {brokerId && brokerId !== "-" ? `| ${brokerId}` : ""}
+      </div>
     </div>
   );
 }

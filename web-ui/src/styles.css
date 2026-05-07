@@ -268,16 +268,14 @@ body {
     align-items: center;
 }
 .cell-major {
-    font-size: 14px;
-    font-weight: 400 !important;
+    font-size: 12px;
     color: var(--text);
     line-height: 1.4;
 }
 .cell-minor,
 .minor-text {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--muted);
-    font-weight: 400;
     margin-top: 1px;
 }
 

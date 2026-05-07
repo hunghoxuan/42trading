@@ -3,7 +3,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 
 const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
-import { AuditCell, StatusPnlCell, StrategyTfCell, SymbolEntryCell } from "../../components/TradeSignalListCells";
+import {
+  PositionAuditCell,
+  StatusPnlCell,
+  SymbolEntryCell,
+} from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import { asNum, buildHeaderMeta, renderHistoryItem } from "../../utils/signalDetailUtils";
 
@@ -653,18 +657,20 @@ export default function SignalsPage() {
                     />
                   </th>
                   <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
-                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>STRATEGY | MODEL | TF{sortMarker("strategy")}</th>
-                  <th onClick={() => toggleSort("audit")} style={{ cursor: "pointer" }}>AUDIT{sortMarker("audit")}</th>
+                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>POSITION | INFO | Status{sortMarker("strategy")}</th>
                   <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATE{sortMarker("status")}</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map(t => {
+                {sortedRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="empty-state">No signals found.</td>
+                  </tr>
+                ) : sortedRows.map(t => {
                   const status = statusUi(t.status);
                   const sideValue = String(t.action || t.side || '-').toUpperCase();
                   const sideCls = sideValue === 'BUY' ? 'side-buy' : 'side-sell';
                   const sourceLabel = displaySource(t);
-                  const sourceId = String(t.source_id || "-");
                   const signalShort = String(t.sid || t.sid || "").slice(-12) || "-";
                   const strategyLabel = compactStrategy(t);
 
@@ -675,7 +681,6 @@ export default function SignalsPage() {
                       onClick={() => {
                         const ref = signalRefOf(t);
                         if (signalRefOf(selectedSignal) === ref) {
-                          // Deselect — back to list
                           setSelectedSignal(null);
                           selectedSignalIdRef.current = "";
                           setCreateMode(false);
@@ -716,8 +721,15 @@ export default function SignalsPage() {
                           status={t.status}
                         />
                       </td>
-                      <td><StrategyTfCell strategy={strategyLabel} entryModel={t.entry_model || "-"} tf={t.signal_tf} /></td>
-                      <td><AuditCell timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)} sid={signalShort} brokerTradeId={String(t?.broker_trade_id || "-")} /></td>
+                      <td>
+                        <PositionAuditCell
+                          source={sourceLabel}
+                          strategy={strategyLabel}
+                          timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)}
+                          sid={signalShort}
+                          brokerId={String(t?.broker_trade_id || "-")}
+                        />
+                      </td>
                       <td>
                         <div className="cell-wrap">
                           <StatusPnlCell
