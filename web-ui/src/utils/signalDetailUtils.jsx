@@ -198,38 +198,27 @@ function planPrimaryTp(plan = {}) {
   return null;
 }
 
-/**
- * Calculate weighted average RR from partial_tps when available.
- */
-export function calcWeightedRr(s) {
-  if (!s) return null;
-  const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
-  const plan = raw?.trade_plan || raw?.tradePlan || {};
-  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : (Array.isArray(s?.partial_tps) ? s.partial_tps : []);
-  if (!partials.length) return null;
-  let totalWeights = 0;
-  let weightedRr = 0;
-  for (const p of partials) {
-    const pRr = p && typeof p === "object" ? asNum(p.rr) ?? asNum(p.risk_reward) : null;
-    const pPct = p && typeof p === "object" ? asNum(p.size_pct) : null;
-    if (pRr != null && pPct != null && pPct > 0) {
-      weightedRr += pRr * pPct;
-      totalWeights += pPct;
-    }
-  }
-  if (totalWeights <= 0) return null;
-  return Number((weightedRr / totalWeights).toFixed(2));
-}
-
 export function calcRrFromSignal(s) {
-  // First try weighted average from partial_tps
-  const weighted = calcWeightedRr(s);
-  if (weighted != null) return weighted;
   const entry = asNum(
     s?.entry || s?.target_price || s?.entry_price || s?.entry_price_raw,
   );
   const sl = asNum(s?.sl || s?.sl_price || s?.sl_price_raw);
-  const tp = asNum(s?.tp || s?.tp_price || s?.tp_price_raw);
+  // Use highest TP from partials if available, else signal.tp
+  const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
+  const plan = raw?.trade_plan || raw?.tradePlan || {};
+  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : (Array.isArray(s?.partial_tps) ? s.partial_tps : []);
+  let tp = asNum(s?.tp || s?.tp_price || s?.tp_price_raw);
+  // Override with highest partial TP if higher
+  if (partials.length > 0) {
+    let highestPartial = tp;
+    for (const p of partials) {
+      const pPrice = p && typeof p === "object" ? asNum(p.price) : null;
+      if (pPrice != null && (highestPartial == null || pPrice > highestPartial)) {
+        highestPartial = pPrice;
+      }
+    }
+    if (highestPartial != null) tp = highestPartial;
+  }
   if (entry == null || sl == null || tp == null) return null;
   const risk = Math.abs(entry - sl);
   const reward = Math.abs(tp - entry);

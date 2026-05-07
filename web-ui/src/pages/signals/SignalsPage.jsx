@@ -81,25 +81,23 @@ function statusUi(statusRaw) {
 }
 
 function calcRrFromSignal(s) {
-  // Check partial_tps for weighted average first
+  const entry = asNum(s?.entry || s?.target_price || s?.entry_price);
+  const sl = asNum(s?.sl || s?.sl_price);
+  // Use highest TP from partials if available, else signal.tp
   const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
   const plan = raw?.trade_plan || raw?.tradePlan || {};
   const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
+  let tp = asNum(s?.tp || s?.tp_price);
   if (partials.length > 0) {
-    let total = 0, weighted = 0;
+    let highestPartial = tp;
     for (const p of partials) {
-      const pRr = p && typeof p === "object" ? asNum(p.rr) ?? asNum(p.risk_reward) : null;
-      const pPct = p && typeof p === "object" ? asNum(p.size_pct) : null;
-      if (pRr != null && pPct != null && pPct > 0) {
-        weighted += pRr * pPct;
-        total += pPct;
+      const pPrice = p && typeof p === "object" ? asNum(p.price) : null;
+      if (pPrice != null && (highestPartial == null || pPrice > highestPartial)) {
+        highestPartial = pPrice;
       }
     }
-    if (total > 0) return Number((weighted / total).toFixed(2));
+    if (highestPartial != null) tp = highestPartial;
   }
-  const entry = asNum(s?.entry || s?.target_price || s?.entry_price);
-  const sl = asNum(s?.sl || s?.sl_price);
-  const tp = asNum(s?.tp || s?.tp_price);
   if (entry == null || sl == null || tp == null) return null;
   const risk = Math.abs(entry - sl);
   const reward = Math.abs(tp - entry);
