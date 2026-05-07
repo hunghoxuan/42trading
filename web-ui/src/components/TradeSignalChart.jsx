@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 import { asNumValue, showDateTime } from "../utils/format";
+import { chartFetchManager } from "../services/chartFetchManager";
 
 const parsePosNum = (v) => {
   const n = Number(v);
@@ -377,6 +378,15 @@ export default function TradeSignalChart({
             candles = snapshotBars;
             setDataSource("snapshot");
           } else {
+            // Check in-memory cache first (populated by chartFetchManager across page loads)
+            const cachedEntry = chartFetchManager.get(symbol, interval);
+            if (cachedEntry?.bars && cachedEntry.bars.length > 0) {
+              candles = cachedEntry.bars;
+              snapshot = { ...snapshot, bar_start: cachedEntry.bar_start, bar_end: cachedEntry.bar_end };
+              snapshotBars = candles;
+              hasSnapshotBars = true;
+              setDataSource("cache");
+            } else {
             // Try Twelve Data on-demand (for old trades without stored snapshot)
             try {
               // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
@@ -413,6 +423,7 @@ export default function TradeSignalChart({
             } catch {
               // Twelve fetch failed
             }
+            } // end cache-check else
           }
 
           if (!candles.length) {

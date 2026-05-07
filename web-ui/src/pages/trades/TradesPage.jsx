@@ -984,7 +984,7 @@ export default function TradesPage() {
                     onClick={() => toggleSort("strategy")}
                     style={{ cursor: "pointer" }}
                   >
-                    STRATEGY | MODEL | TF{sortMarker("strategy")}
+                    POSITION | INFO | Status{sortMarker("strategy")}
                   </th>
                   <th
                     onClick={() => toggleSort("audit")}
@@ -1141,6 +1141,8 @@ export default function TradesPage() {
                               asNum(t.metadata?.broker_data?.pips) ??
                               "-"
                             }
+                            tpPnl={asNum(t.metadata?.broker_data?.tp_pnl) ?? asNum(t.tp_pnl)}
+                            slPnl={asNum(t.metadata?.broker_data?.sl_pnl) ?? asNum(t.sl_pnl)}
                           />
                         </td>
                       </tr>

@@ -50,9 +50,10 @@ export function SymbolEntryCell({
 }
 
 export function StrategyTfCell({ strategy = "-", entryModel = "-", tf = "-" }) {
+  const displayStrategy = strategy === "-" ? entryModel : `${strategy} | ${entryModel}`;
   return (
     <div className="cell-wrap">
-      <div className="cell-major">{strategy} | {entryModel}</div>
+      <div className="cell-major">{displayStrategy}</div>
       <div className="cell-minor">{formatTf(tf)}</div>
     </div>
   );
@@ -62,7 +63,7 @@ export function AuditCell({ timeText = "-", sid = "-", brokerTradeId = "-" }) {
   return (
     <div className="cell-wrap">
       <div className="cell-major">{timeText}</div>
-      <div className="cell-minor">- | {sid} | {brokerTradeId}</div>
+      <div className="cell-minor">{sid} | {brokerTradeId}</div>
     </div>
   );
 }
@@ -75,6 +76,8 @@ export function StatusPnlCell({
   brokerLots = null,
   brokerPips = null,
   hideStatus = false,
+  tpPnl = null,
+  slPnl = null,
 }) {
   const pnlNum = num(pnl);
   return (
@@ -88,13 +91,15 @@ export function StatusPnlCell({
         ) : null}
         {brokerPips != null && brokerPips !== 0 ? (
           <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6, marginTop: 2 }}>
-            {num(brokerPips).toFixed(1)} bips
+            {Math.round(num(brokerPips))} pips
           </div>
         ) : null}
       </div>
       {showFilledDetails ? (
-        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7 }}>
-          {brokerVolume ?? "-"} | {brokerLots ?? "-"} lots
+        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7, marginTop: 2 }}>
+          {tpPnl != null ? <span className="money-pos" style={{ fontWeight: 600 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
+          {" "}/{" "}
+          {slPnl != null ? <span className="money-neg" style={{ fontWeight: 600 }}>-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
         </div>
       ) : null}
     </div>
