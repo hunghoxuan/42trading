@@ -176,6 +176,211 @@ function emitNotification(payload) {
   }
 }
 
+// --- NotificationManager (unified notification routing) ---
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  TRADE_ACTIVITY: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    sound: "NEW_SIGNAL",
+  },
+  SIGNAL_ACTIVITY: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    sound: "NEW_SIGNAL",
+  },
+  BROKER_POLL: {
+    toast: false,
+    console_log: false,
+    ticker: false,
+    db_log: true,
+  },
+  BROKER_SYNC: { toast: false, console_log: false, ticker: true, db_log: true },
+  SYSTEM_EVENT: {
+    toast: false,
+    console_log: true,
+    ticker: false,
+    db_log: true,
+  },
+  REMOTE_API_CALL: {
+    toast: false,
+    console_log: false,
+    ticker: false,
+    db_log: true,
+  },
+};
+
+class NotificationManager {
+  constructor() {
+    this.settingsCache = new Map();
+    this.queue = [];
+    this._pool = null;
+    this._flushTimer = null;
+    this._flushPromise = null;
+    this._settingsLoaded = false;
+  }
+
+  /** Call after DB pool is ready, e.g. from _mt5InitBackendInternal */
+  async init(poolRef) {
+    this._pool = poolRef;
+    await this.loadSettings();
+    if (this._flushTimer) clearInterval(this._flushTimer);
+    this._flushTimer = setInterval(() => this.flushQueue(), 1000);
+    if (this._flushTimer.unref) this._flushTimer.unref();
+  }
+
+  /** Load notification_config rows from user_settings into cache */
+  async loadSettings() {
+    if (!this._pool) return;
+    try {
+      const { rows } = await this._pool.query(
+        `SELECT name, data FROM user_settings WHERE type = 'notification_config'`,
+      );
+      this.settingsCache.clear();
+      for (const row of rows) {
+        const eventType = row.name;
+        const settings = row.data;
+        if (eventType && settings && typeof settings === "object") {
+          this.settingsCache.set(eventType, settings);
+        }
+      }
+      this._settingsLoaded = true;
+    } catch (e) {
+      console.warn("[NotificationManager] loadSettings error:", e.message);
+      this._settingsLoaded = true;
+    }
+  }
+
+  /** Reload settings from DB (called externally after settings change) */
+  async reloadSettings() {
+    await this.loadSettings();
+  }
+
+  /** Get effective settings for an event type (merged with defaults) */
+  _getSettings(eventType) {
+    const defaults = DEFAULT_NOTIFICATION_SETTINGS[eventType] || {};
+    const custom = this.settingsCache.get(eventType) || {};
+    return { ...defaults, ...custom };
+  }
+
+  /**
+   * Route a notification to all enabled channels based on settings for eventType.
+   *
+   * @param {string} eventType - One of TRADE_ACTIVITY, SIGNAL_ACTIVITY, BROKER_POLL, BROKER_SYNC, SYSTEM_EVENT, REMOTE_API_CALL
+   * @param {string} subType - Sub-type like "added", "updated", "deleted", or free-form
+   * @param {object} payload - Event payload (user_id, message, type, notification, need_refresh, comp_refresh, action, position, sound, event, etc.)
+   */
+  handle(eventType, subType, payload = {}) {
+    const settings = this._getSettings(eventType);
+    const evName =
+      payload.event || `${eventType}${subType ? "_" + subType : ""}`;
+
+    const merged = {
+      ...payload,
+      event: evName,
+      console_log: settings.console_log,
+      ticker: settings.ticker,
+      sound: payload.sound || settings.sound || null,
+      notification: payload.notification !== false,
+    };
+
+    // 1) console_log channel
+    if (settings.console_log) {
+      console.log(
+        `[NOTIFICATION][${eventType}] ${merged.message || ""}`,
+        JSON.stringify(merged),
+      );
+    }
+
+    // 2) SSE delivery (toast / ticker / sound)
+    const hasSSE = settings.toast || settings.ticker || settings.sound;
+    if (hasSSE) {
+      merged.toast = settings.toast;
+      merged.ticker = settings.ticker;
+      merged.sound = merged.sound || settings.sound || null;
+      try {
+        emitNotification(merged);
+      } catch (e) {
+        console.warn(
+          "[NotificationManager] emitNotification error:",
+          e.message,
+        );
+      }
+    }
+
+    // 3) db_log channel → enqueue for batch INSERT
+    if (settings.db_log) {
+      const userId = payload.user_id || null;
+      this.queue.push({
+        object_id: null,
+        object_table: eventType,
+        symbol: null,
+        event_type: subType || eventType,
+        metadata: JSON.stringify({
+          event: eventType,
+          sub_type: subType,
+          message: merged.message || "",
+          ...payload,
+        }),
+        user_id: userId,
+      });
+    }
+  }
+
+  /**
+   * Flush queued db_log entries to logs table in a single batch INSERT.
+   * Called automatically every 1s via setInterval.
+   */
+  async flushQueue() {
+    if (!this.queue.length) return;
+    if (this._flushPromise) return;
+
+    const batch = this.queue.splice(0, this.queue.length);
+    this._flushPromise = (async () => {
+      if (!this._pool) {
+        console.warn(
+          "[NotificationManager] No pool available for db_log flush",
+        );
+        return;
+      }
+      try {
+        const placeholders = [];
+        const values = [];
+        let idx = 1;
+        for (const row of batch) {
+          placeholders.push(
+            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW())`,
+          );
+          values.push(
+            row.object_id,
+            row.object_table,
+            row.symbol,
+            row.event_type,
+            row.metadata,
+            row.user_id,
+          );
+          idx += 6;
+        }
+        await this._pool.query(
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at) VALUES ${placeholders.join(", ")}`,
+          values,
+        );
+      } catch (e) {
+        console.warn("[NotificationManager] db_log flush error:", e.message);
+        // Re-queue on failure to avoid data loss
+        this.queue.unshift(...batch);
+      } finally {
+        this._flushPromise = null;
+      }
+    })();
+  }
+}
+
+const notificationManager = new NotificationManager();
+
 // Legacy: keep NOTIFICATION_PULSE for backward compat during migration
 const NOTIFICATION_PULSE = { global: 0, user: {} };
 function bumpPulse(userId = null, action = "updated", itemType = "general") {
@@ -187,22 +392,25 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
     const typeKey = `${itemType}_${action}`;
     NOTIFICATION_PULSE.user[userId][typeKey] = Date.now();
   }
-  // Also emit SSE
-  const evType =
+  // Also emit SSE via NotificationManager
+  const eventType =
     itemType === "trade"
-      ? "trade_added"
+      ? "TRADE_ACTIVITY"
       : itemType === "signal"
-        ? "signal_added"
-        : "system_event";
-  emitNotification({
+        ? "SIGNAL_ACTIVITY"
+        : "SYSTEM_EVENT";
+  notificationManager.handle(eventType, action, {
     user_id: userId || null,
     page: null,
-    event: evType,
+    event:
+      itemType === "trade"
+        ? "trade_added"
+        : itemType === "signal"
+          ? "signal_added"
+          : "system_event",
     message: `${itemType} ${action}`,
     type: "info",
     notification: true,
-    console_log: false,
-    ticker: true,
     need_refresh: false,
     comp_refresh: false,
     action: null,
@@ -6510,6 +6718,10 @@ async function _mt5InitBackendInternal() {
   }
   await loadLoggingConfig();
 
+  // Initialize NotificationManager (loads notification_config from user_settings)
+  await notificationManager.init(pool);
+  global.__notificationManager = notificationManager;
+
   const storage = "postgres";
   MT5_BACKEND = {
     storage,
@@ -6581,7 +6793,7 @@ async function _mt5InitBackendInternal() {
           sid, created_at, user_id, source, source_id, symbol, side, order_type, entry, sl, tp,
           strategy, entry_model, signal_tf, chart_tf, rr_planned, risk_money_planned, risk_pct_planned,
           note, rejection_reason, raw_json, status,
-          profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition, 
+          profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition,
           risk_management, skip_recommendation, confluence_checklist, be_trigger
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb,$32)
         ON CONFLICT (sid) DO NOTHING
@@ -6618,7 +6830,9 @@ async function _mt5InitBackendInternal() {
           signal.entry_condition || null,
           signal.risk_management || null,
           signal.skip_recommendation || null,
-          signal.confluence_checklist ? JSON.stringify(signal.confluence_checklist) : null,
+          signal.confluence_checklist
+            ? JSON.stringify(signal.confluence_checklist)
+            : null,
           signal.be_trigger || null,
         ],
       );
@@ -6927,7 +7141,9 @@ async function _mt5InitBackendInternal() {
               payload.entry_condition || null,
               payload.risk_management || null,
               payload.skip_recommendation || null,
-              payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+              payload.confluence_checklist
+                ? JSON.stringify(payload.confluence_checklist)
+                : null,
               payload.be_trigger || null,
             ],
           );
@@ -7563,8 +7779,8 @@ async function _mt5InitBackendInternal() {
               it.volume || 0,
               it.sid || "",
               it.margin || 0,
-              it.tp_pnl || 0,
-              it.sl_pnl || 0,
+              it.tp_pnl || it.pnl_tp || 0,
+              it.sl_pnl || it.pnl_sl || 0,
             ],
           );
         }
@@ -7635,8 +7851,8 @@ async function _mt5InitBackendInternal() {
                 it.volume || 0,
                 ticketCandidates,
                 it.margin || 0,
-                it.tp_pnl || 0,
-                it.sl_pnl || 0,
+                it.tp_pnl || it.pnl_tp || 0,
+                it.sl_pnl || it.pnl_sl || 0,
               ],
             );
           }
@@ -7665,8 +7881,8 @@ async function _mt5InitBackendInternal() {
                 broker_swap = $15,
                 broker_volume = $16,
                 broker_margin = $17,
-                broker_tp_pnl = $18,
-                broker_sl_pnl = $19,
+                broker_tp_pnl = $19,
+                broker_sl_pnl = $20,
                 order_type = COALESCE($11, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
@@ -7912,15 +8128,14 @@ async function _mt5InitBackendInternal() {
         });
       }
 
-      // Emit SSE — generic pattern: page_id + data
-      emitNotification({
+      // Emit SSE via NotificationManager
+      notificationManager.handle("BROKER_SYNC", "sync", {
         user_id: uid,
         page_id: "trades",
         event: "broker_sync",
         data: tradeUpdates,
         message: `Broker sync: ${matched} updated, ${synced} matched, ${closed_by_snapshot || 0} closed`,
         type: "info",
-        notification_settings: { toast: false, ticker: true, sound: false },
         need_refresh: false,
         comp_refresh: matched > 0,
       });
@@ -17555,15 +17770,13 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       if (!payload.event)
         return json(res, 400, { ok: false, error: "event is required" });
-      emitNotification({
+      notificationManager.handle("REMOTE_API_CALL", payload.event, {
         user_id: payload.user_id || null,
         page: payload.page || null,
         event: payload.event,
         message: payload.message || "",
         type: payload.type || "info",
         notification: payload.notification !== false,
-        console_log: payload.console_log || false,
-        ticker: payload.ticker !== false,
         need_refresh: payload.need_refresh || false,
         comp_refresh: payload.comp_refresh || false,
         action: payload.action || null,
@@ -17581,24 +17794,32 @@ const appHandler = async (req, res) => {
     try {
       const sess = getUiSessionFromReq(req);
       const payload = await readJson(req).catch(() => ({}));
-      const ev = {
-        user_id: sess.user_id,
-        page: payload.page || null,
-        event: payload.event || "system_event",
-        message:
-          payload.message || "🧪 Test notification — all channels firing",
-        type: payload.type || "info",
-        notification: payload.notification !== false,
-        console_log: payload.console_log !== false,
-        ticker: payload.ticker !== false,
-        need_refresh: payload.need_refresh || false,
-        comp_refresh: payload.comp_refresh || false,
-        action: payload.action || null,
-        sound: payload.sound || null,
-        position: payload.position || "bottom-right",
-      };
-      emitNotification(ev);
-      return json(res, 200, { ok: true, sent: ev });
+      notificationManager.handle(
+        "SYSTEM_EVENT",
+        payload.event || "system_event",
+        {
+          user_id: sess.user_id,
+          page: payload.page || null,
+          event: payload.event || "system_event",
+          message:
+            payload.message || "🧪 Test notification — all channels firing",
+          type: payload.type || "info",
+          notification: payload.notification !== false,
+          need_refresh: payload.need_refresh || false,
+          comp_refresh: payload.comp_refresh || false,
+          action: payload.action || null,
+          sound: payload.sound || null,
+          position: payload.position || "bottom-right",
+        },
+      );
+      return json(res, 200, {
+        ok: true,
+        sent: {
+          event: payload.event || "system_event",
+          message:
+            payload.message || "🧪 Test notification — all channels firing",
+        },
+      });
     } catch (e) {
       return json(res, 400, { ok: false, error: e.message });
     }
@@ -17700,24 +17921,20 @@ const appHandler = async (req, res) => {
   if (req.method === "GET" && url.pathname === "/v2/notifications/events") {
     if (!requireAuthForUi(req, res)) return;
     try {
-      const sess = getUiSessionFromReq(req);
-      const userId = sess.user_id;
-      let overrides = {};
-      try {
-        const db = await mt5InitBackend();
-        const { rows } = await db.query(
-          "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
-          [userId],
-        );
-        if (rows[0]?.data && typeof rows[0].data === "object")
-          overrides = rows[0].data;
-      } catch (e) {
-        /* use defaults */
-      }
-      const events = DEFAULT_EVENT_TYPES.map((ev) => ({
-        ...ev,
-        ...(overrides[ev.event] || {}),
-      }));
+      const notificationsManager = global.__notificationManager;
+      // Return all event types with merged settings (defaults + DB overrides)
+      const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(([event, defaults]) => {
+        const dbSettings = notificationsManager?.settingsCache?.get(event) || {};
+        return {
+          event,
+          label: event.replace(/_/g, " ").replace(/\w/g, c => c.toUpperCase()),
+          toast: dbSettings.toast !== undefined ? dbSettings.toast : defaults.toast,
+          console_log: dbSettings.console_log !== undefined ? dbSettings.console_log : (defaults.console_log || false),
+          ticker: dbSettings.ticker !== undefined ? dbSettings.ticker : defaults.ticker,
+          sound: dbSettings.sound !== undefined ? dbSettings.sound : (defaults.sound || null),
+          db_log: dbSettings.db_log !== undefined ? dbSettings.db_log : defaults.db_log,
+        };
+      });
       return json(res, 200, { ok: true, events });
     } catch (e) {
       return json(res, 400, { ok: false, error: e.message });
@@ -17747,15 +17964,24 @@ const appHandler = async (req, res) => {
     try {
       const payload = await readJson(req);
       const sess = getUiSessionFromReq(req);
-      const data = payload.settings || payload;
+      const settings = payload.settings || payload;
       const db = await mt5InitBackend();
-      await db.query(
-        `INSERT INTO user_settings (user_id, type, name, data)
-         VALUES ($1, 'notification', 'preferences', $2)
-         ON CONFLICT (user_id, type, name)
-         DO UPDATE SET data = $2, updated_at = NOW()`,
-        [sess.user_id, JSON.stringify(data)],
-      );
+      // Save each event type as a separate notification_config row
+      for (const [eventName, config] of Object.entries(settings)) {
+        const eventKey = String(eventName).toUpperCase().replace(/[^A-Z_]/g, "");
+        if (!eventKey) continue;
+        await db.query(
+          `INSERT INTO user_settings (user_id, type, name, data)
+           VALUES ($1, 'notification_config', $2, $3)
+           ON CONFLICT (user_id, type, name)
+           DO UPDATE SET data = $3, updated_at = NOW()`,
+          [sess.user_id, eventKey, JSON.stringify(config)],
+        );
+      }
+      // Reload NotificationManager cache
+      if (global.__notificationManager) {
+        await global.__notificationManager.reloadSettings();
+      }
       return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 400, { ok: false, error: e.message });
@@ -18429,7 +18655,9 @@ const appHandler = async (req, res) => {
         payload.entry_condition || null,
         payload.risk_management || null,
         payload.skip_recommendation || null,
-        payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+        payload.confluence_checklist
+          ? JSON.stringify(payload.confluence_checklist)
+          : null,
         asNum(payload.be_trigger),
       ];
       const whereUser = userId ? "AND user_id = $8" : "";
@@ -18547,16 +18775,44 @@ const appHandler = async (req, res) => {
           : {};
       const copiedMetadata = {
         ...signalRawJson,
-        confidence_pct: asNum(payload.confidence_pct ?? signal.confidence_pct ?? signalRawJson.confidence_pct),
-        invalidation: payload.invalidation ?? signal.invalidation ?? signalRawJson.invalidation,
-        estimated_bars: asNum(payload.estimated_bars ?? signal.estimated_bars ?? signalRawJson.estimated_bars),
+        confidence_pct: asNum(
+          payload.confidence_pct ??
+            signal.confidence_pct ??
+            signalRawJson.confidence_pct,
+        ),
+        invalidation:
+          payload.invalidation ??
+          signal.invalidation ??
+          signalRawJson.invalidation,
+        estimated_bars: asNum(
+          payload.estimated_bars ??
+            signal.estimated_bars ??
+            signalRawJson.estimated_bars,
+        ),
         profile: payload.profile ?? signal.profile ?? signalRawJson.profile,
-        exit_condition: payload.exit_condition ?? signal.exit_condition ?? signalRawJson.exit_condition,
-        entry_condition: payload.entry_condition ?? signal.entry_condition ?? signalRawJson.entry_condition,
-        risk_management: payload.risk_management ?? signal.risk_management ?? signalRawJson.risk_management,
-        skip_recommendation: payload.skip_recommendation ?? signal.skip_recommendation ?? signalRawJson.skip_recommendation,
-        confluence_checklist: payload.confluence_checklist ?? signal.confluence_checklist ?? signalRawJson.confluence_checklist,
-        be_trigger: asNum(payload.be_trigger ?? signal.be_trigger ?? signalRawJson.be_trigger),
+        exit_condition:
+          payload.exit_condition ??
+          signal.exit_condition ??
+          signalRawJson.exit_condition,
+        entry_condition:
+          payload.entry_condition ??
+          signal.entry_condition ??
+          signalRawJson.entry_condition,
+        risk_management:
+          payload.risk_management ??
+          signal.risk_management ??
+          signalRawJson.risk_management,
+        skip_recommendation:
+          payload.skip_recommendation ??
+          signal.skip_recommendation ??
+          signalRawJson.skip_recommendation,
+        confluence_checklist:
+          payload.confluence_checklist ??
+          signal.confluence_checklist ??
+          signalRawJson.confluence_checklist,
+        be_trigger: asNum(
+          payload.be_trigger ?? signal.be_trigger ?? signalRawJson.be_trigger,
+        ),
       };
       if (!copiedMetadata.order_type && !copiedMetadata.orderType) {
         copiedMetadata.order_type = ["limit", "market", "stop"].includes(
@@ -18681,7 +18937,9 @@ const appHandler = async (req, res) => {
         payload.entry_condition || null,
         payload.risk_management || null,
         payload.skip_recommendation || null,
-        payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+        payload.confluence_checklist
+          ? JSON.stringify(payload.confluence_checklist)
+          : null,
         asNum(payload.be_trigger),
       ];
       const whereUser = userId ? "AND user_id = $8" : "";
