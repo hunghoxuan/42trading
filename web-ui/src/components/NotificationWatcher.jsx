@@ -48,12 +48,17 @@ export default function NotificationWatcher() {
       // Resolve: intersect SSE capability with user preferences
       const ns = p.notification_settings || {};
       const userPref = prefsRef.current[p.event] || {};
+      // Read toast/ticker from notification_settings (legacy) or top-level payload (NotificationManager)
+      const effectiveToast = ns.toast !== undefined ? ns.toast : (p.toast !== undefined ? p.toast : true);
+      const effectiveTicker = ns.ticker !== undefined ? ns.ticker : (p.ticker !== undefined ? p.ticker : true);
       const shouldShowToast =
-        ns.toast !== false &&
+        effectiveToast !== false &&
         p.notification !== false &&
         userPref.notification !== false;
       const showTicker =
-        ns.ticker !== false && p.ticker !== false && userPref.ticker !== false;
+        effectiveTicker !== false &&
+        p.ticker !== false &&
+        userPref.ticker !== false;
       // Sound: only play if SSE allows, user has a sound selected AND sound event key is valid
       const userSound = userPref.sound;
       const sseSound = ns.sound !== false ? p.sound || userSound : null;
