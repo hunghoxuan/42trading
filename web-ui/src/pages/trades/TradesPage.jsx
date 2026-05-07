@@ -1103,11 +1103,14 @@ export default function TradesPage() {
                             timeText={timeValue}
                             sid={String(t.sid || "-")}
                             brokerId={brokerTicketOf(t)}
+                            confidence={t.confidence_pct || t.raw_json?.confidence_pct || t.raw_json?.confidence}
+                            riskManagement={t.raw_json?.risk_management || t.raw_json?.risk_pct || t.raw_json?.risk}
                           />
                         </td>
                         <td style={{ textAlign: "right" }}>
                           <StatusPnlCell
                             status={t.execution_status}
+                            hideStatus={true}
                             statusNode={
                               <span
                                 className={`badge ${status.cls}`}
@@ -1378,10 +1381,44 @@ export default function TradesPage() {
                     value: selectedTrade.confidence_pct != null ? `${selectedTrade.confidence_pct}%` : (selectedTrade.raw_json?.confidence_pct != null ? `${selectedTrade.raw_json.confidence_pct}%` : "-"),
                     group: "source",
                   },
-                  {
+                   {
                     label: "Invalidation",
                     value: selectedTrade.invalidation || selectedTrade.raw_json?.invalidation || "-",
                     group: "source",
+                  },
+                  {
+                    label: "BE Trigger",
+                    value: selectedTrade.be_trigger || selectedTrade.raw_json?.be_trigger || "-",
+                    group: "source",
+                  },
+                  {
+                    label: "Profile",
+                    value: selectedTrade.raw_json?.profile || "-",
+                    group: "source",
+                  },
+                  {
+                    label: "Entry Condition",
+                    value: selectedTrade.raw_json?.entry_condition || "-",
+                    group: "source",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Exit Condition",
+                    value: selectedTrade.raw_json?.exit_condition || "-",
+                    group: "source",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Checklist",
+                    value: Array.isArray(selectedTrade.raw_json?.confluence_checklist) ? selectedTrade.raw_json.confluence_checklist.join(", ") : "-",
+                    group: "source",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Skip Recommendation",
+                    value: selectedTrade.raw_json?.skip_recommendation || "-",
+                    group: "source",
+                    fullWidth: true,
                   },
                   {
                     label: "Account",

@@ -83,17 +83,18 @@ export function TradePlanEditor({
     { label: "Note", value: value.note || "-" },
     { label: "BE", value: value.be_trigger || value.be || "-" },
     { label: "Invalidation", value: value.invalidation || "-" },
-    {
-      label: "Confidence",
-      value:
-        value.confidence_pct === null || value.confidence_pct === undefined
-          ? "-"
-          : `${Number(value.confidence_pct).toFixed(1)}%`,
-    },
+    { label: "Confidence", value: value.confidence_pct != null ? `${Number(value.confidence_pct).toFixed(1)}%` : "-" },
     { label: "Estimated Bars", value: value.estimated_bars ?? "-" },
     { label: "Entry Model", value: value.entry_model || value.entryModel || "-" },
     { label: "Strategy", value: value.strategy || "-" },
-    // Skip rows removed per request
+    { label: "Profile", value: value.profile || "-" },
+    { label: "Exit Condition", value: value.exit_condition || "-" },
+    { label: "Entry Condition", value: value.entry_condition || "-" },
+    { label: "Checklist", value: Array.isArray(value.confluence_checklist) && value.confluence_checklist.length > 0 
+        ? value.confluence_checklist.join(", ") 
+        : "-" 
+    },
+    { label: "Skip Recommendation", value: value.skip_recommendation || "-" },
   ];
 
   const NumericInline = ({ label, k, step = "0.001", min, max, sliderOverride = null }) => {

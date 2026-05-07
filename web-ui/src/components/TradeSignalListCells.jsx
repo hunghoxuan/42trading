@@ -55,8 +55,16 @@ export function PositionAuditCell({
   timeText = "-",
   sid = "-",
   brokerId = "-",
+  confidence = null,
+  riskManagement = null,
 }) {
   const sourceStrategy = [source, strategy].filter((x) => x && x !== "-").join(" | ");
+  const confidenceText = confidence != null ? `${confidence}%` : null;
+  const riskText = riskManagement != null ? `Risk: ${riskManagement}` : null;
+  const metaLine = [sid, brokerId && brokerId !== "-" ? brokerId : null, confidenceText, riskText]
+    .filter(Boolean)
+    .join(" | ");
+
   return (
     <div className="cell-wrap">
       <div className="cell-major">
@@ -67,8 +75,8 @@ export function PositionAuditCell({
           </span>
         )}
       </div>
-      <div className="cell-minor">
-        {sid} {brokerId && brokerId !== "-" ? `| ${brokerId}` : ""}
+      <div className="cell-minor" style={{ opacity: 0.7 }}>
+        {metaLine}
       </div>
     </div>
   );
@@ -98,12 +106,15 @@ export function StatusPnlCell({
         {shouldShowMetrics && !hidePnl && (
           <>
             {brokerPips != null && (
-              <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6, fontWeight: 400 }}>
+              <div className="minor-text" style={{ fontSize: '10px', opacity: 0.5, fontWeight: 400 }}>
                 {Math.round(num(brokerPips))} pips
               </div>
             )}
             {pnlNum != null && (
-              <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontSize: '12px', fontWeight: 400 }}>
+              <div 
+                className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} 
+                style={{ fontSize: '12px', fontWeight: 400, opacity: 0.75 }}
+              >
                 ${Math.abs(pnlNum).toFixed(2)}
               </div>
             )}
@@ -111,10 +122,10 @@ export function StatusPnlCell({
         )}
       </div>
       {showFilledDetails && !hidePnl ? (
-        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.7, marginTop: 2, textAlign: 'right' }}>
-          {tpPnl != null ? <span className="money-pos">+${num(tpPnl).toFixed(1)}</span> : "-"} 
+        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.5, marginTop: 2, textAlign: 'right' }}>
+          {tpPnl != null ? <span className="money-pos" style={{ opacity: 0.7 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
           {" "}/{" "}
-          {slPnl != null ? <span className="money-neg">-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
+          {slPnl != null ? <span className="money-neg" style={{ opacity: 0.7 }}>-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
         </div>
       ) : null}
     </div>

@@ -281,6 +281,13 @@ export function extractTradePlanFromSignal(signal = {}) {
         tradePlan.be_trigger ??
         raw.be_trigger_raw,
     ),
+    profile: String(signal.profile || raw.profile || tradePlan.profile || ""),
+    exit_condition: String(signal.exit_condition || raw.exit_condition || tradePlan.exit_condition || ""),
+    entry_condition: String(signal.entry_condition || raw.entry_condition || tradePlan.entry_condition || ""),
+    confluence_checklist: Array.isArray(signal.confluence_checklist || raw.confluence_checklist || tradePlan.confluence_checklist) 
+      ? (signal.confluence_checklist || raw.confluence_checklist || tradePlan.confluence_checklist)
+      : [],
+    skip_recommendation: String(signal.skip_recommendation || raw.skip_recommendation || tradePlan.skip_recommendation || ""),
   };
 }
 
@@ -326,6 +333,13 @@ export function extractTradePlanFromTrade(trade = {}) {
       trade.estimated_bars ?? meta.estimated_bars ?? raw.estimated_bars,
     ),
     be_trigger: asNum(trade.be_trigger ?? meta.be_trigger ?? raw.be_trigger),
+    profile: String(trade.profile || meta.profile || raw.profile || ""),
+    exit_condition: String(trade.exit_condition || meta.exit_condition || raw.exit_condition || ""),
+    entry_condition: String(trade.entry_condition || meta.entry_condition || raw.entry_condition || ""),
+    confluence_checklist: Array.isArray(trade.confluence_checklist || meta.confluence_checklist || raw.confluence_checklist)
+      ? (trade.confluence_checklist || meta.confluence_checklist || raw.confluence_checklist)
+      : [],
+    skip_recommendation: String(trade.skip_recommendation || meta.skip_recommendation || raw.skip_recommendation || ""),
   };
 }
 

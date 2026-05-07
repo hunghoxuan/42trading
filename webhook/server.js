@@ -138,7 +138,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 08:50 - 9e08681"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:11 - a9e341e"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -5623,6 +5623,7 @@ async function _mt5InitBackendInternal() {
       order_type TEXT NULL, -- market, limit, stop
       entry DOUBLE PRECISION NULL,
       entry_model TEXT NULL,
+      strategy TEXT NULL,
       sl DOUBLE PRECISION NULL,
       tp DOUBLE PRECISION NULL,
       signal_tf TEXT NULL,
@@ -5643,6 +5644,7 @@ async function _mt5InitBackendInternal() {
       broker_id TEXT NULL,
       signal_id TEXT NULL REFERENCES signals(sid) ON DELETE SET NULL,
       source_id TEXT NULL,
+      strategy TEXT NULL,
       entry_model TEXT NULL,
       signal_tf TEXT NULL,
       chart_tf TEXT NULL,
@@ -6525,9 +6527,9 @@ async function _mt5InitBackendInternal() {
         `
         INSERT INTO signals (
           sid, created_at, user_id, source, source_id, symbol, side, order_type, entry, sl, tp,
-          entry_model, signal_tf, chart_tf, rr_planned, risk_money_planned, risk_pct_planned,
+          strategy, entry_model, signal_tf, chart_tf, rr_planned, risk_money_planned, risk_pct_planned,
           note, rejection_reason, raw_json, status
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,$21)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)
         ON CONFLICT (sid) DO NOTHING
         RETURNING sid
       `,
@@ -6543,6 +6545,7 @@ async function _mt5InitBackendInternal() {
           signal.entry,
           signal.sl,
           signal.tp,
+          signal.strategy || null,
           signal.entry_model || null,
           signal.signal_tf,
           signal.chart_tf,
@@ -6816,16 +6819,17 @@ async function _mt5InitBackendInternal() {
             `
             INSERT INTO trades (
               sid, account_id, user_id, source_id,
-              entry_model, signal_tf, chart_tf,
+              strategy, entry_model, signal_tf, chart_tf,
               symbol, action, order_type, entry, sl, tp, volume, note,
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'NEW','PENDING',$16::jsonb,$17::jsonb,$18,$18)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'NEW','PENDING',$17::jsonb,$18::jsonb,$19,$19)
           `,
             [
               tradeSid,
               aid,
               userId,
               sourceId,
+              payload.strategy || null,
               payload.entry_model || null,
               payload.signal_tf || null,
               payload.chart_tf || null,
@@ -10844,8 +10848,10 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
       payload.chartTimeframe ??
       payload.chart_tf_period,
   );
+  const rawJson = payload.raw_json || payload;
+  const strategy = String(payload.strategy || rawJson?.strategy || opts.strategy || "").trim() || null;
   const derived = mt5DeriveEntryModelAndNote(payload, {
-    fallbackModel: payload.strategy || source || "MANUAL",
+    fallbackModel: strategy || source || "MANUAL",
   });
   const entryModel = derived.entryModel;
   const note = derived.note;
@@ -10925,6 +10931,7 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
     symbol,
     side: mt5MapActionToSide(action),
     entry: plannedEntry,
+    strategy: strategy,
     entry_model: entryModel || null,
     sl: payload.sl ?? null,
     tp: payload.tp ?? null,

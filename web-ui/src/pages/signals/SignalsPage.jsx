@@ -742,6 +742,8 @@ export default function SignalsPage() {
                           timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)}
                           sid={signalShort}
                           brokerId={String(t?.broker_trade_id || "-")}
+                          confidence={t.confidence_pct || t.raw_json?.confidence_pct || t.raw_json?.confidence}
+                          riskManagement={t.raw_json?.risk_management || t.raw_json?.risk_pct || t.raw_json?.risk}
                         />
                       </td>
                       <td>
@@ -749,7 +751,7 @@ export default function SignalsPage() {
                           <StatusPnlCell
                             status={t.status}
                             statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
-                            hideStatus={false}
+                            hideStatus={true}
                             hidePnl={true}
                             pnl={null}
                             showFilledDetails={false}
@@ -944,6 +946,28 @@ export default function SignalsPage() {
                 { label: "Entry Model", value: selectedSignal.entry_model || selectedSignal.raw_json?.entry_model || "-" },
                 { label: "Confidence", value: selectedSignal.confidence_pct != null ? `${selectedSignal.confidence_pct}%` : (selectedSignal.raw_json?.confidence_pct != null ? `${selectedSignal.raw_json.confidence_pct}%` : "-") },
                 { label: "Invalidation", value: selectedSignal.invalidation || selectedSignal.raw_json?.invalidation || "-" },
+                { label: "BE Trigger", value: selectedSignal.be_trigger || selectedSignal.raw_json?.be_trigger || "-" },
+                { label: "Profile", value: selectedSignal.raw_json?.profile || "-" },
+                {
+                  label: "Entry Condition",
+                  value: selectedSignal.raw_json?.entry_condition || "-",
+                  fullWidth: true,
+                },
+                {
+                  label: "Exit Condition",
+                  value: selectedSignal.raw_json?.exit_condition || "-",
+                  fullWidth: true,
+                },
+                {
+                  label: "Checklist",
+                  value: Array.isArray(selectedSignal.raw_json?.confluence_checklist) ? selectedSignal.raw_json.confluence_checklist.join(", ") : "-",
+                  fullWidth: true,
+                },
+                {
+                  label: "Skip Recommendation",
+                  value: selectedSignal.raw_json?.skip_recommendation || "-",
+                  fullWidth: true,
+                },
                 {
                   label: "Metadata",
                   fullWidth: true,
