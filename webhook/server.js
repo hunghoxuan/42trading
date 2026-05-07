@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.07 13:20 - e6f7a8b",
-); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:22 - 004d330"); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7592,6 +7589,7 @@ async function _mt5InitBackendInternal() {
           const pipsVal = Number(raw.pips ?? 0);
           const pnlVal = Number(raw.pnl ?? raw.net_pnl ?? 0);
           const volumeVal = Number(raw.volume || raw.lots || 0);
+          const lotsVal = Number(raw.lots ?? (volumeVal / 100000));
           const brokerComment = String(raw.comment || "").trim();
 
           // Use broker comment as SID if it looks like an ID
@@ -7611,7 +7609,7 @@ async function _mt5InitBackendInternal() {
               commission,
               swap,
               pips: pipsVal,
-              lots: Number(raw.lots ?? volumeVal / 100000),
+              lots: lotsVal,
               volume: volumeVal,
               symbol,
               action,
@@ -7635,13 +7633,13 @@ async function _mt5InitBackendInternal() {
               prev.execution_status = executionStatus;
               prev.status_raw = statusRaw || prev.status_raw;
             }
-            if (pnl !== null) prev.pnl = pnl;
-            if (netPnl !== 0) prev.net_pnl = netPnl;
+            if (pnlVal !== 0) prev.pnl = pnlVal;
+            if (pnlVal !== 0) prev.net_pnl = pnlVal;
             if (commission !== 0) prev.commission = commission;
             if (swap !== 0) prev.swap = swap;
             if (pipsVal !== 0) prev.pips = pipsVal;
-            if (lots !== 0) prev.lots = lots;
-            if (volume !== null) prev.volume = volume;
+            if (lotsVal !== 0) prev.lots = lotsVal;
+            if (volumeVal !== 0) prev.volume = volumeVal;
             if (symbol) prev.symbol = symbol;
             if (action) prev.action = action;
             if (closeReason) prev.close_reason = closeReason;
@@ -7721,34 +7719,34 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN
-                    CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN $1 ELSE execution_status END
-                  WHEN execution_status = 'OPEN' AND $1 = 'PENDING' THEN execution_status
-                  ELSE $1
+                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN
+                    CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN $1::text ELSE execution_status END
+                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  ELSE $1::text
                 END,
-                pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2, pnl_realized) ELSE pnl_realized END,
-                broker_pnl = $2,
-                volume = COALESCE($7, volume),
-                broker_pips = $13,
-                broker_lots = $14,
-                broker_commission = $15,
-                broker_swap = $16,
-                broker_volume = $17,
-                broker_margin = $19,
-                broker_tp_pnl = $20,
-                broker_sl_pnl = $21,
-                order_type = COALESCE($12, order_type),
-                close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8, close_reason) ELSE close_reason END,
-                broker_trade_id = COALESCE(NULLIF($9, ''), broker_trade_id),
+                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2::numeric, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $2::numeric,
+                volume = COALESCE($7::numeric, volume),
+                broker_pips = $13::numeric,
+                broker_lots = $14::numeric,
+                broker_commission = $15::numeric,
+                broker_swap = $16::numeric,
+                broker_volume = $17::numeric,
+                broker_margin = $19::numeric,
+                broker_tp_pnl = $20::numeric,
+                broker_sl_pnl = $21::numeric,
+                order_type = COALESCE($12::text, order_type),
+                close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
+                broker_trade_id = COALESCE(NULLIF($9::text, ''), broker_trade_id),
                 metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
-                opened_at = COALESCE($5, opened_at),
-                closed_at = COALESCE($6, CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
+                opened_at = COALESCE($5::timestamptz, opened_at),
+                closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
                 updated_at = NOW()
             WHERE account_id = $3
-              AND ($11 = '' OR symbol = $11)
+              AND ($11::text = '' OR symbol = $11::text)
               AND (
                 sid = ANY($4::text[])
-                OR (sid = $18 AND $18 <> '')
+                OR (sid = $18::text AND $18::text <> '')
                 OR broker_trade_id = ANY($4::text[])
                 OR metadata->>'broker_position_id' = ANY($4::text[])
                 OR metadata->>'position_ticket' = ANY($4::text[])
@@ -7790,35 +7788,35 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN $1
-                  WHEN execution_status = 'OPEN' AND $1 = 'PENDING' THEN execution_status
-                  ELSE $1
+                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN $1::text
+                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  ELSE $1::text
                 END,
-                broker_trade_id = COALESCE(NULLIF($2, ''), broker_trade_id),
-                pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3, pnl_realized) ELSE pnl_realized END,
-                broker_pnl = $3,
-                volume = COALESCE($6, volume),
-                broker_pips = $12,
-                broker_lots = $13,
-                broker_commission = $14,
-                broker_swap = $15,
-                broker_volume = $16,
-                broker_margin = $18,
-                broker_tp_pnl = $19,
-                broker_sl_pnl = $20,
-                order_type = COALESCE($11, order_type),
-                close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7, close_reason) ELSE close_reason END,
+                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $3::numeric,
+                volume = COALESCE($6::numeric, volume),
+                broker_pips = $12::numeric,
+                broker_lots = $13::numeric,
+                broker_commission = $14::numeric,
+                broker_swap = $15::numeric,
+                broker_volume = $16::numeric,
+                broker_margin = $18::numeric,
+                broker_tp_pnl = $19::numeric,
+                broker_sl_pnl = $20::numeric,
+                order_type = COALESCE($11::text, order_type),
+                close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
-                opened_at = COALESCE($9, opened_at),
-                closed_at = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10, closed_at, NOW()) ELSE closed_at END,
+                opened_at = COALESCE($9::timestamptz, opened_at),
+                closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10::timestamptz, closed_at, NOW()) ELSE closed_at END,
                 updated_at = NOW()
             WHERE sid = (
               SELECT sid
               FROM trades
-              WHERE account_id = $4
+              WHERE account_id = $4::text
                 AND (
-                  (sid = $5 AND $5 <> '')
-                  OR (broker_trade_id = $2 AND $2 <> '')
+                  (sid = $5::text AND $5::text <> '')
+                  OR (broker_trade_id = $2::text AND $2::text <> '')
                   OR (broker_trade_id = ANY($17::text[]))
                 )
               ORDER BY
@@ -7863,39 +7861,39 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1 NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'OPEN' AND $1 = 'PENDING' THEN execution_status
-                  ELSE $1
+                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
+                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  ELSE $1::text
                 END,
-                broker_trade_id = COALESCE(NULLIF($2, ''), broker_trade_id),
-                pnl_realized = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3, pnl_realized) ELSE pnl_realized END,
-                broker_pnl = $3,
-                volume = COALESCE($5, volume),
-                broker_pips = $12,
-                broker_lots = $13,
-                broker_commission = $14,
-                broker_swap = $15,
-                broker_volume = $16,
-                broker_margin = $17,
-                broker_tp_pnl = $19,
-                broker_sl_pnl = $20,
-                order_type = COALESCE($11, order_type),
-                close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6, close_reason) ELSE close_reason END,
+                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized) ELSE pnl_realized END,
+                broker_pnl = $3::numeric,
+                volume = COALESCE($5::numeric, volume),
+                broker_pips = $12::numeric,
+                broker_lots = $13::numeric,
+                broker_commission = $14::numeric,
+                broker_swap = $15::numeric,
+                broker_volume = $16::numeric,
+                broker_margin = $17::numeric,
+                broker_tp_pnl = $19::numeric,
+                broker_sl_pnl = $20::numeric,
+                order_type = COALESCE($11::text, order_type),
+                close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
-                closed_at = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8, closed_at, NOW()) ELSE closed_at END,
+                closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::timestamptz, closed_at, NOW()) ELSE closed_at END,
                 updated_at = NOW()
             WHERE sid = (
               SELECT sid
               FROM trades
-              WHERE account_id = $4
+              WHERE account_id = $4::text
                 AND execution_status IN ('PENDING','OPEN')
                 AND (broker_trade_id IS NULL OR broker_trade_id = '')
-                AND $9 <> ''
-                AND symbol = $9
-                AND ($10 = '' OR action = $10)
+                AND $9::text <> ''
+                AND symbol = $9::text
+                AND ($10::text = '' OR action = $10::text)
                 AND (
-                  $1 NOT IN ('CLOSED', 'CANCELLED', 'TP', 'SL')
-                  OR created_at <= COALESCE($8, NOW())
+                  $1::text NOT IN ('CLOSED', 'CANCELLED', 'TP', 'SL')
+                  OR created_at <= COALESCE($8::timestamptz, NOW())
                 )
               ORDER BY created_at ASC
               LIMIT 1

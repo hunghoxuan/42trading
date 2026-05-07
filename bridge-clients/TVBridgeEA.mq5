@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.07 13:20 - e6f7a8b";
+string EA_BUILD_VERSION = "v2026.05.07 17:22 - 004d330";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -47,7 +47,21 @@ input int    InpDedupKeepSeconds     = 86400; // Duplicate Cache Duration (Secon
 input int    InpStopRetrySeconds     = 5;    // SL/TP Retry Interval
 input int    InpStopRetryMaxAttempts = 24;   // SL/TP Max Retries
 
-//--- 6. SYSTEM & SIMULATION
+//--- 6. BROKER MANAGEMENT (THE HAND)
+enum ENUM_MANAGEMENT_STRATEGY {
+   STRATEGY_NONE,  // None
+   STRATEGY_BE,    // Break Even
+   STRATEGY_TRAIL, // Trailing Stop
+   STRATEGY_BOTH   // Both
+};
+
+input ENUM_MANAGEMENT_STRATEGY InpMgtStrategy = STRATEGY_NONE; // Management Strategy
+input int    InpMgtBE_Trigger_Pips = 15; // BE Trigger (Pips)
+input int    InpMgtBE_Offset_Pips  = 1;  // BE Offset (Pips)
+input int    InpMgtTrail_Start_Pips = 20; // Trail Start (Pips)
+input int    InpMgtTrail_Step_Pips  = 5;  // Trail Step (Pips)
+
+//--- 7. SYSTEM & SIMULATION
 sinput string InpMappingFile         = "TVBridge_Mappings.csv"; // Internal ticket mapping file
 input bool    InpBacktestMode        = false; // Replay signals from CSV
 input string  InpBacktestFileCommon  = "tvbridge_signals.csv";
@@ -98,6 +112,53 @@ double   g_ackMarginReq = 0.0;
 double   g_ackMarginBudget = 0.0;
 double   g_ackFreeMargin = 0.0;
 double   g_ackBalance = 0.0;
+
+//--- 8. PARTIAL TP TRACKING
+struct SPartialTarget {
+   string sid;
+   double price;
+   double pct;
+   bool   done;
+};
+SPartialTarget g_partialTargets[];
+
+void ParsePartialTps(string sid, string rawJson)
+{
+   if(sid == "" || rawJson == "") return;
+   
+   string token = "\"partial_tps\"";
+   int p = StringFind(rawJson, token);
+   if(p < 0) return;
+   
+   int b1 = StringFind(rawJson, "[", p);
+   int b2 = StringFind(rawJson, "]", b1);
+   if(b1 < 0 || b2 < 0) return;
+   
+   string list = StringSubstr(rawJson, b1 + 1, b2 - b1 - 1);
+   
+   int start = 0;
+   while(true)
+   {
+      int o1 = StringFind(list, "{", start);
+      int o2 = StringFind(list, "}", o1);
+      if(o1 < 0 || o2 < 0) break;
+      
+      string item = StringSubstr(list, o1, o2 - o1 + 1);
+      double price = JsonGetNumber(item, "price");
+      double pct   = JsonGetNumber(item, "size_pct");
+      
+      if(price > 0 && pct > 0)
+      {
+         int n = ArraySize(g_partialTargets);
+         ArrayResize(g_partialTargets, n + 1);
+         g_partialTargets[n].sid = sid;
+         g_partialTargets[n].price = price;
+         g_partialTargets[n].pct = pct;
+         g_partialTargets[n].done = false;
+      }
+      start = o2 + 1;
+   }
+}
 double   g_ackEquity = 0.0;
 double   g_ackPnlRealized = 0.0;
 bool     g_ackHasPnlRealized = false;
@@ -2695,6 +2756,9 @@ void OnTimer()
     double tp       = JsonGetNumber(resp, "tp", 0.0);
     string orderType = JsonGetString(resp, "order_type");
     if(orderType == "") orderType = "market";
+    
+    string rawJson = JsonGetString(resp, "raw_json");
+    if(rawJson != "") ParsePartialTps(signalId, rawJson);
 
     g_lastPullSummary = "TASK=" + taskType + " ID=" + signalId + " " + action + " " + symbolIn;
 
@@ -2802,6 +2866,142 @@ void OnTick()
 {
    if(InpBacktestMode)
       ProcessBacktestQueue();
+   
+   if(InpMgtStrategy != STRATEGY_NONE)
+      ManageBrokerPositions();
+}
+
+//+------------------------------------------------------------------+
+//| Management Logic: The Hand                                       |
+//+------------------------------------------------------------------+
+void ManageBrokerPositions()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0 && PositionSelectByTicket(ticket))
+      {
+         long magic = PositionGetInteger(POSITION_MAGIC);
+         if(magic != InpMagic) continue; // Only manage our trades
+
+         string symbol = PositionGetString(POSITION_SYMBOL);
+         double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+         double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+         double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+         double digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+         double pipSize = (digits == 3 || digits == 5) ? point * 10 : point;
+         
+         if(bid <= 0 || ask <= 0 || pipSize <= 0) continue;
+
+         double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+         long type = PositionGetInteger(POSITION_TYPE);
+         double currentPrice = (type == POSITION_TYPE_BUY) ? bid : ask;
+         double sl = PositionGetDouble(POSITION_SL);
+         double tp = PositionGetDouble(POSITION_TP);
+         
+         double pips = (type == POSITION_TYPE_BUY) 
+            ? (currentPrice - entry) / pipSize 
+            : (entry - currentPrice) / pipSize;
+
+         bool modified = false;
+         double newSl = sl;
+
+         // 1. Break Even
+         if(InpMgtStrategy == STRATEGY_BE || InpMgtStrategy == STRATEGY_BOTH)
+         {
+            if(pips >= InpMgtBE_Trigger_Pips)
+            {
+               double targetSL = (type == POSITION_TYPE_BUY) 
+                  ? entry + (InpMgtBE_Offset_Pips * pipSize)
+                  : entry - (InpMgtBE_Offset_Pips * pipSize);
+
+               // Only move SL forward
+               bool needsMove = false;
+               if(sl == 0) needsMove = true;
+               else if(type == POSITION_TYPE_BUY && sl < targetSL - (0.1 * pipSize)) needsMove = true;
+               else if(type == POSITION_TYPE_SELL && sl > targetSL + (0.1 * pipSize)) needsMove = true;
+
+               if(needsMove)
+               {
+                  newSl = targetSL;
+                  modified = true;
+                  Print("[BE] Moving SL to Entry+", InpMgtBE_Offset_Pips, " pips for ", symbol, " ", ticket);
+               }
+            }
+         }
+
+         // 2. Trailing Stop (Only if BE didn't just trigger or if already past BE)
+         if(!modified && (InpMgtStrategy == STRATEGY_TRAIL || InpMgtStrategy == STRATEGY_BOTH))
+         {
+            if(pips >= InpMgtTrail_Start_Pips)
+            {
+               double targetSL = (type == POSITION_TYPE_BUY)
+                  ? currentPrice - (InpMgtTrail_Start_Pips * pipSize)
+                  : currentPrice + (InpMgtTrail_Start_Pips * pipSize);
+
+               bool shouldMove = false;
+               if(sl == 0) shouldMove = true;
+               else
+               {
+                  double currentDiff = (type == POSITION_TYPE_BUY)
+                     ? (targetSL - sl) / pipSize
+                     : (sl - targetSL) / pipSize;
+                  
+                  if(currentDiff >= InpMgtTrail_Step_Pips) shouldMove = true;
+               }
+
+               if(shouldMove)
+               {
+                  newSl = targetSL;
+                  modified = true;
+                  Print("[Trail] Moving SL to ", DoubleToString(newSl, (int)digits), " for ", symbol, " ", ticket);
+               }
+            }
+         }
+
+         if(modified)
+         {
+            if(!trade.PositionModify(ticket, NormalizeDouble(newSl, (int)digits), NormalizeDouble(tp, (int)digits)))
+            {
+               Print("[Mgt] Modify failed: ", GetLastError());
+            }
+         }
+
+         // 3. Partial TPs
+         string sid = PositionGetString(POSITION_COMMENT);
+         if(sid != "")
+         {
+            for(int j = 0; j < ArraySize(g_partialTargets); j++)
+            {
+               if(g_partialTargets[j].sid == sid && !g_partialTargets[j].done)
+               {
+                  bool hit = (type == POSITION_TYPE_BUY) ? (bid >= g_partialTargets[j].price) : (ask <= g_partialTargets[j].price);
+                  if(hit)
+                  {
+                     double currentVol = PositionGetDouble(POSITION_VOLUME);
+                     double closeVol = NormalizeDouble(currentVol * (g_partialTargets[j].pct / 100.0), 2);
+                     double minVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+                     
+                     if(closeVol >= minVol && currentVol - closeVol >= minVol)
+                     {
+                        if(trade.PositionClosePartial(ticket, closeVol))
+                        {
+                           g_partialTargets[j].done = true;
+                           Print("[Partial] Closed ", closeVol, " lots (", g_partialTargets[j].pct, "%) for ", symbol, " ", ticket);
+                        }
+                     }
+                     else if(currentVol > 0)
+                     {
+                        // If too small for partial, just mark as done to avoid noise
+                        g_partialTargets[j].done = true;
+                        Print("[Partial] Skipped ", ticket, " (Volume too small for partial)");
+                     }
+                  }
+               }
+            }
+         }
+      }
+   }
 }
 
 void OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -3063,6 +3263,14 @@ void SyncWithVps()
                double sl = OrderGetDouble(ORDER_SL);
                double tp = OrderGetDouble(ORDER_TP);
                
+               double pnl_tp = 0;
+               double pnl_sl = 0;
+               double margin = 0;
+               ENUM_ORDER_TYPE ordType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+               if(tp > 0) OrderCalcProfit(ordType, sym, vol, price, tp, pnl_tp);
+               if(sl > 0) OrderCalcProfit(ordType, sym, vol, price, sl, pnl_sl);
+               OrderCalcMargin(ordType, sym, vol, price, margin);
+
                if(ordCount > 0) ordUpdates += ",";
                ordUpdates += "{";
                ordUpdates += "\"signal_id\":\"" + JsonEscape(sid) + "\",";
@@ -3074,6 +3282,9 @@ void SyncWithVps()
                ordUpdates += "\"target_price\":" + DoubleToString(price, 5) + ",";
                ordUpdates += "\"sl\":" + DoubleToString(sl, 5) + ",";
                ordUpdates += "\"tp\":" + DoubleToString(tp, 5) + ",";
+               ordUpdates += "\"margin\":" + DoubleToString(margin, 2) + ",";
+               ordUpdates += "\"pnl_tp\":" + DoubleToString(pnl_tp, 2) + ",";
+               ordUpdates += "\"pnl_sl\":" + DoubleToString(pnl_sl, 2) + ",";
                ordUpdates += "\"pnl\":0";
                ordUpdates += "}";
                ordCount++;

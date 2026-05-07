@@ -36,6 +36,29 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
+        public enum ManagementStrategy
+        {
+            None,
+            BreakEven,
+            TrailingStop,
+            Both
+        }
+
+        [Parameter("Management Strategy", Group = "Automation", DefaultValue = ManagementStrategy.None)]
+        public ManagementStrategy SelectedStrategy { get; set; }
+
+        [Parameter("BE Trigger (Pips)", Group = "Automation", DefaultValue = 15, MinValue = 1)]
+        public double BE_Trigger { get; set; }
+
+        [Parameter("BE Offset (Pips)", Group = "Automation", DefaultValue = 1)]
+        public double BE_Offset { get; set; }
+
+        [Parameter("Trailing Start (Pips)", Group = "Automation", DefaultValue = 20, MinValue = 1)]
+        public double Trail_Start { get; set; }
+
+        [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
+        public double Trail_Step { get; set; }
+
         private const string BuildVersion = "v2026.05.07 13:20 - e6f7a8b";
         
         private string _serverStatus = "WAITING";
@@ -59,6 +82,14 @@ namespace cAlgo.Robots
         private List<string> _lastSyncResults = new List<string>();
         private HashSet<string> _syncedClosedTickets = new HashSet<string>();
 
+        private class PartialTP
+        {
+            public double Price;
+            public double SizePct;
+        }
+        private Dictionary<string, List<PartialTP>> _tradePartials = new Dictionary<string, List<PartialTP>>();
+        private HashSet<string> _executedPartials = new HashSet<string>(); // key: ticket_partialIdx
+
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         private bool _isBusy = false;
@@ -69,6 +100,119 @@ namespace cAlgo.Robots
             Timer.Start(PollSeconds);
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
+        }
+
+        protected override void OnTick()
+        {
+            if (SelectedStrategy == ManagementStrategy.None) return;
+            ManagePositions();
+        }
+
+        private void ManagePositions()
+        {
+            foreach (var pos in Positions)
+            {
+                // Only manage trades associated with our bridge (Comment or Label)
+                if (pos.Label != "TVBridge" && string.IsNullOrEmpty(pos.Comment)) continue;
+
+                var symbol = Symbols.GetSymbol(pos.SymbolName);
+                if (symbol == null) continue;
+
+                double currentPrice = (pos.TradeType == TradeType.Buy) ? symbol.Bid : symbol.Ask;
+                double pips = (pos.TradeType == TradeType.Buy) 
+                    ? (currentPrice - pos.EntryPrice) / symbol.PipSize 
+                    : (pos.EntryPrice - currentPrice) / symbol.PipSize;
+
+                // 1. Break Even
+                if (SelectedStrategy == ManagementStrategy.BreakEven || SelectedStrategy == ManagementStrategy.Both)
+                {
+                    if (pips >= BE_Trigger)
+                    {
+                        double targetSL = (pos.TradeType == TradeType.Buy) 
+                            ? pos.EntryPrice + (BE_Offset * symbol.PipSize)
+                            : pos.EntryPrice - (BE_Offset * symbol.PipSize);
+
+                        // Only move SL forward, never backward
+                        bool needsMove = false;
+                        if (!pos.StopLoss.HasValue) needsMove = true;
+                        else if (pos.TradeType == TradeType.Buy && pos.StopLoss.Value < targetSL - (0.1 * symbol.PipSize)) needsMove = true;
+                        else if (pos.TradeType == TradeType.Sell && pos.StopLoss.Value > targetSL + (0.1 * symbol.PipSize)) needsMove = true;
+
+                        if (needsMove)
+                        {
+                            var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
+                            if (result.IsSuccessful)
+                                Print("[BE] Moved SL to Entry+{0} pips for {1} {2}", BE_Offset, pos.SymbolName, pos.Id);
+                        }
+                    }
+                }
+
+                // 2. Trailing Stop
+                if (SelectedStrategy == ManagementStrategy.TrailingStop || SelectedStrategy == ManagementStrategy.Both)
+                {
+                    if (pips >= Trail_Start)
+                    {
+                        double targetSL = (pos.TradeType == TradeType.Buy)
+                            ? currentPrice - (Trail_Start * symbol.PipSize)
+                            : currentPrice + (Trail_Start * symbol.PipSize);
+
+                        // If current SL is further away than targetSL by at least Trail_Step, move it
+                        bool shouldMove = false;
+                        if (!pos.StopLoss.HasValue) shouldMove = true;
+                        else
+                        {
+                            double currentDiff = (pos.TradeType == TradeType.Buy)
+                                ? (targetSL - pos.StopLoss.Value) / symbol.PipSize
+                                : (pos.StopLoss.Value - targetSL) / symbol.PipSize;
+                            
+                            if (currentDiff >= Trail_Step) shouldMove = true;
+                        }
+
+                        if (shouldMove)
+                        {
+                            var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
+                            if (result.IsSuccessful)
+                                Print("[Trail] Moved SL to {0:F5} for {1} {2}", targetSL, pos.SymbolName, pos.Id);
+                        }
+                    }
+                }
+
+                // 3. Partial TPs
+                var sid = pos.Comment;
+                if (!string.IsNullOrEmpty(sid) && _tradePartials.ContainsKey(sid))
+                {
+                    var partials = _tradePartials[sid];
+                    for (int i = 0; i < partials.Count; i++)
+                    {
+                        var p = partials[i];
+                        string pKey = pos.Id + "_" + i;
+                        if (_executedPartials.Contains(pKey)) continue;
+
+                        bool hit = (pos.TradeType == TradeType.Buy) ? (currentPrice >= p.Price) : (currentPrice <= p.Price);
+                        if (hit)
+                        {
+                            double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
+                            volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
+                            
+                            if (volToClose >= symbol.VolumeInUnitsMin)
+                            {
+                                var res = ClosePosition(pos, volToClose);
+                                if (res.IsSuccessful)
+                                {
+                                    _executedPartials.Add(pKey);
+                                    Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
+                                }
+                            }
+                            else
+                            {
+                                // If remaining volume is too small to split, just mark as done to avoid spamming
+                                _executedPartials.Add(pKey);
+                                Print("[Partial] Skipped {0} (Volume too small for partial)", pos.Id);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         protected override void OnTimer()
@@ -146,15 +290,31 @@ namespace cAlgo.Robots
                 var s = Symbols.GetSymbol(order.SymbolName);
                 double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
                 
+                double pnlTp = 0;
+                double pnlSl = 0;
+                if (s != null) {
+                    if (order.TakeProfit.HasValue) {
+                        double pips = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s.PipSize;
+                        pnlTp = pips * s.PipValue;
+                    }
+                    if (order.StopLoss.HasValue) {
+                        double pips = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s.PipSize;
+                        pnlSl = -pips * s.PipValue;
+                    }
+                }
+
                 ordersList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\",\"status\":\"PENDING\"}}",
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\",\"status\":\"PENDING\",\"margin\":{11:F2},\"pnl_tp\":{12:F2},\"pnl_sl\":{13:F2}}}",
                     sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
                     double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
                     double.IsNaN(lotsVal) ? 0 : lotsVal,
                     order.TargetPrice,
                     order.StopLoss ?? 0,
                     order.TakeProfit ?? 0,
-                    order.Label));
+                    order.Label,
+                    0.0, // margin fallback
+                    pnlTp,
+                    pnlSl));
             }
 
             var symbolsToSync = new HashSet<string>();
@@ -267,7 +427,6 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => {
                 var symbol = Symbols.GetSymbol(symbolCode);
                 
-                // Simplified Match: Just try exact and slash variation (e.g., GBP/JPY)
                 if (symbol == null && symbolCode.Length == 6) {
                     var slashName = symbolCode.Substring(0, 3) + "/" + symbolCode.Substring(3, 3);
                     symbol = Symbols.GetSymbol(slashName);
@@ -282,19 +441,18 @@ namespace cAlgo.Robots
                 }
                 
                 symbolCode = symbol.Name; 
-                Print("[Info] Found matching symbol: {0}", symbolCode);
                 
                 if (action == "CLOSE") {
-                    // Close by SID (comment) or Magic Number (label)
                     var targets = Positions.Where(p => p.SymbolName == symbolCode && (p.Comment == id || p.Label == MagicNumber.ToString())).ToList();
-                    foreach (var p in targets) ClosePosition(p);
+                    foreach (var p in targets) {
+                         var cRes = ClosePosition(p);
+                         if (!cRes.IsSuccessful) Print("[Error] Close failed: {0}", cRes.Error);
+                    }
                     _ = AckAsync(id, leaseToken, "CLOSED", "MANUAL", "");
                     return;
                 }
 
-                if (Positions.Any(p => p.Comment == id))
-                {
-                    Print("Signal {0} already open. Skipping.", id);
+                if (Positions.Any(p => p.Comment == id)) {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_OPEN)");
                     _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
                     return;
@@ -309,66 +467,70 @@ namespace cAlgo.Robots
                 var currentPrice = (action == "BUY") ? symbol.Ask : symbol.Bid;
                 var executionPrice = (orderTypeStr == "market" || entry <= 0) ? currentPrice : entry;
 
-                // 1. RISK CALCULATION
                 double signalRiskPct = lots; 
                 double requestedRiskMoney = Account.Balance * signalRiskPct;
                 double finalRiskMoney = Math.Min(MaxRiskAmount, requestedRiskMoney);
                 double volumeUnits = symbol.VolumeInUnitsMin;
 
-                if (sl > 0)
-                {
+                if (sl > 0) {
                     double riskPerMinVolume = (Math.Abs(executionPrice - sl) / symbol.TickSize) * symbol.TickValue;
-                    if (riskPerMinVolume > 0)
-                    {
+                    if (riskPerMinVolume > 0) {
                         volumeUnits = (finalRiskMoney / riskPerMinVolume) * symbol.VolumeInUnitsMin;
                         volumeUnits = symbol.NormalizeVolumeInUnits(volumeUnits, RoundingMode.Down);
                     }
                 }
                 else volumeUnits = symbol.QuantityToVolumeInUnits(lots);
 
-                // 2. CAP VOLUME
                 double maxNotional = Account.Balance * (MaxVolumePercent / 100.0);
                 double maxVolumeByBalance = maxNotional / currentPrice;
                 if (volumeUnits > maxVolumeByBalance) volumeUnits = symbol.NormalizeVolumeInUnits(maxVolumeByBalance, RoundingMode.Down);
 
-                if (volumeUnits < symbol.VolumeInUnitsMin)
-                {
-                    var msg = string.Format("Rejected: vol {0} < min {1}", volumeUnits, symbol.VolumeInUnitsMin);
+                if (volumeUnits < symbol.VolumeInUnitsMin) {
+                    var msg = "Volume too small: " + volumeUnits;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
                     return;
                 }
 
-                // Construct new-style label: {Source}_{EntryModel}
-                var sourceId = GetJsonValue(json, "source_id");
-                var entryModel = GetJsonValue(json, "entry_model");
-                if (string.IsNullOrEmpty(entryModel)) entryModel = GetJsonValue(json, "strategy");
-                
-                string label = MagicNumber.ToString();
-                if (!string.IsNullOrEmpty(sourceId) && !string.IsNullOrEmpty(entryModel))
-                    label = string.Format("{0}_{1}", sourceId, entryModel);
+                // EXTRACT PARTIAL TPs
+                var rawJson = GetJsonValue(json, "raw_json");
+                if (!string.IsNullOrEmpty(rawJson)) {
+                    var partials = new List<PartialTP>();
+                    var pMatch = Regex.Match(rawJson, "\"partial_tps\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+                    if (pMatch.Success) {
+                        var items = Regex.Matches(pMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                        foreach (Match m in items) {
+                            var it = "{" + m.Groups[1].Value + "}";
+                            var pPrice = ParseDouble(GetJsonValue(it, "price"));
+                            var pPct = ParseDouble(GetJsonValue(it, "size_pct"));
+                            if (pPrice > 0 && pPct > 0) partials.Add(new PartialTP { Price = pPrice, SizePct = pPct });
+                        }
+                    }
+                    if (partials.Count > 0) _tradePartials[id] = partials;
+                }
 
-                TradeResult res = null;
+                var label = MagicNumber.ToString();
                 var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
-                
+                TradeResult res = null;
+
+                double? slPips = (sl > 0) ? Math.Abs(executionPrice - sl) / symbol.PipSize : (double?)null;
+                double? tpPips = (tp > 0) ? Math.Abs(executionPrice - tp) / symbol.PipSize : (double?)null;
+
                 if (orderTypeStr == "limit") {
-                    res = PlaceLimitOrder(tradeType, symbol, volumeUnits, entry, label, sl, tp);
+                    res = PlaceLimitOrder(tradeType, symbol.Name, volumeUnits, entry, label, stopLossPips: slPips, takeProfitPips: tpPips, expiration: null, comment: id);
                 } else if (orderTypeStr == "stop") {
-                    res = PlaceStopOrder(tradeType, symbol, volumeUnits, entry, label, sl, tp);
+                    res = PlaceStopOrder(tradeType, symbol.Name, volumeUnits, entry, label, stopLossPips: slPips, takeProfitPips: tpPips, expiration: null, comment: id);
                 } else {
-                    res = ExecuteMarketOrder(tradeType, symbol, volumeUnits, label, sl, tp);
+                    res = ExecuteMarketOrder(tradeType, symbol.Name, volumeUnits, label, stopLossPips: slPips, takeProfitPips: tpPips, comment: id);
                 }
 
                 if (res.IsSuccessful) {
-                    UpdateSignalHistory(id, action + " " + symbolCode + " (OK)");
-                    string ticketId = (res.Position != null) ? res.Position.Id.ToString() : (res.PendingOrder != null ? res.PendingOrder.Id.ToString() : "OK");
-                    string finalStatus = (res.Position != null) ? "OPEN" : "PENDING";
-                    double fillPrice = (res.Position != null) ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0);
-                    
-                    _ = AckAsync(id, leaseToken, finalStatus, ticketId, "", fillPrice);
+                    var ticket = (res.Position != null) ? res.Position.Id.ToString() : (res.PendingOrder != null ? res.PendingOrder.Id.ToString() : "OK");
+                    UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
+                    _ = AckAsync(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)));
                 } else {
-                    UpdateSignalHistory(id, action + " " + symbolCode + " (ERR: " + res.Error + ")");
-                    _ = AckAsync(id, leaseToken, "ERROR", "", res.Error.ToString());
+                    UpdateSignalHistory(id, action + " " + symbolCode + " (EXEC_FAIL: " + res.Error + ")");
+                    _ = AckAsync(id, leaseToken, "REJECTED", "", res.Error.ToString());
                 }
             });
         }
