@@ -2,22 +2,6 @@ import { useEffect, useState, useMemo } from "react";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 
-const ALL_LOG_TYPES = [
-  "CRON_MD",
-  "FETCH_API",
-  "CHART_API",
-  "ANALYZE",
-  "CACHE",
-  "DB",
-  "ORDER",
-  "SYNC",
-  "ERROR",
-  "EA",
-  "SIGNAL",
-  "TRADE",
-];
-const TRACE_TYPES = new Set(ALL_LOG_TYPES);
-
 function fDateTime(v) {
   return showDateTime(v);
 }
@@ -144,34 +128,12 @@ export default function LogsPage() {
             flexWrap: "wrap",
           }}
         >
-          <span className="minor-text" style={{ fontWeight: 600 }}>
-            TYPE:
+          <span
+            className="minor-text"
+            style={{ fontWeight: 600, fontStyle: "italic" }}
+          >
+            Logs filtered by NotificationManager settings.
           </span>
-          {ALL_LOG_TYPES.map((lt) => (
-            <label
-              key={lt}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 3,
-                cursor: "pointer",
-                fontSize: 10,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={filter.type === lt}
-                onChange={(e) => {
-                  setFilter((f) => ({
-                    ...f,
-                    type: e.target.checked ? lt : "",
-                  }));
-                  setPage(0);
-                }}
-              />
-              <span className="minor-text">{lt}</span>
-            </label>
-          ))}
         </div>
       </div>
 

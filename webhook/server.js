@@ -915,69 +915,9 @@ const UI_ROLE_SYSTEM = "System";
 const MARKET_DATA_MEMORY_CACHE = new Map();
 const MARKET_DATA_TF_CACHE = new Map(); // key: "EURUSD_4H" → { bars, bar_start, bar_end, last_price, created_at, snapshot }
 
-// ── Trace logging ────────────────────────────────────────────────
+// ── Trace ID generation ──────────────────────────────────────────
 function genTraceId(prefix = "") {
   return `${prefix}${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
-async function logEvent(traceId, eventType, data = {}, userId = null) {
-  const b = mt5Backend();
-  const msg = `[${eventType}][${traceId}] ${JSON.stringify(data).slice(0, 500)}`;
-  console.log(msg);
-  try {
-    if (b?.log)
-      await b.log(
-        traceId,
-        "system",
-        { event: eventType, trace_id: traceId, ...data },
-        userId,
-      );
-  } catch (_) {
-    /* non-fatal */
-  }
-}
-
-/** Wrapper for external API calls — logs request + response + timing */
-async function logApiCall(
-  traceId,
-  eventType,
-  {
-    url,
-    method = "GET",
-    reqPayload,
-    resStatus,
-    resBody,
-    durationMs,
-    error,
-    symbol,
-    tf,
-  },
-) {
-  await logEvent(
-    traceId,
-    eventType,
-    {
-      api: {
-        url,
-        method,
-        req_payload:
-          typeof reqPayload === "string"
-            ? reqPayload.slice(0, 300)
-            : JSON.stringify(reqPayload || {}).slice(0, 300),
-      },
-      response: {
-        status: resStatus,
-        body:
-          typeof resBody === "string"
-            ? resBody.slice(0, 500)
-            : JSON.stringify(resBody || {}).slice(0, 500),
-      },
-      duration_ms: durationMs,
-      error: error || null,
-      symbol: symbol || null,
-      tf: tf || null,
-    },
-    null,
-  );
 }
 
 function tfCacheKey(symbol, tf) {
@@ -5010,7 +4950,6 @@ function isApiPath(pathname) {
     p.startsWith("/webhook") ||
     p === "/system/storage/stats" ||
     p === "/system/cache" ||
-    p === "/api/system/stats" ||
     p === "/system/storage/cleanup"
   );
 }
@@ -6785,24 +6724,6 @@ async function _mt5InitBackendInternal() {
     return mt5GenerateTimeSid();
   }
 
-  let LOG_ENABLED_PREFIXES = [];
-  async function loadLoggingConfig() {
-    try {
-      const res = await pool.query(
-        `SELECT data FROM user_settings WHERE name = 'enabled_log_prefixes' LIMIT 1`,
-      );
-      if (res.rows.length > 0) {
-        const prefixes = res.rows[0]?.data?.prefixes;
-        LOG_ENABLED_PREFIXES = Array.isArray(prefixes) ? prefixes : [];
-      } else {
-        LOG_ENABLED_PREFIXES = [];
-      }
-    } catch (e) {
-      LOG_ENABLED_PREFIXES = [];
-    }
-  }
-  await loadLoggingConfig();
-
   // Initialize NotificationManager (loads notification_config from user_settings)
   await notificationManager.init(pool);
   global.__notificationManager = notificationManager;
@@ -6819,16 +6740,6 @@ async function _mt5InitBackendInternal() {
       ).toUpperCase();
       const symbol = String(metadata.symbol || "").toUpperCase() || null;
 
-      const isEnabled =
-        !LOG_ENABLED_PREFIXES ||
-        LOG_ENABLED_PREFIXES.length === 0 ||
-        LOG_ENABLED_PREFIXES.some((p) => eventType.startsWith(p)) ||
-        ["TRADE_", "SIGNAL_", "ACCOUNT_", "SYNC_"].some((p) =>
-          eventType.startsWith(p),
-        );
-      if (!isEnabled) {
-        return;
-      }
       if (eventType === "TRADE_SYNC_UPDATE") {
         // Keep only 1 latest row per trade: delete old then insert new
         await pool.query(
@@ -6864,7 +6775,6 @@ async function _mt5InitBackendInternal() {
         ],
       );
     },
-    refreshLogConfig: loadLoggingConfig,
     async upsertSignal(signal) {
       const signalSid = await allocateUniqueSid(
         pool,
@@ -7111,6 +7021,7 @@ async function _mt5InitBackendInternal() {
             tp: row.tp,
             sid: row.sid,
             ticket: row.broker_trade_id,
+            raw_json: row.raw_json,
           };
         }
 
@@ -10964,12 +10875,6 @@ async function buildAnalysisSnapshotFromTwelve({
     };
 
   if (!forceRefresh) {
-    await logEvent(tid, "FETCH_API", {
-      step: "cache_check",
-      symbol: symbolNorm,
-      tf: tfNorm,
-      forceRefresh,
-    });
     // Check per-TF memory cache (TTL = TF duration)
     const cached = await tfCacheGet(symbolNorm, tfNorm);
     if (cached && cached.bars && cached.bars.length) {
@@ -10978,13 +10883,6 @@ async function buildAnalysisSnapshotFromTwelve({
         cached.bar_end || cached.bars[cached.bars.length - 1].time,
       );
       if (s <= reqRange.start && e >= reqRange.end) {
-        await logEvent(tid, "FETCH_API", {
-          step: "cache_hit",
-          symbol: symbolNorm,
-          tf: tfNorm,
-          bars: cached.bars.length,
-          source: "memory",
-        });
         return {
           ...cached,
           symbol: symbolNorm,
@@ -11012,13 +10910,6 @@ async function buildAnalysisSnapshotFromTwelve({
 
     if (dbHit && Array.isArray(dbHit.bars) && dbHit.bars.length) {
       tfCacheSet(symbolNorm, tfNorm, dbHit);
-      await logEvent(tid, "FETCH_API", {
-        step: "cache_hit",
-        symbol: symbolNorm,
-        tf: tfNorm,
-        bars: dbHit.bars.length,
-        source: "db",
-      });
       return {
         ...dbHit,
         cache_source: "db",
@@ -11026,13 +10917,6 @@ async function buildAnalysisSnapshotFromTwelve({
         tf_norm: tfNorm,
       };
     }
-
-    await logEvent(tid, "FETCH_API", {
-      step: "cache_miss",
-      symbol: symbolNorm,
-      tf: tfNorm,
-      reason: forceRefresh ? "force_refresh" : "not_in_cache",
-    });
   }
 
   const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
@@ -11122,27 +11006,15 @@ async function buildAnalysisSnapshotFromTwelve({
       usedSymbol = candidate;
       lastError = "";
       console.log(`[twelve-success] candidate=${candidate}`);
-      await logApiCall(tid, "FETCH_API", {
-        url: endpoint,
-        method: "GET",
-        resStatus: 200,
-        resBody: `${vals.length} bars`,
-        durationMs: Date.now() - t0,
-        symbol: symbolNorm,
-        tf: tfNorm,
-      });
+      console.log(
+        `[twelve-api] OK ${symbolNorm} ${tfNorm} ${vals.length} bars ${Date.now() - t0}ms`,
+      );
       break;
     }
     if (!data || !Array.isArray(data?.values) || !data.values.length) {
-      await logApiCall(tid, "FETCH_API", {
-        url: "twelvedata",
-        method: "GET",
-        resStatus: 0,
-        error: lastError || "provider error",
-        durationMs: Date.now() - t0,
-        symbol: symbolNorm,
-        tf: tfNorm,
-      });
+      console.log(
+        `[twelve-api] FAIL ${symbolNorm} ${tfNorm} error=${lastError || "provider error"}`,
+      );
       return {
         provider: "twelvedata",
         status: "error",
@@ -11231,13 +11103,6 @@ async function buildAnalysisSnapshotFromTwelve({
     // Update Unified Cache
     tfCacheSet(symbolNorm, tfNorm, snapshot);
     await marketDataDbUpsert(symbolNorm, tfNorm, snapshot).catch(() => {});
-    await logEvent(tid, "FETCH_API", {
-      step: "done",
-      symbol: symbolNorm,
-      tf: tfNorm,
-      bars: bars.length,
-      duration_ms: Date.now() - t0,
-    });
     return snapshot;
   } catch (error) {
     const reason =
@@ -13466,10 +13331,6 @@ const appHandler = async (req, res) => {
     });
     await Promise.all(tasks);
     return json(res, 200, { ok: true, symbol, data: results });
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/system/stats") {
-    return json(res, 200, { ok: true, stats: GLOBAL_API_STATS });
   }
 
   if (req.method === "GET" && url.pathname === "/auth/users") {
@@ -15853,14 +15714,6 @@ const appHandler = async (req, res) => {
 
       await StateRepo.del("USER_SETTINGS", userId);
 
-      if (
-        body.type === "system_config" &&
-        settingName === "enabled_log_prefixes"
-      ) {
-        const b = await mt5Backend();
-        if (b.refreshLogConfig) await b.refreshLogConfig();
-      }
-
       return json(res, 200, { ok: true, item: res2.rows[0] });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -16478,12 +16331,9 @@ const appHandler = async (req, res) => {
         results.push(row);
       }
 
-      await logEvent(chartTraceId, "CHART_API", {
-        step: "done",
-        symbols: symbols.length,
-        timeframes: timeframes.length,
-        duration_ms: Date.now() - t0,
-      });
+      console.log(
+        `[CHART_API] done symbols=${symbols.length} tfs=${timeframes.length} ${Date.now() - t0}ms`,
+      );
       return json(res, 200, {
         ok: true,
         generated_at: new Date().toISOString(),
@@ -17917,99 +17767,6 @@ const appHandler = async (req, res) => {
       return json(res, 400, { ok: false, error: e.message });
     }
   }
-
-  const DEFAULT_EVENT_TYPES = [
-    {
-      event: "trade_added",
-      notification: true,
-      console_log: false,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: "NEW_SIGNAL",
-      position: "bottom-right",
-    },
-    {
-      event: "trade_updated",
-      notification: false,
-      console_log: false,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: null,
-      position: "bottom-right",
-    },
-    {
-      event: "signal_added",
-      notification: true,
-      console_log: false,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: "NEW_SIGNAL",
-      position: "bottom-right",
-    },
-    {
-      event: "broker_sync",
-      notification: false,
-      console_log: false,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: null,
-      position: "bottom-right",
-    },
-    {
-      event: "news_alert",
-      notification: true,
-      console_log: false,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: "NEWS_ALERT",
-      position: "bottom-right",
-    },
-    {
-      event: "system_event",
-      notification: false,
-      console_log: true,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: null,
-      position: "bottom-right",
-    },
-    {
-      event: "page_refresh",
-      notification: false,
-      console_log: false,
-      ticker: false,
-      refresh: true,
-      comp_refresh: false,
-      sound: null,
-      position: "bottom-right",
-    },
-    {
-      event: "component_refresh",
-      notification: false,
-      console_log: false,
-      ticker: false,
-      refresh: false,
-      comp_refresh: true,
-      sound: null,
-      position: "bottom-right",
-    },
-    {
-      event: "error",
-      notification: true,
-      console_log: true,
-      ticker: true,
-      refresh: false,
-      comp_refresh: false,
-      sound: null,
-      position: "bottom-right",
-    },
-  ];
 
   if (req.method === "GET" && url.pathname === "/v2/notifications/events") {
     if (!requireAuthForUi(req, res)) return;
@@ -20243,7 +20000,7 @@ async function marketDataFetchJob({
   timezone,
 }) {
   const cronTraceId = genTraceId("cron_md_");
-  await logEvent(cronTraceId, "CRON_MD", { step: "start" });
+  console.log(`[CRON_MD] start ${symbol} ${tf}`);
   const symbolNorm = normalizeMarketDataSymbol(symbol);
   const tfNorm = normalizeMarketDataTf(tf);
   if (!symbolNorm || !tfNorm)
