@@ -76,8 +76,7 @@ function trackApiCall(apiName) {
       .handle("REMOTE_API_CALL", "call", {
         api: apiName,
         message: name,
-      })
-      .catch(() => {});
+      });
   }
 }
 
@@ -147,10 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.07 17:34 - 77f9e8f",
-); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:53 - 28eab7b"); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -887,8 +883,7 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
           user_id: userId || null,
           message: metadata.event || "",
           ...metadata,
-        })
-        .catch(() => {});
+        });
     }
   }
   // Legacy DB insert — still needed for object-scoped queries (e.g. trade detail events page)
@@ -11036,8 +11031,7 @@ async function buildAnalysisSnapshotFromTwelve({
             symbol: symbolNorm,
             tf: tfNorm,
             bars_count: vals.length,
-          })
-          .catch(() => {});
+          });
       }
       break;
     }
@@ -11050,8 +11044,7 @@ async function buildAnalysisSnapshotFromTwelve({
             symbol: symbolNorm,
             tf: tfNorm,
             error: lastError,
-          })
-          .catch(() => {});
+          });
       }
       return {
         provider: "twelvedata",
@@ -16376,8 +16369,7 @@ const appHandler = async (req, res) => {
             symbols: symbols.length,
             timeframes: timeframes.length,
             duration_ms: Date.now() - t0,
-          })
-          .catch(() => {});
+          });
       }
       return json(res, 200, {
         ok: true,
@@ -20055,10 +20047,9 @@ async function marketDataFetchJob({
         message: `Market data cron: ${symbol} ${tf}`,
         symbol,
         tf,
-      })
-      .catch(() => {});
+      });
   }
-  const symbolNorm = normalizeMarketDataSymbol(symbol);
+  const symbolNorm = normalizeMarketDataSymbol(symbol) ;
   const tfNorm = normalizeMarketDataTf(tf);
   if (!symbolNorm || !tfNorm)
     return { ok: false, reason: "invalid_symbol_or_tf" };
