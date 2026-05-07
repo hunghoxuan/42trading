@@ -140,7 +140,7 @@ loadEnvFile();
 
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.07 12:50 - d5e6f7a",
+  "v2026.05.07 13:10 - e6f7a8b",
 ); // fix route params same component
 
 // --- SSE Notification Bus ---
@@ -5682,12 +5682,45 @@ async function _mt5InitBackendInternal() {
       opened_at TIMESTAMPTZ NULL,
       closed_at TIMESTAMPTZ NULL,
       pnl_realized FLOAT8 NULL,
-	      metadata JSONB NULL,
-	      last_price DOUBLE PRECISION NULL,
-	      last_price_at TIMESTAMPTZ NULL,
-	      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      metadata JSONB NULL,
+      raw_json JSONB NULL,
+      last_price DOUBLE PRECISION NULL,
+      last_price_at TIMESTAMPTZ NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      profile TEXT NULL,
+      confidence_pct FLOAT8 NULL,
+      invalidation TEXT NULL,
+      estimated_bars INT NULL,
+      exit_condition TEXT NULL,
+      entry_condition TEXT NULL,
+      risk_management TEXT NULL,
+      skip_recommendation TEXT NULL,
+      confluence_checklist JSONB NULL,
+      be_trigger FLOAT8 NULL
     );
+
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS profile TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS confidence_pct FLOAT8;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS invalidation TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS estimated_bars INT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS exit_condition TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry_condition TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS risk_management TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS skip_recommendation TEXT;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS confluence_checklist JSONB;
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS be_trigger FLOAT8;
+
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS profile TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS confidence_pct FLOAT8;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS invalidation TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS estimated_bars INT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS exit_condition TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_condition TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS risk_management TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS skip_recommendation TEXT;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS confluence_checklist JSONB;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS be_trigger FLOAT8;
 
     CREATE TABLE IF NOT EXISTS execution_profiles (
       profile_id TEXT PRIMARY KEY,
@@ -6547,8 +6580,10 @@ async function _mt5InitBackendInternal() {
         INSERT INTO signals (
           sid, created_at, user_id, source, source_id, symbol, side, order_type, entry, sl, tp,
           strategy, entry_model, signal_tf, chart_tf, rr_planned, risk_money_planned, risk_pct_planned,
-          note, rejection_reason, raw_json, status
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)
+          note, rejection_reason, raw_json, status,
+          profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition, 
+          risk_management, skip_recommendation, confluence_checklist, be_trigger
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb,$32)
         ON CONFLICT (sid) DO NOTHING
         RETURNING sid
       `,
@@ -6575,6 +6610,16 @@ async function _mt5InitBackendInternal() {
           signal.rejection_reason,
           JSON.stringify(signal.raw_json || {}),
           signal.status || "NEW",
+          signal.profile || null,
+          signal.confidence_pct || null,
+          signal.invalidation || null,
+          signal.estimated_bars || null,
+          signal.exit_condition || null,
+          signal.entry_condition || null,
+          signal.risk_management || null,
+          signal.skip_recommendation || null,
+          signal.confluence_checklist ? JSON.stringify(signal.confluence_checklist) : null,
+          signal.be_trigger || null,
         ],
       );
       bumpPulse(signal.user_id);
@@ -6840,8 +6885,10 @@ async function _mt5InitBackendInternal() {
               sid, account_id, user_id, source_id,
               strategy, entry_model, signal_tf, chart_tf,
               symbol, action, order_type, entry, sl, tp, volume, note,
-              dispatch_status, execution_status, metadata, raw_json, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'NEW','PENDING',$17::jsonb,$18::jsonb,$19,$19)
+              dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
+              profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition,
+              risk_management, skip_recommendation, confluence_checklist, be_trigger
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'NEW','PENDING',$17::jsonb,$18::jsonb,$19,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::jsonb,$29)
           `,
             [
               tradeSid,
@@ -6872,6 +6919,16 @@ async function _mt5InitBackendInternal() {
                 payload.metadata?.raw_json || payload.raw_json || {},
               ),
               mt5NowIso(),
+              payload.profile || null,
+              payload.confidence_pct || null,
+              payload.invalidation || null,
+              payload.estimated_bars || null,
+              payload.exit_condition || null,
+              payload.entry_condition || null,
+              payload.risk_management || null,
+              payload.skip_recommendation || null,
+              payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+              payload.be_trigger || null,
             ],
           );
           if ((ins.rowCount || 0) > 0) {
@@ -18364,6 +18421,16 @@ const appHandler = async (req, res) => {
         JSON.stringify(rawPatch || {}),
         signalId,
         userId || null,
+        asNum(payload.confidence_pct),
+        payload.invalidation || null,
+        asNum(payload.estimated_bars),
+        payload.profile || null,
+        payload.exit_condition || null,
+        payload.entry_condition || null,
+        payload.risk_management || null,
+        payload.skip_recommendation || null,
+        payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+        asNum(payload.be_trigger),
       ];
       const whereUser = userId ? "AND user_id = $8" : "";
       const resUpd = await b.query(
@@ -18375,12 +18442,22 @@ const appHandler = async (req, res) => {
             rr_planned = COALESCE($4, rr_planned),
             note = COALESCE($5, note),
             raw_json = COALESCE(raw_json, '{}'::jsonb) || $6::jsonb,
+            confidence_pct = COALESCE($9, confidence_pct),
+            invalidation = COALESCE($10, invalidation),
+            estimated_bars = COALESCE($11, estimated_bars),
+            profile = COALESCE($12, profile),
+            exit_condition = COALESCE($13, exit_condition),
+            entry_condition = COALESCE($14, entry_condition),
+            risk_management = COALESCE($15, risk_management),
+            skip_recommendation = COALESCE($16, skip_recommendation),
+            confluence_checklist = COALESCE($17::jsonb, confluence_checklist),
+            be_trigger = COALESCE($18, be_trigger),
             updated_at = NOW()
         WHERE sid = $7
         ${whereUser}
         RETURNING *
       `,
-        userId ? params : params.slice(0, 7),
+        userId ? params : params.slice(0, 18), // userId is $8, so if it exists we need 18 params
       );
       const row = resUpd.rows?.[0];
       if (!row) return json(res, 404, { ok: false, error: "signal not found" });
@@ -18470,6 +18547,16 @@ const appHandler = async (req, res) => {
           : {};
       const copiedMetadata = {
         ...signalRawJson,
+        confidence_pct: asNum(payload.confidence_pct ?? signal.confidence_pct ?? signalRawJson.confidence_pct),
+        invalidation: payload.invalidation ?? signal.invalidation ?? signalRawJson.invalidation,
+        estimated_bars: asNum(payload.estimated_bars ?? signal.estimated_bars ?? signalRawJson.estimated_bars),
+        profile: payload.profile ?? signal.profile ?? signalRawJson.profile,
+        exit_condition: payload.exit_condition ?? signal.exit_condition ?? signalRawJson.exit_condition,
+        entry_condition: payload.entry_condition ?? signal.entry_condition ?? signalRawJson.entry_condition,
+        risk_management: payload.risk_management ?? signal.risk_management ?? signalRawJson.risk_management,
+        skip_recommendation: payload.skip_recommendation ?? signal.skip_recommendation ?? signalRawJson.skip_recommendation,
+        confluence_checklist: payload.confluence_checklist ?? signal.confluence_checklist ?? signalRawJson.confluence_checklist,
+        be_trigger: asNum(payload.be_trigger ?? signal.be_trigger ?? signalRawJson.be_trigger),
       };
       if (!copiedMetadata.order_type && !copiedMetadata.orderType) {
         copiedMetadata.order_type = ["limit", "market", "stop"].includes(
@@ -18586,6 +18673,16 @@ const appHandler = async (req, res) => {
         JSON.stringify(metaPatch || {}),
         tradeId,
         userId || null,
+        asNum(payload.confidence_pct),
+        payload.invalidation || null,
+        asNum(payload.estimated_bars),
+        payload.profile || null,
+        payload.exit_condition || null,
+        payload.entry_condition || null,
+        payload.risk_management || null,
+        payload.skip_recommendation || null,
+        payload.confluence_checklist ? JSON.stringify(payload.confluence_checklist) : null,
+        asNum(payload.be_trigger),
       ];
       const whereUser = userId ? "AND user_id = $8" : "";
       const resUpd = await (
@@ -18599,6 +18696,16 @@ const appHandler = async (req, res) => {
             tp = $4,
             note = COALESCE($5, note),
             metadata = metadata || $6,
+            confidence_pct = COALESCE($9, confidence_pct),
+            invalidation = COALESCE($10, invalidation),
+            estimated_bars = COALESCE($11, estimated_bars),
+            profile = COALESCE($12, profile),
+            exit_condition = COALESCE($13, exit_condition),
+            entry_condition = COALESCE($14, entry_condition),
+            risk_management = COALESCE($15, risk_management),
+            skip_recommendation = COALESCE($16, skip_recommendation),
+            confluence_checklist = COALESCE($17::jsonb, confluence_checklist),
+            be_trigger = COALESCE($18, be_trigger),
             execution_status = CASE
               WHEN execution_status IN ('OPEN', 'PENDING') THEN 'PENDING_MOD'
               ELSE execution_status
@@ -18608,7 +18715,7 @@ const appHandler = async (req, res) => {
           ${whereUser}
         RETURNING *
       `,
-        userId ? params : params.slice(0, 7),
+        userId ? params : params.slice(0, 18),
       );
       const row = resUpd.rows?.[0];
       if (!row) return json(res, 404, { ok: false, error: "trade not found" });

@@ -97,7 +97,7 @@ export function StatusPnlCell({
 }) {
   const pnlNum = num(pnl);
   const st = String(status || "").toUpperCase();
-  const shouldShowMetrics = st === "FILLED" || st === "CLOSED" || st === "OPEN" || st === "PARTIAL";
+  const shouldShowMetrics = ["FILLED", "CLOSED", "OPEN", "PARTIAL", "START", "TP", "SL"].includes(st);
   
   return (
     <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>

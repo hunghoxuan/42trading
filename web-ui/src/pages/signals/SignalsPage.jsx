@@ -370,6 +370,16 @@ export default function SignalsPage() {
         sl: asNum(detailPlan.sl),
         rr: asNum(detailPlan.rr),
         note: detailPlan.note,
+        confidence_pct: asNum(detailPlan.confidence_pct),
+        invalidation: detailPlan.invalidation,
+        estimated_bars: asNum(detailPlan.estimated_bars),
+        profile: detailPlan.profile,
+        exit_condition: detailPlan.exit_condition,
+        entry_condition: detailPlan.entry_condition,
+        risk_management: detailPlan.risk_management,
+        skip_recommendation: detailPlan.skip_recommendation,
+        confluence_checklist: detailPlan.confluence_checklist,
+        be_trigger: asNum(detailPlan.be_trigger),
       });
       await loadSignals();
       await loadSignalDetail(selectedSignal.sid);
@@ -400,6 +410,16 @@ export default function SignalsPage() {
         sl: asNum(plan.sl),
         rr: asNum(plan.rr),
         note: plan.note,
+        confidence_pct: asNum(plan.confidence_pct),
+        invalidation: plan.invalidation,
+        estimated_bars: asNum(plan.estimated_bars),
+        profile: plan.profile,
+        exit_condition: plan.exit_condition,
+        entry_condition: plan.entry_condition,
+        risk_management: plan.risk_management,
+        skip_recommendation: plan.skip_recommendation,
+        confluence_checklist: plan.confluence_checklist,
+        be_trigger: asNum(plan.be_trigger),
       });
       setDetailPlanMsg({ type: "success", text: "Trade queued from signal." });
     } catch (e) {
@@ -943,29 +963,40 @@ export default function SignalsPage() {
                 { label: "Chart TF", value: formatTimeframe(selectedSignal.chart_tf || "-") },
                 { label: "Signal TF", value: formatTimeframe(selectedSignal.signal_tf || "-") },
                 { label: "Strategy", value: compactStrategy(selectedSignal) },
-                { label: "Entry Model", value: selectedSignal.entry_model || selectedSignal.raw_json?.entry_model || "-" },
-                { label: "Confidence", value: selectedSignal.confidence_pct != null ? `${selectedSignal.confidence_pct}%` : (selectedSignal.raw_json?.confidence_pct != null ? `${selectedSignal.raw_json.confidence_pct}%` : "-") },
-                { label: "Invalidation", value: selectedSignal.invalidation || selectedSignal.raw_json?.invalidation || "-" },
-                { label: "BE Trigger", value: selectedSignal.be_trigger || selectedSignal.raw_json?.be_trigger || "-" },
-                { label: "Profile", value: selectedSignal.raw_json?.profile || "-" },
+                { label: "Entry Model", value: detailPlan.entry_model || "-" },
+                { label: "Confidence", value: detailPlan.confidence_pct != null ? `${detailPlan.confidence_pct}%` : "-" },
+                { label: "Invalidation", value: detailPlan.invalidation || "-" },
+                { label: "BE Trigger", value: detailPlan.be_trigger || "-" },
+                { label: "Profile", value: detailPlan.profile || "-" },
+                { label: "Est. Bars", value: detailPlan.estimated_bars || "-" },
                 {
                   label: "Entry Condition",
-                  value: selectedSignal.raw_json?.entry_condition || "-",
+                  value: detailPlan.entry_condition || "-",
                   fullWidth: true,
                 },
                 {
                   label: "Exit Condition",
-                  value: selectedSignal.raw_json?.exit_condition || "-",
+                  value: detailPlan.exit_condition || "-",
+                  fullWidth: true,
+                },
+                {
+                  label: "Risk Management",
+                  value: detailPlan.risk_management || "-",
                   fullWidth: true,
                 },
                 {
                   label: "Checklist",
-                  value: Array.isArray(selectedSignal.raw_json?.confluence_checklist) ? selectedSignal.raw_json.confluence_checklist.join(", ") : "-",
+                  value: Array.isArray(detailPlan.confluence_checklist) && detailPlan.confluence_checklist.length > 0 ? detailPlan.confluence_checklist.join(", ") : "-",
                   fullWidth: true,
                 },
                 {
                   label: "Skip Recommendation",
-                  value: selectedSignal.raw_json?.skip_recommendation || "-",
+                  value: detailPlan.skip_recommendation || "-",
+                  fullWidth: true,
+                },
+                {
+                  label: "Note",
+                  value: detailPlan.note || "-",
                   fullWidth: true,
                 },
                 {

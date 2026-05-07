@@ -316,7 +316,12 @@ export function extractTradePlanFromSignal(signal = {}) {
         tradePlan.skip_recommendation ||
         "",
     ),
-    risk_management: String(tradePlan.risk_management || raw.risk_management || ""),
+    risk_management: String(
+      signal.risk_management ||
+        tradePlan.risk_management ||
+        raw.risk_management ||
+        "",
+    ),
     partial_tps: Array.isArray(tradePlan.partial_tps)
       ? tradePlan.partial_tps
       : Array.isArray(raw.partial_tps)

@@ -1,3 +1,21 @@
+# Session Log: 2026-05-07 12:20
+- **Starting Task**: Resolve cTrader execution discrepancy, fix obsolete warnings, and achieve MT5 feature parity.
+- **Work Accomplished**:
+-   - **cTrader Bridge**: Implemented Limit/Stop order support, synced `PendingOrders`, and improved `Ack` telemetry (lots, pips, commissions).
+-   - **Warning Fixes**: Migrated `TVBridge_CTrader.cs` to newer API overloads using named parameters to resolve `CS0618` obsolete warnings.
+-   - **MT5 Parity**: Enhanced `SyncV2` in `TVBridgeEA.mq5` to include detailed telemetry (volume, lots, commission, swap, margin, sl, tp, pips) and symbol metrics (pip value, spread, min/step vol).
+-   - **Documentation**: Created feature documentation for cTrader bridge and a parity ticket for MT5. Fixed documentation location to adhere to `.agents/` project standards.
+-   - **Versions**: Bumped SERVER and EA versions to `v2026.05.07 12:00 - b2c3d4e`.
+- - **Changed Files**: `bridge-clients/TVBridge_CTrader.cs`, `bridge-clients/TVBridgeEA.mq5`, `webhook/server.js`, `.agents/.product/features/bridge-clients/ctrader-bridge.md`, `.agents/.product/tickets/2-coding/2026-05-07-mt5-parity-sync-v2.md`, `.agents/.product/tickets/feature_tracker.md`.
+- - **Technical Decisions**:
+-   - Use named parameters to ensure correct API overload selection in cTrader.
+-   - Mirror cTrader's rich telemetry in MT5 `sync-v2` payload for dashboard consistency.
+- - **Verification**:
+-   - cTrader build check (manual) ✅
+-   - MT5 compile check (manual) ✅
+-   - Version sync verification ✅
+- - **Deploy Status**: Ready for build/deploy.
+
 # Session Log: 2026-05-07 08:25
 - **Starting Task**: Add StateRepo/UnifiedCache to Signal Detail and Trade Detail endpoints. Audit all cache sources.
 - **Work Accomplished**:

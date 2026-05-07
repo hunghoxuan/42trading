@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.07 10:48 - 4158f15";
+        private const string BuildVersion = "v2026.05.07 13:20 - e6f7a8b";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -105,7 +105,7 @@ namespace cAlgo.Robots
                 }
 
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"margin\":{10:F2},\"tp_pnl\":{11:F2},\"sl_pnl\":{12:F2},\"label\":\"{13}\"}}",
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"margin\":{10:F2},\"tp_pnl\":{11:F2},\"sl_pnl\":{12:F2},\"label\":\"{13}\",\"status\":\"OPEN\"}}",
                     sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
                     double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
                     double.IsNaN(lotsVal) ? 0 : lotsVal,
@@ -147,7 +147,7 @@ namespace cAlgo.Robots
                 double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
                 
                 ordersList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\"}}",
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\",\"status\":\"PENDING\"}}",
                     sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
                     double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
                     double.IsNaN(lotsVal) ? 0 : lotsVal,
@@ -352,11 +352,11 @@ namespace cAlgo.Robots
                 var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
                 
                 if (orderTypeStr == "limit") {
-                    res = PlaceLimitOrder(tradeType, symbol, volumeUnits, entry, label, stopLoss: sl, takeProfit: tp, expiration: null, comment: id);
+                    res = PlaceLimitOrder(tradeType, symbol, volumeUnits, entry, label, sl, tp);
                 } else if (orderTypeStr == "stop") {
-                    res = PlaceStopOrder(tradeType, symbol, volumeUnits, entry, label, stopLoss: sl, takeProfit: tp, expiration: null, comment: id);
+                    res = PlaceStopOrder(tradeType, symbol, volumeUnits, entry, label, sl, tp);
                 } else {
-                    res = ExecuteMarketOrder(tradeType, symbol, volumeUnits, label, stopLoss: sl, takeProfit: tp, comment: id);
+                    res = ExecuteMarketOrder(tradeType, symbol, volumeUnits, label, sl, tp);
                 }
 
                 if (res.IsSuccessful) {
