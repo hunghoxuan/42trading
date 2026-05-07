@@ -17,11 +17,16 @@ This file tracks the status of user-facing features and links them to technical 
 - **Ticket**: [./2-backlog/2026-05-05-db-cache-enhancements.md]
 - **Summary**: System-only database and cache inspection pages with schema-driven list/detail/edit flows, validated sorting/search, and cache filtering.
 
-## [ ] SSE Notification System
-- **Status**: Planned
-- **Feature Doc**: [../features/1-plan/sse_notification_system.md]
-- **Ticket**: [./2-backlog/2026-05-05-sse-notification-system.md]
-- **Summary**: Real-time SSE push replacing 10s polling. Multi-channel output (toast, ticker, console, sound, refresh) configurable per event type. New `/system/events` management page.
+## [ ] AI Chat Agent UI
+- **Status**: Idea
+- **Feature Doc**: [../features/1-ideas/ai_chat_agent_ui.md]
+- **Summary**: Interactive streaming chat with AI models, custom widgets (TradePlan, charts), multi-turn conversation, cross-model verification, context-aware tool calling.
+
+## [ ] Unified Notification Manager
+- **Status**: Plan
+- **Feature Doc**: [../features/1-plan/unified_notification_manager.md]
+- **Summary**: Single NotificationManager handles all events. Channels: toast, ticker, db_log, email, telegram, console.log, sound, refresh. Event types: TRADE_ACTIVITY, SIGNAL_ACTIVITY, BROKER_POLL, BROKER_SYNC, SYSTEM_EVENT, REMOTE_API_CALL. Async queue for db_log/email/telegram. Single notification settings page.
+- **Supersedes**: SSE Notification System (old) — merged into this plan.
 
 ## [ ] Chart Snapshots Symbols Panel Filters
 - **Status**: Planned

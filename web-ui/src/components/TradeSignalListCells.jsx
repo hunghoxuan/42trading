@@ -92,18 +92,24 @@ export function StatusPnlCell({
   hideStatus = false,
   tpPnl = null,
   slPnl = null,
+  margin = null,
   status = "",
   hidePnl = false,
 }) {
   const pnlNum = num(pnl);
   const st = String(status || "").toUpperCase();
-  const shouldShowMetrics = ["FILLED", "CLOSED", "OPEN", "PARTIAL", "START", "TP", "SL"].includes(st);
+  const isPending = ["PENDING", "PLACED", "NEW"].includes(st);
+  const isFinished = ["CLOSED", "TP", "SL", "CANCELLED", "CANCEL"].includes(st);
+  const isActive = ["OPEN", "FILLED", "PARTIAL", "START"].includes(st);
+
+  const shouldShowLiveMetrics = (isActive || isFinished) && !hidePnl;
+  const shouldShowProjectedMetrics = isPending && !hidePnl;
   
   return (
     <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>
       <div className="cell-major" style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end', fontWeight: 400 }}>
         {!hideStatus && statusNode}
-        {shouldShowMetrics && !hidePnl && (
+        {shouldShowLiveMetrics && (
           <>
             {brokerPips != null && (
               <div className="minor-text" style={{ fontSize: '10px', opacity: 0.5, fontWeight: 400 }}>
@@ -120,12 +126,17 @@ export function StatusPnlCell({
             )}
           </>
         )}
+        {shouldShowProjectedMetrics && margin != null && margin > 0 && (
+          <div className="minor-text" style={{ fontSize: '10px', opacity: 0.5 }}>
+            Margin: ${num(margin).toFixed(2)}
+          </div>
+        )}
       </div>
-      {showFilledDetails && !hidePnl ? (
+      {(showFilledDetails || isPending) && !hidePnl ? (
         <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.5, marginTop: 2, textAlign: 'right' }}>
-          {tpPnl != null ? <span className="money-pos" style={{ opacity: 0.7 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
+          {tpPnl != null && num(tpPnl) !== 0 ? <span className="money-pos" style={{ opacity: 0.7 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
           {" "}/{" "}
-          {slPnl != null ? <span className="money-neg" style={{ opacity: 0.7 }}>-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
+          {slPnl != null && num(slPnl) !== 0 ? <span className="money-neg" style={{ opacity: 0.7 }}>-${Math.abs(num(slPnl)).toFixed(1)}</span> : "-"}
         </div>
       ) : null}
     </div>

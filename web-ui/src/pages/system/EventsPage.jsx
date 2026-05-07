@@ -204,7 +204,6 @@ export function EventsPageContent() {
               {state.testMsg}
             </span>
           )}
-          </button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table
@@ -331,7 +330,6 @@ export default function EventsPage() {
               {state.testMsg}
             </span>
           )}
-          </button>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table

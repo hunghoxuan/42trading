@@ -101,9 +101,9 @@ All tables use PostgreSQL with JSONB for flexible metadata.
 | `sid` | TEXT | migration |
 | `account_id` | TEXT FK → user_accounts | NOT NULL, ON DELETE CASCADE |
 | `user_id` | TEXT FK → users | NOT NULL, ON DELETE CASCADE |
-| `broker_id` | TEXT | |
 | `signal_id` | TEXT FK → signals | ON DELETE SET NULL |
 | `source_id` | TEXT | |
+| `strategy` | TEXT | |
 | `entry_model` | TEXT | |
 | `signal_tf` | TEXT | |
 | `chart_tf` | TEXT | |
@@ -117,21 +117,21 @@ All tables use PostgreSQL with JSONB for flexible metadata.
 | `note` | TEXT | |
 | `lease_token` | TEXT | |
 | `lease_expires_at` | TIMESTAMPTZ | |
-| `source` | TEXT | broker source name (e.g. ICMARKETS) |
-| `status` | TEXT | trade status |
-| `broker_pips` | FLOAT8 | |
-| `broker_lots` | FLOAT8 | |
-| `broker_commission` | FLOAT8 | |
-| `broker_swap` | FLOAT8 | |
-| `broker_volume` | FLOAT8 | |
 | `dispatch_status` | TEXT | NOT NULL DEFAULT 'NEW' |
 | `execution_status` | TEXT | NOT NULL DEFAULT 'PENDING' |
 | `close_reason` | TEXT | |
 | `rejection_reason` | TEXT | |
 | `broker_trade_id` | TEXT | |
 | `entry_exec` | FLOAT8 | |
-| `sl_exec` | FLOAT8 | |
-| `tp_exec` | FLOAT8 | |
+| `broker_pips` | FLOAT8 | |
+| `broker_lots` | FLOAT8 | |
+| `broker_commission` | FLOAT8 | |
+| `broker_swap` | FLOAT8 | |
+| `broker_volume` | FLOAT8 | |
+| `broker_pnl` | FLOAT8 | |
+| `broker_margin` | FLOAT8 | |
+| `broker_tp_pnl` | FLOAT8 | |
+| `broker_sl_pnl` | FLOAT8 | |
 | `opened_at` | TIMESTAMPTZ | |
 | `closed_at` | TIMESTAMPTZ | |
 | `pnl_realized` | FLOAT8 | |
@@ -139,6 +139,16 @@ All tables use PostgreSQL with JSONB for flexible metadata.
 | `last_price` | DOUBLE PRECISION | |
 | `last_price_at` | TIMESTAMPTZ | |
 | `raw_json` | JSONB | |
+| `profile` | TEXT | |
+| `confidence_pct` | FLOAT8 | |
+| `invalidation` | TEXT | |
+| `estimated_bars` | INT | |
+| `exit_condition` | TEXT | |
+| `entry_condition` | TEXT | |
+| `risk_management` | TEXT | |
+| `skip_recommendation` | TEXT | |
+| `confluence_checklist` | JSONB | |
+| `be_trigger` | FLOAT8 | |
 | `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
 | `updated_at` | TIMESTAMPTZ | NOT NULL DEFAULT NOW() |
 | `id` | BIGSERIAL | migration |
