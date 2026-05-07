@@ -6489,25 +6489,15 @@ async function _mt5InitBackendInternal() {
         return;
       }
       if (eventType === "TRADE_SYNC_UPDATE") {
-        // Keep only 1 latest row per trade: upsert by object_id + event_type
+        // Keep only 1 latest row per trade: delete old then insert new
         await pool.query(
-          `
-          INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, NOW())
-          ON CONFLICT (object_id, event_type) DO UPDATE SET
-            metadata = EXCLUDED.metadata,
-            created_at = NOW(),
-            symbol = EXCLUDED.symbol,
-            user_id = EXCLUDED.user_id
-        `,
-          [
-            objectId,
-            objectTable,
-            symbol,
-            eventType,
-            JSON.stringify(metadata),
-            userId,
-          ],
+          `DELETE FROM logs WHERE object_id = $1 AND event_type = $2`,
+          [objectId, eventType],
+        );
+        await pool.query(
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [objectId, objectTable, symbol, eventType, JSON.stringify(metadata), userId],
         );
         return;
       }
