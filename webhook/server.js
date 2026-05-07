@@ -138,7 +138,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 08:25 - d3ec724"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 08:26 - bae0f43"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
