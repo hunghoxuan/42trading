@@ -138,7 +138,13 @@ function EventRow({ event, idx, toggle, setField, state = {} }) {
             state.fire({
               event: event.event,
               message: "Test: " + (event.label || event.event),
-              sound: event.sound || undefined,
+              settings: {
+                toast: event.toast !== false,
+                console_log: event.console_log === true,
+                ticker: event.ticker === true,
+                db_log: event.db_log !== false,
+                sound: event.sound || null,
+              },
             });
           }}
         >▶</button>

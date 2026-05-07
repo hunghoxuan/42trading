@@ -313,8 +313,9 @@ class NotificationManager {
    * @param {string} subType - Sub-type like "added", "updated", "deleted", or free-form
    * @param {object} payload - Event payload (user_id, message, type, notification, need_refresh, comp_refresh, action, position, sound, event, etc.)
    */
-  handle(eventType, subType, payload = {}) {
-    const settings = this._getSettings(eventType);
+  handle(eventType, subType, payload = {}, settingsOverride = null) {
+    // If settingsOverride is provided (e.g. from Test button), use it directly
+    const settings = settingsOverride || this._getSettings(eventType);
     const evName =
       payload.event || `${eventType}${subType ? "_" + subType : ""}`;
 
@@ -14263,6 +14264,7 @@ const appHandler = async (req, res) => {
           eventType: "UI_CREATE_TRADE",
           fallbackIdPrefix: "ui",
         },
+        testSettings,
       );
 
       notifyPulse(effectiveUserId, "signals");
@@ -17772,6 +17774,16 @@ const appHandler = async (req, res) => {
     try {
       const sess = getUiSessionFromReq(req);
       const payload = await readJson(req).catch(() => ({}));
+      // If UI sent settings (from test button), use them directly
+      const testSettings = payload.settings
+        ? {
+            toast: payload.settings.toast !== false,
+            console_log: payload.settings.console_log === true,
+            ticker: payload.settings.ticker === true,
+            db_log: payload.settings.db_log !== false,
+            sound: payload.settings.sound || null,
+          }
+        : null;
       notificationManager.handle(
         "SYSTEM_EVENT",
         payload.event || "system_event",
