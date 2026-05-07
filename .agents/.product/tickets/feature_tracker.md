@@ -6,6 +6,11 @@ This file tracks the status of user-facing features and links them to technical 
 - **Database Schema**: [./architecture/db-schema.md]
 - **External APIs**: [./architecture/external_apis.md]
 
+## [x] Unified Cache Manager
+- **Status**: Done
+- **Feature Doc**: [../features/2-done/unified_cache_manager.md]
+- **Summary**: Multi-tier cache (Memory-Redis-DB/API) across all data sources: Twelve Data, user settings, watchlist, trades, signals, news, accounts, profiles, templates. Request collapsing prevents duplicate in-flight fetches.
+
 ## [x] System DB & Cache Admin
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/system_db_cache_admin.md]

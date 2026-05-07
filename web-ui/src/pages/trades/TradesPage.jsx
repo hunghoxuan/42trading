@@ -1090,6 +1090,7 @@ export default function TradesPage() {
                             sid={String(t.sid || "-")}
                             brokerId={brokerTicketOf(t)}
                           />
+                        </td>
                         <td style={{ textAlign: "right" }}>
                           <StatusPnlCell
                             status={t.execution_status}
