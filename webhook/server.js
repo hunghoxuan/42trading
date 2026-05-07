@@ -138,7 +138,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 07:59 - 12c316d"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 07:59 - 12c316d",
+); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -862,7 +865,9 @@ const StateRepo = {
     MARKET_DATA_UNIFIED: { prefix: "MARKET_DATA", ttl: 3600 }, // 1 hour unified symbol cache
     SIGNAL_DETAIL: { prefix: "SIG:DET", ttl: 3600 * 24 }, // 1 day
     TRADE_DETAIL: { prefix: "TRD:DET", ttl: 3600 * 24 }, // 1 day
+    TRADE_LIST: { prefix: "TRD:LST", ttl: 30 }, // 30 seconds (dynamic, short TTL)
     USER_SETTINGS: { prefix: "USR:SET", ttl: 3600 * 6 }, // 6 hours
+    NEWS_CALENDAR: { prefix: "NEWS:CAL", ttl: 3600 },
   },
 
   getL1Map(bucketName) {
@@ -950,18 +955,7 @@ async function refreshEconomicCalendar() {
       return itemDate === today && item.impact === "High";
     });
 
-    if (CFG.redisEnabled) {
-      const client = await getRedisClient();
-      if (client) {
-        await client
-          .setEx("economic_calendar:today", 86400, JSON.stringify(filtered))
-          .catch(() => {});
-      }
-    }
-    MARKET_DATA_MEMORY_CACHE.set("economic_calendar:today", {
-      data: filtered,
-      expires_at_ms: Date.now() + 3600000,
-    });
+    await StateRepo.set("NEWS_CALENDAR", "today", filtered);
 
     console.log(
       `[news] Refreshed economic calendar: ${filtered.length} high-impact events today.`,
@@ -6496,7 +6490,14 @@ async function _mt5InitBackendInternal() {
         await pool.query(
           `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-          [objectId, objectTable, symbol, eventType, JSON.stringify(metadata), userId],
+          [
+            objectId,
+            objectTable,
+            symbol,
+            eventType,
+            JSON.stringify(metadata),
+            userId,
+          ],
         );
         return;
       }
@@ -17633,20 +17634,11 @@ const appHandler = async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/v2/calendar/today") {
     try {
-      let data = null;
-      if (CFG.redisEnabled) {
-        const client = await getRedisClient();
-        if (client) {
-          const cached = await client
-            .get("economic_calendar:today")
-            .catch(() => null);
-          if (cached) data = JSON.parse(cached);
-        }
-      }
-      if (!data) {
+      const data = await StateRepo.get("NEWS_CALENDAR", "today", async () => {
+        await refreshEconomicCalendar();
         const mem = MARKET_DATA_MEMORY_CACHE.get("economic_calendar:today");
-        if (mem) data = mem.data;
-      }
+        return mem?.data || [];
+      });
       return json(res, 200, { ok: true, events: data || [] });
     } catch (error) {
       return json(res, 500, { ok: false, error: error.message });
@@ -18003,38 +17995,68 @@ const appHandler = async (req, res) => {
         chart_tf: url.searchParams.get("chart_tf") || "",
         q: url.searchParams.get("q") || "",
       };
-      const out = await mt5ListTradesV2(filters, page, pageSize);
-      const total = Number(out?.total || 0);
-      const items = Array.isArray(out?.items)
-        ? out.items.map((item) => {
-            const metadata =
-              item?.metadata && typeof item.metadata === "object"
-                ? item.metadata
-                : {};
-            const rawEntryModel =
-              item?.entry_model ||
-              metadata?.entry_model ||
-              metadata?.entry_model_raw ||
-              "";
-            return {
-              ...item,
-              entry_model: mt5NormalizeEntryModel(rawEntryModel, {
-                fallback: item?.source_id || "manual",
-              }),
-            };
-          })
-        : [];
-      return json(res, 200, {
-        ok: true,
-        items,
-        page: Number(out?.page || page),
-        pageSize: Number(out?.page_size || pageSize),
-        total,
-        pages: Math.max(
-          1,
-          Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
-        ),
-      });
+
+      // Only cache when there are no meaningful filters (just user_id + page/pageSize).
+      // Filters beyond user_id would poison the cache with stale scoped results.
+      const filterKeys = [
+        "account_id",
+        "source_id",
+        "dispatch_status",
+        "execution_status",
+        "created_from",
+        "created_to",
+        "symbol",
+        "action",
+        "entry_model",
+        "chart_tf",
+        "q",
+      ];
+      const hasFilters = filterKeys.some((k) => filters[k]);
+
+      const cacheKey = hasFilters
+        ? null
+        : JSON.stringify({ userId, filters, page, pageSize });
+
+      const buildResponse = async () => {
+        const out = await mt5ListTradesV2(filters, page, pageSize);
+        const total = Number(out?.total || 0);
+        const items = Array.isArray(out?.items)
+          ? out.items.map((item) => {
+              const metadata =
+                item?.metadata && typeof item.metadata === "object"
+                  ? item.metadata
+                  : {};
+              const rawEntryModel =
+                item?.entry_model ||
+                metadata?.entry_model ||
+                metadata?.entry_model_raw ||
+                "";
+              return {
+                ...item,
+                entry_model: mt5NormalizeEntryModel(rawEntryModel, {
+                  fallback: item?.source_id || "manual",
+                }),
+              };
+            })
+          : [];
+        return {
+          ok: true,
+          items,
+          page: Number(out?.page || page),
+          pageSize: Number(out?.page_size || pageSize),
+          total,
+          pages: Math.max(
+            1,
+            Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
+          ),
+        };
+      };
+
+      const result = cacheKey
+        ? await StateRepo.get("TRADE_LIST", cacheKey, buildResponse)
+        : await buildResponse();
+
+      return json(res, 200, result);
     } catch (error) {
       return json(res, 400, {
         ok: false,
