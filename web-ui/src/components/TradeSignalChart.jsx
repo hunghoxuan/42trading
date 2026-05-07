@@ -268,6 +268,7 @@ export default function TradeSignalChart({
   onPlanLevelChange = null,
   syncedCrosshair = null,
   onCrosshairSync = null,
+  onBarsLoaded = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -420,9 +421,9 @@ export default function TradeSignalChart({
                 candles = bars;
                 setDataSource("twelve");
               }
-            } catch {
-              // Twelve fetch failed
-            }
+              } catch (err) {
+                console.error("Twelve fetch failed for", apiSym, err);
+              }
             } // end cache-check else
           }
 
@@ -436,6 +437,9 @@ export default function TradeSignalChart({
 
           if (isMounted) {
             candleSeries.setData(candles);
+            if (typeof onBarsLoaded === "function") {
+              onBarsLoaded(interval, candles.length);
+            }
 
             // --- MARKERS: creation/open/close arrows, NO text overlays ---
             const markers = [];

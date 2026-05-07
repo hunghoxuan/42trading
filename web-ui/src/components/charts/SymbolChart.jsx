@@ -231,21 +231,34 @@ export default function SymbolChart({
     prevStatus.current = status;
   }, [status, error, pendingMode]);
 
-  const hasAnyBars = useMemo(
-    () =>
-      Object.values(master?.bars || {}).some(
-        (b) => Array.isArray(b) && b.length > 0,
-      ),
-    [master],
-  );
+  const [loadedTfs, setLoadedTfs] = useState({}); // { tf: count }
+  const handleBarsLoaded = useCallback((tf, count) => {
+    setLoadedTfs((prev) => ({ ...prev, [tf.toLowerCase()]: count }));
+  }, []);
 
-  const needsFallback =
-    mode !== "live" && !skipFetch && !hasAnyBars && status !== "LOADING";
+  const hasAnyBars = useMemo(() => {
+    const fromMaster = Object.values(master?.bars || {}).some(
+      (b) => Array.isArray(b) && b.length > 0,
+    );
+    const fromReports = Object.values(loadedTfs).some((c) => c > 0);
+    return fromMaster || fromReports;
+  }, [master, loadedTfs]);
+
+  // If loading finished (READY/ERROR) and still no bars anywhere -> auto switch to Live
+  const needsFallback = useMemo(() => {
+    if (mode === "live") return false;
+    if (status === "LOADING") return false;
+    if (hasAnyBars) return false;
+    // If skipFetch is true, status is READY immediately, so we should wait a bit?
+    // Actually, TradeSignalChart starts loading immediately.
+    return true;
+  }, [mode, status, hasAnyBars]);
 
   useEffect(() => {
     if (hasTradePlan && hasAnyBars) {
-      if (hasTradePlan && !entryPrice && !tpPrice && !slPrice) {
-        setMode("live");
+      if (!entryPrice && !tpPrice && !slPrice) {
+        // If we have bars but no levels, maybe stay in Live if it was live?
+        // But usually TradePlan mode is preferred if we have a plan.
       } else if (mode === "live") {
         setMode("cache");
       }
@@ -567,6 +580,7 @@ export default function SymbolChart({
                   onPlanLevelChange={onPlanLevelChange}
                   syncedCrosshair={syncedCrosshair}
                   onCrosshairSync={setSyncedCrosshair}
+                  onBarsLoaded={handleBarsLoaded}
                 />
               )}
             </div>

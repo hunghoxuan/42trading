@@ -295,11 +295,11 @@ namespace cAlgo.Robots
                 if (s != null) {
                     if (order.TakeProfit.HasValue) {
                         double pips = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s.PipSize;
-                        pnlTp = pips * s.PipValue;
+                        pnlTp = pips * s.PipValue * order.VolumeInUnits;
                     }
                     if (order.StopLoss.HasValue) {
                         double pips = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s.PipSize;
-                        pnlSl = -pips * s.PipValue;
+                        pnlSl = -pips * s.PipValue * order.VolumeInUnits;
                     }
                 }
 

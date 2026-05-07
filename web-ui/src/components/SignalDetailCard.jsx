@@ -195,11 +195,18 @@ function PlanHeader({
             {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>{plan.tp || "-"}</span> /{" "}
             <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
-            <span
-              style={{ color: "var(--muted)", marginLeft: 8, fontWeight: 400 }}
-            >
-              {rrText}
-            </span>
+              <span
+                title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
+                style={{
+                  color: "var(--muted)",
+                  marginLeft: 8,
+                  fontWeight: 400,
+                  cursor: "help",
+                  borderBottom: "1px dotted var(--muted-bright)",
+                }}
+              >
+                {rrText}
+              </span>
           </div>
         </div>
       </div>
@@ -346,6 +353,7 @@ export default function SignalDetailCard({
 
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length) tabs.push("info");
+    if (mode === "trade") tabs.push("broker");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
     return tabs;
@@ -737,14 +745,6 @@ export default function SignalDetailCard({
               </div>
             );
             const card = (title, items) => {
-              const isAccount = title === "Account";
-              const rawJsonItem = metaItems.find(
-                (x) =>
-                  x.label === "Metadata" ||
-                  x.label === "Raw Metadata" ||
-                  x.label === "Raw JSON",
-              );
-
               return (
                 <div
                   className="fields-grid"
@@ -761,46 +761,26 @@ export default function SignalDetailCard({
                     position: "relative",
                   }}
                 >
+                  <div
+                    style={{
+                      gridColumn: "1 / -1",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      color: "var(--accent)",
+                      marginBottom: -4,
+                      opacity: 0.6,
+                    }}
+                  >
+                    {title}
+                  </div>
                   {items.map(renderField)}
-                  {isAccount && rawJsonItem && (
-                    <div style={{ gridColumn: "1 / -1", marginTop: 8 }}>
-                      <span
-                        className="minor-text"
-                        style={{
-                          fontSize: "10px",
-                          textTransform: "uppercase",
-                          color: "var(--muted-bright)",
-                        }}
-                      >
-                        METADATA
-                      </span>
-                      <div
-                        style={{
-                          marginTop: 6,
-                          padding: 10,
-                          background: "rgba(0,0,0,0.2)",
-                          borderRadius: 6,
-                          border: "1px solid rgba(255,255,255,0.05)",
-                          fontSize: "10px",
-                          fontFamily: "monospace",
-                          color: "#8be9fd",
-                          overflowX: "auto",
-                          maxHeight: "200px",
-                        }}
-                      >
-                        {typeof rawJsonItem.value === "object"
-                          ? JSON.stringify(rawJsonItem.value, null, 2)
-                          : String(rawJsonItem.value)}
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             };
             return (
               <div style={{ marginBottom: 20 }}>
                 {sourceItems.length ? card("Source", sourceItems) : null}
-                {accountItems.length ? card("Account", accountItems) : null}
                 {otherItems.length ? card("Other", otherItems) : null}
               </div>
             );
@@ -1389,6 +1369,139 @@ export default function SignalDetailCard({
             );
           })()}
         </div>
+      </div>
+
+      {/* BROKER TAB (Trades only) */}
+      <div style={{ display: mainTab === "broker" ? "block" : "none" }}>
+        {metaItems.length > 0 &&
+          (() => {
+            const hasVal = (x) =>
+              x &&
+              x.value !== null &&
+              x.value !== undefined &&
+              String(x.value) !== "";
+            const isMeta = (x) =>
+              x.label === "Metadata" ||
+              x.label === "Raw Metadata" ||
+              x.label === "Raw JSON";
+            const accountItems = metaItems.filter(
+              (x) => x?.group === "account" && !isMeta(x) && hasVal(x),
+            );
+            const rawJsonItem = metaItems.find(
+              (x) =>
+                (x.label === "Metadata" ||
+                  x.label === "Raw Metadata" ||
+                  x.label === "Raw JSON") &&
+                (x.group === "account" || mode === "trade"),
+            );
+
+            if (!accountItems.length && !rawJsonItem) {
+              return (
+                <div className="minor-text" style={{ padding: 20 }}>
+                  No broker data available for this trade.
+                </div>
+              );
+            }
+
+            const renderField = (item, i) => (
+              <div
+                key={`${item.label}-${i}`}
+                style={{
+                  gridColumn: item.fullWidth ? "1 / -1" : "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                }}
+              >
+                <span
+                  className="minor-text"
+                  style={{
+                    fontSize: "10px",
+                    textTransform: "uppercase",
+                    color: "var(--muted-bright)",
+                  }}
+                >
+                  {item.label}
+                </span>
+                <div
+                  style={{
+                    fontSize: "12.5px",
+                    color: "var(--foreground)",
+                    wordBreak: "break-word",
+                    fontWeight: 500,
+                    ...(item.valueStyle || {}),
+                  }}
+                >
+                  {typeof item.value === "object" ? (
+                    JSON.stringify(item.value, null, 2)
+                  ) : (
+                    item.value
+                  )}
+                </div>
+              </div>
+            );
+
+            return (
+              <div style={{ padding: "0 4px" }}>
+                <div
+                  className="fields-grid"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(auto-fill, minmax(180px, 1fr))",
+                    gap: 16,
+                    padding: 20,
+                    background: "rgba(255,255,255,0.02)",
+                    borderRadius: 12,
+                    border: "1px solid var(--border)",
+                    marginBottom: 16,
+                  }}
+                >
+                  {accountItems.map(renderField)}
+                </div>
+
+                {rawJsonItem && (
+                  <div style={{ marginTop: 24 }}>
+                    <div
+                      className="minor-text"
+                      style={{
+                        fontSize: "11px",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        marginBottom: 12,
+                        paddingLeft: 4,
+                      }}
+                    >
+                      Broker Metadata
+                    </div>
+                    <div
+                      style={{
+                        padding: 16,
+                        background: "rgba(0,0,0,0.3)",
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.05)",
+                      }}
+                    >
+                      <SmartContent
+                        content={
+                          typeof rawJsonItem.value === "string"
+                            ? (() => {
+                                try {
+                                  return JSON.parse(rawJsonItem.value);
+                                } catch (e) {
+                                  return { raw: rawJsonItem.value };
+                                }
+                              })()
+                            : rawJsonItem.value
+                        }
+                        mode="readonly"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
       </div>
 
       {/* CHART TAB */}
