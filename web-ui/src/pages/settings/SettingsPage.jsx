@@ -19,7 +19,7 @@ const API_KEY_NAME_OPTIONS = [
   { value: "TWELVE_DATA_API_KEY", label: "Twelve Data API Key" },
 ];
 
-const SYSTEM_SETTING_TYPES = new Set(["system_config"]);
+const SYSTEM_SETTING_TYPES = new Set(["system_config", "notification_config"]);
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const DISPLAY_TIMEZONE_OPTIONS = [
   { value: "Local", label: "Local (Browser)" },
@@ -910,7 +910,7 @@ export default function SettingsPage({
                   {settings
                     .filter(
                       (s) =>
-                        !["api_key", "cron", "trade", "symbols"].includes(
+                        !["api_key", "cron", "trade", "symbols", "notification_config"].includes(
                           s.type,
                         ) && !s.type.endsWith("_cron"),
                     )
