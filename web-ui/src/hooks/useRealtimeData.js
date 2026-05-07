@@ -1,8 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /**
  * Generic realtime data hook — any page can use.
  * Listens for SSE `data-update` events matching `pageId`.
+ *
+ * Uses a ref for the callback so the event listener is not re-registered
+ * on every render (which could cause missed events between cleanup and re-add).
  *
  * Usage:
  *   useRealtimeData("trades", (data) => {
@@ -13,13 +16,16 @@ import { useEffect } from "react";
  *   });
  */
 export function useRealtimeData(pageId, onData) {
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
+
   useEffect(() => {
     const handler = (e) => {
       if (e.detail?.page_id === pageId) {
-        onData(e.detail.data);
+        onDataRef.current(e.detail.data);
       }
     };
     window.addEventListener("data-update", handler);
     return () => window.removeEventListener("data-update", handler);
-  }, [pageId, onData]);
+  }, [pageId]);
 }

@@ -3,7 +3,9 @@ import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useRealtimeData } from "../../hooks/useRealtimeData";
 
-const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
+const SignalDetailCard = lazy(
+  () => import("../../components/SignalDetailCard"),
+);
 import {
   PositionAuditCell,
   StatusPnlCell,
@@ -83,7 +85,10 @@ function calcRr(t) {
     let highestPartial = tp;
     for (const p of partials) {
       const pPrice = p && typeof p === "object" ? asNum(p.price) : null;
-      if (pPrice != null && (highestPartial == null || pPrice > highestPartial)) {
+      if (
+        pPrice != null &&
+        (highestPartial == null || pPrice > highestPartial)
+      ) {
         highestPartial = pPrice;
       }
     }
@@ -473,13 +478,16 @@ export default function TradesPage() {
   }, []);
 
   // Realtime data patch from SSE (generic page_id="trades")
+  // NOTE: match by `sid` (UUID) — SSE updates carry sid from broker sync,
+  // while `tradeKeyOf(r)` returns `r.id` (integer), which would never match.
   useRealtimeData("trades", (data) => {
     if (!Array.isArray(data) || !data.length) return;
     setRows((prev) => {
-      const map = new Map(data.map((u) => [u.sid, u]));
-      if (!prev.some((r) => map.has(tradeKeyOf(r)))) return prev;
+      const map = new Map(data.map((u) => [String(u.sid || "").trim(), u]));
+      if (!prev.some((r) => map.has(String(r.sid || "").trim()))) return prev;
       return prev.map((r) => {
-        const update = map.get(tradeKeyOf(r));
+        const key = String(r.sid || "").trim();
+        const update = map.get(key);
         return update ? { ...r, ...update } : r;
       });
     });
@@ -647,8 +655,16 @@ export default function TradesPage() {
         return sortDir === "asc" ? cmp : -cmp;
       }
       if (sortKey === "pnl") {
-        const pa = asNum(a?.broker_pnl) ?? asNum(a?.pnl_realized) ?? asNum(a?.net_pnl) ?? 0;
-        const pb = asNum(b?.broker_pnl) ?? asNum(b?.pnl_realized) ?? asNum(b?.net_pnl) ?? 0;
+        const pa =
+          asNum(a?.broker_pnl) ??
+          asNum(a?.pnl_realized) ??
+          asNum(a?.net_pnl) ??
+          0;
+        const pb =
+          asNum(b?.broker_pnl) ??
+          asNum(b?.pnl_realized) ??
+          asNum(b?.net_pnl) ??
+          0;
         cmp = pa - pb;
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sortDir === "asc" ? cmp : -cmp;
@@ -1123,8 +1139,16 @@ export default function TradesPage() {
                             timeText={timeValue}
                             sid={String(t.sid || "-")}
                             brokerId={brokerTicketOf(t)}
-                            confidence={t.confidence_pct || t.raw_json?.confidence_pct || t.raw_json?.confidence}
-                            riskManagement={t.raw_json?.risk_management || t.raw_json?.risk_pct || t.raw_json?.risk}
+                            confidence={
+                              t.confidence_pct ||
+                              t.raw_json?.confidence_pct ||
+                              t.raw_json?.confidence
+                            }
+                            riskManagement={
+                              t.raw_json?.risk_management ||
+                              t.raw_json?.risk_pct ||
+                              t.raw_json?.risk
+                            }
                           />
                         </td>
                         <td style={{ textAlign: "right" }}>
@@ -1145,11 +1169,19 @@ export default function TradesPage() {
                               </span>
                             }
                             pnl={pnl}
+                            margin={tradeRiskSize(t)}
+                            tpPnl={
+                              stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                                ? t.entry_exec || t.entry
+                                : t.broker_tp_pnl
+                            }
+                            slPnl={
+                              stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                                ? t.last_price || t.tp
+                                : t.broker_sl_pnl
+                            }
                             showFilledDetails={
-                              String(t.execution_status || "").toUpperCase() ===
-                                "OPEN" ||
-                              String(t.execution_status || "").toUpperCase() ===
-                                "FILLED"
+                              stRaw === "OPEN" || stRaw === "FILLED"
                             }
                             brokerVolume={
                               asNum(t.broker_volume) ??
@@ -1166,9 +1198,20 @@ export default function TradesPage() {
                               asNum(t.metadata?.broker_data?.pips) ??
                               "-"
                             }
-                            tpPnl={asNum(t.broker_tp_pnl) ?? asNum(t.metadata?.broker_data?.tp_pnl) ?? asNum(t.metadata?.broker_data?.pnl_tp)}
-                            slPnl={asNum(t.broker_sl_pnl) ?? asNum(t.metadata?.broker_data?.sl_pnl) ?? asNum(t.metadata?.broker_data?.pnl_sl)}
-                            margin={asNum(t.broker_margin) ?? asNum(t.metadata?.broker_data?.margin)}
+                            tpPnl={
+                              asNum(t.broker_tp_pnl) ??
+                              asNum(t.metadata?.broker_data?.tp_pnl) ??
+                              asNum(t.metadata?.broker_data?.pnl_tp)
+                            }
+                            slPnl={
+                              asNum(t.broker_sl_pnl) ??
+                              asNum(t.metadata?.broker_data?.sl_pnl) ??
+                              asNum(t.metadata?.broker_data?.pnl_sl)
+                            }
+                            margin={
+                              asNum(t.broker_margin) ??
+                              asNum(t.metadata?.broker_data?.margin)
+                            }
                           />
                         </td>
                       </tr>
@@ -1215,398 +1258,446 @@ export default function TradesPage() {
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
-              <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+              <Suspense
+                fallback={
+                  <div className="loading-card">Loading Details...</div>
+                }
+              >
                 <SignalDetailCard
-                mode="trade"
-                tradePlan={{
-                  enabled: true,
-                  hideEditor: false,
-                  mode: "trade",
-                  tradeId: selectedTrade.sid || selectedTrade.id,
-                  value: detailPlan,
-                  onChange: (k, v) => setDetailPlan((p) => ({ ...p, [k]: v })),
-                  onSave: onUpdateTradePlan,
-                  onAddTrade: onReEntryTrade,
-                  showAddSignalButton: false,
-                  showSaveButton: ![
-                    "FILLED",
-                    "CLOSED",
-                    "CANCELLED",
-                    "TP",
-                    "SL",
-                    "FAIL",
-                    "EXPIRED",
-                  ].includes(
-                    String(selectedTrade.execution_status || "").toUpperCase(),
-                  ),
-                  viewOnly: [
-                    "FILLED",
-                    "CLOSED",
-                    "CANCELLED",
-                    "TP",
-                    "SL",
-                    "FAIL",
-                    "EXPIRED",
-                  ].includes(
-                    String(selectedTrade.execution_status || "").toUpperCase(),
-                  ),
-                }}
-                header={(() => {
-                  const action = String(
-                    selectedTrade.action || selectedTrade.side || "-",
-                  ).toUpperCase();
-                  const actionCls = action === "BUY" ? "side-buy" : "side-sell";
-                  const pnl = asNum(selectedTrade.broker_pnl) ?? asNum(selectedTrade.pnl_realized);
-                  const rr = calcRr(selectedTrade);
-                  const riskSize = tradeRiskSize(selectedTrade);
-                  const meta =
-                    selectedTrade?.metadata &&
-                    typeof selectedTrade.metadata === "object"
-                      ? selectedTrade.metadata
-                      : {};
-                  const raw =
-                    selectedTrade?.raw_json &&
-                    typeof selectedTrade.raw_json === "object"
-                      ? selectedTrade.raw_json
-                      : {};
-                  const vol =
-                    asNum(selectedTrade.broker_lots) ||
-                    asNum(meta.broker_data?.lots) ||
-                    asNum(meta.broker_lots) ||
-                    asNum(meta.lots) ||
-                    asNum(selectedTrade.volume);
-                  const plannedVol =
-                    asNum(meta.requested_lots) ??
-                    asNum(meta.requested_volume) ??
-                    asNum(raw.riskPct) ??
-                    asNum(raw.risk_pct);
-                  const riskPct = asNum(
-                    meta.riskPct ??
-                      meta.risk_pct ??
-                      meta.volumePct ??
-                      meta.volume_pct ??
-                      raw.riskPct ??
-                      raw.risk_pct ??
-                      raw.volumePct ??
-                      raw.volume_pct,
-                  );
-                  const mr = moneyRiskReward(selectedTrade);
-                  const status = statusUi(selectedTrade.execution_status);
-                  const headerMeta = buildHeaderMeta({
-                    statusRaw: selectedTrade.execution_status,
-                    pnlRaw: pnl,
-                    rrRaw: rr,
-                    volumeRaw: vol,
-                    plannedVolRaw: plannedVol,
-                    riskSizeRaw: riskSize,
-                    riskPctRaw: riskPct,
-                    rewardSizeRaw: mr.reward,
-                    updatedAtRaw:
-                      selectedTrade.updated_at ||
-                      selectedTrade.closed_at ||
-                      selectedTrade.opened_at ||
-                      selectedTrade.created_at,
-                    statusUi,
-                  });
-                  return buildDetailHeader({
-                    side: action,
-                    symbol: selectedTrade.symbol || "-",
-                    sideClass: actionCls,
-                    positionText: `${selectedTrade.entry || "-"} → ${selectedTrade.tp || "-"} / ${selectedTrade.sl || "-"}`,
-                    ...headerMeta,
-                    statusNode: (
-                      <span
-                        className={`badge ${status.cls}`}
-                        style={{ cursor: "pointer" }}
-                        title="Edit trade status / PnL"
-                        onClick={() => openTradeEditModal(selectedTrade)}
-                      >
-                        {status.label}
-                      </span>
+                  mode="trade"
+                  tradePlan={{
+                    enabled: true,
+                    hideEditor: false,
+                    mode: "trade",
+                    tradeId: selectedTrade.sid || selectedTrade.id,
+                    value: detailPlan,
+                    onChange: (k, v) =>
+                      setDetailPlan((p) => ({ ...p, [k]: v })),
+                    onSave: onUpdateTradePlan,
+                    onAddTrade: onReEntryTrade,
+                    showAddSignalButton: false,
+                    showSaveButton: ![
+                      "FILLED",
+                      "CLOSED",
+                      "CANCELLED",
+                      "TP",
+                      "SL",
+                      "FAIL",
+                      "EXPIRED",
+                    ].includes(
+                      String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase(),
                     ),
-                  });
-                })()}
-                chart={{
-                  enabled: true,
-                  detailTfTab,
-                  onDetailTfTabChange: setDetailTfTab,
-                  iframeTitle: `trade-tv-${detailTfTab}`,
-                  symbol: selectedTrade.symbol,
-                  interval:
-                    selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
-                  live: true,
-                  entryPrice: asNum(selectedTrade.entry),
-                  slPrice: asNum(selectedTrade.sl),
-                  tpPrice: asNum(selectedTrade.tp),
-                  openedAt: selectedTrade.opened_at,
-                  closedAt: selectedTrade.closed_at,
-                  createdAt: selectedTrade.created_at,
-                  analysisSnapshot: (() => {
-                    const snap =
-                      selectedTrade?.metadata?.analysis_snapshot ||
-                      selectedTrade?.raw_json?.analysis_snapshot;
-                    const mkt =
-                      selectedTrade?.metadata?.market_analysis ||
-                      selectedTrade?.raw_json?.market_analysis;
-                    const pdArrays =
-                      snap?.pd_arrays ||
-                      mkt?.pd_arrays ||
-                      selectedTrade?.raw_json?.pd_arrays ||
-                      [];
-                    const keyLevels = snap?.key_levels || mkt?.key_levels || [];
-                    if (snap)
-                      return {
-                        ...snap,
-                        pd_arrays: pdArrays,
-                        key_levels: keyLevels,
-                      };
-                    if (pdArrays.length > 0)
-                      return { pd_arrays: pdArrays, key_levels: keyLevels };
-                    return null;
-                  })(),
-                }}
-                metaItems={[
-                  {
-                    label: "Source",
-                    value: displaySource(selectedTrade),
-                    group: "source",
-                  },
-                  {
-                    label: "Trade SID",
-                    value: selectedTrade.sid || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Chart TF",
-                    value: formatTimeframe(selectedTrade.chart_tf || "-"),
-                    group: "source",
-                  },
-                  {
-                    label: "Signal TF",
-                    value: formatTimeframe(selectedTrade.signal_tf || "-"),
-                    group: "source",
-                  },
-                  {
-                    label: "Strategy",
-                    value: compactStrategy(selectedTrade),
-                    group: "source",
-                  },
-                  {
-                    label: "Entry Model",
-                    value: selectedTrade.entry_model || selectedTrade.raw_json?.entry_model || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Confidence",
-                    value: detailPlan.confidence_pct != null ? `${detailPlan.confidence_pct}%` : "-",
-                    group: "source",
-                  },
-                   {
-                    label: "Invalidation",
-                    value: detailPlan.invalidation || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "BE Trigger",
-                    value: detailPlan.be_trigger || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Profile",
-                    value: detailPlan.profile || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Est. Bars",
-                    value: detailPlan.estimated_bars || "-",
-                    group: "source",
-                  },
-                  {
-                    label: "Entry Condition",
-                    value: detailPlan.entry_condition || "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Exit Condition",
-                    value: detailPlan.exit_condition || "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Risk Management",
-                    value: detailPlan.risk_management || "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Checklist",
-                    value: Array.isArray(detailPlan.confluence_checklist) && detailPlan.confluence_checklist.length > 0 ? detailPlan.confluence_checklist.join(", ") : "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Skip Recommendation",
-                    value: detailPlan.skip_recommendation || "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Note",
-                    value: detailPlan.note || "-",
-                    fullWidth: true,
-                  },
-                  {
-                    label: "Account",
-                    value:
-                      accountById.get(String(selectedTrade.account_id || ""))
-                        ?.name ||
-                      selectedTrade.account_id ||
-                      "-",
-                    group: "account",
-                  },
-                  {
-                    label: "Broker Ticket",
-                    value: brokerTicketOf(selectedTrade),
-                    group: "account",
-                  },
-                  {
-                    label: "Broker Status",
-                    value: selectedTrade.metadata?.broker_data?.status || "-",
-                    group: "account",
-                  },
-                  ...(selectedTrade.metadata &&
-                  typeof selectedTrade.metadata === "object"
-                    ? (() => {
-                        const meta = selectedTrade.metadata;
+                    viewOnly: [
+                      "FILLED",
+                      "CLOSED",
+                      "CANCELLED",
+                      "TP",
+                      "SL",
+                      "FAIL",
+                      "EXPIRED",
+                    ].includes(
+                      String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase(),
+                    ),
+                  }}
+                  header={(() => {
+                    const action = String(
+                      selectedTrade.action || selectedTrade.side || "-",
+                    ).toUpperCase();
+                    const actionCls =
+                      action === "BUY" ? "side-buy" : "side-sell";
+                    const pnl =
+                      asNum(selectedTrade.broker_pnl) ??
+                      asNum(selectedTrade.pnl_realized);
+                    const rr = calcRr(selectedTrade);
+                    const riskSize = tradeRiskSize(selectedTrade);
+                    const meta =
+                      selectedTrade?.metadata &&
+                      typeof selectedTrade.metadata === "object"
+                        ? selectedTrade.metadata
+                        : {};
+                    const raw =
+                      selectedTrade?.raw_json &&
+                      typeof selectedTrade.raw_json === "object"
+                        ? selectedTrade.raw_json
+                        : {};
+                    const vol =
+                      asNum(selectedTrade.broker_lots) ||
+                      asNum(meta.broker_data?.lots) ||
+                      asNum(meta.broker_lots) ||
+                      asNum(meta.lots) ||
+                      asNum(selectedTrade.volume);
+                    const plannedVol =
+                      asNum(meta.requested_lots) ??
+                      asNum(meta.requested_volume) ??
+                      asNum(raw.riskPct) ??
+                      asNum(raw.risk_pct);
+                    const riskPct = asNum(
+                      meta.riskPct ??
+                        meta.risk_pct ??
+                        meta.volumePct ??
+                        meta.volume_pct ??
+                        raw.riskPct ??
+                        raw.risk_pct ??
+                        raw.volumePct ??
+                        raw.volume_pct,
+                    );
+                    const mr = moneyRiskReward(selectedTrade);
+                    const status = statusUi(selectedTrade.execution_status);
+                    const headerMeta = buildHeaderMeta({
+                      statusRaw: selectedTrade.execution_status,
+                      pnlRaw: pnl,
+                      rrRaw: rr,
+                      volumeRaw: vol,
+                      plannedVolRaw: plannedVol,
+                      riskSizeRaw: riskSize,
+                      riskPctRaw: riskPct,
+                      rewardSizeRaw: mr.reward,
+                      updatedAtRaw:
+                        selectedTrade.updated_at ||
+                        selectedTrade.closed_at ||
+                        selectedTrade.opened_at ||
+                        selectedTrade.created_at,
+                      statusUi,
+                    });
+                    return buildDetailHeader({
+                      side: action,
+                      symbol: selectedTrade.symbol || "-",
+                      sideClass: actionCls,
+                      positionText: `${selectedTrade.entry || "-"} → ${selectedTrade.tp || "-"} / ${selectedTrade.sl || "-"}`,
+                      ...headerMeta,
+                      statusNode: (
+                        <span
+                          className={`badge ${status.cls}`}
+                          style={{ cursor: "pointer" }}
+                          title="Edit trade status / PnL"
+                          onClick={() => openTradeEditModal(selectedTrade)}
+                        >
+                          {status.label}
+                        </span>
+                      ),
+                    });
+                  })()}
+                  chart={{
+                    enabled: true,
+                    detailTfTab,
+                    onDetailTfTabChange: setDetailTfTab,
+                    iframeTitle: `trade-tv-${detailTfTab}`,
+                    symbol: selectedTrade.symbol,
+                    interval:
+                      selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
+                    live: true,
+                    entryPrice: asNum(selectedTrade.entry),
+                    slPrice: asNum(selectedTrade.sl),
+                    tpPrice: asNum(selectedTrade.tp),
+                    openedAt: selectedTrade.opened_at,
+                    closedAt: selectedTrade.closed_at,
+                    createdAt: selectedTrade.created_at,
+                    analysisSnapshot: (() => {
+                      const snap =
+                        selectedTrade?.metadata?.analysis_snapshot ||
+                        selectedTrade?.raw_json?.analysis_snapshot;
+                      const mkt =
+                        selectedTrade?.metadata?.market_analysis ||
+                        selectedTrade?.raw_json?.market_analysis;
+                      const pdArrays =
+                        snap?.pd_arrays ||
+                        mkt?.pd_arrays ||
+                        selectedTrade?.raw_json?.pd_arrays ||
+                        [];
+                      const keyLevels =
+                        snap?.key_levels || mkt?.key_levels || [];
+                      if (snap)
+                        return {
+                          ...snap,
+                          pd_arrays: pdArrays,
+                          key_levels: keyLevels,
+                        };
+                      if (pdArrays.length > 0)
+                        return { pd_arrays: pdArrays, key_levels: keyLevels };
+                      return null;
+                    })(),
+                  }}
+                  metaItems={[
+                    {
+                      label: "Source",
+                      value: displaySource(selectedTrade),
+                      group: "source",
+                    },
+                    {
+                      label: "Trade SID",
+                      value: selectedTrade.sid || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Chart TF",
+                      value: formatTimeframe(selectedTrade.chart_tf || "-"),
+                      group: "source",
+                    },
+                    {
+                      label: "Signal TF",
+                      value: formatTimeframe(selectedTrade.signal_tf || "-"),
+                      group: "source",
+                    },
+                    {
+                      label: "Strategy",
+                      value: compactStrategy(selectedTrade),
+                      group: "source",
+                    },
+                    {
+                      label: "Entry Model",
+                      value:
+                        selectedTrade.entry_model ||
+                        selectedTrade.raw_json?.entry_model ||
+                        "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Confidence",
+                      value:
+                        detailPlan.confidence_pct != null
+                          ? `${detailPlan.confidence_pct}%`
+                          : "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Invalidation",
+                      value: detailPlan.invalidation || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "BE Trigger",
+                      value: detailPlan.be_trigger || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Profile",
+                      value: detailPlan.profile || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Est. Bars",
+                      value: detailPlan.estimated_bars || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Entry Condition",
+                      value: detailPlan.entry_condition || "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Exit Condition",
+                      value: detailPlan.exit_condition || "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Risk Management",
+                      value: detailPlan.risk_management || "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Checklist",
+                      value:
+                        Array.isArray(detailPlan.confluence_checklist) &&
+                        detailPlan.confluence_checklist.length > 0
+                          ? detailPlan.confluence_checklist.join(", ")
+                          : "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Skip Recommendation",
+                      value: detailPlan.skip_recommendation || "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Note",
+                      value: detailPlan.note || "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "Account",
+                      value:
+                        accountById.get(String(selectedTrade.account_id || ""))
+                          ?.name ||
+                        selectedTrade.account_id ||
+                        "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Broker Ticket",
+                      value: brokerTicketOf(selectedTrade),
+                      group: "account",
+                    },
+                    {
+                      label: "Broker Status",
+                      value: selectedTrade.metadata?.broker_data?.status || "-",
+                      group: "account",
+                    },
+                    ...(selectedTrade.metadata &&
+                    typeof selectedTrade.metadata === "object"
+                      ? (() => {
+                          const meta = selectedTrade.metadata;
+                          const bData = meta.broker_data || {};
+
+                          const bVol =
+                            asNum(selectedTrade.broker_volume) ??
+                            asNum(bData.volume);
+                          const bLots =
+                            asNum(selectedTrade.broker_lots) ??
+                            asNum(bData.lots);
+                          const bPips =
+                            asNum(selectedTrade.broker_pips) ??
+                            asNum(bData.pips);
+                          const bProfit =
+                            asNum(selectedTrade.broker_pnl) ??
+                            asNum(selectedTrade.pnl_realized) ??
+                            asNum(bData.net_pnl) ??
+                            asNum(bData.pnl);
+                          const bComm =
+                            asNum(selectedTrade.broker_commission) ??
+                            asNum(bData.commission);
+                          const bSwap =
+                            asNum(selectedTrade.broker_swap) ??
+                            asNum(bData.swap);
+                          const bMargin =
+                            asNum(selectedTrade.broker_margin) ??
+                            asNum(bData.margin);
+                          const bTpPnl =
+                            asNum(selectedTrade.broker_tp_pnl) ??
+                            asNum(bData.tp_pnl);
+                          const bSlPnl =
+                            asNum(selectedTrade.broker_sl_pnl) ??
+                            asNum(bData.sl_pnl);
+
+                          return [
+                            {
+                              label: "Broker Volume",
+                              value:
+                                bVol != null
+                                  ? `${bVol.toLocaleString()} units`
+                                  : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Broker Lots",
+                              value:
+                                bLots != null
+                                  ? `${bLots.toFixed(2)} lots`
+                                  : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Broker Pips",
+                              value:
+                                bPips != null
+                                  ? `${bPips.toFixed(1)} pips`
+                                  : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Broker Net Profit",
+                              value:
+                                bProfit != null
+                                  ? `$${bProfit.toFixed(2)}`
+                                  : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Commission",
+                              value:
+                                bComm != null ? `$${bComm.toFixed(2)}` : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Swap",
+                              value:
+                                bSwap != null ? `$${bSwap.toFixed(2)}` : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Margin",
+                              value:
+                                bMargin != null
+                                  ? `$${bMargin.toFixed(2)}`
+                                  : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Planned TP Profit",
+                              value:
+                                bTpPnl != null ? `$${bTpPnl.toFixed(2)}` : null,
+                              group: "account",
+                            },
+                            {
+                              label: "Planned SL Profit",
+                              value:
+                                bSlPnl != null ? `$${bSlPnl.toFixed(2)}` : null,
+                              group: "account",
+                            },
+                          ].filter((x) => x.value !== null);
+                        })()
+                      : []),
+                    {
+                      label: "Metadata",
+                      fullWidth: true,
+                      value: (() => {
+                        const meta = selectedTrade.metadata || {};
                         const bData = meta.broker_data || {};
 
-                        const bVol =
-                          asNum(selectedTrade.broker_volume) ??
-                          asNum(bData.volume);
-                        const bLots =
-                          asNum(selectedTrade.broker_lots) ?? asNum(bData.lots);
-                        const bPips =
-                          asNum(selectedTrade.broker_pips) ?? asNum(bData.pips);
-                        const bProfit =
-                          asNum(selectedTrade.broker_pnl) ??
-                          asNum(selectedTrade.pnl_realized) ??
-                          asNum(bData.net_pnl) ??
-                          asNum(bData.pnl);
-                        const bComm =
-                          asNum(selectedTrade.broker_commission) ??
-                          asNum(bData.commission);
-                        const bSwap =
-                          asNum(selectedTrade.broker_swap) ?? asNum(bData.swap);
-                        const bMargin =
-                          asNum(selectedTrade.broker_margin) ??
-                          asNum(bData.margin);
-                        const bTpPnl =
-                          asNum(selectedTrade.broker_tp_pnl) ??
-                          asNum(bData.tp_pnl);
-                        const bSlPnl =
-                          asNum(selectedTrade.broker_sl_pnl) ??
-                          asNum(bData.sl_pnl);
+                        const cleaned = {};
+                        const junk = [
+                          "props",
+                          "children",
+                          "ref",
+                          "key",
+                          "type",
+                          "_owner",
+                          "_store",
+                          "_self",
+                          "_source",
+                          "market_analysis",
+                          "analysis_snapshot",
+                          "pd_arrays",
+                          "key_levels",
+                          "labels",
+                        ];
 
-                        return [
-                          {
-                            label: "Broker Volume",
-                            value:
-                              bVol != null
-                                ? `${bVol.toLocaleString()} units`
-                                : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Broker Lots",
-                            value:
-                              bLots != null ? `${bLots.toFixed(2)} lots` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Broker Pips",
-                            value:
-                              bPips != null ? `${bPips.toFixed(1)} pips` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Broker Net Profit",
-                            value:
-                              bProfit != null ? `$${bProfit.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Commission",
-                            value:
-                              bComm != null ? `$${bComm.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Swap",
-                            value:
-                              bSwap != null ? `$${bSwap.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Margin",
-                            value:
-                              bMargin != null ? `$${bMargin.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Planned TP Profit",
-                            value:
-                              bTpPnl != null ? `$${bTpPnl.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                          {
-                            label: "Planned SL Profit",
-                            value:
-                              bSlPnl != null ? `$${bSlPnl.toFixed(2)}` : null,
-                            group: "account",
-                          },
-                        ].filter((x) => x.value !== null);
-                      })()
-                    : []),
-                   {
-                    label: "Metadata",
-                    fullWidth: true,
-                    value: (() => {
-                      const meta = selectedTrade.metadata || {};
-                      const bData = meta.broker_data || {};
-                      
-                      const cleaned = {};
-                      const junk = [
-                        "props", "children", "ref", "key", "type", "_owner", "_store", "_self", "_source",
-                        "market_analysis", "analysis_snapshot", "pd_arrays", "key_levels", "labels"
-                      ];
-                      
-                      // If we have broker data, it's usually the most important
-                      const source = Object.keys(bData).length > 0 ? bData : meta;
-                      
-                      Object.keys(source).forEach((k) => {
-                        if (junk.includes(k)) return;
-                        const val = source[k];
-                        if (val === null || val === undefined || val === "") return;
-                        cleaned[k] = val;
-                      });
-                      return cleaned;
-                    })(),
-                  },
-                ]}
-                history={{
-                  enabled: true,
-                  items: tradeEvents,
-                  scroll: true,
-                  renderItem: (ev, idx) =>
-                    renderHistoryItem(ev, idx, {
-                      formatDateTime: fDateTime,
-                      includeTicket: true,
-                    }),
-                }}
-                formatDateTime={fDateTime}
-                response={{
-                  raw: selectedTrade?.raw_json,
-                  metadata: selectedTrade?.metadata,
-                }}
-              />
-            </Suspense>
-            {createMode ? (
+                        // If we have broker data, it's usually the most important
+                        const source =
+                          Object.keys(bData).length > 0 ? bData : meta;
+
+                        Object.keys(source).forEach((k) => {
+                          if (junk.includes(k)) return;
+                          const val = source[k];
+                          if (val === null || val === undefined || val === "")
+                            return;
+                          cleaned[k] = val;
+                        });
+                        return cleaned;
+                      })(),
+                    },
+                  ]}
+                  history={{
+                    enabled: true,
+                    items: tradeEvents,
+                    scroll: true,
+                    renderItem: (ev, idx) =>
+                      renderHistoryItem(ev, idx, {
+                        formatDateTime: fDateTime,
+                        includeTicket: true,
+                      }),
+                  }}
+                  formatDateTime={fDateTime}
+                  response={{
+                    raw: selectedTrade?.raw_json,
+                    metadata: selectedTrade?.metadata,
+                  }}
+                />
+              </Suspense>
+              {createMode ? (
                 <div className="panel" style={{ padding: 12 }}>
                   <div className="panel-label">CREATE TRADE</div>
                   <div

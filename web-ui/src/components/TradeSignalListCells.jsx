@@ -132,7 +132,13 @@ export function StatusPnlCell({
           </div>
         )}
       </div>
-      {(showFilledDetails || isPending) && !hidePnl ? (
+      {isFinished ? (
+        <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.5, marginTop: 2, textAlign: 'right' }}>
+          {num(tpPnl) != null && num(slPnl) != null ? (
+             <span>{tpPnl} → {slPnl} | <span className={num(pnl) < 0 ? 'money-neg' : 'money-pos'} style={{fontWeight: 700}}>{num(pnl) != null ? (pnl > 0 ? '+' : '') : ''}{num(pnl) != null && num(margin) ? (pnl / Math.abs(margin)).toFixed(1) : '0.0'}r</span></span>
+          ) : "-"}
+        </div>
+      ) : (showFilledDetails || isPending) && !hidePnl ? (
         <div className="cell-minor" style={{ fontSize: '10px', opacity: 0.5, marginTop: 2, textAlign: 'right' }}>
           {tpPnl != null && num(tpPnl) !== 0 ? <span className="money-pos" style={{ opacity: 0.7 }}>+${num(tpPnl).toFixed(1)}</span> : "-"} 
           {" "}/{" "}
