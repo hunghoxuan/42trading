@@ -81,6 +81,22 @@ function statusUi(statusRaw) {
 }
 
 function calcRrFromSignal(s) {
+  // Check partial_tps for weighted average first
+  const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
+  const plan = raw?.trade_plan || raw?.tradePlan || {};
+  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
+  if (partials.length > 0) {
+    let total = 0, weighted = 0;
+    for (const p of partials) {
+      const pRr = p && typeof p === "object" ? asNum(p.rr) ?? asNum(p.risk_reward) : null;
+      const pPct = p && typeof p === "object" ? asNum(p.size_pct) : null;
+      if (pRr != null && pPct != null && pPct > 0) {
+        weighted += pRr * pPct;
+        total += pPct;
+      }
+    }
+    if (total > 0) return Number((weighted / total).toFixed(2));
+  }
   const entry = asNum(s?.entry || s?.target_price || s?.entry_price);
   const sl = asNum(s?.sl || s?.sl_price);
   const tp = asNum(s?.tp || s?.tp_price);
@@ -88,7 +104,7 @@ function calcRrFromSignal(s) {
   const risk = Math.abs(entry - sl);
   const reward = Math.abs(tp - entry);
   if (!risk) return null;
-  return reward / risk;
+  return Number((reward / risk).toFixed(2));
 }
 
 function signalRiskSize(s, details) {
@@ -656,9 +672,9 @@ export default function SignalsPage() {
                       }}
                     />
                   </th>
-                  <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>SYMBOL{sortMarker("symbol")}</th>
-                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>POSITION | INFO | Status{sortMarker("strategy")}</th>
-                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATE{sortMarker("status")}</th>
+                  <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>POSITION{sortMarker("symbol")}</th>
+                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>INFO{sortMarker("strategy")}</th>
+                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -927,7 +943,9 @@ export default function SignalsPage() {
                 { label: "Chart TF", value: formatTimeframe(selectedSignal.chart_tf || "-") },
                 { label: "Signal TF", value: formatTimeframe(selectedSignal.signal_tf || "-") },
                 { label: "Strategy", value: compactStrategy(selectedSignal) },
-                { label: "Entry Model", value: selectedSignal.entry_model || "-" },
+                { label: "Entry Model", value: selectedSignal.entry_model || selectedSignal.raw_json?.entry_model || "-" },
+                { label: "Confidence", value: selectedSignal.confidence_pct != null ? `${selectedSignal.confidence_pct}%` : (selectedSignal.raw_json?.confidence_pct != null ? `${selectedSignal.raw_json.confidence_pct}%` : "-") },
+                { label: "Invalidation", value: selectedSignal.invalidation || selectedSignal.raw_json?.invalidation || "-" },
                 {
                   label: "Metadata",
                   fullWidth: true,

@@ -72,6 +72,22 @@ function statusUi(statusRaw) {
 }
 
 function calcRr(t) {
+  // Check partial_tps for weighted average first
+  const raw = t?.raw_json && typeof t.raw_json === "object" ? t.raw_json : {};
+  const plan = raw?.trade_plan || raw?.tradePlan || {};
+  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
+  if (partials.length > 0) {
+    let total = 0, weighted = 0;
+    for (const p of partials) {
+      const pRr = p && typeof p === "object" ? asNum(p.rr) ?? asNum(p.risk_reward) : null;
+      const pPct = p && typeof p === "object" ? asNum(p.size_pct) : null;
+      if (pRr != null && pPct != null && pPct > 0) {
+        weighted += pRr * pPct;
+        total += pPct;
+      }
+    }
+    if (total > 0) return Number((weighted / total).toFixed(2));
+  }
   const entry = asNum(t?.entry);
   const sl = asNum(t?.sl);
   const tp = asNum(t?.tp);
@@ -79,7 +95,7 @@ function calcRr(t) {
   const risk = Math.abs(entry - sl);
   const reward = Math.abs(tp - entry);
   if (!risk) return null;
-  return reward / risk;
+  return Number((reward / risk).toFixed(2));
 }
 
 function brokerNameFromAccount(a) {
@@ -977,19 +993,19 @@ export default function TradesPage() {
                     onClick={() => toggleSort("symbol")}
                     style={{ cursor: "pointer" }}
                   >
-                    SYMBOL{sortMarker("symbol")}
+                    POSITION{sortMarker("symbol")}
                   </th>
                   <th
                     onClick={() => toggleSort("strategy")}
                     style={{ cursor: "pointer" }}
                   >
-                    POSITION | INFO | Status{sortMarker("strategy")}
+                    INFO{sortMarker("strategy")}
                   </th>
                   <th
                     onClick={() => toggleSort("pnl")}
                     style={{ cursor: "pointer" }}
                   >
-                    PNL / VOLUME{sortMarker("pnl")}
+                    STATUS{sortMarker("pnl")}
                   </th>
                 </tr>
               </thead>
@@ -1356,7 +1372,17 @@ export default function TradesPage() {
                   },
                   {
                     label: "Entry Model",
-                    value: selectedTrade.entry_model || "-",
+                    value: selectedTrade.entry_model || selectedTrade.raw_json?.entry_model || "-",
+                    group: "source",
+                  },
+                  {
+                    label: "Confidence",
+                    value: selectedTrade.confidence_pct != null ? `${selectedTrade.confidence_pct}%` : (selectedTrade.raw_json?.confidence_pct != null ? `${selectedTrade.raw_json.confidence_pct}%` : "-"),
+                    group: "source",
+                  },
+                  {
+                    label: "Invalidation",
+                    value: selectedTrade.invalidation || selectedTrade.raw_json?.invalidation || "-",
                     group: "source",
                   },
                   {

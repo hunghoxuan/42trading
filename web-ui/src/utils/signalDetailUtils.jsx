@@ -14,9 +14,16 @@ export function shouldShowPnl(statusRaw, pnlRaw) {
   const status = String(statusRaw || "").toUpperCase();
   const pnl = asNum(pnlRaw);
   if (pnl == null) return false;
-  
+
   // Terminal statuses always show PnL if present
-  const isTerminal = ["CLOSED", "CANCELLED", "TP", "SL", "FAIL", "EXPIRED"].includes(status);
+  const isTerminal = [
+    "CLOSED",
+    "CANCELLED",
+    "TP",
+    "SL",
+    "FAIL",
+    "EXPIRED",
+  ].includes(status);
   if (isTerminal) return true;
 
   // Active trades (START) should show PnL if non-zero
@@ -33,7 +40,15 @@ export function formatNote(note) {
   return String(note).split(". ").filter(Boolean).join(".<br/>");
 }
 
-export function buildRrVolRiskText({ rrRaw, volumeRaw, riskSizeRaw, riskPctRaw, rewardSizeRaw, plannedVolRaw, volumeSizeRaw }) {
+export function buildRrVolRiskText({
+  rrRaw,
+  volumeRaw,
+  riskSizeRaw,
+  riskPctRaw,
+  rewardSizeRaw,
+  plannedVolRaw,
+  volumeSizeRaw,
+}) {
   const rr = asNum(rrRaw);
   const vol = asNum(volumeRaw);
   const plannedVol = asNum(plannedVolRaw);
@@ -41,28 +56,44 @@ export function buildRrVolRiskText({ rrRaw, volumeRaw, riskSizeRaw, riskPctRaw, 
   const riskPct = asNum(riskPctRaw);
   const rewardRaw = asNum(rewardSizeRaw);
   const loss = risk != null ? Math.abs(risk) : null;
-  const reward = rewardRaw != null
-    ? Math.abs(rewardRaw)
-    : (loss != null && rr != null ? loss * rr : null);
+  const reward =
+    rewardRaw != null
+      ? Math.abs(rewardRaw)
+      : loss != null && rr != null
+        ? loss * rr
+        : null;
 
-  const volVal = volumeSizeRaw != null ? volumeSizeRaw / 100 : (plannedVol ?? (riskPct != null ? riskPct / 100 : null));
-  const volText = volVal != null
-    ? `vol ${Number((volVal * 100).toFixed(2))}%`
-    : "vol -";
+  const volVal =
+    volumeSizeRaw != null
+      ? volumeSizeRaw / 100
+      : (plannedVol ?? (riskPct != null ? riskPct / 100 : null));
+  const volText =
+    volVal != null ? `vol ${Number((volVal * 100).toFixed(2))}%` : "vol -";
 
   const lotsText = vol != null ? `${Number(vol.toFixed(3))} lots` : "- lots";
   const rrText = rr != null ? `${rr.toFixed(2)} rr` : "- rr";
 
   return (
-    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+    <div
+      style={{
+        display: "flex",
+        gap: "8px",
+        alignItems: "center",
+        flexWrap: "wrap",
+      }}
+    >
       <span>{rrText}</span>
       <span>{volText}</span>
       <span>|</span>
       <span>{lotsText}</span>
       {(reward != null || loss != null) && (
-        <span style={{ display: 'flex', gap: '8px' }}>
-           <span className="money-pos">+{reward != null ? `$${reward.toFixed(2)}` : "$-"}</span>
-           <span className="money-neg">-{loss != null ? `$${loss.toFixed(2)}` : "$-"}</span>
+        <span style={{ display: "flex", gap: "8px" }}>
+          <span className="money-pos">
+            +{reward != null ? `$${reward.toFixed(2)}` : "$-"}
+          </span>
+          <span className="money-neg">
+            -{loss != null ? `$${loss.toFixed(2)}` : "$-"}
+          </span>
         </span>
       )}
     </div>
@@ -84,15 +115,24 @@ export function buildHeaderMeta({
 }) {
   const pnl = asNum(pnlRaw);
   const showPnl = shouldShowPnl(statusRaw, pnl);
-  const status = typeof statusUi === "function"
-    ? statusUi(statusRaw)
-    : { cls: "OTHER", label: String(statusRaw || "PENDING").toUpperCase() };
+  const status =
+    typeof statusUi === "function"
+      ? statusUi(statusRaw)
+      : { cls: "OTHER", label: String(statusRaw || "PENDING").toUpperCase() };
   return {
     showPnl,
     pnlText: `$${pnl != null ? pnl.toFixed(2) : "0.00"}`,
     pnlClassName: pnl != null && pnl < 0 ? "money-neg" : "money-pos",
     dateText: formatDetailDateTime(updatedAtRaw),
-    statsText: buildRrVolRiskText({ rrRaw, volumeRaw, plannedVolRaw, riskSizeRaw, riskPctRaw, rewardSizeRaw, volumeSizeRaw }),
+    statsText: buildRrVolRiskText({
+      rrRaw,
+      volumeRaw,
+      plannedVolRaw,
+      riskSizeRaw,
+      riskPctRaw,
+      rewardSizeRaw,
+      volumeSizeRaw,
+    }),
     statusNode: <span className={`badge ${status.cls}`}>{status.label}</span>,
   };
 }
@@ -103,12 +143,20 @@ export function historyPayload(item) {
 }
 
 export function historyType(item, payload) {
-  return String(item?.event_type || item?.type || payload?.event || payload?.event_type || "EVENT");
+  return String(
+    item?.event_type ||
+      item?.type ||
+      payload?.event ||
+      payload?.event_type ||
+      "EVENT",
+  );
 }
 
 export function historyWhen(item, formatDateTime) {
   const dt = item?.event_time || item?.created_at;
-  return typeof formatDateTime === "function" ? formatDateTime(dt) : formatDetailDateTime(dt);
+  return typeof formatDateTime === "function"
+    ? formatDateTime(dt)
+    : formatDetailDateTime(dt);
 }
 
 export function formatNum3(v) {
@@ -120,15 +168,29 @@ export function formatNum3(v) {
 function firstTradePlan(raw = {}) {
   if (Array.isArray(raw?.trade_plan)) return raw.trade_plan[0] || {};
   if (Array.isArray(raw?.tradePlan)) return raw.tradePlan[0] || {};
-  return raw?.trade_plan && typeof raw.trade_plan === "object" ? raw.trade_plan : {};
+  return raw?.trade_plan && typeof raw.trade_plan === "object"
+    ? raw.trade_plan
+    : {};
 }
 
 function planPrimaryTp(plan = {}) {
   const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
-  const partialPrices = partials.map((x) => (x && typeof x === "object" ? x.price : x));
+  const partialPrices = partials.map((x) =>
+    x && typeof x === "object" ? x.price : x,
+  );
   const legacyLevels = Array.isArray(plan?.tp_levels) ? plan.tp_levels : [];
-  const compactTps = Array.isArray(plan?.tps) ? plan.tps.map((x) => (x && typeof x === "object" ? x.price : x)) : [];
-  const candidates = [plan?.tp, ...partialPrices, ...compactTps, ...legacyLevels, plan?.tp1, plan?.target, plan?.take_profit];
+  const compactTps = Array.isArray(plan?.tps)
+    ? plan.tps.map((x) => (x && typeof x === "object" ? x.price : x))
+    : [];
+  const candidates = [
+    plan?.tp,
+    ...partialPrices,
+    ...compactTps,
+    ...legacyLevels,
+    plan?.tp1,
+    plan?.target,
+    plan?.take_profit,
+  ];
   for (const value of candidates) {
     const n = asNum(value);
     if (n != null) return n;
@@ -136,52 +198,145 @@ function planPrimaryTp(plan = {}) {
   return null;
 }
 
+/**
+ * Calculate weighted average RR from partial_tps when available.
+ */
+export function calcWeightedRr(s) {
+  if (!s) return null;
+  const raw = s?.raw_json && typeof s.raw_json === "object" ? s.raw_json : {};
+  const plan = raw?.trade_plan || raw?.tradePlan || {};
+  const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : (Array.isArray(s?.partial_tps) ? s.partial_tps : []);
+  if (!partials.length) return null;
+  let totalWeights = 0;
+  let weightedRr = 0;
+  for (const p of partials) {
+    const pRr = p && typeof p === "object" ? asNum(p.rr) ?? asNum(p.risk_reward) : null;
+    const pPct = p && typeof p === "object" ? asNum(p.size_pct) : null;
+    if (pRr != null && pPct != null && pPct > 0) {
+      weightedRr += pRr * pPct;
+      totalWeights += pPct;
+    }
+  }
+  if (totalWeights <= 0) return null;
+  return Number((weightedRr / totalWeights).toFixed(2));
+}
+
 export function calcRrFromSignal(s) {
-  const entry = asNum(s?.entry || s?.target_price || s?.entry_price || s?.entry_price_raw);
+  // First try weighted average from partial_tps
+  const weighted = calcWeightedRr(s);
+  if (weighted != null) return weighted;
+  const entry = asNum(
+    s?.entry || s?.target_price || s?.entry_price || s?.entry_price_raw,
+  );
   const sl = asNum(s?.sl || s?.sl_price || s?.sl_price_raw);
   const tp = asNum(s?.tp || s?.tp_price || s?.tp_price_raw);
   if (entry == null || sl == null || tp == null) return null;
   const risk = Math.abs(entry - sl);
   const reward = Math.abs(tp - entry);
   if (!risk) return null;
-  return reward / risk;
+  return Number((reward / risk).toFixed(2));
 }
 
 export function extractTradePlanFromSignal(signal = {}) {
-  const raw = signal?.raw_json && typeof signal.raw_json === "object" ? signal.raw_json : {};
+  const raw =
+    signal?.raw_json && typeof signal.raw_json === "object"
+      ? signal.raw_json
+      : {};
   const tradePlan = firstTradePlan(raw);
-  const sideRaw = String(signal?.action || signal?.side || tradePlan?.direction || "").toUpperCase();
-  const entry = asNum(signal?.entry || signal?.target_price || signal?.entry_price) ?? asNum(raw?.entry ?? raw?.price);
+  const sideRaw = String(
+    signal?.action || signal?.side || tradePlan?.direction || "",
+  ).toUpperCase();
+  const entry =
+    asNum(signal?.entry || signal?.target_price || signal?.entry_price) ??
+    asNum(raw?.entry ?? raw?.price);
   const tp = asNum(signal?.tp || signal?.tp_price) ?? planPrimaryTp(tradePlan);
   const sl = asNum(signal?.sl || signal?.sl_price) ?? asNum(tradePlan?.sl);
-  const rr = asNum(signal?.rr_planned) ?? asNum(tradePlan?.rr) ?? calcRrFromSignal(signal);
+  const rr =
+    asNum(signal?.rr_planned) ??
+    asNum(tradePlan?.rr) ??
+    calcRrFromSignal(signal);
+
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
-    trade_type: String(tradePlan?.type || raw?.order_type || "limit").toLowerCase(),
+    trade_type: String(
+      tradePlan?.type || raw?.order_type || "limit",
+    ).toLowerCase(),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(tradePlan?.note || signal?.note || "").trim(),
+    entry_model: String(
+      signal.entry_model || raw.entry_model || tradePlan.entry_model || "",
+    ),
+    strategy: String(
+      signal.strategy || raw.strategy || tradePlan.strategy || "",
+    ),
+    confidence_pct: asNum(
+      signal.confidence_pct ??
+        signal.confidence ??
+        raw.confidence_pct ??
+        raw.confidence ??
+        tradePlan.confidence_pct ??
+        tradePlan.confidence,
+    ),
+    invalidation: String(
+      signal.invalidation || raw.invalidation || tradePlan.invalidation || "",
+    ),
+    estimated_bars: asNum(
+      signal.estimated_bars ?? raw.estimated_bars ?? tradePlan.estimated_bars,
+    ),
+    be_trigger: asNum(
+      signal.be_trigger ??
+        raw.be_trigger ??
+        tradePlan.be_trigger ??
+        raw.be_trigger_raw,
+    ),
   };
 }
 
 export function extractTradePlanFromTrade(trade = {}) {
-  const meta = trade?.metadata && typeof trade.metadata === "object" ? trade.metadata : {};
-  const raw = trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
-  const sideRaw = String(trade.action || trade.side || meta.direction || "").toUpperCase();
+  const meta =
+    trade?.metadata && typeof trade.metadata === "object" ? trade.metadata : {};
+  const raw =
+    trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+  const sideRaw = String(
+    trade.action || trade.side || meta.direction || "",
+  ).toUpperCase();
   const entry = asNum(trade.entry);
   const tp = asNum(trade.tp);
   const sl = asNum(trade.sl);
   const rr = asNum(trade.rr_planned) ?? calcRrFromSignal(trade);
+
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
-    trade_type: String(meta.trade_type || meta.order_type || raw.order_type || "limit").toLowerCase(),
+    trade_type: String(
+      meta.trade_type || meta.order_type || raw.order_type || "limit",
+    ).toLowerCase(),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(trade.note || "").trim(),
+    entry_model: String(
+      trade.entry_model || meta.entry_model || raw.entry_model || "",
+    ),
+    strategy: String(trade.strategy || meta.strategy || raw.strategy || ""),
+    confidence_pct: asNum(
+      trade.confidence_pct ??
+        trade.confidence ??
+        meta.confidence_pct ??
+        meta.confidence ??
+        raw.confidence_pct ??
+        raw.confidence,
+    ),
+    invalidation: String(
+      trade.invalidation || meta.invalidation || raw.invalidation || "",
+    ),
+    estimated_bars: asNum(
+      trade.estimated_bars ?? meta.estimated_bars ?? raw.estimated_bars,
+    ),
+    be_trigger: asNum(trade.be_trigger ?? meta.be_trigger ?? raw.be_trigger),
   };
 }
 
@@ -190,10 +345,15 @@ export function validateTradePlan(plan = {}, opts = {}) {
   const tp = asNum(plan.tp);
   const sl = asNum(plan.sl);
   const rr = asNum(plan.rr);
-  const direction = String(plan.direction || "").trim().toUpperCase();
-  if (!["BUY", "SELL"].includes(direction)) return "Direction must be Buy or Sell.";
-  if (entry == null || tp == null || sl == null) return "Entry/TP/SL must be numeric values.";
-  if (!opts.skipRrCheck && rr != null && (rr < 0.1 || rr > 20)) return "RR must be between 0.1 and 20.";
+  const direction = String(plan.direction || "")
+    .trim()
+    .toUpperCase();
+  if (!["BUY", "SELL"].includes(direction))
+    return "Direction must be Buy or Sell.";
+  if (entry == null || tp == null || sl == null)
+    return "Entry/TP/SL must be numeric values.";
+  if (!opts.skipRrCheck && rr != null && (rr < 0.1 || rr > 20))
+    return "RR must be between 0.1 and 20.";
   if (direction === "BUY") {
     if (!(tp > entry)) return "For BUY, TP must be greater than Entry.";
     if (!(sl < entry)) return "For BUY, SL must be lower than Entry.";
@@ -211,26 +371,56 @@ export function renderHistoryItem(item, idx, opts = {}) {
   const ticket = opts.includeTicket
     ? String(
         payload?.ticket ||
-        payload?.broker_trade_id ||
-        payload?.brokerTradeId ||
-        payload?.order_ticket ||
-        "",
+          payload?.broker_trade_id ||
+          payload?.brokerTradeId ||
+          payload?.order_ticket ||
+          "",
       ).trim()
     : "";
-  const statusBadge = typeof opts.statusFromType === "function" ? opts.statusFromType(type) : null;
+  const statusBadge =
+    typeof opts.statusFromType === "function"
+      ? opts.statusFromType(type)
+      : null;
 
   return (
-    <div key={`${item?.id || item?.event_id || item?.log_id || idx}`} style={{ margin: "0 0 10px 0", paddingBottom: 10, borderBottom: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+    <div
+      key={`${item?.id || item?.event_id || item?.log_id || idx}`}
+      style={{
+        margin: "0 0 10px 0",
+        paddingBottom: 10,
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 8,
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="panel-label" style={{ margin: 0 }}>{type}</span>
-          {statusBadge ? <span className={`badge ${statusBadge.cls}`}>{statusBadge.label}</span> : null}
+          <span className="panel-label" style={{ margin: 0 }}>
+            {type}
+          </span>
+          {statusBadge ? (
+            <span className={`badge ${statusBadge.cls}`}>
+              {statusBadge.label}
+            </span>
+          ) : null}
         </div>
         <span className="minor-text">{when}</span>
       </div>
-      {ticket ? <div className="minor-text" style={{ marginBottom: 8 }}>Ticket: <strong>{ticket}</strong></div> : null}
+      {ticket ? (
+        <div className="minor-text" style={{ marginBottom: 8 }}>
+          Ticket: <strong>{ticket}</strong>
+        </div>
+      ) : null}
       <div className="json-table-wrapper">
-        <pre className="minor-text" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        <pre
+          className="minor-text"
+          style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+        >
           {JSON.stringify(payload || {}, null, 2)}
         </pre>
       </div>
