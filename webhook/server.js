@@ -6187,6 +6187,21 @@ async function _mt5InitBackendInternal() {
       `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_pnl DOUBLE PRECISION NULL`,
     )
     .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_margin DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_tp_pnl DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_sl_pnl DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
 
   // Performance Indexes
   const idxSql = [
@@ -7387,6 +7402,9 @@ async function _mt5InitBackendInternal() {
                 broker_commission = $15,
                 broker_swap = $16,
                 broker_volume = $17,
+                broker_margin = $19,
+                broker_tp_pnl = $20,
+                broker_sl_pnl = $21,
                 order_type = COALESCE($12, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8, close_reason) ELSE close_reason END,
                 broker_trade_id = COALESCE(NULLIF($9, ''), broker_trade_id),
@@ -7424,6 +7442,9 @@ async function _mt5InitBackendInternal() {
               it.swap || 0,
               it.volume || 0,
               it.sid || "",
+              it.margin || 0,
+              it.tp_pnl || 0,
+              it.sl_pnl || 0,
             ],
           );
         }
@@ -7450,6 +7471,9 @@ async function _mt5InitBackendInternal() {
                 broker_commission = $14,
                 broker_swap = $15,
                 broker_volume = $16,
+                broker_margin = $18,
+                broker_tp_pnl = $19,
+                broker_sl_pnl = $20,
                 order_type = COALESCE($11, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
@@ -7490,6 +7514,9 @@ async function _mt5InitBackendInternal() {
                 it.swap || 0,
                 it.volume || 0,
                 ticketCandidates,
+                it.margin || 0,
+                it.tp_pnl || 0,
+                it.sl_pnl || 0,
               ],
             );
           }
@@ -7517,6 +7544,9 @@ async function _mt5InitBackendInternal() {
                 broker_commission = $14,
                 broker_swap = $15,
                 broker_volume = $16,
+                broker_margin = $17,
+                broker_tp_pnl = $18,
+                broker_sl_pnl = $19,
                 order_type = COALESCE($11, order_type),
                 close_reason = CASE WHEN $1 IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
@@ -7557,6 +7587,9 @@ async function _mt5InitBackendInternal() {
               it.commission || 0,
               it.swap || 0,
               it.volume || 0,
+              it.margin || 0,
+              it.tp_pnl || 0,
+              it.sl_pnl || 0,
             ],
           );
         }
@@ -7588,6 +7621,9 @@ async function _mt5InitBackendInternal() {
                 commission: it.commission,
                 swap: it.swap,
                 volume: it.volume,
+                margin: it.margin,
+                tp_pnl: it.tp_pnl,
+                sl_pnl: it.sl_pnl,
               },
               uid,
             );
@@ -7605,9 +7641,9 @@ async function _mt5InitBackendInternal() {
               symbol, action, volume, entry,
               execution_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
-              broker_pnl,
+              broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
             [
@@ -7627,6 +7663,9 @@ async function _mt5InitBackendInternal() {
               it.swap || 0,
               it.volume || 0,
               it.pnl || 0,
+              it.margin || 0,
+              it.tp_pnl || 0,
+              it.sl_pnl || 0,
             ],
           );
           matched++;

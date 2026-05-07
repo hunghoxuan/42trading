@@ -88,9 +88,18 @@ namespace cAlgo.Robots
                 var sid = (pos.Comment ?? "").Replace("\"", "'");
                 var s = Symbols.GetSymbol(pos.SymbolName);
                 double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
+                
+                double tpPnl = 0;
+                double slPnl = 0;
+                if (s != null) {
+                    if (pos.TakeProfit.HasValue) 
+                        tpPnl = s.GetProfitFromPrice(pos.TradeType, pos.VolumeInUnits, pos.TakeProfit.Value, pos.EntryPrice);
+                    if (pos.StopLoss.HasValue) 
+                        slPnl = s.GetProfitFromPrice(pos.TradeType, pos.VolumeInUnits, pos.StopLoss.Value, pos.EntryPrice);
+                }
 
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"label\":\"{10}\"}}",
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"margin\":{10:F2},\"tp_pnl\":{11:F2},\"sl_pnl\":{12:F2},\"label\":\"{13}\"}}",
                     sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
                     double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
                     double.IsNaN(lotsVal) ? 0 : lotsVal,
@@ -98,6 +107,9 @@ namespace cAlgo.Robots
                     double.IsNaN(pos.Pips) ? 0 : pos.Pips,
                     double.IsNaN(pos.Commissions) ? 0 : pos.Commissions,
                     double.IsNaN(pos.Swap) ? 0 : pos.Swap,
+                    double.IsNaN(pos.Margin) ? 0 : pos.Margin,
+                    double.IsNaN(tpPnl) ? 0 : tpPnl,
+                    double.IsNaN(slPnl) ? 0 : slPnl,
                     pos.Label));
             }
 

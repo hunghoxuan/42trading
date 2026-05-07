@@ -1410,6 +1410,15 @@ export default function TradesPage() {
                           asNum(bData.commission);
                         const bSwap =
                           asNum(selectedTrade.broker_swap) ?? asNum(bData.swap);
+                        const bMargin =
+                          asNum(selectedTrade.broker_margin) ??
+                          asNum(bData.margin);
+                        const bTpPnl =
+                          asNum(selectedTrade.broker_tp_pnl) ??
+                          asNum(bData.tp_pnl);
+                        const bSlPnl =
+                          asNum(selectedTrade.broker_sl_pnl) ??
+                          asNum(bData.sl_pnl);
 
                         return [
                           {
@@ -1448,6 +1457,24 @@ export default function TradesPage() {
                             label: "Swap",
                             value:
                               bSwap != null ? `$${bSwap.toFixed(2)}` : null,
+                            group: "account",
+                          },
+                          {
+                            label: "Margin",
+                            value:
+                              bMargin != null ? `$${bMargin.toFixed(2)}` : null,
+                            group: "account",
+                          },
+                          {
+                            label: "Planned TP Profit",
+                            value:
+                              bTpPnl != null ? `$${bTpPnl.toFixed(2)}` : null,
+                            group: "account",
+                          },
+                          {
+                            label: "Planned SL Profit",
+                            value:
+                              bSlPnl != null ? `$${bSlPnl.toFixed(2)}` : null,
                             group: "account",
                           },
                         ].filter((x) => x.value !== null);
