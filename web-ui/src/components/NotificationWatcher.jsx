@@ -70,16 +70,19 @@ export default function NotificationWatcher() {
         });
       }
 
-      // 3. Ticker
+      // 3. Ticker — dedup: skip if same message+event as last entry
       if (showTicker) {
-        window.__tickerEvents.push({
-          ts: Date.now(),
-          event: p.event,
-          message: p.message,
-          type: p.type,
-        });
-        if (window.__tickerEvents.length > 50) window.__tickerEvents.shift();
-        window.dispatchEvent(new CustomEvent("ticker-update"));
+        const last = window.__tickerEvents[window.__tickerEvents.length - 1];
+        if (!last || last.message !== p.message || last.event !== p.event) {
+          window.__tickerEvents.push({
+            ts: Date.now(),
+            event: p.event,
+            message: p.message,
+            type: p.type,
+          });
+          if (window.__tickerEvents.length > 50) window.__tickerEvents.shift();
+          window.dispatchEvent(new CustomEvent("ticker-update"));
+        }
       }
 
       // 4. Page refresh
