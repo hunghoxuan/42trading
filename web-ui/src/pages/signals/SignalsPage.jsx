@@ -751,7 +751,7 @@ export default function SignalsPage() {
                           <StatusPnlCell
                             status={t.status}
                             statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
-                            hideStatus={true}
+                            hideStatus={false}
                             hidePnl={true}
                             pnl={null}
                             showFilledDetails={false}

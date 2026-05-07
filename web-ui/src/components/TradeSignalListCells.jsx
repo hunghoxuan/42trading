@@ -89,21 +89,21 @@ export function StatusPnlCell({
 }) {
   const pnlNum = num(pnl);
   const st = String(status || "").toUpperCase();
-  const shouldShowMetrics = st === "FILLED" || st === "CLOSED";
+  const shouldShowMetrics = st === "FILLED" || st === "CLOSED" || st === "OPEN" || st === "PARTIAL";
   
   return (
     <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>
-      {!hideStatus && <div className="cell-major">{statusNode}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end', height: 16 }}>
+      <div className="cell-major" style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end', fontWeight: 400 }}>
+        {!hideStatus && statusNode}
         {shouldShowMetrics && !hidePnl && (
           <>
             {brokerPips != null && (
-              <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6 }}>
+              <div className="minor-text" style={{ fontSize: '11px', opacity: 0.6, fontWeight: 400 }}>
                 {Math.round(num(brokerPips))} pips
               </div>
             )}
             {pnlNum != null && (
-              <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontSize: '12px', lineHeight: 1 }}>
+              <div className={`${pnlNum < 0 ? "money-neg" : "money-pos"}`} style={{ fontSize: '12px', fontWeight: 400 }}>
                 ${Math.abs(pnlNum).toFixed(2)}
               </div>
             )}
