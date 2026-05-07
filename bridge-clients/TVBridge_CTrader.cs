@@ -36,7 +36,7 @@ namespace cAlgo.Robots
         [Parameter("Max Volume (%)", DefaultValue = 1.0)]
         public double MaxVolumePercent { get; set; }
 
-        private string BuildVersion = "v2026.05.07 09:14 - cb0b2d3";
+        private string BuildVersion = "v2026.05.07 10:48 - 4158f15";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -140,7 +140,23 @@ namespace cAlgo.Robots
                     deal.ClosingTime, deal.Label));
             }
 
-            var metricsList = new List<string>();
+            var ordersList = new List<string>();
+            foreach (var order in PendingOrders) {
+                var sid = (order.Comment ?? "").Replace("\"", "'");
+                var s = Symbols.GetSymbol(order.SymbolName);
+                double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
+                
+                ordersList.Add(string.Format(CultureInfo.InvariantCulture, 
+                    "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\"}}",
+                    sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
+                    double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
+                    double.IsNaN(lotsVal) ? 0 : lotsVal,
+                    order.TargetPrice,
+                    order.StopLoss ?? 0,
+                    order.TakeProfit ?? 0,
+                    order.Label));
+            }
+
             var symbolsToSync = new HashSet<string>();
             symbolsToSync.Add(Symbol.Name);
             int count = 0;
@@ -150,11 +166,11 @@ namespace cAlgo.Robots
             }
             foreach (var pos in Positions) symbolsToSync.Add(pos.SymbolName);
             
+            var metricsList = new List<string>();
             foreach (var symbolName in symbolsToSync.Take(100)) {
                 var s = Symbols.GetSymbol(symbolName);
                 if (s == null) continue;
                 
-                // Use CultureInfo.InvariantCulture and check for NaN to avoid invalid JSON
                 metricsList.Add(string.Format(CultureInfo.InvariantCulture, 
                     "{{\"symbol\":\"{0}\",\"pip_value\":{1:F5},\"spread\":{2:F2},\"min_vol\":{3:F2},\"step_vol\":{4:F2},\"pip_size\":{5:F8},\"digits\":{6}}}",
                     s.Name, 
@@ -171,7 +187,7 @@ namespace cAlgo.Robots
             Task.Run(async () => {
                 try {
                     await PollSignalsAsync(accId);
-                    await SyncWithVpsAsync(accId, balance, equity, margin, brokerName, posList, closedList, activeTicketIds, metricsList);
+                    await SyncWithVpsAsync(accId, balance, equity, margin, brokerName, posList, ordersList, closedList, activeTicketIds, metricsList);
                 } catch (Exception ex) {
                     _lastSyncErr = ex.Message;
                 } finally {
@@ -286,7 +302,12 @@ namespace cAlgo.Robots
 
                 var sl = ParseDouble(GetJsonValue(json, "sl"));
                 var tp = ParseDouble(GetJsonValue(json, "tp"));
+                var entry = ParseDouble(GetJsonValue(json, "entry"));
+                var orderTypeStr = GetJsonValue(json, "order_type").ToLower();
+                if (string.IsNullOrEmpty(orderTypeStr)) orderTypeStr = "market";
+                
                 var currentPrice = (action == "BUY") ? symbol.Ask : symbol.Bid;
+                var executionPrice = (orderTypeStr == "market" || entry <= 0) ? currentPrice : entry;
 
                 // 1. RISK CALCULATION
                 double signalRiskPct = lots; 
@@ -296,7 +317,7 @@ namespace cAlgo.Robots
 
                 if (sl > 0)
                 {
-                    double riskPerMinVolume = (Math.Abs(currentPrice - sl) / symbol.TickSize) * symbol.TickValue;
+                    double riskPerMinVolume = (Math.Abs(executionPrice - sl) / symbol.TickSize) * symbol.TickValue;
                     if (riskPerMinVolume > 0)
                     {
                         volumeUnits = (finalRiskMoney / riskPerMinVolume) * symbol.VolumeInUnitsMin;
@@ -327,10 +348,24 @@ namespace cAlgo.Robots
                 if (!string.IsNullOrEmpty(sourceId) && !string.IsNullOrEmpty(entryModel))
                     label = string.Format("{0}_{1}", sourceId, entryModel);
 
-                var res = ExecuteMarketOrder(action == "BUY" ? TradeType.Buy : TradeType.Sell, symbol.Name, volumeUnits, label, sl, tp, id);
+                TradeResult res = null;
+                var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
+                
+                if (orderTypeStr == "limit") {
+                    res = PlaceLimitOrder(tradeType, symbol, volumeUnits, entry, label, stopLoss: sl, takeProfit: tp, expiration: null, comment: id);
+                } else if (orderTypeStr == "stop") {
+                    res = PlaceStopOrder(tradeType, symbol, volumeUnits, entry, label, stopLoss: sl, takeProfit: tp, expiration: null, comment: id);
+                } else {
+                    res = ExecuteMarketOrder(tradeType, symbol, volumeUnits, label, stopLoss: sl, takeProfit: tp, comment: id);
+                }
+
                 if (res.IsSuccessful) {
-                    UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
-                    _ = AckAsync(id, leaseToken, "FILLED", res.Position.Id.ToString(), "");
+                    UpdateSignalHistory(id, action + " " + symbolCode + " (OK)");
+                    string ticketId = (res.Position != null) ? res.Position.Id.ToString() : (res.PendingOrder != null ? res.PendingOrder.Id.ToString() : "OK");
+                    string finalStatus = (res.Position != null) ? "OPEN" : "PENDING";
+                    double fillPrice = (res.Position != null) ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0);
+                    
+                    _ = AckAsync(id, leaseToken, finalStatus, ticketId, "", fillPrice);
                 } else {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ERR: " + res.Error + ")");
                     _ = AckAsync(id, leaseToken, "ERROR", "", res.Error.ToString());
@@ -347,14 +382,14 @@ namespace cAlgo.Robots
             RefreshDebugPanel();
         }
 
-        private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> closedList, HashSet<string> activeTicketIds, List<string> metricsList)
+        private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> ordersList, List<string> closedList, HashSet<string> activeTicketIds, List<string> metricsList)
         {
             _syncStatus = "SYNCING";
             try
             {
                 var payload = string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[],\"closed\":[{6}],\"symbol_metrics\":[{7}]}}",
-                    accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", closedList), string.Join(",", metricsList));
+                    "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[{6}],\"closed\":[{7}],\"symbol_metrics\":[{8}]}}",
+                    accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", ordersList), string.Join(",", closedList), string.Join(",", metricsList));
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/sync", content);
@@ -408,10 +443,12 @@ namespace cAlgo.Robots
             _lastSyncResults = resList;
         }
 
-        private async Task AckAsync(string sid, string token, string status, string ticket, string err)
+        private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0)
         {
             try {
-                var payload = string.Format("{{\"trade_id\":\"{0}\", \"lease_token\":\"{1}\", \"status\":\"{2}\", \"ticket\":\"{3}\", \"error\":\"{4}\"}}", sid, token, status, ticket, err);
+                var payload = string.Format(CultureInfo.InvariantCulture, 
+                    "{{\"trade_id\":\"{0}\", \"lease_token\":\"{1}\", \"execution_status\":\"{2}\", \"broker_trade_id\":\"{3}\", \"error\":\"{4}\", \"entry_exec\":{5:F5}}}", 
+                    sid, token, status, ticket, err, entryExec);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/ack", content);

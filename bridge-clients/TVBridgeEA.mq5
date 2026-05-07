@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.07 09:14 - cb0b2d3";
+string EA_BUILD_VERSION = "v2026.05.07 10:48 - 4158f15";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -2998,8 +2998,44 @@ void SyncWithVps()
             if(sid != "")
             {
                string sym = PositionGetString(POSITION_SYMBOL);
+               double pnl = PositionGetDouble(POSITION_PROFIT);
+               double swap = PositionGetDouble(POSITION_SWAP);
+               double comm = PositionGetDouble(POSITION_COMMISSION);
+               double vol = PositionGetDouble(POSITION_VOLUME);
+               double sl = PositionGetDouble(POSITION_SL);
+               double tp = PositionGetDouble(POSITION_TP);
+               double priceOpen = PositionGetDouble(POSITION_PRICE_OPEN);
+               double priceCurrent = PositionGetDouble(POSITION_PRICE_CURRENT);
+               
+               double pips = 0;
+               double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+               if(point > 0) {
+                  pips = MathAbs(priceCurrent - priceOpen) / point;
+                  if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
+                     if (priceCurrent < priceOpen) pips = -pips;
+                  } else {
+                     if (priceCurrent > priceOpen) pips = -pips;
+                  }
+                  double digits = SymbolInfoInteger(sym, SYMBOL_DIGITS);
+                  if(digits == 3 || digits == 5) pips /= 10.0;
+               }
+
                if(posCount > 0) posUpdates += ",";
-               posUpdates += "{\"signal_id\":\"" + JsonEscape(sid) + "\",\"status\":\"START\",\"ticket\":\"" + IntegerToString((long)ticket) + "\",\"symbol\":\"" + JsonEscape(sym) + "\",\"pnl\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2) + ",\"opened_at\":\"" + IsoTime((datetime)PositionGetInteger(POSITION_TIME)) + "\"}";
+               posUpdates += "{";
+               posUpdates += "\"signal_id\":\"" + JsonEscape(sid) + "\",";
+               posUpdates += "\"status\":\"START\",";
+               posUpdates += "\"ticket\":\"" + IntegerToString((long)ticket) + "\",";
+               posUpdates += "\"symbol\":\"" + JsonEscape(sym) + "\",";
+               posUpdates += "\"lots\":" + DoubleToString(vol, 2) + ",";
+               posUpdates += "\"volume\":" + DoubleToString(vol, 2) + ",";
+               posUpdates += "\"pnl\":" + DoubleToString(pnl, 2) + ",";
+               posUpdates += "\"pips\":" + DoubleToString(pips, 1) + ",";
+               posUpdates += "\"commission\":" + DoubleToString(comm, 2) + ",";
+               posUpdates += "\"swap\":" + DoubleToString(swap, 2) + ",";
+               posUpdates += "\"sl\":" + DoubleToString(sl, 5) + ",";
+               posUpdates += "\"tp\":" + DoubleToString(tp, 5) + ",";
+               posUpdates += "\"opened_at\":\"" + IsoTime((datetime)PositionGetInteger(POSITION_TIME)) + "\"";
+               posUpdates += "}";
                posCount++;
             }
          }
@@ -3022,8 +3058,24 @@ void SyncWithVps()
             if(sid != "")
             {
                string sym = OrderGetString(ORDER_SYMBOL);
+               double vol = OrderGetDouble(ORDER_VOLUME_INITIAL);
+               double price = OrderGetDouble(ORDER_PRICE_OPEN);
+               double sl = OrderGetDouble(ORDER_SL);
+               double tp = OrderGetDouble(ORDER_TP);
+               
                if(ordCount > 0) ordUpdates += ",";
-               ordUpdates += "{\"signal_id\":\"" + JsonEscape(sid) + "\",\"status\":\"PLACED\",\"ticket\":\"" + IntegerToString((long)ticket) + "\",\"symbol\":\"" + JsonEscape(sym) + "\",\"pnl\":0}";
+               ordUpdates += "{";
+               ordUpdates += "\"signal_id\":\"" + JsonEscape(sid) + "\",";
+               ordUpdates += "\"status\":\"PLACED\",";
+               ordUpdates += "\"ticket\":\"" + IntegerToString((long)ticket) + "\",";
+               ordUpdates += "\"symbol\":\"" + JsonEscape(sym) + "\",";
+               ordUpdates += "\"lots\":" + DoubleToString(vol, 2) + ",";
+               ordUpdates += "\"volume\":" + DoubleToString(vol, 2) + ",";
+               ordUpdates += "\"target_price\":" + DoubleToString(price, 5) + ",";
+               ordUpdates += "\"sl\":" + DoubleToString(sl, 5) + ",";
+               ordUpdates += "\"tp\":" + DoubleToString(tp, 5) + ",";
+               ordUpdates += "\"pnl\":0";
+               ordUpdates += "}";
                ordCount++;
             }
          }
@@ -3110,15 +3162,65 @@ void SyncWithVps()
    }
    g_lastStateHash = stateHash;
 
+   // 4. Symbol Metrics (for active symbols)
+   string symMetrics = "";
+   int symCount = 0;
+   string trackedSymbols[];
+   ArrayResize(trackedSymbols, 0);
+   
+   // Add current chart symbol
+   ArrayResize(trackedSymbols, 1);
+   trackedSymbols[0] = Symbol();
+   
+   // Add symbols from positions
+   for(int i=0; i<PositionsTotal(); i++) {
+      if(PositionSelectByTicket(PositionGetTicket(i))) {
+         string s = PositionGetString(POSITION_SYMBOL);
+         bool exists = false;
+         for(int j=0; j<ArraySize(trackedSymbols); j++) if(trackedSymbols[j] == s) { exists=true; break; }
+         if(!exists) {
+            int n = ArraySize(trackedSymbols);
+            ArrayResize(trackedSymbols, n+1);
+            trackedSymbols[n] = s;
+         }
+      }
+   }
+   
+   for(int i=0; i<ArraySize(trackedSymbols); i++) {
+      string s = trackedSymbols[i];
+      double pipVal = SymbolInfoDouble(s, SYMBOL_TRADE_TICK_VALUE); // approximation
+      double spread = SymbolInfoInteger(s, SYMBOL_SPREAD);
+      double minVol = SymbolInfoDouble(s, SYMBOL_VOLUME_MIN);
+      double stepVol = SymbolInfoDouble(s, SYMBOL_VOLUME_STEP);
+      double point = SymbolInfoDouble(s, SYMBOL_POINT);
+      int digits = (int)SymbolInfoInteger(s, SYMBOL_DIGITS);
+      double pipSize = (digits == 3 || digits == 5) ? point * 10 : point;
+      
+      if(symCount > 0) symMetrics += ",";
+      symMetrics += "{";
+      symMetrics += "\"symbol\":\"" + JsonEscape(s) + "\",";
+      symMetrics += "\"pip_value\":" + DoubleToString(pipVal, 5) + ",";
+      symMetrics += "\"spread\":" + DoubleToString(spread, 1) + ",";
+      symMetrics += "\"min_vol\":" + DoubleToString(minVol, 2) + ",";
+      symMetrics += "\"step_vol\":" + DoubleToString(stepVol, 2) + ",";
+      symMetrics += "\"pip_size\":" + DoubleToString(pipSize, 8) + ",";
+      symMetrics += "\"digits\":" + IntegerToString(digits);
+      symMetrics += "}";
+      symCount++;
+   }
+
    string body = "{";
    body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
    body += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
    body += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
    body += "\"margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) + ",";
    body += "\"free_margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + ",";
+   body += "\"broker_name\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
+   body += "\"leverage\":" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LEVERAGE)) + ",";
    body += "\"positions\":[" + posUpdates + "],";
    body += "\"orders\":[" + ordUpdates + "],";
-   body += "\"closed\":[" + closedUpdates + "]";
+   body += "\"closed\":[" + closedUpdates + "],";
+   body += "\"symbol_metrics\":[" + symMetrics + "]";
    body += "}";
 
    string url = BuildApiUrl("/mt5/ea/sync-v2");
