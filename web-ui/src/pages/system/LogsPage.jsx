@@ -59,38 +59,6 @@ export default function LogsPage() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  const [logConfig, setLogConfig] = useState([]);
-  const [logBusy, setLogBusy] = useState(false);
-
-  async function saveLoggingConfig(next) {
-    setLogBusy(true);
-    try {
-      await api.upsertSetting({
-        type: "system_config",
-        name: "enabled_log_prefixes",
-        data: { prefixes: next },
-        status: "active",
-      });
-      setLogConfig(next);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLogBusy(false);
-    }
-  }
-
-  async function loadLogConfig() {
-    try {
-      const res = await api.getSettings();
-      const list = Array.isArray(res?.settings) ? res.settings : [];
-      const logSet = list.find(
-        (x) =>
-          x?.type === "system_config" && x?.name === "enabled_log_prefixes",
-      );
-      let val = logSet?.data?.prefixes;
-      setLogConfig(Array.isArray(val) ? val : []);
-    } catch (_) {}
-  }
   const [filter, setFilter] = useState({
     q: "",
     type: "",
@@ -178,7 +146,7 @@ export default function LogsPage() {
           }}
         >
           <span className="minor-text" style={{ fontWeight: 600 }}>
-            TRACE:
+            TYPE:
           </span>
           {ALL_LOG_TYPES.map((lt) => (
             <label
@@ -193,37 +161,18 @@ export default function LogsPage() {
             >
               <input
                 type="checkbox"
-                checked={
-                  TRACE_TYPES.has(lt)
-                    ? logConfig.includes(lt)
-                    : filter.type === lt
-                }
+                checked={filter.type === lt}
                 onChange={(e) => {
-                  if (TRACE_TYPES.has(lt)) {
-                    const n = e.target.checked
-                      ? [...logConfig, lt]
-                      : logConfig.filter((x) => x !== lt);
-                    setLogConfig(n);
-                  } else {
-                    setFilter((f) => ({
-                      ...f,
-                      type: e.target.checked ? lt : "",
-                    }));
-                    setPage(0);
-                  }
+                  setFilter((f) => ({
+                    ...f,
+                    type: e.target.checked ? lt : "",
+                  }));
+                  setPage(0);
                 }}
               />
               <span className="minor-text">{lt}</span>
             </label>
           ))}
-          <button
-            className="primary-button"
-            onClick={() => saveLoggingConfig(logConfig)}
-            disabled={logBusy}
-            style={{ padding: "3px 10px", fontSize: 10 }}
-          >
-            {logBusy ? "..." : "SAVE"}
-          </button>
         </div>
       </div>
 
@@ -345,7 +294,9 @@ export default function LogsPage() {
                   <tr
                     key={getEventId(ev)}
                     className={
-                      getEventId(selectedEvent) === getEventId(ev) ? "active" : ""
+                      getEventId(selectedEvent) === getEventId(ev)
+                        ? "active"
+                        : ""
                     }
                     onClick={() => {
                       setSelectedEvent(ev);

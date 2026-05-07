@@ -72,10 +72,12 @@ function trackApiCall(apiName) {
   }
   // Route through NotificationManager
   if (notificationManager) {
-    notificationManager.handle("REMOTE_API_CALL", "call", {
-      api: apiName,
-      message: name,
-    }).catch(() => {});
+    notificationManager
+      .handle("REMOTE_API_CALL", "call", {
+        api: apiName,
+        message: name,
+      })
+      .catch(() => {});
   }
 }
 
@@ -150,6 +152,11 @@ const SERVER_VERSION = envStr(
   "v2026.05.07 13:20 - e6f7a8b",
 ); // fix route params same component
 
+const SERVER_LOG_DIR = envStr(
+  process.env.SERVER_LOG_DIR,
+  path.join(__dirname, "logs"),
+);
+
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
 function sseRegisterClient(userId, res) {
@@ -183,16 +190,35 @@ function emitNotification(payload) {
   }
 }
 
+function appendEventLog(eventType, payload) {
+  if (!SERVER_LOG_DIR) return;
+  try {
+    const logDir = SERVER_LOG_DIR;
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    const filePath = path.join(logDir, "events_" + date + ".log");
+    const line = "[" + new Date().toISOString() + "] [" + eventType + "] " + JSON.stringify(payload) + "\n";
+    fs.appendFileSync(filePath, line);
+  } catch (e) { /* ignore file log errors */ }
+}
+
 // --- NotificationManager (unified notification routing) ---
 const DEFAULT_NOTIFICATION_SETTINGS = {
-  TRADE_ACTIVITY: {
+  TRADE_FILLED: {
     toast: true,
     console_log: false,
     ticker: true,
     db_log: true,
-    sound: "NEW_SIGNAL",
+    sound: "TRADE_FILLED",
   },
-  SIGNAL_ACTIVITY: {
+  TRADE_CLOSED: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    sound: "TRADE_CLOSED",
+  },
+  SIGNAL_ADDED: {
     toast: true,
     console_log: false,
     ticker: true,
@@ -300,6 +326,7 @@ class NotificationManager {
         `[NOTIFICATION][${eventType}] ${merged.message || ""}`,
         JSON.stringify(merged),
       );
+      appendEventLog(eventType, merged);
     }
 
     // 2) SSE delivery (toast / ticker / sound)
@@ -821,24 +848,37 @@ function mt5NormalizeSymbol(s) {
 }
 
 async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
-  const b = await mt5Backend();
-  if (b.log) await b.log(objectId, objectTable, metadata, userId).catch(() => {});
-  // Route through NotificationManager for matching event types
+  // Route through NotificationManager for matching event types (handles db_log + SSE)
   if (notificationManager && metadata?.event) {
     const ev = String(metadata.event || "").toUpperCase();
-    let eventType = null, subType = "";
-    if (ev.startsWith("TRADE_")) { eventType = "TRADE_ACTIVITY"; subType = ev.replace("TRADE_", "").toLowerCase(); }
-    else if (ev.startsWith("SIGNAL_")) { eventType = "SIGNAL_ACTIVITY"; subType = ev.replace("SIGNAL_", "").toLowerCase(); }
+    let eventType = null,
+      subType = "";
+    if (ev === "TRADE_FILLED" || ev === "TRADE_SYNC_UPDATE") {
+      eventType = "TRADE_FILLED";
+      subType = ev.toLowerCase();
+    } else if (ev === "TRADE_CLOSED" || ev === "TRADE_CLOSE") {
+      eventType = "TRADE_CLOSED";
+      subType = "closed";
+    } else if (ev.startsWith("SIGNAL_")) {
+      eventType = "SIGNAL_ADDED";
+      subType = ev.replace("SIGNAL_", "").toLowerCase();
+    }
     if (eventType) {
-      notificationManager.handle(eventType, subType, {
-        object_id: objectId,
-        object_table: objectTable,
-        user_id: userId,
-        message: metadata.event || "",
-        ...metadata,
-      }).catch(() => {});
+      notificationManager
+        .handle(eventType, subType, {
+          object_id: objectId,
+          object_table: objectTable,
+          user_id: userId || null,
+          message: metadata.event || "",
+          ...metadata,
+        })
+        .catch(() => {});
     }
   }
+  // Legacy DB insert — still needed for object-scoped queries (e.g. trade detail events page)
+  const b = await mt5Backend();
+  if (b.log)
+    await b.log(objectId, objectTable, metadata, userId).catch(() => {});
 }
 
 function json(res, statusCode, data) {
