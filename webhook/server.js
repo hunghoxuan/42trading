@@ -138,7 +138,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:14 - cb0b2d3"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 12:25 - c4d5e6f"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -4590,11 +4590,13 @@ async function callAiProvider({
 
   // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
   const provider =
-    modelLower.includes("gpt") || modelLower.includes("openai")
-      ? "openai"
-      : modelLower.includes("openrouter") || modelLower.includes("deepseek")
-        ? "deepseek"
-        : "gemini";
+    modelLower.includes("openrouter") || modelLower.includes("open-router")
+      ? "openrouter"
+      : modelLower.includes("gpt") || modelLower.includes("openai")
+        ? "openai"
+        : modelLower.includes("deepseek")
+          ? "deepseek"
+          : "gemini";
 
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
   const cfg = await loadAiConfig();
@@ -10387,6 +10389,49 @@ function normalizeAiAnalysisContract(input = {}) {
         },
       },
     };
+  }
+
+  // Catch-all: normalize raw trade_plan if it still has schema-native field names
+  // (e.g. Claude 3.5 Sonnet returns entry_price/stop_loss/take_profits from schema)
+  if (Array.isArray(out.trade_plan) && out.trade_plan.length > 0) {
+    const first = out.trade_plan[0];
+    if (first?.entry_price !== undefined || first?.stop_loss !== undefined || first?.take_profits !== undefined) {
+      out.trade_plan = out.trade_plan.map((x) => ({
+        direction: x?.direction || x?.dir || "",
+        profile: x?.profile || "",
+        type: x?.order_type || x?.type || "limit",
+        session_entry: x?.session || "",
+        strategy: x?.strategy || "",
+        entry_model: x?.entry_model || "",
+        entry: x?.entry_price ?? x?.entry ?? null,
+        sl: x?.stop_loss ?? x?.sl ?? null,
+        tp: Array.isArray(x?.take_profits) && x.take_profits.length > 0
+          ? (x.take_profits[x.take_profits.length - 1]?.price ?? null)
+          : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+        tp2: Array.isArray(x?.take_profits)
+          ? (x.take_profits[1]?.price ?? null)
+          : (x?.tp2 ?? null),
+        tp3: Array.isArray(x?.take_profits)
+          ? (x.take_profits[2]?.price ?? null)
+          : (x?.tp3 ?? null),
+        estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
+        rr: x?.risk_reward ?? x?.rr ?? null,
+        risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
+        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map((t) => ({
+          price: t?.price ?? null,
+          size_pct: t?.close_position_pct ?? null,
+          rr: t?.reward_to_risk ?? null,
+        })),
+        confidence_pct: x?.confidence_pct ?? null,
+        skip_recommendation: x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
+        reasons_to_skip: (Array.isArray(x?.skip_reasons) ? x.skip_reasons : []).map((r) => ({ reason: r?.reason || "", severity: r?.severity || "" })),
+        entry_condition: x?.entry_trigger || "",
+        exit_condition: x?.mid_trade_invalidation || "",
+        invalidation: x?.pre_entry_invalidation || "",
+        note: x?.note || "",
+        risk_management: x?.risk_management || "",
+      }));
+    }
   }
 
   if (!out.trade_plan && out.tradePlan) {
