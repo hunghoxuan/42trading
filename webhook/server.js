@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:31 - 1a0e9c4"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:34 - 77f9e8f"); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -6787,7 +6787,7 @@ async function _mt5InitBackendInternal() {
           note, rejection_reason, raw_json, status,
           profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition,
           risk_management, skip_recommendation, confluence_checklist, be_trigger
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb,$32)
+        ) VALUES ($1::text,$2::timestamptz,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::numeric,$10::numeric,$11::numeric,$12::text,$13::text,$14::text,$15::text,$16::numeric,$17::numeric,$18::numeric,$19::text,$20::text,$21::jsonb,$22::text,$23::text,$24::numeric,$25::text,$26::numeric,$27::text,$28::text,$29::jsonb,$30::jsonb,$31::jsonb,$32::numeric)
         ON CONFLICT (sid) DO NOTHING
         RETURNING sid
       `,
@@ -7095,7 +7095,7 @@ async function _mt5InitBackendInternal() {
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition,
               risk_management, skip_recommendation, confluence_checklist, be_trigger
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'NEW','PENDING',$17::jsonb,$18::jsonb,$19,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28::jsonb,$29)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::text,'NEW','PENDING',$17::jsonb,$18::jsonb,$19::timestamptz,$19::timestamptz,$20::text,$21::numeric,$22::text,$23::numeric,$24::text,$25::text,$26::jsonb,$27::jsonb,$28::jsonb,$29::numeric)
           `,
             [
               tradeSid,
@@ -7875,8 +7875,8 @@ async function _mt5InitBackendInternal() {
                 broker_swap = $15::numeric,
                 broker_volume = $16::numeric,
                 broker_margin = $17::numeric,
-                broker_tp_pnl = $19::numeric,
-                broker_sl_pnl = $20::numeric,
+                broker_tp_pnl = $18::numeric,
+                broker_sl_pnl = $19::numeric,
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
@@ -18558,7 +18558,7 @@ const appHandler = async (req, res) => {
             risk_management = COALESCE($15, risk_management),
             skip_recommendation = COALESCE($16, skip_recommendation),
             confluence_checklist = COALESCE($17::jsonb, confluence_checklist),
-            be_trigger = COALESCE($18, be_trigger),
+            be_trigger = COALESCE($18::numeric, be_trigger),
             updated_at = NOW()
         WHERE sid = $7
         ${whereUser}
@@ -18842,7 +18842,7 @@ const appHandler = async (req, res) => {
             risk_management = COALESCE($15, risk_management),
             skip_recommendation = COALESCE($16, skip_recommendation),
             confluence_checklist = COALESCE($17::jsonb, confluence_checklist),
-            be_trigger = COALESCE($18, be_trigger),
+            be_trigger = COALESCE($18::numeric, be_trigger),
             execution_status = CASE
               WHEN execution_status IN ('OPEN', 'PENDING') THEN 'PENDING_MOD'
               ELSE execution_status
