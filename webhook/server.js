@@ -138,7 +138,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:11 - a9e341e"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:11 - 18e5982"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -10875,7 +10875,6 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
   if (duplicate?.sid) {
     throw new Error("Already added");
   }
-  const rawJson = payload.raw_json || payload;
   const sessionPrefix = sanitizeSessionPrefix(
     payload.session_prefix ||
       payload.sessionPrefix ||

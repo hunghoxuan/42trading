@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.07 09:11 - a9e341e";
+string EA_BUILD_VERSION = "v2026.05.07 09:11 - 18e5982";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
