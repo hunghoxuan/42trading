@@ -72,11 +72,10 @@ function trackApiCall(apiName) {
   }
   // Route through NotificationManager
   if (notificationManager) {
-    notificationManager
-      .handle("REMOTE_API_CALL", "call", {
-        api: apiName,
-        message: name,
-      });
+    notificationManager.handle("REMOTE_API_CALL", "call", {
+      api: apiName,
+      message: name,
+    });
   }
 }
 
@@ -146,7 +145,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:53 - 28eab7b"); // fix route params same component
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.07 17:53 - 28eab7b",
+); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -344,8 +346,8 @@ class NotificationManager {
       payload._force_ticker ||
       payload._force_sound;
     if (hasSSE) {
-      merged.toast = payload._force_toast ? true : settings.toast;
-      merged.ticker = payload._force_ticker ? true : settings.ticker;
+      merged.toast = settings.toast;
+      merged.ticker = settings.ticker;
       merged.sound = merged.sound || settings.sound || null;
       try {
         emitNotification(merged);
@@ -358,7 +360,7 @@ class NotificationManager {
     }
 
     // 3) db_log channel → enqueue for batch INSERT
-    if (settings.db_log || payload._force_db_log) {
+    if (settings.db_log) {
       const userId = payload.user_id || null;
       this.queue.push({
         object_id: null,
@@ -876,14 +878,13 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
       subType = ev.replace("SIGNAL_", "").toLowerCase();
     }
     if (eventType) {
-      notificationManager
-        .handle(eventType, subType, {
-          object_id: objectId,
-          object_table: objectTable,
-          user_id: userId || null,
-          message: metadata.event || "",
-          ...metadata,
-        });
+      notificationManager.handle(eventType, subType, {
+        object_id: objectId,
+        object_table: objectTable,
+        user_id: userId || null,
+        message: metadata.event || "",
+        ...metadata,
+      });
     }
   }
   // Legacy DB insert — still needed for object-scoped queries (e.g. trade detail events page)
@@ -11024,27 +11025,25 @@ async function buildAnalysisSnapshotFromTwelve({
       lastError = "";
       console.log(`[twelve-success] candidate=${candidate}`);
       if (notificationManager) {
-        notificationManager
-          .handle("REMOTE_API_CALL", "twelve_success", {
-            message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
-            api: "TwelveData",
-            symbol: symbolNorm,
-            tf: tfNorm,
-            bars_count: vals.length,
-          });
+        notificationManager.handle("REMOTE_API_CALL", "twelve_success", {
+          message: `TwelveData OK ${symbolNorm} ${tfNorm} ${vals.length} bars`,
+          api: "TwelveData",
+          symbol: symbolNorm,
+          tf: tfNorm,
+          bars_count: vals.length,
+        });
       }
       break;
     }
     if (!data || !Array.isArray(data?.values) || !data.values.length) {
       if (notificationManager) {
-        notificationManager
-          .handle("REMOTE_API_CALL", "twelve_error", {
-            message: `TwelveData FAIL ${symbolNorm} ${tfNorm} ${lastError || "provider error"}`,
-            api: "TwelveData",
-            symbol: symbolNorm,
-            tf: tfNorm,
-            error: lastError,
-          });
+        notificationManager.handle("REMOTE_API_CALL", "twelve_error", {
+          message: `TwelveData FAIL ${symbolNorm} ${tfNorm} ${lastError || "provider error"}`,
+          api: "TwelveData",
+          symbol: symbolNorm,
+          tf: tfNorm,
+          error: lastError,
+        });
       }
       return {
         provider: "twelvedata",
@@ -16363,13 +16362,12 @@ const appHandler = async (req, res) => {
       }
 
       if (notificationManager) {
-        notificationManager
-          .handle("SYSTEM_EVENT", "chart_refresh", {
-            message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
-            symbols: symbols.length,
-            timeframes: timeframes.length,
-            duration_ms: Date.now() - t0,
-          });
+        notificationManager.handle("SYSTEM_EVENT", "chart_refresh", {
+          message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
+          symbols: symbols.length,
+          timeframes: timeframes.length,
+          duration_ms: Date.now() - t0,
+        });
       }
       return json(res, 200, {
         ok: true,
@@ -17790,10 +17788,6 @@ const appHandler = async (req, res) => {
           action: payload.action || null,
           sound: payload.sound || null,
           position: payload.position || "bottom-right",
-          _force_toast: true,
-          _force_ticker: true,
-          _force_sound: true,
-          _force_db_log: true,
         },
       );
       return json(res, 200, {
@@ -20042,14 +20036,13 @@ async function marketDataFetchJob({
 }) {
   const cronTraceId = genTraceId("cron_md_");
   if (notificationManager) {
-    notificationManager
-      .handle("SYSTEM_EVENT", "cron_md", {
-        message: `Market data cron: ${symbol} ${tf}`,
-        symbol,
-        tf,
-      });
+    notificationManager.handle("SYSTEM_EVENT", "cron_md", {
+      message: `Market data cron: ${symbol} ${tf}`,
+      symbol,
+      tf,
+    });
   }
-  const symbolNorm = normalizeMarketDataSymbol(symbol) ;
+  const symbolNorm = normalizeMarketDataSymbol(symbol);
   const tfNorm = normalizeMarketDataTf(tf);
   if (!symbolNorm || !tfNorm)
     return { ok: false, reason: "invalid_symbol_or_tf" };
