@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:22 - 004d330"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 17:28 - cea08e5"); // fix route params same component
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7471,7 +7471,7 @@ async function _mt5InitBackendInternal() {
         `
         INSERT INTO user_accounts (
           account_id, user_id, metadata, balance, equity, margin, free_margin, leverage, broker_name, status, updated_at
-        ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8, $9, 'ACTIVE', NOW())
+        ) VALUES ($1::text, $2::text, $3::jsonb, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::text, 'ACTIVE', NOW())
         ON CONFLICT (account_id) DO UPDATE SET
           metadata = EXCLUDED.metadata,
           balance = EXCLUDED.balance,
@@ -7973,7 +7973,7 @@ async function _mt5InitBackendInternal() {
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN', $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), NOW())
+            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::numeric, $7::numeric, 'OPEN', $8::text, $9::jsonb, $10::text, $11::numeric, $12::numeric, $13::numeric, $14::numeric, $15::numeric, $16::numeric, $17::numeric, $18::numeric, $19::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
             [
@@ -8042,9 +8042,9 @@ async function _mt5InitBackendInternal() {
               await pool.query(
                 `
                 UPDATE trades
-                SET pnl_realized = COALESCE(pnl_realized, $2),
+                SET pnl_realized = COALESCE(pnl_realized, $2::numeric),
                     updated_at = NOW()
-                WHERE sid = $1
+                WHERE sid = $1::text
               `,
                 [tradeId, inferred],
               );
@@ -8074,7 +8074,7 @@ async function _mt5InitBackendInternal() {
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
                 closed_at = COALESCE(closed_at, NOW()),
                 updated_at = NOW()
-            WHERE account_id = $1
+            WHERE account_id = $1::text
               AND execution_status IN ('OPEN','PENDING')
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
@@ -8093,7 +8093,7 @@ async function _mt5InitBackendInternal() {
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
                 closed_at = COALESCE(closed_at, NOW()),
                 updated_at = NOW()
-            WHERE account_id = $1
+            WHERE account_id = $1::text
               AND execution_status IN ('OPEN','PENDING')
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
