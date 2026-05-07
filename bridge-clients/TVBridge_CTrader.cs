@@ -92,10 +92,16 @@ namespace cAlgo.Robots
                 double tpPnl = 0;
                 double slPnl = 0;
                 if (s != null) {
-                    if (pos.TakeProfit.HasValue) 
-                        tpPnl = s.GetProfitFromPrice(pos.TradeType, pos.VolumeInUnits, pos.TakeProfit.Value, pos.EntryPrice);
-                    if (pos.StopLoss.HasValue) 
-                        slPnl = s.GetProfitFromPrice(pos.TradeType, pos.VolumeInUnits, pos.StopLoss.Value, pos.EntryPrice);
+                    if (pos.TakeProfit.HasValue) {
+                        double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize;
+                        if (pos.TradeType == TradeType.Sell) pips = -pips;
+                        tpPnl = pips * s.PipValue * pos.VolumeInUnits;
+                    }
+                    if (pos.StopLoss.HasValue) {
+                        double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize;
+                        if (pos.TradeType == TradeType.Sell) pips = -pips;
+                        slPnl = pips * s.PipValue * pos.VolumeInUnits;
+                    }
                 }
 
                 posList.Add(string.Format(CultureInfo.InvariantCulture, 
