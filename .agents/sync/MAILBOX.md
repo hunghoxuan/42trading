@@ -1,5 +1,16 @@
 # MAILBOX
 
+## 2026-05-07 08:25 - DONE
+- Task: Add StateRepo/UnifiedCache to Signal Detail and Trade Detail endpoints. Deploy all cache changes.
+- Action taken:
+  - Wrapped GET /mt5/trades/{signalId} in StateRepo.get("SIGNAL_DETAIL", signalId, ...) (24h TTL)
+  - Wrapped GET /v2/trades/{tradeRef}/events in StateRepo.get("TRADE_DETAIL", tradeRef, ...) (24h TTL)
+  - Added invalidation: StateRepo.del on trade update and plan save
+  - Previous deploys also cached: /v2/trades list (30s TTL), /v2/calendar/today (1h TTL via StateRepo), TradeSignalChart cache-first Twelve Data check
+  - Feature doc created: ../features/2-done/unified_cache_manager.md
+  - Feature tracker updated.
+  - Build + deploy to VPS: OK.
+
 ## 2026-05-06 23:12 - DONE
 - Task: Rebuild `web-ui` from source directly on VPS for persistent `/trades` blank-page + `SignalDetailCard` runtime error report.
 - Action taken:

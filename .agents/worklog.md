@@ -1,3 +1,19 @@
+# Session Log: 2026-05-07 08:25
+- **Starting Task**: Add StateRepo/UnifiedCache to Signal Detail and Trade Detail endpoints. Audit all cache sources.
+- **Work Accomplished**:
+  - Trade list cache: Wrapped /v2/trades in StateRepo.get("TRADE_LIST", ...) with 30s TTL (no-filter only).
+  - News cache: Refactored /v2/calendar/today to use StateRepo.get("NEWS_CALENDAR", "today", ...) with 1h TTL.
+  - Signal Detail cache: Wrapped GET /mt5/trades/{signalId} in StateRepo.get("SIGNAL_DETAIL", signalId, ...) with 24h TTL.
+  - Trade Detail cache: Wrapped GET /v2/trades/{tradeRef}/events in StateRepo.get("TRADE_DETAIL", tradeRef, ...) with 24h TTL.
+  - Invalidation: Added StateRepo.del on trade update and trade plan save.
+  - TRADE_SYNC_UPDATE dedup: Changed log() to DELETE+INSERT instead of INSERT for TRADE_SYNC_UPDATE events.
+  - TradeSignalChart optimization: Added chartFetchManager cache check before Twelve Data API call.
+  - Documentation: Created feature doc unified_cache_manager.md, updated feature tracker and handoff.
+- **Changed Files**: webhook/server.js, web-ui/src/components/TradeSignalChart.jsx, .agents/.product/features/2-done/unified_cache_manager.md, .agents/.product/tickets/feature_tracker.md, .agents/sync/MAILBOX.md
+- **Technical Decisions**: 30s TTL for trade list (no manual invalidation needed), 24h TTL for detail endpoints (explicit invalidation on update).
+- **Verification**: Build OK, deploy OK, health: v2026.05.07 08:25 - d3ec724.
+- **Deploy Status**: Deployed.
+
 # Session Log: 2026-05-06 23:10
 - **Starting Task**: Fix persistent error pages on /ai/browser/GBPJPY, /trades, /signals/39 by applying uncommitted lazy-load changes.
 - **Work Accomplished**:
