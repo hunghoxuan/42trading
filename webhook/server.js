@@ -138,7 +138,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 
 loadEnvFile();
 
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:12 - 60f6393"); // fix route params same component
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 09:14 - cb0b2d3"); // fix route params same component
 
 // --- SSE Notification Bus ---
 const SSE_CLIENTS = new Map(); // userId -> Set<res>
@@ -5723,6 +5723,8 @@ async function _mt5InitBackendInternal() {
   await pool.query(
     `ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry DOUBLE PRECISION NULL`,
   );
+  await pool.query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS strategy TEXT NULL`);
+  await pool.query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy TEXT NULL`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS market_data (
