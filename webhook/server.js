@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 20:29 - bba7af7"); // broker sync auto-creates broker sources; ctrader skips no-quote symbol scans
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 22:56 - 4846960"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -359,8 +359,6 @@ class NotificationManager {
     // 3) db_log channel → enqueue for batch INSERT
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
-      const status = payload.status || (payload.error ? "ERROR" : "OK");
-      const errorStr = payload.error ? String(payload.error) : null;
       this.queue.push({
         object_id: null,
         object_table: eventType,
@@ -370,11 +368,11 @@ class NotificationManager {
           event: eventType,
           sub_type: subType,
           message: merged.message || "",
+          status: payload.status || (payload.error ? "ERROR" : "OK"),
+          error: payload.error ? String(payload.error) : null,
           ...payload,
         }),
         user_id: userId,
-        status: status,
-        error: errorStr,
       });
     }
   }
@@ -401,7 +399,7 @@ class NotificationManager {
         let idx = 1;
         for (const row of batch) {
           placeholders.push(
-            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW(), $${idx + 6}, $${idx + 7})`,
+            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW())`,
           );
           values.push(
             row.object_id,
@@ -410,13 +408,11 @@ class NotificationManager {
             row.event_type,
             row.metadata,
             row.user_id,
-            row.status,
-            row.error,
           );
-          idx += 8;
+          idx += 6;
         }
         await this._pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error) VALUES ${placeholders.join(", ")}`,
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at) VALUES ${placeholders.join(", ")}`,
           values,
         );
       } catch (e) {
@@ -6754,8 +6750,18 @@ async function _mt5InitBackendInternal() {
         metadata.event || metadata.event_type || "INFO",
       ).toUpperCase();
       const symbol = String(metadata.symbol || "").toUpperCase() || null;
-      const status = metadata.status || (metadata.error ? "ERROR" : "OK");
-      const errorStr = metadata.error ? String(metadata.error) : null;
+      const normalizedMeta =
+        metadata && typeof metadata === "object"
+          ? {
+              ...metadata,
+              status: metadata.status || (metadata.error ? "ERROR" : "OK"),
+              error: metadata.error ? String(metadata.error) : null,
+            }
+          : {
+              message: String(metadata || ""),
+              status: "OK",
+              error: null,
+            };
 
       if (eventType === "TRADE_SYNC_UPDATE") {
         // Keep only 1 latest row per trade: delete old then insert new
@@ -6764,35 +6770,31 @@ async function _mt5InitBackendInternal() {
           [objectId, eventType],
         );
         await pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)`,
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
           [
             objectId,
             objectTable,
             symbol,
             eventType,
-            JSON.stringify(metadata),
+            JSON.stringify(normalizedMeta),
             userId,
-            status,
-            errorStr,
           ],
         );
         return;
       }
       await pool.query(
         `
-        INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
+        INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
       `,
         [
           objectId,
           objectTable,
           symbol,
           eventType,
-          JSON.stringify(metadata),
+          JSON.stringify(normalizedMeta),
           userId,
-          status,
-          errorStr,
         ],
       );
     },

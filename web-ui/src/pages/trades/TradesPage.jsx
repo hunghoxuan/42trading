@@ -112,9 +112,12 @@ function brokerTicketOf(t) {
 }
 
 function tradeKeyOf(t) {
+  // Prefer sid (UUID) for URLs, fall back to id for backward compat
+  const sid = String(t?.sid || "").trim();
+  if (sid) return sid;
   const idNum = Number(t?.id);
   if (Number.isInteger(idNum) && idNum > 0) return String(idNum);
-  return String(t?.sid || "").trim();
+  return "";
 }
 
 function auditTimestampRaw(t) {
@@ -462,7 +465,9 @@ export default function TradesPage() {
         risk_pct:
           createForm.risk_pct === "" ? undefined : Number(createForm.risk_pct),
         risk_money:
-          createForm.risk_money === "" ? undefined : Number(createForm.risk_money),
+          createForm.risk_money === ""
+            ? undefined
+            : Number(createForm.risk_money),
         price: createForm.price === "" ? undefined : Number(createForm.price),
         sl: createForm.sl === "" ? undefined : Number(createForm.sl),
         tp: createForm.tp === "" ? undefined : Number(createForm.tp),
@@ -542,7 +547,9 @@ export default function TradesPage() {
   // Select trade from URL param on load
   useEffect(() => {
     if (tradeId && rows.length > 0) {
-      const found = rows.find((r) => tradeKeyOf(r) === tradeId);
+      const found = rows.find(
+        (r) => tradeKeyOf(r) === tradeId || String(r.id) === String(tradeId),
+      );
       if (found) {
         setSelectedTrade(found);
         selectedTradeIdRef.current = tradeId;
@@ -1796,14 +1803,20 @@ export default function TradesPage() {
                     <input
                       value={createForm.risk_pct}
                       onChange={(e) =>
-                        setCreateForm((p) => ({ ...p, risk_pct: e.target.value }))
+                        setCreateForm((p) => ({
+                          ...p,
+                          risk_pct: e.target.value,
+                        }))
                       }
                       placeholder="Risk % (0.01)"
                     />
                     <input
                       value={createForm.risk_money}
                       onChange={(e) =>
-                        setCreateForm((p) => ({ ...p, risk_money: e.target.value }))
+                        setCreateForm((p) => ({
+                          ...p,
+                          risk_money: e.target.value,
+                        }))
                       }
                       placeholder="Risk $ (100)"
                     />
