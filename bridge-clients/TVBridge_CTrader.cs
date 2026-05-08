@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.08 22:20 - 393b507";
+        private const string BuildVersion = "v2026.05.08 22:56 - 4846960";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -707,6 +707,8 @@ namespace cAlgo.Robots
         private void ParseSyncResults(string json, HashSet<string> activeTicketIds)
         {
             var resList = new List<string>();
+            var hasErrors = false;
+            string firstError = null;
             var resultsMatch = Regex.Match(json, "\"results\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
             if (resultsMatch.Success)
             {
@@ -719,16 +721,33 @@ namespace cAlgo.Robots
                     var status = GetJsonValue(obj, "status");
                     var sym = GetJsonValue(obj, "symbol");
                     var act = GetJsonValue(obj, "action");
+                    var err = GetJsonValue(obj, "error");
+                    var reason = GetJsonValue(obj, "reason");
                     
                     if (status == "Ok" || status == "Skip") {
                         if (status == "Ok" && !activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
                         continue;
                     }
-                    var displaySid = string.IsNullOrEmpty(sid) ? "SKIP" : sid;
-                    resList.Add(string.Format("{0} | {1} {2} {3} [{4}]", ticket, displaySid, act, sym, status));
+                    if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase)) {
+                        hasErrors = true;
+                        if (string.IsNullOrEmpty(firstError)) firstError = !string.IsNullOrEmpty(err) ? err : reason;
+                    }
+                    var displayTicket = string.IsNullOrEmpty(ticket) || ticket == "null" ? "-" : ticket;
+                    var displaySid = string.IsNullOrEmpty(sid) || sid == "null" ? "NO_SID" : sid;
+                    var detail = !string.IsNullOrEmpty(err) ? err : reason;
+                    if (!string.IsNullOrEmpty(detail)) {
+                        resList.Add(string.Format("{0} | {1} {2} {3} [{4}: {5}]", displayTicket, displaySid, act, sym, status, detail));
+                    } else {
+                        resList.Add(string.Format("{0} | {1} {2} {3} [{4}]", displayTicket, displaySid, act, sym, status));
+                    }
                 }
             }
             _lastSyncResults = resList;
+            if (hasErrors)
+            {
+                _syncStatus = "PARTIAL";
+                if (!string.IsNullOrEmpty(firstError)) _lastSyncErr = firstError;
+            }
         }
 
         private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0)
@@ -773,7 +792,8 @@ namespace cAlgo.Robots
                 
                 Color syncColor = _syncStatus == "OK" ? Color.Lime : 
                                  (_syncStatus == "IDLE" || _syncStatus == "WAITING" ? Color.Gray : 
-                                 (_syncStatus == "SYNCING" ? Color.Yellow : Color.Red));
+                                 (_syncStatus == "SYNCING" ? Color.Yellow :
+                                 (_syncStatus == "PARTIAL" ? Color.Orange : Color.Red)));
                 Chart.DrawStaticText("Panel_BR", br.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Right, syncColor);
             });
         }
