@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
+import TickerBar from "../../components/TickerBar";
 
 function fDateTime(v) {
   return showDateTime(v);
@@ -159,16 +160,39 @@ export default function LogsPage() {
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 6,
+            gap: 4,
             flexWrap: "wrap",
           }}
         >
           <span
             className="minor-text"
-            style={{ fontWeight: 600, fontStyle: "italic" }}
+            style={{ fontWeight: 600, fontSize: 10, marginRight: 2 }}
           >
-            Logs filtered by NotificationManager settings.
+            TYPE:
           </span>
+          <button
+            className={`secondary-button ${!filter.type ? "active" : ""}`}
+            style={{ fontSize: 10, padding: "2px 8px" }}
+            onClick={() => {
+              setFilter((f) => ({ ...f, type: "" }));
+              setPage(0);
+            }}
+          >
+            ALL
+          </button>
+          {EVENT_TYPE_BUTTONS.map((et) => (
+            <button
+              key={et}
+              className={`secondary-button ${filter.type === et ? "active" : ""}`}
+              style={{ fontSize: 10, padding: "2px 8px" }}
+              onClick={() => {
+                setFilter((f) => ({ ...f, type: f.type === et ? "" : et }));
+                setPage(0);
+              }}
+            >
+              {et}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -248,41 +272,6 @@ export default function LogsPage() {
               </option>
             ))}
           </select>
-        </div>
-
-        <div
-          className="toolbar-group toolbar-search-filter"
-          style={{ flexWrap: "wrap" }}
-        >
-          <span
-            className="minor-text"
-            style={{ fontWeight: 600, fontSize: 10 }}
-          >
-            TYPE:
-          </span>
-          <button
-            className={`secondary-button ${!filter.type ? "active" : ""}`}
-            style={{ fontSize: 10, padding: "2px 8px" }}
-            onClick={() => {
-              setFilter((f) => ({ ...f, type: "" }));
-              setPage(0);
-            }}
-          >
-            ALL
-          </button>
-          {EVENT_TYPE_BUTTONS.map((et) => (
-            <button
-              key={et}
-              className={`secondary-button ${filter.type === et ? "active" : ""}`}
-              style={{ fontSize: 10, padding: "2px 8px" }}
-              onClick={() => {
-                setFilter((f) => ({ ...f, type: f.type === et ? "" : et }));
-                setPage(0);
-              }}
-            >
-              {et}
-            </button>
-          ))}
         </div>
 
         <div className="toolbar-group toolbar-bulk-action">
@@ -414,6 +403,9 @@ export default function LogsPage() {
             </div>
           )}
         </div>
+      </div>
+      <div style={{ position: "sticky", bottom: 0, zIndex: 10 }}>
+        <TickerBar />
       </div>
     </section>
   );
