@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 15:16 - 9eaeda0"
-); // ai analyze supports attached image input
+  "v2026.05.08 16:34 - a7b54eb"
+); // ai browser drag & drop image attach
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

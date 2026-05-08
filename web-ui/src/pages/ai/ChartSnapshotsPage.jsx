@@ -1737,7 +1737,9 @@ export default function ChartSnapshotsPage() {
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
   const [attachedTradeImage, setAttachedTradeImage] = useState(null);
+  const [imageDragOver, setImageDragOver] = useState(false);
   const pendingHydrateRef = useRef(null);
+  const tradeImageInputRef = useRef(null);
   const liteChartRef = useRef(null);
   const liteChartApiRef = useRef(null);
   const autoFlowRef = useRef({ runId: 0, key: "", timer: null });
@@ -2146,6 +2148,36 @@ export default function ChartSnapshotsPage() {
 
   const setActionMessage = (action, type, text) => {
     setActionStatus({ action, type, text: String(text || "") });
+  };
+  const attachTradeImageFile = (file) => {
+    const f = file || null;
+    if (!f) {
+      setAttachedTradeImage(null);
+      return;
+    }
+    if (!String(f.type || "").startsWith("image/")) {
+      setStatus({
+        type: "warning",
+        text: "Only image files are supported.",
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      if (!dataUrl.startsWith("data:image/")) {
+        setStatus({
+          type: "warning",
+          text: "Only image files are supported.",
+        });
+        return;
+      }
+      setAttachedTradeImage({
+        name: f.name || "trade-image",
+        dataUrl,
+      });
+    };
+    reader.readAsDataURL(f);
   };
   const normalizeUiStatus = (type, text) => {
     const msg = String(text || "");
@@ -4298,33 +4330,75 @@ export default function ChartSnapshotsPage() {
                   placeholder="Paste Trades free text here..."
                   style={{ minHeight: 110, resize: "vertical", padding: 10 }}
                 />
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setImageDragOver(true);
+                  }}
+                  onDragLeave={() => setImageDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setImageDragOver(false);
+                    const f = e.dataTransfer?.files?.[0] || null;
+                    attachTradeImageFile(f);
+                  }}
+                  onClick={() => tradeImageInputRef.current?.click()}
+                  style={{
+                    border: imageDragOver
+                      ? "1px solid var(--accent)"
+                      : "1px dashed var(--border)",
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    background: imageDragOver
+                      ? "rgba(0, 170, 255, 0.08)"
+                      : "transparent",
+                  }}
+                >
+                  <input
+                    ref={tradeImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => attachTradeImageFile(e.target.files?.[0])}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span className="minor-text">
+                      Drag & drop image here, or click to browse
+                    </span>
+                    {attachedTradeImage ? (
+                      <span className="minor-text">
+                        Attached: {attachedTradeImage.name}
+                      </span>
+                    ) : (
+                      <span className="minor-text">No image attached</span>
+                    )}
+                    {attachedTradeImage ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAttachedTradeImage(null);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div style={{ display: "none", alignItems: "center", gap: 10 }}>
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (!f) {
-                        setAttachedTradeImage(null);
-                        return;
-                      }
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const dataUrl = String(reader.result || "");
-                        if (!dataUrl.startsWith("data:image/")) {
-                          setStatus({
-                            type: "warning",
-                            text: "Only image files are supported.",
-                          });
-                          return;
-                        }
-                        setAttachedTradeImage({
-                          name: f.name || "trade-image",
-                          dataUrl,
-                        });
-                      };
-                      reader.readAsDataURL(f);
-                    }}
+                    onChange={(e) => attachTradeImageFile(e.target.files?.[0])}
                   />
                   {attachedTradeImage ? (
                     <span className="minor-text">
