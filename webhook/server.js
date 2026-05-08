@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 14:51 - 13974dc",
-); // ai/browser auto_save + trades form
+  "v2026.05.08 15:16 - 9eaeda0"
+); // ai analyze supports attached image input
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16624,6 +16624,9 @@ const appHandler = async (req, res) => {
         prompt_preview: clipForLog(reqPrompt, 1000),
         trades_hash: hashForLog(tradesText),
         trades_len: tradesText.length,
+        attached_images_count: Array.isArray(body?.attached_images)
+          ? body.attached_images.length
+          : 0,
       };
       const buildTradesReviewPrompt = (basePrompt, tradesRaw) => {
         const base = String(basePrompt || "").trim();
@@ -16632,6 +16635,39 @@ const appHandler = async (req, res) => {
         const reviewInstruction =
           "Extract Symbol, Entry, TP, SL from the Trades param text. Do your analysis with the guide and snapshots attached and response if the Trades correct then return the Trade Plan with your analysis with following response format.";
         return `${base}\n\nTRADES_PARAM_TEXT:\n${tradeText}\n\n${reviewInstruction}`;
+      };
+      const normalizeAttachedImageList = (rawList) => {
+        if (!Array.isArray(rawList)) return [];
+        const out = [];
+        for (const item of rawList.slice(0, 3)) {
+          const raw =
+            typeof item === "string"
+              ? item
+              : String(item?.data_url || item?.dataUrl || "").trim();
+          if (!raw) continue;
+          const m = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+          if (!m) continue;
+          const mediaType = String(m[1] || "").toLowerCase();
+          if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(mediaType)) continue;
+          const data = String(m[2] || "").trim();
+          if (!data) continue;
+          out.push({ mediaType: mediaType === "image/jpg" ? "image/jpeg" : mediaType, data });
+        }
+        return out;
+      };
+      const appendAttachedImages = (contentList, attachedList) => {
+        const normalized = normalizeAttachedImageList(attachedList);
+        for (const img of normalized) {
+          contentList.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: img.mediaType,
+              data: img.data,
+            },
+          });
+        }
+        return normalized.length;
       };
       const inferSymbolFromSnapshotFile = (fileNameRaw) => {
         const safe = String(fileNameRaw || "").trim();
@@ -17066,6 +17102,7 @@ const appHandler = async (req, res) => {
               "Snapshots are required for analysis, but no snapshot images were available.",
           });
         }
+        appendAttachedImages(content, body?.attached_images);
         content.push({ type: "text", text: finalPrompt });
         const requestModel =
           String(body.model || "claude-sonnet-4-0").trim() ||
@@ -17449,6 +17486,7 @@ const appHandler = async (req, res) => {
       }
 
       const content = [...imagePayload.content];
+      appendAttachedImages(content, body?.attached_images);
       content.push({
         type: "text",
         text: finalPrompt,

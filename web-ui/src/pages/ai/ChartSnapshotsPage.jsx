@@ -1736,6 +1736,8 @@ export default function ChartSnapshotsPage() {
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
+  const [attachedTradeImage, setAttachedTradeImage] = useState(null);
+  const pendingHydrateRef = useRef(null);
   const liteChartRef = useRef(null);
   const liteChartApiRef = useRef(null);
   const autoFlowRef = useRef({ runId: 0, key: "", timer: null });
@@ -1813,6 +1815,19 @@ export default function ChartSnapshotsPage() {
     setActionStatus({ action: "", type: "", text: "" });
     setSessionPrefix("");
     setAiContext(null);
+    if (pendingHydrateRef.current) {
+      const p = pendingHydrateRef.current;
+      pendingHydrateRef.current = null;
+      if (p.raw != null) setAnalysisRaw(String(p.raw || ""));
+      if (p.parsed && typeof p.parsed === "object") {
+        setAnalysisParsed(p.parsed);
+        setAnalysisJson(JSON.stringify(p.parsed, null, 2));
+        setPosition(extractPositionFromAnalysis(p.parsed));
+      }
+      if (Array.isArray(p.usedFiles)) setUsedFiles(p.usedFiles);
+      if (Array.isArray(p.displayFiles)) setAnalysisFilesDisplay(p.displayFiles);
+      setResponseTab("chart");
+    }
   }, [cfg.symbol]);
   const [selectedEntryTf, setSelectedEntryTf] = useState("");
   const timeframe = useMemo(() => {
@@ -2305,6 +2320,9 @@ export default function ChartSnapshotsPage() {
       if (String(tradesText || "").trim()) {
         payload.Trades = String(tradesText || "").trim();
       }
+      if (attachedTradeImage?.dataUrl) {
+        payload.attached_images = [{ name: attachedTradeImage.name, data_url: attachedTradeImage.dataUrl }];
+      }
 
       if (Array.isArray(files) && files.length) payload.files = files;
       if (!payload.files || !payload.files.length) {
@@ -2399,6 +2417,24 @@ export default function ChartSnapshotsPage() {
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
         setPosition(extractPositionFromAnalysis(parsed));
+        if (!cfg.symbol) {
+          const nextSymbol = normalizeWatchSymbol(parsed?.symbol || "");
+          if (nextSymbol) {
+            pendingHydrateRef.current = {
+              raw,
+              parsed,
+              usedFiles: Array.isArray(out?.used_files) ? out.used_files : [],
+              displayFiles: !files.length
+                ? Array.isArray(out?.used_files)
+                  ? out.used_files
+                  : []
+                : Array.isArray(files)
+                  ? files
+                  : [],
+            };
+            setCfgField("symbol", nextSymbol);
+          }
+        }
       }
       setUsedFiles(Array.isArray(out?.used_files) ? out.used_files : []);
       if (!files.length)
@@ -4262,6 +4298,51 @@ export default function ChartSnapshotsPage() {
                   placeholder="Paste Trades free text here..."
                   style={{ minHeight: 110, resize: "vertical", padding: 10 }}
                 />
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) {
+                        setAttachedTradeImage(null);
+                        return;
+                      }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const dataUrl = String(reader.result || "");
+                        if (!dataUrl.startsWith("data:image/")) {
+                          setStatus({
+                            type: "warning",
+                            text: "Only image files are supported.",
+                          });
+                          return;
+                        }
+                        setAttachedTradeImage({
+                          name: f.name || "trade-image",
+                          dataUrl,
+                        });
+                      };
+                      reader.readAsDataURL(f);
+                    }}
+                  />
+                  {attachedTradeImage ? (
+                    <span className="minor-text">
+                      Attached: {attachedTradeImage.name}
+                    </span>
+                  ) : (
+                    <span className="minor-text">No image attached</span>
+                  )}
+                  {attachedTradeImage ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => setAttachedTradeImage(null)}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <select
                     className="secondary-button"
