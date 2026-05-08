@@ -2392,12 +2392,10 @@ export default function ChartSnapshotsPage() {
       );
     };
     setAnalyzing(true);
-    setStatus({ type: "", text: "" });
-    setAnalysisRaw("");
-    setAnalysisJson("");
-    setAnalysisParsed(null);
-    setUsedFiles([]);
-    setAnalysisFilesDisplay(Array.isArray(files) ? files : []);
+    setStatus({ type: "info", text: "Analyzing screenshots..." });
+    setAnalysisFilesDisplay(
+      Array.isArray(files) && files.length ? files : analysisFilesDisplay,
+    );
     setAutoSaveResult(null);
     const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
@@ -3617,6 +3615,7 @@ export default function ChartSnapshotsPage() {
           x.tp > 0,
       );
   }, [effectiveParsed]);
+  const selectedSymbol = String(cfg.symbol || paramSymbol || "").trim();
 
   const applyTradePlanToEditor = (plan) => {
     if (!plan?.raw) return;
@@ -4107,389 +4106,246 @@ export default function ChartSnapshotsPage() {
         className="panel snapshot-col-v3 snapshot-col-settings-v3"
         style={isSymbolPanelOpen ? {} : { gridColumn: "1 / -1" }}
       >
-        {cfg.symbol && (
-          <div
-            className="snapshot-control-card-v3 toolbar-panel"
-            style={{
-              display: "flex",
-              flexDirection: "row",
-              gap: 10,
-              marginBottom: 12,
-              padding: "12px 16px",
-              alignItems: "center",
-              flexWrap: "nowrap",
-              overflowX: "auto",
-            }}
-          >
-            {hasResponse && (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={resetAnalyzeSession}
-              >
-                {"<"} Back
-              </button>
-            )}
-
-            {cfg.symbol && (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setCfgField("symbol", "")}
-                style={{ fontSize: 12, padding: "4px 8px" }}
-              >
-                {"<"}
-              </button>
-            )}
-
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <select
-                className="secondary-button"
-                style={{
-                  height: "34px",
-                  padding: "0 10px",
-                  fontSize: "12px",
-                }}
-                value={templateId}
-                onChange={(e) => handleSelectTemplate(e.target.value)}
-              >
-                <option value="">New Template</option>
-                <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="secondary-button"
-                style={{
-                  height: "34px",
-                  padding: "0 10px",
-                  fontSize: "12px",
-                }}
-                value={cfg.profile || "day"}
-                onChange={(e) => setProfilePreset(e.target.value)}
-              >
-                {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div
-              className="v-sep-v3"
-              style={{
-                height: 20,
-                width: 1,
-                background: "var(--border)",
-                margin: "0 4px",
-              }}
-            />
-
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => setSettingsModalOpen(true)}
-            >
-              Settings
-            </button>
-
-            {/* AI controls — right aligned */}
-            <div
-              style={{
-                marginLeft: "auto",
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "nowrap",
-              }}
-            >
-              {/* Provider select */}
-              <select
-                value={analysisSource}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAnalysisSource(v);
-                  localStorage.setItem("ai_model", v);
-                  // Reset model to first available for this provider
-                  const models = aiModelConfig.providers[v]?.models || [];
-                  if (models.length) {
-                    setSelectedModel(models[0].value);
-                    localStorage.setItem("ai_model_name", models[0].value);
-                  }
-                }}
-                className="secondary-button"
-                style={{
-                  padding: "0 8px",
-                  height: 34,
-                  fontSize: "12px",
-                  minWidth: 100,
-                }}
-              >
-                {Object.entries(aiModelConfig.providers).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-
-              {/* Model select */}
-              <select
-                value={selectedModel}
-                onChange={(e) => {
-                  setSelectedModel(e.target.value);
-                  localStorage.setItem("ai_model_name", e.target.value);
-                }}
-                className="secondary-button"
-                style={{
-                  padding: "0 8px",
-                  height: 34,
-                  fontSize: "11px",
-                  minWidth: 140,
-                }}
-              >
-                {(
-                  aiModelConfig.providers[analysisSource]?.models ||
-                  aiModelConfig.providers["ai_claude"]?.models ||
-                  []
-                ).map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={autoSaveMode}
-                onChange={(e) => setAutoSaveMode(e.target.value)}
-                className="secondary-button"
-                style={{
-                  padding: "0 8px",
-                  height: 34,
-                  fontSize: "11px",
-                  minWidth: 120,
-                }}
-                title="Auto save analyze result"
-              >
-                <option value="">Auto Save: None</option>
-                <option value="signals">Auto Save: Signals</option>
-                <option value="trades">Auto Save: Trades</option>
-              </select>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={analyzeSelected}
-                disabled={analyzing}
-              >
-                {analyzing ? "Analyzing..." : "Analyze"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {!hasResponse && !cfg.symbol && (
+        {!hasResponse && (
           <div className="fadeIn">
             <div
-              className="toolbar-panel"
+              className=""
               style={{
-                marginBottom: 12,
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
+                marginBottom: 8,
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 4fr) minmax(320px, 6fr)",
+                gap: 8,
+                alignItems: "start",
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  gap: 12,
-                  alignItems: "center",
-                  flex: 1,
-                }}
-              >
-                {!isSymbolPanelOpen && (
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => setIsSymbolPanelOpen(true)}
-                    title="Expand symbols panel"
-                    style={{
-                      width: 28,
-                      height: 28,
-                      padding: 0,
-                      fontSize: 12,
-                      fontWeight: 700,
-                    }}
+              <div style={{ display: "grid", gap: 6 }}>
+                {selectedSymbol ? (
+                  <div
+                    className="snapshot-control-card-v3"
+                    style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
                   >
-                    {">>"}
-                  </button>
-                )}
-                <select
-                  className="secondary-button"
-                  value={symbolFilterTab}
-                  onChange={(e) => {
-                    setSymbolFilterTab(e.target.value);
-                    setVisibleCount(8);
-                  }}
-                  style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
-                >
-                  <option value="FAVOURITE">Watchlist</option>
-                  <option value="CRYPTO">Crypto</option>
-                  <option value="FOREX">Forex</option>
-                  <option value="COMMODITY">Commodity</option>
-                  <option value="INDICES">Indices</option>
-                  <option value="SMT">SMT</option>
-                </select>
-                <div
-                  style={{
-                    position: "relative",
-                    flex: 1,
-                    maxWidth: 320,
-                    display: "flex",
-                    gap: 4,
-                  }}
-                >
-                  <input
-                    list="tv-symbol-options"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && searchTerm.trim()) {
-                        setCfgField(
-                          "symbol",
-                          normalizeWatchSymbol(searchTerm.trim()),
-                        );
-                      }
-                    }}
-                    placeholder="Search symbol..."
-                    style={{ flex: 1, padding: "6px 10px", fontSize: 13 }}
-                  />
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    style={{
-                      width: 28,
-                      minWidth: 28,
-                      padding: "4px 0",
-                      fontSize: 14,
-                    }}
-                    onClick={() => {
-                      if (searchTerm.trim()) {
-                        const s = normalizeWatchSymbol(searchTerm.trim());
-                        setCfgField("symbol", s);
-                        const next = [...new Set([...watchlist, s])];
-                        saveWatchlistToDb(next).then(() => setWatchlist(next));
-                      }
-                    }}
-                    title="Add current symbol"
-                  >
-                    +
-                  </button>
-                  <datalist id="tv-symbol-options">
-                    {[
-                      ...new Set([...symbolSelectOptions, ...apiSymbolOptions]),
-                    ].map((opt) => (
-                      <option key={opt} value={opt} />
-                    ))}
-                  </datalist>
-                </div>
-                <div className="tf-pills">
-                  {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
-                    <button
-                      key={tf}
-                      className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
-                      onClick={() => {
-                        setBrowserTfs((prev) => {
-                          if (prev.includes(tf)) {
-                            if (prev.length <= 1) return prev;
-                            return prev.filter((t) => t !== tf);
-                          }
-                          return [...prev, tf];
-                        });
-                        setBrowserTf(tf);
-                      }}
-                    >
-                      {tf.toUpperCase()}
-                    </button>
-                  ))}
-
-                  <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
                     <button
                       className="secondary-button"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        padding: 0,
-                        fontSize: 16,
-                        fontWeight: 800,
-                        borderRadius: 6,
-                      }}
-                      onClick={() =>
-                        setMasterGridCols((prev) =>
-                          Math.max(1, (prev ?? 2) - 1),
-                        )
-                      }
-                      title="All: Larger charts"
+                      type="button"
+                      onClick={() => setCfgField("symbol", "")}
+                      style={{ fontSize: 12, padding: "4px 8px" }}
                     >
-                      +
+                      {"<"}
                     </button>
-                    <button
+                    <select
                       className="secondary-button"
-                      style={{
-                        width: 28,
-                        height: 28,
-                        padding: 0,
-                        fontSize: 16,
-                        fontWeight: 800,
-                        borderRadius: 6,
-                      }}
-                      onClick={() =>
-                        setMasterGridCols((prev) =>
-                          Math.min(6, (prev ?? 2) + 1),
-                        )
-                      }
-                      title="All: Smaller charts"
+                      style={{ height: "34px", padding: "0 10px", fontSize: "12px" }}
+                      value={templateId}
+                      onChange={(e) => handleSelectTemplate(e.target.value)}
                     >
-                      -
+                      <option value="">New Template</option>
+                      <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                      {templates.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="secondary-button"
+                      style={{ height: "34px", padding: "0 10px", fontSize: "12px" }}
+                      value={cfg.profile || "day"}
+                      onChange={(e) => setProfilePreset(e.target.value)}
+                    >
+                      {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
+                        <option key={k} value={k}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setSettingsModalOpen(true)}
+                    >
+                      Settings
                     </button>
                   </div>
-                </div>
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => setBrowserAnalyzeOpen((v) => !v)}
-                  >
-                    Analyze
-                  </button>
-                </div>
+                ) : (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 12,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      {!isSymbolPanelOpen && (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => setIsSymbolPanelOpen(true)}
+                          title="Expand symbols panel"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            padding: 0,
+                            fontSize: 12,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {">>"}
+                        </button>
+                      )}
+                      <select
+                        className="secondary-button"
+                        value={symbolFilterTab}
+                        onChange={(e) => {
+                          setSymbolFilterTab(e.target.value);
+                          setVisibleCount(8);
+                        }}
+                        style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
+                      >
+                        <option value="FAVOURITE">Watchlist</option>
+                        <option value="CRYPTO">Crypto</option>
+                        <option value="FOREX">Forex</option>
+                        <option value="COMMODITY">Commodity</option>
+                        <option value="INDICES">Indices</option>
+                        <option value="SMT">SMT</option>
+                      </select>
+                      <div
+                        style={{
+                          position: "relative",
+                          flex: 1,
+                          minWidth: 260,
+                          maxWidth: 420,
+                          display: "flex",
+                          gap: 4,
+                        }}
+                      >
+                        <input
+                          list="tv-symbol-options"
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && searchTerm.trim()) {
+                              setCfgField(
+                                "symbol",
+                                normalizeWatchSymbol(searchTerm.trim()),
+                              );
+                            }
+                          }}
+                          placeholder="Search symbol..."
+                          style={{ flex: 1, padding: "6px 10px", fontSize: 13 }}
+                        />
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          style={{
+                            width: 28,
+                            minWidth: 28,
+                            padding: "4px 0",
+                            fontSize: 14,
+                          }}
+                          onClick={() => {
+                            if (searchTerm.trim()) {
+                              const s = normalizeWatchSymbol(searchTerm.trim());
+                              setCfgField("symbol", s);
+                              const next = [...new Set([...watchlist, s])];
+                              saveWatchlistToDb(next).then(() => setWatchlist(next));
+                            }
+                          }}
+                          title="Add current symbol"
+                        >
+                          +
+                        </button>
+                        <datalist id="tv-symbol-options">
+                          {[
+                            ...new Set([...symbolSelectOptions, ...apiSymbolOptions]),
+                          ].map((opt) => (
+                            <option key={opt} value={opt} />
+                          ))}
+                        </datalist>
+                      </div>
+                    </div>
+                    <div className="tf-pills" style={{ marginLeft: 40 }}>
+                      {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
+                        <button
+                          key={tf}
+                          className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
+                          onClick={() => {
+                            setBrowserTfs((prev) => {
+                              if (prev.includes(tf)) {
+                                if (prev.length <= 1) return prev;
+                                return prev.filter((t) => t !== tf);
+                              }
+                              return [...prev, tf];
+                            });
+                            setBrowserTf(tf);
+                          }}
+                        >
+                          {tf.toUpperCase()}
+                        </button>
+                      ))}
+                      <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
+                        <button
+                          className="secondary-button"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            padding: 0,
+                            fontSize: 16,
+                            fontWeight: 800,
+                            borderRadius: 6,
+                          }}
+                          onClick={() =>
+                            setMasterGridCols((prev) =>
+                              Math.max(1, (prev ?? 2) - 1),
+                            )
+                          }
+                          title="All: Larger charts"
+                        >
+                          +
+                        </button>
+                        <button
+                          className="secondary-button"
+                          style={{
+                            width: 28,
+                            height: 28,
+                            padding: 0,
+                            fontSize: 16,
+                            fontWeight: 800,
+                            borderRadius: 6,
+                          }}
+                          onClick={() =>
+                            setMasterGridCols((prev) =>
+                              Math.min(6, (prev ?? 2) + 1),
+                            )
+                          }
+                          title="All: Smaller charts"
+                        >
+                          -
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-            {browserAnalyzeOpen ? (
+
               <div
-                className="toolbar-panel"
+                className=""
                 style={{
-                  marginBottom: 12,
-                  padding: 12,
-                  display: "grid",
-                  gap: 10,
+                  padding: 8,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  border: "1px solid rgba(255,255,255,0.04)",
+                  borderRadius: 8,
+                  boxShadow: "none",
                 }}
               >
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <textarea
                   value={tradesText}
                   onChange={(e) => setTradesText(e.target.value)}
                   placeholder="Paste Trades free text here..."
-                  style={{ minHeight: 110, resize: "vertical", padding: 10 }}
+                  style={{ minHeight: 88, resize: "vertical", padding: 8 }}
                 />
                 <div
                   onDragOver={(e) => {
@@ -4508,8 +4364,8 @@ export default function ChartSnapshotsPage() {
                     border: imageDragOver
                       ? "1px solid var(--accent)"
                       : "1px dashed var(--border)",
-                    borderRadius: 8,
-                    padding: "10px 12px",
+                    borderRadius: 6,
+                    padding: "8px 10px",
                     cursor: "pointer",
                     background: imageDragOver
                       ? "rgba(0, 170, 255, 0.08)"
@@ -4524,20 +4380,12 @@ export default function ChartSnapshotsPage() {
                     style={{ display: "none" }}
                     onChange={(e) => addTradeImageFiles(e.target.files)}
                   />
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 8,
-                    }}
-                  >
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <span className="minor-text">
                       Drag & drop images here, or click to browse
                     </span>
                     {attachedTradeImages.length > 0 ? (
-                      <div
-                        style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
-                      >
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                         {attachedTradeImages.map((img, i) => (
                           <span
                             key={i}
@@ -4562,11 +4410,7 @@ export default function ChartSnapshotsPage() {
                                   prev.filter((_, j) => j !== i),
                                 );
                               }}
-                              style={{
-                                fontSize: 10,
-                                padding: "0 4px",
-                                lineHeight: "16px",
-                              }}
+                              style={{ fontSize: 10, padding: "0 4px", lineHeight: "16px" }}
                             >
                               x
                             </button>
@@ -4591,13 +4435,53 @@ export default function ChartSnapshotsPage() {
                     )}
                   </div>
                 </div>
-
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "center" }}>
+                  <select
+                    value={analysisSource}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setAnalysisSource(v);
+                      localStorage.setItem("ai_model", v);
+                      const models = aiModelConfig.providers[v]?.models || [];
+                      if (models.length) {
+                        setSelectedModel(models[0].value);
+                        localStorage.setItem("ai_model_name", models[0].value);
+                      }
+                    }}
+                    className="secondary-button"
+                    style={{ padding: "0 8px", height: 34, fontSize: "12px", width: "100%" }}
+                  >
+                    {Object.entries(aiModelConfig.providers).map(([k, v]) => (
+                      <option key={k} value={k}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => {
+                      setSelectedModel(e.target.value);
+                      localStorage.setItem("ai_model_name", e.target.value);
+                    }}
+                    className="secondary-button"
+                    style={{ padding: "0 8px", height: 34, fontSize: "11px", width: "100%" }}
+                  >
+                    {(
+                      aiModelConfig.providers[analysisSource]?.models ||
+                      aiModelConfig.providers["ai_claude"]?.models ||
+                      []
+                    ).map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
                   <select
                     className="secondary-button"
                     value={autoSaveMode}
                     onChange={(e) => setAutoSaveMode(e.target.value)}
-                    style={{ height: 34, fontSize: 12, padding: "0 10px" }}
+                    style={{ height: 34, fontSize: 12, padding: "0 10px", width: "100%" }}
                   >
                     <option value="">Auto Save: None</option>
                     <option value="signals">Auto Save: Signals</option>
@@ -4608,28 +4492,30 @@ export default function ChartSnapshotsPage() {
                     type="button"
                     disabled={analyzing}
                     onClick={() => analyzeSelected({ allowNoSymbol: true })}
+                    style={{ height: 34, padding: "0 16px", whiteSpace: "nowrap" }}
                   >
                     {analyzing ? "Analyzing..." : "Analyze"}
                   </button>
                 </div>
               </div>
-            ) : null}
-            <div
-              className="browser-grid-v1"
-              style={{
-                gridTemplateColumns:
-                  symbolFilterTab === "SMT"
-                    ? "1fr"
-                    : browserTfs.length === 1
-                      ? "repeat(4, 1fr)"
-                      : browserTfs.length === 2
-                        ? "repeat(2, 1fr)"
-                        : "1fr",
-                gap: 12,
-              }}
-            >
-              {symbolFilterTab === "SMT"
-                ? DEFAULT_SMT_GROUPS.map((group) => (
+            </div>
+            {!selectedSymbol ? (
+              <div
+                className="browser-grid-v1"
+                style={{
+                  gridTemplateColumns:
+                    symbolFilterTab === "SMT"
+                      ? "1fr"
+                      : browserTfs.length === 1
+                        ? "repeat(4, 1fr)"
+                        : browserTfs.length === 2
+                          ? "repeat(2, 1fr)"
+                          : "1fr",
+                  gap: 12,
+                }}
+              >
+                {symbolFilterTab === "SMT"
+                  ? DEFAULT_SMT_GROUPS.map((group) => (
                     <div
                       key={group.name}
                       style={{
@@ -4683,8 +4569,8 @@ export default function ChartSnapshotsPage() {
                         ))}
                       </div>
                     </div>
-                  ))
-                : symbolsByTab.slice(0, visibleCount).map((sym) => (
+                    ))
+                  : symbolsByTab.slice(0, visibleCount).map((sym) => (
                     <Suspense
                       key={sym}
                       fallback={
@@ -4700,18 +4586,19 @@ export default function ChartSnapshotsPage() {
                         onRemove={(s) => removeFromWatchlist(s)}
                       />
                     </Suspense>
-                  ))}
-            </div>{" "}
+                    ))}
+              </div>
+            ) : null}{" "}
           </div>
         )}
 
-        {!hasResponse && cfg.symbol && (
+        {!hasResponse && selectedSymbol && (
           <div style={{ marginBottom: 20 }}>
             <Suspense
               fallback={<div className="loading-card">Loading Chart...</div>}
             >
               <SymbolChart
-                symbol={cfg.symbol}
+                symbol={selectedSymbol}
                 timeframes={widgetTfs}
                 defaultMode="live"
                 onAnalyze={() => analyzeSelected()}
@@ -4721,7 +4608,7 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
-        {cfg.symbol && (
+        {selectedSymbol && (
           <Suspense
             fallback={<div className="loading-card">Loading Details...</div>}
           >
@@ -4730,7 +4617,7 @@ export default function ChartSnapshotsPage() {
               hideTabsBeforeResponse={true}
               chart={{
                 enabled: true,
-                symbol: cfg.symbol,
+                symbol: selectedSymbol,
                 interval: timeframe,
                 entryPrice: position.entry,
                 slPrice: position.sl,
@@ -4768,6 +4655,10 @@ export default function ChartSnapshotsPage() {
               response={{
                 enabled: true,
                 hasData: hasResponse,
+                pending: analyzing,
+                pendingText: hasResponse
+                  ? "Refreshing analysis result..."
+                  : "Analyzing screenshots...",
                 label: "Response",
                 tab: responseTab,
                 onTabChange: setResponseTab,
@@ -4851,6 +4742,24 @@ export default function ChartSnapshotsPage() {
           >
             {actionStatus.text}
           </span>
+        ) : null}
+        {addedEntity?.kind === "trade" && addedEntity?.id ? (
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={resetToDefaultBrowser}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => navigate(`/trades/${addedEntity.id}`)}
+            >
+              Goto Trade
+            </button>
+          </div>
         ) : null}
       </section>
 

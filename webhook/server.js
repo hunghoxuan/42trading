@@ -144,10 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 19:52 - 7be31c9"
-); // ai add-flow buttons + tp/rr consistency
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 19:38 - 45b9d87"); // broker sync recovers orphan account owners and skips invalid discovery rows
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7421,11 +7418,45 @@ async function _mt5InitBackendInternal() {
     async brokerSyncV2(accountId, payload = {}) {
       const aid = String(accountId || "").trim();
       const acc = await pool.query(
-        `SELECT user_id, metadata FROM user_accounts WHERE account_id = $1`,
+        `
+        SELECT ua.user_id, ua.metadata, u.user_id AS resolved_user_id
+        FROM user_accounts ua
+        LEFT JOIN users u ON u.user_id = ua.user_id
+        WHERE ua.account_id = $1
+      `,
         [aid],
       );
-      const uid = acc.rows[0]?.user_id || CFG.mt5DefaultUserId;
+      const accountUserId = String(acc.rows[0]?.user_id || "").trim();
+      let uid = String(
+        acc.rows[0]?.resolved_user_id ||
+          accountUserId ||
+          CFG.mt5DefaultUserId,
+      ).trim();
       const existingMeta = acc.rows[0]?.metadata || {};
+
+      // Legacy datasets can contain account rows whose user_id no longer exists.
+      // Re-anchor sync writes to a guaranteed user row so broker snapshots do not
+      // fail with FK violations when auto-updating accounts or discovering trades.
+      if (!uid) uid = String(CFG.mt5DefaultUserId || "default").trim();
+      await pool.query(
+        `
+        INSERT INTO users (user_id, role, is_active, created_at, updated_at)
+        VALUES ($1, $2, TRUE, NOW(), NOW())
+        ON CONFLICT (user_id) DO UPDATE SET
+          updated_at = EXCLUDED.updated_at
+      `,
+        [uid, uid === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER],
+      );
+      if (accountUserId && accountUserId !== uid) {
+        await pool.query(
+          `
+          UPDATE user_accounts
+          SET user_id = $2, updated_at = NOW()
+          WHERE account_id = $1
+        `,
+          [aid, uid],
+        );
+      }
 
       // Update metadata and explicit columns
       const newMeta = {
@@ -7960,6 +7991,17 @@ async function _mt5InitBackendInternal() {
             );
           }
         } else if (it.execution_status === "OPEN") {
+          if (!syncSymbol || !syncAction) {
+            results.push({
+              ticket: it.ticket,
+              sid: null,
+              status: "Skip",
+              symbol: it.symbol,
+              action: it.action,
+              reason: "missing_symbol_or_action",
+            });
+            continue;
+          }
           const discoverySid = mt5GenerateTimeSid();
           const brokerSource = (payload.broker_name || "BROKER")
             .toUpperCase()
