@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 19:38 - 45b9d87"); // broker sync recovers orphan account owners and skips invalid discovery rows
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 22:20 - 393b507"); // broker sync auto-creates broker sources; ctrader skips no-quote symbol scans
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -359,10 +359,12 @@ class NotificationManager {
     // 3) db_log channel → enqueue for batch INSERT
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
+      const status = payload.status || (payload.error ? "ERROR" : "OK");
+      const errorStr = payload.error ? String(payload.error) : null;
       this.queue.push({
         object_id: null,
         object_table: eventType,
-        symbol: null,
+        symbol: payload.symbol || null,
         event_type: subType || eventType,
         metadata: JSON.stringify({
           event: eventType,
@@ -371,6 +373,8 @@ class NotificationManager {
           ...payload,
         }),
         user_id: userId,
+        status: status,
+        error: errorStr,
       });
     }
   }
@@ -397,7 +401,7 @@ class NotificationManager {
         let idx = 1;
         for (const row of batch) {
           placeholders.push(
-            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW())`,
+            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW(), $${idx + 6}, $${idx + 7})`,
           );
           values.push(
             row.object_id,
@@ -406,11 +410,13 @@ class NotificationManager {
             row.event_type,
             row.metadata,
             row.user_id,
+            row.status,
+            row.error,
           );
-          idx += 6;
+          idx += 8;
         }
         await this._pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at) VALUES ${placeholders.join(", ")}`,
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error) VALUES ${placeholders.join(", ")}`,
           values,
         );
       } catch (e) {
@@ -6748,6 +6754,8 @@ async function _mt5InitBackendInternal() {
         metadata.event || metadata.event_type || "INFO",
       ).toUpperCase();
       const symbol = String(metadata.symbol || "").toUpperCase() || null;
+      const status = metadata.status || (metadata.error ? "ERROR" : "OK");
+      const errorStr = metadata.error ? String(metadata.error) : null;
 
       if (eventType === "TRADE_SYNC_UPDATE") {
         // Keep only 1 latest row per trade: delete old then insert new
@@ -6756,8 +6764,8 @@ async function _mt5InitBackendInternal() {
           [objectId, eventType],
         );
         await pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)`,
           [
             objectId,
             objectTable,
@@ -6765,14 +6773,16 @@ async function _mt5InitBackendInternal() {
             eventType,
             JSON.stringify(metadata),
             userId,
+            status,
+            errorStr,
           ],
         );
         return;
       }
       await pool.query(
         `
-        INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at, status, error)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8)
       `,
         [
           objectId,
@@ -6781,6 +6791,8 @@ async function _mt5InitBackendInternal() {
           eventType,
           JSON.stringify(metadata),
           userId,
+          status,
+          errorStr,
         ],
       );
     },
@@ -7447,7 +7459,7 @@ async function _mt5InitBackendInternal() {
       `,
         [uid, uid === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER],
       );
-      if (accountUserId && accountUserId !== uid) {
+      if (accountUserId !== uid) {
         await pool.query(
           `
           UPDATE user_accounts
@@ -7505,6 +7517,7 @@ async function _mt5InitBackendInternal() {
           account_id, user_id, metadata, balance, equity, margin, free_margin, leverage, broker_name, status, updated_at
         ) VALUES ($1::text, $2::text, $3::jsonb, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::text, 'ACTIVE', NOW())
         ON CONFLICT (account_id) DO UPDATE SET
+          user_id = EXCLUDED.user_id,
           metadata = EXCLUDED.metadata,
           balance = EXCLUDED.balance,
           equity = EXCLUDED.equity,
@@ -7692,8 +7705,9 @@ async function _mt5InitBackendInternal() {
       let synced = 0;
       const results = [];
       for (const it of items) {
-        let res = { rowCount: 0 };
-        const ticketCandidates =
+        try {
+          let res = { rowCount: 0 };
+          const ticketCandidates =
           Array.isArray(it.ticket_candidates) && it.ticket_candidates.length
             ? it.ticket_candidates
             : it.ticket
@@ -8006,6 +8020,18 @@ async function _mt5InitBackendInternal() {
           const brokerSource = (payload.broker_name || "BROKER")
             .toUpperCase()
             .replace(/\s+/g, "_");
+          await this.upsertSourceV2({
+            source_id: brokerSource,
+            name: payload.broker_name || brokerSource,
+            kind: "broker",
+            auth_mode: "token",
+            is_active: true,
+            metadata: {
+              discovered_via: "broker_sync_v2",
+              account_id: aid,
+              broker_name: payload.broker_name || brokerSource,
+            },
+          });
 
           await pool.query(
             `
@@ -8057,6 +8083,31 @@ async function _mt5InitBackendInternal() {
             symbol: it.symbol,
             action: it.action,
           });
+        }
+        } catch (err) {
+          console.error(`[brokerSyncV2] Error processing item ticket=${it.ticket}`, err);
+          results.push({
+            ticket: it.ticket,
+            sid: it.sid || it.signal_id || null,
+            status: "Error",
+            error: err.message,
+            symbol: it.symbol,
+            action: it.action,
+          });
+          await this.log(
+            it.sid || it.signal_id || it.ticket || "unknown",
+            "trades",
+            {
+              event: "TRADE_SYNC_UPDATE",
+              status_raw: it.status_raw,
+              execution_status: it.execution_status,
+              ticket: it.ticket || null,
+              signal_id: it.sid || it.signal_id || null,
+              error: err.message,
+              status: "ERROR",
+            },
+            uid,
+          );
         }
       }
       const finalizeSnapshotClosures = async (rows = []) => {
@@ -12830,6 +12881,27 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
   return account;
 }
 
+function formatBrokerSyncError(error) {
+  if (!error) return "unknown broker sync error";
+  const message =
+    error instanceof Error ? String(error.message || "") : String(error);
+  const code = String(error?.code || "").trim();
+  const table = String(error?.table || "").trim();
+  const constraint = String(error?.constraint || "").trim();
+  const detail = String(error?.detail || "").trim();
+
+  if (code === "23503") {
+    return `FK_VIOLATION table=${table || "unknown"} constraint=${constraint || "unknown"}${detail ? ` detail=${detail}` : ""}`;
+  }
+  if (code === "23505") {
+    return `UNIQUE_VIOLATION constraint=${constraint || "unknown"}${detail ? ` detail=${detail}` : ""}`;
+  }
+  if (code === "23502") {
+    return `NOT_NULL_VIOLATION column=${String(error?.column || "unknown").trim() || "unknown"} table=${table || "unknown"}`;
+  }
+  return message || "unknown broker sync error";
+}
+
 function getTvTokenFromPath(pathname = "") {
   const m = String(pathname).match(/^\/(?:signal|mt5\/tv\/webhook)\/([^/]+)$/);
   if (!m) return "";
@@ -15181,6 +15253,8 @@ const appHandler = async (req, res) => {
           ack_ticket: ackTicket,
           symbol: symbol || "N/A",
           payload_json: payload,
+          status: r.status || null,
+          error: r.error || null,
         };
       });
       if (hasExtraFilter) {
@@ -19743,13 +19817,19 @@ const appHandler = async (req, res) => {
       );
       return json(res, statusCode, result);
     } catch (error) {
+      const formatted = formatBrokerSyncError(error);
       console.error("[v2/broker/sync] failed", {
         message: error instanceof Error ? error.message : String(error),
+        formatted,
+        code: error?.code || null,
+        table: error?.table || null,
+        constraint: error?.constraint || null,
+        detail: error?.detail || null,
         stack: error instanceof Error ? error.stack : null,
       });
       return json(res, 400, {
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatted,
       });
     }
   }

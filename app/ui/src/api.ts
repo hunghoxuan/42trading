@@ -4,13 +4,17 @@
 const DEFAULT_API_URL = "https://trade.mozasolution.com";
 
 function apiBase(): string {
-  const stored = localStorage.getItem("v3_api_url");
+  // Read from same keys as v2 API module (bridged from v3 App header)
+  const stored = localStorage.getItem("tvbridge_api_base");
   if (stored) return stored.replace(/\/+$/, "");
-  return (import.meta.env.VITE_API_URL || DEFAULT_API_URL).replace(/\/+$/, "");
+  // Fallback to VPS
+  return (
+    import.meta.env.VITE_API_URL || "https://trade.mozasolution.com"
+  ).replace(/\/+$/, "");
 }
 
 export function setApiUrl(url: string) {
-  localStorage.setItem("v3_api_url", url.replace(/\/+$/, ""));
+  localStorage.setItem("tvbridge_api_base", url.replace(/\/+$/, ""));
 }
 
 export function getApiUrl(): string {
@@ -20,9 +24,11 @@ export function getApiUrl(): string {
 async function get(path: string) {
   const headers: Record<string, string> = {};
   const token = localStorage.getItem("v3_token");
+  const adminKey = localStorage.getItem("tvbridge_api_key");
   if (token) headers["x-session-token"] = token;
+  if (adminKey) headers["x-api-key"] = adminKey;
   const res = await fetch(`${apiBase()}${path}`, {
-    credentials: "include",
+    credentials: "omit",
     headers,
   });
   if (!res.ok) {
@@ -37,11 +43,13 @@ async function post(path: string, payload?: unknown) {
     "Content-Type": "application/json",
   };
   const token = localStorage.getItem("v3_token");
+  const adminKey = localStorage.getItem("tvbridge_api_key");
   if (token) headers["x-session-token"] = token;
+  if (adminKey) headers["x-api-key"] = adminKey;
   const res = await fetch(`${apiBase()}${path}`, {
     method: "POST",
     headers,
-    credentials: "include",
+    credentials: "omit",
     body: payload ? JSON.stringify(payload) : undefined,
   });
   if (!res.ok) {

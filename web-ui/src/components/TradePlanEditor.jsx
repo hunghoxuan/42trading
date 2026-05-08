@@ -40,6 +40,7 @@ export function TradePlanEditor({
   showAddSignalButton,
   showAddTradeButton,
   showResetButton = true,
+  resetLabel = "Reset",
   saveLabel,
   addSignalLabel = "+ Signal",
   addTradeLabel = "+ Trade",
@@ -83,23 +84,19 @@ export function TradePlanEditor({
     { label: "Note", value: value.note || "-" },
     { label: "BE", value: value.be_trigger || value.be || "-" },
     { label: "Invalidation", value: value.invalidation || "-" },
-    { label: "Confidence", value: value.confidence_pct != null ? `${Number(value.confidence_pct).toFixed(1)}%` : "-" },
-    { label: "Risk Mgmt", value: value.risk_management || "-" },
-    { label: "Partial TPs", value: Array.isArray(value.partial_tps) && value.partial_tps.length > 0 
-        ? value.partial_tps.map((t, i) => `${(t.price || "-")}@${t.rr || "-"}r(${t.size_pct || "-"}%)`).join(" | ") 
-        : "-" 
+    {
+      label: "Confidence",
+      value:
+        value.confidence_pct === null || value.confidence_pct === undefined
+          ? "-"
+          : `${Number(value.confidence_pct).toFixed(1)}%`,
     },
     { label: "Estimated Bars", value: value.estimated_bars ?? "-" },
-    { label: "Entry Model", value: value.entry_model || value.entryModel || "-" },
-    { label: "Strategy", value: value.strategy || "-" },
-    { label: "Profile", value: value.profile || "-" },
-    { label: "Exit Condition", value: value.exit_condition || "-" },
-    { label: "Entry Condition", value: value.entry_condition || "-" },
-    { label: "Checklist", value: Array.isArray(value.confluence_checklist) && value.confluence_checklist.length > 0 
-        ? value.confluence_checklist.join(", ") 
-        : "-" 
+    {
+      label: "Entry Model",
+      value: value.entry_model || value.entryModel || "-",
     },
-    { label: "Skip Recommendation", value: value.skip_recommendation || "-" },
+    { label: "Strategy", value: value.strategy || "-" },
   ];
 
   const NumericInline = ({ label, k, step = "0.001", min, max, sliderOverride = null }) => {
@@ -272,6 +269,10 @@ export function TradePlanEditor({
 
         <NumericInline label="Entry" k="entry" />
 
+        <NumericInline label="Risk (%)" k="risk_pct" step="0.001" min="0.001" max="0.1" />
+
+        <NumericInline label="Risk ($)" k="risk_money" step="1" min="1" />
+
         <NumericInline label="Risk / Reward" k="rr" step="0.1" min="0.3" max="10" sliderOverride={{ min: 0.5, max: 8, step: 0.1 }} />
 
         <NumericInline label="Take Profit" k="tp" />
@@ -327,7 +328,7 @@ export function TradePlanEditor({
                 borderRadius: "4px",
               }}
             >
-              Reset
+              {resetLabel}
             </button>
           ) : null}
           {effectiveShowSave ? (

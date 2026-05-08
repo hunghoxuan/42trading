@@ -1,32 +1,32 @@
-# Rules Index
+# Rules
 
-Mandatory rules live here.
+## Boot Rules
 
-Read all files in this order:
+Read on every new chat:
 
 1. `rules/communication.md`
 2. `rules/planning.md`
 3. `rules/safety.md`
-4. `rules/handoff.md`
-5. `rules/db.md`
-6. `rules/ui.md`
-7. `rules/deploy.md`
-8. `rules/testing.md`
-9. `rules/cli.md`
-10. `rules/scratch.md`
-11. `rules/scripting.md`
-12. `rules/token.md`
-13. `rules/memory-governance.md`
-14. `rules/documentation_integrity.md`
+4. `rules/cli.md`
+5. `rules/token.md`
+
+## Read Only When Task Needs It
+
+- Handoff: `rules/handoff.md`
+- DB: `rules/db.md`
+- UI: `rules/ui.md`
+- Deploy: `rules/deploy.md`
+- Testing: `rules/testing.md`
+- Scripts: `rules/scripting.md`
+- Scratch: `rules/scratch.md`
+- Memory: `rules/memory-governance.md`
+- Docs governance: `rules/documentation_integrity.md`
+- Automation mining: `rules/automation_integrity.md`
 
 ## Global Law
-- Plan first for feature/UI/DB/architecture changes.
-- Ask approval before changing behavior unless user says execute now.
-- Preserve user-facing behavior unless explicitly changed.
-- Update worklog at START and FINISH of significant work.
+
+- Keep context small.
+- Read only what task needs.
+- Do not break user behavior by accident.
 - Test real code changes.
 - Bump matched server/EA versions for backend, EA, UI, or script changes.
-
-## Workflow Laws
-- **Documentation First**: Before executing any new tasks, update or create the relevant Feature document in `.product/features/` and Ticket document in `.product/tickets/`.
-- **Clean Hand-off**: After finishing a task, always update the hand-off document (`MAILBOX.md`) and the relevant Feature/Ticket status with detailed progress.

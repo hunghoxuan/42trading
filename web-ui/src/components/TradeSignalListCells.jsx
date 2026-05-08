@@ -67,6 +67,7 @@ export function PositionAuditCell({
   brokerId = "-",
   confidence = null,
   riskManagement = null,
+  riskPct = null,
 }) {
   const sourceStrategy = [source, strategy]
     .filter((x) => x && x !== "-")
@@ -76,6 +77,7 @@ export function PositionAuditCell({
   const metaLine = [
     sid,
     brokerId && brokerId !== "-" ? brokerId : null,
+    riskPct != null ? `${(Number(riskPct) * 100).toFixed(2)}%` : null,
     confidenceText,
     riskText,
   ]
@@ -166,7 +168,7 @@ export function StatusPnlCell({
             className="minor-text"
             style={{ fontSize: "10px", opacity: 0.5 }}
           >
-            Margin: ${num(margin).toFixed(2)}
+            Risk: ${num(margin).toFixed(2)}
           </div>
         )}
       </div>

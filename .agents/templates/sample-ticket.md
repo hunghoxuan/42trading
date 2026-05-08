@@ -15,13 +15,10 @@
 - `web-ui/src/components/SessionClockBar.jsx`
 
 ## Out Of Scope
-- Backend behavior changes
-- DB schema changes
+
+## Tech - Solution
 
 ## Acceptance Criteria
-1. Invalid timezone input cannot crash UI.
-2. User can only pick supported timezone options.
-3. Relative time labels update without page reload.
 
 ## Checks
 - `npm --prefix web-ui run build`

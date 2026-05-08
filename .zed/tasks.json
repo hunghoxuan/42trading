@@ -1,0 +1,37 @@
+[
+  {
+    "label": "Launch Antigravity",
+    "command": "open",
+    "args": ["app/ui/src-tauri/target/release/bundle/macos/Antigravity.app"],
+    "use_new_terminal": false,
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+  {
+    "label": "Restart Antigravity",
+    "command": "bash",
+    "args": ["scripts/restart_desktop.sh"],
+    "use_new_terminal": false,
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+  {
+    "label": "Build Desktop App",
+    "command": "bash",
+    "args": ["scripts/build_desktop.sh"],
+    "use_new_terminal": false,
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+  {
+    "label": "Deploy to VPS",
+    "command": "bash",
+    "args": ["scripts/deploy/deploy_webhook.sh"],
+    "use_new_terminal": false,
+    "cwd": "$ZED_WORKTREE_ROOT",
+  },
+  {
+    "label": "V3 Dev Server",
+    "command": "npm",
+    "args": ["run", "dev"],
+    "use_new_terminal": false,
+    "cwd": "$ZED_WORKTREE_ROOT/app/ui",
+  },
+]

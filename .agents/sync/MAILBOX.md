@@ -1,38 +1,91 @@
-# MAILBOX
+# Handoff — 2026-05-08
 
-## 2026-05-07 08:25 - DONE
-- Task: Add StateRepo/UnifiedCache to Signal Detail and Trade Detail endpoints. Deploy all cache changes.
-- Action taken:
-  - Wrapped GET /mt5/trades/{signalId} in StateRepo.get("SIGNAL_DETAIL", signalId, ...) (24h TTL)
-  - Wrapped GET /v2/trades/{tradeRef}/events in StateRepo.get("TRADE_DETAIL", tradeRef, ...) (24h TTL)
-  - Added invalidation: StateRepo.del on trade update and plan save
-  - Previous deploys also cached: /v2/trades list (30s TTL), /v2/calendar/today (1h TTL via StateRepo), TradeSignalChart cache-first Twelve Data check
-  - Feature doc created: ../features/2-done/unified_cache_manager.md
-  - Feature tracker updated.
-  - Build + deploy to VPS: OK.
+> From: Codex session
+> To: Next agent / Self
 
-## 2026-05-06 23:12 - DONE
-- Task: Rebuild `web-ui` from source directly on VPS for persistent `/trades` blank-page + `SignalDetailCard` runtime error report.
-- Action taken:
-  - SSH to `root@139.59.211.192`
-  - `cd /opt/trading`
-  - `git fetch --all --prune && git checkout main && git pull --ff-only origin main`
-  - `npm --prefix web-ui install --no-audit --no-fund`
-  - `npm --prefix web-ui run build`
-  - `pm2 restart webhook`
-- Verification:
-  - VPS source build completed successfully from commit `9a23a6c`.
-  - Built assets on VPS are still `index-BFR1piDZ.js`, `SignalDetailCard-sLd3tzqN.js`, `SymbolChart-BPjEaqx0.js`.
-  - VPS `web-ui/dist/index.html` points at `/assets/index-BFR1piDZ.js`.
-  - Public health still reports `{"ok":true,"version":"v2026.05.06 19:12 - c3e392e"}`.
-- Next agent: If user still sees the same `Cannot access 'O' before initialization` error after hard refresh, investigate the actual module graph/minified output for a remaining circular-init bug in the current source, not deploy drift.
+## What Was Done
 
-## 2026-05-06 22:55 - DONE
-- Task: Restore production fix for `SignalDetailCard` ReferenceError on `/ai/browser/GBPJPY`, `/trades`, `/signals/39`.
-- Root cause: Production was serving older build `v2026.05.06 18:59 - 2fab46d` even though `main` already contained the lazy-loading/export hardening shipped in `v2026.05.06 19:12 - c3e392e`.
-- Action taken: Rebuilt and redeployed current `main` to VPS with `PUSH_FIRST=0 VPS_APP_DIR=/opt/trading bash scripts/deploy/deploy_webhook.sh`.
-- Verification:
-  - Local UI build emitted `dist/assets/index-BFR1piDZ.js`, `dist/assets/SignalDetailCard-sLd3tzqN.js`, `dist/assets/SymbolChart-BPjEaqx0.js`.
-  - Public health endpoint now reports `{"ok":true,"version":"v2026.05.06 19:12 - c3e392e"}`.
-  - Public `/ui/` now references `/assets/index-BFR1piDZ.js`.
-- Next agent: If user still sees the error, focus on browser cache/CDN cache invalidation and capture fresh console/network traces from the affected page.
+### Broker Sync SSE Fixes
+- **PnL not updating**: SDK SSE `tradeUpdates` only had `pnl_realized`, but UI reads `broker_pnl` first. Added `broker_pnl: it.pnl` to SSE payload.
+- **SID mismatch**: `tradeKeyOf(r)` returned `r.id` (integer), but SSE map was keyed by `u.sid` (UUID). Fixed to match by `r.sid`.
+- **Event listener churn**: `useRealtimeData` re-registered on every render. Fixed with `useRef`.
+
+### Per-Value Flash Animation
+- CSS `.value-flash` — very subtle accent pulse (`rgba(accent, 0.06)`, 0.8s fade)
+- Tracks per-field changes via `changedFields` Map<sid, Set<fieldName>>
+- `StatusPnlCell` accepts `flashFields` prop, applies `.value-flash` to pips/PnL divs
+
+### Toast Fix (Add Trade from Signal)
+- Root cause: `mt5Log` key was `event_type` but function checks `metadata.event`
+- Fix: Changed `event_type` → `event` so `NotificationManager.handle` fires
+
+### Signal Auto-Close
+- After `+Trade` from signal, queries `execution_profiles` for other subscribers
+- If none → `UPDATE signals SET status = 'CLOSED'`
+- UI: `showAddTradeButton` hidden for CLOSED/FILLED/CANCELLED/etc signals
+
+### Claude Files Cleanup
+- 0 files on Anthropic API — already clean
+- Cleared 373 stale entries from `.claude-files.json` + `.claude-context-files.json`
+
+### Logs Page UI
+- TYPE filter moved to same row as "Logs" title, right-aligned
+- Bottom-sticky TickerBar added to Logs page
+
+### ChartSnapshotsPage Refactor
+- Removed Snapshots button + warming process (~350 lines)
+- Removed status text display
+- AI provider/model selects + Analyze button moved to right side
+- Toolbar: `flexWrap: "nowrap"` keeps all controls on one row
+
+### GPT-4o 404 Fix
+- Backend: `gpt4o` → `openai` provider alias in `callAiProvider()`
+- Frontend: `aiSourceFromModel` returns `"ai_gpt4o"` for GPT models
+
+### Async Multi-Image Upload
+- `attachedTradeImage` → `attachedTradeImages` (single to array)
+- `attachTradeImageFile` → `addTradeImageFiles` (multi-file support)
+- File input: `multiple` attribute
+- Each image has individual `x` remove, + "Clear all" button
+- `payload.attached_images` array sent to AI analyze endpoint
+
+### Desktop Auth Fix
+- Backend: `getUiSessionFromReq` reads `x-session-token` header in addition to cookies
+- Login endpoint returns `token` in JSON response
+- v3 API client bridges `tvbridge_api_base` + `tvbridge_api_key` localStorage keys
+
+### V3 Desktop App (Phase 1)
+- Tauri v2 + React + TypeScript in `app/ui/`
+- Imports all v2 pages via `@v2/*` alias (Trades, Signals, Logs, Analyze, Settings)
+- API URL + admin key inputs in header
+- HomePage: dual auth (API key tab + Login tab)
+- Health check with green/red dot
+- 8.2MB bundle size
+- Zed tasks: `.zed/tasks.json` (Launch, Restart, Build, Deploy, V3 Dev)
+- Build script: `scripts/build_desktop.sh`
+- Restart script: `scripts/restart_desktop.sh`
+
+## Key Files Changed
+
+| File | What |
+|---|---|
+| `webhook/server.js` | broker_pnl SSE, session token header, toast fix, signal auto-close, gpt4o fix |
+| `web-ui/src/pages/trades/TradesPage.jsx` | SID matching, value-flash, changedFields |
+| `web-ui/src/hooks/useRealtimeData.js` | useRef stabilization |
+| `web-ui/src/components/TradeSignalListCells.jsx` | flashFields prop |
+| `web-ui/src/styles.css` | .value-flash animation |
+| `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | Multi-image, remove snapshots/warmup, UI layout |
+| `web-ui/src/pages/signals/SignalsPage.jsx` | showAddTradeButton conditional |
+| `web-ui/src/pages/system/LogsPage.jsx` | TYPE filter move, bottom TickerBar |
+| `app/ui/*` | New V3 desktop app |
+
+## VPS Status
+- Webhook: `v2026.05.08 18:38 - 45b9d87` — online, PM2
+- Desktop app: built at `app/ui/src-tauri/target/release/bundle/macos/Antigravity.app`
+
+## Outstanding / Next
+- [ ] CHART_API logging (event type button exists, no code emits it)
+- [ ] Desktop app "Disconnected" issue — CORS or Tauri WebView fetch problem, try `credentials: "omit"` + API key
+- [ ] Tauri DMG bundling fails (`.app` works, need `create-dmg` or similar)
+- [ ] Windows/Linux Tauri cross-compile
+- [ ] V3 Phase 2: Hono + Drizzle backend migration (only if needed)

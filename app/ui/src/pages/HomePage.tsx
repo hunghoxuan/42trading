@@ -3,9 +3,12 @@ import { useState } from "react";
 import { api } from "../api";
 
 export default function HomePage() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "apikey">("apikey");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [apiKey, setApiKey] = useState(
+    () => localStorage.getItem("tvbridge_api_key") || "",
+  );
   const [authError, setAuthError] = useState("");
 
   const inputStyle: React.CSSProperties = {
@@ -15,6 +18,7 @@ export default function HomePage() {
     borderRadius: 6,
     color: "var(--text)",
     fontSize: 14,
+    width: "100%",
   };
 
   const health = useQuery({
@@ -23,22 +27,24 @@ export default function HomePage() {
     refetchInterval: 30000,
   });
 
-  const trades = useQuery({
-    queryKey: ["trades"],
-    queryFn: () => api.trades({ limit: "10" }),
-    enabled: loggedIn,
-  });
-
-  async function login(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setAuthError("");
     try {
       await api.login(email, password);
-      setLoggedIn(true);
     } catch (err) {
       setAuthError((err as Error).message);
     }
   }
+
+  function handleApiKeySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    localStorage.setItem("tvbridge_api_key", apiKey);
+    // Force refetch
+    window.location.reload();
+  }
+
+  const connected = health.data?.ok;
 
   return (
     <div>
@@ -57,117 +63,116 @@ export default function HomePage() {
             width: 8,
             height: 8,
             borderRadius: "50%",
-            background: health.data?.ok ? "#22c55e" : "#ef4444",
+            background: connected ? "#22c55e" : "#ef4444",
           }}
         />
         <strong style={{ fontSize: 14 }}>
-          {health.data?.ok ? "Connected" : "Disconnected"}
+          {connected ? "Connected" : "Disconnected"}
         </strong>
         <span className="minor-text" style={{ fontSize: 12 }}>
           {health.data?.version || "..."}
         </span>
-        {loggedIn && (
-          <button
-            className="secondary-button"
-            style={{ marginLeft: "auto", fontSize: 11 }}
-            onClick={() => {
-              api.logout().then(() => setLoggedIn(false));
-            }}
-          >
-            Logout
-          </button>
-        )}
       </div>
 
-      {/* Login */}
-      {!loggedIn && (
-        <div style={{ maxWidth: 360, margin: "40px auto" }}>
-          <form
-            onSubmit={login}
+      {/* Auth */}
+      {!connected && (
+        <div style={{ maxWidth: 380, margin: "20px auto" }}>
+          <div
             className="panel"
             style={{ display: "flex", flexDirection: "column", gap: 12 }}
           >
-            <div className="panel-label">Login to view trades</div>
-            {authError && (
-              <div className="error" style={{ fontSize: 12 }}>
-                {authError}
-              </div>
+            {/* Mode switch */}
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                className={`secondary-button ${authMode === "apikey" ? "active" : ""}`}
+                style={{ flex: 1, fontSize: 12 }}
+                onClick={() => setAuthMode("apikey")}
+              >
+                API Key
+              </button>
+              <button
+                className={`secondary-button ${authMode === "login" ? "active" : ""}`}
+                style={{ flex: 1, fontSize: 12 }}
+                onClick={() => setAuthMode("login")}
+              >
+                Login
+              </button>
+            </div>
+
+            {authMode === "apikey" ? (
+              <form
+                onSubmit={handleApiKeySubmit}
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
+                <div className="panel-label">API Key</div>
+                <input
+                  type="password"
+                  placeholder="Paste your admin API key"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  style={inputStyle}
+                />
+                <button
+                  type="submit"
+                  className="primary-button"
+                  style={{ width: "100%" }}
+                >
+                  Connect
+                </button>
+              </form>
+            ) : (
+              <form
+                onSubmit={handleLogin}
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
+                <div className="panel-label">Login</div>
+                {authError && (
+                  <div className="error" style={{ fontSize: 12 }}>
+                    {authError}
+                  </div>
+                )}
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  style={inputStyle}
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={inputStyle}
+                />
+                <button
+                  type="submit"
+                  className="primary-button"
+                  style={{ width: "100%" }}
+                >
+                  Login
+                </button>
+              </form>
             )}
-            <input
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={inputStyle}
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={inputStyle}
-            />
-            <button
-              type="submit"
-              className="primary-button"
-              style={{ width: "100%" }}
-            >
-              Login
-            </button>
-          </form>
+          </div>
         </div>
       )}
 
-      {/* Trades */}
-      {loggedIn && (
-        <div className="panel">
-          <div className="panel-label">Recent Trades</div>
-          {trades.isLoading ? (
-            <div className="loading">Loading...</div>
-          ) : trades.error ? (
-            <div className="error">{(trades.error as Error).message}</div>
-          ) : (
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Action</th>
-                  <th>Status</th>
-                  <th>PnL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(trades.data?.items || []).slice(0, 10).map((t: any) => (
-                  <tr key={t.sid || t.id}>
-                    <td>
-                      <strong>{t.symbol}</strong>
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          t.action === "BUY" ? "side-buy" : "side-sell"
-                        }
-                      >
-                        {t.action}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="badge">{t.execution_status}</span>
-                    </td>
-                    <td
-                      className={
-                        Number(t.pnl_realized || 0) >= 0
-                          ? "money-pos"
-                          : "money-neg"
-                      }
-                    >
-                      ${Number(t.pnl_realized || 0).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      {/* Quick stats when connected */}
+      {connected && (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 12,
+          }}
+        >
+          <div className="kpi-card">
+            <div className="kpi-label">API</div>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>
+              {health.data?.version || "-"}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -246,6 +246,8 @@ export default function TradesPage() {
     tp: "",
     sl: "",
     rr: "",
+    risk_pct: 0.01,
+    risk_money: "",
     note: "",
   });
 
@@ -263,6 +265,8 @@ export default function TradesPage() {
     action: "BUY",
     symbol: "",
     volume: "0.01",
+    risk_pct: "0.01",
+    risk_money: "",
     price: "",
     sl: "",
     tp: "",
@@ -455,6 +459,10 @@ export default function TradesPage() {
           .toUpperCase(),
         volume:
           createForm.volume === "" ? undefined : Number(createForm.volume),
+        risk_pct:
+          createForm.risk_pct === "" ? undefined : Number(createForm.risk_pct),
+        risk_money:
+          createForm.risk_money === "" ? undefined : Number(createForm.risk_money),
         price: createForm.price === "" ? undefined : Number(createForm.price),
         sl: createForm.sl === "" ? undefined : Number(createForm.sl),
         tp: createForm.tp === "" ? undefined : Number(createForm.tp),
@@ -614,6 +622,8 @@ export default function TradesPage() {
         skip_recommendation: detailPlan.skip_recommendation,
         confluence_checklist: detailPlan.confluence_checklist,
         be_trigger: asNum(detailPlan.be_trigger),
+        risk_pct: asNum(detailPlan.risk_pct),
+        risk_money: asNum(detailPlan.risk_money),
       };
       await api.saveTradePlan(ref, payload);
       await loadTrades();
@@ -1185,8 +1195,14 @@ export default function TradesPage() {
                             }
                             riskManagement={
                               t.raw_json?.risk_management ||
-                              t.raw_json?.risk_pct ||
-                              t.raw_json?.risk
+                              t.metadata?.risk_management
+                            }
+                            riskPct={
+                              asNum(t.risk_pct_planned) ??
+                              asNum(t.metadata?.risk_pct) ??
+                              asNum(t.raw_json?.risk_pct) ??
+                              asNum(t.raw_json?.riskPct) ??
+                              asNum(t.volume)
                             }
                           />
                         </td>
@@ -1366,7 +1382,8 @@ export default function TradesPage() {
                       asNum(raw.riskPct) ??
                       asNum(raw.risk_pct);
                     const riskPct = asNum(
-                      meta.riskPct ??
+                      selectedTrade.risk_pct_planned ??
+                        meta.riskPct ??
                         meta.risk_pct ??
                         meta.volumePct ??
                         meta.volume_pct ??
@@ -1470,6 +1487,22 @@ export default function TradesPage() {
                     {
                       label: "Signal TF",
                       value: formatTimeframe(selectedTrade.signal_tf || "-"),
+                      group: "source",
+                    },
+                    {
+                      label: "Risk (%)",
+                      value:
+                        detailPlan.risk_pct != null
+                          ? `${(Number(detailPlan.risk_pct) * 100).toFixed(2)}%`
+                          : "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Risk ($)",
+                      value:
+                        detailPlan.risk_money != null
+                          ? `$${Number(detailPlan.risk_money).toFixed(2)}`
+                          : "-",
                       group: "source",
                     },
                     {
@@ -1758,7 +1791,21 @@ export default function TradesPage() {
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, volume: e.target.value }))
                       }
-                      placeholder="0.01"
+                      placeholder="Lots (0.01)"
+                    />
+                    <input
+                      value={createForm.risk_pct}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, risk_pct: e.target.value }))
+                      }
+                      placeholder="Risk % (0.01)"
+                    />
+                    <input
+                      value={createForm.risk_money}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, risk_money: e.target.value }))
+                      }
+                      placeholder="Risk $ (100)"
                     />
                     <input
                       value={createForm.price}

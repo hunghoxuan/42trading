@@ -1,3 +1,85 @@
+# Session Log: 2026-05-08 12:12
+- **Starting Task**: Make ticker FILLED items clickable, tighten top-bar spacing, and deploy.
+- **Work Accomplished**:
+  - Added click-through on each FILLED ticker item to open `/trades/:sid`.
+  - Updated top bar CSS per request:
+    - `.ticker-bar`: removed visible bar background/borders, removed bottom margin.
+    - `.session-clock-bar-container`: removed bottom margin.
+  - Deployed commit to `main` and rebuilt UI on VPS.
+- **Changed Files**:
+  - `web-ui/src/components/TickerBar.jsx`
+  - `web-ui/src/components/TickerBar.css`
+  - `web-ui/src/components/SessionClockBar.css`
+  - `web-ui/src/components/NotificationWatcher.jsx`
+  - `webhook/server.js` (version bump)
+  - `bridge-clients/TVBridgeEA.mq5` (version bump)
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - Public health: `https://trade.mozasolution.com/health` -> `v2026.05.08 09:52 - 6be00a2` ✅
+  - Public UI index: `/assets/index-CJoV622d.js`, `/assets/index-DgKm1TZ3.css` ✅
+- **Deploy Status**: Deployed.
+
+# Session Log: 2026-05-08 11:58
+- **Starting Task**: Redesign top ticker into split realtime mode.
+- **Work Accomplished**:
+  - Replaced marquee ticker with split layout:
+    - Left: one message at a time, auto-rotate, click to open related page.
+    - Right: realtime FILLED trades list showing only `Symbol` and `PnL`.
+  - Added route metadata in ticker events so click can jump to `/trades/:sid`, `/trades`, or `/signals`.
+  - Wired broker sync SSE data into ticker FILLED list using `OPEN|FILLED` status semantics and live PnL updates.
+- **Changed Files**:
+  - `web-ui/src/components/NotificationWatcher.jsx`
+  - `web-ui/src/components/TickerBar.jsx`
+  - `web-ui/src/components/TickerBar.css`
+- **Technical Decisions**:
+  - Treat `OPEN` as FILLED for display parity with existing Trades UI semantics.
+  - Keep FILLED list capped to recent 12 trades and auto-remove entries when broker sync reports non-filled states.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**: Not deployed (UI local changes only).
+
+# Session Log: 2026-05-08 07:10
+- **Starting Task**: Shrink AI refresh context and clean boot routing docs.
+- **Work Accomplished**:
+  - Rewrote `AI.md`, `.agents/BOOTSTRAP.md`, and `.agents/rules.md` in short caveman style.
+  - Kept boot read path small: `AI.md` -> `.agents/BOOTSTRAP.md` -> `.agents/rules.md` -> core rules -> `.agents/STATE.md`.
+  - Moved heavy docs like `worklog`, `MAILBOX`, `db-schema`, and `feature_tracker` to read-on-demand.
+  - Removed stale `.agents/README.md` startup reference from `AI.md`.
+- **Changed Files**:
+  - `AI.md`
+  - `.agents/BOOTSTRAP.md`
+  - `.agents/rules.md`
+- **Technical Decisions**:
+  - Optimize startup for token savings first.
+  - Keep only universal rules in boot; load domain docs only when task needs them.
+- **Verification**:
+  - Manual doc read-path check.
+  - File size check: `AI.md` 413 B, `.agents/BOOTSTRAP.md` 979 B, `.agents/rules.md` 738 B.
+- **Deploy Status**: Not deployed (docs only).
+
+# Session Log: 2026-05-08 05:45
+- **Starting Task**: Standardize Risk Management Infrastructure (lots -> risk-based).
+- **Work Accomplished**:
+  - **Backend Standardization**: Added `risk_pct_planned`, `risk_money_planned`, and `rr_planned` to `signals` table schema and normalized ingestion in `server.js`.
+  - **UI/UX Modernization**: Integrated Risk (%) and Risk ($) inputs into `SignalsPage` and `TradesPage` creation forms and `TradePlanEditor`.
+  - **Trade Plan Logic**: Centralized risk extraction and PnL calculation in `signalDetailUtils.jsx`.
+  - **Dashboard Density**: Added risk percentage badges to `SignalDetailCard` and `PositionAuditCell`.
+  - **Documentation**: Created `standardized_risk_management.md` feature doc and updated `db-schema.md` (via manual check, it already has these columns).
+- **Changed Files**:
+  - `webhook/server.js`
+  - `web-ui/src/pages/signals/SignalsPage.jsx`
+  - `web-ui/src/pages/trades/TradesPage.jsx`
+  - `web-ui/src/components/TradePlanEditor.jsx`
+  - `web-ui/src/utils/signalDetailUtils.jsx`
+  - `.agents/.product/features/2-done/standardized_risk_management.md`
+- **Technical Decisions**:
+  - Prioritize `risk_pct` over `volume` (lots) to ensure consistency across symbols.
+  - Use aliasing in backend to maintain backward compatibility with legacy signal payloads.
+- **Verification**:
+  - Manual UI check of risk badges and input fields.
+  - Signal creation test with risk percentage.
+- **Deploy Status**: Ready for build/deploy.
+
 # Session Log: 2026-05-07 12:20
 - **Starting Task**: Resolve cTrader execution discrepancy, fix obsolete warnings, and achieve MT5 feature parity.
 - **Work Accomplished**:

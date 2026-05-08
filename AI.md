@@ -1,34 +1,17 @@
-# AI Agent Boot Document
+# AI Boot
 
-Before planning or coding, read these files in order:
+Start here.
 
-1. [README.md](./README.md)
-2. [.agents/README.md](./.agents/README.md)
-3. [.agents/rules.md](./.agents/rules.md)
+Read in this order:
 
-## Build Version Rule (Mandatory)
+1. `AI.md`
+2. `.agents/BOOTSTRAP.md`
 
-When changing code (backend, EA, UI, scripts), bump both versions before reporting done or deploying:
+Hard rules:
 
-- `webhook/server.js` -> `SERVER_VERSION`
-- `bridge-clients/TVBridgeEA.mq5` -> `EA_BUILD_VERSION`
-
-Version format must use date, hour/minute, and latest git commit/push identifier:
-
-- `vY.M.d H:m - git`
-- Apply the same version to VPS/server and EA client.
-- Prefer deriving `git` from the latest pushed commit short SHA or agreed push/build number.
-
-Use:
-
-- `bash scripts/bump_build_versions.sh`
-
-Deploy guard:
-
-- `bash scripts/check_build_versions.sh origin/main`
-
-## Planning & Confirmation Rule (Mandatory)
-
-Before implementation, always provide a detailed design/plan and proposed solution covering relevant UI, layout, DB schema, technical approach, and tech stack choices.
-
-Always ask confirmation questions and wait for approval before changing UI, layout, feature behavior, DB schema, tech stack, or architecture, unless the user explicitly asks for immediate execution or the task is read-only inspection.
+- Follow bootstrap read order.
+- Use `rtk` for shell.
+- If code changes touch backend, EA, UI, or scripts, bump both versions:
+  - `webhook/server.js` -> `SERVER_VERSION`
+  - `bridge-clients/TVBridgeEA.mq5` -> `EA_BUILD_VERSION`
+- Plan first for UI, feature, DB, or architecture changes unless user says execute now.

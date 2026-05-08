@@ -157,6 +157,7 @@ export default function SymbolChart({
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
+  const [tradePlanBusy, setTradePlanBusy] = useState(false);
 
   useEffect(() => {
     if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
@@ -255,6 +256,13 @@ export default function SymbolChart({
   }, [mode, status, hasAnyBars]);
 
   useEffect(() => {
+    if (mode !== "cache") return;
+    if (status === "LOADING") return;
+    if (hasAnyBars) return;
+    setLastError("TradePlan bars unavailable. Showing Live chart.");
+  }, [mode, status, hasAnyBars]);
+
+  useEffect(() => {
     if (hasTradePlan && hasAnyBars) {
       if (!entryPrice && !tpPrice && !slPrice) {
         // If we have bars but no levels, maybe stay in Live if it was live?
@@ -315,6 +323,8 @@ export default function SymbolChart({
 
   const showControls = !(hasTradePlan && hasAnalysis);
   const tvTimezone = toTradingViewTimezone();
+  const canShowTradePlanOverlays =
+    hasTradePlan && mode === "cache" && hasAnyBars;
   const overlayButtons = [
     { key: "plan1", label: "P1" },
     { key: "plan2", label: "P2" },
@@ -396,16 +406,38 @@ export default function SymbolChart({
                 Live
               </button>
               <button
-                className="primary-button"
+                className={canShowTradePlanOverlays ? "primary-button" : "secondary-button"}
                 style={{
                   fontSize: 10,
                   fontWeight: 700,
                   padding: "3px 8px",
                   borderRadius: 4,
                 }}
-                onClick={() => setMode("cache")}
+                onClick={async () => {
+                  setTradePlanBusy(true);
+                  setLastError(null);
+                  try {
+                    await refresh();
+                    const hasBarsAfter = Object.values(master?.bars || {}).some(
+                      (b) => Array.isArray(b) && b.length > 0,
+                    );
+                    if (hasBarsAfter || hasAnyBars) {
+                      setMode("cache");
+                    } else {
+                      setMode("live");
+                      setLastError("TradePlan bars unavailable. Showing Live chart.");
+                    }
+                  } catch (e) {
+                    setMode("live");
+                    setLastError(
+                      String(e?.message || "TradePlan fetch failed. Showing Live chart."),
+                    );
+                  } finally {
+                    setTradePlanBusy(false);
+                  }
+                }}
               >
-                TradePlan
+                {tradePlanBusy ? "Loading..." : "TradePlan"}
               </button>
               <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
                 |
@@ -413,15 +445,17 @@ export default function SymbolChart({
               {overlayButtons.map(({ key, label }) => (
                 <button
                   key={key}
-                  className={overlays[key] ? "primary-button" : "secondary-button"}
+                  className={overlays[key] && canShowTradePlanOverlays ? "primary-button" : "secondary-button"}
                   onClick={() => toggleOverlay(key)}
                   type="button"
+                  disabled={!canShowTradePlanOverlays}
                   style={{
                     fontSize: 10,
                     fontWeight: 700,
                     padding: "3px 7px",
                     borderRadius: 4,
                     minWidth: 28,
+                    opacity: canShowTradePlanOverlays ? 1 : 0.6,
                   }}
                 >
                   {label}

@@ -311,6 +311,7 @@ export default function LogsPage() {
                   <th>SYMBOL</th>
                   <th>EVENT TYPE</th>
                   <th>ID | TICKET</th>
+                  <th>RESULT</th>
                   <th>DATE TIME</th>
                 </tr>
               </thead>
@@ -356,6 +357,15 @@ export default function LogsPage() {
                       </div>
                     </td>
                     <td>
+                      {(ev.status === "ERROR" || ev.error) ? (
+                        <span className="badge SL" title={ev.error || "Error"}>ERROR</span>
+                      ) : ev.status ? (
+                        <span className="badge FILLED">{ev.status}</span>
+                      ) : (
+                        <span className="badge" style={{ opacity: 0.6 }}>OK</span>
+                      )}
+                    </td>
+                    <td>
                       <span className="minor-text">
                         {fDateTime(getEventTime(ev))}
                       </span>
@@ -386,6 +396,12 @@ export default function LogsPage() {
                 </div>
               </div>
               <div className="panel" style={{ margin: 0, padding: 12 }}>
+                {(selectedEvent.error || selectedEvent.status === "ERROR") && (
+                  <div style={{ marginBottom: 12, padding: 8, background: "rgba(255,0,0,0.1)", borderRadius: 4, border: "1px solid rgba(255,0,0,0.2)" }}>
+                    <div className="minor-text" style={{ color: "var(--sl)", fontWeight: 600, marginBottom: 4 }}>ERROR DETAIL</div>
+                    <div style={{ fontSize: 12, color: "var(--sl)", wordBreak: "break-word" }}>{selectedEvent.error || "Unknown Error"}</div>
+                  </div>
+                )}
                 <div className="panel-label" style={{ marginBottom: 8 }}>
                   RAW JSON
                 </div>

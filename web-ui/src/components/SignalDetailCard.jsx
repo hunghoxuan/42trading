@@ -120,13 +120,11 @@ function PlanHeader({
   const confidenceText = Number.isFinite(confidenceNum)
     ? `${confidenceNum.toFixed(1)}%`
     : "";
-  const skipText = String(
-    plan.skip_recommendation ||
-      plan.skip ||
-      (Array.isArray(plan.skipReasons) && plan.skipReasons.length
-        ? "skip"
-        : ""),
-  ).trim();
+  const rr2 =
+    partials[1] && partials[1].rr != null ? `${partials[1].rr}r` : "";
+  const rr3 =
+    partials[2] && partials[2].rr != null ? `${partials[2].rr}r` : "";
+  const partialText = `TP1: ${tp1}  TP2: ${tp2}${rr2 ? ` (${rr2})` : ""}  TP3: ${tp3}${rr3 ? ` (${rr3})` : ""}`;
 
   return (
     <div
@@ -231,21 +229,12 @@ function PlanHeader({
         {pnl ? (
           <span style={{ fontSize: "11px", fontWeight: 700 }}>{pnl}</span>
         ) : null}
-        {/* skipText removed per request */}
         {confidenceText ? (
           <span
             className="badge badge-mini"
             style={{ padding: "2px 6px", fontSize: "9px" }}
           >
             {confidenceText}
-          </span>
-        ) : null}
-        {plan.risk_management ? (
-          <span
-            className="badge badge-mini"
-            style={{ padding: "2px 6px", fontSize: "9px", color: "#f59e0b", border: "1px solid #f59e0b40" }}
-          >
-            RM: {plan.risk_management}
           </span>
         ) : null}
       </div>
@@ -317,6 +306,10 @@ export default function SignalDetailCard({
 }) {
   const preset = MODE_PRESETS[mode] || MODE_PRESETS.generic;
   const hasResponseData = Boolean(response?.hasData);
+  const isResponsePending = Boolean(response?.pending);
+  const pendingResponseText = String(
+    response?.pendingText || "Refreshing analysis...",
+  ).trim();
 
   if (
     !showWhenEmpty &&
@@ -678,6 +671,25 @@ export default function SignalDetailCard({
         </div>
       ) : null}
 
+      {isResponsePending ? (
+        <div
+          className="loading"
+          style={{
+            marginBottom: 14,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid rgba(245, 158, 11, 0.25)",
+            background: "rgba(245, 158, 11, 0.08)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <div className="spinner" style={{ width: 14, height: 14 }} />
+          <span>{pendingResponseText}</span>
+        </div>
+      ) : null}
+
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {/* Fields at the top of Info tab */}
@@ -897,8 +909,24 @@ export default function SignalDetailCard({
               primaryTf?.price_prediction?.narrative ||
               primaryTf?.next ||
               "";
+            const hasAnalysisSummary =
+              compactTfs.length > 0 ||
+              Boolean(analysis) ||
+              Boolean(confluence) ||
+              (Array.isArray(checklist) && checklist.length > 0) ||
+              Boolean(verdictText) ||
+              Boolean(note) ||
+              (Array.isArray(raw.pdArrays) && raw.pdArrays.length > 0) ||
+              (Array.isArray(raw.keyLevels) && raw.keyLevels.length > 0);
             return (
               <div className="analysis-summary-md">
+                {!hasAnalysisSummary ? (
+                  <div className="minor-text" style={{ marginBottom: 8 }}>
+                    {isResponsePending
+                      ? pendingResponseText
+                      : "No analysis summary yet."}
+                  </div>
+                ) : null}
                 {/* Per-TF Cards Row */}
                 {Array.isArray(compactTfs) && compactTfs.length > 0 && (
                   <div style={{ marginBottom: 20 }}>
@@ -973,6 +1001,25 @@ export default function SignalDetailCard({
                                 {kb.event}: {kb.price} {kb.direction}
                               </div>
                             ))}
+                            {tf?.price_action_summary?.recent_move ? (
+                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4, whiteSpace: "pre-wrap" }}>
+                                {String(tf.price_action_summary.recent_move)}
+                              </div>
+                            ) : null}
+                            {tf?.price_prediction?.narrative ? (
+                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4, whiteSpace: "pre-wrap" }}>
+                                {String(tf.price_prediction.narrative)}
+                              </div>
+                            ) : null}
+                            {Array.isArray(tf?.price_prediction?.expected_path) &&
+                            tf.price_prediction.expected_path.length > 0 ? (
+                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4 }}>
+                                {tf.price_prediction.expected_path
+                                  .slice(0, 3)
+                                  .map((p) => `${p?.action || "Step"} ${p?.target_price ?? "-"}`)
+                                  .join(" • ")}
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })}
@@ -1528,7 +1575,7 @@ export default function SignalDetailCard({
               tradePlan?.value?.sl,
             )}
             hasAnalysis={Boolean(rawData && Object.keys(rawData).length > 0)}
-            skipFetch={true}
+            skipFetch={false}
           />
         </Suspense>
       </div>
@@ -1542,7 +1589,15 @@ export default function SignalDetailCard({
             borderRadius: 12,
           }}
         >
-          <SmartContent content={rawData} mode="readonly" />
+          {rawData && Object.keys(rawData).length > 0 ? (
+            <SmartContent content={rawData} mode="readonly" />
+          ) : (
+            <div className="minor-text">
+              {isResponsePending
+                ? pendingResponseText
+                : "No JSON result yet."}
+            </div>
+          )}
         </div>
       </div>
 

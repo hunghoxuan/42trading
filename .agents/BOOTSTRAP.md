@@ -1,42 +1,36 @@
-# Unified AI Bootstrap (Source of Truth)
+# Bootstrap
 
-All AI agents in this repo must load project context in this exact order before planning, coding, or architecture advice:
+Read this on every new chat.
 
-1. `AI.md` (Root)
-2. `.agents/BOOTSTRAP.md` (This file)
+## Boot Read
+
+Read in this order:
+
+1. `AI.md`
+2. `.agents/BOOTSTRAP.md`
 3. `.agents/rules.md`
-4. `.agents/rules/*` (In alphabetical order)
-5. `.agents/STATE.md`
-6. `.agents/.product/architecture/db-schema.md`
-7. `.agents/.product/tickets/feature_tracker.md`
-8. `.agents/sync/MAILBOX.md`
-9. `.agents/worklog.md`
+4. `.agents/rules/communication.md`
+5. `.agents/rules/planning.md`
+6. `.agents/rules/safety.md`
+7. `.agents/rules/cli.md`
+8. `.agents/rules/token.md`
+9. `.agents/STATE.md`
 
-## 1. Organization Map
+## Read Later Only If Needed
 
-- **`.agents/.product/`**: The "Knowledge" domain (Hidden from AI logic by default).
-    - `architecture/`: Tech stack, Schema, API Design.
-    - `features/`: Capability "Source of Truth" (Done/Plan).
-    - `tickets/`: Lifecycle of active work and history.
-- **`.agents/.raw/`**: The "Memory" domain (Not for AI logic).
-    - Append-only raw logs and data.
-- **`.agents/wiki/`: Distilled project lessons.
-- **`.agents/rules/`**: **READ ON BOOT.** Mandatory boundaries and constraints.
-- **`.agents/skills/`**: **READ ON DEMAND.** Step-by-step playbooks for specific tasks.
-- **`.agents/sync/`**: Inter-agent communication (Mailbox).
+- DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`
+- UI work: `.agents/rules/ui.md`
+- Deploy/version work: `.agents/rules/deploy.md`
+- Test work: `.agents/rules/testing.md`
+- Handoff/delegation: `.agents/rules/handoff.md`, `.agents/sync/MAILBOX.md`
+- Script/test creation: `.agents/rules/scripting.md`
+- Memory/wiki cleanup: `.agents/rules/memory-governance.md`
+- Feature/ticket audit: `.agents/.product/tickets/feature_tracker.md`
+- Old session details: `.agents/worklog.md`
 
-## 2. Execution Rules
+## Core Law
 
-- **Source of Truth**: Treat `.agents/` as the authority for process and state.
-- **Context Refresh**: Do not assume old chat memory is valid; re-read context per new conversation.
-- **RTK Policy**: All shell commands must follow the RTK command policy.
-- **Feature-First**: Any change to behavior must be documented in a Feature Doc in `.product/features/`.
-
-## 3. Conflict Resolution
-
-If documentation files disagree, the priority is:
-1. `AI.md` (Root)
-2. `.agents/rules.md`
-3. `.agents/rules/*`
-4. `.agents/.product/architecture/*`
-5. `.agents/.product/features/*`
+- Read fresh. Old chat memory weak.
+- Use `rtk` for shell.
+- Keep boot small.
+- Pull big docs only when task needs them.

@@ -90,6 +90,11 @@ All tables use PostgreSQL with JSONB for flexible metadata.
 | `risk_pct_planned` | DOUBLE PRECISION | |
 | `note` | TEXT | |
 | `rejection_reason` | TEXT | |
+| `strategy` | TEXT | |
+| `profile` | TEXT | |
+| `confidence_pct` | FLOAT8 | |
+| `estimated_bars` | INT | |
+| `be_trigger` | FLOAT8 | |
 | `raw_json` | JSONB | |
 | `status` | TEXT | NOT NULL DEFAULT 'NEW' |
 | `id` | BIGSERIAL | migration |
@@ -114,7 +119,14 @@ All tables use PostgreSQL with JSONB for flexible metadata.
 | `entry` | FLOAT8 | |
 | `sl` | FLOAT8 | |
 | `tp` | FLOAT8 | |
+| `rr_planned` | FLOAT8 | |
+| `risk_money_planned` | FLOAT8 | |
+| `risk_pct_planned` | FLOAT8 | |
 | `note` | TEXT | |
+| `profile` | TEXT | |
+| `confidence_pct` | FLOAT8 | |
+| `estimated_bars` | INT | |
+| `be_trigger` | FLOAT8 | |
 | `lease_token` | TEXT | |
 | `lease_expires_at` | TIMESTAMPTZ | |
 | `dispatch_status` | TEXT | NOT NULL DEFAULT 'NEW' |
