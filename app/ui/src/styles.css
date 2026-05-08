@@ -1,0 +1,200 @@
+:root {
+    /* Default Dark Theme Tokens */
+    --bg: #0b0f14;
+    --surface: #121821;
+    --panel: #161c27;
+    --border: #263244;
+    --text: #e6edf3;
+    --text-inverse: #0b0f14;
+    --muted: #9fb0c4;
+    --accent: #22d3ee;
+    --accent-soft: rgba(34, 211, 238, 0.1);
+}
+
+[data-theme="light"] {
+    /* SMC Light Theme Tokens */
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --panel: #f1f5f9;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text-inverse: #ffffff;
+    --muted: #64748b;
+    --accent: #0284c7;
+    --accent-soft: rgba(2, 132, 199, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 30px;
+    background: var(--bg);
+    color: var(--text);
+    overflow-x: hidden;
+    transition:
+        background 0.2s,
+        color 0.1s;
+    font-family: -apple-system, sans-serif;
+    line-height: 1.5;
+}
+
+.app-container {
+    width: 100%;
+    margin: 0 auto;
+}
+.app-shell {
+    width: 100%;
+    margin: 0 auto;
+}
+.page-wrap {
+    width: 100%;
+}
+.login-page {
+    max-width: 420px;
+    margin: 60px auto;
+}
+.error-inline {
+    color: #ef4444;
+    font-size: 12px;
+    font-weight: 700;
+}
+.page-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+}
+.form-message {
+    font-size: 12px;
+    font-weight: 700;
+    margin: 2px 0 0 0;
+}
+.field-validation {
+    font-size: 11px;
+    font-weight: 700;
+    margin-top: 4px;
+}
+.msg-error {
+    color: #ef4444 !important;
+}
+.msg-warning {
+    color: #f59e0b !important;
+}
+.msg-success {
+    color: #10b981 !important;
+}
+
+/* Navigation */
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+.brand {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.brand-version {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 400;
+}
+.topbar nav {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+}
+.topbar nav a {
+    text-decoration: none;
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 14px;
+    transition: color 0.15s;
+}
+.topbar nav a:hover {
+    color: var(--text);
+}
+.topbar nav a.active {
+    color: var(--text);
+    border-bottom: 2px solid var(--accent);
+}
+.nav-dropdown {
+    position: relative;
+}
+.nav-dropdown-trigger {
+    padding: 4px 10px;
+    font-size: 12px;
+    min-width: 78px;
+}
+.nav-dropdown:hover .nav-dropdown-trigger,
+.nav-dropdown:focus-within .nav-dropdown-trigger {
+    color: var(--text);
+    border-color: var(--accent);
+}
+.nav-dropdown-trigger.active {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+.nav-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    min-width: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+    z-index: 100;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+    transition:
+        opacity 0.12s ease,
+        transform 0.12s ease;
+}
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown:focus-within .nav-dropdown-menu {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+.nav-dropdown-menu a,
+.nav-dropdown-menu button {
+    text-decoration: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+.nav-dropdown-menu a:hover,
+.nav-dropdown-menu button:hover {
+    color: var(--text);
+    background: var(--accent-soft);
+}
+.nav-dropdown-menu a.active,
+.nav-dropdown-menu button.active {
+    color: var(--text);
+    border-color: var(--accent);
+    border-bottom: 1px solid var(--accent);
+}
+
+/* Layouts */
+.stack-layout {
+    display: flex;
+    flex-direction: column;

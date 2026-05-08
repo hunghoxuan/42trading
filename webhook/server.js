@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 14:51 - 13974dc"
+  "v2026.05.08 14:51 - 13974dc",
 ); // ai/browser auto_save + trades form
 
 const SERVER_LOG_DIR = envStr(
@@ -2626,7 +2626,9 @@ function getUiSessionFromReq(req) {
     };
   }
   const cookies = parseCookies(req);
-  const token = String(cookies.tvb_session || "");
+  const token = String(
+    cookies.tvb_session || req.headers["x-session-token"] || "",
+  );
   if (!token)
     return {
       ok: false,
