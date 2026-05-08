@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 14:35 - 4867736"
-); // analyze auto_save
+  "v2026.05.08 14:39 - 8940335"
+); // analyze Trades param review prompt
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16589,6 +16589,7 @@ const appHandler = async (req, res) => {
     try {
       const body = await readJson(req);
       const reqPrompt = String(body?.prompt || "");
+      const tradesText = String(body?.Trades ?? body?.trades ?? "").trim();
       const analyzeReqSummary = {
         event: "AI_ANALYZE_REQUEST",
         schema_version: AI_RESPONSE_SCHEMA_VERSION,
@@ -16619,6 +16620,16 @@ const appHandler = async (req, res) => {
         prompt_hash: hashForLog(reqPrompt),
         prompt_len: reqPrompt.length,
         prompt_preview: clipForLog(reqPrompt, 1000),
+        trades_hash: hashForLog(tradesText),
+        trades_len: tradesText.length,
+      };
+      const buildTradesReviewPrompt = (basePrompt, tradesRaw) => {
+        const base = String(basePrompt || "").trim();
+        const tradeText = String(tradesRaw || "").trim();
+        if (!tradeText) return base;
+        const reviewInstruction =
+          "Extract Symbol, Entry, TP, SL from the Trades param text. Do your analysis with the guide and snapshots attached and response if the Trades correct then return the Trade Plan with your analysis with following response format.";
+        return `${base}\n\nTRADES_PARAM_TEXT:\n${tradeText}\n\n${reviewInstruction}`;
       };
       const inferSymbolFromSnapshotFile = (fileNameRaw) => {
         const safe = String(fileNameRaw || "").trim();
@@ -16963,6 +16974,7 @@ const appHandler = async (req, res) => {
         let finalPrompt =
           String(body.prompt || "").trim() ||
           "Analyze this chart context and return only JSON.";
+        finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
         const manifest = {
           symbol: contextBundle.symbol,
           current_price: contextBundle.current_price,
@@ -17374,6 +17386,7 @@ const appHandler = async (req, res) => {
       let finalPrompt =
         String(body.prompt || "").trim() ||
         "Analyze these chart snapshots and return only JSON.";
+      finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
 
       // For text-only models (DeepSeek), inject bar data as text since they can't see images
       const requestModel =
