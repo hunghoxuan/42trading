@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 08:50 - 6d767d7"); // remove snapshots+warmup, move AI controls to right
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 09:52 - 6be00a2"); // remove snapshots+warmup, move AI controls to right
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -2092,6 +2092,17 @@ function decryptObject(obj) {
     out[k] = decryptData(String(v || ""));
   }
   return out;
+}
+
+/**
+ * Mask an API key for display: first 4 chars + **** + last 4 chars of the real decrypted key.
+ * Example: sk-ant-api03-abcdef123456789 → sk-a****6789
+ */
+function maskApiKeyForDisplay(value) {
+  const raw = String(value || "");
+  if (!raw) return "";
+  if (raw.length <= 8) return raw.slice(0, 1) + "****" + raw.slice(-1);
+  return raw.slice(0, 4) + "****" + raw.slice(-4);
 }
 
 function hashPassword(passwordRaw, saltHex) {
@@ -15642,6 +15653,15 @@ const appHandler = async (req, res) => {
             d = { value: r.value };
           }
         }
+        // For api_key type, decrypt and mask the real key value for display
+        if (r.type === "api_key" && d && typeof d === "object") {
+          const decrypted = decryptObject(d);
+          const masked = {};
+          for (const [k, v] of Object.entries(decrypted)) {
+            masked[k] = maskApiKeyForDisplay(String(v || ""));
+          }
+          return { ...r, data: masked };
+        }
         return { ...r, data: d || {} };
       });
       return json(res, 200, { ok: true, settings });
@@ -16669,16 +16689,54 @@ const appHandler = async (req, res) => {
       await (
         await mt5Backend()
       ).log(sessionId, "ai", analyzeReqSummary, userId);
-      const claudeKey = await loadClaudeApiKeyForUser(userId);
-      if (!claudeKey)
+      // Determine AI provider from request (default to claude for backward compat)
+      const aiProviderRaw = String(body.ai_provider || "")
+        .replace(/^ai_/i, "")
+        .trim()
+        .toLowerCase();
+      const isClaudeProvider =
+        !aiProviderRaw ||
+        aiProviderRaw === "claude" ||
+        aiProviderRaw === "anthropic";
+
+      // Load all user API keys
+      const userApiKeys = await loadUserApiKeysMap(userId).catch(() => ({}));
+
+      // Resolve the required key based on provider
+      let requiredKeyName = "CLAUDE_API_KEY";
+      let requiredKeyValue = "";
+      if (aiProviderRaw === "openrouter") {
+        requiredKeyName = "OPENROUTER_API_KEY";
+        requiredKeyValue = userApiKeys.OPENROUTER_API_KEY || "";
+      } else if (aiProviderRaw === "openai" || aiProviderRaw === "gpt4o") {
+        requiredKeyName = "OPENAI_API_KEY";
+        requiredKeyValue = userApiKeys.OPENAI_API_KEY || "";
+      } else if (aiProviderRaw === "deepseek") {
+        requiredKeyName = "DEEPSEEK_API_KEY";
+        requiredKeyValue = userApiKeys.DEEPSEEK_API_KEY || "";
+      } else if (aiProviderRaw === "gemini") {
+        requiredKeyName = "GEMINI_API_KEY";
+        requiredKeyValue = userApiKeys.GEMINI_API_KEY || "";
+      } else {
+        // Claude / default
+        requiredKeyValue = userApiKeys.CLAUDE_API_KEY || "";
+      }
+
+      if (!requiredKeyValue) {
+        const providerLabel = requiredKeyName.replace(/_API_KEY$/, "");
         return json(res, 400, {
           ok: false,
-          error: "CLAUDE_API_KEY is missing in Settings.",
+          error: `${requiredKeyName} is missing. Please configure it in Settings → API_KEY.`,
         });
+      }
 
+      const claudeKey = isClaudeProvider ? requiredKeyValue : "";
+
+      // Only Claude provider supports context-files mode
       let useContextFiles =
-        body.use_context_files === true ||
-        String(body.context_mode || "").toLowerCase() === "claude";
+        isClaudeProvider &&
+        (body.use_context_files === true ||
+          String(body.context_mode || "").toLowerCase() === "claude");
       const contextSymbol =
         String(body.symbol || "").trim() ||
         (Array.isArray(body.files)
@@ -17135,7 +17193,8 @@ const appHandler = async (req, res) => {
       let imagePayload = null;
       let claudeFilesMode = "base64";
       let claudeFilesError = "";
-      if (UPLOAD_TO_CLAUDE) {
+      // Only use Claude Files API when Claude provider is selected and key is available
+      if (UPLOAD_TO_CLAUDE && isClaudeProvider && claudeKey) {
         try {
           imagePayload = await buildClaudeFileSnapshotContent({
             apiKey: claudeKey,
@@ -17158,11 +17217,7 @@ const appHandler = async (req, res) => {
         text: finalPrompt,
       });
 
-      // Map ai_provider (ai_claude/ai_openrouter/ai_*) to provider name for callAiProvider
-      const aiProviderRaw = String(body.ai_provider || "")
-        .replace(/^ai_/i, "")
-        .trim()
-        .toLowerCase();
+      // Use the ai_provider resolved earlier for callAiProvider
       const aiResult = await callAiProvider({
         model: requestModel,
         provider: aiProviderRaw || "",

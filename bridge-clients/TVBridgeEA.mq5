@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.07 19:50 - 1b5448b";
+string EA_BUILD_VERSION = "v2026.05.08 09:52 - 6be00a2";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -23,6 +23,7 @@ input bool   InpShowDebugPanel      = true;  // Show EA State on Chart
 //--- 3. RISK & FORMULA VARIABLES
 input bool   InpUseRiskPercentSizing = true; // Use % Risk Sizing
 input double InpMaxRiskPct           = 1.0;  // Max Risk % per Trade
+input double InpMaxRiskAmount        = 100.0; // Max Risk $ per Trade
 input bool   InpUseMarginPercentSizing = false; // Use Margin Cap Sizing
 input double InpMarginPercentOfBalance = 100.0; // Margin Budget (% of Balance)
 input double InpMarginSafetyPercent    = 98.0; // Margin Safety Cap (%)
@@ -1426,6 +1427,8 @@ bool ComputeRiskBasedVolume(const string action,
                             const string symbol,
                             const double plannedEntryPrice,
                             const double slPrice,
+                            const double requestedRiskPct,
+                            const double requestedRiskMoney,
                             double &volumeOut,
                             string &noteOut)
 {
@@ -1494,7 +1497,23 @@ bool ComputeRiskBasedVolume(const string action,
       noteOut = "[balance_invalid]";
       return false;
    }
-   double riskMoney = balance * (InpMaxRiskPct / 100.0);
+   
+   double riskMoney = 0.0;
+   if(requestedRiskMoney > 0.0) {
+      riskMoney = requestedRiskMoney;
+   } else if(requestedRiskPct > 0.0) {
+      riskMoney = balance * (requestedRiskPct / 100.0);
+   } else {
+      riskMoney = balance * (InpMaxRiskPct / 100.0);
+   }
+   
+   double maxRiskFromPct = balance * (InpMaxRiskPct / 100.0);
+   riskMoney = MathMin(riskMoney, maxRiskFromPct);
+   
+   if(InpMaxRiskAmount > 0.0) {
+      riskMoney = MathMin(riskMoney, InpMaxRiskAmount);
+   }
+
    if(riskMoney <= 0.0)
    {
       noteOut = "[risk_money_invalid]";
@@ -2087,6 +2106,8 @@ bool ExecuteSignal(const string signalId,
                    const string symbolRaw,
                    const string comment,
                    const double volume,
+                   const double riskPct,
+                   const double riskMoney,
                    const double entry,
                    const string orderTypeRaw,
                    const double sl,
@@ -2254,7 +2275,7 @@ bool ExecuteSignal(const string signalId,
          {
             double riskVol = 0.0;
             string riskNote = "";
-            if(ComputeRiskBasedVolume(action, symbol, entry, slUse, riskVol, riskNote))
+            if(ComputeRiskBasedVolume(action, symbol, entry, slUse, riskPct, riskMoney, riskVol, riskNote))
             {
                volumeUse = riskVol;
                volumeNote = "[margin_pct_fallback_risk] " + marginPctNote + " " + riskNote;
@@ -2275,7 +2296,7 @@ bool ExecuteSignal(const string signalId,
       {
          double riskVol = 0.0;
          string riskNote = "";
-         if(ComputeRiskBasedVolume(action, symbol, entry, slUse, riskVol, riskNote))
+         if(ComputeRiskBasedVolume(action, symbol, entry, slUse, riskPct, riskMoney, riskVol, riskNote))
          {
             volumeUse = riskVol;
             volumeNote = riskNote;
@@ -2665,6 +2686,8 @@ void ProcessBacktestQueue()
                               g_btSymbol[g_btCursor],
                               g_btNote[g_btCursor],
                               g_btVolume[g_btCursor],
+                              g_btVolume[g_btCursor], // riskPct
+                              0.0,                    // riskMoney
                               0.0,
                               "market",
                               g_btSl[g_btCursor],
@@ -2751,6 +2774,9 @@ void OnTimer()
     string comment  = JsonGetString(resp, "note");
     ulong  ticketNum = (ulong)JsonGetNumber(resp, "ticket", 0);
     double volume   = JsonGetNumber(resp, "volume", 0.0);
+    double riskPct  = JsonGetNumber(resp, "risk_pct", 0.0);
+    if(riskPct <= 0.0) riskPct = volume;
+    double riskMoney = JsonGetNumber(resp, "risk_money", 0.0);
     double entry    = JsonGetNumber(resp, "entry", 0.0);
     double sl       = JsonGetNumber(resp, "sl", 0.0);
     double tp       = JsonGetNumber(resp, "tp", 0.0);
@@ -2767,7 +2793,7 @@ void OnTimer()
     string outTicket = "";
 
     if(taskType == "OPEN") {
-       ok = ExecuteSignal(signalId, action, symbolIn, comment, volume, entry, orderType, sl, tp, 0, outTicket, err);
+       ok = ExecuteSignal(signalId, action, symbolIn, comment, volume, riskPct, riskMoney, entry, orderType, sl, tp, 0, outTicket, err);
        if(ok) {
           string initialStatus = (orderType == "market") ? "START" : "PLACED";
           Ack(signalId, initialStatus, outTicket, "exec_ok_" + orderType);
