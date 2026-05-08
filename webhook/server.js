@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.07 19:50 - 1b5448b"); // fix broker sync SSE missing broker_pnl
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 06:50 - c3ee694"); // fix toast + signal auto-close
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -5998,6 +5998,15 @@ async function _mt5InitBackendInternal() {
   await pool.query(
     `ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy TEXT NULL`,
   );
+  await pool.query(
+    `ALTER TABLE trades ADD COLUMN IF NOT EXISTS rr_planned DOUBLE PRECISION NULL`,
+  );
+  await pool.query(
+    `ALTER TABLE trades ADD COLUMN IF NOT EXISTS risk_money_planned DOUBLE PRECISION NULL`,
+  );
+  await pool.query(
+    `ALTER TABLE trades ADD COLUMN IF NOT EXISTS risk_pct_planned DOUBLE PRECISION NULL`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS market_data (
@@ -7097,8 +7106,9 @@ async function _mt5InitBackendInternal() {
               symbol, action, order_type, entry, sl, tp, volume, note,
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, invalidation, estimated_bars, exit_condition, entry_condition,
-              risk_management, skip_recommendation, confluence_checklist, be_trigger
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::text,'NEW','PENDING',$17::jsonb,$18::jsonb,$19::timestamptz,$19::timestamptz,$20::text,$21::numeric,$22::text,$23::numeric,$24::text,$25::text,$26::jsonb,$27::jsonb,$28::jsonb,$29::numeric)
+              risk_management, skip_recommendation, confluence_checklist, be_trigger,
+              rr_planned, risk_money_planned, risk_pct_planned
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::text,'NEW','PENDING',$17::jsonb,$18::jsonb,$19::timestamptz,$19::timestamptz,$20::text,$21::numeric,$22::text,$23::numeric,$24::text,$25::text,$26::jsonb,$27::jsonb,$28::jsonb,$29::numeric,$30::numeric,$31::numeric,$32::numeric)
           `,
             [
               tradeSid,
@@ -7141,6 +7151,9 @@ async function _mt5InitBackendInternal() {
                 ? JSON.stringify(payload.confluence_checklist)
                 : null,
               payload.be_trigger || null,
+              payload.rr_planned || null,
+              payload.risk_money_planned || null,
+              payload.risk_pct_planned || null,
             ],
           );
           if ((ins.rowCount || 0) > 0) {
@@ -11157,10 +11170,22 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
     payload.user_id ?? payload.userId ?? payload.user ?? CFG.mt5DefaultUserId,
     CFG.mt5DefaultUserId,
   );
-  const rrPlanned = asNum(payload.rr ?? payload.risk_reward, NaN);
+  const rrPlanned = asNum(payload.rr ?? payload.risk_reward, null);
   const riskMoneyPlanned = asNum(
     payload.risk_money ?? payload.money_risk ?? payload.riskMoney,
-    NaN,
+    null,
+  );
+  const riskPctPlanned = asNum(
+    payload.risk_pct ??
+      payload.riskPct ??
+      payload.risk_percent ??
+      payload.riskPercent ??
+      payload.vol ??
+      payload.volume ??
+      payload.lots ??
+      payload.volume_pct ??
+      payload.volumePct,
+    null,
   );
   const signalTf = mt5TfToMinutes(
     payload.signal_tf ??
@@ -11317,6 +11342,13 @@ async function mt5EnqueueSignalFromPayload(payload, opts = {}) {
           sl: payload.sl ?? null,
           tp: payload.tp ?? null,
           volume: volume ?? null,
+          rr_planned: Number.isFinite(rrPlanned) ? rrPlanned : null,
+          risk_money_planned: Number.isFinite(riskMoneyPlanned)
+            ? riskMoneyPlanned
+            : null,
+          risk_pct_planned: Number.isFinite(riskPctPlanned)
+            ? riskPctPlanned
+            : null,
           note: note || null,
           sid: signalSid,
           session_prefix: sessionPrefix || null,
@@ -14241,6 +14273,7 @@ const appHandler = async (req, res) => {
           tp: payload.tp ?? null,
           rr: payload.rr ?? payload.risk_reward ?? null,
           risk_money: payload.risk_money ?? payload.money_risk ?? null,
+          risk_pct: payload.risk_pct ?? payload.riskPct ?? null,
           price: payload.price ?? payload.entry ?? null,
           strategy,
           entry_model:
@@ -14372,6 +14405,22 @@ const appHandler = async (req, res) => {
         sl: Number.isFinite(sl) ? sl : null,
         tp: Number.isFinite(tp) ? tp : null,
         volume: volume ?? null,
+        rr_planned: asNum(
+          payload.rr_planned ?? payload.rr ?? payload.risk_reward,
+        ),
+        risk_money_planned: asNum(
+          payload.risk_money_planned ??
+            payload.risk_money ??
+            payload.money_risk,
+        ),
+        risk_pct_planned: asNum(
+          payload.risk_pct_planned ??
+            payload.risk_pct ??
+            payload.riskPct ??
+            payload.vol ??
+            payload.volume ??
+            payload.lots,
+        ),
         note: note || null,
         sid: tradeSidBase,
         trade_sid: tradeSidBase,
@@ -18770,11 +18819,35 @@ const appHandler = async (req, res) => {
         signalId,
         "signals",
         {
-          event_type: "SIGNAL_CREATE_TRADE",
+          event: "SIGNAL_CREATE_TRADE",
           data: { created: fanout?.created || 0 },
         },
         signal.user_id || userId || CFG.mt5DefaultUserId,
       );
+
+      // If no other active users are subscribed to this source, mark signal CLOSED
+      if (fanout?.created > 0 && sourceId) {
+        try {
+          const subCheck = await b.query(
+            `SELECT COUNT(*) AS cnt
+             FROM execution_profiles
+             WHERE is_active = TRUE
+               AND source_ids ? $1
+               AND user_id != $2`,
+            [sourceId, signal.user_id || userId || CFG.mt5DefaultUserId],
+          );
+          const hasSubscribers = Number(subCheck.rows?.[0]?.cnt || 0) > 0;
+          if (!hasSubscribers) {
+            await b.query(
+              `UPDATE signals SET status = 'CLOSED', updated_at = NOW() WHERE sid = $1`,
+              [signalId],
+            );
+          }
+        } catch (_) {
+          // non-critical — don't fail the response
+        }
+      }
+
       return json(res, 200, {
         ok: true,
         signal_id: signalId,

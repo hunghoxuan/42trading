@@ -2,14 +2,20 @@ import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 
-const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
+const SignalDetailCard = lazy(
+  () => import("../../components/SignalDetailCard"),
+);
 import {
   PositionAuditCell,
   StatusPnlCell,
   SymbolEntryCell,
 } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
-import { asNum, buildHeaderMeta, renderHistoryItem } from "../../utils/signalDetailUtils";
+import {
+  asNum,
+  buildHeaderMeta,
+  renderHistoryItem,
+} from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
@@ -23,7 +29,13 @@ const STATUS_OPTIONS = [
   { value: "FAIL", label: "FAIL" },
   { value: "EXPIRED", label: "EXPIRED" },
 ];
-const BULK_ACTIONS = ["", "Download CSV", "Renew All", "Cancel All", "Delete All"];
+const BULK_ACTIONS = [
+  "",
+  "Download CSV",
+  "Renew All",
+  "Cancel All",
+  "Delete All",
+];
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
   { val: "today", lab: "Today" },
@@ -38,14 +50,16 @@ const PAGE_SIZE_OPTIONS = [50, 100, 200];
 
 function fPrice(v1, v2) {
   const n1 = Number(v1);
-  if (n1 && n1 !== 0) return n1.toLocaleString(undefined, { maximumFractionDigits: 5 });
+  if (n1 && n1 !== 0)
+    return n1.toLocaleString(undefined, { maximumFractionDigits: 5 });
   const n2 = Number(v2);
-  if (n2 && n2 !== 0) return n2.toLocaleString(undefined, { maximumFractionDigits: 5 });
+  if (n2 && n2 !== 0)
+    return n2.toLocaleString(undefined, { maximumFractionDigits: 5 });
   return "-";
 }
 
 function formatTimeframe(min) {
-  if (!min || min === 'manual') return min || "-";
+  if (!min || min === "manual") return min || "-";
   const n = Number(min);
   if (isNaN(n) || n <= 0) return min;
   if (n < 60) return `${n}m`;
@@ -71,7 +85,8 @@ function signalRefOf(s) {
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
   if (s === "ACTIVE" || s === "TRUE") return { cls: "ACTIVE", label: "ACTIVE" };
-  if (s === "INACTIVE" || s === "FALSE" || s === "DISABLE" || s === "DISABLED") return { cls: "INACTIVE", label: "INACTIVE" };
+  if (s === "INACTIVE" || s === "FALSE" || s === "DISABLE" || s === "DISABLED")
+    return { cls: "INACTIVE", label: "INACTIVE" };
   if (s === "PLACED") return { cls: "PLACED", label: "PLACED" };
   if (s === "LOCKED") return { cls: "LOCKED", label: "LOCKED" };
   if (s === "START") return { cls: "START", label: "START" };
@@ -92,7 +107,10 @@ function calcRrFromSignal(s) {
     let highestPartial = tp;
     for (const p of partials) {
       const pPrice = p && typeof p === "object" ? asNum(p.price) : null;
-      if (pPrice != null && (highestPartial == null || pPrice > highestPartial)) {
+      if (
+        pPrice != null &&
+        (highestPartial == null || pPrice > highestPartial)
+      ) {
         highestPartial = pPrice;
       }
     }
@@ -136,15 +154,29 @@ function formatNum3(v) {
 function firstTradePlan(raw = {}) {
   if (Array.isArray(raw?.trade_plan)) return raw.trade_plan[0] || {};
   if (Array.isArray(raw?.tradePlan)) return raw.tradePlan[0] || {};
-  return raw?.trade_plan && typeof raw.trade_plan === "object" ? raw.trade_plan : {};
+  return raw?.trade_plan && typeof raw.trade_plan === "object"
+    ? raw.trade_plan
+    : {};
 }
 
 function planPrimaryTp(plan = {}) {
   const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
-  const partialPrices = partials.map((x) => (x && typeof x === "object" ? x.price : x));
+  const partialPrices = partials.map((x) =>
+    x && typeof x === "object" ? x.price : x,
+  );
   const legacyLevels = Array.isArray(plan?.tp_levels) ? plan.tp_levels : [];
-  const compactTps = Array.isArray(plan?.tps) ? plan.tps.map((x) => (x && typeof x === "object" ? x.price : x)) : [];
-  const candidates = [plan?.tp, ...partialPrices, ...compactTps, ...legacyLevels, plan?.tp1, plan?.target, plan?.take_profit];
+  const compactTps = Array.isArray(plan?.tps)
+    ? plan.tps.map((x) => (x && typeof x === "object" ? x.price : x))
+    : [];
+  const candidates = [
+    plan?.tp,
+    ...partialPrices,
+    ...compactTps,
+    ...legacyLevels,
+    plan?.tp1,
+    plan?.target,
+    plan?.take_profit,
+  ];
   for (const value of candidates) {
     const n = asNum(value);
     if (n != null) return n;
@@ -153,16 +185,53 @@ function planPrimaryTp(plan = {}) {
 }
 
 function extractTradePlanFromSignal(signal = {}) {
-  const raw = signal?.raw_json && typeof signal.raw_json === "object" ? signal.raw_json : {};
+  const raw =
+    signal?.raw_json && typeof signal.raw_json === "object"
+      ? signal.raw_json
+      : {};
   const tradePlan = firstTradePlan(raw);
-  const sideRaw = String(signal?.action || signal?.side || tradePlan?.direction || "").toUpperCase();
+  const sideRaw = String(
+    signal?.action || signal?.side || tradePlan?.direction || "",
+  ).toUpperCase();
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
-    trade_type: String(tradePlan?.type || raw?.order_type || "limit").toLowerCase(),
-    entry: formatNum3(asNum(signal?.entry || signal?.target_price || signal?.entry_price) ?? asNum(raw?.entry ?? raw?.price) ?? NaN),
-    tp: formatNum3(asNum(signal?.tp || signal?.tp_price) ?? planPrimaryTp(tradePlan) ?? NaN),
-    sl: formatNum3(asNum(signal?.sl || signal?.sl_price) ?? asNum(tradePlan?.sl) ?? NaN),
-    rr: formatNum3(asNum(signal?.rr_planned) ?? asNum(tradePlan?.rr) ?? calcRrFromSignal(signal) ?? NaN),
+    trade_type: String(
+      tradePlan?.type || raw?.order_type || "limit",
+    ).toLowerCase(),
+    entry: formatNum3(
+      asNum(signal?.entry || signal?.target_price || signal?.entry_price) ??
+        asNum(raw?.entry ?? raw?.price) ??
+        NaN,
+    ),
+    tp: formatNum3(
+      asNum(signal?.tp || signal?.tp_price) ?? planPrimaryTp(tradePlan) ?? NaN,
+    ),
+    sl: formatNum3(
+      asNum(signal?.sl || signal?.sl_price) ?? asNum(tradePlan?.sl) ?? NaN,
+    ),
+    rr: formatNum3(
+      asNum(signal?.rr_planned) ??
+        asNum(tradePlan?.rr) ??
+        calcRrFromSignal(signal) ??
+        NaN,
+    ),
+    risk_pct: asNum(
+      signal.risk_pct_planned ??
+        raw.risk_pct ??
+        raw.riskPct ??
+        tradePlan.risk_pct ??
+        tradePlan.riskPct ??
+        signal.volume ??
+        raw.volume ??
+        0.01,
+    ),
+    risk_money: asNum(
+      signal.risk_money_planned ??
+        raw.risk_money ??
+        raw.riskMoney ??
+        tradePlan.risk_money ??
+        tradePlan.riskMoney,
+    ),
     note: String(tradePlan?.note || signal?.note || "").trim(),
   };
 }
@@ -172,10 +241,15 @@ function validateTradePlan(plan = {}) {
   const tp = asNum(plan.tp);
   const sl = asNum(plan.sl);
   const rr = asNum(plan.rr);
-  const direction = String(plan.direction || "").trim().toUpperCase();
-  if (!["BUY", "SELL"].includes(direction)) return "Direction must be Buy or Sell.";
-  if (entry == null || tp == null || sl == null) return "Entry/TP/SL must be numeric values.";
-  if (rr != null && (rr < 0.3 || rr > 5)) return "RR must be between 0.3 and 5.";
+  const direction = String(plan.direction || "")
+    .trim()
+    .toUpperCase();
+  if (!["BUY", "SELL"].includes(direction))
+    return "Direction must be Buy or Sell.";
+  if (entry == null || tp == null || sl == null)
+    return "Entry/TP/SL must be numeric values.";
+  if (rr != null && (rr < 0.3 || rr > 5))
+    return "RR must be between 0.3 and 5.";
   if (direction === "BUY") {
     if (!(tp > entry)) return "For BUY, TP must be greater than Entry.";
     if (!(sl < entry)) return "For BUY, SL must be lower than Entry.";
@@ -187,17 +261,24 @@ function validateTradePlan(plan = {}) {
 }
 
 function compactStrategy(item = {}) {
-  const raw = item?.raw_json && typeof item.raw_json === "object" ? item.raw_json : {};
-  const fromRaw = String(item.strategy || raw?.strategy || raw?.trade_plan?.strategy || "").trim();
+  const raw =
+    item?.raw_json && typeof item.raw_json === "object" ? item.raw_json : {};
+  const fromRaw = String(
+    item.strategy || raw?.strategy || raw?.trade_plan?.strategy || "",
+  ).trim();
   return fromRaw || "-";
 }
 
 function displaySource(item = {}) {
-  const src = String(item?.source || "").trim().toLowerCase();
+  const src = String(item?.source || "")
+    .trim()
+    .toLowerCase();
   if (src.startsWith("ai_")) return src;
   if (src === "ai") return "ai_claude";
   if (src) return src;
-  const srcId = String(item?.source_id || "").trim().toLowerCase();
+  const srcId = String(item?.source_id || "")
+    .trim()
+    .toLowerCase();
   return srcId || "-";
 }
 
@@ -215,18 +296,39 @@ export default function SignalsPage() {
   const [selectedSignal, setSelectedSignal] = useState(null);
   const [signalDetails, setSignalDetails] = useState(null);
   const [error, setError] = useState("");
-  const [advFilters, setAdvFilters] = useState({ sources: [], entry_models: [], chart_tfs: [], signal_tfs: [] });
+  const [advFilters, setAdvFilters] = useState({
+    sources: [],
+    entry_models: [],
+    chart_tfs: [],
+    signal_tfs: [],
+  });
   const [createMode, setCreateMode] = useState(false);
   const [isListOpen, setIsListOpen] = useState(true);
   const [createMsg, setCreateMsg] = useState("");
   const [detailTfTab, setDetailTfTab] = useState("ENTRY");
-  const [detailPlan, setDetailPlan] = useState({ direction: "BUY", trade_type: "limit", entry: "", tp: "", sl: "", rr: "", note: "" });
-  const [detailPlanBusy, setDetailPlanBusy] = useState({ save: false, trade: false, signal: false });
+  const [detailPlan, setDetailPlan] = useState({
+    direction: "BUY",
+    trade_type: "limit",
+    entry: "",
+    tp: "",
+    sl: "",
+    rr: "",
+    risk_pct: 0.01,
+    risk_money: "",
+    note: "",
+  });
+  const [detailPlanBusy, setDetailPlanBusy] = useState({
+    save: false,
+    trade: false,
+    signal: false,
+  });
   const [detailPlanMsg, setDetailPlanMsg] = useState({ type: "", text: "" });
   const DEFAULT_CREATE_FORM = {
     action: "BUY",
     symbol: "",
     volume: "0.01",
+    risk_pct: "0.01",
+    risk_money: "",
     price: "",
     sl: "",
     tp: "",
@@ -260,9 +362,14 @@ export default function SignalsPage() {
 
   async function loadSymbols() {
     try {
-      const [data, src] = await Promise.all([api.filtersAdvanced(), api.v2Sources()]);
+      const [data, src] = await Promise.all([
+        api.filtersAdvanced(),
+        api.v2Sources(),
+      ]);
       const srcFromTrades = data.sources || [];
-      const srcFromV2 = (src?.items || []).map((x) => String(x.name || x.source_id || "")).filter(Boolean);
+      const srcFromV2 = (src?.items || [])
+        .map((x) => String(x.name || x.source_id || ""))
+        .filter(Boolean);
       const sources = [...new Set([...srcFromTrades, ...srcFromV2])].sort();
       setSymbols(data.symbols || []);
       setAdvFilters({
@@ -271,7 +378,9 @@ export default function SignalsPage() {
         chart_tfs: data.chart_tfs || [],
         signal_tfs: data.signal_tfs || [],
       });
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   const [initialDetailPlan, setInitialDetailPlan] = useState(null);
@@ -293,7 +402,9 @@ export default function SignalsPage() {
       setError("");
       const selectedSignalId = String(selectedSignalIdRef.current || "").trim();
       if (selectedSignalId) {
-        const updated = nextRows.find((x) => signalRefOf(x) === selectedSignalId);
+        const updated = nextRows.find(
+          (x) => signalRefOf(x) === selectedSignalId,
+        );
         if (updated) {
           setSelectedSignal(updated);
         } else {
@@ -324,7 +435,9 @@ export default function SignalsPage() {
 
   const updateDetailPlanField = (key, rawValue) => {
     setDetailPlan((prev) => {
-      const value = ["entry", "tp", "sl", "rr"].includes(key) ? String(rawValue ?? "").replace(",", ".") : rawValue;
+      const value = ["entry", "tp", "sl", "rr"].includes(key)
+        ? String(rawValue ?? "").replace(",", ".")
+        : rawValue;
       const next = { ...prev, [key]: value };
       const entry = asNum(next.entry);
       const sl = asNum(next.sl);
@@ -377,6 +490,8 @@ export default function SignalsPage() {
         exit_condition: detailPlan.exit_condition,
         entry_condition: detailPlan.entry_condition,
         risk_management: detailPlan.risk_management,
+        risk_pct: asNum(detailPlan.risk_pct),
+        risk_money: asNum(detailPlan.risk_money),
         skip_recommendation: detailPlan.skip_recommendation,
         confluence_checklist: detailPlan.confluence_checklist,
         be_trigger: asNum(detailPlan.be_trigger),
@@ -385,21 +500,29 @@ export default function SignalsPage() {
       await loadSignalDetail(selectedSignal.sid);
       setDetailPlanMsg({ type: "success", text: "Signal plan saved." });
     } catch (e) {
-      setDetailPlanMsg({ type: "error", text: String(e?.message || e || "Failed to save signal plan.") });
+      setDetailPlanMsg({
+        type: "error",
+        text: String(e?.message || e || "Failed to save signal plan."),
+      });
     } finally {
       setDetailPlanBusy((p) => ({ ...p, save: false }));
     }
   }
 
   async function addTradeFromSignal(signal) {
-    const targetSignalId = String(signalRefOf(signal) || signalRefOf(selectedSignal)).trim();
+    const targetSignalId = String(
+      signalRefOf(signal) || signalRefOf(selectedSignal),
+    ).trim();
     if (!targetSignalId) return;
     const err = validateTradePlan(detailPlan);
     if (signalRefOf(signal) === signalRefOf(selectedSignal) && err) {
       setDetailPlanMsg({ type: "error", text: err });
       return;
     }
-    const plan = signalRefOf(signal) === signalRefOf(selectedSignal) ? detailPlan : extractTradePlanFromSignal(signal);
+    const plan =
+      signalRefOf(signal) === signalRefOf(selectedSignal)
+        ? detailPlan
+        : extractTradePlanFromSignal(signal);
     try {
       setDetailPlanBusy((p) => ({ ...p, trade: true }));
       await api.createTradeFromSignal(targetSignalId, {
@@ -417,6 +540,8 @@ export default function SignalsPage() {
         exit_condition: plan.exit_condition,
         entry_condition: plan.entry_condition,
         risk_management: plan.risk_management,
+        risk_pct: asNum(plan.risk_pct),
+        risk_money: asNum(plan.risk_money),
         skip_recommendation: plan.skip_recommendation,
         confluence_checklist: plan.confluence_checklist,
         be_trigger: asNum(plan.be_trigger),
@@ -442,8 +567,17 @@ export default function SignalsPage() {
       setBulkBusy(true);
       const payload = {
         side: String(createForm.action || "BUY").toUpperCase(),
-        symbol: String(createForm.symbol || "").trim().toUpperCase(),
-        volume: createForm.volume === "" ? undefined : Number(createForm.volume),
+        symbol: String(createForm.symbol || "")
+          .trim()
+          .toUpperCase(),
+        volume:
+          createForm.volume === "" ? undefined : Number(createForm.volume),
+        risk_pct:
+          createForm.risk_pct === "" ? undefined : Number(createForm.risk_pct),
+        risk_money:
+          createForm.risk_money === ""
+            ? undefined
+            : Number(createForm.risk_money),
         price: createForm.price === "" ? undefined : Number(createForm.price),
         sl: createForm.sl === "" ? undefined : Number(createForm.sl),
         tp: createForm.tp === "" ? undefined : Number(createForm.tp),
@@ -456,7 +590,12 @@ export default function SignalsPage() {
       setCreateMode(false);
       await loadSignals();
       if (out?.trade?.sid) {
-        const created = { signal_id: out.trade.signal_sid, action: payload.side, symbol: payload.symbol, status: "NEW" };
+        const created = {
+          signal_id: out.trade.signal_sid,
+          action: payload.side,
+          symbol: payload.symbol,
+          status: "NEW",
+        };
         setSelectedSignal(created);
       }
     } catch (e) {
@@ -479,11 +618,14 @@ export default function SignalsPage() {
         a.download = filename;
         a.click();
       } else if (bulkAction === "Renew All") {
-         if (window.confirm("Renew all filtered signals?")) await api.renewTrades(query);
+        if (window.confirm("Renew all filtered signals?"))
+          await api.renewTrades(query);
       } else if (bulkAction === "Cancel All") {
-         if (window.confirm("Cancel all filtered signals?")) await api.cancelTrades(query);
+        if (window.confirm("Cancel all filtered signals?"))
+          await api.cancelTrades(query);
       } else if (bulkAction === "Delete All") {
-         if (window.confirm("CRITICAL: Delete all filtered signals?")) await api.deleteTrades(query);
+        if (window.confirm("CRITICAL: Delete all filtered signals?"))
+          await api.deleteTrades(query);
       }
       setSelectedIds(new Set());
       await loadSignals();
@@ -502,41 +644,63 @@ export default function SignalsPage() {
       setDetailPlanMsg({ type: "", text: "" });
     } else {
       setSignalDetails(null);
-      setDetailPlan({ direction: "BUY", trade_type: "limit", entry: "", tp: "", sl: "", rr: "", note: "" });
+      setDetailPlan({
+        direction: "BUY",
+        trade_type: "limit",
+        entry: "",
+        tp: "",
+        sl: "",
+        rr: "",
+        risk_pct: 0.01,
+        risk_money: "",
+        note: "",
+      });
     }
   }, [selectedSignal]);
   useEffect(() => {
     selectedSignalIdRef.current = signalRefOf(selectedSignal);
   }, [selectedSignal?.id, selectedSignal?.sid]);
 
-  useEffect(() => { loadSymbols(); }, []);
+  useEffect(() => {
+    loadSymbols();
+  }, []);
 
   // Select signal from URL param on load
   useEffect(() => {
     if (signalId && rows.length > 0) {
-      const found = rows.find(r => signalRefOf(r) === signalId);
-      if (found) { setSelectedSignal(found); selectedSignalIdRef.current = signalId; }
+      const found = rows.find((r) => signalRefOf(r) === signalId);
+      if (found) {
+        setSelectedSignal(found);
+        selectedSignalIdRef.current = signalId;
+      }
     }
   }, [signalId, rows.length]);
 
-  useEffect(() => { loadSignals(); }, [query]);
+  useEffect(() => {
+    loadSignals();
+  }, [query]);
 
   const sortedRows = useMemo(() => {
     const statusRankAsc = (v) => {
       const s = String(v || "").toUpperCase();
-      if (["FILLED", "OPEN", "ACTIVE", "PLACED", "START", "TP"].includes(s)) return 0;
+      if (["FILLED", "OPEN", "ACTIVE", "PLACED", "START", "TP"].includes(s))
+        return 0;
       if (["PENDING", "NEW", "LOCKED"].includes(s)) return 1;
-      if (["CLOSED", "CANCELLED", "SL", "FAIL", "EXPIRED", "ERROR"].includes(s)) return 2;
+      if (["CLOSED", "CANCELLED", "SL", "FAIL", "EXPIRED", "ERROR"].includes(s))
+        return 2;
       return 3;
     };
     const statusRankDesc = (v) => {
       const s = String(v || "").toUpperCase();
       if (["PENDING", "NEW", "LOCKED"].includes(s)) return 0;
-      if (["FILLED", "OPEN", "ACTIVE", "PLACED", "START", "TP"].includes(s)) return 1;
-      if (["CLOSED", "CANCELLED", "SL", "FAIL", "EXPIRED", "ERROR"].includes(s)) return 2;
+      if (["FILLED", "OPEN", "ACTIVE", "PLACED", "START", "TP"].includes(s))
+        return 1;
+      if (["CLOSED", "CANCELLED", "SL", "FAIL", "EXPIRED", "ERROR"].includes(s))
+        return 2;
       return 3;
     };
-    const valueOfAudit = (x) => new Date(x?.closed_at || x?.opened_at || x?.created_at || 0).getTime();
+    const valueOfAudit = (x) =>
+      new Date(x?.closed_at || x?.opened_at || x?.created_at || 0).getTime();
     const out = [...rows];
     out.sort((a, b) => {
       let cmp = 0;
@@ -551,7 +715,10 @@ export default function SignalsPage() {
         return sortDir === "asc" ? cmp : -cmp;
       }
       if (sortKey === "status") {
-        cmp = sortDir === "asc" ? statusRankAsc(a?.status) - statusRankAsc(b?.status) : statusRankDesc(a?.status) - statusRankDesc(b?.status);
+        cmp =
+          sortDir === "asc"
+            ? statusRankAsc(a?.status) - statusRankAsc(b?.status)
+            : statusRankDesc(a?.status) - statusRankDesc(b?.status);
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return cmp;
       }
@@ -574,12 +741,23 @@ export default function SignalsPage() {
     return sortDir === "asc" ? " ↑" : " ↓";
   };
 
-  const allSelected = sortedRows.length > 0 && sortedRows.every(r => selectedIds.has(signalRefOf(r)));
+  const allSelected =
+    sortedRows.length > 0 &&
+    sortedRows.every((r) => selectedIds.has(signalRefOf(r)));
 
   return (
     <section className="logs-page-container stack-layout">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <h2 className="page-title" style={{ margin: 0 }}>Signals</h2>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <h2 className="page-title" style={{ margin: 0 }}>
+          Signals
+        </h2>
         <span className="minor-text">{total} signals</span>
       </div>
       <div className="toolbar-panel">
@@ -588,16 +766,40 @@ export default function SignalsPage() {
             <strong>{total}</strong>
             {pages > 1 && (
               <div className="pager-mini">
-                <button className="secondary-button" disabled={filter.page <= 1} onClick={() => setFilter(f => ({ ...f, page: f.page - 1 }))}>&lt;</button>
-                <span className="minor-text">{filter.page}/{pages}</span>
-                <button className="secondary-button" disabled={filter.page >= pages} onClick={() => setFilter(f => ({ ...f, page: f.page + 1 }))}>&gt;</button>
+                <button
+                  className="secondary-button"
+                  disabled={filter.page <= 1}
+                  onClick={() => setFilter((f) => ({ ...f, page: f.page - 1 }))}
+                >
+                  &lt;
+                </button>
+                <span className="minor-text">
+                  {filter.page}/{pages}
+                </span>
+                <button
+                  className="secondary-button"
+                  disabled={filter.page >= pages}
+                  onClick={() => setFilter((f) => ({ ...f, page: f.page + 1 }))}
+                >
+                  &gt;
+                </button>
               </div>
             )}
             <select
               value={filter.pageSize}
-              onChange={e => setFilter(f => ({ ...f, pageSize: Number(e.target.value), page: 1 }))}
+              onChange={(e) =>
+                setFilter((f) => ({
+                  ...f,
+                  pageSize: Number(e.target.value),
+                  page: 1,
+                }))
+              }
             >
-              {PAGE_SIZE_OPTIONS.map(n => <option key={n} value={n}>{n}</option>)}
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -605,60 +807,160 @@ export default function SignalsPage() {
         <div className="toolbar-group toolbar-search-filter">
           <input
             value={filter.q}
-            onChange={(e) => setFilter(f => ({ ...f, q: e.target.value, page: 1 }))}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, q: e.target.value, page: 1 }))
+            }
             placeholder="Search sid, symbol, note..."
-            style={{ width: '220px' }}
+            style={{ width: "220px" }}
           />
-          <select value={filter.symbol} onChange={(e) => setFilter(f => ({ ...f, symbol: e.target.value, page: 1 }))}>
+          <select
+            value={filter.symbol}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
+            }
+          >
             <option value="">ALL SYMBOLS</option>
-            {symbols.map(s => <option key={s}>{s}</option>)}
+            {symbols.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
           </select>
-          <select value={filter.status} onChange={(e) => setFilter(f => ({ ...f, status: e.target.value, page: 1 }))}>
-            {STATUS_OPTIONS.map(s => <option key={s.value || "all"} value={s.value}>{s.label}</option>)}
+          <select
+            value={filter.status}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, status: e.target.value, page: 1 }))
+            }
+          >
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.value || "all"} value={s.value}>
+                {s.label}
+              </option>
+            ))}
           </select>
-          <select value={filter.source} onChange={(e) => setFilter(f => ({ ...f, source: e.target.value, page: 1 }))}>
+          <select
+            value={filter.source}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, source: e.target.value, page: 1 }))
+            }
+          >
             <option value="">ALL SOURCES</option>
-            {advFilters.sources.map(s => <option key={s}>{s}</option>)}
+            {advFilters.sources.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
           </select>
-          <select value={filter.entry_model} onChange={(e) => setFilter(f => ({ ...f, entry_model: e.target.value, page: 1 }))}>
+          <select
+            value={filter.entry_model}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, entry_model: e.target.value, page: 1 }))
+            }
+          >
             <option value="">ALL MODELS</option>
-            {advFilters.entry_models.map(s => <option key={s}>{s}</option>)}
+            {advFilters.entry_models.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
           </select>
-          <select value={filter.chart_tf} onChange={(e) => setFilter(f => ({ ...f, chart_tf: e.target.value, page: 1 }))}>
+          <select
+            value={filter.chart_tf}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
+            }
+          >
             <option value="">CHART TF</option>
-            {sortTimeframes(advFilters.chart_tfs, "desc").map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
+            {sortTimeframes(advFilters.chart_tfs, "desc").map((s) => (
+              <option key={s} value={s}>
+                {formatTimeframe(s)}
+              </option>
+            ))}
           </select>
-          <select value={filter.signal_tf} onChange={(e) => setFilter(f => ({ ...f, signal_tf: e.target.value, page: 1 }))}>
+          <select
+            value={filter.signal_tf}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, signal_tf: e.target.value, page: 1 }))
+            }
+          >
             <option value="">SIGNAL TF</option>
-            {sortTimeframes(advFilters.signal_tfs, "desc").map(s => <option key={s} value={s}>{formatTimeframe(s)}</option>)}
+            {sortTimeframes(advFilters.signal_tfs, "desc").map((s) => (
+              <option key={s} value={s}>
+                {formatTimeframe(s)}
+              </option>
+            ))}
           </select>
-          <select value={filter.range} onChange={(e) => setFilter(f => ({ ...f, range: e.target.value, page: 1 }))}>
-            {RANGE_OPTIONS.map(r => <option key={r.val} value={r.val}>{r.lab}</option>)}
+          <select
+            value={filter.range}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, range: e.target.value, page: 1 }))
+            }
+          >
+            {RANGE_OPTIONS.map((r) => (
+              <option key={r.val} value={r.val}>
+                {r.lab}
+              </option>
+            ))}
           </select>
         </div>
 
         <div className="toolbar-group toolbar-bulk-action">
-          <select value={bulkAction} onChange={(e) => setBulkAction(e.target.value)} disabled={bulkBusy}>
-            {BULK_ACTIONS.map(s => <option key={s} value={s}>{s || "BULK ACTION..."}</option>)}
+          <select
+            value={bulkAction}
+            onChange={(e) => setBulkAction(e.target.value)}
+            disabled={bulkBusy}
+          >
+            {BULK_ACTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s || "BULK ACTION..."}
+              </option>
+            ))}
           </select>
-          <button type="button" className={`primary-button ${bulkBusy ? "btn-busy" : ""}`} onClick={onBulkOk} disabled={bulkBusy || !bulkAction}>
-            {bulkBusy ? <div className="spinner" style={{ width: 14, height: 14 }} /> : "APPLY"}
+          <button
+            type="button"
+            className={`primary-button ${bulkBusy ? "btn-busy" : ""}`}
+            onClick={onBulkOk}
+            disabled={bulkBusy || !bulkAction}
+          >
+            {bulkBusy ? (
+              <div className="spinner" style={{ width: 14, height: 14 }} />
+            ) : (
+              "APPLY"
+            )}
           </button>
           <button
             type="button"
             className="primary-button"
-            onClick={() => { if (createMode) { setCreateMode(false); setCreateMsg(""); } else { setCreateMode(true); setSelectedSignal(null); } }}
+            onClick={() => {
+              if (createMode) {
+                setCreateMode(false);
+                setCreateMsg("");
+              } else {
+                setCreateMode(true);
+                setSelectedSignal(null);
+              }
+            }}
           >
             {createMode ? "CANCEL" : "+ CREATE SIGNAL"}
           </button>
         </div>
-
       </div>
 
       <div className="logs-layout-split">
-        <div className="logs-list-pane component-frozen-wrap" style={isListOpen ? {} : { display: "none" }}>
+        <div
+          className="logs-list-pane component-frozen-wrap"
+          style={isListOpen ? {} : { display: "none" }}
+        >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
-            <button className="secondary-button" type="button" onClick={() => setIsListOpen(false)} title="Hide list" style={{ width: 28, height: 28, padding: 0, fontSize: 12, fontWeight: 700 }}>{"<<"}</button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setIsListOpen(false)}
+              title="Hide list"
+              style={{
+                width: 28,
+                height: 28,
+                padding: 0,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {"<<"}
+            </button>
           </div>
           {loading && (
             <div className="frozen-overlay">
@@ -667,18 +969,22 @@ export default function SignalsPage() {
             </div>
           )}
           {error ? <div className="error">{error}</div> : null}
-          {createMsg ? <div className="loading" style={{ padding: 10 }}>{createMsg}</div> : null}
+          {createMsg ? (
+            <div className="loading" style={{ padding: 10 }}>
+              {createMsg}
+            </div>
+          ) : null}
           <div className="events-table-wrap">
             <table className="events-table">
               <thead>
                 <tr>
-                  <th style={{ width: '30px' }}>
+                  <th style={{ width: "30px" }}>
                     <input
                       type="checkbox"
                       checked={allSelected}
-                      onChange={e => {
+                      onChange={(e) => {
                         const checked = e.target.checked;
-                        setSelectedIds(prev => {
+                        setSelectedIds((prev) => {
                           const next = new Set(prev);
                           sortedRows.forEach((r) => {
                             const ref = signalRefOf(r);
@@ -690,120 +996,218 @@ export default function SignalsPage() {
                       }}
                     />
                   </th>
-                  <th onClick={() => toggleSort("symbol")} style={{ cursor: "pointer" }}>POSITION{sortMarker("symbol")}</th>
-                  <th onClick={() => toggleSort("strategy")} style={{ cursor: "pointer" }}>INFO{sortMarker("strategy")}</th>
-                  <th onClick={() => toggleSort("status")} style={{ cursor: "pointer" }}>STATUS{sortMarker("status")}</th>
+                  <th
+                    onClick={() => toggleSort("symbol")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    POSITION{sortMarker("symbol")}
+                  </th>
+                  <th
+                    onClick={() => toggleSort("strategy")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    INFO{sortMarker("strategy")}
+                  </th>
+                  <th
+                    onClick={() => toggleSort("status")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    STATUS{sortMarker("status")}
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedRows.length === 0 ? (
                   <tr>
-                    <td colSpan="4" className="empty-state">No signals found.</td>
+                    <td colSpan="4" className="empty-state">
+                      No signals found.
+                    </td>
                   </tr>
-                ) : sortedRows.map(t => {
-                  const status = statusUi(t.status);
-                  const sideValue = String(t.action || t.side || '-').toUpperCase();
-                  const sideCls = sideValue === 'BUY' ? 'side-buy' : 'side-sell';
-                  const sourceLabel = displaySource(t);
-                  const signalShort = String(t.sid || t.sid || "").slice(-12) || "-";
-                  const strategyLabel = compactStrategy(t);
+                ) : (
+                  sortedRows.map((t) => {
+                    const status = statusUi(t.status);
+                    const sideValue = String(
+                      t.action || t.side || "-",
+                    ).toUpperCase();
+                    const sideCls =
+                      sideValue === "BUY" ? "side-buy" : "side-sell";
+                    const sourceLabel = displaySource(t);
+                    const signalShort =
+                      String(t.sid || t.sid || "").slice(-12) || "-";
+                    const strategyLabel = compactStrategy(t);
 
-                  return (
-                    <tr
-                      key={signalRefOf(t)}
-                      className={signalRefOf(selectedSignal) === signalRefOf(t) ? "active" : ""}
-                      onClick={() => {
-                        const ref = signalRefOf(t);
-                        if (signalRefOf(selectedSignal) === ref) {
-                          setSelectedSignal(null);
-                          selectedSignalIdRef.current = "";
-                          setCreateMode(false);
-                          navigate("/signals", { replace: true });
-                        } else {
-                          selectedSignalIdRef.current = ref;
-                          setCreateMode(false);
-                          setSelectedSignal(t);
-                          navigate(`/signals/${ref}`, { replace: true });
+                    return (
+                      <tr
+                        key={signalRefOf(t)}
+                        className={
+                          signalRefOf(selectedSignal) === signalRefOf(t)
+                            ? "active"
+                            : ""
                         }
-                      }}
-                    >
-                      <td onClick={e => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(signalRefOf(t))}
-                          onChange={e => {
-                            const checked = e.target.checked;
-                            setSelectedIds(prev => {
-                              const next = new Set(prev);
-                              const ref = signalRefOf(t);
-                              if (checked) next.add(ref);
-                              else next.delete(ref);
-                              return next;
-                            });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <SymbolEntryCell
-                          side={sideValue}
-                          symbol={t.symbol}
-                          orderType={t.order_type || "limit"}
-                          entry={fPrice(t.entry, t.target_price || t.entry_price)}
-                          tp={fPrice(t.tp)}
-                          sl={fPrice(t.sl)}
-                          rr={asNum(t.rr_planned)}
-                          status={t.status}
-                        />
-                      </td>
-                      <td>
-                        <PositionAuditCell
-                          source={sourceLabel}
-                          strategy={strategyLabel}
-                          timeText={fDateTime(t.closed_at || t.opened_at || t.created_at)}
-                          sid={signalShort}
-                          brokerId={String(t?.broker_trade_id || "-")}
-                          confidence={t.confidence_pct || t.raw_json?.confidence_pct || t.raw_json?.confidence}
-                          riskManagement={t.raw_json?.risk_management || t.raw_json?.risk_pct || t.raw_json?.risk}
-                        />
-                      </td>
-                      <td>
-                        <div className="cell-wrap" style={{ alignItems: 'flex-end' }}>
-                          <StatusPnlCell
-                            status={t.status}
-                            statusNode={<span className={`badge ${status.cls} badge-fixed`}>{status.label}</span>}
-                            hideStatus={true}
-                            hidePnl={true}
-                            pnl={null}
-                            showFilledDetails={false}
-                          />
-                          <button
-                            type="button"
-                            className={`secondary-button icon-button ${detailPlanBusy.trade ? "btn-busy" : ""}`}
-                            style={{ marginTop: 4, width: "fit-content", fontSize: '10px', height: '22px' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addTradeFromSignal(t);
+                        onClick={() => {
+                          const ref = signalRefOf(t);
+                          if (signalRefOf(selectedSignal) === ref) {
+                            setSelectedSignal(null);
+                            selectedSignalIdRef.current = "";
+                            setCreateMode(false);
+                            navigate("/signals", { replace: true });
+                          } else {
+                            selectedSignalIdRef.current = ref;
+                            setCreateMode(false);
+                            setSelectedSignal(t);
+                            navigate(`/signals/${ref}`, { replace: true });
+                          }
+                        }}
+                      >
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(signalRefOf(t))}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                const ref = signalRefOf(t);
+                                if (checked) next.add(ref);
+                                else next.delete(ref);
+                                return next;
+                              });
                             }}
-                            disabled={detailPlanBusy.trade || (t.execution_status && t.execution_status !== "")}
-                            title={t.execution_status ? `Trade already exists (${t.execution_status})` : ""}
+                          />
+                        </td>
+                        <td>
+                          <SymbolEntryCell
+                            side={sideValue}
+                            symbol={t.symbol}
+                            orderType={t.order_type || "limit"}
+                            entry={fPrice(
+                              t.entry,
+                              t.target_price || t.entry_price,
+                            )}
+                            tp={fPrice(t.tp)}
+                            sl={fPrice(t.sl)}
+                            rr={asNum(t.rr_planned)}
+                            status={t.status}
+                          />
+                        </td>
+                        <td>
+                          <PositionAuditCell
+                            source={sourceLabel}
+                            strategy={strategyLabel}
+                            timeText={fDateTime(
+                              t.closed_at || t.opened_at || t.created_at,
+                            )}
+                            sid={signalShort}
+                            brokerId={String(t?.broker_trade_id || "-")}
+                            confidence={
+                              t.confidence_pct ||
+                              t.raw_json?.confidence_pct ||
+                              t.raw_json?.confidence
+                            }
+                            riskManagement={
+                              t.raw_json?.risk_management ||
+                              t.metadata?.risk_management
+                            }
+                            riskPct={
+                              asNum(t.risk_pct_planned) ??
+                              asNum(t.metadata?.risk_pct) ??
+                              asNum(t.raw_json?.risk_pct) ??
+                              asNum(t.raw_json?.riskPct) ??
+                              asNum(t.volume)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <div
+                            className="cell-wrap"
+                            style={{ alignItems: "flex-end" }}
                           >
-                            {detailPlanBusy.trade ? <div className="spinner" style={{ width: 10, height: 10 }} /> : "+ Trade"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                            <StatusPnlCell
+                              status={t.status}
+                              statusNode={
+                                <span
+                                  className={`badge ${status.cls} badge-fixed`}
+                                >
+                                  {status.label}
+                                </span>
+                              }
+                              hideStatus={true}
+                              hidePnl={true}
+                              pnl={null}
+                              showFilledDetails={false}
+                            />
+                            <button
+                              type="button"
+                              className={`secondary-button icon-button ${detailPlanBusy.trade ? "btn-busy" : ""}`}
+                              style={{
+                                marginTop: 4,
+                                width: "fit-content",
+                                fontSize: "10px",
+                                height: "22px",
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                addTradeFromSignal(t);
+                              }}
+                              disabled={
+                                detailPlanBusy.trade ||
+                                (t.execution_status &&
+                                  t.execution_status !== "")
+                              }
+                              title={
+                                t.execution_status
+                                  ? `Trade already exists (${t.execution_status})`
+                                  : ""
+                              }
+                            >
+                              {detailPlanBusy.trade ? (
+                                <div
+                                  className="spinner"
+                                  style={{ width: 10, height: 10 }}
+                                />
+                              ) : (
+                                "+ Trade"
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        <div className="logs-detail-pane component-frozen-wrap" style={isListOpen ? {} : { gridColumn: "1 / -1" }}>
+        <div
+          className="logs-detail-pane component-frozen-wrap"
+          style={isListOpen ? {} : { gridColumn: "1 / -1" }}
+        >
           {!isListOpen && (
-            <button className="secondary-button" type="button" onClick={() => setIsListOpen(true)} title="Show list" style={{ position: "absolute", top: 8, left: 8, zIndex: 2, width: 28, height: 28, padding: 0, fontSize: 12, fontWeight: 700 }}>{">>"}</button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setIsListOpen(true)}
+              title="Show list"
+              style={{
+                position: "absolute",
+                top: 8,
+                left: 8,
+                zIndex: 2,
+                width: 28,
+                height: 28,
+                padding: 0,
+                fontSize: 12,
+                fontWeight: 700,
+              }}
+            >
+              {">>"}
+            </button>
           )}
-          {(detailPlanBusy.save || detailPlanBusy.trade || detailPlanBusy.signal) && (
+          {(detailPlanBusy.save ||
+            detailPlanBusy.trade ||
+            detailPlanBusy.signal) && (
             <div className="frozen-overlay">
               <div className="spinner" />
               <span>PROCESSING...</span>
@@ -813,237 +1217,445 @@ export default function SignalsPage() {
             <div className="panel" style={{ margin: 0 }}>
               <div className="panel-label">SIGNAL FORM</div>
               <div className="stack-layout" style={{ gap: 10 }}>
-                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(2, minmax(0,1fr))" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns: "repeat(2, minmax(0,1fr))",
+                  }}
+                >
                   <label>
                     <div className="muted small">Action</div>
-                    <select value={createForm.action} onChange={(e) => setCreateForm((p) => ({ ...p, action: e.target.value }))}>
+                    <select
+                      value={createForm.action}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, action: e.target.value }))
+                      }
+                    >
                       <option value="BUY">BUY</option>
                       <option value="SELL">SELL</option>
                     </select>
                   </label>
                   <label>
                     <div className="muted small">Symbol</div>
-                    <input value={createForm.symbol} onChange={(e) => setCreateForm((p) => ({ ...p, symbol: e.target.value }))} placeholder="XAUUSD" />
+                    <input
+                      value={createForm.symbol}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, symbol: e.target.value }))
+                      }
+                      placeholder="XAUUSD"
+                    />
                   </label>
                   <label>
-                    <div className="muted small">Volume</div>
-                    <input value={createForm.volume} onChange={(e) => setCreateForm((p) => ({ ...p, volume: e.target.value }))} placeholder="0.01" />
+                    <div className="muted small">Volume (Lots)</div>
+                    <input
+                      value={createForm.volume}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, volume: e.target.value }))
+                      }
+                      placeholder="0.01"
+                    />
+                  </label>
+                  <label>
+                    <div className="muted small">Risk (%)</div>
+                    <input
+                      value={createForm.risk_pct}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({
+                          ...p,
+                          risk_pct: e.target.value,
+                        }))
+                      }
+                      placeholder="0.01"
+                    />
+                  </label>
+                  <label>
+                    <div className="muted small">Risk ($)</div>
+                    <input
+                      value={createForm.risk_money}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({
+                          ...p,
+                          risk_money: e.target.value,
+                        }))
+                      }
+                      placeholder="100"
+                    />
                   </label>
                   <label>
                     <div className="muted small">Entry Price</div>
-                    <input value={createForm.price} onChange={(e) => setCreateForm((p) => ({ ...p, price: e.target.value }))} placeholder="3345.20" />
+                    <input
+                      value={createForm.price}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, price: e.target.value }))
+                      }
+                      placeholder="3345.20"
+                    />
                   </label>
                   <label>
                     <div className="muted small">SL</div>
-                    <input value={createForm.sl} onChange={(e) => setCreateForm((p) => ({ ...p, sl: e.target.value }))} placeholder="3330.00" />
+                    <input
+                      value={createForm.sl}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, sl: e.target.value }))
+                      }
+                      placeholder="3330.00"
+                    />
                   </label>
                   <label>
                     <div className="muted small">TP</div>
-                    <input value={createForm.tp} onChange={(e) => setCreateForm((p) => ({ ...p, tp: e.target.value }))} placeholder="3365.00" />
+                    <input
+                      value={createForm.tp}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, tp: e.target.value }))
+                      }
+                      placeholder="3365.00"
+                    />
                   </label>
                   <label>
                     <div className="muted small">Strategy</div>
-                    <input value={createForm.strategy} onChange={(e) => setCreateForm((p) => ({ ...p, strategy: e.target.value }))} />
+                    <input
+                      value={createForm.strategy}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({
+                          ...p,
+                          strategy: e.target.value,
+                        }))
+                      }
+                    />
                   </label>
                   <label>
                     <div className="muted small">Timeframe</div>
-                    <input value={createForm.timeframe} onChange={(e) => setCreateForm((p) => ({ ...p, timeframe: e.target.value }))} />
+                    <input
+                      value={createForm.timeframe}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({
+                          ...p,
+                          timeframe: e.target.value,
+                        }))
+                      }
+                    />
                   </label>
                 </div>
                 <label>
                   <div className="muted small">Note</div>
-                  <input value={createForm.note} onChange={(e) => setCreateForm((p) => ({ ...p, note: e.target.value }))} placeholder="Optional note" />
+                  <input
+                    value={createForm.note}
+                    onChange={(e) =>
+                      setCreateForm((p) => ({ ...p, note: e.target.value }))
+                    }
+                    placeholder="Optional note"
+                  />
                 </label>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button type="button" className={`primary-button ${bulkBusy ? "btn-busy" : ""}`} onClick={onCreateSignal} disabled={bulkBusy || !isSignalFormDirty}>
-                    {bulkBusy ? <div className="spinner" style={{ width: 14, height: 14 }} /> : "💾 SAVE SIGNAL"}
+                  <button
+                    type="button"
+                    className={`primary-button ${bulkBusy ? "btn-busy" : ""}`}
+                    onClick={onCreateSignal}
+                    disabled={bulkBusy || !isSignalFormDirty}
+                  >
+                    {bulkBusy ? (
+                      <div
+                        className="spinner"
+                        style={{ width: 14, height: 14 }}
+                      />
+                    ) : (
+                      "💾 SAVE SIGNAL"
+                    )}
                   </button>
-                  <button type="button" className="secondary-button" onClick={() => setCreateMode(false)} disabled={bulkBusy}>✖ CANCEL</button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setCreateMode(false)}
+                    disabled={bulkBusy}
+                  >
+                    ✖ CANCEL
+                  </button>
                 </div>
               </div>
             </div>
           ) : !selectedSignal ? (
-            <div className="empty-state minor-text">SELECT A SIGNAL TO INSPECT HISTORY</div>
+            <div className="empty-state minor-text">
+              SELECT A SIGNAL TO INSPECT HISTORY
+            </div>
           ) : (
-            <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+            <Suspense
+              fallback={<div className="loading-card">Loading Details...</div>}
+            >
               <SignalDetailCard
-              key={signalRefOf(selectedSignal)}
-              mode="signal"
-              header={(() => {
-                const rr = asNum(selectedSignal.rr_planned) ?? calcRrFromSignal(selectedSignal);
-                const vol = asNum(selectedSignal.volume);
-                const risk = signalRiskSize(selectedSignal, signalDetails);
-                const raw = selectedSignal?.raw_json && typeof selectedSignal.raw_json === "object" ? selectedSignal.raw_json : {};
-                const riskPct = asNum(raw.riskPct ?? raw.risk_pct ?? raw.volumePct ?? raw.volume_pct);
-                const reward = (risk != null && rr != null) ? (Math.abs(risk) * rr) : null;
-                const headerMeta = buildHeaderMeta({
-                  statusRaw: selectedSignal.status,
-                  pnlRaw: null,
-                  rrRaw: rr,
-                  volumeRaw: vol,
-                  plannedVolRaw: asNum(raw.volume) ?? vol,
-                  riskSizeRaw: risk,
-                  riskPctRaw: riskPct,
-                  rewardSizeRaw: reward,
-                  updatedAtRaw: selectedSignal.updated_at || selectedSignal.closed_at || selectedSignal.opened_at || selectedSignal.created_at,
-                  statusUi,
-                });
-                return buildDetailHeader({
-                  side: String(selectedSignal.action || selectedSignal.side || "-").toUpperCase(),
-                  symbol: selectedSignal.symbol || "-",
-                  sideClass: String(selectedSignal.action || selectedSignal.side || "").toUpperCase() === "BUY" ? "side-buy" : "side-sell",
-                  positionText: `${fPrice(selectedSignal.entry, selectedSignal.target_price || selectedSignal.entry_price)} → ${fPrice(selectedSignal.tp)} / ${fPrice(selectedSignal.sl)}`,
-                  ...headerMeta,
-                });
-              })()}
-              tradePlan={{
-                enabled: true,
-                signalId: signalRefOf(selectedSignal) || null,
-                tradeId: null,
-                value: detailPlan,
-                onChange: updateDetailPlanField,
-                onReset: resetDetailPlanLocal,
-                onSave: saveSelectedSignalPlan,
-                onAddTrade: () => addTradeFromSignal(selectedSignal),
-                showSaveButton: true,
-                showAddSignalButton: false,
-                showAddTradeButton: true,
-                showResetButton: true,
-                saveLabel: "Save Signal",
-                busy: detailPlanBusy,
-                disabled: !isDetailPlanDirty,
-                viewOnly: ["FILLED", "CLOSED", "CANCELLED", "TP", "SL", "FAIL", "EXPIRED"].includes(String(selectedSignal.status || "").toUpperCase()),
-                error: detailPlanMsg.type === "error" ? detailPlanMsg.text : "",
-                successMessage: detailPlanMsg.text && detailPlanMsg.type !== "error" ? detailPlanMsg.text : "",
-                status: statusUi(selectedSignal.status),
-                volume: `${Number(((asNum(selectedSignal.volume) || 0) * 100).toFixed(2))}% | ${asNum(selectedSignal.volume_lots) || 0.01} lots`,
-                pnl: null,
-              }}
-              chart={{
-                enabled: true,
-                detailTfTab,
-                onDetailTfTabChange: setDetailTfTab,
-                iframeTitle: `signal-tv-${detailTfTab}`,
-                symbol: selectedSignal.symbol,
-                interval: selectedSignal.signal_tf || selectedSignal.chart_tf || "1h",
-                live: true,
-                entryPrice: asNum(detailPlan.entry) ?? asNum(selectedSignal.entry || selectedSignal.target_price || selectedSignal.entry_price),
-                slPrice: asNum(detailPlan.sl) ?? asNum(selectedSignal.sl),
-                tpPrice: asNum(detailPlan.tp) ?? asNum(selectedSignal.tp),
-                analysisSnapshot: selectedSignal?.raw_json?.analysis_snapshot
-                  ? {
-                      ...selectedSignal.raw_json.analysis_snapshot,
-                      pd_arrays: (
-                        selectedSignal.raw_json.analysis_snapshot.pd_arrays ||
-                        selectedSignal.raw_json.market_analysis?.pd_arrays ||
-                        selectedSignal.raw_json.pd_arrays ||
-                        []
-                      ),
-                      key_levels: (
-                        selectedSignal.raw_json.analysis_snapshot.key_levels ||
-                        selectedSignal.raw_json.market_analysis?.key_levels ||
-                        []
-                      ),
-                    }
-                  : {
-                      pd_arrays: (
-                        selectedSignal.raw_json?.market_analysis?.pd_arrays ||
-                        selectedSignal.raw_json?.pd_arrays ||
-                        []
-                      ),
-                      key_levels: (
-                        selectedSignal.raw_json?.market_analysis?.key_levels ||
-                        []
-                      ),
-                    },
-              }}
-              metaItems={[
-                { label: "Source", value: displaySource(selectedSignal) },
-                { label: "Signal SID", value: selectedSignal.sid || "-" },
-                { label: "Chart TF", value: formatTimeframe(selectedSignal.chart_tf || "-") },
-                { label: "Signal TF", value: formatTimeframe(selectedSignal.signal_tf || "-") },
-                { label: "Strategy", value: compactStrategy(selectedSignal) },
-                { label: "Entry Model", value: detailPlan.entry_model || "-" },
-                { label: "Confidence", value: detailPlan.confidence_pct != null ? `${detailPlan.confidence_pct}%` : "-" },
-                { label: "Invalidation", value: detailPlan.invalidation || "-" },
-                { label: "BE Trigger", value: detailPlan.be_trigger || "-" },
-                { label: "Profile", value: detailPlan.profile || "-" },
-                { label: "Est. Bars", value: detailPlan.estimated_bars || "-" },
-                {
-                  label: "Entry Condition",
-                  value: detailPlan.entry_condition || "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Exit Condition",
-                  value: detailPlan.exit_condition || "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Risk Management",
-                  value: detailPlan.risk_management || "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Checklist",
-                  value: Array.isArray(detailPlan.confluence_checklist) && detailPlan.confluence_checklist.length > 0 ? detailPlan.confluence_checklist.join(", ") : "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Skip Recommendation",
-                  value: detailPlan.skip_recommendation || "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Note",
-                  value: detailPlan.note || "-",
-                  fullWidth: true,
-                },
-                {
-                  label: "Metadata",
-                  fullWidth: true,
-                  group: "account",
-                  value: (() => {
-                    const meta = selectedSignal.metadata || selectedSignal.raw_json || {};
-                    const cleaned = {};
-                    const junk = [
-                      "props", "children", "ref", "key", "type", "_owner", "_store", "_self", "_source",
-                      "market_analysis", "analysis_snapshot", "pd_arrays", "key_levels", "labels", "raw_json"
-                    ];
-                    Object.keys(meta).forEach((k) => {
-                      if (junk.includes(k)) return;
-                      const val = meta[k];
-                      if (val === null || val === undefined || val === "") return;
-                      cleaned[k] = val;
-                    });
-                    return cleaned;
-                  })(),
-                },
-              ]}
-              history={{
-                enabled: true,
-                loading: !(signalDetails?.events || signalDetails?.items),
-                loadingText: "FETCHING TELEMETRY LOGS...",
-                items: [...(signalDetails?.events || signalDetails?.items || [])]
-                  .sort((a, b) => new Date(b.event_time || b.created_at || 0) - new Date(a.event_time || a.created_at || 0)),
-                renderItem: (ev, idx) => renderHistoryItem(ev, idx, {
-                  formatDateTime: fDateTime,
-                  statusFromType: (eventType) => {
-                    const tType = String(eventType || "");
-                    if (!tType.startsWith("EA_ACK_")) return null;
-                    const raw = tType.replace("EA_ACK_", "");
-                    return statusUi(raw);
+                key={signalRefOf(selectedSignal)}
+                mode="signal"
+                header={(() => {
+                  const rr =
+                    asNum(selectedSignal.rr_planned) ??
+                    calcRrFromSignal(selectedSignal);
+                  const vol = asNum(selectedSignal.volume);
+                  const risk = signalRiskSize(selectedSignal, signalDetails);
+                  const raw =
+                    selectedSignal?.raw_json &&
+                    typeof selectedSignal.raw_json === "object"
+                      ? selectedSignal.raw_json
+                      : {};
+                  const riskPct = asNum(
+                    selectedSignal.risk_pct_planned ??
+                      raw.riskPct ??
+                      raw.risk_pct ??
+                      raw.volumePct ??
+                      raw.volume_pct,
+                  );
+                  const reward =
+                    risk != null && rr != null ? Math.abs(risk) * rr : null;
+                  const headerMeta = buildHeaderMeta({
+                    statusRaw: selectedSignal.status,
+                    pnlRaw: null,
+                    rrRaw: rr,
+                    volumeRaw: vol,
+                    plannedVolRaw: asNum(raw.volume) ?? vol,
+                    riskSizeRaw: risk,
+                    riskPctRaw: riskPct,
+                    rewardSizeRaw: reward,
+                    updatedAtRaw:
+                      selectedSignal.updated_at ||
+                      selectedSignal.closed_at ||
+                      selectedSignal.opened_at ||
+                      selectedSignal.created_at,
+                    statusUi,
+                  });
+                  return buildDetailHeader({
+                    side: String(
+                      selectedSignal.action || selectedSignal.side || "-",
+                    ).toUpperCase(),
+                    symbol: selectedSignal.symbol || "-",
+                    sideClass:
+                      String(
+                        selectedSignal.action || selectedSignal.side || "",
+                      ).toUpperCase() === "BUY"
+                        ? "side-buy"
+                        : "side-sell",
+                    positionText: `${fPrice(selectedSignal.entry, selectedSignal.target_price || selectedSignal.entry_price)} → ${fPrice(selectedSignal.tp)} / ${fPrice(selectedSignal.sl)}`,
+                    ...headerMeta,
+                  });
+                })()}
+                tradePlan={{
+                  enabled: true,
+                  signalId: signalRefOf(selectedSignal) || null,
+                  tradeId: null,
+                  value: detailPlan,
+                  onChange: updateDetailPlanField,
+                  onReset: resetDetailPlanLocal,
+                  onSave: saveSelectedSignalPlan,
+                  onAddTrade: () => addTradeFromSignal(selectedSignal),
+                  showSaveButton: true,
+                  showAddSignalButton: false,
+                  showAddTradeButton: ![
+                    "FILLED",
+                    "CLOSED",
+                    "CANCELLED",
+                    "TP",
+                    "SL",
+                    "FAIL",
+                    "EXPIRED",
+                  ].includes(String(selectedSignal.status || "").toUpperCase()),
+                  showResetButton: true,
+                  saveLabel: "Save Signal",
+                  busy: detailPlanBusy,
+                  disabled: !isDetailPlanDirty,
+                  viewOnly: [
+                    "FILLED",
+                    "CLOSED",
+                    "CANCELLED",
+                    "TP",
+                    "SL",
+                    "FAIL",
+                    "EXPIRED",
+                  ].includes(String(selectedSignal.status || "").toUpperCase()),
+                  error:
+                    detailPlanMsg.type === "error" ? detailPlanMsg.text : "",
+                  successMessage:
+                    detailPlanMsg.text && detailPlanMsg.type !== "error"
+                      ? detailPlanMsg.text
+                      : "",
+                  status: statusUi(selectedSignal.status),
+                  volume: `${Number(((asNum(selectedSignal.volume) || 0) * 100).toFixed(2))}% | ${asNum(selectedSignal.volume_lots) || 0.01} lots`,
+                  pnl: null,
+                }}
+                chart={{
+                  enabled: true,
+                  detailTfTab,
+                  onDetailTfTabChange: setDetailTfTab,
+                  iframeTitle: `signal-tv-${detailTfTab}`,
+                  symbol: selectedSignal.symbol,
+                  interval:
+                    selectedSignal.signal_tf || selectedSignal.chart_tf || "1h",
+                  live: true,
+                  entryPrice:
+                    asNum(detailPlan.entry) ??
+                    asNum(
+                      selectedSignal.entry ||
+                        selectedSignal.target_price ||
+                        selectedSignal.entry_price,
+                    ),
+                  slPrice: asNum(detailPlan.sl) ?? asNum(selectedSignal.sl),
+                  tpPrice: asNum(detailPlan.tp) ?? asNum(selectedSignal.tp),
+                  analysisSnapshot: selectedSignal?.raw_json?.analysis_snapshot
+                    ? {
+                        ...selectedSignal.raw_json.analysis_snapshot,
+                        pd_arrays:
+                          selectedSignal.raw_json.analysis_snapshot.pd_arrays ||
+                          selectedSignal.raw_json.market_analysis?.pd_arrays ||
+                          selectedSignal.raw_json.pd_arrays ||
+                          [],
+                        key_levels:
+                          selectedSignal.raw_json.analysis_snapshot
+                            .key_levels ||
+                          selectedSignal.raw_json.market_analysis?.key_levels ||
+                          [],
+                      }
+                    : {
+                        pd_arrays:
+                          selectedSignal.raw_json?.market_analysis?.pd_arrays ||
+                          selectedSignal.raw_json?.pd_arrays ||
+                          [],
+                        key_levels:
+                          selectedSignal.raw_json?.market_analysis
+                            ?.key_levels || [],
+                      },
+                }}
+                metaItems={[
+                  { label: "Source", value: displaySource(selectedSignal) },
+                  { label: "Signal SID", value: selectedSignal.sid || "-" },
+                  {
+                    label: "Chart TF",
+                    value: formatTimeframe(selectedSignal.chart_tf || "-"),
                   },
-                }),
-              }}
-              formatDateTime={fDateTime}
-              response={{
-                raw: selectedSignal?.raw_json,
-                metadata: selectedSignal?.metadata,
-              }}
-            />
-          </Suspense>
-        )}
+                  {
+                    label: "Signal TF",
+                    value: formatTimeframe(selectedSignal.signal_tf || "-"),
+                  },
+                  { label: "Strategy", value: compactStrategy(selectedSignal) },
+                  {
+                    label: "Entry Model",
+                    value: detailPlan.entry_model || "-",
+                  },
+                  {
+                    label: "Confidence",
+                    value:
+                      detailPlan.confidence_pct != null
+                        ? `${detailPlan.confidence_pct}%`
+                        : "-",
+                  },
+                  {
+                    label: "Invalidation",
+                    value: detailPlan.invalidation || "-",
+                  },
+                  { label: "BE Trigger", value: detailPlan.be_trigger || "-" },
+                  { label: "Profile", value: detailPlan.profile || "-" },
+                  {
+                    label: "Est. Bars",
+                    value: detailPlan.estimated_bars || "-",
+                  },
+                  {
+                    label: "Entry Condition",
+                    value: detailPlan.entry_condition || "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Exit Condition",
+                    value: detailPlan.exit_condition || "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Risk Management",
+                    value: detailPlan.risk_management || "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Checklist",
+                    value:
+                      Array.isArray(detailPlan.confluence_checklist) &&
+                      detailPlan.confluence_checklist.length > 0
+                        ? detailPlan.confluence_checklist.join(", ")
+                        : "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Skip Recommendation",
+                    value: detailPlan.skip_recommendation || "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Note",
+                    value: detailPlan.note || "-",
+                    fullWidth: true,
+                  },
+                  {
+                    label: "Metadata",
+                    fullWidth: true,
+                    group: "account",
+                    value: (() => {
+                      const meta =
+                        selectedSignal.metadata ||
+                        selectedSignal.raw_json ||
+                        {};
+                      const cleaned = {};
+                      const junk = [
+                        "props",
+                        "children",
+                        "ref",
+                        "key",
+                        "type",
+                        "_owner",
+                        "_store",
+                        "_self",
+                        "_source",
+                        "market_analysis",
+                        "analysis_snapshot",
+                        "pd_arrays",
+                        "key_levels",
+                        "labels",
+                        "raw_json",
+                      ];
+                      Object.keys(meta).forEach((k) => {
+                        if (junk.includes(k)) return;
+                        const val = meta[k];
+                        if (val === null || val === undefined || val === "")
+                          return;
+                        cleaned[k] = val;
+                      });
+                      return cleaned;
+                    })(),
+                  },
+                ]}
+                history={{
+                  enabled: true,
+                  loading: !(signalDetails?.events || signalDetails?.items),
+                  loadingText: "FETCHING TELEMETRY LOGS...",
+                  items: [
+                    ...(signalDetails?.events || signalDetails?.items || []),
+                  ].sort(
+                    (a, b) =>
+                      new Date(b.event_time || b.created_at || 0) -
+                      new Date(a.event_time || a.created_at || 0),
+                  ),
+                  renderItem: (ev, idx) =>
+                    renderHistoryItem(ev, idx, {
+                      formatDateTime: fDateTime,
+                      statusFromType: (eventType) => {
+                        const tType = String(eventType || "");
+                        if (!tType.startsWith("EA_ACK_")) return null;
+                        const raw = tType.replace("EA_ACK_", "");
+                        return statusUi(raw);
+                      },
+                    }),
+                }}
+                formatDateTime={fDateTime}
+                response={{
+                  raw: selectedSignal?.raw_json,
+                  metadata: selectedSignal?.metadata,
+                }}
+              />
+            </Suspense>
+          )}
         </div>
       </div>
     </section>
