@@ -2304,9 +2304,10 @@ export default function ChartSnapshotsPage() {
               symbol: symbolForSnapshot,
               provider: provider || "ICMARKETS",
               session_prefix: activeSessionPrefix,
-              tfs: Array.isArray(snapshotTfs) && snapshotTfs.length
-                ? snapshotTfs
-                : ["D", "240", "15", "5"],
+              tfs:
+                Array.isArray(snapshotTfs) && snapshotTfs.length
+                  ? snapshotTfs
+                  : ["D", "240", "15", "5"],
               lookbackBars: Number(cfg.lookbackBars || 300) || 300,
             });
             const freshFiles = Array.isArray(batch?.items)
