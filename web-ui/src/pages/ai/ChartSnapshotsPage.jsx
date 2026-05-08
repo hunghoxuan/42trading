@@ -1733,6 +1733,9 @@ export default function ChartSnapshotsPage() {
   );
   const [promptEdited, setPromptEdited] = useState(false);
   const [guideDraft, setGuideDraft] = useState(GUIDE_TEXT);
+  const [autoSaveMode, setAutoSaveMode] = useState("");
+  const [tradesText, setTradesText] = useState("");
+  const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
   const liteChartRef = useRef(null);
   const liteChartApiRef = useRef(null);
   const autoFlowRef = useRef({ runId: 0, key: "", timer: null });
@@ -2294,6 +2297,14 @@ export default function ChartSnapshotsPage() {
         force_refresh: true,
         snapshot_refresh: true,
       };
+      if (autoSaveMode === "signals" || autoSaveMode === "trades") {
+        payload.auto_save = autoSaveMode;
+      } else {
+        payload.auto_save = null;
+      }
+      if (String(tradesText || "").trim()) {
+        payload.Trades = String(tradesText || "").trim();
+      }
 
       if (Array.isArray(files) && files.length) payload.files = files;
       if (!payload.files || !payload.files.length) {
@@ -2428,7 +2439,7 @@ export default function ChartSnapshotsPage() {
     }
   };
 
-  const analyzeSelected = async () => {
+  const analyzeSelected = async (opts = {}) => {
     const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
     const files = [...selectedFiles];
@@ -2441,10 +2452,13 @@ export default function ChartSnapshotsPage() {
         snapshotTfs.map((x) => String(x || "").trim()).filter(Boolean),
       ),
     ];
-    if (!String(tvSymbol || "").trim() || !tfs.length) {
+    const allowNoSymbol = Boolean(opts?.allowNoSymbol);
+    if ((!String(tvSymbol || "").trim() && !allowNoSymbol) || !tfs.length) {
       setStatus({
         type: "warning",
-        text: "Symbol and at least one snapshot TF are required.",
+        text: allowNoSymbol
+          ? "At least one snapshot TF is required."
+          : "Symbol and at least one snapshot TF are required.",
       });
       return;
     }
@@ -4032,6 +4046,22 @@ export default function ChartSnapshotsPage() {
               >
                 {analyzing ? "Analyzing..." : "Analyze"}
               </button>
+              <select
+                value={autoSaveMode}
+                onChange={(e) => setAutoSaveMode(e.target.value)}
+                className="secondary-button"
+                style={{
+                  padding: "0 8px",
+                  height: 34,
+                  fontSize: "11px",
+                  minWidth: 120,
+                }}
+                title="Auto save analyze result"
+              >
+                <option value="">Auto Save: None</option>
+                <option value="signals">Auto Save: Signals</option>
+                <option value="trades">Auto Save: Trades</option>
+              </select>
             </div>
           </div>
         )}
@@ -4203,8 +4233,57 @@ export default function ChartSnapshotsPage() {
                     </button>
                   </div>
                 </div>
+                <div
+                  style={{
+                    marginLeft: "auto",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => setBrowserAnalyzeOpen((v) => !v)}
+                  >
+                    Analyze
+                  </button>
+                </div>
               </div>
             </div>
+            {browserAnalyzeOpen ? (
+              <div
+                className="toolbar-panel"
+                style={{ marginBottom: 12, padding: 12, display: "grid", gap: 10 }}
+              >
+                <textarea
+                  value={tradesText}
+                  onChange={(e) => setTradesText(e.target.value)}
+                  placeholder="Paste Trades free text here..."
+                  style={{ minHeight: 110, resize: "vertical", padding: 10 }}
+                />
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <select
+                    className="secondary-button"
+                    value={autoSaveMode}
+                    onChange={(e) => setAutoSaveMode(e.target.value)}
+                    style={{ height: 34, fontSize: 12, padding: "0 10px" }}
+                  >
+                    <option value="">Auto Save: None</option>
+                    <option value="signals">Auto Save: Signals</option>
+                    <option value="trades">Auto Save: Trades</option>
+                  </select>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={analyzing}
+                    onClick={() => analyzeSelected({ allowNoSymbol: true })}
+                  >
+                    {analyzing ? "Analyzing..." : "Analyze"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div
               className="browser-grid-v1"
               style={{
@@ -4305,7 +4384,7 @@ export default function ChartSnapshotsPage() {
                 symbol={cfg.symbol}
                 timeframes={widgetTfs}
                 defaultMode="live"
-                onAnalyze={() => handleAnalyze()}
+                onAnalyze={() => analyzeSelected()}
                 onRemove={null}
               />
             </Suspense>

@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 14:39 - 8940335"
-); // analyze Trades param review prompt
+  "v2026.05.08 14:51 - 13974dc"
+); // ai/browser auto_save + trades form
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -13645,7 +13645,7 @@ const appHandler = async (req, res) => {
         });
       const token = createUiSession(authUser);
       setUiSessionCookie(res, token);
-      return json(res, 200, { ok: true, user: authUser });
+      return json(res, 200, { ok: true, user: authUser, token });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return json(res, 400, { ok: false, error: message });
@@ -16721,7 +16721,9 @@ const appHandler = async (req, res) => {
         return "BUY";
       };
       const firstAutoSavableTradePlan = (parsed = {}) => {
-        const plans = Array.isArray(parsed?.trade_plan) ? parsed.trade_plan : [];
+        const plans = Array.isArray(parsed?.trade_plan)
+          ? parsed.trade_plan
+          : [];
         for (const plan of plans) {
           const entry = Number(plan?.entry);
           const sl = Number(plan?.sl);
