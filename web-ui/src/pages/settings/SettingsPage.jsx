@@ -18,6 +18,7 @@ const API_KEY_NAME_OPTIONS = [
   { value: "OPENROUTER_API_KEY", label: "OpenRouter API Key" },
   { value: "TWELVE_DATA_API_KEY", label: "Twelve Data API Key" },
 ];
+const STANDARD_API_KEY_NAMES = API_KEY_NAME_OPTIONS.map((x) => x.value);
 
 const SYSTEM_SETTING_TYPES = new Set(["system_config", "notification_config"]);
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
@@ -294,7 +295,20 @@ export default function SettingsPage({
 
       if (sets?.settings) {
         const list = Array.isArray(sets.settings) ? sets.settings : [];
-        setSettings(list);
+        const existingApiNames = new Set(
+          list
+            .filter((x) => String(x?.type || "").toLowerCase() === "api_key")
+            .map((x) => String(x?.name || "").toUpperCase()),
+        );
+        const missingApiRows = STANDARD_API_KEY_NAMES.filter(
+          (name) => !existingApiNames.has(name),
+        ).map((name) => ({
+          type: "api_key",
+          name,
+          status: "INACTIVE",
+          data: { value: "" },
+        }));
+        setSettings([...list, ...missingApiRows]);
         const logSet = list.find(
           (x) =>
             x?.type === "system_config" && x?.name === "enabled_log_prefixes",
@@ -315,8 +329,14 @@ export default function SettingsPage({
         // If we have settings, pick the first one as default active tab
         api.getSettings().then((res) => {
           const list = Array.isArray(res?.settings) ? res.settings : [];
-          if (list.length > 0) {
-            setActiveTab(getSettingKey(list[0]));
+          const firstVisible = list.find(
+            (s) =>
+              !["notification_config", "system_config"].includes(
+                String(s?.type || ""),
+              ),
+          );
+          if (firstVisible) {
+            setActiveTab(getSettingKey(firstVisible));
           }
         });
       } else {
@@ -865,7 +885,12 @@ export default function SettingsPage({
               </div>
               <div className="stack-layout" style={{ gap: 0 }}>
                 {settings
-                  .filter((s) => s.type === "trade" || s.type === "symbols")
+                  .filter(
+                    (s) =>
+                      s.type === "trade" ||
+                      s.type === "symbols" ||
+                      s.type === "others",
+                  )
                   .map((s) => renderSidebarItem(s))}
               </div>
             </div>
@@ -879,6 +904,8 @@ export default function SettingsPage({
                   "trade",
                   "symbols",
                   "system_config",
+                  "notification_config",
+                  "others",
                 ].includes(s.type) && !s.type.endsWith("_cron"),
             ).length > 0 && (
               <div className="stack-layout" style={{ gap: 8 }}>

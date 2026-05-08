@@ -1,7 +1,7 @@
 .session-clock-bar-container {
   width: 100%;
   padding: 0;
-  margin-bottom: 0;
+  margin-bottom: 10px;
   background: transparent;
   border-bottom: none;
   box-sizing: border-box;

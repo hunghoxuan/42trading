@@ -73,7 +73,6 @@ export default function TickerBar() {
         )}
       </button>
       <div className="ticker-right">
-        <span className="ticker-filled-label">FILLED</span>
         <div className="ticker-filled-list">
           {filledTrades.length ? (
             filledTrades.map((t) => (

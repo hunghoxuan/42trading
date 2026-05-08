@@ -2206,6 +2206,22 @@ export default function ChartSnapshotsPage() {
   };
 
   const analyzeFiles = async (files = [], opts = {}) => {
+    const hasCorePlanLevels = (parsed) => {
+      const plans = Array.isArray(parsed?.trade_plan) ? parsed.trade_plan : [];
+      if (!plans.length) return false;
+      const first = plans[0] || {};
+      const entry = Number(first.entry);
+      const sl = Number(first.sl);
+      const tp = Number(first.tp);
+      return (
+        Number.isFinite(entry) &&
+        Number.isFinite(sl) &&
+        Number.isFinite(tp) &&
+        entry !== 0 &&
+        sl !== 0 &&
+        tp !== 0
+      );
+    };
     setAnalyzing(true);
     setStatus({ type: "", text: "" });
     setAnalysisRaw("");
@@ -2274,6 +2290,9 @@ export default function ChartSnapshotsPage() {
         use_context_files: useContextFiles,
         context_mode: useContextFiles ? "claude" : "none",
         context_files: contextFiles,
+        // Reduce stale context/snapshot impact on TP/SL output quality.
+        force_refresh: true,
+        snapshot_refresh: true,
       };
 
       if (Array.isArray(files) && files.length) payload.files = files;
@@ -2307,10 +2326,39 @@ export default function ChartSnapshotsPage() {
       }
       const raw = String(out?.raw_response || "");
       setAnalysisRaw(raw);
-      const parsed = enrichParsedAnalysis(
+      let parsed = enrichParsedAnalysis(
         raw,
         out?.parsed_json || tryParseJsonLoose(raw),
       );
+      // Claude can occasionally return plan shells with null entry/sl/tp.
+      // Retry once with stronger instruction to force concrete numeric levels.
+      const shouldRepairOnce =
+        String(analysisSource || "").toLowerCase() === "ai_claude" &&
+        !hasCorePlanLevels(parsed);
+      if (shouldRepairOnce) {
+        const strictRetryPrompt = `${composedPrompt}\n\nIMPORTANT: Return at least one trade_plan item with numeric entry, sl, tp. Do not return null for these three fields.`;
+        const retryPayload = {
+          ...payload,
+          prompt: strictRetryPrompt,
+          force_refresh: true,
+          snapshot_refresh: true,
+        };
+        try {
+          const retryOut = await api.chartSnapshotsAnalyze(retryPayload);
+          const retryRaw = String(retryOut?.raw_response || "");
+          const retryParsed = enrichParsedAnalysis(
+            retryRaw,
+            retryOut?.parsed_json || tryParseJsonLoose(retryRaw),
+          );
+          if (hasCorePlanLevels(retryParsed)) {
+            out = retryOut;
+            parsed = retryParsed;
+            setAnalysisRaw(retryRaw);
+          }
+        } catch {
+          // Keep first response if retry fails.
+        }
+      }
       if (parsed && typeof parsed === "object") {
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
@@ -3800,187 +3848,165 @@ export default function ChartSnapshotsPage() {
             className="snapshot-control-card-v3 toolbar-panel"
             style={{
               display: "flex",
-              flexDirection: "column",
+              flexDirection: "row",
               gap: 10,
               marginBottom: 12,
               padding: "12px 16px",
-              alignItems: "flex-start",
+              alignItems: "center",
+              flexWrap: "nowrap",
+              overflowX: "auto",
             }}
           >
-            {/* Row 1 */}
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-                width: "100%",
-                justifyContent: "flex-start",
-              }}
-            >
-              {hasResponse && (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={resetAnalyzeSession}
-                >
-                  {"<"} Back
-                </button>
-              )}
-
-              {cfg.symbol && (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => setCfgField("symbol", "")}
-                  style={{ fontSize: 12, padding: "4px 8px" }}
-                >
-                  {"<"}
-                </button>
-              )}
-
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <select
-                  className="secondary-button"
-                  style={{
-                    height: "34px",
-                    padding: "0 10px",
-                    fontSize: "12px",
-                  }}
-                  value={templateId}
-                  onChange={(e) => handleSelectTemplate(e.target.value)}
-                >
-                  <option value="">New Template</option>
-                  <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  className="secondary-button"
-                  style={{
-                    height: "34px",
-                    padding: "0 10px",
-                    fontSize: "12px",
-                  }}
-                  value={cfg.profile || "day"}
-                  onChange={(e) => setProfilePreset(e.target.value)}
-                >
-                  {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div
-                className="v-sep-v3"
-                style={{
-                  height: 20,
-                  width: 1,
-                  background: "var(--border)",
-                  margin: "0 4px",
-                }}
-              />
-
+            {hasResponse && (
               <button
-                type="button"
                 className="secondary-button"
-                onClick={() => setSettingsModalOpen(true)}
+                type="button"
+                onClick={resetAnalyzeSession}
               >
-                Settings
+                {"<"} Back
               </button>
+            )}
+
+            {cfg.symbol && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setCfgField("symbol", "")}
+                style={{ fontSize: 12, padding: "4px 8px" }}
+              >
+                {"<"}
+              </button>
+            )}
+
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <select
+                className="secondary-button"
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  fontSize: "12px",
+                }}
+                value={templateId}
+                onChange={(e) => handleSelectTemplate(e.target.value)}
+              >
+                <option value="">New Template</option>
+                <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                className="secondary-button"
+                style={{
+                  height: "34px",
+                  padding: "0 10px",
+                  fontSize: "12px",
+                }}
+                value={cfg.profile || "day"}
+                onChange={(e) => setProfilePreset(e.target.value)}
+              >
+                {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Row 2 */}
+            <div
+              className="v-sep-v3"
+              style={{
+                height: 20,
+                width: 1,
+                background: "var(--border)",
+                margin: "0 4px",
+              }}
+            />
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setSettingsModalOpen(true)}
+            >
+              Settings
+            </button>
+
+            {/* AI controls — right aligned */}
             <div
               style={{
+                marginLeft: "auto",
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
-                width: "100%",
-                justifyContent: "flex-start",
-                flexWrap: "wrap",
+                flexWrap: "nowrap",
               }}
             >
-              {/* AI controls — right aligned */}
-              <div
+              {/* Provider select */}
+              <select
+                value={analysisSource}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAnalysisSource(v);
+                  localStorage.setItem("ai_model", v);
+                  // Reset model to first available for this provider
+                  const models = aiModelConfig.providers[v]?.models || [];
+                  if (models.length) {
+                    setSelectedModel(models[0].value);
+                    localStorage.setItem("ai_model_name", models[0].value);
+                  }
+                }}
+                className="secondary-button"
                 style={{
-                  marginLeft: "auto",
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
+                  padding: "0 8px",
+                  height: 34,
+                  fontSize: "12px",
+                  minWidth: 100,
                 }}
               >
-                {/* Provider select */}
-                <select
-                  value={analysisSource}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setAnalysisSource(v);
-                    localStorage.setItem("ai_model", v);
-                    // Reset model to first available for this provider
-                    const models = aiModelConfig.providers[v]?.models || [];
-                    if (models.length) {
-                      setSelectedModel(models[0].value);
-                      localStorage.setItem("ai_model_name", models[0].value);
-                    }
-                  }}
-                  className="secondary-button"
-                  style={{
-                    padding: "0 8px",
-                    height: 34,
-                    fontSize: "12px",
-                    minWidth: 100,
-                  }}
-                >
-                  {Object.entries(aiModelConfig.providers).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
+                {Object.entries(aiModelConfig.providers).map(([k, v]) => (
+                  <option key={k} value={k}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
 
-                {/* Model select */}
-                <select
-                  value={selectedModel}
-                  onChange={(e) => {
-                    setSelectedModel(e.target.value);
-                    localStorage.setItem("ai_model_name", e.target.value);
-                  }}
-                  className="secondary-button"
-                  style={{
-                    padding: "0 8px",
-                    height: 34,
-                    fontSize: "11px",
-                    minWidth: 140,
-                  }}
-                >
-                  {(
-                    aiModelConfig.providers[analysisSource]?.models ||
-                    aiModelConfig.providers["ai_claude"]?.models ||
-                    []
-                  ).map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
+              {/* Model select */}
+              <select
+                value={selectedModel}
+                onChange={(e) => {
+                  setSelectedModel(e.target.value);
+                  localStorage.setItem("ai_model_name", e.target.value);
+                }}
+                className="secondary-button"
+                style={{
+                  padding: "0 8px",
+                  height: 34,
+                  fontSize: "11px",
+                  minWidth: 140,
+                }}
+              >
+                {(
+                  aiModelConfig.providers[analysisSource]?.models ||
+                  aiModelConfig.providers["ai_claude"]?.models ||
+                  []
+                ).map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
 
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={analyzeSelected}
-                  disabled={analyzing}
-                >
-                  {analyzing ? "Analyzing..." : "Analyze"}
-                </button>
-              </div>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={analyzeSelected}
+                disabled={analyzing}
+              >
+                {analyzing ? "Analyzing..." : "Analyze"}
+              </button>
             </div>
           </div>
         )}

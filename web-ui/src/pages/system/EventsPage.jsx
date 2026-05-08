@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 
 const SOUNDS = [
@@ -19,7 +19,14 @@ function useNotificationState() {
   const [testMsg, setTestMsg] = useState("");
 
   async function fire(overrides = {}) {
-    try { setTestMsg(""); const res = await api.notificationTest(overrides); setTestMsg('Sent: ' + res.sent.event); setTimeout(() => setTestMsg(""), 3000); } catch (e) { setTestMsg('Failed: ' + (e?.message || e)); }
+    try {
+      setTestMsg("");
+      const res = await api.notificationTest(overrides);
+      setTestMsg(`Sent: ${res.sent.event}`);
+      setTimeout(() => setTestMsg(""), 3000);
+    } catch (e) {
+      setTestMsg(`Failed: ${e?.message || e}`);
+    }
   }
 
   async function load() {
@@ -27,8 +34,9 @@ function useNotificationState() {
       setLoading(true);
       const data = await api.notificationEvents();
       setEvents(data.events || []);
+      setError("");
     } catch (e) {
-      setError(e?.message);
+      setError(e?.message || "Failed to load notification events.");
     } finally {
       setLoading(false);
     }
@@ -55,32 +63,44 @@ function useNotificationState() {
       setMsg("Saved.");
       setTimeout(() => setMsg(""), 3000);
     } catch (e) {
-      setError(e?.message);
+      setError(e?.message || "Failed to save notification settings.");
     } finally {
       setSaving(false);
     }
   }
 
   function toggle(idx, key) {
-    setEvents((p) => {
-      const n = [...p];
-      n[idx] = { ...n[idx], [key]: !n[idx][key] };
-      return n;
+    setEvents((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [key]: !next[idx][key] };
+      return next;
     });
   }
 
   function setField(idx, key, val) {
-    setEvents((p) => {
-      const n = [...p];
-      n[idx] = { ...n[idx], [key]: val };
-      return n;
+    setEvents((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [key]: val };
+      return next;
     });
   }
 
-  return { events, loading, saving, msg, error, testMsg, fire, load, save, toggle, setField };
+  return {
+    events,
+    loading,
+    saving,
+    msg,
+    error,
+    testMsg,
+    fire,
+    load,
+    save,
+    toggle,
+    setField,
+  };
 }
 
-function EventRow({ event, idx, toggle, setField, state = {} }) {
+function EventRow({ event, idx, toggle, setField, state }) {
   return (
     <tr>
       <td>
@@ -137,7 +157,7 @@ function EventRow({ event, idx, toggle, setField, state = {} }) {
           onClick={() => {
             state.fire({
               event: event.event,
-              message: "Test: " + (event.label || event.event),
+              message: `Test: ${event.label || event.event}`,
               settings: {
                 toast: event.toast !== false,
                 console_log: event.console_log === true,
@@ -147,7 +167,9 @@ function EventRow({ event, idx, toggle, setField, state = {} }) {
               },
             });
           }}
-        >▶</button>
+        >
+          ▶
+        </button>
       </td>
     </tr>
   );
@@ -156,6 +178,25 @@ function EventRow({ event, idx, toggle, setField, state = {} }) {
 export function EventsPageContent() {
   const state = useNotificationState();
   const { events, loading, msg, error, load, save, toggle, setField } = state;
+  const readonlyJson = useMemo(
+    () =>
+      JSON.stringify(
+        (events || []).reduce((acc, ev) => {
+          acc[ev.event] = {
+            toast: ev.toast !== false,
+            console_log: ev.console_log === true,
+            ticker: ev.ticker === true,
+            db_log: ev.db_log !== false,
+            sound: ev.sound || null,
+          };
+          return acc;
+        }, {}),
+        null,
+        2,
+      ),
+    [events],
+  );
+
   return (
     <section className="stack-layout" style={{ gap: 14 }}>
       <div className="panel">
@@ -203,19 +244,19 @@ export function EventsPageContent() {
             disabled={state.saving}
             style={{ fontSize: 11 }}
           >
-            {state.saving ? "..." : "💾 SAVE"}
+            {state.saving ? "..." : "SAVE"}
           </button>
           {state.testMsg && (
-            <span className="badge FILLED" style={{ padding: "4px 10px", fontSize: 11 }}>
+            <span
+              className="badge FILLED"
+              style={{ padding: "4px 10px", fontSize: 11 }}
+            >
               {state.testMsg}
             </span>
           )}
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table
-            className="events-table"
-            style={{ width: "100%", minWidth: 600 }}
-          >
+          <table className="events-table" style={{ width: "100%", minWidth: 600 }}>
             <thead>
               <tr>
                 <th>EVENT</th>
@@ -231,7 +272,7 @@ export function EventsPageContent() {
               {loading && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     style={{ textAlign: "center", padding: 30 }}
                     className="minor-text"
                   >
@@ -242,7 +283,7 @@ export function EventsPageContent() {
               {!loading && events.length === 0 && (
                 <tr>
                   <td
-                    colSpan={6}
+                    colSpan={7}
                     style={{ textAlign: "center", padding: 30 }}
                     className="minor-text"
                   >
@@ -268,10 +309,26 @@ export function EventsPageContent() {
           className="minor-text"
           style={{ marginTop: 12, fontSize: 10, lineHeight: 1.6 }}
         >
-          <strong>Events:</strong> TRADE_ACTIVITY · SIGNAL_ACTIVITY ·
-          BROKER_POLL · BROKER_SYNC · SYSTEM_EVENT · REMOTE_API_CALL
+          <strong>Events:</strong> TRADE_ACTIVITY · SIGNAL_ACTIVITY · BROKER_POLL
+          · BROKER_SYNC · SYSTEM_EVENT · REMOTE_API_CALL
           <br />
           <strong>Channels:</strong> Toast · Console · Ticker · DB Log · Sound
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <div className="minor-text" style={{ marginBottom: 6 }}>
+            JSON Configuration (read only)
+          </div>
+          <textarea
+            readOnly
+            value={readonlyJson}
+            rows={10}
+            style={{
+              width: "100%",
+              resize: "vertical",
+              fontFamily: "monospace",
+              fontSize: 11,
+            }}
+          />
         </div>
       </div>
     </section>
@@ -279,132 +336,5 @@ export function EventsPageContent() {
 }
 
 export default function EventsPage() {
-  const state = useNotificationState();
-  const { events, loading, msg, error, load, save, toggle, setField } = state;
-
-  return (
-    <section className="stack-layout" style={{ gap: 14 }}>
-      <div className="panel">
-        <div className="panel-label">
-          NOTIFICATION SETTINGS
-          <span className="minor-text" style={{ marginLeft: 8, fontSize: 10 }}>
-            Configure channels per event type
-          </span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 10,
-            marginBottom: 12,
-          }}
-        >
-          {msg && (
-            <span
-              className="badge FILLED"
-              style={{ padding: "4px 10px", fontSize: 11 }}
-            >
-              {msg}
-            </span>
-          )}
-          {error && (
-            <span
-              className="badge SL"
-              style={{ padding: "4px 10px", fontSize: 11 }}
-            >
-              {error}
-            </span>
-          )}
-          <button
-            className="secondary-button"
-            onClick={load}
-            disabled={loading}
-            style={{ fontSize: 11 }}
-          >
-            {loading ? "..." : "REFRESH"}
-          </button>
-          <button
-            className="primary-button"
-            onClick={save}
-            disabled={state.saving}
-            style={{ fontSize: 11 }}
-          >
-            {state.saving ? "..." : "💾 SAVE"}
-          </button>
-          {state.testMsg && (
-            <span className="badge FILLED" style={{ padding: "4px 10px", fontSize: 11 }}>
-              {state.testMsg}
-            </span>
-          )}
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table
-            className="events-table"
-            style={{ width: "100%", minWidth: 600 }}
-          >
-            <thead>
-              <tr>
-                <th>EVENT</th>
-                <th style={{ width: 60, textAlign: "center" }}>TOAST</th>
-                <th style={{ width: 60, textAlign: "center" }}>CONSOLE</th>
-                <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
-                <th style={{ width: 60, textAlign: "center" }}>DB LOG</th>
-                <th style={{ width: 110 }}>SOUND</th>
-                <th style={{ width: 40 }}>TEST</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{ textAlign: "center", padding: 30 }}
-                    className="minor-text"
-                  >
-                    Loading...
-                  </td>
-                </tr>
-              )}
-              {!loading && events.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    style={{ textAlign: "center", padding: 30 }}
-                    className="minor-text"
-                  >
-                    No events configured.
-                  </td>
-                </tr>
-              )}
-              {!loading &&
-                events.map((ev, idx) => (
-                  <EventRow
-                    key={ev.event}
-                    event={ev}
-                    idx={idx}
-                    toggle={toggle}
-                    setField={setField}
-                    state={state}
-                  />
-                ))}
-            </tbody>
-          </table>
-        </div>
-        <div
-          className="minor-text"
-          style={{ marginTop: 12, fontSize: 10, lineHeight: 1.6 }}
-        >
-          <strong>Events:</strong> TRADE_ACTIVITY (trade
-          created/updated/deleted) · SIGNAL_ACTIVITY (signal
-          created/updated/deleted) · BROKER_POLL (periodic broker check) ·
-          BROKER_SYNC (sync cycle result) · SYSTEM_EVENT (admin actions) ·
-          REMOTE_API_CALL (Claude/Twelve/OpenAI calls)
-          <br />
-          <strong>Channels:</strong> Toast (in-app popup) · Console (server log)
-          · Ticker (scrolling bar) · DB Log (persistent storage) · Sound (audio
-          alert)
-        </div>
-      </div>
-    </section>
-  );
+  return <EventsPageContent />;
 }
