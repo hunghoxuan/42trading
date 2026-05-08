@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 16:34 - a7b54eb"
-); // ai browser drag & drop image attach
+  "v2026.05.08 16:54 - 16e70c7"
+); // autosave behavior + ai browser button states
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16826,34 +16826,52 @@ const appHandler = async (req, res) => {
             trade_plan: plan,
           };
           if (mode === "signals") {
-            const signal = await mt5EnqueueSignalFromPayload(
-              {
-                action,
-                symbol,
-                entry: pick.entry,
-                price: pick.entry,
-                sl: pick.sl,
-                tp: pick.tp,
-                note: String(
-                  plan?.note || parsedJson?.final_verdict?.note || "",
-                ).trim(),
-                strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim(),
-                entry_model: String(plan?.entry_model || "").trim(),
-                timeframe: String(body?.timeframe || "").trim() || "manual",
-                provider: source,
-                source,
-                user_id: userId,
+            const signalId = mt5GenerateTimeSid();
+            const signalSid = normalizePublicSidBase(`${symbol}_AI`, "SIG");
+            const orderType = mt5NormalizeOrderType({
+              order_type: plan?.type || "limit",
+            });
+            const entryModel = String(plan?.entry_model || "").trim() || null;
+            const note = String(
+              plan?.note || parsedJson?.final_verdict?.note || "",
+            ).trim();
+            await mt5UpsertSignal({
+              signal_id: signalId,
+              sid: signalSid,
+              created_at: mt5NowIso(),
+              user_id: userId,
+              source,
+              source_id: mt5SlugId(source, "tradingview"),
+              symbol,
+              side: mt5MapActionToSide(action),
+              entry: pick.entry,
+              strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
+              entry_model: entryModel,
+              sl: pick.sl,
+              tp: pick.tp,
+              rr_planned: asNum(plan?.rr, null),
+              signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              note,
+              order_type: orderType,
+              raw_json: {
+                ...sharedRawJson,
                 only_signal: true,
-                raw_json: sharedRawJson,
               },
-              {
-                source,
-                eventType: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
-                fallbackIdPrefix: "ai",
-              },
-              testSettings,
-            );
-            return { enabled: true, mode, saved: true, signal };
+              status: "NEW",
+            });
+            await mt5Log(
+              signalId,
+              "signals",
+              { event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL", data: sharedRawJson },
+              userId,
+            ).catch(() => null);
+            return {
+              enabled: true,
+              mode,
+              saved: true,
+              signal: { signal_id: signalId, sid: signalSid, symbol },
+            };
           }
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({

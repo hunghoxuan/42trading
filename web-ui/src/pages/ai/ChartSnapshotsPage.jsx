@@ -1701,6 +1701,7 @@ export default function ChartSnapshotsPage() {
   const [isSymbolPanelOpen, setIsSymbolPanelOpen] = useState(true);
   const [symbolFilterTab, setSymbolFilterTab] = useState("FAVOURITE");
   const [analysisFilesDisplay, setAnalysisFilesDisplay] = useState([]);
+  const [autoSaveResult, setAutoSaveResult] = useState(null);
   const [position, setPosition] = useState({
     direction: "BUY",
     entry: "",
@@ -1817,6 +1818,7 @@ export default function ChartSnapshotsPage() {
     setActionStatus({ action: "", type: "", text: "" });
     setSessionPrefix("");
     setAiContext(null);
+    setAutoSaveResult(null);
     if (pendingHydrateRef.current) {
       const p = pendingHydrateRef.current;
       pendingHydrateRef.current = null;
@@ -1982,6 +1984,14 @@ export default function ChartSnapshotsPage() {
     position.direction,
     cfg.symbol,
   ]);
+  const autoSavedSignal =
+    autoSaveResult?.enabled === true &&
+    autoSaveResult?.saved === true &&
+    autoSaveResult?.mode === "signals";
+  const autoSavedTrades =
+    autoSaveResult?.enabled === true &&
+    autoSaveResult?.saved === true &&
+    autoSaveResult?.mode === "trades";
 
   const setCfgField = (key, value) => {
     setCfg((prev) => ({ ...prev, [key]: value }));
@@ -2279,6 +2289,7 @@ export default function ChartSnapshotsPage() {
     setAnalysisParsed(null);
     setUsedFiles([]);
     setAnalysisFilesDisplay(Array.isArray(files) ? files : []);
+    setAutoSaveResult(null);
     const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
     try {
@@ -2411,6 +2422,7 @@ export default function ChartSnapshotsPage() {
         });
       }
       const raw = String(out?.raw_response || "");
+      setAutoSaveResult(out?.auto_save_result || null);
       setAnalysisRaw(raw);
       let parsed = enrichParsedAnalysis(
         raw,
@@ -3367,7 +3379,12 @@ export default function ChartSnapshotsPage() {
     resetPositionLocal();
     setActionStatus({ action: "", type: "", text: "" });
     setSessionPrefix("");
+    setAutoSaveResult(null);
     setStatus({ type: "success", text: "New analyze session started." });
+  };
+  const resetToDefaultBrowser = () => {
+    resetAnalyzeSession();
+    setCfgField("symbol", "");
   };
 
   const chartPdArrays = useMemo(() => {
@@ -4106,14 +4123,6 @@ export default function ChartSnapshotsPage() {
                 ))}
               </select>
 
-              <button
-                className="primary-button"
-                type="button"
-                onClick={analyzeSelected}
-                disabled={analyzing}
-              >
-                {analyzing ? "Analyzing..." : "Analyze"}
-              </button>
               <select
                 value={autoSaveMode}
                 onChange={(e) => setAutoSaveMode(e.target.value)}
@@ -4130,6 +4139,14 @@ export default function ChartSnapshotsPage() {
                 <option value="signals">Auto Save: Signals</option>
                 <option value="trades">Auto Save: Trades</option>
               </select>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={analyzeSelected}
+                disabled={analyzing}
+              >
+                {analyzing ? "Analyzing..." : "Analyze"}
+              </button>
             </div>
           </div>
         )}
@@ -4617,10 +4634,10 @@ export default function ChartSnapshotsPage() {
                 onAddTrade: (pos, planId = "main") =>
                   addBySelection("trade", pos, planId),
                 showSaveButton: false,
-                showAddSignalButton: true,
-                showAddTradeButton: true,
+                showAddSignalButton: !autoSavedSignal && !autoSavedTrades,
+                showAddTradeButton: !autoSavedTrades,
                 showResetButton: true,
-                onReset: resetPositionLocal,
+                onReset: resetToDefaultBrowser,
                 busy: {
                   signal: addingSignal && submittingPlanId === "main",
                   trade: addingSignal && submittingPlanId === "main",
