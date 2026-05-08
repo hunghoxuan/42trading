@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 21:02 - 76be1be"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.08 21:02 - 76be1be",
+); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -877,13 +880,26 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
       subType = ev.replace("SIGNAL_", "").toLowerCase();
     }
     if (eventType) {
-      notificationManager.handle(eventType, subType, {
-        object_id: objectId,
-        object_table: objectTable,
-        user_id: userId || null,
-        message: metadata.event || "",
-        ...metadata,
-      });
+      try {
+        notificationManager.handle(eventType, subType, {
+          object_id: objectId,
+          object_table: objectTable,
+          user_id: userId || null,
+          message: metadata.event || "",
+          ...metadata,
+        });
+      } catch (e) {
+        // Log failed — still record as error
+        notificationManager.handle(eventType, subType, {
+          object_id: objectId,
+          object_table: objectTable,
+          user_id: userId || null,
+          message: metadata.event || "",
+          status: "ERROR",
+          error: e.message || String(e),
+          ...metadata,
+        });
+      }
     }
   }
   // Legacy DB insert — still needed for object-scoped queries (e.g. trade detail events page)
@@ -7442,9 +7458,7 @@ async function _mt5InitBackendInternal() {
       );
       const accountUserId = String(acc.rows[0]?.user_id || "").trim();
       let uid = String(
-        acc.rows[0]?.resolved_user_id ||
-          accountUserId ||
-          CFG.mt5DefaultUserId,
+        acc.rows[0]?.resolved_user_id || accountUserId || CFG.mt5DefaultUserId,
       ).trim();
       const existingMeta = acc.rows[0]?.metadata || {};
 
@@ -7710,33 +7724,33 @@ async function _mt5InitBackendInternal() {
         try {
           let res = { rowCount: 0 };
           const ticketCandidates =
-          Array.isArray(it.ticket_candidates) && it.ticket_candidates.length
-            ? it.ticket_candidates
-            : it.ticket
-              ? [it.ticket]
-              : [];
-        const syncMeta = JSON.stringify({
-          broker_data: {
-            ...it, // Spread all processed fields (pips, lots, commission, etc.)
-            position_id: ticketCandidates[0] || null,
-            ticket_candidates: ticketCandidates,
-            status: it.status_raw || null,
-            last_sync_at: new Date().toISOString(),
-          },
-          last_sync_source: "broker_sync_v2",
-        });
-        const syncSymbol = String(it.symbol || "")
-          .trim()
-          .toUpperCase();
-        const syncAction = String(it.action || "")
-          .trim()
-          .toUpperCase();
-        if (ticketCandidates.length) {
-          const openedAt = it.opened_at || null;
-          const closedAt = it.closed_at || null;
-          if (syncSymbol) {
-            await pool.query(
-              `
+            Array.isArray(it.ticket_candidates) && it.ticket_candidates.length
+              ? it.ticket_candidates
+              : it.ticket
+                ? [it.ticket]
+                : [];
+          const syncMeta = JSON.stringify({
+            broker_data: {
+              ...it, // Spread all processed fields (pips, lots, commission, etc.)
+              position_id: ticketCandidates[0] || null,
+              ticket_candidates: ticketCandidates,
+              status: it.status_raw || null,
+              last_sync_at: new Date().toISOString(),
+            },
+            last_sync_source: "broker_sync_v2",
+          });
+          const syncSymbol = String(it.symbol || "")
+            .trim()
+            .toUpperCase();
+          const syncAction = String(it.action || "")
+            .trim()
+            .toUpperCase();
+          if (ticketCandidates.length) {
+            const openedAt = it.opened_at || null;
+            const closedAt = it.closed_at || null;
+            if (syncSymbol) {
+              await pool.query(
+                `
               UPDATE trades
               SET broker_trade_id = NULL,
                   execution_status = CASE WHEN execution_status = 'OPEN' THEN 'PENDING' ELSE execution_status END,
@@ -7747,20 +7761,20 @@ async function _mt5InitBackendInternal() {
                 AND symbol <> $3
                 AND execution_status IN ('PENDING','OPEN')
             `,
-              [
-                aid,
-                ticketCandidates,
-                syncSymbol,
-                JSON.stringify({
-                  broker_ticket_mismatch_cleared: ticketCandidates,
-                  broker_ticket_mismatch_symbol: syncSymbol,
-                  broker_ticket_mismatch_at: new Date().toISOString(),
-                }),
-              ],
-            );
-          }
-          res = await pool.query(
-            `
+                [
+                  aid,
+                  ticketCandidates,
+                  syncSymbol,
+                  JSON.stringify({
+                    broker_ticket_mismatch_cleared: ticketCandidates,
+                    broker_ticket_mismatch_symbol: syncSymbol,
+                    broker_ticket_mismatch_at: new Date().toISOString(),
+                  }),
+                ],
+              );
+            }
+            res = await pool.query(
+              `
             UPDATE trades
             SET dispatch_status = CASE
                   WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
@@ -7801,35 +7815,35 @@ async function _mt5InitBackendInternal() {
               )
             RETURNING sid, pnl_realized
           `,
-            [
-              it.execution_status,
-              it.pnl,
-              aid,
-              ticketCandidates,
-              openedAt,
-              closedAt,
-              it.volume,
-              it.close_reason,
-              ticketCandidates[0] || "",
-              syncMeta,
-              syncSymbol,
-              it.order_type || null,
-              it.pips || 0,
-              it.lots || 0,
-              it.commission || 0,
-              it.swap || 0,
-              it.volume || 0,
-              it.sid || "",
-              it.margin || 0,
-              it.tp_pnl || it.pnl_tp || 0,
-              it.sl_pnl || it.pnl_sl || 0,
-            ],
-          );
-        }
-        if (it.sid) {
-          if (res.rowCount === 0) {
-            res = await pool.query(
-              `
+              [
+                it.execution_status,
+                it.pnl,
+                aid,
+                ticketCandidates,
+                openedAt,
+                closedAt,
+                it.volume,
+                it.close_reason,
+                ticketCandidates[0] || "",
+                syncMeta,
+                syncSymbol,
+                it.order_type || null,
+                it.pips || 0,
+                it.lots || 0,
+                it.commission || 0,
+                it.swap || 0,
+                it.volume || 0,
+                it.sid || "",
+                it.margin || 0,
+                it.tp_pnl || it.pnl_tp || 0,
+                it.sl_pnl || it.pnl_sl || 0,
+              ],
+            );
+          }
+          if (it.sid) {
+            if (res.rowCount === 0) {
+              res = await pool.query(
+                `
             UPDATE trades
             SET dispatch_status = CASE
                   WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
@@ -7874,35 +7888,35 @@ async function _mt5InitBackendInternal() {
             )
             RETURNING sid
             `,
-              [
-                it.execution_status,
-                it.ticket,
-                it.pnl,
-                aid,
-                it.sid,
-                it.volume,
-                it.close_reason,
-                syncMeta,
-                it.opened_at || null,
-                it.closed_at || null,
-                it.order_type || null,
-                it.pips || 0,
-                it.lots || 0,
-                it.commission || 0,
-                it.swap || 0,
-                it.volume || 0,
-                ticketCandidates,
-                it.margin || 0,
-                it.tp_pnl || it.pnl_tp || 0,
-                it.sl_pnl || it.pnl_sl || 0,
-              ],
-            );
+                [
+                  it.execution_status,
+                  it.ticket,
+                  it.pnl,
+                  aid,
+                  it.sid,
+                  it.volume,
+                  it.close_reason,
+                  syncMeta,
+                  it.opened_at || null,
+                  it.closed_at || null,
+                  it.order_type || null,
+                  it.pips || 0,
+                  it.lots || 0,
+                  it.commission || 0,
+                  it.swap || 0,
+                  it.volume || 0,
+                  ticketCandidates,
+                  it.margin || 0,
+                  it.tp_pnl || it.pnl_tp || 0,
+                  it.sl_pnl || it.pnl_sl || 0,
+                ],
+              );
+            }
           }
-        }
-        if (res.rowCount === 0 && ticketCandidates.length) {
-          // Last-resort fallback: bind ticket to oldest unresolved trade for this account.
-          res = await pool.query(
-            `
+          if (res.rowCount === 0 && ticketCandidates.length) {
+            // Last-resort fallback: bind ticket to oldest unresolved trade for this account.
+            res = await pool.query(
+              `
             UPDATE trades
             SET dispatch_status = CASE
                   WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
@@ -7948,95 +7962,95 @@ async function _mt5InitBackendInternal() {
             )
             RETURNING sid
           `,
-            [
-              it.execution_status,
-              it.ticket,
-              it.pnl,
-              aid,
-              it.volume,
-              it.close_reason,
-              syncMeta,
-              it.closed_at || null,
-              syncSymbol,
-              syncAction,
-              it.order_type || null,
-              it.pips || 0,
-              it.lots || 0,
-              it.commission || 0,
-              it.swap || 0,
-              it.volume || 0,
-              it.margin || 0,
-              it.tp_pnl || 0,
-              it.sl_pnl || 0,
-            ],
-          );
-        }
-
-        if (res.rowCount > 0) {
-          matched += res.rowCount;
-          synced++;
-          const tid = String(res.rows?.[0]?.sid || "").trim();
-          results.push({
-            ticket: it.ticket,
-            sid: tid,
-            status: "Ok",
-            symbol: it.symbol,
-            action: it.action,
-          });
-          if (tid) {
-            await this.log(
-              tid,
-              "trades",
-              {
-                event: "TRADE_SYNC_UPDATE",
-                status_raw: it.status_raw,
-                execution_status: it.execution_status,
-                ticket: it.ticket || null,
-                signal_id: it.sid || null,
-                pnl: it.pnl,
-                pips: it.pips,
-                lots: it.lots,
-                commission: it.commission,
-                swap: it.swap,
-                volume: it.volume,
-                margin: it.margin,
-                tp_pnl: it.tp_pnl,
-                sl_pnl: it.sl_pnl,
-              },
-              uid,
+              [
+                it.execution_status,
+                it.ticket,
+                it.pnl,
+                aid,
+                it.volume,
+                it.close_reason,
+                syncMeta,
+                it.closed_at || null,
+                syncSymbol,
+                syncAction,
+                it.order_type || null,
+                it.pips || 0,
+                it.lots || 0,
+                it.commission || 0,
+                it.swap || 0,
+                it.volume || 0,
+                it.margin || 0,
+                it.tp_pnl || 0,
+                it.sl_pnl || 0,
+              ],
             );
           }
-        } else if (it.execution_status === "OPEN") {
-          if (!syncSymbol || !syncAction) {
+
+          if (res.rowCount > 0) {
+            matched += res.rowCount;
+            synced++;
+            const tid = String(res.rows?.[0]?.sid || "").trim();
             results.push({
               ticket: it.ticket,
-              sid: null,
-              status: "Skip",
+              sid: tid,
+              status: "Ok",
               symbol: it.symbol,
               action: it.action,
-              reason: "missing_symbol_or_action",
             });
-            continue;
-          }
-          const discoverySid = String(it.ticket || mt5GenerateTimeSid());
-          const brokerSource = (payload.broker_name || "BROKER")
-            .toUpperCase()
-            .replace(/\s+/g, "_");
-          await this.upsertSourceV2({
-            source_id: brokerSource,
-            name: payload.broker_name || brokerSource,
-            kind: "broker",
-            auth_mode: "token",
-            is_active: true,
-            metadata: {
-              discovered_via: "broker_sync_v2",
-              account_id: aid,
-              broker_name: payload.broker_name || brokerSource,
-            },
-          });
+            if (tid) {
+              await this.log(
+                tid,
+                "trades",
+                {
+                  event: "TRADE_SYNC_UPDATE",
+                  status_raw: it.status_raw,
+                  execution_status: it.execution_status,
+                  ticket: it.ticket || null,
+                  signal_id: it.sid || null,
+                  pnl: it.pnl,
+                  pips: it.pips,
+                  lots: it.lots,
+                  commission: it.commission,
+                  swap: it.swap,
+                  volume: it.volume,
+                  margin: it.margin,
+                  tp_pnl: it.tp_pnl,
+                  sl_pnl: it.sl_pnl,
+                },
+                uid,
+              );
+            }
+          } else if (it.execution_status === "OPEN") {
+            if (!syncSymbol || !syncAction) {
+              results.push({
+                ticket: it.ticket,
+                sid: null,
+                status: "Skip",
+                symbol: it.symbol,
+                action: it.action,
+                reason: "missing_symbol_or_action",
+              });
+              continue;
+            }
+            const discoverySid = String(it.ticket || mt5GenerateTimeSid());
+            const brokerSource = (payload.broker_name || "BROKER")
+              .toUpperCase()
+              .replace(/\s+/g, "_");
+            await this.upsertSourceV2({
+              source_id: brokerSource,
+              name: payload.broker_name || brokerSource,
+              kind: "broker",
+              auth_mode: "token",
+              is_active: true,
+              metadata: {
+                discovered_via: "broker_sync_v2",
+                account_id: aid,
+                broker_name: payload.broker_name || brokerSource,
+              },
+            });
 
-          await pool.query(
-            `
+            await pool.query(
+              `
             INSERT INTO trades (
               sid, account_id, user_id,
               symbol, action, volume, entry,
@@ -8047,47 +8061,50 @@ async function _mt5InitBackendInternal() {
             ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::numeric, $7::numeric, 'OPEN', $8::text, $9::jsonb, $10::text, $11::numeric, $12::numeric, $13::numeric, $14::numeric, $15::numeric, $16::numeric, $17::numeric, $18::numeric, $19::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
-            [
-              discoverySid,
-              aid,
-              uid,
-              syncSymbol,
-              syncAction,
-              it.volume || 0,
-              it.entry || 0,
-              brokerSource,
-              syncMeta,
-              ticketCandidates[0] || "",
-              it.pips || 0,
-              it.lots || 0,
-              it.commission || 0,
-              it.swap || 0,
-              it.volume || 0,
-              it.pnl || 0,
-              it.margin || 0,
-              it.tp_pnl || 0,
-              it.sl_pnl || 0,
-            ],
-          );
-          matched++;
-          results.push({
-            ticket: it.ticket,
-            sid: discoverySid,
-            status: "Added",
-            symbol: it.symbol,
-            action: it.action,
-          });
-        } else {
-          results.push({
-            ticket: it.ticket,
-            sid: null,
-            status: "Skip",
-            symbol: it.symbol,
-            action: it.action,
-          });
-        }
+              [
+                discoverySid,
+                aid,
+                uid,
+                syncSymbol,
+                syncAction,
+                it.volume || 0,
+                it.entry || 0,
+                brokerSource,
+                syncMeta,
+                ticketCandidates[0] || "",
+                it.pips || 0,
+                it.lots || 0,
+                it.commission || 0,
+                it.swap || 0,
+                it.volume || 0,
+                it.pnl || 0,
+                it.margin || 0,
+                it.tp_pnl || 0,
+                it.sl_pnl || 0,
+              ],
+            );
+            matched++;
+            results.push({
+              ticket: it.ticket,
+              sid: discoverySid,
+              status: "Added",
+              symbol: it.symbol,
+              action: it.action,
+            });
+          } else {
+            results.push({
+              ticket: it.ticket,
+              sid: null,
+              status: "Skip",
+              symbol: it.symbol,
+              action: it.action,
+            });
+          }
         } catch (err) {
-          console.error(`[brokerSyncV2] Error processing item ticket=${it.ticket}`, err);
+          console.error(
+            `[brokerSyncV2] Error processing item ticket=${it.ticket}`,
+            err,
+          );
           results.push({
             ticket: it.ticket,
             sid: it.sid || it.signal_id || null,
@@ -15255,8 +15272,8 @@ const appHandler = async (req, res) => {
           ack_ticket: ackTicket,
           symbol: symbol || "N/A",
           payload_json: payload,
-          status: r.status || null,
-          error: r.error || null,
+          status: payload.status || null,
+          error: payload.error || null,
         };
       });
       if (hasExtraFilter) {
@@ -16769,7 +16786,10 @@ const appHandler = async (req, res) => {
           if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(mediaType)) continue;
           const data = String(m[2] || "").trim();
           if (!data) continue;
-          out.push({ mediaType: mediaType === "image/jpg" ? "image/jpeg" : mediaType, data });
+          out.push({
+            mediaType: mediaType === "image/jpg" ? "image/jpeg" : mediaType,
+            data,
+          });
         }
         return out;
       };
@@ -16981,7 +17001,10 @@ const appHandler = async (req, res) => {
             await mt5Log(
               signalId,
               "signals",
-              { event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL", data: sharedRawJson },
+              {
+                event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
+                data: sharedRawJson,
+              },
               userId,
             ).catch(() => null);
             return {
