@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 14:35 - 4867736",
+  "v2026.05.08 14:35 - 4867736"
 ); // analyze auto_save
 
 const SERVER_LOG_DIR = envStr(
