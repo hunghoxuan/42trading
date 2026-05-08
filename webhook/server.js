@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 18:15 - fab00d6"
-); // map full ai trade_plan fields to ui panel
+  "v2026.05.08 18:24 - 21c1c63"
+); // map nested trade analysis fields on trade detail page
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

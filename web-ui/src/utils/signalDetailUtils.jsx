@@ -64,11 +64,11 @@ export function buildRrVolRiskText({
         : null;
 
   const volVal =
-    volumeSizeRaw != null
-      ? volumeSizeRaw / 100
-      : (plannedVol ?? (riskPct != null ? riskPct / 100 : null));
-  const volText =
-    volVal != null ? `vol ${Number((volVal * 100).toFixed(2))}%` : "vol -";
+    asNum(riskPctRaw) ??
+    (volumeSizeRaw != null ? volumeSizeRaw / 100 : null) ??
+    plannedVol;
+  const riskText =
+    volVal != null ? `risk ${Number((volVal * 100).toFixed(2))}%` : "risk -";
 
   const lotsText = vol != null ? `${Number(vol.toFixed(3))} lots` : "- lots";
   const rrText = rr != null ? `${rr.toFixed(2)} rr` : "- rr";
@@ -83,7 +83,7 @@ export function buildRrVolRiskText({
       }}
     >
       <span>{rrText}</span>
-      <span>{volText}</span>
+      <span>{riskText}</span>
       <span>|</span>
       <span>{lotsText}</span>
       {(reward != null || loss != null) && (
@@ -166,11 +166,28 @@ export function formatNum3(v) {
 }
 
 function firstTradePlan(raw = {}) {
-  if (Array.isArray(raw?.trade_plan)) return raw.trade_plan[0] || {};
-  if (Array.isArray(raw?.tradePlan)) return raw.tradePlan[0] || {};
-  return raw?.trade_plan && typeof raw.trade_plan === "object"
-    ? raw.trade_plan
-    : {};
+  const candidates = [
+    raw,
+    raw?.analysis_result,
+    raw?.analysis,
+    raw?.parsed_json,
+    raw?.raw_json,
+    raw?.metadata,
+    raw?.metadata?.raw_json,
+    raw?.metadata?.analysis_result,
+    raw?.payload,
+    raw?.payload?.analysis_result,
+  ];
+  for (const src of candidates) {
+    if (!src || typeof src !== "object") continue;
+    if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
+      return src.trade_plan[0] || {};
+    if (Array.isArray(src?.tradePlan) && src.tradePlan.length)
+      return src.tradePlan[0] || {};
+    if (src?.trade_plan && typeof src.trade_plan === "object")
+      return src.trade_plan;
+  }
+  return {};
 }
 
 function planPrimaryTp(plan = {}) {
@@ -257,6 +274,23 @@ export function extractTradePlanFromSignal(signal = {}) {
     trade_type: String(
       tradePlan?.type || raw?.order_type || "limit",
     ).toLowerCase(),
+    risk_pct: asNum(
+      signal.risk_pct_planned ??
+        raw.risk_pct ??
+        raw.riskPct ??
+        tradePlan.risk_pct ??
+        tradePlan.riskPct ??
+        signal.volume ??
+        raw.volume ??
+        0.01,
+    ),
+    risk_money: asNum(
+      signal.risk_money_planned ??
+        raw.risk_money ??
+        raw.riskMoney ??
+        tradePlan.risk_money ??
+        tradePlan.riskMoney,
+    ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
     sl: formatNum3(sl ?? NaN),
@@ -340,8 +374,18 @@ export function extractTradePlanFromTrade(trade = {}) {
     trade?.metadata && typeof trade.metadata === "object" ? trade.metadata : {};
   const raw =
     trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+  const plan = firstTradePlan({
+    ...raw,
+    metadata: meta,
+    raw_json: raw,
+    analysis_result:
+      raw?.analysis_result ||
+      meta?.analysis_result ||
+      meta?.raw_json?.analysis_result ||
+      null,
+  });
   const sideRaw = String(
-    trade.action || trade.side || meta.direction || "",
+    trade.action || trade.side || meta.direction || plan?.direction || "",
   ).toUpperCase();
   const entry = asNum(trade.entry);
   const tp = asNum(trade.tp);
@@ -353,65 +397,92 @@ export function extractTradePlanFromTrade(trade = {}) {
     trade_type: String(
       meta.trade_type || meta.order_type || raw.order_type || "limit",
     ).toLowerCase(),
+    risk_pct: asNum(
+      trade.risk_pct_planned ??
+        meta.risk_pct ??
+        meta.riskPct ??
+        raw.riskPct ??
+        raw.risk_pct ??
+        trade.volume ??
+        meta.volumePct ??
+        0.01,
+    ),
+    risk_money: asNum(
+      trade.risk_money_planned ??
+        meta.risk_money ??
+        meta.riskMoney ??
+        raw.riskMoney ??
+        raw.risk_money,
+    ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(trade.note || "").trim(),
     entry_model: String(
-      trade.entry_model || meta.entry_model || raw.entry_model || "",
+      trade.entry_model || meta.entry_model || raw.entry_model || plan.entry_model || "",
     ),
-    strategy: String(trade.strategy || meta.strategy || raw.strategy || ""),
+    strategy: String(trade.strategy || meta.strategy || raw.strategy || plan.strategy || ""),
     confidence_pct: asNum(
       trade.confidence_pct ??
         trade.confidence ??
         meta.confidence_pct ??
         meta.confidence ??
         raw.confidence_pct ??
-        raw.confidence,
+        raw.confidence ??
+        plan.confidence_pct ??
+        plan.confidence,
     ),
     invalidation: String(
-      trade.invalidation || meta.invalidation || raw.invalidation || "",
+      trade.invalidation || meta.invalidation || raw.invalidation || plan.invalidation || "",
     ),
     estimated_bars: asNum(
-      trade.estimated_bars ?? meta.estimated_bars ?? raw.estimated_bars,
+      trade.estimated_bars ?? meta.estimated_bars ?? raw.estimated_bars ?? plan.estimated_bars,
     ),
-    be_trigger: asNum(trade.be_trigger ?? meta.be_trigger ?? raw.be_trigger),
-    profile: String(trade.profile || meta.profile || raw.profile || ""),
+    be_trigger: asNum(trade.be_trigger ?? meta.be_trigger ?? raw.be_trigger ?? plan.be_trigger ?? plan.be),
+    profile: String(trade.profile || meta.profile || raw.profile || plan.profile || ""),
     exit_condition: String(
-      trade.exit_condition || meta.exit_condition || raw.exit_condition || "",
+      trade.exit_condition || meta.exit_condition || raw.exit_condition || plan.exit_condition || "",
     ),
     entry_condition: String(
       trade.entry_condition ||
         meta.entry_condition ||
         raw.entry_condition ||
+        plan.entry_condition ||
         "",
     ),
     confluence_checklist: Array.isArray(
       trade.confluence_checklist ||
         meta.confluence_checklist ||
-        raw.confluence_checklist,
+        raw.confluence_checklist ||
+        plan.confluence_checklist,
     )
       ? trade.confluence_checklist ||
         meta.confluence_checklist ||
-        raw.confluence_checklist
+        raw.confluence_checklist ||
+        plan.confluence_checklist
       : [],
     skip_recommendation: String(
       trade.skip_recommendation ||
         meta.skip_recommendation ||
         raw.skip_recommendation ||
+        plan.skip_recommendation ||
         "",
     ),
-    risk_management: String(meta.risk_management || raw.risk_management || ""),
+    risk_management: String(meta.risk_management || raw.risk_management || plan.risk_management || ""),
     partial_tps: Array.isArray(meta.partial_tps)
       ? meta.partial_tps
       : Array.isArray(raw.partial_tps)
         ? raw.partial_tps
+        : Array.isArray(plan.partial_tps)
+          ? plan.partial_tps
         : [],
     reasons_to_skip: Array.isArray(meta.reasons_to_skip)
       ? meta.reasons_to_skip
       : Array.isArray(raw.reasons_to_skip)
         ? raw.reasons_to_skip
+        : Array.isArray(plan.reasons_to_skip)
+          ? plan.reasons_to_skip
         : [],
   };
 }
