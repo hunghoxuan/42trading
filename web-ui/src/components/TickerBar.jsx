@@ -52,6 +52,19 @@ export default function TickerBar() {
     const n = Number(v || 0);
     return `${n >= 0 ? "+" : ""}${n.toFixed(2)}`;
   };
+  const showTimeAgo = (ts) => {
+    const ms = Number(ts || 0);
+    if (!Number.isFinite(ms) || ms <= 0) return "";
+    const diff = Math.max(0, Date.now() - ms);
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const day = Math.floor(hr / 24);
+    return `${day}d ago`;
+  };
 
   return (
     <div className="ticker-bar">
@@ -67,6 +80,9 @@ export default function TickerBar() {
               [{String(active.event || "").replace(/_/g, " ").toUpperCase()}]
             </span>
             <span className="ticker-message">{active.message}</span>
+            <span className="ticker-timeago minor-text">
+              {showTimeAgo(active.ts)}
+            </span>
           </>
         ) : (
           <span className="ticker-message">No message</span>

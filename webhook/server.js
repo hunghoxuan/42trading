@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 10:31 - 2d535c0"); // remove snapshots+warmup, move AI controls to right
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 11:01 - 51590d1"); // remove snapshots+warmup, move AI controls to right
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16873,6 +16873,21 @@ const appHandler = async (req, res) => {
         const requestModel =
           String(body.model || "claude-sonnet-4-0").trim() ||
           "claude-sonnet-4-0";
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_API_CALL_REQUEST",
+            provider: "claude",
+            mode: "context_files",
+            model: requestModel,
+            symbol: contextBundle.symbol,
+            files_count: usedSnapshotFiles.length,
+          },
+          userId,
+        );
         const out = await anthropicMessagesWithFallback({
           apiKey: claudeKey,
           model: requestModel,
@@ -16887,6 +16902,21 @@ const appHandler = async (req, res) => {
           const errText = await aiRes.text();
           throw new Error(`Claude API Error (${aiRes.status}): ${errText}`);
         }
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_API_CALL_RESPONSE",
+            provider: "claude",
+            mode: "context_files",
+            model: resolvedModel,
+            symbol: contextBundle.symbol,
+            ok: true,
+          },
+          userId,
+        );
         const aiJson = await aiRes.json();
         const rawResponse = Array.isArray(aiJson?.content)
           ? aiJson.content
@@ -17092,7 +17122,9 @@ const appHandler = async (req, res) => {
           ? sessionMatched
           : symbolMatched.length
             ? symbolMatched
-            : allSnapshots;
+            : requestedSymbol
+              ? []
+              : allSnapshots;
         files = pickSnapshotFiles(pool);
       }
       if (!files.length && requestedSymbol) {
@@ -17218,6 +17250,21 @@ const appHandler = async (req, res) => {
       });
 
       // Use the ai_provider resolved earlier for callAiProvider
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_API_CALL_REQUEST",
+          provider: aiProviderRaw || "claude",
+          mode: "snapshot_files",
+          model: requestModel,
+          symbol: requestedSymbol,
+          files_count: snapshotFiles.length,
+        },
+        userId,
+      );
       const aiResult = await callAiProvider({
         model: requestModel,
         provider: aiProviderRaw || "",
@@ -17228,6 +17275,21 @@ const appHandler = async (req, res) => {
 
       const rawResponse = aiResult.rawText;
       const resolvedModel = aiResult.modelUsed;
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_API_CALL_RESPONSE",
+          provider: aiResult.provider || aiProviderRaw || "claude",
+          mode: "snapshot_files",
+          model: resolvedModel,
+          symbol: requestedSymbol,
+          ok: true,
+        },
+        userId,
+      );
       claudeFilesMode =
         aiResult.provider === "claude"
           ? claudeFilesMode || "base64"

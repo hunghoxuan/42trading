@@ -2296,6 +2296,30 @@ export default function ChartSnapshotsPage() {
       };
 
       if (Array.isArray(files) && files.length) payload.files = files;
+      if (!payload.files || !payload.files.length) {
+        const symbolForSnapshot = String(payload.symbol || "").trim();
+        if (symbolForSnapshot) {
+          try {
+            const batch = await api.chartSnapshotCreateBatch({
+              symbol: symbolForSnapshot,
+              provider: provider || "ICMARKETS",
+              session_prefix: activeSessionPrefix,
+              tfs: Array.isArray(snapshotTfs) && snapshotTfs.length
+                ? snapshotTfs
+                : ["D", "240", "15", "5"],
+              lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+            });
+            const freshFiles = Array.isArray(batch?.items)
+              ? batch.items
+                  .map((x) => String(x?.file_name || "").trim())
+                  .filter(Boolean)
+              : [];
+            if (freshFiles.length) payload.files = freshFiles;
+          } catch {
+            // Backend will still validate symbol-matched snapshots and return clear error if unavailable.
+          }
+        }
+      }
 
       let out;
       try {

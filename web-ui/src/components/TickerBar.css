@@ -3,7 +3,7 @@
   border-top: none;
   border-bottom: none;
   padding: 4px 10px;
-  margin-bottom: 0;
+  margin-bottom: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
@@ -55,8 +55,16 @@
   font-weight: 400;
 }
 
+.ticker-timeago {
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
 .ticker-right {
-  display: flex;
+  display: contents;
   align-items: center;
   gap: 6px;
   min-width: 260px;
