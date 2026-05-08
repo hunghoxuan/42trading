@@ -493,35 +493,33 @@ function getPlanTpCandidates(plan = {}) {
 }
 
 function getPlanPrimaryTp(plan = {}) {
-  const terminalCandidates = [
-    plan?.tp3,
-    Array.isArray(plan?.tps) && plan.tps[2]
-      ? (plan.tps[2].price ?? plan.tps[2])
+  const primaryCandidates = [
+    Array.isArray(plan?.partial_tps) && plan.partial_tps[0]
+      ? (plan.partial_tps[0].price ?? plan.partial_tps[0])
       : null,
-    Array.isArray(plan?.partial_tps) && plan.partial_tps[2]
-      ? (plan.partial_tps[2].price ?? plan.partial_tps[2])
+    Array.isArray(plan?.take_profits) && plan.take_profits[0]
+      ? (plan.take_profits[0].price ?? plan.take_profits[0])
       : null,
-    Array.isArray(plan?.take_profits) && plan.take_profits[2]
-      ? (plan.take_profits[2].price ?? plan.take_profits[2])
+    Array.isArray(plan?.tps) && plan.tps[0]
+      ? (plan.tps[0].price ?? plan.tps[0])
       : null,
+    plan?.tp1,
+    plan?.tp,
   ];
-  for (const candidate of terminalCandidates) {
+  for (const candidate of primaryCandidates) {
     const value =
       candidate && typeof candidate === "object" ? candidate.price : candidate;
     const n = parseNum(value);
     if (Number.isFinite(n)) return n;
   }
-  // Fallback: choose the last valid TP-like value from any available list.
-  const all = getPlanTpCandidates(plan)
-    .map((candidate) =>
-      parseNum(
-        candidate && typeof candidate === "object"
-          ? candidate.price
-          : candidate,
-      ),
-    )
-    .filter((n) => Number.isFinite(n));
-  return all.length ? all[all.length - 1] : NaN;
+  // Fallback: choose first valid TP-like value from any available list.
+  for (const candidate of getPlanTpCandidates(plan)) {
+    const n = parseNum(
+      candidate && typeof candidate === "object" ? candidate.price : candidate,
+    );
+    if (Number.isFinite(n)) return n;
+  }
+  return NaN;
 }
 
 function normalizeAnalysisContract(parsed) {
@@ -1149,8 +1147,12 @@ function extractPositionFromAnalysis(parsed) {
     note: String(
       plan.note || parsed?.invalidation || parsed?.note || "",
     ).trim(),
-    tp2: Number.isFinite(parseNum(plan?.tp2)) ? formatNum3(parseNum(plan?.tp2)) : "",
-    tp3: Number.isFinite(parseNum(plan?.tp3)) ? formatNum3(parseNum(plan?.tp3)) : "",
+    tp2: Number.isFinite(parseNum(plan?.tp2))
+      ? formatNum3(parseNum(plan?.tp2))
+      : "",
+    tp3: Number.isFinite(parseNum(plan?.tp3))
+      ? formatNum3(parseNum(plan?.tp3))
+      : "",
     be_trigger: Number.isFinite(parseNum(plan?.be_trigger ?? plan?.be))
       ? formatNum3(parseNum(plan?.be_trigger ?? plan?.be))
       : "",
@@ -1163,7 +1165,9 @@ function extractPositionFromAnalysis(parsed) {
     estimated_bars: Number.isFinite(parseNum(plan?.estimated_bars))
       ? parseNum(plan?.estimated_bars)
       : "",
-    invalidation: String(plan?.invalidation || parsed?.invalidation || "").trim(),
+    invalidation: String(
+      plan?.invalidation || parsed?.invalidation || "",
+    ).trim(),
     entry_model: String(plan?.entry_model || parsed?.entry_model || "").trim(),
     strategy: String(plan?.strategy || parsed?.strategy || "").trim(),
     profile: String(plan?.profile || parsed?.profile || "").trim(),
@@ -1176,6 +1180,28 @@ function extractPositionFromAnalysis(parsed) {
       : [],
     partial_tps: Array.isArray(plan?.partial_tps) ? plan.partial_tps : [],
   };
+}
+
+function hasRequiredPlanLevels(parsed) {
+  const plans = Array.isArray(parsed?.trade_plan)
+    ? parsed.trade_plan
+    : parsed?.trade_plan && typeof parsed.trade_plan === "object"
+      ? [parsed.trade_plan]
+      : [];
+  if (!plans.length) return false;
+  return plans.some((p) => {
+    const entry = parseNum(p?.entry);
+    const sl = parseNum(p?.sl);
+    const tp = getPlanPrimaryTp(p);
+    return (
+      Number.isFinite(entry) &&
+      Number.isFinite(sl) &&
+      Number.isFinite(tp) &&
+      entry > 0 &&
+      sl > 0 &&
+      tp > 0
+    );
+  });
 }
 
 function extractPositionFromPlan(plan, parsed = {}) {
@@ -1220,8 +1246,12 @@ function extractPositionFromPlan(plan, parsed = {}) {
     note: String(
       item.note || parsed?.invalidation || parsed?.note || "",
     ).trim(),
-    tp2: Number.isFinite(parseNum(item?.tp2)) ? formatNum3(parseNum(item?.tp2)) : "",
-    tp3: Number.isFinite(parseNum(item?.tp3)) ? formatNum3(parseNum(item?.tp3)) : "",
+    tp2: Number.isFinite(parseNum(item?.tp2))
+      ? formatNum3(parseNum(item?.tp2))
+      : "",
+    tp3: Number.isFinite(parseNum(item?.tp3))
+      ? formatNum3(parseNum(item?.tp3))
+      : "",
     be_trigger: Number.isFinite(parseNum(item?.be_trigger ?? item?.be))
       ? formatNum3(parseNum(item?.be_trigger ?? item?.be))
       : "",
@@ -1234,7 +1264,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
     estimated_bars: Number.isFinite(parseNum(item?.estimated_bars))
       ? parseNum(item?.estimated_bars)
       : "",
-    invalidation: String(item?.invalidation || parsed?.invalidation || "").trim(),
+    invalidation: String(
+      item?.invalidation || parsed?.invalidation || "",
+    ).trim(),
     entry_model: String(item?.entry_model || parsed?.entry_model || "").trim(),
     strategy: String(item?.strategy || parsed?.strategy || "").trim(),
     profile: String(item?.profile || parsed?.profile || "").trim(),
@@ -1754,6 +1786,8 @@ export default function ChartSnapshotsPage() {
   const [symbolFilterTab, setSymbolFilterTab] = useState("FAVOURITE");
   const [analysisFilesDisplay, setAnalysisFilesDisplay] = useState([]);
   const [autoSaveResult, setAutoSaveResult] = useState(null);
+  const [manualAddedMode, setManualAddedMode] = useState("");
+  const [addedEntity, setAddedEntity] = useState(null);
   const [position, setPosition] = useState({
     direction: "BUY",
     entry: "",
@@ -1789,7 +1823,7 @@ export default function ChartSnapshotsPage() {
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
-  const [attachedTradeImage, setAttachedTradeImage] = useState(null);
+  const [attachedTradeImages, setAttachedTradeImages] = useState([]);
   const [imageDragOver, setImageDragOver] = useState(false);
   const pendingHydrateRef = useRef(null);
   const tradeImageInputRef = useRef(null);
@@ -1881,7 +1915,8 @@ export default function ChartSnapshotsPage() {
         setPosition(extractPositionFromAnalysis(p.parsed));
       }
       if (Array.isArray(p.usedFiles)) setUsedFiles(p.usedFiles);
-      if (Array.isArray(p.displayFiles)) setAnalysisFilesDisplay(p.displayFiles);
+      if (Array.isArray(p.displayFiles))
+        setAnalysisFilesDisplay(p.displayFiles);
       setResponseTab("chart");
     }
   }, [cfg.symbol]);
@@ -2044,6 +2079,31 @@ export default function ChartSnapshotsPage() {
     autoSaveResult?.enabled === true &&
     autoSaveResult?.saved === true &&
     autoSaveResult?.mode === "trades";
+  const manuallyAddedSignal = manualAddedMode === "signal";
+  const manuallyAddedTrade = manualAddedMode === "trade";
+
+  const resolveCreatedId = (obj = {}, mode = "") => {
+    const candidates = [
+      obj?.sid,
+      obj?.id,
+      obj?.signal_id,
+      obj?.signalId,
+      obj?.trade_id,
+      obj?.tradeId,
+      obj?.created?.sid,
+      obj?.created?.id,
+      obj?.created?.signal_id,
+      obj?.created?.trade_id,
+      obj?.trade?.sid,
+      obj?.trade?.id,
+      obj?.signal?.sid,
+      obj?.signal?.id,
+    ]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean);
+    if (!candidates.length) return null;
+    return { kind: mode === "trade" ? "trade" : "signal", id: candidates[0] };
+  };
 
   const setCfgField = (key, value) => {
     setCfg((prev) => ({ ...prev, [key]: value }));
@@ -2211,35 +2271,32 @@ export default function ChartSnapshotsPage() {
   const setActionMessage = (action, type, text) => {
     setActionStatus({ action, type, text: String(text || "") });
   };
-  const attachTradeImageFile = (file) => {
-    const f = file || null;
-    if (!f) {
-      setAttachedTradeImage(null);
+  const addTradeImageFiles = (files) => {
+    const fileList = Array.isArray(files) ? files : files ? [files] : [];
+    if (!fileList.length) return;
+    const imageFiles = fileList.filter((f) =>
+      String(f?.type || "").startsWith("image/"),
+    );
+    if (!imageFiles.length) {
+      setStatus({ type: "warning", text: "Only image files are supported." });
       return;
     }
-    if (!String(f.type || "").startsWith("image/")) {
-      setStatus({
-        type: "warning",
-        text: "Only image files are supported.",
-      });
-      return;
+    let loaded = 0;
+    const results = [];
+    for (const f of imageFiles) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result || "");
+        if (dataUrl.startsWith("data:image/")) {
+          results.push({ name: f.name || "image", dataUrl });
+        }
+        loaded++;
+        if (loaded === imageFiles.length) {
+          setAttachedTradeImages((prev) => [...prev, ...results]);
+        }
+      };
+      reader.readAsDataURL(f);
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || "");
-      if (!dataUrl.startsWith("data:image/")) {
-        setStatus({
-          type: "warning",
-          text: "Only image files are supported.",
-        });
-        return;
-      }
-      setAttachedTradeImage({
-        name: f.name || "trade-image",
-        dataUrl,
-      });
-    };
-    reader.readAsDataURL(f);
   };
   const normalizeUiStatus = (type, text) => {
     const msg = String(text || "");
@@ -2415,8 +2472,11 @@ export default function ChartSnapshotsPage() {
       if (String(tradesText || "").trim()) {
         payload.Trades = String(tradesText || "").trim();
       }
-      if (attachedTradeImage?.dataUrl) {
-        payload.attached_images = [{ name: attachedTradeImage.name, data_url: attachedTradeImage.dataUrl }];
+      if (attachedTradeImages.length > 0) {
+        payload.attached_images = attachedTradeImages.map((img) => ({
+          name: img.name,
+          data_url: img.dataUrl,
+        }));
       }
 
       if (Array.isArray(files) && files.length) payload.files = files;
@@ -2475,6 +2535,14 @@ export default function ChartSnapshotsPage() {
       }
       const raw = String(out?.raw_response || "");
       setAutoSaveResult(out?.auto_save_result || null);
+      const autoMode = String(out?.auto_save_result?.mode || "").toLowerCase();
+      if (out?.auto_save_result?.saved) {
+        const autoEntity = resolveCreatedId(
+          out?.auto_save_result,
+          autoMode === "trades" ? "trade" : "signal",
+        );
+        if (autoEntity) setAddedEntity(autoEntity);
+      }
       setAnalysisRaw(raw);
       let parsed = enrichParsedAnalysis(
         raw,
@@ -2512,6 +2580,11 @@ export default function ChartSnapshotsPage() {
       if (parsed && typeof parsed === "object") {
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
+        if (!hasRequiredPlanLevels(parsed)) {
+          throw new Error(
+            "Invalid analysis response: entry, tp, sl are required in trade_plan.",
+          );
+        }
         setPosition(extractPositionFromAnalysis(parsed));
         if (!cfg.symbol) {
           const nextSymbol = normalizeWatchSymbol(parsed?.symbol || "");
@@ -2799,6 +2872,7 @@ export default function ChartSnapshotsPage() {
       const validationErr = validatePosition(activePosition);
       if (validationErr) throw new Error(validationErr);
       let createdCount = 0;
+      let lastCreated = null;
       for (let i = 0; i < signals.length; i++) {
         const payload = signals[i];
         const dir = String(activePosition.direction || "")
@@ -2894,16 +2968,21 @@ export default function ChartSnapshotsPage() {
           analysis_snapshot: analysisSnapshotPayload,
         };
         if (mode === "trade") {
-          await api.createTrade(finalPayload);
+          const out = await api.createTrade(finalPayload);
+          if (out && typeof out === "object") lastCreated = out;
         } else {
-          await api.createSignal(finalPayload);
+          const out = await api.createSignal(finalPayload);
+          if (out && typeof out === "object") lastCreated = out;
         }
         createdCount += 1;
       }
+      const createdEntity = resolveCreatedId(lastCreated || {}, mode);
+      if (createdEntity) setAddedEntity(createdEntity);
       const msg =
         mode === "trade"
           ? `Added ${createdCount} trade request(s).`
           : `Added ${createdCount} signal(s) only.`;
+      setManualAddedMode(mode);
       setStatus({ type: "success", text: msg });
       setActionMessage("add", "success", msg);
     } catch (e) {
@@ -3432,6 +3511,8 @@ export default function ChartSnapshotsPage() {
     setActionStatus({ action: "", type: "", text: "" });
     setSessionPrefix("");
     setAutoSaveResult(null);
+    setManualAddedMode("");
+    setAddedEntity(null);
     setStatus({ type: "success", text: "New analyze session started." });
   };
   const resetToDefaultBrowser = () => {
@@ -3524,7 +3605,17 @@ export default function ChartSnapshotsPage() {
           skip_recommendation: p?.skip_recommendation || p?.skip || "",
         };
       })
-      .filter((x) => x.raw && typeof x.raw === "object");
+      .filter(
+        (x) =>
+          x.raw &&
+          typeof x.raw === "object" &&
+          Number.isFinite(x.entry) &&
+          Number.isFinite(x.sl) &&
+          Number.isFinite(x.tp) &&
+          x.entry > 0 &&
+          x.sl > 0 &&
+          x.tp > 0,
+      );
   }, [effectiveParsed]);
 
   const applyTradePlanToEditor = (plan) => {
@@ -3786,7 +3877,6 @@ export default function ChartSnapshotsPage() {
               <div className="snapshot-tabs-v2" style={{ flexWrap: "wrap" }}>
                 {[
                   "FAVOURITE",
-                  "ALL",
                   "CRYPTO",
                   "FOREX",
                   "COMMODITY",
@@ -3801,17 +3891,15 @@ export default function ChartSnapshotsPage() {
                   >
                     {tab === "FAVOURITE"
                       ? "Watchlist"
-                      : tab === "ALL"
-                        ? "All"
-                        : tab === "CRYPTO"
-                          ? "Crypto"
-                          : tab === "FOREX"
-                            ? "Forex"
-                            : tab === "COMMODITY"
-                              ? "Commodity"
-                              : tab === "INDICES"
-                                ? "Indices"
-                                : "SMT"}
+                      : tab === "CRYPTO"
+                        ? "Crypto"
+                        : tab === "FOREX"
+                          ? "Forex"
+                          : tab === "COMMODITY"
+                            ? "Commodity"
+                            : tab === "INDICES"
+                              ? "Indices"
+                              : "SMT"}
                   </button>
                 ))}
               </div>
@@ -4249,7 +4337,6 @@ export default function ChartSnapshotsPage() {
                   style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
                 >
                   <option value="FAVOURITE">Watchlist</option>
-                  <option value="ALL">All</option>
                   <option value="CRYPTO">Crypto</option>
                   <option value="FOREX">Forex</option>
                   <option value="COMMODITY">Commodity</option>
@@ -4391,7 +4478,12 @@ export default function ChartSnapshotsPage() {
             {browserAnalyzeOpen ? (
               <div
                 className="toolbar-panel"
-                style={{ marginBottom: 12, padding: 12, display: "grid", gap: 10 }}
+                style={{
+                  marginBottom: 12,
+                  padding: 12,
+                  display: "grid",
+                  gap: 10,
+                }}
               >
                 <textarea
                   value={tradesText}
@@ -4408,8 +4500,8 @@ export default function ChartSnapshotsPage() {
                   onDrop={(e) => {
                     e.preventDefault();
                     setImageDragOver(false);
-                    const f = e.dataTransfer?.files?.[0] || null;
-                    attachTradeImageFile(f);
+                    const f = e.dataTransfer?.files || null;
+                    addTradeImageFiles(f);
                   }}
                   onClick={() => tradeImageInputRef.current?.click()}
                   style={{
@@ -4428,64 +4520,78 @@ export default function ChartSnapshotsPage() {
                     ref={tradeImageInputRef}
                     type="file"
                     accept="image/*"
+                    multiple
                     style={{ display: "none" }}
-                    onChange={(e) => attachTradeImageFile(e.target.files?.[0])}
+                    onChange={(e) => addTradeImageFiles(e.target.files)}
                   />
                   <div
                     style={{
                       display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      flexWrap: "wrap",
+                      flexDirection: "column",
+                      gap: 8,
                     }}
                   >
                     <span className="minor-text">
-                      Drag & drop image here, or click to browse
+                      Drag & drop images here, or click to browse
                     </span>
-                    {attachedTradeImage ? (
-                      <span className="minor-text">
-                        Attached: {attachedTradeImage.name}
-                      </span>
+                    {attachedTradeImages.length > 0 ? (
+                      <div
+                        style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                      >
+                        {attachedTradeImages.map((img, i) => (
+                          <span
+                            key={i}
+                            className="minor-text"
+                            style={{
+                              background: "var(--surface)",
+                              padding: "2px 8px",
+                              borderRadius: 4,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                              fontSize: 11,
+                            }}
+                          >
+                            {img.name}
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAttachedTradeImages((prev) =>
+                                  prev.filter((_, j) => j !== i),
+                                );
+                              }}
+                              style={{
+                                fontSize: 10,
+                                padding: "0 4px",
+                                lineHeight: "16px",
+                              }}
+                            >
+                              x
+                            </button>
+                          </span>
+                        ))}
+                      </div>
                     ) : (
-                      <span className="minor-text">No image attached</span>
+                      <span className="minor-text">No images attached</span>
                     )}
-                    {attachedTradeImage ? (
+                    {attachedTradeImages.length > 0 && (
                       <button
                         className="secondary-button"
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setAttachedTradeImage(null);
+                          setAttachedTradeImages([]);
                         }}
+                        style={{ fontSize: 10, width: "fit-content" }}
                       >
-                        Remove
+                        Clear all
                       </button>
-                    ) : null}
+                    )}
                   </div>
                 </div>
-                <div style={{ display: "none", alignItems: "center", gap: 10 }}>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => attachTradeImageFile(e.target.files?.[0])}
-                  />
-                  {attachedTradeImage ? (
-                    <span className="minor-text">
-                      Attached: {attachedTradeImage.name}
-                    </span>
-                  ) : (
-                    <span className="minor-text">No image attached</span>
-                  )}
-                  {attachedTradeImage ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => setAttachedTradeImage(null)}
-                    >
-                      Remove
-                    </button>
-                  ) : null}
-                </div>
+
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <select
                     className="secondary-button"
@@ -4681,15 +4787,44 @@ export default function ChartSnapshotsPage() {
                 tradeId: null,
                 value: position,
                 onChange: updatePositionField,
-                onAddSignal: (pos, planId = "main") =>
-                  addBySelection("signal", pos, planId),
-                onAddTrade: (pos, planId = "main") =>
-                  addBySelection("trade", pos, planId),
                 showSaveButton: false,
-                showAddSignalButton: !autoSavedSignal && !autoSavedTrades,
-                showAddTradeButton: !autoSavedTrades,
+                showAddSignalButton:
+                  (addedEntity?.kind === "signal" &&
+                    Boolean(addedEntity?.id)) ||
+                  (!autoSavedSignal &&
+                    !autoSavedTrades &&
+                    !manuallyAddedTrade &&
+                    !manuallyAddedSignal),
+                showAddTradeButton:
+                  (addedEntity?.kind === "trade" && Boolean(addedEntity?.id)) ||
+                  (!Boolean(addedEntity?.id) &&
+                    !autoSavedTrades &&
+                    !manuallyAddedTrade),
                 showResetButton: true,
                 onReset: resetToDefaultBrowser,
+                resetLabel: "Back",
+                addSignalLabel:
+                  addedEntity?.kind === "signal" && addedEntity?.id
+                    ? "Signal added"
+                    : "+ Signal",
+                addTradeLabel:
+                  addedEntity?.kind === "trade" && addedEntity?.id
+                    ? "Trade added"
+                    : "+ Trade",
+                onAddSignal: (pos, planId = "main") => {
+                  if (addedEntity?.kind === "signal" && addedEntity?.id) {
+                    navigate(`/signals/${addedEntity.id}`);
+                    return;
+                  }
+                  addBySelection("signal", pos, planId);
+                },
+                onAddTrade: (pos, planId = "main") => {
+                  if (addedEntity?.kind === "trade" && addedEntity?.id) {
+                    navigate(`/trades/${addedEntity.id}`);
+                    return;
+                  }
+                  addBySelection("trade", pos, planId);
+                },
                 busy: {
                   signal: addingSignal && submittingPlanId === "main",
                   trade: addingSignal && submittingPlanId === "main",
