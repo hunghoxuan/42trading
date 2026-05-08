@@ -129,6 +129,8 @@ function PlanHeader({
 
   const riskTier = plan.risk_management || plan.risk_tier || "";
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
+  const strategy = plan.strategy || "";
+  const entryModel = plan.entry_model || plan.entryModel || "";
 
   return (
     <div
@@ -142,7 +144,7 @@ function PlanHeader({
         gap: 12,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
         <div
           style={{
             background: sideBg,
@@ -162,8 +164,8 @@ function PlanHeader({
         >
           {isBuy ? "B" : "S"}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span
               style={{
                 fontWeight: 800,
@@ -173,6 +175,21 @@ function PlanHeader({
             >
               {symbol}
             </span>
+            {strategy && (
+              <span className="minor-text" style={{ fontSize: "11px", fontWeight: 600 }}>
+                {strategy}
+              </span>
+            )}
+            {entryModel && (
+              <span className="minor-text" style={{ fontSize: "11px" }}>
+                {entryModel}
+              </span>
+            )}
+            {confidenceText && (
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--accent)" }}>
+                {confidenceText}
+              </span>
+            )}
             {!simplified && (
               <span
                 style={{
@@ -243,18 +260,6 @@ function PlanHeader({
               {pnl}
             </span>
           )}
-          {confidenceText && (
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 700,
-                color: "var(--foreground)",
-                opacity: 0.9,
-              }}
-            >
-              {confidenceText}
-            </span>
-          )}
           {riskTier && (
             <span
               className={`badge badge-mini ${
@@ -300,6 +305,7 @@ function PlanHeader({
     </div>
   );
 }
+
 
 
 function ExtraPlanBlock({
@@ -642,6 +648,25 @@ export default function SignalDetailCard({
                   volume={tradePlan.volume}
                   pnl={tradePlan.pnl}
                 />
+
+                {isSelected && planValue.note && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      padding: "8px 12px",
+                      background: "rgba(255,255,255,0.02)",
+                      borderRadius: 8,
+                      borderLeft: "2px solid var(--accent-soft)",
+                      fontSize: "12px",
+                      color: "var(--foreground)",
+                      lineHeight: 1.5,
+                      opacity: 0.9,
+                    }}
+                  >
+                    <div dangerouslySetInnerHTML={{ __html: formatNote(planValue.note) }} />
+                  </div>
+                )}
+
                 {isSelected && !tradePlan.hideEditor ? (
                   <TradePlanEditor
                     signalId={tradePlan.signalId || null}
@@ -758,14 +783,6 @@ export default function SignalDetailCard({
 
           const fields = [
             { label: "Source", value: planVal.source || rawData.source },
-            { label: "Strategy", value: planVal.strategy || rawData.strategy },
-            { label: "Entry Model", value: planVal.entry_model || planVal.entryModel || rawData.entry_model },
-            { label: "Confidence", value: planVal.confidence_pct || planVal.confidence || rawData.confidence_pct },
-            { label: "Risk Management", value: planVal.risk_management || rawData.risk_management },
-            { label: "BE", value: planVal.be_trigger || planVal.be || rawData.be_trigger },
-            { label: "Estimated Bars", value: planVal.estimated_bars || rawData.estimated_bars },
-            { label: "Confluence Checklist", value: planVal.confluence_checklist || rawData.confluence_checklist, isChecklist: true },
-            { label: "Note", value: planVal.note || rawData.note, isNote: true, fullWidth: true },
             { label: "Invalidation", value: planVal.invalidation || rawData.invalidation, fullWidth: true },
             { label: "Entry Condition", value: planVal.entry_condition || rawData.entry_condition, fullWidth: true },
             { label: "Exit Condition", value: planVal.exit_condition || rawData.exit_condition, fullWidth: true },
@@ -775,682 +792,95 @@ export default function SignalDetailCard({
 
           const hasVal = (v) => v !== null && v !== undefined && String(v) !== "" && (Array.isArray(v) ? v.length > 0 : true);
 
+          // Data extraction for Bias/Trend and Analysis
+          const raw = rawData;
+          const m = raw.market_analysis || {};
+          const compactTfs = Array.isArray(raw.timeframes)
+            ? raw.timeframes
+            : Array.isArray(m.timeframes)
+              ? m.timeframes.map((tf) => ({
+                  ...tf,
+                  phase: tf?.phase || tf?.market_phase || "",
+                  poiAlign: String(tf?.poiAlign ?? tf?.poi_alignment ?? ""),
+                  keyBreaks: Array.isArray(tf?.strongEvents) ? tf.strongEvents : [],
+                }))
+              : [];
+          const analysisText = raw.analysis || m.analysis || "";
+          const rawChecklist = m.confluence_checklist || raw.confluence_checklist || m.checklist || raw.checklist || [];
+          let checklist = Array.isArray(rawChecklist) ? rawChecklist : [];
+
           return (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "20px 30px",
-                padding: "10px 4px",
-              }}
-            >
-              {fields.map((f, i) => {
-                if (!hasVal(f.value)) return null;
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      gridColumn: f.fullWidth ? "1 / -1" : "auto",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                    }}
-                  >
-                    <span className="minor-text">{f.label}</span>
-                    <div
-                      style={{
-                        fontSize: "13px",
-                        color: "var(--foreground)",
-                        fontWeight: 500,
-                        lineHeight: 1.5,
-                      }}
-                    >
-                      {f.isNote ? (
-                        <div dangerouslySetInnerHTML={{ __html: formatNote(f.value) }} />
-                      ) : f.isChecklist ? (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
-                          {(Array.isArray(f.value) ? f.value : []).map((item, idx) => (
-                            <span key={idx} className="badge badge-mini" style={{ opacity: 0.8 }}>
-                              {typeof item === "object" ? item.item || item.condition : item}
-                            </span>
-                          ))}
+            <div style={{ padding: "10px 4px" }}>
+              {/* Bias & Trend Cards */}
+              {compactTfs.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <div className="minor-text" style={{ marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Bias & Trend</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {compactTfs.map((tf) => {
+                      const b = tf.bias || "";
+                      const isLong = b.toLowerCase().includes("long");
+                      const isShort = b.toLowerCase().includes("short");
+                      const biasColor = isLong ? "#26a69a" : isShort ? "#ef5350" : "var(--muted)";
+                      return (
+                        <div key={tf.tf} style={{ flex: "1 1 0", minWidth: 140, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8, border: `1px solid ${biasColor}30` }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                            <span>{tf.tf}</span>
+                            <span style={{ fontSize: 14, color: biasColor }}>{isLong ? "↑" : isShort ? "↓" : ""}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: biasColor, fontWeight: 600 }}>{b || "—"}</div>
+                          <div className="minor-text" style={{ fontSize: 9 }}>{tf.trend || ""} · {tf.structure || ""}</div>
                         </div>
-                      ) : f.isList ? (
-                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: "12px", opacity: 0.9 }}>
-                          {(Array.isArray(f.value) ? f.value : []).map((item, idx) => (
-                            <li key={idx}>{item}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        f.value
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              )}
+
+              {/* Analysis narrative */}
+              {analysisText && (
+                <div style={{ marginBottom: 24, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="minor-text">Analysis</span>
+                  <div style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: 500, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                    {analysisText}
+                  </div>
+                </div>
+              )}
+
+              {/* Checklist */}
+              {checklist.length > 0 && (
+                <div style={{ marginBottom: 24, display: "flex", flexDirection: "column", gap: 8 }}>
+                  <span className="minor-text">Checklist</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {checklist.map((item, idx) => (
+                      <span key={idx} className="badge badge-mini" style={{ opacity: 0.8 }}>
+                        {typeof item === "object" ? item.item || item.condition : item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Other Fields (Invalidation, Conditions, etc.) */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px 30px" }}>
+                {fields.map((f, i) => {
+                  if (!hasVal(f.value)) return null;
+                  return (
+                    <div key={i} style={{ gridColumn: f.fullWidth ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                      <span className="minor-text">{f.label}</span>
+                      <div style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: 500, lineHeight: 1.5 }}>
+                        {f.isList ? (
+                          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "12px", opacity: 0.9 }}>
+                            {(Array.isArray(f.value) ? f.value : []).map((item, idx) => <li key={idx}>{item}</li>)}
+                          </ul>
+                        ) : f.value}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
-
-
-        {/* Analysis content below fields */}
-        <div
-          className="panel"
-          style={{
-            padding: 16,
-            margin: 0,
-            lineHeight: 1.6,
-            fontSize: "14px",
-            background: "var(--card-bg)",
-            borderRadius: 12,
-          }}
-        >
-          {(() => {
-            const raw = rawData;
-            const m = raw.market_analysis || {};
-            const compactTfs = Array.isArray(raw.timeframes)
-              ? raw.timeframes
-              : Array.isArray(m.timeframes)
-                ? m.timeframes.map((tf) => ({
-                    ...tf,
-                    phase: tf?.phase || tf?.market_phase || "",
-                    poiAlign:
-                      tf?.poiAlign === true || tf?.poiAlign === false
-                        ? String(tf.poiAlign)
-                        : tf?.poi_alignment === true ||
-                            tf?.poi_alignment === false
-                          ? String(tf.poi_alignment)
-                          : "",
-                    keyBreaks: Array.isArray(tf?.strongEvents)
-                      ? tf.strongEvents
-                      : Array.isArray(tf?.price_action_summary?.key_breaks)
-                        ? tf.price_action_summary.key_breaks.map((kb) => ({
-                            event: kb?.event || "",
-                            price: kb?.price_level ?? kb?.price ?? null,
-                            direction: kb?.direction || "",
-                            time: kb?.time ?? null,
-                          }))
-                        : [],
-                  }))
-                : [];
-            const primaryTf =
-              Array.isArray(m.timeframes) && m.timeframes.length
-                ? m.timeframes.find((x) => x?.bias || x?.trend) || {}
-                : compactTfs.find((x) => x?.bias || x?.trend) || {};
-            const bias = m.bias || raw.bias || primaryTf.bias || "N/A";
-            const trend = m.trend || raw.trend || primaryTf.trend || "N/A";
-            const confluence = m.confluence || raw.confluence || "";
-            const compactChecklist =
-              raw.checklist && typeof raw.checklist === "object"
-                ? {
-                    buy: Array.isArray(raw.checklist?.buy?.items)
-                      ? raw.checklist.buy.items.map((x) => ({
-                          ...x,
-                          checked: Boolean(x?.passed),
-                          pd_array_ref: x?.pdRef ?? null,
-                        }))
-                      : [],
-                    sell: Array.isArray(raw.checklist?.sell?.items)
-                      ? raw.checklist.sell.items.map((x) => ({
-                          ...x,
-                          checked: Boolean(x?.passed),
-                          pd_array_ref: x?.pdRef ?? null,
-                        }))
-                      : [],
-                  }
-                : null;
-            const rawChecklist =
-              m.confluence_checklist ||
-              raw.confluence_checklist ||
-              compactChecklist ||
-              m.checklist ||
-              raw.checklist ||
-              [];
-            let checklist = Array.isArray(rawChecklist)
-              ? rawChecklist
-              : [
-                  ...(Array.isArray(rawChecklist?.buy)
-                    ? rawChecklist.buy.map((x) => ({ side: "Buy", ...x }))
-                    : []),
-                  ...(Array.isArray(rawChecklist?.sell)
-                    ? rawChecklist.sell.map((x) => ({ side: "Sell", ...x }))
-                    : []),
-                ];
-            if (typeof checklist === "string") checklist = [checklist];
-            const verdictObj =
-              raw.final_verdict || m.final_verdict || raw.verdict || {};
-            const verdictText =
-              typeof verdictObj === "string"
-                ? verdictObj
-                : verdictObj.action
-                  ? `${verdictObj.action}${verdictObj.risk_tier || verdictObj.tier ? ` / ${verdictObj.risk_tier || verdictObj.tier}` : ""}${verdictObj.confidence ? ` (${verdictObj.confidence}%)` : ""}`
-                  : "";
-            const firstPlan = Array.isArray(raw.trade_plan)
-              ? raw.trade_plan[0]
-              : Array.isArray(raw.tradePlan)
-                ? raw.tradePlan[0]
-                : raw.trade_plan;
-            const note =
-              raw.note ||
-              m.note ||
-              (verdictObj && verdictObj.note) ||
-              (firstPlan && firstPlan.note) ||
-              "";
-            const analysis =
-              raw.analysis ||
-              m.analysis ||
-              primaryTf?.price_action_summary?.recent_move ||
-              primaryTf?.did ||
-              primaryTf?.price_prediction?.narrative ||
-              primaryTf?.next ||
-              "";
-            const hasAnalysisSummary =
-              compactTfs.length > 0 ||
-              Boolean(analysis) ||
-              Boolean(confluence) ||
-              (Array.isArray(checklist) && checklist.length > 0) ||
-              Boolean(verdictText) ||
-              Boolean(note) ||
-              (Array.isArray(raw.pdArrays) && raw.pdArrays.length > 0) ||
-              (Array.isArray(raw.keyLevels) && raw.keyLevels.length > 0);
-            return (
-              <div className="analysis-summary-md">
-                {!hasAnalysisSummary ? (
-                  <div className="minor-text" style={{ marginBottom: 8 }}>
-                    {isResponsePending
-                      ? pendingResponseText
-                      : "No analysis summary yet."}
-                  </div>
-                ) : null}
-                {/* Per-TF Cards Row */}
-                {Array.isArray(compactTfs) && compactTfs.length > 0 && (
-                  <div style={{ marginBottom: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Bias & Trend
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {compactTfs.map((tf) => {
-                        const b = tf.bias || "";
-                        const isLong = b.toLowerCase().includes("long");
-                        const isShort = b.toLowerCase().includes("short");
-                        const biasColor = isLong
-                          ? "#26a69a"
-                          : isShort
-                            ? "#ef5350"
-                            : "var(--muted)";
-                        return (
-                          <div
-                            key={tf.tf}
-                            style={{
-                              flex: "1 1 0",
-                              minWidth: 120,
-                              padding: 8,
-                              background: "rgba(255,255,255,0.03)",
-                              borderRadius: 8,
-                              border: `1px solid ${biasColor}30`,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontWeight: 700,
-                                fontSize: 13,
-                                marginBottom: 4,
-                                display: "flex",
-                                justifyContent: "space-between",
-                              }}
-                            >
-                              <span>{tf.tf}</span>
-                              <span style={{ fontSize: 14, color: biasColor }}>
-                                {isLong ? "↑" : isShort ? "↓" : ""}
-                              </span>
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 10,
-                                color: biasColor,
-                                fontWeight: 600,
-                              }}
-                            >
-                              {bias || "—"}
-                            </div>
-                            <div className="minor-text" style={{ fontSize: 9 }}>
-                              {tf.trend || ""} · {tf.structure || ""}
-                            </div>
-                            <div className="minor-text" style={{ fontSize: 9 }}>
-                              {tf.phase || ""} · {tf.poiAlign || ""}
-                            </div>
-                            {tf.keyBreaks?.slice(0, 2).map((kb, i) => (
-                              <div
-                                key={i}
-                                className="minor-text"
-                                style={{ fontSize: 8, marginTop: 2 }}
-                              >
-                                {kb.event}: {kb.price} {kb.direction}
-                              </div>
-                            ))}
-                            {tf?.price_action_summary?.recent_move ? (
-                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4, whiteSpace: "pre-wrap" }}>
-                                {String(tf.price_action_summary.recent_move)}
-                              </div>
-                            ) : null}
-                            {tf?.price_prediction?.narrative ? (
-                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4, whiteSpace: "pre-wrap" }}>
-                                {String(tf.price_prediction.narrative)}
-                              </div>
-                            ) : null}
-                            {Array.isArray(tf?.price_prediction?.expected_path) &&
-                            tf.price_prediction.expected_path.length > 0 ? (
-                              <div className="minor-text" style={{ fontSize: 9, marginTop: 4 }}>
-                                {tf.price_prediction.expected_path
-                                  .slice(0, 3)
-                                  .map((p) => `${p?.action || "Step"} ${p?.target_price ?? "-"}`)
-                                  .join(" • ")}
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                {analysis && (
-                  <div style={{ marginBottom: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Analysis
-                    </div>
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        marginBottom: 12,
-                        color: "var(--foreground)",
-                        fontSize: "14px",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {typeof analysis === "object"
-                        ? JSON.stringify(analysis, null, 2)
-                        : analysis}
-                    </div>
-                  </div>
-                )}
-                {confluence && (
-                  <div style={{ marginBottom: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Confluence
-                    </div>
-                    <div style={{ whiteSpace: "pre-wrap", marginBottom: 12 }}>
-                      {typeof confluence === "object"
-                        ? JSON.stringify(confluence, null, 2)
-                        : confluence}
-                    </div>
-                  </div>
-                )}
-                {Array.isArray(checklist) && checklist.length > 0 && (
-                  <div style={{ marginBottom: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 12,
-                      }}
-                    >
-                      Checklist
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: 24,
-                      }}
-                    >
-                      {/* BUY COLUMN */}
-                      <div>
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            color: "#26a69a",
-                            marginBottom: 8,
-                            borderBottom: "1px solid rgba(38, 166, 154, 0.2)",
-                            paddingBottom: 4,
-                          }}
-                        >
-                          BUY
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 6,
-                          }}
-                        >
-                          {checklist
-                            .filter((item) => {
-                              const side =
-                                typeof item === "object"
-                                  ? item.side
-                                  : String(item).split(":")[0];
-                              return String(side || "")
-                                .toLowerCase()
-                                .includes("buy");
-                            })
-                            .map((item, idx) => {
-                              const label =
-                                typeof item === "object"
-                                  ? item.item || item.condition || ""
-                                  : String(item)
-                                      .split(":")
-                                      .slice(1)
-                                      .join(":")
-                                      .trim();
-                              const isChecked =
-                                typeof item === "object" ? item.checked : true;
-                              return (
-                                <div
-                                  key={idx}
-                                  style={{
-                                    display: "flex",
-                                    gap: 8,
-                                    alignItems: "flex-start",
-                                    fontSize: "12.5px",
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    readOnly
-                                    style={{
-                                      marginTop: 3,
-                                      pointerEvents: "none",
-                                    }}
-                                  />
-                                  <span
-                                    style={{
-                                      color: isChecked
-                                        ? "var(--foreground)"
-                                        : "var(--muted)",
-                                    }}
-                                  >
-                                    {typeof label === "object"
-                                      ? JSON.stringify(label, null, 2)
-                                      : label}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                      {/* SELL COLUMN */}
-                      <div>
-                        <div
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            color: "#ef5350",
-                            marginBottom: 8,
-                            borderBottom: "1px solid rgba(239, 83, 80, 0.2)",
-                            paddingBottom: 4,
-                          }}
-                        >
-                          SELL
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 6,
-                          }}
-                        >
-                          {checklist
-                            .filter((item) => {
-                              const side =
-                                typeof item === "object"
-                                  ? item.side
-                                  : String(item).split(":")[0];
-                              return String(side || "")
-                                .toLowerCase()
-                                .includes("sell");
-                            })
-                            .map((item, idx) => {
-                              const label =
-                                typeof item === "object"
-                                  ? item.item || item.condition || ""
-                                  : String(item)
-                                      .split(":")
-                                      .slice(1)
-                                      .join(":")
-                                      .trim();
-                              const isChecked =
-                                typeof item === "object" ? item.checked : true;
-                              return (
-                                <div
-                                  key={idx}
-                                  style={{
-                                    display: "flex",
-                                    gap: 8,
-                                    alignItems: "flex-start",
-                                    fontSize: "12.5px",
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    readOnly
-                                    style={{
-                                      marginTop: 3,
-                                      pointerEvents: "none",
-                                    }}
-                                  />
-                                  <span
-                                    style={{
-                                      color: isChecked
-                                        ? "var(--foreground)"
-                                        : "var(--muted)",
-                                    }}
-                                  >
-                                    {typeof label === "object"
-                                      ? JSON.stringify(label, null, 2)
-                                      : label}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {verdictText && (
-                  <div
-                    style={{
-                      marginBottom: 20,
-                      padding: 12,
-                      background: "rgba(38, 166, 154, 0.05)",
-                      borderRadius: 8,
-                      border: "1px solid rgba(38, 166, 154, 0.2)",
-                    }}
-                  >
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 4,
-                      }}
-                    >
-                      Final Verdict
-                    </div>
-                    <div
-                      style={{
-                        fontWeight: 600,
-                        color: "#26a69a",
-                        fontSize: "15px",
-                      }}
-                    >
-                      {verdictText}
-                    </div>
-                  </div>
-                )}
-                {note && (
-                  <div
-                    style={{
-                      marginTop: 24,
-                      padding: 12,
-                      background: "rgba(255,255,255,0.03)",
-                      borderRadius: 8,
-                      borderLeft: "3px solid var(--accent)",
-                    }}
-                  >
-                    <div
-                      className="minor-text"
-                      style={{ fontSize: "10px", marginBottom: 4 }}
-                    >
-                      NOTE
-                    </div>
-                    <SmartContent content={note} mode="readonly" />
-                  </div>
-                )}
-
-                {/* PD Arrays */}
-                {Array.isArray(raw.pdArrays) && raw.pdArrays.length > 0 && (
-                  <div style={{ marginTop: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 8,
-                      }}
-                    >
-                      PD Arrays
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      {raw.pdArrays.map((pd, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            fontSize: 11,
-                            padding: "4px 8px",
-                            background: "rgba(255,255,255,0.03)",
-                            borderRadius: 4,
-                            display: "flex",
-                            gap: 8,
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <span style={{ fontWeight: 600 }}>{pd.type}</span>
-                          <span
-                            style={{
-                              color:
-                                pd.dir?.toLowerCase() === "long"
-                                  ? "#26a69a"
-                                  : "#ef5350",
-                            }}
-                          >
-                            {pd.dir}
-                          </span>
-                          <span className="minor-text">{pd.tf}</span>
-                          <span className="minor-text">
-                            {pd.top}–{pd.bot}
-                          </span>
-                          <span className="minor-text">
-                            {pd.status}
-                            {pd.touched ? " (touched)" : ""}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Key Levels */}
-                {Array.isArray(raw.keyLevels) && raw.keyLevels.length > 0 && (
-                  <div style={{ marginTop: 20 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Key Levels
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {raw.keyLevels.map((kl, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            fontSize: 11,
-                            padding: "3px 8px",
-                            background: "rgba(255,255,255,0.03)",
-                            borderRadius: 4,
-                          }}
-                        >
-                          <span style={{ fontWeight: 600 }}>{kl.name}</span>
-                          <span
-                            className="minor-text"
-                            style={{ marginLeft: 6 }}
-                          >
-                            {kl.price}
-                          </span>
-                          {kl.swept && (
-                            <span
-                              style={{
-                                marginLeft: 6,
-                                color: "#ef5350",
-                                fontSize: 9,
-                              }}
-                            >
-                              swept
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Key Levels */}
-              </div>
-            );
-          })()}
-        </div>
       </div>
 
       {/* BROKER TAB (Trades only) */}
