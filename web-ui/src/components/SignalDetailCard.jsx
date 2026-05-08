@@ -111,23 +111,31 @@ function PlanHeader({
   volume = null,
   pnl = null,
 }) {
+  const entry = parseNumLoose(plan.entry);
+  const sl = parseNumLoose(plan.sl);
+  const tp = parseNumLoose(plan.tp);
+  const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
+
   const rrNum = Number(String(plan.rr ?? "").replace(",", "."));
   const rrText = Number.isFinite(rrNum) ? `${rrNum.toFixed(1)}r` : "0.0r";
   const directionColor = isBuy ? "#26a69a" : "#ef5350";
   const sideBg = isBuy ? "rgba(38,166,154,0.1)" : "rgba(239,83,80,0.1)";
+
   const confidenceRaw = plan.confidence ?? plan.confidence_pct;
   const confidenceNum = Number(String(confidenceRaw ?? "").replace(",", "."));
   const confidenceText = Number.isFinite(confidenceNum)
     ? `${confidenceNum.toFixed(1)}%`
     : "";
 
+  const riskTier = plan.risk_management || plan.risk_tier || "";
+  const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
 
   return (
     <div
       style={{
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "center",
+        alignItems: "flex-start",
         marginBottom: 8,
         borderBottom: "1px solid var(--accent-soft)",
         paddingBottom: 6,
@@ -149,6 +157,7 @@ function PlanHeader({
             fontWeight: 900,
             border: `1px solid ${directionColor}44`,
             flexShrink: 0,
+            marginTop: 2,
           }}
         >
           {isBuy ? "B" : "S"}
@@ -189,54 +198,109 @@ function PlanHeader({
             {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>{plan.tp || "-"}</span> /{" "}
             <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
-              <span
-                title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
-                style={{
-                  color: "var(--muted)",
-                  marginLeft: 8,
-                  fontWeight: 400,
-                  cursor: "help",
-                  borderBottom: "1px dotted var(--muted-bright)",
-                }}
-              >
-                {rrText}
-              </span>
+            <span
+              title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
+              style={{
+                color: "var(--muted)",
+                marginLeft: 8,
+                fontWeight: 400,
+                cursor: "help",
+                borderBottom: "1px dotted var(--muted-bright)",
+              }}
+            >
+              {rrText}
+            </span>
           </div>
         </div>
       </div>
+
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          gap: 10,
-          fontSize: "11px",
-          color: "var(--muted)",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 4,
           textAlign: "right",
         }}
       >
-        {status && (
-          <span
-            className={`badge ${status.cls} badge-mini`}
-            style={{ padding: "2px 6px", fontSize: "9px" }}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {status && (
+            <span
+              className={`badge ${status.cls} badge-mini`}
+              style={{ padding: "2px 6px", fontSize: "9px" }}
+            >
+              {status.label}
+            </span>
+          )}
+          {pnl && (
+            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--foreground)" }}>
+              {pnl}
+            </span>
+          )}
+          {confidenceText && (
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--foreground)",
+                opacity: 0.9,
+              }}
+            >
+              {confidenceText}
+            </span>
+          )}
+          {riskTier && (
+            <span
+              className={`badge badge-mini ${
+                riskTier.toLowerCase() === "high"
+                  ? "badge-danger"
+                  : riskTier.toLowerCase() === "medium"
+                    ? "badge-warning"
+                    : "badge-success"
+              }`}
+              style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+            >
+              {riskTier}
+            </span>
+          )}
+        </div>
+
+        {partials.length > 0 && (
+          <div
+            style={{
+              fontSize: "9.5px",
+              color: "var(--muted-bright)",
+              display: "flex",
+              gap: 8,
+              opacity: 0.8,
+            }}
           >
-            {status.label}
-          </span>
+            {partials.map((pt, idx) => {
+              const ptPrice = parseNumLoose(pt.price);
+              let rrPt = "";
+              if (risk && ptPrice != null && entry != null) {
+                const r = Math.abs(ptPrice - entry) / risk;
+                rrPt = `(${r.toFixed(1)}r)`;
+              }
+              return (
+                <span key={idx}>
+                  tp{idx + 1}: {pt.price} {rrPt}
+                </span>
+              );
+            })}
+          </div>
         )}
-        {pnl ? (
-          <span style={{ fontSize: "11px", fontWeight: 700 }}>{pnl}</span>
-        ) : null}
-        {confidenceText ? (
-          <span
-            className="badge badge-mini"
-            style={{ padding: "2px 6px", fontSize: "9px" }}
-          >
-            {confidenceText}
-          </span>
-        ) : null}
       </div>
     </div>
   );
 }
+
 
 function ExtraPlanBlock({
   planId,
@@ -688,111 +752,86 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        {/* Fields at the top of Info tab */}
-        {metaItems.length > 0 &&
-          (() => {
-            const hasVal = (x) =>
-              x &&
-              x.value !== null &&
-              x.value !== undefined &&
-              String(x.value) !== "";
-            const isMeta = (x) =>
-              x.label === "Metadata" ||
-              x.label === "Raw Metadata" ||
-              x.label === "Raw JSON";
-            const sourceItems = metaItems.filter(
-              (x) => x?.group === "source" && !isMeta(x) && hasVal(x),
-            );
-            const accountItems = metaItems.filter(
-              (x) => x?.group === "account" && !isMeta(x) && hasVal(x),
-            );
-            const otherItems = metaItems.filter(
-              (x) => !x?.group && !isMeta(x) && hasVal(x),
-            );
-            const renderField = (item, i) => (
-              <div
-                key={`${item.label}-${i}`}
-                style={{
-                  gridColumn: item.fullWidth ? "1 / -1" : "auto",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                }}
-              >
-                <span
-                  className="minor-text"
-                  style={{
-                    fontSize: "10px",
-                    textTransform: "uppercase",
-                    color: "var(--muted-bright)",
-                  }}
-                >
-                  {item.label}
-                </span>
-                <div
-                  style={{
-                    fontSize: "12.5px",
-                    color: "var(--foreground)",
-                    wordBreak: "break-word",
-                    fontWeight: 500,
-                    ...(item.valueStyle || {}),
-                  }}
-                >
-                  {String(item.label || "").toLowerCase() === "note" ? (
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: formatNote(item.value),
-                      }}
-                    />
-                  ) : typeof item.value === "object" ? (
-                    JSON.stringify(item.value, null, 2)
-                  ) : (
-                    item.value
-                  )}
-                </div>
-              </div>
-            );
-            const card = (title, items) => {
-              return (
-                <div
-                  className="fields-grid"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fill, minmax(180px, 1fr))",
-                    gap: 16,
-                    padding: 16,
-                    background: "rgba(255,255,255,0.02)",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    marginBottom: 12,
-                    position: "relative",
-                  }}
-                >
+        {(() => {
+          const p = plans.find((pl, i) => (i === 0 ? "main" : `suggested_${i}`) === selectedPlanId) || plans[0] || {};
+          const planVal = selectedPlanId === "main" ? tradePlan?.value || p : planDrafts[selectedPlanId] || p;
+
+          const fields = [
+            { label: "Source", value: planVal.source || rawData.source },
+            { label: "Strategy", value: planVal.strategy || rawData.strategy },
+            { label: "Entry Model", value: planVal.entry_model || planVal.entryModel || rawData.entry_model },
+            { label: "Confidence", value: planVal.confidence_pct || planVal.confidence || rawData.confidence_pct },
+            { label: "Risk Management", value: planVal.risk_management || rawData.risk_management },
+            { label: "BE", value: planVal.be_trigger || planVal.be || rawData.be_trigger },
+            { label: "Estimated Bars", value: planVal.estimated_bars || rawData.estimated_bars },
+            { label: "Confluence Checklist", value: planVal.confluence_checklist || rawData.confluence_checklist, isChecklist: true },
+            { label: "Note", value: planVal.note || rawData.note, isNote: true, fullWidth: true },
+            { label: "Invalidation", value: planVal.invalidation || rawData.invalidation, fullWidth: true },
+            { label: "Entry Condition", value: planVal.entry_condition || rawData.entry_condition, fullWidth: true },
+            { label: "Exit Condition", value: planVal.exit_condition || rawData.exit_condition, fullWidth: true },
+            { label: "Reasons to skip", value: planVal.reasons_to_skip || planVal.skipReasons || rawData.reasons_to_skip, isList: true, fullWidth: true },
+            { label: "Skip Recommendation", value: planVal.skip_recommendation || planVal.skip || rawData.skip_recommendation, fullWidth: true },
+          ];
+
+          const hasVal = (v) => v !== null && v !== undefined && String(v) !== "" && (Array.isArray(v) ? v.length > 0 : true);
+
+          return (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "20px 30px",
+                padding: "10px 4px",
+              }}
+            >
+              {fields.map((f, i) => {
+                if (!hasVal(f.value)) return null;
+                return (
                   <div
+                    key={i}
                     style={{
-                      gridColumn: "1 / -1",
-                      fontSize: "10px",
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      color: "var(--accent)",
-                      marginBottom: -4,
-                      opacity: 0.6,
+                      gridColumn: f.fullWidth ? "1 / -1" : "auto",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
                     }}
                   >
-                    {title}
+                    <span className="minor-text">{f.label}</span>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        color: "var(--foreground)",
+                        fontWeight: 500,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {f.isNote ? (
+                        <div dangerouslySetInnerHTML={{ __html: formatNote(f.value) }} />
+                      ) : f.isChecklist ? (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+                          {(Array.isArray(f.value) ? f.value : []).map((item, idx) => (
+                            <span key={idx} className="badge badge-mini" style={{ opacity: 0.8 }}>
+                              {typeof item === "object" ? item.item || item.condition : item}
+                            </span>
+                          ))}
+                        </div>
+                      ) : f.isList ? (
+                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: "12px", opacity: 0.9 }}>
+                          {(Array.isArray(f.value) ? f.value : []).map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        f.value
+                      )}
+                    </div>
                   </div>
-                  {items.map(renderField)}
-                </div>
-              );
-            };
-            return (
-              <div style={{ marginBottom: 20 }}>
-                {sourceItems.length ? card("Source", sourceItems) : null}
-                {otherItems.length ? card("Other", otherItems) : null}
-              </div>
-            );
-          })()}
+                );
+              })}
+            </div>
+          );
+        })()}
+
 
         {/* Analysis content below fields */}
         <div
