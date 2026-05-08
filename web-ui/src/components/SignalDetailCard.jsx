@@ -120,11 +120,7 @@ function PlanHeader({
   const confidenceText = Number.isFinite(confidenceNum)
     ? `${confidenceNum.toFixed(1)}%`
     : "";
-  const rr2 =
-    partials[1] && partials[1].rr != null ? `${partials[1].rr}r` : "";
-  const rr3 =
-    partials[2] && partials[2].rr != null ? `${partials[2].rr}r` : "";
-  const partialText = `TP1: ${tp1}  TP2: ${tp2}${rr2 ? ` (${rr2})` : ""}  TP3: ${tp3}${rr3 ? ` (${rr3})` : ""}`;
+
 
   return (
     <div

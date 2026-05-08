@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 20:22 - f949a6c"); // broker sync auto-creates broker sources; ctrader skips no-quote symbol scans
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 20:29 - bba7af7"); // broker sync auto-creates broker sources; ctrader skips no-quote symbol scans
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
