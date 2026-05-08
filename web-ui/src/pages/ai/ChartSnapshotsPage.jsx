@@ -1039,7 +1039,7 @@ function aiSourceFromModel(modelRaw) {
     .trim()
     .toLowerCase();
   if (!model) return "ai_claude";
-  if (model.includes("gpt") || model.includes("openai")) return "ai_openai";
+  if (model.includes("gpt") || model.includes("openai")) return "ai_gpt4o";
   if (model.includes("gemini")) return "ai_gemini";
   if (model.includes("deepseek")) return "ai_deepseek";
   if (model.includes("openrouter") || model.includes("open-router"))
@@ -1639,7 +1639,6 @@ export default function ChartSnapshotsPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [capturing, setCapturing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [addingSignal, setAddingSignal] = useState(false);
   const [settingsTab, setSettingsTab] = useState("settings");
@@ -1650,12 +1649,6 @@ export default function ChartSnapshotsPage() {
     type: "",
     text: "",
   });
-  const [warmupGate, setWarmupGate] = useState({
-    locked: false,
-    timedOut: false,
-    startedAt: 0,
-  });
-
   const [analysisRaw, setAnalysisRaw] = useState("");
   const [analysisJson, setAnalysisJson] = useState("");
   const [analysisParsed, setAnalysisParsed] = useState(null);
@@ -1721,12 +1714,6 @@ export default function ChartSnapshotsPage() {
   const [barsLoading, setBarsLoading] = useState(false);
   const [aiContext, setAiContext] = useState(null);
   const [contextLoading, setContextLoading] = useState(false);
-  const [warmupState, setWarmupState] = useState({
-    contextReady: false,
-    snapshotsReady: false,
-    snapshotsMatched: 0,
-    snapshotsTarget: 0,
-  });
   const [autoFlow, setAutoFlow] = useState({
     runId: 0,
     context: "idle",
@@ -1748,10 +1735,7 @@ export default function ChartSnapshotsPage() {
   const [guideDraft, setGuideDraft] = useState(GUIDE_TEXT);
   const liteChartRef = useRef(null);
   const liteChartApiRef = useRef(null);
-  const contextWarmupRef = useRef({ key: "", promise: null });
-  const snapshotWarmupRef = useRef({ key: "", promise: null });
   const autoFlowRef = useRef({ runId: 0, key: "", timer: null });
-  const warmupUnlockTimerRef = useRef(null);
   const lastAutoAnalyzeRef = useRef("");
   const tfConfig = useMemo(() => getEffectiveTfConfig(cfg), [cfg]);
 
@@ -1940,22 +1924,6 @@ export default function ChartSnapshotsPage() {
       ),
     [analysisRaw, analysisJson, effectiveParsed],
   );
-  const flowChipText = useMemo(() => {
-    const fmt = (label, value) =>
-      `${label}:${value === "loading" ? "..." : value}`;
-    return [
-      fmt("C", autoFlow.context),
-      `S:${autoFlow.snapshots === "loading" ? "..." : `${warmupState.snapshotsMatched}/${Math.max(1, warmupState.snapshotsTarget || snapshotTfs.length || 1)}`}`,
-      fmt("A", autoFlow.analysis),
-    ].join(" | ");
-  }, [
-    autoFlow.context,
-    autoFlow.snapshots,
-    autoFlow.analysis,
-    warmupState.snapshotsMatched,
-    warmupState.snapshotsTarget,
-    snapshotTfs.length,
-  ]);
   const responseText = useMemo(
     () => buildFriendlyResponse(effectiveParsed),
     [effectiveParsed],
@@ -2158,171 +2126,6 @@ export default function ChartSnapshotsPage() {
     };
   };
 
-  const startContextWarmup = async (opts = {}) => {
-    const symbol = normalizeSignalSymbol(tvSymbol || cfg.symbol || "");
-    const warmupKey = `${symbol}|${String(provider || "").toUpperCase()}|${snapshotTfs.join(",")}|${Number(cfg.lookbackBars || 300) || 300}`;
-    if (!symbol) return null;
-    if (
-      !opts.force &&
-      contextWarmupRef.current.key === warmupKey &&
-      contextWarmupRef.current.promise
-    ) {
-      return contextWarmupRef.current.promise;
-    }
-    const promise = (async () => {
-      if (isCurrentFlowRun(opts.runId)) setContextLoading(true);
-      setAutoFlowForRun(opts.runId, { context: "loading" });
-      const out = await api.chartRefresh({
-        symbols: [symbol],
-        provider,
-        timeframes: snapshotTfs,
-        types: ["context"],
-        bars: Number(cfg.lookbackBars || 300) || 300,
-        force: opts.refresh === true,
-        include_snapshots: opts.includeSnapshots === true,
-      });
-      const context = out?.context || out?.symbols?.[0]?.context || null;
-      if (isCurrentFlowRun(opts.runId)) {
-        setAiContext(context && typeof context === "object" ? context : null);
-        setMarketMetadata({
-          source: "chart_context",
-          updated_time: Date.now(),
-          auto_refresh: 0,
-        });
-      }
-      const rows = Array.isArray(context?.timeframes) ? context.timeframes : [];
-      const hasRows = rows.length > 0;
-      if (isCurrentFlowRun(opts.runId)) {
-        setWarmupState((prev) => ({ ...prev, contextReady: hasRows }));
-        setAutoFlowForRun(opts.runId, {
-          context: hasRows ? "ready" : "failed",
-        });
-      }
-      return context;
-    })()
-      .catch((error) => {
-        setAutoFlowForRun(opts.runId, {
-          context: "failed",
-          message: String(error?.message || error || "Context refresh failed."),
-        });
-        throw error;
-      })()
-      .finally(() => {
-        if (isCurrentFlowRun(opts.runId)) setContextLoading(false);
-        if (contextWarmupRef.current.key === warmupKey)
-          contextWarmupRef.current.promise = null;
-      });
-    contextWarmupRef.current = { key: warmupKey, promise };
-    return promise;
-  };
-
-  const startSnapshotWarmup = async (opts = {}) => {
-    const symbol = normalizeSignalSymbol(tvSymbol || cfg.symbol || "");
-    const warmupKey = `${symbol}|${String(provider || "").toUpperCase()}|${snapshotTfs.join(",")}|${Number(cfg.lookbackBars || 300) || 300}|${String(opts.sessionPrefix || "").trim()}`;
-    if (!symbol)
-      return {
-        matchedFiles: [],
-        targetTfTokens: [],
-        missingTokens: [],
-        missingTfs: [],
-      };
-    if (
-      !opts.force &&
-      snapshotWarmupRef.current.key === warmupKey &&
-      snapshotWarmupRef.current.promise
-    ) {
-      return snapshotWarmupRef.current.promise;
-    }
-    const promise = (async () => {
-      setAutoFlowForRun(opts.runId, { snapshots: "loading" });
-      if (isCurrentFlowRun(opts.runId)) setCapturing(true);
-      const initial = resolveRecentSnapshots({
-        sessionPrefix: opts.sessionPrefix || "",
-      });
-      setWarmupState((prev) => ({
-        ...prev,
-        snapshotsReady:
-          initial.missingTokens.length === 0 &&
-          initial.targetTfTokens.length > 0,
-        snapshotsMatched: initial.matchedFiles.length,
-        snapshotsTarget: initial.targetTfTokens.length,
-      }));
-      if (!opts.captureMissing || initial.missingTfs.length === 0) {
-        setAutoFlowForRun(opts.runId, {
-          snapshots: initial.missingTokens.length === 0 ? "ready" : "partial",
-        });
-        return initial;
-      }
-      const out = await api.chartRefresh({
-        symbols: [
-          String(tvSymbol || "")
-            .split(":")
-            .pop(),
-        ],
-        provider,
-        timeframes: initial.missingTfs,
-        types: ["snapshots"],
-        session_prefix: String(opts.sessionPrefix || "").trim() || undefined,
-        bars: Number(cfg.lookbackBars || 300),
-        format: "jpg",
-        quality: 55,
-        snapshot_max_age_ms: 15 * 60 * 1000,
-      });
-      const snap = out?.snapshots || out?.symbols?.[0]?.snapshots || {};
-      const returnedItems = Array.isArray(snap?.items) ? snap.items : [];
-      const created = Array.isArray(snap?.created) ? snap.created : [];
-      const cached = Array.isArray(snap?.cached) ? snap.cached : [];
-      if (returnedItems.length) {
-        setItems((prev) => [...returnedItems, ...prev].slice(0, 60));
-      } else {
-        await loadSnapshots();
-      }
-      const matchedFiles = returnedItems
-        .map((x) => String(x?.file_name || "").trim())
-        .filter(Boolean);
-      const targetTokens = Array.isArray(snap?.target_timeframes)
-        ? snap.target_timeframes
-        : initial.targetTfTokens;
-      const missingTokens = Array.isArray(snap?.missing_timeframes)
-        ? snap.missing_timeframes
-        : [];
-      const resolved = {
-        matchedFiles,
-        targetTfTokens: targetTokens,
-        missingTokens,
-        missingTfs: missingTokens,
-        created,
-        cached,
-      };
-      setWarmupState((prev) => ({
-        ...prev,
-        snapshotsReady:
-          resolved.missingTokens.length === 0 &&
-          resolved.targetTfTokens.length > 0,
-        snapshotsMatched: resolved.matchedFiles.length,
-        snapshotsTarget: resolved.targetTfTokens.length,
-      }));
-      setAutoFlowForRun(opts.runId, {
-        snapshots: resolved.missingTokens.length === 0 ? "ready" : "partial",
-      });
-      return resolved;
-    })()
-      .catch(() => {
-        setWarmupState((prev) => ({ ...prev, snapshotsReady: false }));
-        setAutoFlowForRun(opts.runId, { snapshots: "failed" });
-        return resolveRecentSnapshots({
-          sessionPrefix: opts.sessionPrefix || "",
-        });
-      })
-      .finally(() => {
-        if (isCurrentFlowRun(opts.runId)) setCapturing(false);
-        if (snapshotWarmupRef.current.key === warmupKey)
-          snapshotWarmupRef.current.promise = null;
-      });
-    snapshotWarmupRef.current = { key: warmupKey, promise };
-    return promise;
-  };
-
   const setActionMessage = (action, type, text) => {
     setActionStatus({ action, type, text: String(text || "") });
   };
@@ -2401,150 +2204,6 @@ export default function ChartSnapshotsPage() {
       setContextLoading(false);
     }
   };
-
-  useEffect(() => {
-    const symbol = normalizeSignalSymbol(tvSymbol || cfg.symbol || "");
-    if (!symbol) {
-      setWarmupState({
-        contextReady: false,
-        snapshotsReady: false,
-        snapshotsMatched: 0,
-        snapshotsTarget: 0,
-      });
-      setAutoFlow({
-        runId: 0,
-        context: "idle",
-        snapshots: "idle",
-        analysis: "idle",
-        message: "",
-        updatedAt: null,
-      });
-      return;
-    }
-    if (autoFlowRef.current.timer) {
-      window.clearTimeout(autoFlowRef.current.timer);
-      autoFlowRef.current.timer = null;
-    }
-    const flowKey = `${symbol}|${provider}|${snapshotTfs.join(",")}|${Number(cfg.lookbackBars || 300) || 300}`;
-    const runId = Date.now();
-    const activeSessionPrefix = makeSessionPrefix();
-    autoFlowRef.current = { runId, key: flowKey, timer: null };
-    if (warmupUnlockTimerRef.current) {
-      window.clearTimeout(warmupUnlockTimerRef.current);
-      warmupUnlockTimerRef.current = null;
-    }
-    setWarmupGate({ locked: true, timedOut: false, startedAt: Date.now() });
-    warmupUnlockTimerRef.current = window.setTimeout(() => {
-      setWarmupGate((prev) => ({ ...prev, locked: false, timedOut: true }));
-      warmupUnlockTimerRef.current = null;
-    }, 45000);
-    setSessionPrefix(activeSessionPrefix);
-    setAutoFlow({
-      runId,
-      context: "loading",
-      snapshots: "loading",
-      analysis: "idle",
-      message: "",
-      updatedAt: Date.now(),
-    });
-    setWarmupState((prev) => ({
-      ...prev,
-      contextReady: false,
-      snapshotsReady: false,
-    }));
-
-    const runOnce = async (isInterval = false) => {
-      const currentRunId = autoFlowRef.current.runId;
-
-      // If SymbolChart already cached fresh data, build context from cache
-      const cachedCtx = buildContextFromCache(symbol);
-      const ctxPromise = cachedCtx
-        ? Promise.resolve(cachedCtx)
-        : startContextWarmup({
-            includeSnapshots: false,
-            runId: currentRunId,
-            refresh: isInterval,
-          });
-
-      // If cache hit, update states immediately
-      if (cachedCtx && isCurrentFlowRun(currentRunId)) {
-        setAiContext(cachedCtx);
-        setWarmupState((prev) => ({ ...prev, contextReady: true }));
-        setAutoFlowForRun(currentRunId, { context: "ready" });
-      }
-
-      const [ctxSettled, snapSettled] = await Promise.allSettled([
-        ctxPromise,
-        startSnapshotWarmup({
-          captureMissing: true,
-          sessionPrefix: activeSessionPrefix,
-          runId: currentRunId,
-        }),
-      ]);
-      if (!isCurrentFlowRun(currentRunId)) return;
-      const context =
-        ctxSettled.status === "fulfilled" ? ctxSettled.value : null;
-      const snapshots =
-        snapSettled.status === "fulfilled"
-          ? snapSettled.value
-          : resolveRecentSnapshots({ sessionPrefix: activeSessionPrefix });
-      if (context) {
-        const analyzeKey = `${flowKey}|${context?.generated_at || ""}|${(snapshots?.matchedFiles || []).join(",")}`;
-        if (lastAutoAnalyzeRef.current !== analyzeKey) {
-          lastAutoAnalyzeRef.current = analyzeKey;
-          setAutoFlowForRun(currentRunId, { analysis: "loading" });
-          const analyzed = await analyzeFiles(snapshots?.matchedFiles || [], {
-            context,
-            runId: currentRunId,
-            auto: true,
-          });
-          if (isCurrentFlowRun(currentRunId) && analyzed)
-            setAutoFlowForRun(currentRunId, { analysis: "ready" });
-        }
-      } else {
-        setAutoFlowForRun(currentRunId, {
-          analysis: "idle",
-          message: "Context refresh failed; analysis skipped.",
-        });
-      }
-      if (isCurrentFlowRun(currentRunId)) {
-        autoFlowRef.current.timer = window.setTimeout(
-          () => {
-            if (isCurrentFlowRun(currentRunId)) runOnce(true).catch(() => null);
-          },
-          5 * 60 * 1000,
-        );
-      }
-    };
-
-    runOnce(false).catch((error) => {
-      setAutoFlowForRun(runId, {
-        message: String(error?.message || error || "Auto flow failed."),
-      });
-    });
-
-    return () => {
-      if (autoFlowRef.current.timer)
-        window.clearTimeout(autoFlowRef.current.timer);
-      if (warmupUnlockTimerRef.current) {
-        window.clearTimeout(warmupUnlockTimerRef.current);
-        warmupUnlockTimerRef.current = null;
-      }
-      autoFlowRef.current = { runId: runId + 1, key: "", timer: null };
-    };
-  }, [tvSymbol, provider, snapshotTfs.join(","), cfg.lookbackBars]);
-
-  useEffect(() => {
-    const contextDone = autoFlow.context !== "loading";
-    const snapshotsDone = autoFlow.snapshots !== "loading";
-    if (warmupGate.locked && contextDone && snapshotsDone) {
-      if (warmupUnlockTimerRef.current) {
-        window.clearTimeout(warmupUnlockTimerRef.current);
-        warmupUnlockTimerRef.current = null;
-      }
-      setWarmupGate((prev) => ({ ...prev, locked: false, timedOut: false }));
-    }
-  }, [warmupGate.locked, autoFlow.context, autoFlow.snapshots]);
 
   const analyzeFiles = async (files = [], opts = {}) => {
     setAnalyzing(true);
@@ -2696,67 +2355,6 @@ export default function ChartSnapshotsPage() {
     }
   };
 
-  const captureSnapshots = async () => {
-    if (!String(tvSymbol || "").trim()) {
-      setStatus({ type: "warning", text: "Symbol is required." });
-      return;
-    }
-    const tfs = [
-      ...new Set(
-        snapshotTfs.map((x) => String(x || "").trim()).filter(Boolean),
-      ),
-    ];
-    if (!tfs.length) {
-      setStatus({ type: "warning", text: "Select at least one timeframe." });
-      return;
-    }
-    setCapturing(true);
-    setStatus({ type: "", text: "" });
-    const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
-    if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
-    try {
-      const out = await api.chartSnapshotCreateBatch({
-        symbol: String(tvSymbol || "")
-          .split(":")
-          .pop(),
-        provider,
-        session_prefix: activeSessionPrefix,
-        timeframes: tfs,
-        lookbackBars: Number(cfg.lookbackBars || 300),
-        format: "jpg",
-        quality: 55,
-      });
-      const created = Array.isArray(out?.items) ? out.items : [];
-      if (created.length) {
-        setItems((prev) => [...created, ...prev].slice(0, 60));
-      } else {
-        await loadSnapshots();
-      }
-      const createdTfSet = new Set(
-        created.map((x) => parseSnapshotMeta(x)?.tfToken).filter(Boolean),
-      );
-      const expectedTfSet = new Set(
-        tfs.map((x) => toTradingViewInterval(x).toUpperCase()),
-      );
-      const missing = [...expectedTfSet].filter((tf) => !createdTfSet.has(tf));
-      if (missing.length) {
-        const msg = `Captured ${created.length} snapshot(s). Missing TF: ${missing.map(intervalTokenToLabel).join(", ")}`;
-        setStatus({ type: "warning", text: msg });
-        setActionMessage("capture", "warning", msg);
-      } else {
-        const msg = `Captured ${created.length || tfs.length} snapshot(s).`;
-        setStatus({ type: "success", text: msg });
-        setActionMessage("capture", "success", msg);
-      }
-    } catch (e) {
-      const msg = String(e?.message || e || "Snapshots failed.");
-      setStatus({ type: "error", text: msg });
-      setActionMessage("capture", "error", msg);
-    } finally {
-      setCapturing(false);
-    }
-  };
-
   const analyzeSelected = async () => {
     const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
@@ -2778,17 +2376,7 @@ export default function ChartSnapshotsPage() {
       return;
     }
 
-    if (warmupGate.locked) {
-      setStatus({
-        type: "warning",
-        text: "Warm-up in progress. Please wait...",
-      });
-      return;
-    }
-    setStatus({
-      type: "warning",
-      text: "Starting analyze. Missing data will continue warming in background...",
-    });
+    setStatus({ type: "", text: "" });
     try {
       const contextRows = Array.isArray(aiContext?.timeframes)
         ? aiContext.timeframes
@@ -2797,32 +2385,11 @@ export default function ChartSnapshotsPage() {
       const recent = resolveRecentSnapshots({
         sessionPrefix: activeSessionPrefix,
       });
-      const readySnapshots =
-        recent.matchedFiles.length === recent.targetTfTokens.length &&
-        recent.matchedFiles.length > 0;
-      if (!hasContext)
-        startContextWarmup({ includeSnapshots: false, force: false }).catch(
-          () => null,
-        );
-      if (!readySnapshots) {
-        startSnapshotWarmup({
-          captureMissing: true,
-          sessionPrefix: activeSessionPrefix,
-          force: false,
-        }).catch(() => null);
-      }
-      if (readySnapshots) {
-        const msg = `Using snapshots (${recent.matchedFiles.length}) from warm-up cache.`;
-        setStatus({ type: "success", text: msg });
-        setActionMessage("analyze", "success", msg);
+      if (recent.matchedFiles.length > 0) {
         await analyzeFiles(recent.matchedFiles, {
           context: hasContext ? aiContext : undefined,
         });
       } else {
-        const msg =
-          "Snapshots still partial. Analyze continues with bars/context while warm-up runs in background.";
-        setStatus({ type: "warning", text: msg });
-        setActionMessage("analyze", "warning", msg);
         await analyzeFiles([], { context: hasContext ? aiContext : undefined });
       }
     } catch (e) {
@@ -4327,47 +3894,6 @@ export default function ChartSnapshotsPage() {
               >
                 Settings
               </button>
-
-              {(marketMetadata.updated_time || autoFlow.runId) && (
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    background: "rgba(255,255,255,0.03)",
-                    padding: "4px 10px",
-                    borderRadius: 6,
-                    border: "1px solid var(--border)",
-                    flexWrap: "wrap",
-                    maxWidth: 360,
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: "var(--accent)",
-                      boxShadow: "0 0 6px var(--accent)",
-                    }}
-                  />
-                  <span
-                    className="minor-text"
-                    style={{ fontSize: 11, fontWeight: 500 }}
-                  >
-                    {marketMetadata.updated_time
-                      ? showDateTime(marketMetadata.updated_time)
-                      : "refreshing..."}
-                  </span>
-                  <span
-                    className={`minor-text ${autoFlow.context === "failed" || autoFlow.snapshots === "failed" || autoFlow.analysis === "failed" ? "msg-error" : autoFlow.context === "loading" || autoFlow.snapshots === "loading" || autoFlow.analysis === "loading" ? "msg-warning" : "msg-success"}`}
-                    style={{ fontSize: 11 }}
-                  >
-                    {flowChipText}
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Row 2 */}
@@ -4381,94 +3907,80 @@ export default function ChartSnapshotsPage() {
                 flexWrap: "wrap",
               }}
             >
-              {/* Provider select */}
-              <select
-                value={analysisSource}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAnalysisSource(v);
-                  localStorage.setItem("ai_model", v);
-                  // Reset model to first available for this provider
-                  const models = aiModelConfig.providers[v]?.models || [];
-                  if (models.length) {
-                    setSelectedModel(models[0].value);
-                    localStorage.setItem("ai_model_name", models[0].value);
-                  }
-                }}
-                className="secondary-button"
+              {/* AI controls — right aligned */}
+              <div
                 style={{
-                  padding: "0 8px",
-                  height: 34,
-                  fontSize: "12px",
-                  minWidth: 100,
+                  marginLeft: "auto",
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  flexWrap: "wrap",
                 }}
               >
-                {Object.entries(aiModelConfig.providers).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-
-              {/* Model select */}
-              <select
-                value={selectedModel}
-                onChange={(e) => {
-                  setSelectedModel(e.target.value);
-                  localStorage.setItem("ai_model_name", e.target.value);
-                }}
-                className="secondary-button"
-                style={{
-                  padding: "0 8px",
-                  height: 34,
-                  fontSize: "11px",
-                  minWidth: 140,
-                }}
-              >
-                {(
-                  aiModelConfig.providers[analysisSource]?.models ||
-                  aiModelConfig.providers["ai_claude"]?.models ||
-                  []
-                ).map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={captureSnapshots}
-                disabled={capturing}
-              >
-                {capturing
-                  ? "Snapshots..."
-                  : warmupGate.locked
-                    ? "Warming..."
-                    : "Snapshots"}
-              </button>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={analyzeSelected}
-                disabled={analyzing || warmupGate.locked}
-              >
-                {analyzing
-                  ? "Analyzing..."
-                  : warmupGate.locked
-                    ? "Warming..."
-                    : "Analyze"}
-              </button>
-
-              {status.text && (
-                <span
-                  className={`minor-text ${status.type === "error" ? "msg-error" : status.type === "warning" ? "msg-warning" : "msg-success"}`}
-                  style={{ marginLeft: 8, fontSize: "13px" }}
+                {/* Provider select */}
+                <select
+                  value={analysisSource}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAnalysisSource(v);
+                    localStorage.setItem("ai_model", v);
+                    // Reset model to first available for this provider
+                    const models = aiModelConfig.providers[v]?.models || [];
+                    if (models.length) {
+                      setSelectedModel(models[0].value);
+                      localStorage.setItem("ai_model_name", models[0].value);
+                    }
+                  }}
+                  className="secondary-button"
+                  style={{
+                    padding: "0 8px",
+                    height: 34,
+                    fontSize: "12px",
+                    minWidth: 100,
+                  }}
                 >
-                  {status.text}
-                </span>
-              )}
+                  {Object.entries(aiModelConfig.providers).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+
+                {/* Model select */}
+                <select
+                  value={selectedModel}
+                  onChange={(e) => {
+                    setSelectedModel(e.target.value);
+                    localStorage.setItem("ai_model_name", e.target.value);
+                  }}
+                  className="secondary-button"
+                  style={{
+                    padding: "0 8px",
+                    height: 34,
+                    fontSize: "11px",
+                    minWidth: 140,
+                  }}
+                >
+                  {(
+                    aiModelConfig.providers[analysisSource]?.models ||
+                    aiModelConfig.providers["ai_claude"]?.models ||
+                    []
+                  ).map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={analyzeSelected}
+                  disabled={analyzing}
+                >
+                  {analyzing ? "Analyzing..." : "Analyze"}
+                </button>
+              </div>
             </div>
           </div>
         )}

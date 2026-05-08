@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 08:04 - 79da54d"); // fix toast + signal auto-close
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.08 08:50 - 6d767d7"); // remove snapshots+warmup, move AI controls to right
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -4814,7 +4814,7 @@ async function callAiProvider({
 
   // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
   // Determine provider: explicit overrides model-based detection
-  const provider = explicitProvider
+  let provider = explicitProvider
     ? explicitProvider.toLowerCase()
     : modelLower.includes("openrouter") || modelLower.includes("open-router")
       ? "openrouter"
@@ -4823,6 +4823,11 @@ async function callAiProvider({
         : modelLower.includes("deepseek")
           ? "deepseek"
           : "gemini";
+
+  // Normalize provider aliases (e.g. frontend sends ai_gpt4o → stripped to "gpt4o")
+  if (provider === "gpt4o" || provider === "gpt-4o" || provider === "chatgpt") {
+    provider = "openai";
+  }
 
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
   const cfg = await loadAiConfig();
@@ -18571,11 +18576,16 @@ const appHandler = async (req, res) => {
         note: note || null,
       };
       if (payload.invalidation) rawPatch.invalidation = payload.invalidation;
-      if (payload.exit_condition) rawPatch.exit_condition = payload.exit_condition;
-      if (payload.entry_condition) rawPatch.entry_condition = payload.entry_condition;
-      if (payload.risk_management) rawPatch.risk_management = payload.risk_management;
-      if (payload.skip_recommendation) rawPatch.skip_recommendation = payload.skip_recommendation;
-      if (payload.confluence_checklist) rawPatch.confluence_checklist = payload.confluence_checklist;
+      if (payload.exit_condition)
+        rawPatch.exit_condition = payload.exit_condition;
+      if (payload.entry_condition)
+        rawPatch.entry_condition = payload.entry_condition;
+      if (payload.risk_management)
+        rawPatch.risk_management = payload.risk_management;
+      if (payload.skip_recommendation)
+        rawPatch.skip_recommendation = payload.skip_recommendation;
+      if (payload.confluence_checklist)
+        rawPatch.confluence_checklist = payload.confluence_checklist;
       const b = await mt5Backend();
       const params = [
         side,
@@ -18870,11 +18880,16 @@ const appHandler = async (req, res) => {
         rr_planned: Number.isFinite(rr) ? rr : null,
       };
       if (payload.invalidation) metaPatch.invalidation = payload.invalidation;
-      if (payload.exit_condition) metaPatch.exit_condition = payload.exit_condition;
-      if (payload.entry_condition) metaPatch.entry_condition = payload.entry_condition;
-      if (payload.risk_management) metaPatch.risk_management = payload.risk_management;
-      if (payload.skip_recommendation) metaPatch.skip_recommendation = payload.skip_recommendation;
-      if (payload.confluence_checklist) metaPatch.confluence_checklist = payload.confluence_checklist;
+      if (payload.exit_condition)
+        metaPatch.exit_condition = payload.exit_condition;
+      if (payload.entry_condition)
+        metaPatch.entry_condition = payload.entry_condition;
+      if (payload.risk_management)
+        metaPatch.risk_management = payload.risk_management;
+      if (payload.skip_recommendation)
+        metaPatch.skip_recommendation = payload.skip_recommendation;
+      if (payload.confluence_checklist)
+        metaPatch.confluence_checklist = payload.confluence_checklist;
       const params = [
         side,
         Number.isFinite(entry) ? entry : null,
