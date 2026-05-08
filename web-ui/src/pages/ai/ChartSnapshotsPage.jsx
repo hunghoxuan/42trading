@@ -1149,6 +1149,32 @@ function extractPositionFromAnalysis(parsed) {
     note: String(
       plan.note || parsed?.invalidation || parsed?.note || "",
     ).trim(),
+    tp2: Number.isFinite(parseNum(plan?.tp2)) ? formatNum3(parseNum(plan?.tp2)) : "",
+    tp3: Number.isFinite(parseNum(plan?.tp3)) ? formatNum3(parseNum(plan?.tp3)) : "",
+    be_trigger: Number.isFinite(parseNum(plan?.be_trigger ?? plan?.be))
+      ? formatNum3(parseNum(plan?.be_trigger ?? plan?.be))
+      : "",
+    confidence_pct: Number.isFinite(parseNum(plan?.confidence_pct))
+      ? parseNum(plan?.confidence_pct)
+      : "",
+    risk_pct: Number.isFinite(parseNum(plan?.risk_pct))
+      ? parseNum(plan?.risk_pct)
+      : "",
+    estimated_bars: Number.isFinite(parseNum(plan?.estimated_bars))
+      ? parseNum(plan?.estimated_bars)
+      : "",
+    invalidation: String(plan?.invalidation || parsed?.invalidation || "").trim(),
+    entry_model: String(plan?.entry_model || parsed?.entry_model || "").trim(),
+    strategy: String(plan?.strategy || parsed?.strategy || "").trim(),
+    profile: String(plan?.profile || parsed?.profile || "").trim(),
+    entry_condition: String(plan?.entry_condition || "").trim(),
+    exit_condition: String(plan?.exit_condition || "").trim(),
+    skip_recommendation: String(plan?.skip_recommendation || "").trim(),
+    risk_management: String(plan?.risk_management || "").trim(),
+    confluence_checklist: Array.isArray(plan?.confluence_checklist)
+      ? plan.confluence_checklist
+      : [],
+    partial_tps: Array.isArray(plan?.partial_tps) ? plan.partial_tps : [],
   };
 }
 
@@ -1194,6 +1220,32 @@ function extractPositionFromPlan(plan, parsed = {}) {
     note: String(
       item.note || parsed?.invalidation || parsed?.note || "",
     ).trim(),
+    tp2: Number.isFinite(parseNum(item?.tp2)) ? formatNum3(parseNum(item?.tp2)) : "",
+    tp3: Number.isFinite(parseNum(item?.tp3)) ? formatNum3(parseNum(item?.tp3)) : "",
+    be_trigger: Number.isFinite(parseNum(item?.be_trigger ?? item?.be))
+      ? formatNum3(parseNum(item?.be_trigger ?? item?.be))
+      : "",
+    confidence_pct: Number.isFinite(parseNum(item?.confidence_pct))
+      ? parseNum(item?.confidence_pct)
+      : "",
+    risk_pct: Number.isFinite(parseNum(item?.risk_pct))
+      ? parseNum(item?.risk_pct)
+      : "",
+    estimated_bars: Number.isFinite(parseNum(item?.estimated_bars))
+      ? parseNum(item?.estimated_bars)
+      : "",
+    invalidation: String(item?.invalidation || parsed?.invalidation || "").trim(),
+    entry_model: String(item?.entry_model || parsed?.entry_model || "").trim(),
+    strategy: String(item?.strategy || parsed?.strategy || "").trim(),
+    profile: String(item?.profile || parsed?.profile || "").trim(),
+    entry_condition: String(item?.entry_condition || "").trim(),
+    exit_condition: String(item?.exit_condition || "").trim(),
+    skip_recommendation: String(item?.skip_recommendation || "").trim(),
+    risk_management: String(item?.risk_management || "").trim(),
+    confluence_checklist: Array.isArray(item?.confluence_checklist)
+      ? item.confluence_checklist
+      : [],
+    partial_tps: Array.isArray(item?.partial_tps) ? item.partial_tps : [],
   };
 }
 
