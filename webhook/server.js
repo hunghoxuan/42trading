@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.08 11:52 - 352e66d",
-); // fix toolbar nowrap
+  "v2026.05.08 14:35 - 4867736",
+); // analyze auto_save
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16683,6 +16683,184 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         body.session_prefix || body.sessionPrefix || "",
       );
+      const autoSaveInput =
+        body?.auto_save === undefined || body?.auto_save === null
+          ? ""
+          : String(body.auto_save).trim().toLowerCase();
+      const autoSave =
+        autoSaveInput === "signals" || autoSaveInput === "trades"
+          ? autoSaveInput
+          : "";
+      if (
+        body?.auto_save !== undefined &&
+        body?.auto_save !== null &&
+        autoSaveInput !== "null" &&
+        !autoSave
+      ) {
+        return json(res, 400, {
+          ok: false,
+          error: "auto_save must be null, 'signals', or 'trades'",
+        });
+      }
+      const normalizeDirectionToAction = (value) => {
+        const dir = String(value || "")
+          .trim()
+          .toUpperCase();
+        if (dir.includes("SELL") || dir === "SHORT") return "SELL";
+        return "BUY";
+      };
+      const firstAutoSavableTradePlan = (parsed = {}) => {
+        const plans = Array.isArray(parsed?.trade_plan) ? parsed.trade_plan : [];
+        for (const plan of plans) {
+          const entry = Number(plan?.entry);
+          const sl = Number(plan?.sl);
+          const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
+          if (
+            Number.isFinite(entry) &&
+            Number.isFinite(sl) &&
+            Number.isFinite(tp)
+          ) {
+            return { plan, entry, sl, tp };
+          }
+        }
+        return null;
+      };
+      const autoSaveAnalyzeResult = async ({
+        mode,
+        parsedJson,
+        sourceSymbol,
+        providerRaw,
+      }) => {
+        if (!mode) return { enabled: false, mode: null };
+        try {
+          const pick = firstAutoSavableTradePlan(parsedJson);
+          if (!pick) {
+            return {
+              enabled: true,
+              mode,
+              saved: false,
+              error: "No valid trade_plan entry with entry/sl/tp",
+            };
+          }
+          const plan = pick.plan || {};
+          const symbol = String(
+            sourceSymbol || parsedJson?.symbol || body?.symbol || "",
+          )
+            .trim()
+            .toUpperCase();
+          if (!symbol) {
+            return {
+              enabled: true,
+              mode,
+              saved: false,
+              error: "symbol is required for auto_save",
+            };
+          }
+          const source = mt5NormalizeUiSource(
+            `ai_${providerRaw || "claude"}`,
+            "ai_claude",
+          );
+          const action = normalizeDirectionToAction(plan?.direction);
+          const sharedRawJson = {
+            source: "ai_analyze_auto_save",
+            session_id: sessionId,
+            auto_save: mode,
+            analyze_mode: useContextFiles ? "context_files" : "snapshot_files",
+            prompt: String(body?.prompt || ""),
+            symbol,
+            timeframe: String(body?.timeframe || ""),
+            model: String(body?.model || ""),
+            ai_provider: providerRaw || "claude",
+            analysis_result: parsedJson,
+            trade_plan: plan,
+          };
+          if (mode === "signals") {
+            const signal = await mt5EnqueueSignalFromPayload(
+              {
+                action,
+                symbol,
+                entry: pick.entry,
+                price: pick.entry,
+                sl: pick.sl,
+                tp: pick.tp,
+                note: String(
+                  plan?.note || parsedJson?.final_verdict?.note || "",
+                ).trim(),
+                strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim(),
+                entry_model: String(plan?.entry_model || "").trim(),
+                timeframe: String(body?.timeframe || "").trim() || "manual",
+                provider: source,
+                source,
+                user_id: userId,
+                only_signal: true,
+                raw_json: sharedRawJson,
+              },
+              {
+                source,
+                eventType: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
+                fallbackIdPrefix: "ai",
+              },
+              testSettings,
+            );
+            return { enabled: true, mode, saved: true, signal };
+          }
+          const sourceId = mt5SlugId(source, "tradingview");
+          await mt5UpsertSourceV2({
+            source_id: sourceId,
+            name: source,
+            kind: sourceId.includes("tv") ? "tv" : "api",
+            auth_mode: "token",
+            is_active: true,
+            metadata: {
+              migrated_from: "ai_analyze_auto_save",
+              signal_source: source,
+            },
+          }).catch(() => null);
+          const fanout = await mt5FanoutSignalTradeV2({
+            signal_id: null,
+            source_id: sourceId,
+            user_id: userId,
+            entry_model: String(plan?.entry_model || "").trim() || null,
+            signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+            chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+            symbol,
+            action,
+            entry: pick.entry,
+            sl: pick.sl,
+            tp: pick.tp,
+            volume: asNum(body?.volume ?? body?.lots, null),
+            rr_planned: asNum(plan?.rr, null),
+            risk_pct_planned: asNum(plan?.risk_pct, null),
+            note: String(
+              plan?.note || parsedJson?.final_verdict?.note || "",
+            ).trim(),
+            sid: normalizePublicSidBase(`${symbol}_AI`, "TRD"),
+            session_prefix: reqSessionPrefix || null,
+            metadata: {
+              event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
+              order_type: String(plan?.type || "limit"),
+              session_prefix: reqSessionPrefix || null,
+              raw_json: sharedRawJson,
+            },
+          });
+          return {
+            enabled: true,
+            mode,
+            saved: true,
+            created: Number(fanout?.created || 0),
+            account_ids: Array.isArray(fanout?.account_ids)
+              ? fanout.account_ids
+              : [],
+          };
+        } catch (error) {
+          return {
+            enabled: true,
+            mode,
+            saved: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      };
       ensureChartSnapshotDir();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       const sessionId = `ai_analyze_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -16952,6 +17130,12 @@ const appHandler = async (req, res) => {
         ) {
           parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
         }
+        const autoSaveResult = await autoSaveAnalyzeResult({
+          mode: autoSave,
+          parsedJson,
+          sourceSymbol: contextBundle.symbol,
+          providerRaw: aiProviderRaw || "claude",
+        });
         const analysisFileUploads = [];
         try {
           const firstOk = (contextBundle.timeframes || []).find(
@@ -17043,6 +17227,7 @@ const appHandler = async (req, res) => {
           context_bundle: contextBundle,
           raw_response: rawResponse,
           parsed_json: parsedJson,
+          auto_save_result: autoSaveResult,
           source: "claude_context_cache",
           updated_time: Date.now(),
           auto_refresh: 0,
@@ -17322,6 +17507,12 @@ const appHandler = async (req, res) => {
       ) {
         parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
       }
+      const autoSaveResult = await autoSaveAnalyzeResult({
+        mode: autoSave,
+        parsedJson,
+        sourceSymbol: requestedSymbol,
+        providerRaw: aiResult.provider || aiProviderRaw || "claude",
+      });
 
       // Persistence: If we have analysis and bars context, store in market_data metadata
       // Persistence: If we have analysis and bars context, store in Unified Cache and DB
@@ -17423,6 +17614,7 @@ const appHandler = async (req, res) => {
         claude_files_error: claudeFilesError,
         raw_response: rawResponse,
         parsed_json: parsedJson,
+        auto_save_result: autoSaveResult,
         source: "remote_api",
         updated_time: Date.now(),
         auto_refresh: 0, // Analysis doesn't need auto-refresh by default
