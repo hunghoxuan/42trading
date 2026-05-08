@@ -362,18 +362,23 @@ class NotificationManager {
     // 3) db_log channel → enqueue for batch INSERT
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
+      const root = {
+        event: eventType,
+        sub_type: subType,
+        message: merged.message || "",
+        ...payload,
+      };
       this.queue.push({
         object_id: null,
         object_table: eventType,
         symbol: payload.symbol || null,
         event_type: subType || eventType,
         metadata: JSON.stringify({
-          event: eventType,
-          sub_type: subType,
-          message: merged.message || "",
           status: payload.status || (payload.error ? "ERROR" : "OK"),
           error: payload.error ? String(payload.error) : null,
-          ...payload,
+          data: root,
+          payload: payload.data || null,
+          response: null,
         }),
         user_id: userId,
       });
@@ -15247,9 +15252,13 @@ const appHandler = async (req, res) => {
             ? payload.data
             : payload;
         const symbol = String(data?.symbol || payload?.symbol || "").trim();
-        const eventType =
-          String(payload.event_type || payload.event || "").trim() ||
-          String(r.object_table || "LOG");
+        const eventType = String(
+          data.event_type ||
+            data.event ||
+            r.event_type ||
+            r.object_table ||
+            "LOG",
+        ).trim();
         const eventTime = String(r.created_at || "");
         const signalId = String(r.object_id || "");
         const ackTicket = String(
