@@ -154,16 +154,6 @@ function PlanHeader({
             >
               {symbol}
             </span>
-            {strategy && (
-              <span className="minor-text" style={{ fontSize: "11px", fontWeight: 600 }}>
-                {strategy}
-              </span>
-            )}
-            {entryModel && (
-              <span className="minor-text" style={{ fontSize: "11px" }}>
-                {entryModel}
-              </span>
-            )}
             {!simplified && (
               <span
                 style={{
@@ -232,6 +222,16 @@ function PlanHeader({
           {pnl && (
             <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--foreground)" }}>
               {pnl}
+            </span>
+          )}
+          {strategy && (
+            <span className="minor-text" style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em" }}>
+              {strategy}
+            </span>
+          )}
+          {entryModel && (
+            <span className="minor-text" style={{ fontSize: "10px", fontWeight: 500 }}>
+              {entryModel}
             </span>
           )}
           {confidenceText && (
@@ -777,6 +777,7 @@ export default function SignalDetailCard({
 
           const fields = [
             { label: "Source", value: planVal.source || rawData.source },
+            { label: "Confluence Checklist", value: planVal.confluence_checklist || rawData.confluence_checklist || rawData.market_analysis?.confluence_checklist, isList: true, fullWidth: true },
             { label: "Invalidation", value: planVal.invalidation || rawData.invalidation, fullWidth: true },
             { label: "Entry Condition", value: planVal.entry_condition || rawData.entry_condition, fullWidth: true },
             { label: "Exit Condition", value: planVal.exit_condition || rawData.exit_condition, fullWidth: true },
@@ -822,7 +823,17 @@ export default function SignalDetailCard({
                             <span style={{ fontSize: 14, color: biasColor }}>{isLong ? "↑" : isShort ? "↓" : ""}</span>
                           </div>
                           <div style={{ fontSize: 10, color: biasColor, fontWeight: 600 }}>{b || "—"}</div>
-                          <div className="minor-text" style={{ fontSize: 9 }}>{tf.trend || ""} · {tf.structure || ""}</div>
+                          <div className="minor-text" style={{ fontSize: "9px" }}>{tf.trend || ""} · {tf.structure || ""}</div>
+                          {tf.price_action_summary && (
+                            <div className="minor-text" style={{ fontSize: "9px", marginTop: 4, fontStyle: "italic", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 4 }}>
+                              {tf.price_action_summary}
+                            </div>
+                          )}
+                          {tf.price_prediction && (
+                            <div style={{ fontSize: "9px", color: "var(--accent-soft)", fontWeight: 600, marginTop: 2 }}>
+                              Pred: {tf.price_prediction}
+                            </div>
+                          )}
                         </div>
                       );
                     })}

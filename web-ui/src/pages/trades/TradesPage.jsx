@@ -291,7 +291,7 @@ export default function TradesPage() {
     side: "",
     entry_model: "",
     chart_tf: "",
-    execution_status: "",
+    execution_status: "FILLED",
     range: "all",
     page: 1,
     pageSize: 50,
@@ -929,16 +929,6 @@ export default function TradesPage() {
             ))}
           </select>
           <select
-            value={filter.side}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, side: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL SIDES</option>
-            <option value="BUY">BUY</option>
-            <option value="SELL">SELL</option>
-          </select>
-          <select
             value={filter.symbol}
             onChange={(e) =>
               setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
@@ -961,19 +951,6 @@ export default function TradesPage() {
             {uniqueOptions.models.map((m) => (
               <option key={m} value={m}>
                 {m}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filter.chart_tf}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL TFS</option>
-            {uniqueOptions.tfs.map((t) => (
-              <option key={t} value={t}>
-                {formatTimeframe(t)}
               </option>
             ))}
           </select>
