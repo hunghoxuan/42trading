@@ -3544,7 +3544,7 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            JSON Config = runtime settings as structured JSON. Appended to
+            Template JSON = full config stored to DB settings as structured JSON. Appended to
             Prompt as CONFIG:{"{...}"} so AI has access to symbol, timeframes,
             RR, risk %, session overrides, etc.
           </div>
@@ -4949,7 +4949,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("json")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  JSON
+                  Template
                 </button>
               </div>
               <div
