@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.09 13:27 - e5a1096",
+  "v2026.05.09 13:32 - b6f44d5",
 ); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
@@ -5247,8 +5247,6 @@ function normalizeSignal(payload) {
   };
 }
 
-
-
 function formatSignal(signal) {
   return [
     `${signal.symbol} | ${signal.side} | ${signal.sid || "-"} | ${signal.timeframe || "n/a"}`,
@@ -5351,10 +5349,6 @@ function resolveBinanceSizing(signal) {
   );
 }
 
-
-
-
-
 function buildExecSummary(execResults) {
   return execResults
     .map((r) => {
@@ -5369,8 +5363,6 @@ function buildExecSummary(execResults) {
     })
     .join(" | ");
 }
-
-
 
 async function handleSignal(payload) {
   const signal = normalizeSignal(payload);
@@ -5849,7 +5841,8 @@ async function _mt5InitBackendInternal() {
     "signal_events",
     "trade_events",
     "source_events",
-    "mt5_signals",    "ui_auth_users",
+    "mt5_signals",
+    "ui_auth_users",
     "user_api_keys",
     "brokers",
   ];
@@ -6268,8 +6261,7 @@ async function _mt5InitBackendInternal() {
   const idSidMigrations = [
     { table: "users", legacy: "user_id", prefix: "USR" },
     { table: "accounts", legacy: "account_id", prefix: "ACC" },
-    // { table: "signals", legacy: "signal_id", prefix: "SIG" } // REMOVED: signal_id column dropped,
-    // { table: "trades", legacy: "trade_id", prefix: "TRD" } // REMOVED: trade_id column dropped,  ];
+  ];
   const UUID_REGEX_SQL =
     "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
   for (const { table, legacy, prefix } of idSidMigrations) {
@@ -8322,8 +8314,6 @@ async function _mt5InitBackendInternal() {
       return pool.query(`DELETE FROM logs`);
     },
 
-
-
     async rotateSourceSecretV2(sourceId) {
       const sid = String(sourceId || "").trim();
       if (!sid) return null;
@@ -8425,8 +8415,6 @@ async function _mt5InitBackendInternal() {
       );
       return res.rows || [];
     },
-
-
 
     async updateAccountV2(accountId, patch = {}) {
       const targetId = String(accountId || "").trim();
@@ -8622,7 +8610,8 @@ async function _mt5InitBackendInternal() {
         "user_accounts",
         "signals",
         "trades",
-        "logs",        "user_settings",
+        "logs",
+        "user_settings",
         "market_data",
         "user_templates",
       ];
@@ -9437,7 +9426,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 13:27 - e5a1096");
+    throw new Error("v2026.05.09 13:32 - b6f44d5");
   }
   return n;
 }
@@ -11129,10 +11118,6 @@ async function mt5UpsertSignal(signal) {
   return b.upsertSignal(signal);
 }
 
-
-
-
-
 async function mt5FindSignalById(signalId) {
   const b = await mt5Backend();
   return b.findSignalById(signalId);
@@ -11329,8 +11314,6 @@ async function mt5AppendSignalEvent(signalId, eventType, payload = {}) {
   }
 }
 
-
-
 async function mt5FanoutSignalTradeV2(payload) {
   const b = await mt5Backend();
   if (!b.fanoutSignalTradeV2) return { created: 0, account_ids: [] };
@@ -11406,10 +11389,6 @@ async function mt5ArchiveAccountV2(accountId) {
   if (!b.archiveAccountV2) return { ok: false, error: "not supported" };
   return b.archiveAccountV2(accountId);
 }
-
-
-
-
 
 async function mt5ListSourceEventsV2(sourceId, limit = 100) {
   const b = await mt5Backend();
@@ -11507,12 +11486,6 @@ async function mt5ListAccountsV2(userId = null) {
   if (!b.listAccountsV2) return [];
   return b.listAccountsV2(userId);
 }
-
-
-
-
-
-
 
 async function mt5RotateSourceSecretV2(sourceId) {
   const b = await mt5Backend();
@@ -12279,7 +12252,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 13:27 - e5a1096",
+        error: "v2026.05.09 13:32 - b6f44d5",
       });
       return null;
     }
@@ -12433,7 +12406,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 13:27 - e5a1096" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 13:32 - b6f44d5" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -12525,8 +12498,6 @@ function mt5DashboardHtml() {
 </body>
 </html>`;
 }
-
-
 
 const appHandler = async (req, res) => {
   const origin = req.headers.origin;
@@ -12626,7 +12597,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 13:27 - e5a1096" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 13:32 - b6f44d5",
+      });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -12691,7 +12665,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 13:27 - e5a1096" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 13:32 - b6f44d5",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -12732,7 +12709,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 13:27 - e5a1096" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 13:32 - b6f44d5",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -12765,7 +12745,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 13:27 - e5a1096" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 13:32 - b6f44d5",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -12788,7 +12771,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 13:27 - e5a1096" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 13:32 - b6f44d5",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
