@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 18:03 - 9e75c0d"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 18:08 - cf796bb"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -9489,7 +9489,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 18:03 - 9e75c0d");
+    throw new Error("v2026.05.09 18:08 - cf796bb");
   }
   return n;
 }
@@ -11613,7 +11613,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 18:03 - 9e75c0d", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const route = ["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
   const accountId = String(payload.account_id || "").trim() || null;
   const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
     .map((v) => String(v || "").trim())
@@ -12443,7 +12443,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
+        error: "v2026.05.09 18:08 - cf796bb",
       });
       return null;
     }
@@ -12597,7 +12597,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 18:03 - 9e75c0d" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 18:08 - cf796bb" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -12712,20 +12712,614 @@ const appHandler = async (req, res) => {
   }
 
   const proto = req?.socket?.encrypted ? "https" : "http";
-  const url = new URL(
+  const incomingUrl = new URL(
     req.url,
     `${proto}://${req.headers.host || "localhost"}`,
   );
-  const hostname = normalizeHostHeader(req.headers.host || "localhost");
 
   // NORMALIZE PATH: Support both /webhook/path and /path for routing
-  if (url.pathname.startsWith("/webhook/")) {
-    url.pathname = url.pathname.substring(8);
-  } else if (url.pathname === "/webhook") {
-    url.pathname = "/";
+  if (incomingUrl.pathname.startsWith("/webhook/")) {
+    incomingUrl.pathname = incomingUrl.pathname.substring(8);
+  } else if (incomingUrl.pathname === "/webhook") {
+    incomingUrl.pathname = "/";
   }
 
-  if (tryServeLanding(url, req, res, hostname)) return;
+  // Optimization: Any incoming webhook/POST potentially changes state
+  if (req.method === "POST") {
+    notifyPulse(null, "webhook");
+  }
+  const url = incomingUrl;
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  console.log(
+    `[REQUEST] ${req.method} ${req.url} -> ${url.pathname} (IP: ${ip})`,
+  );
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/stream") {
+    const sess = getUiSessionFromReq(req);
+    const userId = sess.user_id || "*";
+    // SSE headers
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write(":ok\n\n"); // initial comment to establish connection
+    sseRegisterClient(userId, res);
+    // heartbeat every 30s
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(":ping\n\n");
+      } catch (e) {
+        clearInterval(heartbeat);
+      }
+    }, 30000);
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      sseRemoveClient(userId, res);
+    });
+    return; // do not call json() — SSE is raw
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/pulse") {
+    const sess = getUiSessionFromReq(req);
+    const userId = sess.user_id;
+    return json(res, 200, {
+      ok: true,
+      global: NOTIFICATION_PULSE.global,
+      user: userId ? NOTIFICATION_PULSE.user[userId] || 0 : 0,
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/proxy/binance") {
+    const target =
+      "https://api.binance.com/api/v3/klines?" +
+      incomingUrl.searchParams.toString();
+    https
+      .get(target, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode || 200, {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        });
+        proxyRes.pipe(res);
+      })
+      .on("error", (err) => {
+        json(res, 500, { error: err.message });
+      });
+    return;
+  }
+
+  const hostname = normalizeHostHeader(req.headers.host);
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/broker\/accounts\/[^/]+\/apiKey$/.test(incomingUrl.pathname)
+  ) {
+    try {
+      const accountId = decodeURIComponent(incomingUrl.pathname.split("/")[4]);
+      const body = await readJson(req);
+      const out = await (
+        await mt5Backend()
+      ).updateAccountApiKeyV2(accountId, body.api_key_plaintext);
+      if (!out)
+        return json(res, 404, { ok: false, error: "Account not found" });
+      return json(res, 200, { ok: true, ...out });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (
+    req.method === "DELETE" &&
+    /^\/v2\/broker\/accounts\/[^/]+\/apiKey$/.test(incomingUrl.pathname)
+  ) {
+    try {
+      const accountId = decodeURIComponent(incomingUrl.pathname.split("/")[4]);
+      const out = await (
+        await mt5Backend()
+      ).updateAccountApiKeyV2(accountId, null);
+      if (!out)
+        return json(res, 404, { ok: false, error: "Account not found" });
+      return json(res, 200, { ok: true, ...out });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (tryServeLanding(incomingUrl, req, res, hostname)) {
+    return;
+  }
+
+  if (tryServeUi(incomingUrl, req, res, hostname)) {
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/me") {
+    try {
+      const sess = getUiSessionFromReq(req);
+      if (!sess.ok)
+        return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+
+      // Eager Load common data for the SPA - catch individual errors to remain resilient
+      const [sysCfg, accounts, watchlist, pendingSignals] = await Promise.all([
+        repoGetSystemSettings().catch((e) => {
+          console.error("[authMe] system settings fail:", e);
+          return {};
+        }),
+        repoGetUserAccounts(sess.user_id).catch((e) => {
+          console.error("[authMe] accounts fail:", e);
+          return [];
+        }),
+        repoGetUserWatchlist(sess.user_id).catch((e) => {
+          console.error("[authMe] watchlist fail:", e);
+          return [];
+        }),
+        repoGetPendingSignals("all").catch((e) => {
+          console.error("[authMe] signals fail:", e);
+          return [];
+        }),
+      ]);
+
+      return json(res, 200, {
+        ok: true,
+        user: {
+          user_id: sess.user_id,
+          name: sess.name,
+          email: sess.email,
+          role: sess.role,
+          is_active: normalizeUserActive(sess.is_active, true),
+          metadata: {
+            ...(sess.metadata || {}),
+            watchlist: watchlist || sess.metadata?.watchlist || [],
+          },
+        },
+        eager_data: {
+          system_settings: sysCfg || {},
+          user_accounts: accounts || [],
+          pending_signals: pendingSignals || [],
+        },
+      });
+    } catch (err) {
+      console.error("[authMe] fatal error:", err);
+      return json(res, 500, {
+        ok: false,
+        error: "Internal Server Error during hydration",
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/profile") {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    const state =
+      (await uiReadAuthStateByUserId(sess.user_id)) ||
+      (await uiReadAuthStateByEmail(sess.email));
+    if (!state)
+      return json(res, 404, { ok: false, error: "Profile not found" });
+    return json(res, 200, {
+      ok: true,
+      user: {
+        user_id: state.user_id,
+        name: state.name,
+        email: state.email,
+        role: state.role,
+        is_active: normalizeUserActive(state.is_active, true),
+        metadata: state.metadata || {},
+      },
+    });
+  }
+
+  if (req.method === "PUT" && url.pathname === "/auth/profile") {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const payload = await readJson(req);
+      const out = await uiAuthUpdateProfile(sess, payload || {});
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to update profile",
+        });
+      if (sess.token && UI_SESSIONS.has(sess.token)) {
+        const cur = UI_SESSIONS.get(sess.token) || {};
+        UI_SESSIONS.set(sess.token, {
+          ...cur,
+          email: out.user.email,
+          name: out.user.name,
+          role: out.user.role,
+          user_id: out.user.user_id,
+          is_active: normalizeUserActive(out.user.is_active, true),
+        });
+      }
+      return json(res, 200, { ok: true, user: out.user });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "PUT" && url.pathname === "/auth/metadata") {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const payload = await readJson(req);
+      const db = await mt5InitBackend();
+      const userId = sess.user_id;
+
+      const currentRes = await db.query(
+        "SELECT metadata FROM users WHERE user_id = $1",
+        [userId],
+      );
+      const current = currentRes.rows[0]?.metadata || {};
+      const next = { ...current, ...payload };
+
+      await db.query(
+        "UPDATE users SET metadata = $1, updated_at = NOW() WHERE user_id = $2",
+        [JSON.stringify(next), userId],
+      );
+
+      // Update session cache
+      const token = sess.token;
+      if (token && UI_SESSIONS.has(token)) {
+        const s = UI_SESSIONS.get(token);
+        s.metadata = next;
+        UI_SESSIONS.set(token, s);
+      }
+
+      await StateRepo.del("USER_PROFILE", userId);
+      await StateRepo.del("USER_WATCHLIST", userId);
+
+      return json(res, 200, { ok: true, metadata: next });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/charts/multi") {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    const symbol = url.searchParams.get("symbol");
+    const tfsRaw = url.searchParams.get("tfs") || "";
+    const tfs = tfsRaw.split(",").filter(Boolean);
+    if (!symbol || !tfs.length)
+      return json(res, 400, { ok: false, error: "Missing symbol or tfs" });
+    const results = {};
+    const tasks = tfs.map(async (tf) => {
+      try {
+        const data = await buildAnalysisSnapshotFromTwelve({
+          userId: sess.user_id,
+          symbol,
+          timeframe: tf,
+          payload: Object.fromEntries(url.searchParams),
+        });
+        results[tf] = data;
+      } catch (e) {
+        results[tf] = { status: "error", reason: e.message };
+      }
+    });
+    await Promise.all(tasks);
+    return json(res, 200, { ok: true, symbol, data: results });
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/users") {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const users = await uiListUsers();
+      return json(res, 200, { ok: true, users });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/users") {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const out = await uiCreateUser(payload || {});
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to create user",
+        });
+      return json(res, 200, { ok: true, user: out.user });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/auth\/users\/[^/]+\/detail$/.test(url.pathname)
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const userId = decodeURIComponent(
+        url.pathname.slice("/auth/users/".length, -"/detail".length),
+      );
+      const out = await uiGetUserDetail(userId);
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to load user detail",
+        });
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/auth\/users\/[^/]+\/accounts$/.test(url.pathname)
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const userId = decodeURIComponent(
+        url.pathname.slice("/auth/users/".length, -"/accounts".length),
+      );
+      const payload = await readJson(req);
+      const out = await uiUpsertUserAccount(userId, payload || {});
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to save account",
+        });
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "PUT" &&
+    /^\/auth\/users\/[^/]+\/accounts\/[^/]+$/.test(url.pathname)
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const userId = decodeURIComponent(parts[2] || "");
+      const accountId = decodeURIComponent(parts[4] || "");
+      const payload = await readJson(req);
+      const out = await uiUpsertUserAccount(userId, {
+        ...(payload || {}),
+        account_id: accountId,
+      });
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to update account",
+        });
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "DELETE" &&
+    /^\/auth\/users\/[^/]+\/accounts\/[^/]+$/.test(url.pathname)
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const userId = decodeURIComponent(parts[2] || "");
+      const accountId = decodeURIComponent(parts[4] || "");
+      const out = await uiDeleteUserAccount(userId, accountId);
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to delete account",
+        });
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/auth\/users\/[^/]+\/api-keys$/.test(url.pathname)
+  ) {
+    return json(res, 410, {
+      ok: false,
+      error:
+        "User API key endpoints are removed. Use account API key rotation.",
+    });
+  }
+
+  if (
+    req.method === "PUT" &&
+    /^\/auth\/users\/[^/]+\/api-keys\/[^/]+$/.test(url.pathname)
+  ) {
+    return json(res, 410, {
+      ok: false,
+      error:
+        "User API key endpoints are removed. Use account API key rotation.",
+    });
+  }
+
+  if (
+    req.method === "DELETE" &&
+    /^\/auth\/users\/[^/]+\/api-keys\/[^/]+$/.test(url.pathname)
+  ) {
+    return json(res, 410, {
+      ok: false,
+      error:
+        "User API key endpoints are removed. Use account API key rotation.",
+    });
+  }
+
+  if (req.method === "PUT" && /^\/auth\/users\/[^/]+$/.test(url.pathname)) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const userId = decodeURIComponent(
+        url.pathname.slice("/auth/users/".length),
+      );
+      if (!userId)
+        return json(res, 400, { ok: false, error: "user_id is required" });
+      const payload = await readJson(req);
+      const out = await uiUpdateUserById(userId, payload || {});
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to update user",
+        });
+      for (const [token, session] of UI_SESSIONS.entries()) {
+        if (String(session?.user_id || "") !== String(userId)) continue;
+        if (!normalizeUserActive(out.user?.is_active, true)) {
+          UI_SESSIONS.delete(token);
+          continue;
+        }
+        UI_SESSIONS.set(token, {
+          ...session,
+          name: out.user.name,
+          email: out.user.email,
+          role: out.user.role,
+          is_active: normalizeUserActive(out.user.is_active, true),
+        });
+      }
+      return json(res, 200, { ok: true, user: out.user });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "DELETE" && /^\/auth\/users\/[^/]+$/.test(url.pathname)) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const userId = decodeURIComponent(
+        url.pathname.slice("/auth/users/".length),
+      );
+      if (!userId)
+        return json(res, 400, { ok: false, error: "user_id is required" });
+      const out = await uiDeleteUserById(userId);
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to delete user",
+        });
+
+      // Logout active sessions for this user
+      for (const [token, session] of UI_SESSIONS.entries()) {
+        if (String(session?.user_id || "") === String(userId)) {
+          UI_SESSIONS.delete(token);
+        }
+      }
+      return json(res, 200, { ok: true, message: "User deleted successfully" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/auth\/users\/[^/]+\/deactivate$/.test(url.pathname)
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const base = url.pathname.slice(
+        "/auth/users/".length,
+        -"/deactivate".length,
+      );
+      const userId = decodeURIComponent(base.replace(/\/+$/, ""));
+      if (!userId)
+        return json(res, 400, { ok: false, error: "user_id is required" });
+      const out = await uiUpdateUserById(userId, {
+        is_active: false,
+        role: "Guest",
+      });
+      if (!out.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out.error || "Failed to deactivate user",
+        });
+      for (const [token, session] of UI_SESSIONS.entries()) {
+        if (String(session?.user_id || "") === String(userId))
+          UI_SESSIONS.delete(token);
+      }
+      return json(res, 200, { ok: true, user: out.user });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/login") {
+    try {
+      const payload = await readJson(req);
+      const email = normalizeEmail(payload.email);
+      const password = String(payload.password || "");
+      if (!email || !password)
+        return json(res, 400, {
+          ok: false,
+          error: "Email and password are required",
+        });
+      const authUser = await uiAuthGetVerifiedUser(email, password);
+      if (!authUser)
+        return json(res, 401, {
+          ok: false,
+          error: "Invalid email or password",
+        });
+      const token = createUiSession(authUser);
+      setUiSessionCookie(res, token);
+      return json(res, 200, { ok: true, user: authUser, token });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/logout") {
+    const sess = getUiSessionFromReq(req);
+    if (sess.ok && sess.token) UI_SESSIONS.delete(sess.token);
+    clearUiSessionCookie(res);
+    return json(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/password") {
+    const sess = getUiSessionFromReq(req);
+    if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const payload = await readJson(req);
+      const currentPassword = String(payload.currentPassword || "");
+      const newPassword = String(payload.newPassword || "");
+      const changed = await uiAuthChangePassword(
+        sess.email,
+        currentPassword,
+        newPassword,
+      );
+      if (!changed.ok)
+        return json(res, 400, {
+          ok: false,
+          error: changed.error || "Failed to update password",
+        });
+      return json(res, 200, { ok: true, message: "Password updated" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (["GET", "HEAD"].includes(req.method) && url.pathname === "/") {
+    return json(res, 200, {
+      ok: true,
+      service: "telegram-trading-bot",
+      version: SERVER_VERSION,
+      endpoints: {
+        health: "/health",
+        mt5Health: "/mt5/health",
+        signal: "/signal",
+      },
+    });
+  }
 
   if (req.method === "GET" && url.pathname === "/health") {
     res.setHeader("Cache-Control", "no-store");
@@ -12742,710 +13336,462 @@ const appHandler = async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/mt5/health") {
-    const backend = await mt5Backend();
-    res.setHeader("Cache-Control", "no-store");
+    if (!CFG.mt5Enabled) {
+      return json(res, 200, {
+        ok: true,
+        service: "mt5-bridge",
+        version: SERVER_VERSION,
+        enabled: false,
+        storage: "postgres",
+        hasTvApiKeys: CFG.mt5TvAlertApiKeys.size > 0,
+        hasEaApiKeys: CFG.mt5EaApiKeys.size > 0,
+        pruneEnabled: CFG.mt5PruneEnabled,
+        pruneDays: CFG.mt5PruneDays,
+        pruneIntervalMinutes: CFG.mt5PruneIntervalMinutes,
+      });
+    }
+    const b = await mt5Backend();
     return json(res, 200, {
       ok: true,
       service: "mt5-bridge",
       version: SERVER_VERSION,
       enabled: CFG.mt5Enabled,
-      storage: backend.storage,
-      target: CFG.mt5StorageTarget,
-      brokerApiEnabled: CFG.mt5V2BrokerApiEnabled,
-      dualWriteEnabled: CFG.mt5V2DualWriteEnabled,
+      storage: b.storage,
+      hasTvApiKeys: CFG.mt5TvAlertApiKeys.size > 0,
+      hasEaApiKeys: CFG.mt5EaApiKeys.size > 0,
+      dbPath: b.info.path || null,
+      postgresConfigured: b.storage === "postgres",
+      pruneEnabled: CFG.mt5PruneEnabled,
+      pruneDays: CFG.mt5PruneDays,
+      pruneIntervalMinutes: CFG.mt5PruneIntervalMinutes,
     });
   }
 
-  if (req.method === "POST" && url.pathname === "/auth/login") {
-    try {
-      const payload = await readJson(req);
-      await uiEnsureAuthBootstrap();
-      const user = await uiAuthGetVerifiedUser(payload?.email, payload?.password);
-      if (!user) {
-        clearUiSessionCookie(res);
-        return json(res, 401, { ok: false, error: "Invalid email or password" });
-      }
-      const token = createUiSession(user);
-      setUiSessionCookie(res, token);
-      return json(res, 200, {
-        ok: true,
-        user: {
-          ...uiPublicUserView(user),
-          metadata: user?.metadata || {},
-        },
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "POST" && url.pathname === "/auth/logout") {
-    const sess = getUiSessionFromReq(req);
-    if (sess?.token) UI_SESSIONS.delete(sess.token);
-    clearUiSessionCookie(res);
-    return json(res, 200, { ok: true });
-  }
-
-  if (req.method === "GET" && url.pathname === "/auth/me") {
-    const sess = getUiSessionFromReq(req);
-    if (!sess.ok) {
-      clearUiSessionCookie(res);
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
-    }
-    const state =
-      (await uiReadAuthStateByUserId(sess.user_id)) ||
-      (await uiReadAuthStateByEmail(sess.email));
-    const user = state || sess;
-    return json(res, 200, {
-      ok: true,
-      user: {
-        ...uiPublicUserView(user),
-        metadata: user?.metadata || sess.metadata || {},
-      },
-    });
-  }
-
-  if (req.method === "GET" && url.pathname === "/auth/profile") {
-    const sess = getUiSessionFromReq(req);
-    if (!sess.ok) {
-      clearUiSessionCookie(res);
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
-    }
-    const state =
-      (await uiReadAuthStateByUserId(sess.user_id)) ||
-      (await uiReadAuthStateByEmail(sess.email));
-    const user = state || sess;
-    return json(res, 200, {
-      ok: true,
-      user: {
-        ...uiPublicUserView(user),
-        metadata: user?.metadata || sess.metadata || {},
-      },
-    });
-  }
-
-  if (req.method === "PUT" && url.pathname === "/auth/profile") {
-    const sess = getUiSessionFromReq(req);
-    if (!sess.ok) {
-      clearUiSessionCookie(res);
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
-    }
-    try {
-      const payload = await readJson(req);
-      const out = await uiAuthUpdateProfile(sess, payload || {});
-      if (!out?.ok) {
-        return json(res, 400, {
-          ok: false,
-          error: out?.error || "Failed to update profile",
-        });
-      }
-      if (sess.token && UI_SESSIONS.has(sess.token)) {
-        const prev = UI_SESSIONS.get(sess.token) || {};
-        UI_SESSIONS.set(sess.token, {
-          ...prev,
-          email: normalizeEmail(out.user?.email || prev.email || sess.email),
-          user_id: String(out.user?.user_id || prev.user_id || sess.user_id),
-          name: String(out.user?.name || prev.name || sess.name),
-          role: normalizeUserRole(out.user?.role || prev.role || sess.role),
-          is_active: normalizeUserActive(out.user?.is_active, true),
-        });
-      }
-      return json(res, 200, out);
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "POST" && url.pathname === "/auth/password") {
-    const sess = getUiSessionFromReq(req);
-    if (!sess.ok) {
-      clearUiSessionCookie(res);
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
-    }
-    try {
-      const payload = await readJson(req);
-      const out = await uiAuthChangePassword(
-        sess.email,
-        payload?.currentPassword,
-        payload?.newPassword,
-      );
-      if (!out?.ok) {
-        return json(res, 400, {
-          ok: false,
-          error: out?.error || "Failed to change password",
-        });
-      }
-      return json(res, 200, { ok: true });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/notifications/stream") {
-    const sess = getUiSessionFromReq(req);
-    const userId = sess.user_id || "*";
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    res.write(":ok\n\n");
-    sseRegisterClient(userId, res);
-    const heartbeat = setInterval(() => {
-      try {
-        res.write(":ping\n\n");
-      } catch {
-        clearInterval(heartbeat);
-      }
-    }, 30000);
-    req.on("close", () => {
-      clearInterval(heartbeat);
-      sseRemoveClient(userId, res);
-    });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/notifications/events") {
-    if (!requireAuthForUi(req, res)) return;
-    try {
-      const notificationsManager = global.__notificationManager;
-      const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(
-        ([event, defaults]) => {
-          const dbSettings =
-            notificationsManager?.settingsCache?.get(event) || {};
-          return {
-            event,
-            label: event
-              .replace(/_/g, " ")
-              .replace(/\b\w/g, (c) => c.toUpperCase()),
-            toast:
-              dbSettings.toast !== undefined
-                ? dbSettings.toast
-                : defaults.toast,
-            console_log:
-              dbSettings.console_log !== undefined
-                ? dbSettings.console_log
-                : defaults.console_log || false,
-            ticker:
-              dbSettings.ticker !== undefined
-                ? dbSettings.ticker
-                : defaults.ticker,
-            sound:
-              dbSettings.sound !== undefined
-                ? dbSettings.sound
-                : defaults.sound || null,
-            db_log:
-              dbSettings.db_log !== undefined
-                ? dbSettings.db_log
-                : defaults.db_log,
-          };
-        },
-      );
-      return json(res, 200, { ok: true, events });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "POST" && url.pathname === "/v2/notifications/test") {
-    if (!requireAuthForUi(req, res)) return;
-    try {
-      const sess = getUiSessionFromReq(req);
-      const payload = await readJson(req).catch(() => ({}));
-      notificationManager.handle("SYSTEM_EVENT", payload.event || "system_event", {
-        user_id: sess.user_id,
-        page: payload.page || null,
-        event: payload.event || "system_event",
-        message:
-          payload.message || "Test notification - all channels firing",
-        type: payload.type || "info",
-        notification: payload.notification !== false,
-        need_refresh: payload.need_refresh || false,
-        comp_refresh: payload.comp_refresh || false,
-        action: payload.action || null,
-        sound: payload.sound || null,
-        position: payload.position || "bottom-right",
-        _force_toast: true,
-        _force_ticker: true,
-        _force_sound: true,
-        _force_db_log: true,
-      });
-      return json(res, 200, {
-        ok: true,
-        sent: {
-          event: payload.event || "system_event",
-          message: payload.message || "Test notification - all channels firing",
-        },
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/notifications/settings") {
-    if (!requireAuthForUi(req, res)) return;
-    try {
-      const sess = getUiSessionFromReq(req);
-      const db = await mt5InitBackend();
-      const { rows } = await db.query(
-        "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
-        [sess.user_id],
-      );
-      const settings =
-        rows[0]?.data && typeof rows[0].data === "object" ? rows[0].data : {};
-      return json(res, 200, { ok: true, settings });
-    } catch {
-      return json(res, 200, { ok: true, settings: {} });
-    }
-  }
-
-  if (req.method === "POST" && url.pathname === "/v2/notifications/settings") {
-    if (!requireAuthForUi(req, res)) return;
-    try {
-      const payload = await readJson(req);
-      const sess = getUiSessionFromReq(req);
-      const settings = payload.settings || payload;
-      const db = await mt5InitBackend();
-      for (const [eventName, config] of Object.entries(settings || {})) {
-        const eventKey = String(eventName)
-          .toUpperCase()
-          .replace(/[^A-Z_]/g, "");
-        if (!eventKey) continue;
-        await db.query(
-          `INSERT INTO user_settings (user_id, type, name, data)
-           VALUES ($1, 'notification_config', $2, $3)
-           ON CONFLICT (user_id, type, name)
-           DO UPDATE SET data = $3, updated_at = NOW()`,
-          [sess.user_id, eventKey, JSON.stringify(config || {})],
-        );
-      }
-      if (global.__notificationManager) {
-        await global.__notificationManager.reloadSettings();
-      }
-      return json(res, 200, { ok: true });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/accounts") {
+  if (req.method === "GET" && url.pathname === "/mt5/dashboard/summary") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
     try {
-      const userId = uiEffectiveUserId(req, url);
-      const items = await mt5ListAccountsV2(userId);
-      return json(res, 200, { ok: true, items });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/auth/users") {
-    if (!requireSystemRoleForUi(req, res)) return;
-    try {
-      const users = await uiListUsers();
-      return json(res, 200, { ok: true, users });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "GET" &&
-    /^\/auth\/users\/[^/]+\/detail$/.test(url.pathname)
-  ) {
-    if (!requireSystemRoleForUi(req, res)) return;
-    try {
-      const userId = decodeURIComponent(
-        url.pathname.slice("/auth/users/".length, -"/detail".length),
-      );
-      const out = await uiGetUserDetail(userId);
-      return json(res, out?.ok ? 200 : 400, out);
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/ai/templates") {
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const db = await mt5InitBackend();
-      const { rows } = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY created_at DESC",
-        [CFG.mt5DefaultUserId],
-      );
-      const templates = rows.map((r) => ({
-        template_id: r.name,
-        name: r.name,
-        ...(r.data && typeof r.data === "object" ? r.data : {}),
-      }));
-      return json(res, 200, { ok: true, templates });
-    } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "POST" && url.pathname === "/v2/ai/templates") {
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const payload = await readJson(req);
-      const db = await mt5InitBackend();
-      const config =
-        payload?.config && typeof payload.config === "object"
-          ? payload.config
-          : payload && typeof payload === "object"
-            ? payload
-            : {};
-      const requestedId = String(payload?.template_id || "").trim();
-      const requestedName = String(payload?.name || "").trim();
-      const templateName = requestedName || requestedId || "Unnamed Template";
-      const data = {
-        config,
-        _guide: config?._guide,
-        _schema: config?._schema,
-        saved: payload?.saved || new Date().toISOString(),
-      };
-      await db.query(
-        `INSERT INTO user_settings (user_id, type, name, data)
-         VALUES ($1, 'ai_template', $2, $3::jsonb)
-         ON CONFLICT (user_id, type, name)
-         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-        [CFG.mt5DefaultUserId, templateName, JSON.stringify(data)],
-      );
-      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
-      return json(res, 201, {
-        ok: true,
-        template: {
-          template_id: templateName,
-          name: templateName,
-          config,
-          saved: data.saved,
-          _guide: data._guide,
-          _schema: data._schema,
-        },
-      });
-    } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "DELETE" && url.pathname.startsWith("/v2/ai/templates/")) {
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const templateName = decodeURIComponent(url.pathname.split("/").pop() || "");
-      const db = await mt5InitBackend();
-      await db.query(
-        "DELETE FROM user_settings WHERE user_id = $1 AND type = 'ai_template' AND name = $2",
-        [CFG.mt5DefaultUserId, templateName],
-      );
-      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
-      return json(res, 200, { ok: true });
-    } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "GET" &&
-    url.pathname === "/v2/settings/execution-profiles"
-  ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const userId = uiEffectiveUserId(req, url);
-      const [items, active, accounts] = await Promise.all([
-        mt5ListExecutionProfilesV2(userId),
-        mt5GetActiveExecutionProfileV2(userId),
-        mt5ListAccountsV2(userId),
-      ]);
-      return json(res, 200, {
-        ok: true,
-        items,
-        active_profile: active || null,
-        accounts: accounts || [],
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "POST" &&
-    url.pathname === "/v2/settings/execution-profile"
-  ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    let payload = {};
-    try {
-      payload = await readJson(req);
-    } catch {}
-    if (!requireAdminKey(req, res, url, payload)) return;
-    try {
-      const userId = uiEffectiveUserId(req, url, payload);
-      const route = String(payload?.route || "")
-        .trim()
-        .toLowerCase();
-      if (!["ea", "v2026.05.09 18:03 - 9e75c0d", "ctrader"].includes(route)) {
-        return json(res, 400, {
-          ok: false,
-          error: "route must be one of: ea, v2, ctrader",
-        });
-      }
-      const accountId = String(payload?.account_id || "").trim();
-      if (!accountId) {
-        return json(res, 400, { ok: false, error: "account_id is required" });
-      }
-      const sourceIds = (
-        Array.isArray(payload?.source_ids) ? payload.source_ids : []
-      )
-        .map((v) => String(v || "").trim())
-        .filter(Boolean);
-      const save = await mt5SaveExecutionProfileV2({
-        profile_id:
-          String(payload?.profile_id || "default").trim() || "default",
-        profile_name:
-          String(payload?.profile_name || `profile_${route}`).trim() ||
-          `profile_${route}`,
-        user_id: userId,
-        route,
-        account_id: accountId,
-        source_ids: sourceIds,
-        ctrader_mode: String(payload?.ctrader_mode || "")
-          .trim()
-          .toLowerCase(),
-        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
-        is_active: payload?.is_active === true,
-        metadata:
-          payload?.metadata && typeof payload.metadata === "object"
-            ? payload.metadata
-            : {},
-      });
-      if (!save?.ok) {
-        return json(res, 400, {
-          ok: false,
-          error: save?.error || "failed to save execution profile",
-        });
-      }
-      const rows = await mt5ListExecutionProfilesV2(userId);
-      return json(res, 200, { ok: true, item: save.item || null, items: rows });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "POST" &&
-    url.pathname === "/v2/settings/execution-profile/apply"
-  ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    let payload = {};
-    try {
-      payload = await readJson(req);
-    } catch {}
-    if (!requireAdminKey(req, res, url, payload)) return;
-    try {
-      const userId = uiEffectiveUserId(req, url, payload);
-      const route = String(payload?.route || "")
-        .trim()
-        .toLowerCase();
-      if (!["ea", "v2026.05.09 18:03 - 9e75c0d", "ctrader"].includes(route)) {
-        return json(res, 400, {
-          ok: false,
-          error: "route must be one of: ea, v2, ctrader",
-        });
-      }
-      const accountId = String(payload?.account_id || "").trim();
-      if (!accountId) {
-        return json(res, 400, { ok: false, error: "account_id is required" });
-      }
-      const sourceIds = (
-        Array.isArray(payload?.source_ids)
-          ? payload.source_ids
-          : ["signal", "tradingview"]
-      )
-        .map((v) => String(v || "").trim())
-        .filter(Boolean);
-      const save = await mt5SaveExecutionProfileV2({
-        profile_id:
-          String(payload?.profile_id || "default").trim() || "default",
-        profile_name:
-          String(payload?.profile_name || `active_${route}`).trim() ||
-          `active_${route}`,
-        user_id: userId,
-        route,
-        account_id: accountId,
-        source_ids: sourceIds,
-        ctrader_mode: String(payload?.ctrader_mode || "")
-          .trim()
-          .toLowerCase(),
-        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
-        is_active: true,
-        metadata:
-          payload?.metadata && typeof payload.metadata === "object"
-            ? payload.metadata
-            : {},
-      });
-      if (!save?.ok) {
-        return json(res, 400, {
-          ok: false,
-          error: save?.error || "failed to apply execution profile",
-        });
-      }
-      const [rows, active] = await Promise.all([
-        mt5ListExecutionProfilesV2(userId),
-        mt5GetActiveExecutionProfileV2(userId),
-      ]);
-      return json(res, 200, {
-        ok: true,
-        item: save.item || null,
-        items: rows,
-        active_profile: active || save.item || null,
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/v2/settings") {
-    const sess = getUiSessionFromReq(req);
-    const isAdmin =
-      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
-      CFG.adminKey;
-    if (!sess.ok && !isAdmin)
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
-    try {
-      const db = await mt5InitBackend();
-      const userId = sess.user_id || CFG.mt5DefaultUserId;
-      const rows = await repoListUserSettings(userId);
-      const settings = rows.map((r) => {
-        let d = r.data;
-        if ((!d || Object.keys(d).length === 0) && r.value) {
-          try {
-            d = JSON.parse(r.value);
-            if (typeof d !== "object" || d === null) d = { value: r.value };
-          } catch {
-            d = { value: r.value };
-          }
-        }
-        if (r.type === "api_key" && d && typeof d === "object") {
-          const decrypted = decryptObject(d);
-          const masked = {};
-          for (const [k, v] of Object.entries(decrypted)) {
-            masked[k] = maskApiKeyForDisplay(String(v || ""));
-          }
-          return { ...r, data: masked };
-        }
-        return { ...r, data: d || {} };
-      });
-      return json(res, 200, { ok: true, settings });
-    } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/mt5/api/events") {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    const sess = getUiSessionFromReq(req);
-    const userId = sess.ok
-      ? sess.user_id
-      : url.searchParams.get("user_id") || null;
-    try {
-      const limitRaw = Number(url.searchParams.get("limit") || 200);
+      const limitRaw = Number(url.searchParams.get("limit") || 5000);
       const limit = Math.max(
-        1,
-        Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 200),
+        100,
+        Math.min(50000, Number.isFinite(limitRaw) ? limitRaw : 5000),
       );
-      const offsetRaw = Number(url.searchParams.get("offset") || 0);
-      const offset = Math.max(0, Number.isFinite(offsetRaw) ? offsetRaw : 0);
-      const b = await mt5Backend();
-      const rows = await b.listLogs({ user_id: userId }, limit, offset);
-      const events = (rows || []).map((r) => {
-        const payload =
-          r?.metadata && typeof r.metadata === "object" ? r.metadata : {};
-        const data =
-          payload?.data && typeof payload.data === "object"
-            ? payload.data
-            : payload;
-        return {
-          id: Number(r.log_id || 0),
-          log_id: Number(r.log_id || 0),
-          object_id: String(r.object_id || ""),
-          object_table: String(r.object_table || ""),
-          created_at: String(r.created_at || ""),
-          metadata: payload,
-          event_time: String(r.created_at || ""),
-          event_type: String(
-            data.event_type || data.event || r.event_type || "LOG",
-          ).trim(),
-          signal_id: String(r.object_id || ""),
-          ack_ticket: String(
-            data?.ticket || payload?.ticket || data?.ack_ticket || "",
-          ),
-          symbol: String(data?.symbol || payload?.symbol || "N/A"),
-          payload_json: payload,
-          status: payload.status || null,
-          error: payload.error || null,
-        };
+      const userId = uiEffectiveUserId(req, url);
+      const rows = await mt5ListSignals(limit, "", userId);
+
+      const metrics = mt5ComputeMetrics(rows);
+      return json(res, 200, {
+        ok: true,
+        version: SERVER_VERSION,
+        user_id: userId || null,
+        metrics,
+        benefit: {
+          today: mt5ComputeMetrics(
+            mt5FilterRows(rows, { from: mt5PeriodRange("today").start }),
+          ).pnl_money_realized,
+          week: mt5ComputeMetrics(
+            mt5FilterRows(rows, { from: mt5PeriodRange("week").start }),
+          ).pnl_money_realized,
+          month: mt5ComputeMetrics(
+            mt5FilterRows(rows, { from: mt5PeriodRange("month").start }),
+          ).pnl_money_realized,
+        },
+        status_counts: mt5CountBy(rows, (r) =>
+          mt5CanonicalStoredStatus(r.status),
+        ),
+        action_counts: mt5CountBy(rows, (r) =>
+          String(r.action || "").toUpperCase(),
+        ),
+        order_type_counts: mt5CountBy(rows, (r) =>
+          String(r.raw_json?.order_type || "limit").toUpperCase(),
+        ),
+        top_symbols: mt5CountBy(
+          rows,
+          (r) => String(r.symbol || "").toUpperCase(),
+          { limit: 10 },
+        ),
+        latest_unprocessed: rows
+          .filter((r) => ["NEW", "LOCKED"].includes(r.status))
+          .slice(0, 20)
+          .map(mt5PublicState),
       });
-      return json(res, 200, { ok: true, events });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/dashboard/advanced") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const limitRaw = Number(url.searchParams.get("limit") || 100000);
+      const limit = Math.max(
+        500,
+        Math.min(200000, Number.isFinite(limitRaw) ? limitRaw : 100000),
+      );
+      const userId = uiEffectiveUserId(req, url);
+      const accountId = envStr(url.searchParams.get("account_id"));
+      const symbol = envStr(url.searchParams.get("symbol")).toUpperCase();
+      const sourceId = envStr(
+        url.searchParams.get("source_id") ||
+          url.searchParams.get("source") ||
+          url.searchParams.get("strategy"),
+      );
+      const model = envStr(
+        url.searchParams.get("entry_model") || url.searchParams.get("model"),
+      );
+      const chartTf = envStr(
+        url.searchParams.get("chart_tf") || url.searchParams.get("chartTf"),
+      );
+      const signalTf = envStr(
+        url.searchParams.get("signal_tf") || url.searchParams.get("timeframe"),
+      );
+      const direction = envStr(url.searchParams.get("direction")).toUpperCase();
+      const range = envStr(url.searchParams.get("range"), "all").toLowerCase();
+
+      // Use V2 trades ledger for authoritative dashboard stats
+      const tradesRes = await mt5ListTradesV2(
+        {
+          user_id: userId,
+          account_id: accountId,
+          symbol: symbol,
+          source_id: sourceId,
+          side:
+            direction === "BUY" ? "BUY" : direction === "SELL" ? "SELL" : "",
+        },
+        1,
+        limit,
+      );
+
+      const allRows = tradesRes.items || [];
+      const rowsByDimension = allRows.filter((r) => {
+        const m = r.metadata || {};
+        const rowModel = String(r.entry_model || r.metadata?.entry_model || "");
+        if (model && rowModel !== model) return false;
+        const rowChartTf = String(r.chart_tf || r.metadata?.chart_tf || "");
+        if (chartTf && rowChartTf !== chartTf) return false;
+        const rowSignalTf = String(r.signal_tf || r.metadata?.signal_tf || "");
+        if (signalTf && rowSignalTf !== signalTf) return false;
+        return true;
       });
+
+      const period = mt5PeriodRange(range);
+      const selectedRows = mt5FilterRows(rowsByDimension, {
+        from: period.start,
+        to: period.end,
+      });
+
+      const periods = [
+        "all",
+        "today",
+        "yesterday",
+        "last_week",
+        "last_month",
+        "week",
+        "month",
+        "year",
+      ];
+      const periodTotals = {};
+      for (const p of periods) {
+        const pr = mt5PeriodRange(p);
+        const scopedRows = mt5FilterRows(rowsByDimension, {
+          from: pr.start,
+          to: pr.end,
+        });
+        const metrics = mt5ComputeTradeMetrics(scopedRows);
+        periodTotals[p] = {
+          total_pnl: metrics.total_pnl,
+          total_rr: metrics.total_rr,
+          total_trades: metrics.total_trades,
+          total_wins: metrics.wins,
+          total_losses: metrics.losses,
+          win_sum_pnl: metrics.win_sum_pnl,
+          lose_sum_pnl: metrics.lose_sum_pnl,
+        };
+      }
+
+      const seriesBucket = range === "today" ? "hour" : "day";
+      const seriesMap = new Map();
+      for (const r of selectedRows) {
+        const s = mt5CanonicalStoredStatus(
+          r.execution_status || r.status || r.close_reason,
+        );
+        if (!["CLOSED", "TP", "SL"].includes(s)) continue;
+        // Use unified PnL field (pnl_realized for trades, pnl_money_realized for signals)
+        const pnl = Number(r.pnl_realized ?? r.pnl_money_realized);
+        if (!Number.isFinite(pnl)) continue;
+        const d = new Date(r.closed_at || r.ack_at || r.created_at);
+        if (!Number.isFinite(d.getTime())) continue;
+        const key =
+          seriesBucket === "hour"
+            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:00`
+            : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+        seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
+      }
+      const pnlSeries = [...seriesMap.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([x, y]) => ({ x, y }));
+
+      const symbols = [
+        ...new Set(
+          rowsByDimension
+            .map((r) => String(r.symbol || "").toUpperCase())
+            .filter(Boolean),
+        ),
+      ].sort();
+      const accounts = [
+        ...new Set(allRows.map((r) => envStr(r.account_id)).filter(Boolean)),
+      ].sort();
+
+      const accountsSummary = await mt5ListAccountsV2(userId);
+
+      return json(res, 200, {
+        ok: true,
+        version: SERVER_VERSION,
+        accounts_summary: accountsSummary || [],
+        filters: {
+          user_id: userId || "",
+          symbol,
+          source: sourceId,
+          entry_model: model,
+          chart_tf: chartTf,
+          signal_tf: signalTf,
+          direction,
+          range,
+          accounts,
+          symbols,
+          sources: [
+            ...new Set(
+              allRows.map((r) => mt5StrategyFromRow(r)).filter(Boolean),
+            ),
+          ].sort(),
+          entry_models: [
+            ...new Set(
+              allRows.map((r) => mt5EntryModelFromRow(r)).filter(Boolean),
+            ),
+          ].sort(),
+          chart_tfs: [
+            ...new Set(
+              allRows
+                .map((r) =>
+                  String(
+                    r.chart_tf ||
+                      r.raw_json?.chart_tf ||
+                      r.raw_json?.chartTf ||
+                      r.raw_json?.chartTimeframe ||
+                      r.signal_tf ||
+                      r.raw_json?.signal_tf ||
+                      r.raw_json?.sourceTf ||
+                      r.raw_json?.timeframe ||
+                      "",
+                  ),
+                )
+                .filter(Boolean),
+            ),
+          ].sort(),
+          signal_tfs: [
+            ...new Set(
+              allRows
+                .map((r) =>
+                  String(
+                    r.signal_tf ||
+                      r.raw_json?.signal_tf ||
+                      r.raw_json?.sourceTf ||
+                      r.raw_json?.timeframe ||
+                      "",
+                  ),
+                )
+                .filter(Boolean),
+            ),
+          ].sort(),
+        },
+        metrics: mt5ComputeTradeMetrics(selectedRows),
+        period_totals: periodTotals,
+        top_winrate: {
+          symbols: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => String(r.symbol || "").toUpperCase(),
+            { limit: 100, includeDirection: false },
+          ),
+          entry_models: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => mt5EntryModelFromRow(r),
+            { limit: 100, includeDirection: false },
+          ),
+          accounts: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => envStr(r.account_id),
+            { limit: 100, includeDirection: false },
+          ),
+          sources: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => mt5StrategyFromRow(r),
+            { limit: 100, includeDirection: false },
+          ),
+          directional: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => {
+              const dir = String(r.action || r.side || "BUY").toLowerCase();
+              const typeRaw = String(
+                r.metadata?.type || r.raw_json?.type || r.order_type || "LIMIT",
+              ).toLowerCase();
+              const capitalize = (s) =>
+                s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+              return `${capitalize(dir)} ${capitalize(typeRaw)}`;
+            },
+            { limit: 100, includeDirection: false },
+          ),
+        },
+        pnl_series: pnlSeries,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/dashboard/pnl-series") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const limitRaw = Number(url.searchParams.get("limit") || 5000);
+      const limit = Math.max(
+        100,
+        Math.min(50000, Number.isFinite(limitRaw) ? limitRaw : 5000),
+      );
+      const period = envStr(
+        url.searchParams.get("period"),
+        "month",
+      ).toLowerCase();
+      const userId = uiEffectiveUserId(req, url);
+      const range = mt5PeriodRange(period);
+      const rows = await mt5ListSignals(limit, "", userId);
+      const filtered = mt5FilterRows(rows, {
+        from: range.start,
+        to: range.end,
+      });
+      const bucket = period === "today" ? "hour" : "day";
+      const map = new Map();
+      for (const r of filtered) {
+        const s = mt5CanonicalStoredStatus(
+          r.execution_status || r.status || r.close_reason,
+        );
+        if (!["CLOSED", "TP", "SL"].includes(s)) continue;
+        const pnl = Number(r.pnl_money_realized);
+        if (!Number.isFinite(pnl)) continue;
+        const d = new Date(r.closed_at || r.ack_at || r.created_at);
+        if (!Number.isFinite(d.getTime())) continue;
+        const key =
+          bucket === "hour"
+            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:00`
+            : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+        map.set(key, (map.get(key) || 0) + pnl);
+      }
+      const points = [...map.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([x, y]) => ({ x, y }));
+      return json(res, 200, { ok: true, period, points });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/filters/advanced") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url);
+      const limitRaw = Number(url.searchParams.get("limit") || 20000);
+      const limit = Math.max(
+        1000,
+        Math.min(100000, Number.isFinite(limitRaw) ? limitRaw : 20000),
+      );
+      const rows = await mt5ListSignals(limit, "", userId);
+      const symbols = [
+        ...new Set(rows.map((r) => String(r.symbol || "").toUpperCase())),
+      ]
+        .filter(Boolean)
+        .sort();
+      const sources = [...new Set(rows.map((r) => mt5StrategyFromRow(r)))]
+        .filter(Boolean)
+        .sort();
+      const models = [...new Set(rows.map((r) => mt5EntryModelFromRow(r)))]
+        .filter(Boolean)
+        .sort();
+      const chartTfs = [
+        ...new Set(
+          rows.map((r) =>
+            String(
+              r.chart_tf ||
+                r.raw_json?.chart_tf ||
+                r.raw_json?.chartTf ||
+                r.raw_json?.chartTimeframe ||
+                r.signal_tf ||
+                r.raw_json?.signal_tf ||
+                r.raw_json?.sourceTf ||
+                r.raw_json?.timeframe ||
+                "",
+            ),
+          ),
+        ),
+      ]
+        .filter(Boolean)
+        .sort();
+      const signalTfs = [
+        ...new Set(
+          rows.map((r) =>
+            String(
+              r.signal_tf ||
+                r.raw_json?.signal_tf ||
+                r.raw_json?.sourceTf ||
+                r.raw_json?.timeframe ||
+                "",
+            ),
+          ),
+        ),
+      ]
+        .filter(Boolean)
+        .sort();
+      return json(res, 200, {
+        ok: true,
+        symbols,
+        sources,
+        entry_models: models,
+        chart_tfs: chartTfs,
+        signal_tfs: signalTfs,
+      });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/filters/symbols") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const limitRaw = Number(url.searchParams.get("limit") || 10000);
+      const limit = Math.max(
+        100,
+        Math.min(50000, Number.isFinite(limitRaw) ? limitRaw : 10000),
+      );
+      const userId = uiEffectiveUserId(req, url);
+      const rows = await mt5ListSignals(limit, "", userId);
+      const symbols = [
+        ...new Set(
+          rows.map((r) => String(r.symbol || "").toUpperCase()).filter(Boolean),
+        ),
+      ].sort();
+      return json(res, 200, { ok: true, symbols });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
     }
   }
 
@@ -13465,40 +13811,325 @@ const appHandler = async (req, res) => {
         Math.min(200, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20),
       );
       const { rows } = await mt5GetFilteredTrades(url, null, 10000);
+
       const total = rows.length;
       const start = (page - 1) * pageSize;
-      const trades = rows.slice(start, start + pageSize).map(mt5PublicState);
+      const data = rows.slice(start, start + pageSize).map(mt5PublicState);
       return json(res, 200, {
         ok: true,
         page,
         pageSize,
         total,
         pages: Math.max(1, Math.ceil(total / pageSize)),
-        trades,
+        trades: data,
       });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/mt5/db/tables") {
+  if (req.method === "POST" && url.pathname === "/v2/signals/create") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireSystemRoleForUi(req, res)) return;
+    const sess = getUiSessionFromReq(req);
+    if (!requireAdminKey(req, res, url)) return;
+
     try {
-      const b = await mt5Backend();
-      const tables = (await b.listTables()).filter(
-        (t) => String(t || "").toLowerCase() !== "ui_auth_users",
+      const payload = await readJson(req);
+      const source = mt5NormalizeUiSource(payload.source, "ui_manual");
+      const timeframe = String(payload.timeframe || payload.tf || "").trim();
+      const strategy = String(
+        payload.strategy || (source.startsWith("ai_") ? source : "Manual"),
+      ).trim();
+      const effectiveUserId =
+        uiEffectiveUserId(req, url, payload) ||
+        sess.user_id ||
+        CFG.mt5DefaultUserId;
+      const rawPayload =
+        payload && typeof payload === "object" ? { ...payload } : {};
+      const existingSnapshot =
+        rawPayload.analysis_snapshot &&
+        typeof rawPayload.analysis_snapshot === "object"
+          ? rawPayload.analysis_snapshot
+          : null;
+      if (
+        existingSnapshot &&
+        String(existingSnapshot?.status || "").toLowerCase() === "ok" &&
+        Array.isArray(existingSnapshot?.bars) &&
+        existingSnapshot.bars.length
+      ) {
+        rawPayload.analysis_snapshot = existingSnapshot;
+      } else {
+        const analysisSnapshot = await buildAnalysisSnapshotFromTwelve({
+          userId: effectiveUserId,
+          payload: rawPayload,
+          symbol: payload.symbol,
+          timeframe: timeframe || "15m",
+        }).catch(() => null);
+        if (analysisSnapshot && typeof analysisSnapshot === "object") {
+          rawPayload.analysis_snapshot = analysisSnapshot;
+        }
+      }
+      const enqueue = await mt5EnqueueSignalFromPayload(
+        {
+          id: payload.sid || payload.id || "",
+          action: payload.action,
+          symbol: payload.symbol,
+          volume: payload.volume ?? payload.lots,
+          sl: payload.sl ?? null,
+          tp: payload.tp ?? null,
+          rr: payload.rr ?? payload.risk_reward ?? null,
+          risk_money: payload.risk_money ?? payload.money_risk ?? null,
+          risk_pct: payload.risk_pct ?? payload.riskPct ?? null,
+          price: payload.price ?? payload.entry ?? null,
+          strategy,
+          entry_model:
+            payload.entry_model ?? payload.model ?? payload.strategy ?? null,
+          timeframe: timeframe || "manual",
+          note: payload.note || "",
+          user_id: effectiveUserId,
+          order_type: payload.order_type || "limit",
+          provider: source.startsWith("ai_") ? source : "ui",
+          only_signal: Boolean(payload.only_signal ?? payload.onlySignal),
+          raw_json:
+            rawPayload.raw_json && typeof rawPayload.raw_json === "object"
+              ? rawPayload.raw_json
+              : rawPayload,
+        },
+        {
+          source,
+          eventType: "UI_CREATE_TRADE",
+          fallbackIdPrefix: "ui",
+        },
+        testSettings,
       );
-      return json(res, 200, { ok: true, tables });
+
+      notifyPulse(effectiveUserId, "signals");
+
+      return json(res, 200, { ok: true, trade: enqueue, signal: enqueue });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/trades/create") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    const sess = getUiSessionFromReq(req);
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const payload = await readJson(req);
+      const source = mt5NormalizeUiSource(payload.source, "ui_manual");
+      const sourceId = mt5SlugId(source, "tradingview");
+      const effectiveUserId =
+        uiEffectiveUserId(req, url, payload) ||
+        sess.user_id ||
+        CFG.mt5DefaultUserId;
+      const action = mt5NormalizeAction(payload);
+      const symbol = mt5NormalizeSymbol(payload);
+      const volume = mt5NormalizeVolume(payload);
+      const derived = mt5DeriveEntryModelAndNote(payload, {
+        fallbackModel: payload.strategy || source || "MANUAL",
       });
+      const entryModel = derived.entryModel || null;
+      const signalTf =
+        mt5TfToMinutes(
+          payload.signal_tf ??
+            payload.signalTf ??
+            payload.sourceTf ??
+            payload.timeframe ??
+            payload.tf,
+        ) || null;
+      const chartTf =
+        mt5TfToMinutes(
+          payload.chart_tf ??
+            payload.chartTf ??
+            payload.chartTimeframe ??
+            payload.chart_tf_period,
+        ) || null;
+      const entry = asNum(payload.entry ?? payload.price, NaN);
+      const sl = asNum(payload.sl, NaN);
+      const tp = asNum(payload.tp, NaN);
+      const note = String(derived.note || payload.note || "").trim();
+      const rawPayload =
+        payload && typeof payload === "object" ? { ...payload } : {};
+      const sessionPrefix = sanitizeSessionPrefix(
+        payload.session_prefix ||
+          payload.sessionPrefix ||
+          rawPayload?.session_prefix ||
+          rawPayload?.sessionPrefix ||
+          "",
+      );
+      const sidBaseRaw = String(
+        payload.sid ||
+          payload.trade_sid ||
+          rawPayload?.sid ||
+          rawPayload?.trade_sid ||
+          "",
+      ).trim();
+      const tradeSidBase = sidBaseRaw
+        ? normalizePublicSidBase(sidBaseRaw, "TRD")
+        : normalizePublicSidBase(
+            sessionPrefix ? `${symbol}_${sessionPrefix}` : `${symbol}_TRD`,
+            "TRD",
+          );
+      if (!symbol)
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      if (
+        !Number.isFinite(entry) ||
+        !Number.isFinite(sl) ||
+        !Number.isFinite(tp)
+      ) {
+        return json(res, 400, {
+          ok: false,
+          error: "entry/sl/tp are required numeric values",
+        });
+      }
+
+      await mt5UpsertSourceV2({
+        source_id: sourceId,
+        name: source,
+        kind: sourceId.includes("tv") ? "tv" : "api",
+        auth_mode: "token",
+        is_active: true,
+        metadata: {
+          migrated_from: "ui_trade_direct",
+          signal_source: source,
+        },
+      }).catch(() => null);
+
+      const fanout = await mt5FanoutSignalTradeV2({
+        signal_id: null,
+        source_id: sourceId,
+        user_id: effectiveUserId,
+        entry_model: entryModel,
+        signal_tf: signalTf,
+        chart_tf: chartTf,
+        symbol,
+        action: mt5MapActionToSide(action),
+        entry,
+        sl: Number.isFinite(sl) ? sl : null,
+        tp: Number.isFinite(tp) ? tp : null,
+        volume: volume ?? null,
+        rr_planned: asNum(
+          payload.rr_planned ?? payload.rr ?? payload.risk_reward,
+        ),
+        risk_money_planned: asNum(
+          payload.risk_money_planned ??
+            payload.risk_money ??
+            payload.money_risk,
+        ),
+        risk_pct_planned: asNum(
+          payload.risk_pct_planned ??
+            payload.risk_pct ??
+            payload.riskPct ??
+            payload.vol ??
+            payload.volume ??
+            payload.lots,
+        ),
+        note: note || null,
+        sid: tradeSidBase,
+        trade_sid: tradeSidBase,
+        session_prefix: sessionPrefix || null,
+        metadata: {
+          event_type: "UI_CREATE_TRADE_DIRECT",
+          order_type: payload.order_type || "limit",
+          signal_tf: signalTf,
+          chart_tf: chartTf,
+          provider: payload.provider || null,
+          session_prefix: sessionPrefix || null,
+          entry_model_raw: derived.entryModelRaw || null,
+          raw_json:
+            rawPayload?.raw_json && typeof rawPayload.raw_json === "object"
+              ? rawPayload.raw_json
+              : rawPayload,
+          analysis_snapshot:
+            rawPayload?.analysis_snapshot &&
+            typeof rawPayload.analysis_snapshot === "object"
+              ? rawPayload.analysis_snapshot
+              : null,
+        },
+      });
+      return json(res, 200, {
+        ok: true,
+        created: fanout?.created || 0,
+        account_ids: fanout?.account_ids || [],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/trades/delete") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!requireAdminKey(req, res, url, payload)) return;
+      const { rows, filters, limit } = await mt5GetFilteredTrades(
+        url,
+        payload,
+        50000,
+      );
+      const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
+      const removed = await mt5DeleteSignalsByIds(ids);
+      const cleanup = await mt5CleanupSignalTradeArtifacts({
+        signalRows: rows,
+        signalIds: ids,
+      });
+      return json(res, 200, {
+        ok: true,
+        deleted: removed.deleted || 0,
+        logs_deleted: cleanup.logs_deleted || 0,
+        files_deleted: cleanup.files_deleted || 0,
+        matched: ids.length,
+        filters,
+        scanned_limit: limit,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/trades/cancel") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!requireAdminKey(req, res, url, payload)) return;
+      const { rows, filters, limit } = await mt5GetFilteredTrades(
+        url,
+        payload,
+        50000,
+      );
+      const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
+      const updated = await mt5CancelSignalsByIds(ids);
+      const cleanup = await mt5CleanupSignalTradeArtifacts({
+        signalRows: rows,
+        signalIds: ids,
+      });
+      for (const signalId of updated.updated_ids || []) {
+        await mt5AppendSignalEvent(signalId, "SIGNAL_MANUAL_CANCEL", {
+          via: "ui_bulk_cancel",
+        });
+      }
+      return json(res, 200, {
+        ok: true,
+        updated: updated.updated || 0,
+        logs_deleted: cleanup.logs_deleted || 0,
+        files_deleted: cleanup.files_deleted || 0,
+        matched: ids.length,
+        filters,
+        scanned_limit: limit,
+        target_status: "CANCEL",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
     }
   }
 
@@ -13508,16 +14139,149 @@ const appHandler = async (req, res) => {
     if (!requireSystemRoleForUi(req, res)) return;
     try {
       const b = await mt5Backend();
+      if (!b.getTableSchema)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
       const table = envStr(url.searchParams.get("table") || "signals");
       if (table.toLowerCase() === "ui_auth_users")
         return json(res, 403, { ok: false, error: "table access forbidden" });
       const schema = await b.getTableSchema(table);
       return json(res, 200, { ok: true, table, schema });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/system/storage/stats" ||
+      url.pathname === "/system/storage/stats" ||
+      url.pathname === "/mt5/storage/stats")
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const b = await mt5Backend();
+      if (!b.getStorageStats)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
+      const userId = uiEffectiveUserId(req, url);
+      const stats = await b.getStorageStats(userId);
+      const sess = getUiSessionFromReq(req);
+      return json(res, 200, {
+        ok: true,
+        stats,
+        can_hard_disk_cleanup: Boolean(sess?.ok && isSystemRole(sess.role)),
       });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/system/cache" || url.pathname === "/system/cache")
+  ) {
+    // If browser navigation (wants HTML), fall through to static server
+    const accept = req.headers["accept"] || "";
+    if (url.pathname === "/system/cache" && accept.includes("text/html")) {
+      const indexPath = path.join(CFG.uiDistPath, "index.html");
+      return serveUiFile(res, indexPath, req.method);
+    } else {
+      if (!requireSystemRoleForUi(req, res)) return;
+      try {
+        const b = await mt5Backend();
+        const key = url.searchParams.get("key");
+        const source = url.searchParams.get("source") || "memory";
+
+        if (key) {
+          const detail = await b.uiGetCacheDetail(key, source);
+          return json(res, detail.ok ? 200 : 400, detail);
+        }
+
+        const items = await b.uiListCache();
+        return json(res, 200, { ok: true, items });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        return json(res, 400, { ok: false, error: message });
+      }
+    }
+  }
+
+  if (
+    req.method === "DELETE" &&
+    (url.pathname === "/v2/system/cache" || url.pathname === "/system/cache")
+  ) {
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const b = await mt5Backend();
+      const key = url.searchParams.get("key");
+      const source = url.searchParams.get("source") || "memory";
+      if (key) {
+        const out = await b.uiDeleteCacheKey(key, source);
+        return json(res, 200, out);
+      } else {
+        const out = await b.storageCleanup("cache");
+        return json(res, 200, out);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/system/storage/cleanup" ||
+      url.pathname === "/system/storage/cleanup" ||
+      url.pathname === "/mt5/storage/cleanup")
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const target = String(payload.target || "").trim();
+      if (!target)
+        return json(res, 400, { ok: false, error: "target is required" });
+      if (target === "hard_disk" && !requireSystemRoleForUi(req, res)) return;
+      const b = await mt5Backend();
+      if (!b.storageCleanup)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const stats = await b.storageCleanup(target, userId);
+      return json(res, 200, { ok: true, stats });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/db/tables") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const b = await mt5Backend();
+      if (!b.listTables)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
+      const tables = (await b.listTables()).filter(
+        (t) => String(t || "").toLowerCase() !== "ui_auth_users",
+      );
+      return json(res, 200, { ok: true, tables });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
     }
   }
 
@@ -13527,9 +14291,16 @@ const appHandler = async (req, res) => {
     if (!requireSystemRoleForUi(req, res)) return;
     try {
       const b = await mt5Backend();
+      if (!b.listTableRows)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
+
       const table = envStr(url.searchParams.get("table") || "signals");
-      if (table.toLowerCase() === "ui_auth_users")
+      if (table.toLowerCase() === "ui_auth_users") {
         return json(res, 403, { ok: false, error: "table access forbidden" });
+      }
       const q = envStr(url.searchParams.get("q"));
       const sortCol = envStr(url.searchParams.get("sortCol") || "");
       const sortDir = envStr(url.searchParams.get("sortDir") || "DESC");
@@ -13539,6 +14310,7 @@ const appHandler = async (req, res) => {
         Math.min(500, Number(url.searchParams.get("pageSize") || 50)),
       );
       const offset = (page - 1) * pageSize;
+
       const { rows, total } = await b.listTableRows(
         table,
         pageSize,
@@ -13557,159 +14329,1491 @@ const appHandler = async (req, res) => {
         pages: Math.max(1, Math.ceil(total / pageSize)),
       });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      return json(res, 400, { ok: false, error: error.message });
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/trades") {
+  if (req.method === "POST" && url.pathname === "/mt5/db/rows/create") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const pageRaw = Number(url.searchParams.get("page") || 1);
-      const pageSizeRaw = Number(
-        url.searchParams.get("pageSize") || url.searchParams.get("limit") || 50,
-      );
-      const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
-      const pageSize = Math.max(
-        1,
-        Math.min(200, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 50),
-      );
-      const userId = uiEffectiveUserId(req, url);
-      const filters = {
-        user_id: userId,
-        account_id: url.searchParams.get("account_id") || "",
-        source_id: url.searchParams.get("source_id") || "",
-        dispatch_status: url.searchParams.get("dispatch_status") || "",
-        execution_status: url.searchParams.get("execution_status") || "",
-        created_from: url.searchParams.get("created_from") || "",
-        created_to: url.searchParams.get("created_to") || "",
-        symbol: url.searchParams.get("symbol") || "",
-        action:
-          url.searchParams.get("action") || url.searchParams.get("side") || "",
-        entry_model: url.searchParams.get("entry_model") || "",
-        chart_tf: url.searchParams.get("chart_tf") || "",
-        q: url.searchParams.get("q") || "",
-      };
-      const out = await mt5ListTradesV2(filters, page, pageSize);
-      const total = Number(out?.total || 0);
-      return json(res, 200, {
-        ok: true,
-        items: Array.isArray(out?.items) ? out.items : [],
-        page: Number(out?.page || page),
-        pageSize: Number(out?.page_size || pageSize),
-        total,
-        pages: Math.max(
-          1,
-          Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
-        ),
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "GET" &&
-    /^\/v2\/trades\/[^/]+\/events$/.test(url.pathname)
-  ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/events$/);
-      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
-      if (!tradeRef)
-        return json(res, 400, {
-          ok: false,
-          error: "sid (trade_id) is required",
-        });
-      const userId = uiEffectiveUserId(req, url);
-      const detail = await StateRepo.get("TRADE_DETAIL", tradeRef, async () => {
-        try {
-          const resolved = await mt5ResolveTradeRefV2(tradeRef, userId || null);
-          if (!resolved?.sid) return null;
-          const limitRaw = Number(url.searchParams.get("limit") || 200);
-          const limit = Math.max(
-            1,
-            Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
-          );
-          const rows = await mt5ListTradeEventsV2(resolved.sid, limit);
-          return {
-            sid: resolved.sid,
-            id: resolved.id || null,
-            items: rows,
-          };
-        } catch {
-          return null;
-        }
-      });
-      if (!detail)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      return json(res, 200, { ok: true, ...detail });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "GET" &&
-    (url.pathname === "/v2/system/storage/stats" ||
-      url.pathname === "/system/storage/stats" ||
-      url.pathname === "/mt5/storage/stats")
-  ) {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAuthForUi(req, res)) return;
-    try {
-      const b = await mt5Backend();
-      const userId = uiEffectiveUserId(req, url);
-      const stats = await b.getStorageStats(userId);
-      const sess = getUiSessionFromReq(req);
-      return json(res, 200, {
-        ok: true,
-        stats,
-        can_hard_disk_cleanup: Boolean(sess?.ok && isSystemRole(sess.role)),
-      });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (
-    req.method === "GET" &&
-    (url.pathname === "/v2/system/cache" || url.pathname === "/system/cache")
-  ) {
-    const accept = req.headers["accept"] || "";
-    if (url.pathname === "/system/cache" && accept.includes("text/html")) {
-      const indexPath = path.join(CFG.uiDistPath, "index.html");
-      return serveUiFile(res, indexPath, req.method);
-    }
     if (!requireSystemRoleForUi(req, res)) return;
     try {
-      const b = await mt5Backend();
-      const key = url.searchParams.get("key");
-      const source = url.searchParams.get("source") || "memory";
-      if (key) {
-        const detail = await b.uiGetCacheDetail(key, source);
-        return json(res, detail.ok ? 200 : 400, detail);
+      const payload = await readJson(req);
+      const table = String(payload.table || "")
+        .trim()
+        .toLowerCase();
+      const row =
+        payload.row && typeof payload.row === "object" ? payload.row : {};
+      const sess = getUiSessionFromReq(req);
+      if (!table)
+        return json(res, 400, { ok: false, error: "table is required" });
+
+      if (table === "signals") {
+        const created = await mt5EnqueueSignalFromPayload(
+          {
+            id: row.sid || row.id || "",
+            action: row.action,
+            symbol: row.symbol,
+            volume: row.volume ?? row.lots,
+            sl: row.sl ?? null,
+            tp: row.tp ?? null,
+            rr: row.rr ?? row.risk_reward ?? null,
+            risk_money: row.risk_money ?? row.money_risk ?? null,
+            price: row.price ?? row.entry ?? null,
+            strategy: row.strategy || "DB Insert",
+            timeframe: row.timeframe || "manual",
+            note: row.note || "",
+            user_id: row.user_id || sess.user_id || CFG.mt5DefaultUserId,
+            order_type: row.order_type || "limit",
+            provider: "ui_db",
+            raw_json: row,
+          },
+          {
+            source: "ui_db",
+            eventType: "UI_DB_INSERT_SIGNAL",
+            fallbackIdPrefix: "db",
+          },
+        );
+        return json(res, 200, { ok: true, table, created });
       }
-      const items = await b.uiListCache();
+
+      if (table === "signal_events") {
+        const signalId = String(row.sid || "").trim();
+        const eventType = String(row.event_type || "").trim();
+        if (!signalId)
+          return json(res, 400, {
+            ok: false,
+            error: "row.sid is required",
+          });
+        if (!eventType)
+          return json(res, 400, {
+            ok: false,
+            error: "row.event_type is required",
+          });
+        const payloadJson =
+          row.payload_json && typeof row.payload_json === "object"
+            ? { ...row.payload_json }
+            : row.payload && typeof row.payload === "object"
+              ? { ...row.payload }
+              : {};
+        delete payloadJson.apiKey;
+        delete payloadJson.api_key;
+        delete payloadJson.password;
+        delete payloadJson.token;
+        payloadJson.via = "ui_db_create";
+        payloadJson.created_by = sess.user_id || CFG.mt5DefaultUserId;
+        await mt5AppendSignalEvent(signalId, eventType, payloadJson);
+        return json(res, 200, {
+          ok: true,
+          table,
+          created: { signal_id: signalId, event_type: eventType },
+        });
+      }
+
+      if (table === "users") {
+        const out = await uiCreateUser(row);
+        if (!out.ok)
+          return json(res, 400, {
+            ok: false,
+            error: out.error || "Failed to create user",
+          });
+        return json(res, 200, { ok: true, table, created: out.user });
+      }
+
+      if (table === "accounts" || table === "user_accounts") {
+        const userId = String(row.user_id || "").trim();
+        if (!userId)
+          return json(res, 400, {
+            ok: false,
+            error: "row.user_id is required",
+          });
+        const out = await uiUpsertUserAccount(userId, row);
+        if (!out.ok)
+          return json(res, 400, {
+            ok: false,
+            error: out.error || "Failed to create account",
+          });
+        return json(res, 200, { ok: true, table, created: out.account });
+      }
+
+      if (table === "user_api_keys") {
+        return json(res, 410, {
+          ok: false,
+          error: "user_api_keys is removed. Use accounts api-key rotation.",
+        });
+      }
+
+      return json(res, 400, {
+        ok: false,
+        error: `Create is not supported for table: ${table}`,
+      });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/db/rows/update") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const table = String(payload.table || "")
+        .trim()
+        .toLowerCase();
+      const row =
+        payload.row && typeof payload.row === "object" ? payload.row : {};
+      if (!table)
+        return json(res, 400, { ok: false, error: "table is required" });
+      if (table === "ui_auth_users")
+        return json(res, 403, { ok: false, error: "table access forbidden" });
+      const b = await mt5Backend();
+      if (!b.updateTableRow)
+        return json(res, 400, {
+          ok: false,
+          error: "Not supported by this backend",
+        });
+      const result = await b.updateTableRow(table, row);
+      return json(res, 200, { ok: true, ...result });
+    } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/trades/renew") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!requireAdminKey(req, res, url, payload)) return;
+      const { rows, filters, limit } = await mt5GetFilteredTrades(
+        url,
+        payload,
+        50000,
+      );
+      const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
+      const updated = await mt5RenewSignalsByIds(ids);
+      return json(res, 200, {
+        ok: true,
+        updated: updated.updated || 0,
+        matched: ids.length,
+        filters,
+        scanned_limit: limit,
+        target_status: "NEW",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/mt5/trades/")) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const signalId = decodeURIComponent(
+        url.pathname.slice("/mt5/trades/".length),
+      );
+      if (!signalId)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
+      const eventLimitRaw = Number(url.searchParams.get("event_limit") || 200);
+      const eventLimit = Math.max(
+        1,
+        Math.min(2000, Number.isFinite(eventLimitRaw) ? eventLimitRaw : 200),
+      );
+      const detail = await StateRepo.get(
+        "SIGNAL_DETAIL",
+        signalId,
+        async () => {
+          try {
+            const rows = await mt5ListSignals(50000, "");
+            const trade = rows.find((r) => String(r.sid) === signalId);
+            if (!trade) return null;
+            const events = await mt5ListSignalEvents(signalId, eventLimit);
+            return {
+              trade: mt5PublicState(trade),
+              events,
+              chart: {
+                symbol: trade.symbol,
+                action: trade.action,
+                entry: trade.entry_price_exec ?? null,
+                sl:
+                  asNum(trade.sl_exec) ??
+                  asNum(trade.metadata?.sl_exec) ??
+                  asNum(trade.sl) ??
+                  null,
+                tp:
+                  asNum(trade.tp_exec) ??
+                  asNum(trade.metadata?.tp_exec) ??
+                  asNum(trade.tp) ??
+                  null,
+                opened_at: trade.opened_at ?? trade.ack_at ?? trade.created_at,
+                closed_at: trade.closed_at ?? null,
+              },
+            };
+          } catch {
+            return null;
+          }
+        },
+      );
+      if (!detail || !detail.trade)
+        return json(res, 404, { ok: false, error: "signal not found" });
+      return json(res, 200, { ok: true, ...detail });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/trades") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const limitRaw = Number(url.searchParams.get("limit") || 200);
+      const limit = Math.max(
+        10,
+        Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
+      );
+      const status = String(url.searchParams.get("status") || "")
+        .trim()
+        .toUpperCase();
+      const symbol = String(url.searchParams.get("symbol") || "").trim();
+      const userId = uiEffectiveUserId(req, url);
+      const trades = mt5FilterRows(
+        await mt5ListSignals(limit, { symbol, status }, userId),
+        { statuses: status ? [status] : [] },
+      );
+      const b = await mt5Backend();
+      return json(res, 200, {
+        ok: true,
+        count: trades.length,
+        storage: b.storage,
+        trades: trades.map(mt5PublicState),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/csv" || url.pathname === "/mt5/csv")
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const includeHeader =
+        String(url.searchParams.get("header") || "1").toLowerCase() !== "0";
+      const { rows } = await mt5GetFilteredTrades(url, null, 20000);
+      const symbol = envStr(url.searchParams.get("symbol")).toUpperCase();
+      const status = envStr(url.searchParams.get("status")).toUpperCase();
+      const chronological = rows.slice().reverse();
+      const csv = mt5SignalsToBacktestCsv(chronological, includeHeader);
+
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const suffixSymbol = symbol ? `-${symbol}` : "";
+      const suffixStatus = status ? `-${mt5CanonicalStoredStatus(status)}` : "";
+      const suffix = `${suffixSymbol}${suffixStatus}`;
+      const filename = `mt5-backtest${suffix}-${stamp}.csv`;
+      res.writeHead(200, {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+        "Content-Length": Buffer.byteLength(csv),
+      });
+      res.end(csv);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    (req.method === "POST" || req.method === "GET") &&
+    url.pathname === "/mt5/prune"
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      let payload = {};
+      if (req.method === "POST") {
+        payload = await readJson(req);
+      }
+      const daysRaw = Number(
+        payload.days ?? url.searchParams.get("days") ?? CFG.mt5PruneDays,
+      );
+      const days = Math.max(
+        1,
+        Math.min(3650, Number.isFinite(daysRaw) ? daysRaw : CFG.mt5PruneDays),
+      );
+      const result = await mt5PruneSignals(days);
+      return json(res, 200, { ok: true, days, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/ea/sync") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!(await requireEaKey(req, res, url))) return;
+    try {
+      const signals = await mt5ListActiveSignals();
+      const data = signals.map((s) => ({
+        sid: s.sid,
+        status: s.status,
+        symbol: s.symbol,
+        action: s.action,
+        ticket: s.ack_ticket || "",
+        pnl: s.pnl_money_realized || 0,
+        volume: s.volume,
+        sl: s.sl,
+        tp: s.tp,
+      }));
+      return json(res, 200, { ok: true, count: data.length, signals: data });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: err.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/mt5/api/events") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    const sess = getUiSessionFromReq(req);
+    const userId = sess.ok
+      ? sess.user_id
+      : url.searchParams.get("user_id") || null;
+
+    try {
+      const limitRaw = Number(url.searchParams.get("limit") || 200);
+      const limit = Math.max(
+        1,
+        Math.min(5000, Number.isFinite(limitRaw) ? limitRaw : 200),
+      );
+      const offsetRaw = Number(url.searchParams.get("offset") || 0);
+      const offset = Math.max(0, Number.isFinite(offsetRaw) ? offsetRaw : 0);
+      const q = String(url.searchParams.get("q") || "")
+        .trim()
+        .toLowerCase();
+      const typeFilter = String(url.searchParams.get("type") || "")
+        .trim()
+        .toLowerCase();
+      const symbolFilter = String(url.searchParams.get("symbol") || "")
+        .trim()
+        .toUpperCase();
+      const range = String(url.searchParams.get("range") || "all")
+        .trim()
+        .toLowerCase();
+      const { start: rangeStart, end: rangeEnd } = mt5PeriodRange(range);
+      const hasExtraFilter = Boolean(
+        q || typeFilter || symbolFilter || (range && range !== "all"),
+      );
+
+      const b = await mt5Backend();
+      const fetchLimit = hasExtraFilter
+        ? Math.max(limit + offset, 5000)
+        : limit;
+      const fetchOffset = hasExtraFilter ? 0 : offset;
+      const rows = await b.listLogs(
+        { user_id: userId },
+        fetchLimit,
+        fetchOffset,
+      );
+      let events = (rows || []).map((r) => {
+        const payload =
+          r?.metadata && typeof r.metadata === "object" ? r.metadata : {};
+        const data =
+          payload?.data && typeof payload.data === "object"
+            ? payload.data
+            : payload;
+        const symbol = String(data?.symbol || payload?.symbol || "").trim();
+        const eventType = String(
+          data.event_type ||
+            data.event ||
+            r.event_type ||
+            r.object_table ||
+            "LOG",
+        ).trim();
+        const eventTime = String(r.created_at || "");
+        const signalId = String(r.object_id || "");
+        const ackTicket = String(
+          data?.ticket ||
+            payload?.ticket ||
+            data?.ack_ticket ||
+            payload?.ack_ticket ||
+            "",
+        );
+        return {
+          id: Number(r.log_id || 0),
+          log_id: Number(r.log_id || 0),
+          object_id: signalId,
+          object_table: String(r.object_table || ""),
+          created_at: eventTime,
+          metadata: payload,
+          event_time: eventTime,
+          event_type: eventType,
+          signal_id: signalId,
+          ack_ticket: ackTicket,
+          symbol: symbol || "N/A",
+          payload_json: payload,
+          status: payload.status || null,
+          error: payload.error || null,
+        };
+      });
+      if (hasExtraFilter) {
+        events = events.filter((ev) => {
+          if (
+            symbolFilter &&
+            String(ev.symbol || "").toUpperCase() !== symbolFilter
+          )
+            return false;
+          if (
+            typeFilter &&
+            !String(ev.event_type || "")
+              .toLowerCase()
+              .includes(typeFilter)
+          )
+            return false;
+          if (rangeStart || rangeEnd) {
+            const ts = mt5ToMs(ev.event_time);
+            if (!Number.isFinite(ts)) return false;
+            if (rangeStart && ts < mt5ToMs(rangeStart)) return false;
+            if (rangeEnd && ts > mt5ToMs(rangeEnd)) return false;
+          }
+          if (q) {
+            const haystack = [
+              ev.object_id,
+              ev.signal_id,
+              ev.ack_ticket,
+              ev.symbol,
+              ev.object_table,
+              ev.event_type,
+              JSON.stringify(ev.metadata || ev.payload_json || {}),
+            ]
+              .join(" ")
+              .toLowerCase();
+            if (!haystack.includes(q)) return false;
+          }
+          return true;
+        });
+        events = events.slice(offset, offset + limit);
+      }
+      return json(res, 200, { ok: true, events });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/api/events/create") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const sess = getUiSessionFromReq(req);
+      const signalId =
+        String(payload.sid || payload.object_id || "").trim() ||
+        `ui_note_${Date.now()}`;
+      const eventType = String(payload.event_type || "").trim();
+      if (!eventType)
+        return json(res, 400, { ok: false, error: "event_type is required" });
+      const payloadJson =
+        payload.payload_json && typeof payload.payload_json === "object"
+          ? { ...payload.payload_json }
+          : payload.payload && typeof payload.payload === "object"
+            ? { ...payload.payload }
+            : {};
+      delete payloadJson.apiKey;
+      delete payloadJson.api_key;
+      delete payloadJson.password;
+      delete payloadJson.token;
+      payloadJson.via = "ui_manual_log";
+      payloadJson.created_by = sess.user_id || CFG.mt5DefaultUserId;
+      await mt5AppendSignalEvent(signalId, eventType, payloadJson);
+      return json(res, 200, {
+        ok: true,
+        event: { signal_id: signalId, event_type: eventType },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/api/events/delete") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const resVal = await mt5DeleteAllEvents();
+      return json(res, 200, { ok: true, deleted: resVal.deleted });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/ea/sync") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!(await requireEaKey(req, res, url, payload))) return;
+
+      const activeSignals = payload.active_signals || [];
+
+      const dbSignals = await mt5ListActiveSignals(); // NEW, LOCKED, PLACED, START
+      const updates = [];
+      const nowTs = Date.now();
+
+      // 1. Reconcile EA Active Trades -> VPS
+      for (const s of activeSignals) {
+        const sid = String(s.sid || "");
+        const ticket = String(s.ticket || "");
+        const eaStatus = String(s.status || "");
+        const eaPnl = Number(s.pnl);
+        const hasEaPnl = Number.isFinite(eaPnl);
+
+        // Find trade by sid + ticket
+        let sig = dbSignals.find(
+          (d) => String(d.sid) === sid && String(d.ack_ticket) === ticket,
+        );
+        if (!sig) {
+          // Backup: find by ticket alone if mapping is loose
+          sig = await mt5GetSignalByTicket(ticket);
+        }
+
+        if (sig) {
+          const dbCan = mt5CanonicalStoredStatus(sig.status);
+          const eaCan = mt5CanonicalStoredStatus(eaStatus);
+          const dbPnl = Number(sig.pnl_money_realized);
+          const pnlChanged =
+            hasEaPnl &&
+            (!Number.isFinite(dbPnl) || Math.abs(dbPnl - eaPnl) > 0.000001);
+
+          // Sync if status changed OR pnl changed.
+          if (dbCan !== eaCan || pnlChanged) {
+            updates.push({
+              sid: sig.sid,
+              status: eaStatus || sig.status,
+              ticket: ticket,
+              pnl: hasEaPnl ? eaPnl : undefined,
+              note:
+                dbCan !== eaCan
+                  ? `sync_status_diff_${dbCan}_to_${eaCan}`
+                  : `sync_pnl_${Number.isFinite(dbPnl) ? dbPnl : "null"}_to_${eaPnl}`,
+            });
+          }
+        }
+      }
+
+      // 2. Identify Ghost Signals (Optional, keeping simple as requested)
+      // If needed, we can add logic here to mark trades as FAIL if they are in dbSignals but not in confirmedDbIds.
+      // But the user's latest instruction focuses on the array processing.
+      // I'll skip ghost closing for now to be strictly lean as per the request.
+
+      if (updates.length > 0) {
+        await mt5BulkAckSignals(updates);
+
+        await mt5AppendSignalEvent("SYSTEM_SYNC_PUSH", "SIGNAL_EA_SYNC_PUSH", {
+          account: payload.account_id,
+          active_count: activeSignals.length,
+          updates_count: updates.length,
+          updates_details: updates,
+        });
+      }
+
+      return json(res, 200, { ok: true, reconciled: updates.length, updates });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: err.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/mt5/ea/bulk-sync") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!(await requireEaKey(req, res, url, payload))) return;
+      const updates = payload.updates || [];
+      if (!Array.isArray(updates))
+        return json(res, 400, { ok: false, error: "updates array required" });
+      const result = await mt5BulkAckSignals(updates);
+      for (const u of updates) {
+        await mt5AppendSignalEvent(u.sid, `SIGNAL_EA_SYNC_${u.status}`, {
+          ticket: u.ticket,
+          pnl: u.pnl,
+          account: payload.account_id,
+        });
+      }
+      return json(res, 200, { ok: true, updated: result.updated });
+    } catch (err) {
+      return json(res, 500, { ok: false, error: err.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/accounts") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url);
+      const items = await mt5ListAccountsV2(userId);
       return json(res, 200, { ok: true, items });
     } catch (error) {
+      return json(res, 400, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/accounts") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const accountId = String(payload?.account_id || "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const out = await mt5CreateAccountV2({
+        account_id: accountId,
+        user_id: String(payload?.user_id || CFG.mt5DefaultUserId),
+        name: String(payload?.name || accountId),
+        balance: payload?.balance,
+        status: String(payload?.status || "ACTIVE"),
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+      });
+      if (!out?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out?.error || "failed to create account",
+        });
+      const rows = await mt5ListAccountsV2();
+      return json(res, 200, {
+        ok: true,
+        item: out.item || null,
+        api_key_plaintext: out.api_key_plaintext || null,
+        items: rows,
+      });
+    } catch (error) {
       return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "PUT" && /^\/v2\/accounts\/[^/]+$/.test(url.pathname)) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/accounts\/([^/]+)$/);
+      const accountId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const out = await mt5UpdateAccountV2(accountId, payload || {});
+      if (!out?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out?.error || "failed to update account",
+        });
+      const rows = await mt5ListAccountsV2();
+      return json(res, 200, { ok: true, item: out.item || null, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "DELETE" && /^\/v2\/accounts\/[^/]+$/.test(url.pathname)) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/accounts\/([^/]+)$/);
+      const accountId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const out = await mt5ArchiveAccountV2(accountId);
+      if (!out?.ok) {
+        const statusCode = out?.blocking_open_trades ? 409 : 400;
+        return json(res, statusCode, {
+          ok: false,
+          error: out?.error || "failed to archive account",
+          blocking_open_trades: Number(out?.blocking_open_trades || 0),
+        });
+      }
+      const rows = await mt5ListAccountsV2();
+      return json(res, 200, { ok: true, item: out.item || null, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // =========================
+  // AI HUB API
+  // =========================
+  // =========================
+  // AI HUB API — Templates stored in user_settings (type='ai_template')
+  if (req.method === "GET" && url.pathname === "/v2/ai/templates") {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const db = await mt5InitBackend();
+      const { rows } = await db.query(
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY created_at DESC",
+        [CFG.mt5DefaultUserId],
+      );
+      const templates = rows.map((r) => ({
+        template_id: r.name,
+        name: r.name,
+        ...(r.data && typeof r.data === "object" ? r.data : {}),
+      }));
+      return json(res, 200, { ok: true, templates });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/ai/templates") {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const payload = await readJson(req);
+      const db = await mt5InitBackend();
+      const { template_id, name, ...rest } = payload;
+      const config = rest.config || rest;
+      const templateName = String(name || config?.name || "Unnamed").trim();
+      const data = JSON.stringify({
+        config,
+        _guide: config._guide,
+        _schema: config._schema,
+        saved: rest.saved || new Date().toISOString(),
+      });
+      await db.query(
+        `INSERT INTO user_settings (user_id, type, name, data)
+         VALUES ($1, 'ai_template', $2, $3::jsonb)
+         ON CONFLICT (user_id, type, name)
+         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+        [CFG.mt5DefaultUserId, templateName, data],
+      );
+      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
+      return json(res, 201, {
+        ok: true,
+        template: { template_id: templateName, name: templateName, config },
+      });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/v2/ai/templates/")) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const templateName = decodeURIComponent(url.pathname.split("/").pop());
+      const db = await mt5InitBackend();
+      await db.query(
+        "DELETE FROM user_settings WHERE user_id = $1 AND type = 'ai_template' AND name = $2",
+        [CFG.mt5DefaultUserId, templateName],
+      );
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/ai/config") {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const body = await readJson(req);
+      const db = await mt5InitBackend();
+      const userId = CFG.mt5DefaultUserId;
+
+      if (body.key && body.value !== undefined) {
+        // Individual key update
+        const encValue = encryptData(String(body.value));
+        await db
+          .query(
+            `
+          INSERT INTO user_settings (user_id, type, name, data)
+          VALUES ($1, 'api_key', 'default', jsonb_build_object($2, $3))
+          ON CONFLICT (user_id, type, name)
+          DO UPDATE SET data = user_settings.data || jsonb_build_object($2, $3), updated_at = NOW()
+        `,
+            [userId, body.key, encValue],
+          )
+          .catch(async () => {
+            // Fallback for systems without the partial unique index
+            const existing = await db.query(
+              "SELECT id, data FROM user_settings WHERE user_id=$1 AND type='api_key'",
+              [userId],
+            );
+            if (existing.rows.length) {
+              const oldData =
+                existing.rows[0].data &&
+                typeof existing.rows[0].data === "object"
+                  ? existing.rows[0].data
+                  : {};
+              const newData = { ...oldData, [body.key]: encValue };
+              await db.query(
+                "UPDATE user_settings SET data=$1, updated_at=NOW() WHERE id=$2",
+                [newData, existing.rows[0].id],
+              );
+            } else {
+              await db.query(
+                "INSERT INTO user_settings (user_id, type, data) VALUES ($1, 'api_key', $2)",
+                [userId, { [body.key]: encValue }],
+              );
+            }
+          });
+      } else {
+        // Bulk settings update
+        const settings = encryptObject(body.settings || body || {});
+        await db
+          .query(
+            `
+          INSERT INTO user_settings (user_id, type, name, data)
+          VALUES ($1, 'api_key', 'default', $2)
+          ON CONFLICT (user_id, type, name)
+          DO UPDATE SET data = $2, updated_at = NOW()
+        `,
+            [userId, settings],
+          )
+          .catch(async () => {
+            const existing = await db.query(
+              "SELECT id FROM user_settings WHERE user_id=$1 AND type='api_key'",
+              [userId],
+            );
+            if (existing.rows.length) {
+              await db.query(
+                "UPDATE user_settings SET data=$1, updated_at=NOW() WHERE id=$2",
+                [settings, existing.rows[0].id],
+              );
+            } else {
+              await db.query(
+                "INSERT INTO user_settings (user_id, type, data) VALUES ($1, 'api_key', $2)",
+                [userId, settings],
+              );
+            }
+          });
+      }
+
+      await StateRepo.del("SYSTEM_SETTINGS", "global");
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+  if (req.method === "GET" && url.pathname === "/v2/settings") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+
+    try {
+      const db = await mt5InitBackend();
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      console.log(`[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`);
+      await db.query(
+        `
+        INSERT INTO user_settings (user_id, type, name, data, status)
+        VALUES
+          ($1, 'cron', 'MARKET_DATA_CRON', $2::jsonb, 'INACTIVE'),
+          ($1, 'cron', 'ANALYSIS_CRON', $3::jsonb, 'INACTIVE')
+        ON CONFLICT (user_id, type, name) DO NOTHING
+      `,
+        [
+          userId,
+          JSON.stringify({
+            enabled: false,
+            provider: "twelvedata",
+            timezone: CFG.marketDataDefaultTimezone,
+            symbols: [],
+            timeframes: ["1m", "5m", "15m"],
+            batch_size: CFG.marketDataCronBatchSize,
+            last_sync: {},
+          }),
+          JSON.stringify({
+            enabled: false,
+            symbols: [],
+            timeframes: ["15m", "1h"],
+            cadence_minutes: 60,
+            model: "claude-sonnet-4-0",
+            profile: "",
+            entry_models: [],
+            directions: ["BUY", "SELL"],
+            order_types: ["market", "limit", "stop"],
+            prompt: "",
+            last_sync: {},
+          }),
+        ],
+      );
+      const rows = await repoListUserSettings(userId);
+      const settings = rows.map((r) => {
+        let d = r.data;
+        if ((!d || Object.keys(d).length === 0) && r.value) {
+          try {
+            d = JSON.parse(r.value);
+            if (typeof d !== "object" || d === null) d = { value: r.value };
+          } catch {
+            d = { value: r.value };
+          }
+        }
+        // For api_key type, decrypt and mask the real key value for display
+        if (r.type === "api_key" && d && typeof d === "object") {
+          const decrypted = decryptObject(d);
+          const masked = {};
+          for (const [k, v] of Object.entries(decrypted)) {
+            masked[k] = maskApiKeyForDisplay(String(v || ""));
+          }
+          return { ...r, data: masked };
+        }
+        return { ...r, data: d || {} };
+      });
+      return json(res, 200, { ok: true, settings });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/settings/secret") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const type = String(url.searchParams.get("type") || "").trim();
+      const name = String(url.searchParams.get("name") || "").trim();
+      const field = String(url.searchParams.get("field") || "v2026.05.09 18:08 - cf796bb").trim();
+      if (!type || !name)
+        return json(res, 400, { ok: false, error: "Missing type or name" });
+      if (type !== "api_key")
+        return json(res, 400, {
+          ok: false,
+          error: "Secret reveal is only supported for api_key type",
+        });
+
+      const db = await mt5InitBackend();
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const rowRes = await db.query(
+        "SELECT data FROM user_settings WHERE user_id = $1 AND type = $2 AND name = $3 LIMIT 1",
+        [userId, type, name],
+      );
+      if (!rowRes.rows.length)
+        return json(res, 404, { ok: false, error: "Setting not found" });
+
+      const enc =
+        rowRes.rows[0]?.data && typeof rowRes.rows[0].data === "object"
+          ? rowRes.rows[0].data
+          : {};
+      const dec = decryptObject(enc);
+      return json(res, 200, { ok: true, value: String(dec?.[field] || "") });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/settings") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+
+    try {
+      const body = await readJson(req);
+      if (!body.type)
+        return json(res, 400, { ok: false, error: "Missing type" });
+      const db = await mt5InitBackend();
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      let payloadData = body.data;
+      if (!payloadData || typeof payloadData !== "object") {
+        if (body.value !== undefined && body.value !== null) {
+          try {
+            payloadData = JSON.parse(body.value);
+            if (typeof payloadData !== "object" || payloadData === null) {
+              payloadData = { value: body.value };
+            }
+          } catch {
+            payloadData = { value: body.value };
+          }
+        } else {
+          payloadData = {};
+        }
+      }
+
+      let settingName = String(body.name || body.type || "").trim();
+      let data = payloadData;
+
+      if (body.type === "ai_template") {
+        return json(res, 400, {
+          ok: false,
+          error: "ai_template moved to user_templates. Use /v2/ai/templates.",
+        });
+      }
+
+      if (body.type === "api_key") {
+        settingName = normalizeAiApiKeyName(settingName);
+        if (!ALLOWED_AI_API_KEY_NAMES.has(settingName)) {
+          return json(res, 400, {
+            ok: false,
+            error:
+              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY",
+          });
+        }
+        const rawValue = String(payloadData.value || "").trim();
+        data = encryptObject({ value: rawValue });
+      }
+
+      const res2 = await db.query(
+        `
+        INSERT INTO user_settings (user_id, type, name, data, status)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (user_id, type, name)
+        DO UPDATE SET data = EXCLUDED.data, status = EXCLUDED.status, updated_at = NOW()
+        RETURNING *
+      `,
+        [
+          userId,
+          body.type,
+          settingName || body.type,
+          data,
+          body.status || "active",
+        ],
+      );
+
+      await StateRepo.del("USER_SETTINGS", userId);
+
+      return json(res, 200, { ok: true, item: res2.rows[0] });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/v2/settings/")) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+
+    try {
+      const parts = url.pathname.split("/"); // ["", "v2026.05.09 18:08 - cf796bb", "settings", type, name]
+      const type = decodeURIComponent(parts[3] || "");
+      const name = decodeURIComponent(parts[4] || "");
+
+      if (!type || !name)
+        return json(res, 400, { ok: false, error: "Missing type or name" });
+      const db = await mt5InitBackend();
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      await db.query(
+        "DELETE FROM user_settings WHERE user_id = $1 AND type = $2 AND name = $3",
+        [userId, type, name],
+      );
+      await StateRepo.del("USER_SETTINGS", userId);
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/v2/ai/templates/")) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const templateId = url.pathname.split("/").pop();
+      const db = await mt5InitBackend();
+      await db.query("DELETE FROM user_templates WHERE id = $1", [templateId]);
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/ai/generate") {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const body = await readJson(req);
+      const {
+        templateId,
+        customPrompt,
+        service,
+        provider: bodyProvider,
+        model,
+        context,
+      } = body;
+      const db = await mt5InitBackend();
+      const userId = CFG.mt5DefaultUserId;
+      const sessionId = `ai_gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await (
+        await mt5Backend()
+      ).log(sessionId, "ai", { event: "AI_ANALYSIS", payload: body }, userId);
+
+      let finalPrompt = customPrompt || "";
+      if (templateId) {
+        const { rows } = await db.query(
+          "SELECT data FROM user_templates WHERE id = $1",
+          [templateId],
+        );
+        if (rows.length)
+          finalPrompt = rows[0].data.prompt_text || rows[0].data.prompt;
+      }
+
+      const configRes = await db.query(
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
+        [userId],
+      );
+      const config = {};
+      for (const row of configRes.rows || []) {
+        const name = normalizeAiApiKeyName(row?.name);
+        const dec = decryptObject(
+          row?.data && typeof row.data === "object" ? row.data : {},
+        );
+        if (ALLOWED_AI_API_KEY_NAMES.has(name) && dec?.value) {
+          config[name] = String(dec.value || "");
+        }
+        // Backward compatibility: old payloads may store key/value directly in data object.
+        if (dec && typeof dec === "object") {
+          Object.assign(config, dec);
+        }
+      }
+
+      const { rows: tRows } = templateId
+        ? await db.query("SELECT data FROM user_templates WHERE id = $1", [
+            templateId,
+          ])
+        : { rows: [] };
+      const tData = tRows[0]?.data || {};
+
+      // Data for placeholders
+      const symbol = body.symbol || tData.default_symbol || "BTCUSDT";
+      const tf = body.timeframe || tData.default_tf || "1h";
+
+      finalPrompt = finalPrompt
+        .replace(/{SYMBOL}/g, symbol)
+        .replace(/{TIMEFRAME: default 15m}/g, tf)
+        .replace(/{TIMEFRAME}/g, tf)
+        .replace(
+          /{STRATEGY: default Price Action}/g,
+          body.strategy || "Price Action",
+        )
+        .replace(/{STRATEGY}/g, body.strategy || "Price Action")
+        .replace(
+          /{INDICATORS\/STRATEGY}/g,
+          body.indicators || "Technical Analysis",
+        )
+        .replace(/{RR}/g, body.rr || "1:2");
+
+      const sess = getUiSessionFromReq(req);
+      const userLang = sess?.metadata?.settings?.language || "English";
+
+      finalPrompt += `\n\n${buildAiSchemaPromptText()}`;
+
+      if (userLang && userLang !== "English") {
+        finalPrompt += `\n\nIMPORTANT: Keep enum values exactly as specified, but write narrative fields such as note, recent_move, narrative, condition, and reasons_to_skip.reason in ${userLang}.`;
+      }
+
+      let provider = (bodyProvider || service || "gemini").toLowerCase();
+      if (
+        requestModel &&
+        (requestModel.includes("openrouter") ||
+          requestModel.includes("open-router"))
+      )
+        provider = "openrouter";
+      const apiKey =
+        provider === "deepseek"
+          ? config.DEEPSEEK_API_KEY
+          : provider === "openrouter"
+            ? config.OPENROUTER_API_KEY || ""
+            : provider === "openai"
+              ? config.OPENAI_API_KEY
+              : provider === "claude"
+                ? config.CLAUDE_API_KEY || config.ANTHROPIC_API_KEY
+                : config.GEMINI_API_KEY;
+
+      if (!apiKey) {
+        return json(res, 400, {
+          ok: false,
+          error: `API Key for ${provider} is missing. Please configure it in the AI Hub.`,
+        });
+      }
+
+      console.log(`[ai] invoking ${provider} with model ${model || "default"}`);
+
+      let endpoint = "";
+      let authHeader = "";
+      let bodyData = {};
+      let requestModel = String(model || "").trim();
+
+      if (provider === "deepseek") {
+        endpoint = "https://api.deepseek.com/chat/completions";
+        authHeader = `Bearer ${apiKey}`;
+        if (!requestModel) requestModel = "deepseek-chat";
+        // Backward compatibility: deepseek-coder is deprecated in current API naming.
+        if (requestModel === "deepseek-coder") requestModel = "deepseek-chat";
+        bodyData = {
+          model: requestModel,
+          messages: [{ role: "user", content: finalPrompt }],
+          response_format: { type: "json_object" },
+        };
+      } else if (provider === "openrouter") {
+        endpoint = "https://openrouter.ai/api/v1/chat/completions";
+        authHeader = `Bearer ${apiKey}`;
+        if (!requestModel) requestModel = "openai/gpt-4o";
+        bodyData = {
+          model: requestModel,
+          messages: [{ role: "user", content: finalPrompt }],
+          response_format: { type: "json_object" },
+        };
+      } else if (provider === "openai") {
+        endpoint = "https://api.openai.com/v1/chat/completions";
+        authHeader = `Bearer ${apiKey}`;
+        if (!requestModel) requestModel = "gpt-4o-mini";
+        bodyData = {
+          model: requestModel,
+          messages: [{ role: "user", content: finalPrompt }],
+          response_format: { type: "json_object" },
+        };
+      } else if (provider === "claude") {
+        endpoint = "https://api.anthropic.com/v1/messages";
+        authHeader = "";
+        if (!requestModel) requestModel = "claude-sonnet-4-0";
+        bodyData = {
+          model: requestModel,
+          max_tokens: 4500,
+          messages: [{ role: "user", content: finalPrompt }],
+        };
+      } else {
+        // Default to Gemini (OpenAI compatible route)
+        endpoint =
+          "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+        authHeader = `Bearer ${apiKey}`;
+        if (!requestModel) requestModel = "gemini-2.0-flash";
+        bodyData = {
+          model: requestModel,
+          messages: [{ role: "user", content: finalPrompt }],
+        };
+      }
+
+      const aiCtrl = new AbortController();
+      const aiTimer = setTimeout(() => aiCtrl.abort(), 45000);
+      let aiRes;
+      let aiModelUsed = requestModel;
+      try {
+        if (provider === "claude") {
+          const out = await anthropicMessagesWithFallback({
+            apiKey,
+            model: requestModel,
+            messages: bodyData.messages,
+            maxTokens: bodyData.max_tokens,
+            timeoutMs: 45000,
+          });
+          aiRes = out.response;
+          aiModelUsed = out.modelUsed || requestModel;
+        } else {
+          aiRes = await fetch(endpoint, {
+            method: "POST",
+            signal: aiCtrl.signal,
+            headers: {
+              "Content-Type": "application/json",
+              ...(authHeader ? { Authorization: authHeader } : {}),
+            },
+            body: JSON.stringify(bodyData),
+          });
+        }
+      } catch (e) {
+        if (e?.name === "AbortError") {
+          throw new Error(
+            `AI Provider Timeout (${provider}/${requestModel}) after 45s. Check provider status/network and retry.`,
+          );
+        }
+        throw e;
+      } finally {
+        clearTimeout(aiTimer);
+      }
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text();
+        throw new Error(`AI Provider Error (${aiRes.status}): ${errText}`);
+      }
+
+      const aiJson = await finalAiRes.json();
+
+      // Robust JSON extraction
+      let cleanJson = rawResponse.trim();
+      if (cleanJson.includes("```")) {
+        const match = cleanJson.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (match) cleanJson = match[1];
+      }
+
+      // If it still has markdown prefix (sometimes LLMs ignore instructions), strip it manually
+      cleanJson = cleanJson
+        .replace(/^```json/, "")
+        .replace(/```$/, "")
+        .trim();
+
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_RESPONSE",
+          schema_version: AI_RESPONSE_SCHEMA_VERSION,
+          raw_json: aiJson,
+        },
+        userId,
+      );
+
+      let signals = [];
+      let analysisResult = null;
+      try {
+        const parsed = normalizeAiAnalysisContract(JSON.parse(cleanJson));
+        if (
+          parsed.bias ||
+          parsed.analysis ||
+          parsed.key_levels ||
+          parsed.market_analysis ||
+          parsed.trade_plan ||
+          parsed.final_verdict
+        ) {
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+            parsed.schema_version = AI_RESPONSE_SCHEMA_VERSION;
+          analysisResult = parsed;
+          signals = parsed.signals || [];
+        } else if (Array.isArray(parsed)) {
+          signals = parsed;
+        } else if (parsed.signals && Array.isArray(parsed.signals)) {
+          signals = parsed.signals;
+        } else if (parsed.symbol || parsed.direction || parsed.side) {
+          signals = [parsed];
+        } else {
+          const values = Object.values(parsed);
+          if (values.length > 0 && (values[0].symbol || values[0].direction)) {
+            signals = values;
+          }
+        }
+
+        // Persistence: If we have analysis and bars context, store in market_data metadata
+        if (analysisResult && body.bars && body.bars.length > 0) {
+          const bars = body.bars;
+          const barStart = Number(bars[0].time || bars[0].bar_start);
+          const barEnd = Number(
+            bars[bars.length - 1].time || bars[bars.length - 1].bar_end,
+          );
+          if (barStart && barEnd) {
+            const symbolNorm = normalizeMarketDataSymbol(body.symbol);
+            const tfNorm = normalizeMarketDataTf(body.timeframe);
+            await marketDataDbWrite(symbolNorm, tfNorm, {
+              bar_start: barStart,
+              bar_end: barEnd,
+              bars: bars,
+              metadata: analysisResult,
+            }).catch((e) =>
+              console.error("[ai-gen] DB Write Failed:", e.message),
+            );
+          }
+        }
+      } catch (e) {
+        console.error("[ai] failed to parse JSON from AI response:", cleanJson);
+        // We still return ok: true but empty signals, showing the raw_response to user
+      }
+
+      return json(res, 200, {
+        ok: true,
+        model: aiModelUsed,
+        schema_version: AI_RESPONSE_SCHEMA_VERSION,
+        raw_response: rawResponse,
+        signals: (signals || []).map((s) => {
+          const rawEntryModel =
+            s?.entry_model ||
+            s?.model ||
+            s?.strategy ||
+            tData.name ||
+            "AI_AGENT";
+          const entryModel = mt5NormalizeEntryModel(rawEntryModel, {
+            fallback: tData.name || "AI_AGENT",
+          });
+          const noteRaw = mt5CollapseWhitespace(s?.note || "");
+          const note =
+            noteRaw ||
+            (mt5EntryModelLooksVerbose(rawEntryModel)
+              ? mt5CollapseWhitespace(rawEntryModel)
+              : "");
+          return {
+            ...s,
+            symbol: s.symbol || symbol,
+            side: s.direction || s.side || "BUY",
+            entry: s.entry || s.price || 0,
+            sl: s.sl || s.stop_loss,
+            tp: s.tp || s.take_profit,
+            timeframe: s.timeframe || tf,
+            entry_model: entryModel,
+            entry_model_raw: mt5CollapseWhitespace(rawEntryModel) || null,
+            note,
+          };
+        }),
+      });
+    } catch (e) {
+      console.error("[ai] generation error:", e);
+      return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/chart/snapshot") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const item = await captureTradingViewSnapshot({
+        userId: sess.user_id,
+        symbol: body.symbol,
+        provider: body.provider,
+        session_prefix: body.session_prefix || body.sessionPrefix || "",
+        timeframe: body.timeframe || body.tf,
+        width: body.width,
+        height: body.height,
+        theme: body.theme,
+        lookbackBars: body.lookbackBars,
+        format: body.format,
+        quality: body.quality,
+      });
+      return json(res, 200, { ok: true, item });
+    } catch (error) {
+      return json(res, 500, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -15257,6 +17361,375 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (req.method === "GET" && url.pathname === "/v2/ai/claude/files") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      const limit = Math.max(
+        1,
+        Math.min(Number(url.searchParams.get("limit") || 100) || 100, 200),
+      );
+      const afterId = String(url.searchParams.get("after_id") || "").trim();
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (afterId) qs.set("after_id", afterId);
+      const out = await anthropicFilesRequest({
+        apiKey: claudeKey,
+        pathName: `/v1/files?${qs.toString()}`,
+      });
+      return json(res, 200, {
+        ok: true,
+        ...out,
+        local_map: readClaudeLocalFileMap(),
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    url.pathname.startsWith("/v2/ai/claude/files/") &&
+    url.pathname.endsWith("/content")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      const rawId = decodeURIComponent(
+        url.pathname
+          .replace("/v2/ai/claude/files/", "")
+          .replace(/\/content$/, "") || "",
+      ).trim();
+      if (!rawId || rawId.includes("/") || rawId.includes("\\"))
+        return json(res, 400, { ok: false, error: "Invalid Claude file id." });
+      const meta = await anthropicFilesRequest({
+        apiKey: claudeKey,
+        pathName: `/v1/files/${encodeURIComponent(rawId)}`,
+        timeoutMs: 30000,
+      }).catch(() => ({}));
+      let out = null;
+      let contentError = null;
+      try {
+        out = await anthropicFilesRawRequest({
+          apiKey: claudeKey,
+          pathName: `/v1/files/${encodeURIComponent(rawId)}/content`,
+          timeoutMs: 60000,
+        });
+      } catch (error) {
+        contentError = error;
+      }
+      const local = contentError ? findClaudeLocalFileById(rawId) : null;
+      if (contentError && !local) throw contentError;
+      const fileName =
+        String(meta?.filename || `${rawId}.bin`)
+          .replace(/[^\w.\- ()[\]]+/g, "_")
+          .slice(0, 180) || `${rawId}.bin`;
+      const dispositionMode =
+        url.searchParams.get("download") === "1" ? "attachment" : "inline";
+      const body = local ? fs.readFileSync(local.vps_path) : out.buffer;
+      const contentType = String(
+        local?.mime_type ||
+          meta?.mime_type ||
+          out?.contentType ||
+          "application/octet-stream",
+      );
+      const finalFileName =
+        String(local?.vps_file || fileName)
+          .replace(/[^\w.\- ()[\]]+/g, "_")
+          .slice(0, 180) || fileName;
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Content-Disposition": `${dispositionMode}; filename="${finalFileName}"`,
+        "Cache-Control": "no-store",
+        "Content-Length": body.length,
+        "X-Claude-Content-Source": local ? "v2026.05.09 18:08 - cf796bb" : "claude",
+      });
+      res.end(body);
+      return;
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/v2/ai/claude/files/")) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      const fileId = decodeURIComponent(
+        url.pathname.replace("/v2/ai/claude/files/", "") || "",
+      ).trim();
+      if (!fileId || fileId.includes("/") || fileId.includes("\\"))
+        return json(res, 400, { ok: false, error: "Invalid Claude file id." });
+      const out = await anthropicFilesRequest({
+        apiKey: claudeKey,
+        pathName: `/v1/files/${encodeURIComponent(fileId)}`,
+        timeoutMs: 30000,
+      });
+      return json(res, 200, { ok: true, file: out });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/ai/claude/files/upload-snapshots"
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      ensureChartSnapshotDir();
+      const body = await readJson(req);
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      const reqSessionPrefix = sanitizeSessionPrefix(
+        body?.session_prefix || body?.sessionPrefix || "",
+      );
+      let files = Array.isArray(body?.files)
+        ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      if (!files.length) {
+        files = fs
+          .readdirSync(CHART_SNAPSHOT_DIR)
+          .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
+          .filter(
+            (f) => !reqSessionPrefix || f.includes(`_${reqSessionPrefix}_`),
+          )
+          .slice(0, 20);
+      }
+      const uploaded = [];
+      const failed = [];
+      for (const fileNameRaw of files) {
+        const safeName = normalizeSnapshotFileName(fileNameRaw);
+        if (!safeName) {
+          failed.push({
+            file: fileNameRaw,
+            error: "Invalid snapshot file name.",
+          });
+          continue;
+        }
+        const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+        const mediaType = snapshotMimeByFileName(safeName);
+        if (!mediaType || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+          failed.push({ file: safeName, error: "Snapshot file not found." });
+          continue;
+        }
+        try {
+          uploaded.push(
+            await uploadSnapshotToClaudeFile({
+              apiKey: claudeKey,
+              fileName: safeName,
+              absPath: abs,
+              mediaType,
+            }),
+          );
+        } catch (error) {
+          failed.push({
+            file: safeName,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      for (const u of uploaded) {
+        try {
+          const fname = String(u?.filename || u?.local_file || "");
+          const parts = fname.split("_");
+          if (parts.length >= 2) {
+            const sym = parts[0]?.toUpperCase?.() || "";
+            const tf = parts[1]?.toLowerCase?.() || "";
+            if (sym && tf && u?.id) {
+              tfCacheSet(sym, tf, {
+                snapshot: {
+                  file_id: String(u.id),
+                  file_name: fname,
+                  uploaded_at: new Date().toISOString(),
+                },
+              });
+            }
+          }
+        } catch (_) {}
+      }
+      return json(res, 200, {
+        ok: true,
+        uploaded_count: uploaded.length,
+        failed_count: failed.length,
+        uploaded,
+        failed,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    (req.method === "DELETE" &&
+      url.pathname.startsWith("/v2/ai/claude/files/")) ||
+    (req.method === "POST" && url.pathname === "/v2/ai/claude/files/delete")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      let fileIds = [];
+      if (req.method === "DELETE") {
+        const fileId = decodeURIComponent(
+          url.pathname.replace("/v2/ai/claude/files/", "") || "",
+        ).trim();
+        if (fileId) fileIds.push(fileId);
+      } else {
+        const body = await readJson(req);
+        fileIds = Array.isArray(body?.file_ids)
+          ? body.file_ids.map((x) => String(x || "").trim()).filter(Boolean)
+          : [];
+        const localFiles = Array.isArray(body?.files)
+          ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
+          : [];
+        if (localFiles.length) {
+          const map = readClaudeSnapshotFileMap();
+          for (const localFile of localFiles) {
+            const safe = normalizeSnapshotFileName(localFile);
+            const fileId = safe ? String(map[safe]?.file_id || "") : "";
+            if (fileId) fileIds.push(fileId);
+          }
+        }
+      }
+      fileIds = [...new Set(fileIds)];
+      if (!fileIds.length)
+        return json(res, 400, {
+          ok: false,
+          error: "No Claude file ids provided.",
+        });
+      const deleted = [];
+      const failed = [];
+      for (const fileId of fileIds) {
+        try {
+          const out = await anthropicFilesRequest({
+            apiKey: claudeKey,
+            method: "DELETE",
+            pathName: `/v1/files/${encodeURIComponent(fileId)}`,
+            timeoutMs: 30000,
+          });
+          deleted.push({ file_id: fileId, result: out });
+        } catch (error) {
+          failed.push({
+            file_id: fileId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      // Clean both snapshot and context file maps
+      const snapMap = readClaudeSnapshotFileMap();
+      const ctxMap = readClaudeContextFileMap();
+      let mapChanged = false;
+      for (const [localFile, item] of Object.entries(snapMap)) {
+        if (fileIds.includes(String(item?.file_id || ""))) {
+          delete snapMap[localFile];
+          mapChanged = true;
+          // Also delete local file from disk
+          const abs = path.join(
+            CHART_SNAPSHOT_DIR,
+            path.basename(String(item?.vps_file || localFile)),
+          );
+          try {
+            if (fs.existsSync(abs)) fs.unlinkSync(abs);
+          } catch {}
+        }
+      }
+      for (const [key, item] of Object.entries(ctxMap)) {
+        if (fileIds.includes(String(item?.file_id || ""))) {
+          delete ctxMap[key];
+          mapChanged = true;
+          // Also delete local context file from disk
+          const abs = String(item?.vps_path || "").trim();
+          try {
+            if (abs && fs.existsSync(abs)) fs.unlinkSync(abs);
+          } catch {}
+        }
+      }
+      if (mapChanged) {
+        writeClaudeSnapshotFileMap(snapMap);
+        writeClaudeContextFileMap(ctxMap);
+      }
+      bustClaudeFilesCache();
+      return json(res, 200, {
+        ok: true,
+        deleted_count: deleted.length,
+        failed_count: failed.length,
+        deleted,
+        failed,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/v2/chart/snapshots") {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
@@ -15273,7 +17746,7 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         url.searchParams.get("session_prefix") || "",
       );
-      const items = fs
+      const files = fs
         .readdirSync(CHART_SNAPSHOT_DIR)
         .filter((f) => !reqSessionPrefix || f.includes(`_${reqSessionPrefix}_`))
         .map((f) => {
@@ -15294,7 +17767,7 @@ const appHandler = async (req, res) => {
           String(b.created_at).localeCompare(String(a.created_at)),
         )
         .slice(0, limit);
-      return json(res, 200, { ok: true, items });
+      return json(res, 200, { ok: true, items: files });
     } catch (error) {
       return json(res, 500, {
         ok: false,
@@ -15303,33 +17776,197 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/chart/refresh") {
-    const sess = getUiSessionFromReq(req);
-    const isAdmin =
-      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
-      CFG.adminKey;
-    if (!sess.ok && !isAdmin)
-      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+  if (req.method === "POST" && url.pathname === "/v2/notifications/emit") {
+    // Internal endpoint for other processes/services to push SSE events
+    if (!requireSystemRoleForUi(req, res)) return;
     try {
-      const body = await readJson(req);
-      const userId = sess.user_id || CFG.mt5DefaultUserId;
-      const symbol = String(body.symbol || "").trim();
-      const timeframe = String(
-        body.timeframe || body.tf || body.timeframes || "15m",
-      ).trim();
-      if (!symbol)
-        return json(res, 400, { ok: false, error: "symbol is required" });
-      const snapshot = await buildAnalysisSnapshotFromTwelve({
-        userId,
-        payload: body || {},
-        symbol,
-        timeframe,
+      const payload = await readJson(req);
+      if (!payload.event)
+        return json(res, 400, { ok: false, error: "event is required" });
+      notificationManager.handle("REMOTE_API_CALL", payload.event, {
+        user_id: payload.user_id || null,
+        page: payload.page || null,
+        event: payload.event,
+        message: payload.message || "",
+        type: payload.type || "info",
+        notification: payload.notification !== false,
+        need_refresh: payload.need_refresh || false,
+        comp_refresh: payload.comp_refresh || false,
+        action: payload.action || null,
+        sound: payload.sound || null,
+        position: payload.position || "bottom-right",
       });
-      return json(res, 200, { ok: true, snapshot });
-    } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/notifications/test") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const sess = getUiSessionFromReq(req);
+      const payload = await readJson(req).catch(() => ({}));
+      // If UI sent settings (from test button), use them directly
+      const testSettings = payload.settings
+        ? {
+            toast: payload.settings.toast !== false,
+            console_log: payload.settings.console_log === true,
+            ticker: payload.settings.ticker === true,
+            db_log: payload.settings.db_log !== false,
+            sound: payload.settings.sound || null,
+          }
+        : null;
+      notificationManager.handle(
+        "SYSTEM_EVENT",
+        payload.event || "system_event",
+        {
+          user_id: sess.user_id,
+          page: payload.page || null,
+          event: payload.event || "system_event",
+          message:
+            payload.message || "🧪 Test notification — all channels firing",
+          type: payload.type || "info",
+          notification: payload.notification !== false,
+          need_refresh: payload.need_refresh || false,
+          comp_refresh: payload.comp_refresh || false,
+          action: payload.action || null,
+          sound: payload.sound || null,
+          position: payload.position || "bottom-right",
+          _force_toast: true,
+          _force_ticker: true,
+          _force_sound: true,
+          _force_db_log: true,
+        },
+      );
+      return json(res, 200, {
+        ok: true,
+        sent: {
+          event: payload.event || "system_event",
+          message:
+            payload.message || "🧪 Test notification — all channels firing",
+        },
+      });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/events") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const notificationsManager = global.__notificationManager;
+      // Return all event types with merged settings (defaults + DB overrides)
+      const events = Object.entries(DEFAULT_NOTIFICATION_SETTINGS).map(
+        ([event, defaults]) => {
+          const dbSettings =
+            notificationsManager?.settingsCache?.get(event) || {};
+          return {
+            event,
+            label: event
+              .replace(/_/g, " ")
+              .replace(/\w/g, (c) => c.toUpperCase()),
+            toast:
+              dbSettings.toast !== undefined
+                ? dbSettings.toast
+                : defaults.toast,
+            console_log:
+              dbSettings.console_log !== undefined
+                ? dbSettings.console_log
+                : defaults.console_log || false,
+            ticker:
+              dbSettings.ticker !== undefined
+                ? dbSettings.ticker
+                : defaults.ticker,
+            sound:
+              dbSettings.sound !== undefined
+                ? dbSettings.sound
+                : defaults.sound || null,
+            db_log:
+              dbSettings.db_log !== undefined
+                ? dbSettings.db_log
+                : defaults.db_log,
+          };
+        },
+      );
+      return json(res, 200, { ok: true, events });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/settings") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const sess = getUiSessionFromReq(req);
+      const db = await mt5InitBackend();
+      let data = {};
+      const { rows } = await db.query(
+        "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
+        [sess.user_id],
+      );
+      if (rows[0]?.data && typeof rows[0].data === "object")
+        data = rows[0].data;
+      return json(res, 200, { ok: true, settings: data });
+    } catch (e) {
+      return json(res, 200, { ok: true, settings: {} });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/notifications/settings") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const sess = getUiSessionFromReq(req);
+      const settings = payload.settings || payload;
+      const db = await mt5InitBackend();
+      // Save each event type as a separate notification_config row
+      for (const [eventName, config] of Object.entries(settings)) {
+        const eventKey = String(eventName)
+          .toUpperCase()
+          .replace(/[^A-Z_]/g, "");
+        if (!eventKey) continue;
+        await db.query(
+          `INSERT INTO user_settings (user_id, type, name, data)
+           VALUES ($1, 'notification_config', $2, $3)
+           ON CONFLICT (user_id, type, name)
+           DO UPDATE SET data = $3, updated_at = NOW()`,
+          [sess.user_id, eventKey, JSON.stringify(config)],
+        );
+      }
+      // Reload NotificationManager cache
+      if (global.__notificationManager) {
+        await global.__notificationManager.reloadSettings();
+      }
+      return json(res, 200, { ok: true });
+    } catch (e) {
+      return json(res, 400, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/pulse") {
+    const sess = getUiSessionFromReq(req);
+    const userId = sess.user_id || CFG.mt5DefaultUserId || "global";
+    try {
+      const client = await getRedisClient();
+      let userPulse = {};
+      let globalPulse = 0;
+      if (client) {
+        userPulse = await client.hGetAll(`NOTIF_PULSE:${userId}`);
+        globalPulse = Number((await client.get("NOTIF_PULSE:GLOBAL")) || 0);
+      }
+      return json(res, 200, {
+        ok: true,
+        user: userPulse,
+        global: globalPulse,
+        timestamp: Date.now(),
+      });
+    } catch (e) {
+      return json(res, 200, {
+        ok: true,
+        user: {},
+        global: 0,
+        timestamp: Date.now(),
       });
     }
   }
@@ -15343,14 +17980,11 @@ const appHandler = async (req, res) => {
       });
       return json(res, 200, { ok: true, events: data || [] });
     } catch (error) {
-      return json(res, 500, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      return json(res, 500, { ok: false, error: error.message });
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/chart/twelve/candles") {
+  if (req.method === "POST" && url.pathname === "/v2/chart/snapshots/delete") {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
       (req.headers["x-api-key"] || url.searchParams.get("key")) ===
@@ -15358,34 +17992,80 @@ const appHandler = async (req, res) => {
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
-      const symbol = String(url.searchParams.get("symbol") || "").trim();
-      const timeframe = String(
-        url.searchParams.get("timeframe") ||
-          url.searchParams.get("tf") ||
-          "15m",
-      ).trim();
-      const bars = Math.max(
-        50,
-        Math.min(Number(url.searchParams.get("bars") || 300) || 300, 1000),
+      ensureChartSnapshotDir();
+      const body = await readJson(req);
+      const reqSessionPrefix = sanitizeSessionPrefix(
+        body?.session_prefix || body?.sessionPrefix || "",
       );
-      const forceRefresh = asBool(url.searchParams.get("refresh"), false);
-      if (!symbol)
-        return json(res, 400, { ok: false, error: "symbol is required" });
-      const userId = sess.user_id || CFG.mt5DefaultUserId;
-      const snapshot = await buildAnalysisSnapshotFromTwelve({
-        userId,
-        payload: { bars, force_refresh: forceRefresh },
-        symbol,
-        timeframe,
-      });
-      if (String(snapshot?.status || "").toLowerCase() !== "ok") {
-        return json(res, 400, {
-          ok: false,
-          error: snapshot?.reason || "twelve_data_failed",
-          snapshot,
-        });
+      const deleteAll = body?.all === true;
+      const requestedFiles = Array.isArray(body?.files)
+        ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      const candidates = deleteAll
+        ? fs
+            .readdirSync(CHART_SNAPSHOT_DIR)
+            .filter(
+              (f) => !reqSessionPrefix || f.includes(`_${reqSessionPrefix}_`),
+            )
+        : reqSessionPrefix
+          ? fs
+              .readdirSync(CHART_SNAPSHOT_DIR)
+              .filter((f) => f.includes(`_${reqSessionPrefix}_`))
+          : requestedFiles;
+      const deleted = [];
+      const skipped = [];
+      const claudeMap = readClaudeSnapshotFileMap();
+      const claudeFileIdsToDelete = [];
+      for (const fileNameRaw of candidates) {
+        const safeName = normalizeChartFileName(fileNameRaw);
+        if (!safeName) {
+          skipped.push(fileNameRaw);
+          continue;
+        }
+        const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+          skipped.push(safeName);
+          continue;
+        }
+        fs.unlinkSync(abs);
+        deleted.push(safeName);
+        const mappedClaudeFileId = String(claudeMap[safeName]?.file_id || "");
+        if (mappedClaudeFileId) claudeFileIdsToDelete.push(mappedClaudeFileId);
       }
-      return json(res, 200, { ok: true, snapshot, bars: snapshot.bars || [] });
+      removeMappedClaudeSnapshotFiles(deleted);
+      const claudeDeleted = [];
+      const claudeDeleteFailed = [];
+      if (claudeFileIdsToDelete.length && body?.delete_claude !== false) {
+        const userId = sess.user_id || CFG.mt5DefaultUserId;
+        const claudeKey = await loadClaudeApiKeyForUser(userId).catch(() => "");
+        if (claudeKey) {
+          for (const fileId of [...new Set(claudeFileIdsToDelete)]) {
+            try {
+              await anthropicFilesRequest({
+                apiKey: claudeKey,
+                method: "DELETE",
+                pathName: `/v1/files/${encodeURIComponent(fileId)}`,
+                timeoutMs: 15000,
+              });
+              claudeDeleted.push(fileId);
+            } catch (error) {
+              claudeDeleteFailed.push({
+                file_id: fileId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+      }
+      bustClaudeFilesCache();
+      return json(res, 200, {
+        ok: true,
+        deleted_count: deleted.length,
+        deleted,
+        skipped,
+        claude_deleted: claudeDeleted,
+        claude_delete_failed: claudeDeleteFailed,
+      });
     } catch (error) {
       return json(res, 500, {
         ok: false,
@@ -15394,227 +18074,121 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/mt5/dashboard/advanced") {
+  if (req.method === "GET" && url.pathname.startsWith("/v2/chart/snapshots/")) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      ensureChartSnapshotDir();
+      const fileName = decodeURIComponent(
+        url.pathname.replace("/v2/chart/snapshots/", "") || "",
+      );
+      const safeName = normalizeChartFileName(fileName);
+      if (!safeName) {
+        return json(res, 400, { ok: false, error: "Invalid file" });
+      }
+      const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        return json(res, 404, { ok: false, error: "File not found" });
+      }
+      serveUiFile(res, abs, req.method);
+      return;
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    url.pathname === "/v2/settings/execution-profiles"
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
     try {
-      const limitRaw = Number(url.searchParams.get("limit") || 100000);
-      const limit = Math.max(
-        500,
-        Math.min(200000, Number.isFinite(limitRaw) ? limitRaw : 100000),
-      );
       const userId = uiEffectiveUserId(req, url);
-      const accountId = envStr(url.searchParams.get("account_id"));
-      const symbol = envStr(url.searchParams.get("symbol")).toUpperCase();
-      const sourceId = envStr(
-        url.searchParams.get("source_id") ||
-          url.searchParams.get("source") ||
-          url.searchParams.get("strategy"),
-      );
-      const model = envStr(
-        url.searchParams.get("entry_model") || url.searchParams.get("model"),
-      );
-      const chartTf = envStr(
-        url.searchParams.get("chart_tf") || url.searchParams.get("chartTf"),
-      );
-      const signalTf = envStr(
-        url.searchParams.get("signal_tf") || url.searchParams.get("timeframe"),
-      );
-      const direction = envStr(url.searchParams.get("direction")).toUpperCase();
-      const range = envStr(url.searchParams.get("range"), "all").toLowerCase();
-      const tradesRes = await mt5ListTradesV2(
-        {
-          user_id: userId,
-          account_id: accountId,
-          symbol,
-          source_id: sourceId,
-          side:
-            direction === "BUY" ? "BUY" : direction === "SELL" ? "SELL" : "",
-        },
-        1,
-        limit,
-      );
-
-      const allRows = tradesRes.items || [];
-      const rowsByDimension = allRows.filter((r) => {
-        const rowModel = String(r.entry_model || r.metadata?.entry_model || "");
-        if (model && rowModel !== model) return false;
-        const rowChartTf = String(r.chart_tf || r.metadata?.chart_tf || "");
-        if (chartTf && rowChartTf !== chartTf) return false;
-        const rowSignalTf = String(r.signal_tf || r.metadata?.signal_tf || "");
-        if (signalTf && rowSignalTf !== signalTf) return false;
-        return true;
+      const [items, active, accounts] = await Promise.all([
+        mt5ListExecutionProfilesV2(userId),
+        mt5GetActiveExecutionProfileV2(userId),
+        mt5ListAccountsV2(userId),
+      ]);
+      return json(res, 200, {
+        ok: true,
+        items,
+        active_profile: active || null,
+        accounts: accounts || [],
       });
-
-      const period = mt5PeriodRange(range);
-      const selectedRows = mt5FilterRows(rowsByDimension, {
-        from: period.start,
-        to: period.end,
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
 
-      const metrics = mt5ComputeTradeMetrics(selectedRows);
-      const periods = [
-        "all",
-        "today",
-        "yesterday",
-        "last_week",
-        "last_month",
-        "week",
-        "month",
-        "year",
-      ];
-      const periodTotals = {};
-      for (const p of periods) {
-        const pr = mt5PeriodRange(p);
-        const scopedRows = mt5FilterRows(rowsByDimension, {
-          from: pr.start,
-          to: pr.end,
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/settings/execution-profile"
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload);
+      const route = String(payload?.route || "")
+        .trim()
+        .toLowerCase();
+      if (!["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(route)) {
+        return json(res, 400, {
+          ok: false,
+          error: "route must be one of: ea, v2, ctrader",
         });
-        const scopedMetrics = mt5ComputeTradeMetrics(scopedRows);
-        periodTotals[p] = {
-          total_pnl: scopedMetrics.total_pnl,
-          total_rr: scopedMetrics.total_rr,
-          total_trades: scopedMetrics.total_trades,
-          total_wins: scopedMetrics.wins,
-          total_losses: scopedMetrics.losses,
-          win_sum_pnl: scopedMetrics.win_sum_pnl,
-          lose_sum_pnl: scopedMetrics.lose_sum_pnl,
-        };
       }
-
-      const seriesBucket = range === "today" ? "hour" : "day";
-      const seriesMap = new Map();
-      for (const r of selectedRows) {
-        const s = mt5CanonicalStoredStatus(
-          r.execution_status || r.status || r.close_reason,
-        );
-        if (!["CLOSED", "TP", "SL"].includes(s)) continue;
-        const pnl = Number(r.pnl_realized ?? r.pnl_money_realized);
-        if (!Number.isFinite(pnl)) continue;
-        const d = new Date(r.closed_at || r.ack_at || r.created_at);
-        if (!Number.isFinite(d.getTime())) continue;
-        const key =
-          seriesBucket === "hour"
-            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:00`
-            : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-        seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
-      }
-      const pnlSeries = [...seriesMap.entries()]
-        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-        .map(([x, y]) => ({ x, y }));
-
-      const symbols = [
-        ...new Set(
-          rowsByDimension
-            .map((r) => String(r.symbol || "").toUpperCase())
-            .filter(Boolean),
-        ),
-      ].sort();
-      const accounts = [
-        ...new Set(allRows.map((r) => envStr(r.account_id)).filter(Boolean)),
-      ].sort();
-      const accountsSummary = await mt5ListAccountsV2(userId);
-
-      return json(res, 200, {
-        ok: true,
-        version: SERVER_VERSION,
-        rows: selectedRows,
-        summary: metrics,
-        total: selectedRows.length,
-        accounts_summary: accountsSummary || [],
-        filters: {
-          user_id: userId || "",
-          account_id: accountId,
-          symbol,
-          source: sourceId,
-          entry_model: model,
-          chart_tf: chartTf,
-          signal_tf: signalTf,
-          direction,
-          range,
-          accounts,
-          symbols,
-          sources: [
-            ...new Set(allRows.map((r) => mt5StrategyFromRow(r)).filter(Boolean)),
-          ].sort(),
-          entry_models: [
-            ...new Set(allRows.map((r) => mt5EntryModelFromRow(r)).filter(Boolean)),
-          ].sort(),
-          chart_tfs: [
-            ...new Set(
-              allRows
-                .map((r) =>
-                  String(
-                    r.chart_tf ||
-                      r.raw_json?.chart_tf ||
-                      r.raw_json?.chartTf ||
-                      r.raw_json?.chartTimeframe ||
-                      r.signal_tf ||
-                      r.raw_json?.signal_tf ||
-                      r.raw_json?.sourceTf ||
-                      r.raw_json?.timeframe ||
-                      "",
-                  ),
-                )
-                .filter(Boolean),
-            ),
-          ].sort(),
-          signal_tfs: [
-            ...new Set(
-              allRows
-                .map((r) =>
-                  String(
-                    r.signal_tf ||
-                      r.raw_json?.signal_tf ||
-                      r.raw_json?.sourceTf ||
-                      r.raw_json?.timeframe ||
-                      "",
-                  ),
-                )
-                .filter(Boolean),
-            ),
-          ].sort(),
-        },
-        metrics,
-        period_totals: periodTotals,
-        top_winrate: {
-          symbols: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => String(r.symbol || "").toUpperCase(),
-            { limit: 100, includeDirection: false },
-          ),
-          entry_models: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => mt5EntryModelFromRow(r),
-            { limit: 100, includeDirection: false },
-          ),
-          accounts: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => envStr(r.account_id),
-            { limit: 100, includeDirection: false },
-          ),
-          sources: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => mt5StrategyFromRow(r),
-            { limit: 100, includeDirection: false },
-          ),
-          directional: mt5ComputeTopWinrateRows(
-            selectedRows,
-            (r) => {
-              const dir = String(r.action || r.side || "BUY").toLowerCase();
-              const typeRaw = String(
-                r.metadata?.type || r.raw_json?.type || r.order_type || "LIMIT",
-              ).toLowerCase();
-              const capitalize = (s) =>
-                s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-              return `${capitalize(dir)} ${capitalize(typeRaw)}`;
-            },
-            { limit: 100, includeDirection: false },
-          ),
-        },
-        pnl_series: pnlSeries,
+      const accountId = String(payload?.account_id || "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const sourceIds = (
+        Array.isArray(payload?.source_ids) ? payload.source_ids : []
+      )
+        .map((v) => String(v || "").trim())
+        .filter(Boolean);
+      const save = await mt5SaveExecutionProfileV2({
+        profile_id:
+          String(payload?.profile_id || "default").trim() || "default",
+        profile_name:
+          String(payload?.profile_name || `profile_${route}`).trim() ||
+          `profile_${route}`,
+        user_id: userId,
+        route,
+        account_id: accountId,
+        source_ids: sourceIds,
+        ctrader_mode: String(payload?.ctrader_mode || "")
+          .trim()
+          .toLowerCase(),
+        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
+        is_active: payload?.is_active !== false,
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
       });
+      if (!save?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: save?.error || "failed to save execution profile",
+        });
+      const rows = await mt5ListExecutionProfilesV2(userId);
+      return json(res, 200, { ok: true, item: save.item || null, items: rows });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -15623,97 +18197,83 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/mt5/filters/advanced") {
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/settings/execution-profile/apply"
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
+    let payload = {};
     try {
-      const userId = uiEffectiveUserId(req, url);
-      const limitRaw = Number(url.searchParams.get("limit") || 20000);
-      const limit = Math.max(
-        1000,
-        Math.min(100000, Number.isFinite(limitRaw) ? limitRaw : 20000),
-      );
-      const rows = await mt5ListSignals(limit, "", userId);
-      const symbols = [
-        ...new Set(rows.map((r) => String(r.symbol || "").toUpperCase())),
-      ]
-        .filter(Boolean)
-        .sort();
-      const sources = [...new Set(rows.map((r) => mt5StrategyFromRow(r)))]
-        .filter(Boolean)
-        .sort();
-      const models = [...new Set(rows.map((r) => mt5EntryModelFromRow(r)))]
-        .filter(Boolean)
-        .sort();
-      const chartTfs = [
-        ...new Set(
-          rows.map((r) =>
-            String(
-              r.chart_tf ||
-                r.raw_json?.chart_tf ||
-                r.raw_json?.chartTf ||
-                r.raw_json?.chartTimeframe ||
-                r.signal_tf ||
-                r.raw_json?.signal_tf ||
-                r.raw_json?.sourceTf ||
-                r.raw_json?.timeframe ||
-                "",
-            ),
-          ),
-        ),
-      ]
-        .filter(Boolean)
-        .sort();
-      const signalTfs = [
-        ...new Set(
-          rows.map((r) =>
-            String(
-              r.signal_tf ||
-                r.raw_json?.signal_tf ||
-                r.raw_json?.sourceTf ||
-                r.raw_json?.timeframe ||
-                "",
-            ),
-          ),
-        ),
-      ]
-        .filter(Boolean)
-        .sort();
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload);
+      const route = String(payload?.route || "")
+        .trim()
+        .toLowerCase();
+      if (!["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(route)) {
+        return json(res, 400, {
+          ok: false,
+          error: "route must be one of: ea, v2, ctrader",
+        });
+      }
+      const accountId = String(payload?.account_id || "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const sourceIds = (
+        Array.isArray(payload?.source_ids)
+          ? payload.source_ids
+          : ["signal", "tradingview"]
+      )
+        .map((v) => String(v || "").trim())
+        .filter(Boolean);
+      const save = await mt5SaveExecutionProfileV2({
+        profile_id:
+          String(payload?.profile_id || "default").trim() || "default",
+        profile_name:
+          String(payload?.profile_name || `active_${route}`).trim() ||
+          `active_${route}`,
+        user_id: userId,
+        route,
+        account_id: accountId,
+        source_ids: sourceIds,
+        ctrader_mode: String(payload?.ctrader_mode || "")
+          .trim()
+          .toLowerCase(),
+        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
+        is_active: true,
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+      });
+      if (!save?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: save?.error || "failed to save execution profile",
+        });
+
+      // Route one-account-only by subscriptions to avoid duplicate fanout.
+      const accounts = await mt5ListAccountsV2(userId);
+      for (const acc of accounts || []) {
+        const aid = String(acc?.account_id || "").trim();
+        if (!aid) continue;
+        const items =
+          aid === accountId
+            ? sourceIds.map((sid) => ({ source_id: sid, is_active: true }))
+            : [];
+        await mt5ReplaceAccountSubscriptionsV2(aid, items);
+      }
+      const active = await mt5GetActiveExecutionProfileV2(userId);
       return json(res, 200, {
         ok: true,
-        symbols,
-        sources,
-        entry_models: models,
-        chart_tfs: chartTfs,
-        signal_tfs: signalTfs,
+        active_profile: active || null,
+        routed_account_id: accountId,
+        route,
+        note: "Signal fanout routed to selected account. Runtime process mode (EA/v2 daemon/cTrader bridge) is still managed outside server.",
       });
-    } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  if (req.method === "GET" && url.pathname === "/mt5/filters/symbols") {
-    if (!CFG.mt5Enabled)
-      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
-    try {
-      const limitRaw = Number(url.searchParams.get("limit") || 10000);
-      const limit = Math.max(
-        100,
-        Math.min(50000, Number.isFinite(limitRaw) ? limitRaw : 10000),
-      );
-      const userId = uiEffectiveUserId(req, url);
-      const rows = await mt5ListSignals(limit, "", userId);
-      const symbols = [
-        ...new Set(
-          rows.map((r) => String(r.symbol || "").toUpperCase()).filter(Boolean),
-        ),
-      ].sort();
-      return json(res, 200, { ok: true, symbols });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -15723,13 +18283,876 @@ const appHandler = async (req, res) => {
   }
 
   if (req.method === "GET" && url.pathname === "/v2/sources") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
-    return json(res, 200, { ok: true, items: [] });
+    try {
+      const rows = await mt5ListSourcesV2();
+      return json(res, 200, { ok: true, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
-  if (tryServeUi(url, req, res, hostname)) return;
+  if (req.method === "GET" && url.pathname === "/v2/brokers") {
+    return json(res, 410, {
+      ok: false,
+      error: "Brokers endpoint removed. Broker metadata is account-scoped.",
+    });
+  }
 
-  // Optimization: Any incoming webhook/POST potentially changes state
+  if (req.method === "GET" && url.pathname === "/v2/trades") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const pageRaw = Number(url.searchParams.get("page") || 1);
+      const pageSizeRaw = Number(
+        url.searchParams.get("pageSize") || url.searchParams.get("limit") || 50,
+      );
+      const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
+      const pageSize = Math.max(
+        1,
+        Math.min(200, Number.isFinite(pageSizeRaw) ? pageSizeRaw : 50),
+      );
+      const userId = uiEffectiveUserId(req, url);
+      const filters = {
+        user_id: userId,
+        account_id: url.searchParams.get("account_id") || "",
+        source_id: url.searchParams.get("source_id") || "",
+        dispatch_status: url.searchParams.get("dispatch_status") || "",
+        execution_status: url.searchParams.get("execution_status") || "",
+        created_from: url.searchParams.get("created_from") || "",
+        created_to: url.searchParams.get("created_to") || "",
+        symbol: url.searchParams.get("symbol") || "",
+        action:
+          url.searchParams.get("action") || url.searchParams.get("side") || "",
+        entry_model: url.searchParams.get("entry_model") || "",
+        chart_tf: url.searchParams.get("chart_tf") || "",
+        q: url.searchParams.get("q") || "",
+      };
+
+      // Only cache when there are no meaningful filters (just user_id + page/pageSize).
+      // Filters beyond user_id would poison the cache with stale scoped results.
+      const filterKeys = [
+        "account_id",
+        "source_id",
+        "dispatch_status",
+        "execution_status",
+        "created_from",
+        "created_to",
+        "symbol",
+        "action",
+        "entry_model",
+        "chart_tf",
+        "q",
+      ];
+      const hasFilters = filterKeys.some((k) => filters[k]);
+
+      const cacheKey = hasFilters
+        ? null
+        : JSON.stringify({ userId, filters, page, pageSize });
+
+      const buildResponse = async () => {
+        const out = await mt5ListTradesV2(filters, page, pageSize);
+        const total = Number(out?.total || 0);
+        const items = Array.isArray(out?.items)
+          ? out.items.map((item) => {
+              const metadata =
+                item?.metadata && typeof item.metadata === "object"
+                  ? item.metadata
+                  : {};
+              const rawEntryModel =
+                item?.entry_model ||
+                metadata?.entry_model ||
+                metadata?.entry_model_raw ||
+                "";
+              return {
+                ...item,
+                entry_model: mt5NormalizeEntryModel(rawEntryModel, {
+                  fallback: item?.source_id || "manual",
+                }),
+              };
+            })
+          : [];
+        return {
+          ok: true,
+          items,
+          page: Number(out?.page || page),
+          pageSize: Number(out?.page_size || pageSize),
+          total,
+          pages: Math.max(
+            1,
+            Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
+          ),
+        };
+      };
+
+      const result = cacheKey
+        ? await StateRepo.get("TRADE_LIST", cacheKey, buildResponse)
+        : await buildResponse();
+
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/trades/bulk-action") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload);
+      const action = String(payload.action || "")
+        .trim()
+        .toLowerCase();
+      const filters = {
+        user_id: userId,
+        sids: Array.isArray(payload.sids || payload.trade_ids)
+          ? payload.sids || payload.trade_ids
+          : [],
+        account_id: payload.account_id || "",
+        source_id: payload.source_id || "",
+        execution_status: payload.execution_status || "",
+        created_from: payload.created_from || "",
+        created_to: payload.created_to || "",
+        q: payload.q || "",
+      };
+      const out = await mt5BulkActionTradesV2(action, filters);
+      if (out?.ok && (action === "cancel_all" || action === "delete_all")) {
+        const cleanup = await mt5CleanupSignalTradeArtifacts({
+          signalIds: Array.isArray(out.sids) ? out.sids : [],
+          tradeIds: Array.isArray(out.sids) ? out.sids : [],
+        });
+        out.logs_deleted = cleanup.logs_deleted || 0;
+        out.files_deleted = cleanup.files_deleted || 0;
+      }
+      return json(res, out?.ok ? 200 : 400, out);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/events$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/events$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url);
+      const detail = await StateRepo.get("TRADE_DETAIL", tradeRef, async () => {
+        try {
+          const resolved = await mt5ResolveTradeRefV2(tradeRef, userId || null);
+          if (!resolved?.sid) return null;
+          const limitRaw = Number(url.searchParams.get("limit") || 200);
+          const limit = Math.max(
+            1,
+            Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 200),
+          );
+          const rows = await mt5ListTradeEventsV2(resolved.sid, limit);
+          return {
+            sid: resolved.sid,
+            id: resolved.id || null,
+            items: rows,
+          };
+        } catch {
+          return null;
+        }
+      });
+      if (!detail)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      return json(res, 200, { ok: true, ...detail });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/trades\/[^/]+\/update$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/update$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const out = await mt5UpdateTradeManualV2(
+        tradeRef,
+        userId || null,
+        payload || {},
+      );
+      StateRepo.del("SIGNAL_DETAIL", tradeRef);
+      StateRepo.del("TRADE_DETAIL", tradeRef);
+      return json(res, out?.ok ? 200 : 400, out);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/signals\/[^/]+\/trade-plan\/save$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(
+        /^\/v2\/signals\/([^/]+)\/trade-plan\/save$/,
+      );
+      const signalRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!signalRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const resolvedSignal = await mt5ResolveSignalRefV2(
+        signalRef,
+        userId || null,
+      );
+      if (!resolvedSignal?.sid)
+        return json(res, 404, { ok: false, error: "signal not found" });
+      const signalId = String(resolvedSignal.sid || "").trim();
+      const sideRaw = String(payload.direction || payload.side || "")
+        .trim()
+        .toUpperCase();
+      const side = sideRaw.includes("SELL")
+        ? "SELL"
+        : sideRaw.includes("BUY")
+          ? "BUY"
+          : null;
+      const sl = asNum(payload.sl, NaN);
+      const tp = asNum(payload.tp, NaN);
+      const rr = asNum(payload.rr, NaN);
+      const entry = asNum(payload.entry ?? payload.price, NaN);
+      const tradeType = String(
+        payload.trade_type || payload.order_type || "limit",
+      )
+        .trim()
+        .toLowerCase();
+      const note = String(payload.note || "").trim();
+      const rawPatch = {};
+      if (Number.isFinite(entry)) {
+        rawPatch.entry = entry;
+        rawPatch.price = entry;
+      }
+      rawPatch.order_type = ["limit", "market", "stop"].includes(tradeType)
+        ? tradeType
+        : "limit";
+      rawPatch.trade_plan = {
+        direction: side || null,
+        entry: Number.isFinite(entry) ? entry : null,
+        sl: Number.isFinite(sl) ? sl : null,
+        tp1: Number.isFinite(tp) ? tp : null,
+        rr: Number.isFinite(rr) ? rr : null,
+        type: rawPatch.order_type,
+        note: note || null,
+      };
+      if (payload.invalidation) rawPatch.invalidation = payload.invalidation;
+      if (payload.exit_condition)
+        rawPatch.exit_condition = payload.exit_condition;
+      if (payload.entry_condition)
+        rawPatch.entry_condition = payload.entry_condition;
+      if (payload.risk_management)
+        rawPatch.risk_management = payload.risk_management;
+      if (payload.skip_recommendation)
+        rawPatch.skip_recommendation = payload.skip_recommendation;
+      if (payload.confluence_checklist)
+        rawPatch.confluence_checklist = payload.confluence_checklist;
+      const b = await mt5Backend();
+      const params = [
+        side,
+        Number.isFinite(sl) ? sl : null,
+        Number.isFinite(tp) ? tp : null,
+        Number.isFinite(rr) ? rr : null,
+        note || null,
+        JSON.stringify(rawPatch || {}),
+        signalId,
+        userId || null,
+        asNum(payload.confidence_pct),
+        asNum(payload.estimated_bars),
+        payload.profile || null,
+        asNum(payload.be_trigger),
+      ];
+      const whereUser = userId ? "AND user_id = $8" : "";
+      const resUpd = await b.query(
+        `
+        UPDATE signals
+        SET side = COALESCE($1, side),
+            sl = COALESCE($2, sl),
+            tp = COALESCE($3, tp),
+            rr_planned = COALESCE($4, rr_planned),
+            note = COALESCE($5, note),
+            raw_json = COALESCE(raw_json, '{}'::jsonb) || $6::jsonb,
+            confidence_pct = COALESCE($9, confidence_pct),
+            estimated_bars = COALESCE($10, estimated_bars),
+            profile = COALESCE($11, profile),
+            be_trigger = COALESCE($12::numeric, be_trigger),
+            updated_at = NOW()
+        WHERE sid = $7
+        ${whereUser}
+        RETURNING *
+      `,
+        userId ? params : params.slice(0, 18), // userId is $8, so if it exists we need 18 params
+      );
+      const row = resUpd.rows?.[0];
+      if (!row) return json(res, 404, { ok: false, error: "signal not found" });
+      await mt5Log(
+        signalId,
+        "signals",
+        { event_type: "SIGNAL_TRADE_PLAN_SAVED", data: rawPatch },
+        row.user_id || userId || CFG.mt5DefaultUserId,
+      );
+      StateRepo.del("SIGNAL_DETAIL", signalRef);
+      return json(res, 200, { ok: true, item: mt5MapDbRow(row) });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/signals\/[^/]+\/trade$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/signals\/([^/]+)\/trade$/);
+      const signalRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!signalRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (signal_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const resolvedSignal = await mt5ResolveSignalRefV2(
+        signalRef,
+        userId || null,
+      );
+      if (!resolvedSignal?.sid)
+        return json(res, 404, { ok: false, error: "signal not found" });
+      const signalId = String(resolvedSignal.sid || "").trim();
+      const b = await mt5Backend();
+      const whereUser = userId ? "AND user_id = $2" : "";
+      const signalRes = await b.query(
+        `
+        SELECT * FROM signals WHERE sid = $1 ${whereUser} LIMIT 1
+      `,
+        userId ? [signalId, userId] : [signalId],
+      );
+      const signal = signalRes.rows?.[0];
+      if (!signal)
+        return json(res, 404, { ok: false, error: "signal not found" });
+      const raw =
+        signal.raw_json && typeof signal.raw_json === "object"
+          ? signal.raw_json
+          : {};
+      const sideRaw = String(
+        payload.direction || payload.side || signal.side || "",
+      )
+        .trim()
+        .toUpperCase();
+      const side = sideRaw.includes("SELL") ? "SELL" : "BUY";
+      const entry = asNum(
+        payload.entry ?? payload.price ?? raw.entry ?? raw.price,
+        NaN,
+      );
+      const sl = asNum(payload.sl ?? signal.sl, NaN);
+      const tp = asNum(payload.tp ?? signal.tp, NaN);
+      const rr = asNum(payload.rr ?? signal.rr_planned, NaN);
+      const note = String(payload.note || signal.note || "").trim();
+      const tradeType = String(
+        payload.trade_type || payload.order_type || raw.order_type || "limit",
+      )
+        .trim()
+        .toLowerCase();
+      const sourceId = String(
+        signal.source_id || mt5SlugId(signal.source || "signal", "signal"),
+      ).trim();
+      const signalRawJson =
+        signal.raw_json && typeof signal.raw_json === "object"
+          ? signal.raw_json
+          : {};
+      const copiedMetadata = {
+        ...signalRawJson,
+        confidence_pct: asNum(
+          payload.confidence_pct ??
+            signal.confidence_pct ??
+            signalRawJson.confidence_pct,
+        ),
+        invalidation:
+          payload.invalidation ??
+          signal.invalidation ??
+          signalRawJson.invalidation,
+        estimated_bars: asNum(
+          payload.estimated_bars ??
+            signal.estimated_bars ??
+            signalRawJson.estimated_bars,
+        ),
+        profile: payload.profile ?? signal.profile ?? signalRawJson.profile,
+        exit_condition:
+          payload.exit_condition ??
+          signal.exit_condition ??
+          signalRawJson.exit_condition,
+        entry_condition:
+          payload.entry_condition ??
+          signal.entry_condition ??
+          signalRawJson.entry_condition,
+        risk_management:
+          payload.risk_management ??
+          signal.risk_management ??
+          signalRawJson.risk_management,
+        skip_recommendation:
+          payload.skip_recommendation ??
+          signal.skip_recommendation ??
+          signalRawJson.skip_recommendation,
+        confluence_checklist:
+          payload.confluence_checklist ??
+          signal.confluence_checklist ??
+          signalRawJson.confluence_checklist,
+        be_trigger: asNum(
+          payload.be_trigger ?? signal.be_trigger ?? signalRawJson.be_trigger,
+        ),
+      };
+      if (!copiedMetadata.order_type && !copiedMetadata.orderType) {
+        copiedMetadata.order_type = ["limit", "market", "stop"].includes(
+          tradeType,
+        )
+          ? tradeType
+          : "limit";
+      }
+      const fanout = await mt5FanoutSignalTradeV2({
+        signal_id: signalId,
+        source_id: sourceId,
+        user_id: signal.user_id || userId || CFG.mt5DefaultUserId,
+        entry_model:
+          mt5NormalizeEntryModel(
+            signal.entry_model ||
+              raw.entry_model ||
+              raw.entryModel ||
+              raw.model ||
+              raw.strategy ||
+              "",
+            { fallback: signal.source_id || signal.source || "manual" },
+          ) || null,
+        signal_tf: signal.signal_tf || null,
+        chart_tf: signal.chart_tf || null,
+        symbol: signal.symbol,
+        action: side,
+        entry: Number.isFinite(entry) ? entry : null,
+        sl: Number.isFinite(sl) ? sl : null,
+        tp: Number.isFinite(tp) ? tp : null,
+        volume: asNum(payload.volume ?? raw.volume, NaN) || null,
+        note: note || null,
+        metadata: copiedMetadata,
+      });
+      await mt5Log(
+        signalId,
+        "signals",
+        {
+          event: "SIGNAL_CREATE_TRADE",
+          data: { created: fanout?.created || 0 },
+        },
+        signal.user_id || userId || CFG.mt5DefaultUserId,
+      );
+
+      // If no other active users are subscribed to this source, mark signal CLOSED
+      if (fanout?.created > 0 && sourceId) {
+        try {
+          const subCheck = await b.query(
+            `SELECT COUNT(*) AS cnt
+             FROM user_settings
+             WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE
+               AND data->'source_ids' ? $1
+               AND user_id != $2`,
+            [sourceId, signal.user_id || userId || CFG.mt5DefaultUserId],
+          );
+          const hasSubscribers = Number(subCheck.rows?.[0]?.cnt || 0) > 0;
+          if (!hasSubscribers) {
+            await b.query(
+              `UPDATE signals SET status = 'CLOSED', updated_at = NOW() WHERE sid = $1`,
+              [signalId],
+            );
+          }
+        } catch (_) {
+          // non-critical — don't fail the response
+        }
+      }
+
+      return json(res, 200, {
+        ok: true,
+        signal_id: signalId,
+        created: fanout?.created || 0,
+        account_ids: fanout?.account_ids || [],
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/trades\/[^/]+\/trade-plan\/save$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/trade-plan\/save$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const resolvedTrade = await mt5ResolveTradeRefV2(
+        tradeRef,
+        userId || null,
+      );
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const tradeId = String(resolvedTrade.sid || "").trim();
+      const sideRaw = String(payload.direction || payload.side || "")
+        .trim()
+        .toUpperCase();
+      const side = sideRaw.includes("SELL")
+        ? "SELL"
+        : sideRaw.includes("BUY")
+          ? "BUY"
+          : null;
+      const entry = asNum(payload.entry ?? payload.price, NaN);
+      const sl = asNum(payload.sl, NaN);
+      const tp = asNum(payload.tp, NaN);
+      const rr = asNum(payload.rr, NaN);
+      const tradeType = String(
+        payload.trade_type || payload.order_type || "limit",
+      )
+        .trim()
+        .toLowerCase();
+      const note = String(payload.note || "").trim();
+      const metaPatch = {
+        order_type: ["limit", "market", "stop"].includes(tradeType)
+          ? tradeType
+          : "limit",
+        rr_planned: Number.isFinite(rr) ? rr : null,
+      };
+      if (payload.invalidation) metaPatch.invalidation = payload.invalidation;
+      if (payload.exit_condition)
+        metaPatch.exit_condition = payload.exit_condition;
+      if (payload.entry_condition)
+        metaPatch.entry_condition = payload.entry_condition;
+      if (payload.risk_management)
+        metaPatch.risk_management = payload.risk_management;
+      if (payload.skip_recommendation)
+        metaPatch.skip_recommendation = payload.skip_recommendation;
+      if (payload.confluence_checklist)
+        metaPatch.confluence_checklist = payload.confluence_checklist;
+      const params = [
+        side,
+        Number.isFinite(entry) ? entry : null,
+        Number.isFinite(sl) ? sl : null,
+        Number.isFinite(tp) ? tp : null,
+        note || null,
+        JSON.stringify(metaPatch || {}),
+        tradeId,
+        userId || null,
+        asNum(payload.confidence_pct),
+        asNum(payload.estimated_bars),
+        payload.profile || null,
+        asNum(payload.be_trigger),
+      ];
+      const whereUser = userId ? "AND user_id = $8" : "";
+      const resUpd = await (
+        await mt5Backend()
+      ).query(
+        `
+        UPDATE trades
+        SET action = COALESCE($1, action),
+            entry = COALESCE($2, entry),
+            sl = $3,
+            tp = $4,
+            note = COALESCE($5, note),
+            metadata = metadata || $6,
+            confidence_pct = COALESCE($9, confidence_pct),
+            estimated_bars = COALESCE($10, estimated_bars),
+            profile = COALESCE($11, profile),
+            be_trigger = COALESCE($12::numeric, be_trigger),
+            execution_status = CASE
+              WHEN execution_status IN ('OPEN', 'PENDING') THEN 'PENDING_MOD'
+              ELSE execution_status
+            END,
+            updated_at = NOW()
+        WHERE sid = $7
+          ${whereUser}
+        RETURNING *
+      `,
+        userId ? params : params.slice(0, 18),
+      );
+      const row = resUpd.rows?.[0];
+      if (!row) return json(res, 404, { ok: false, error: "trade not found" });
+      await mt5Log(
+        tradeId,
+        "trades",
+        { event_type: "TRADE_PLAN_SAVED", data: metaPatch },
+        row.user_id || userId || CFG.mt5DefaultUserId,
+      );
+      return json(res, 200, { ok: true, item: row });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/sources") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const name = String(payload?.name || "").trim();
+      if (!name)
+        return json(res, 400, { ok: false, error: "name is required" });
+      const sourceId =
+        String(payload?.source_id || "").trim() || mt5SlugId(name, "source");
+      await mt5UpsertSourceV2({
+        source_id: sourceId,
+        name,
+        kind: String(payload?.kind || "api"),
+        auth_mode: String(payload?.auth_mode || "token"),
+        auth_secret_hash: payload?.auth_secret_hash ?? null,
+        is_active: normalizeUserActive(payload?.is_active, true),
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+      });
+      const rows = await mt5ListSourcesV2();
+      const created =
+        (rows || []).find((r) => String(r.source_id || "") === sourceId) ||
+        null;
+      return json(res, 200, { ok: true, item: created, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "PUT" && /^\/v2\/sources\/[^/]+$/.test(url.pathname)) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/sources\/([^/]+)$/);
+      const sourceId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!sourceId)
+        return json(res, 400, { ok: false, error: "source_id is required" });
+      const rowsBefore = await mt5ListSourcesV2();
+      const prev = (rowsBefore || []).find(
+        (r) => String(r.source_id || "") === sourceId,
+      );
+      if (!prev)
+        return json(res, 404, { ok: false, error: "source not found" });
+
+      await mt5UpsertSourceV2({
+        source_id: sourceId,
+        name: String(payload?.name ?? prev.name ?? sourceId),
+        kind: String(payload?.kind ?? prev.kind ?? "api"),
+        auth_mode: String(payload?.auth_mode ?? prev.auth_mode ?? "token"),
+        auth_secret_hash:
+          payload?.auth_secret_hash ?? prev.auth_secret_hash ?? null,
+        is_active:
+          payload?.is_active === undefined
+            ? normalizeUserActive(prev.is_active, true)
+            : normalizeUserActive(payload?.is_active, true),
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : prev?.metadata && typeof prev.metadata === "object"
+              ? prev.metadata
+              : {},
+      });
+      const rows = await mt5ListSourcesV2();
+      const updated =
+        (rows || []).find((r) => String(r.source_id || "") === sourceId) ||
+        null;
+      return json(res, 200, { ok: true, item: updated, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/sources\/[^/]+\/events$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/sources\/([^/]+)\/events$/);
+      const sourceId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!sourceId)
+        return json(res, 400, { ok: false, error: "source_id is required" });
+      const limitRaw = Number(url.searchParams.get("limit") || 100);
+      const limit = Math.max(
+        1,
+        Math.min(1000, Number.isFinite(limitRaw) ? limitRaw : 100),
+      );
+      const rows = await mt5ListSourceEventsV2(sourceId, limit);
+      return json(res, 200, { ok: true, source_id: sourceId, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/sources\/[^/]+\/auth-secret\/rotate$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(
+        /^\/v2\/sources\/([^/]+)\/auth-secret\/rotate$/,
+      );
+      const sourceId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!sourceId)
+        return json(res, 400, { ok: false, error: "source_id is required" });
+      const out = await mt5RotateSourceSecretV2(sourceId);
+      if (!out)
+        return json(res, 404, {
+          ok: false,
+          error: "source not found or backend unsupported",
+        });
+      return json(res, 200, {
+        ok: true,
+        source_id: out.source_id,
+        source_secret_plaintext: out.source_secret_plaintext,
+        source_secret_last4: out.source_secret_last4 || null,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/sources\/[^/]+\/auth-secret\/revoke$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(
+        /^\/v2\/sources\/([^/]+)\/auth-secret\/revoke$/,
+      );
+      const sourceId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!sourceId)
+        return json(res, 400, { ok: false, error: "source_id is required" });
+      const out = await mt5RevokeSourceSecretV2(sourceId);
+      if (!out?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out?.error || "failed to revoke source secret",
+        });
+      return json(res, 200, { ok: true, source_id: sourceId });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   if (
     req.method === "GET" &&
@@ -15754,16 +19177,46 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    req.method === "PUT" &&
+    /^\/v2\/accounts\/[^/]+\/subscriptions$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/accounts\/([^/]+)\/subscriptions$/);
+      const accountId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!accountId)
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      const items = Array.isArray(payload?.items) ? payload.items : [];
+      const out = await mt5ReplaceAccountSubscriptionsV2(accountId, items);
+      if (!out?.ok)
+        return json(res, 400, {
+          ok: false,
+          error: out?.error || "failed to update subscriptions",
+        });
+      const rows = await mt5GetAccountSubscriptionsV2(accountId);
+      return json(res, 200, { ok: true, account_id: accountId, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
     (req.method === "POST" || req.method === "GET") &&
     url.pathname === "/v2/broker/pull"
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, {
-        ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
-      });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -15828,10 +19281,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, {
-        ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
-      });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -15872,10 +19322,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, {
-        ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
-      });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -15908,10 +19355,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, {
-        ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
-      });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -15934,10 +19378,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, {
-        ok: false,
-        error: "v2026.05.09 18:03 - 9e75c0d",
-      });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
