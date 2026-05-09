@@ -185,11 +185,6 @@ function PlanHeader({
                 {entryModel}
               </span>
             )}
-            {confidenceText && (
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--accent)" }}>
-                {confidenceText}
-              </span>
-            )}
             {!simplified && (
               <span
                 style={{
@@ -260,6 +255,18 @@ function PlanHeader({
               {pnl}
             </span>
           )}
+          {confidenceText && (
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--accent)",
+                opacity: 0.9,
+              }}
+            >
+              {confidenceText}
+            </span>
+          )}
           {riskTier && (
             <span
               className={`badge badge-mini ${
@@ -294,7 +301,15 @@ function PlanHeader({
                 rrPt = `(${r.toFixed(1)}r)`;
               }
               return (
-                <span key={idx}>
+                <span
+                  key={idx}
+                  style={{ cursor: "pointer", borderBottom: "1px dotted var(--muted-soft)" }}
+                  onClick={() => {
+                    if (typeof plan.onSelectTP === "function") {
+                      plan.onSelectTP(pt.price, rrPt.replace(/[()]/g, ""));
+                    }
+                  }}
+                >
                   tp{idx + 1}: {pt.price} {rrPt}
                 </span>
               );
@@ -305,6 +320,7 @@ function PlanHeader({
     </div>
   );
 }
+
 
 
 
@@ -640,7 +656,19 @@ export default function SignalDetailCard({
                 }}
               >
                 <PlanHeader
-                  plan={planValue}
+                  plan={{
+                    ...planValue,
+                    onSelectTP: (price) => {
+                      if (isMain) {
+                        tradePlan.onChange?.("tp", price);
+                      } else {
+                        setPlanDrafts((prev) => ({
+                          ...prev,
+                          [planId]: applyLinkedPlanChange(prev[planId] || p, "tp", price),
+                        }));
+                      }
+                    }
+                  }}
                   symbol={chart?.symbol || "Plan"}
                   isBuy={isBuy}
                   simplified={isSimplified}
@@ -648,24 +676,6 @@ export default function SignalDetailCard({
                   volume={tradePlan.volume}
                   pnl={tradePlan.pnl}
                 />
-
-                {isSelected && planValue.note && (
-                  <div
-                    style={{
-                      marginTop: 4,
-                      padding: "8px 12px",
-                      background: "rgba(255,255,255,0.02)",
-                      borderRadius: 8,
-                      borderLeft: "2px solid var(--accent-soft)",
-                      fontSize: "12px",
-                      color: "var(--foreground)",
-                      lineHeight: 1.5,
-                      opacity: 0.9,
-                    }}
-                  >
-                    <div dangerouslySetInnerHTML={{ __html: formatNote(planValue.note) }} />
-                  </div>
-                )}
 
                 {isSelected && !tradePlan.hideEditor ? (
                   <TradePlanEditor
@@ -925,14 +935,7 @@ export default function SignalDetailCard({
                   gap: 4,
                 }}
               >
-                <span
-                  className="minor-text"
-                  style={{
-                    fontSize: "10px",
-                    textTransform: "uppercase",
-                    color: "var(--muted-bright)",
-                  }}
-                >
+                <span className="minor-text" style={{ fontSize: "10px" }}>
                   {item.label}
                 </span>
                 <div
@@ -1052,6 +1055,9 @@ export default function SignalDetailCard({
             padding: 16,
             background: "rgba(0,0,0,0.3)",
             borderRadius: 12,
+            minHeight: "400px",
+            maxHeight: "800px",
+            overflow: "auto",
           }}
         >
           {rawData && Object.keys(rawData).length > 0 ? (

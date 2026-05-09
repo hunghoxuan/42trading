@@ -138,9 +138,6 @@ export function TradePlanEditor({
   return (
     <div
       className={`trade-plan-editor-v5 ${className}`}
-      onClick={() => {
-        if (!lockedView && mode !== "edit") setMode("edit");
-      }}
       style={{
         display: "grid",
         gridTemplateColumns: isEditMode ? "1.2fr 1fr" : "1fr",
@@ -149,22 +146,53 @@ export function TradePlanEditor({
         paddingTop: "0",
         minWidth: 0,
         overflow: "hidden",
-        cursor: !lockedView && mode !== "edit" ? "pointer" : "default",
       }}
     >
       {!isEditMode ? (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "6px 16px" }}>
-            {summaryRows.map((row) => (
-              <div key={row.label} style={{ display: "flex", gap: 6, fontSize: 11 }}>
-                <span className="minor-text" style={{ minWidth: 84 }}>{row.label}:</span>
-                <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{row.value}</span>
-              </div>
-            ))}
+        <div 
+          style={{ position: "relative", minHeight: 40 }}
+          onClick={() => { if (!lockedView) setMode("edit"); }}
+        >
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "rgba(255,255,255,0.02)",
+              borderRadius: 8,
+              borderLeft: "2px solid var(--accent-soft)",
+              fontSize: "12px",
+              color: "var(--foreground)",
+              lineHeight: 1.5,
+              opacity: 0.9,
+              cursor: !lockedView ? "pointer" : "default",
+              minHeight: "36px"
+            }}
+          >
+            {value.note ? (
+              <div dangerouslySetInnerHTML={{ __html: value.note.replace(/\n/g, "<br/>") }} />
+            ) : (
+              <span className="minor-text">No strategic note available. Click to add...</span>
+            )}
           </div>
-          {showActionsInView ? (
+          
+          {!lockedView && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+              <button
+                className="secondary-button"
+                type="button"
+                style={{ height: "22px", fontSize: "10px", padding: "0 8px" }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMode("edit");
+                }}
+              >
+                Edit
+              </button>
+            </div>
+          )}
+
+          {showActionsInView && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 10 }}>
-              {effectiveShowAddSignal ? (
+              {effectiveShowAddSignal && (
                 <button
                   className={`secondary-button ${busy?.signal ? "btn-busy" : ""}`}
                   type="button"
@@ -177,8 +205,8 @@ export function TradePlanEditor({
                 >
                   {busy?.signal ? <div className="spinner" style={{ width: 12, height: 12 }} /> : addSignalLabel}
                 </button>
-              ) : null}
-              {effectiveShowAddTrade ? (
+              )}
+              {effectiveShowAddTrade && (
                 <button
                   className={`primary-button ${busy?.trade ? "btn-busy" : ""}`}
                   type="button"
@@ -191,11 +219,12 @@ export function TradePlanEditor({
                 >
                   {busy?.trade ? <div className="spinner" style={{ width: 12, height: 12 }} /> : addTradeLabel}
                 </button>
-              ) : null}
+              )}
             </div>
-          ) : null}
-        </>
+          )}
+        </div>
       ) : (
+
       <>
       <div
         style={{
@@ -268,10 +297,6 @@ export function TradePlanEditor({
         </div>
 
         <NumericInline label="Entry" k="entry" />
-
-        <NumericInline label="Risk (%)" k="risk_pct" step="0.001" min="0.001" max="0.1" />
-
-        <NumericInline label="Risk ($)" k="risk_money" step="1" min="1" />
 
         <NumericInline label="Risk / Reward" k="rr" step="0.1" min="0.3" max="10" sliderOverride={{ min: 0.5, max: 8, step: 0.1 }} />
 
