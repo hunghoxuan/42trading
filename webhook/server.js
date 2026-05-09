@@ -144,10 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.09 12:41 - ebb4e20",
-); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 13:08 - 6ea4e39"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -1347,14 +1344,13 @@ async function repoGetUserTemplates(userId) {
 }
 
 async function repoListUserSettings(userId) {
-  return await StateRepo.get("USER_SETTINGS", userId, async () => {
-    const db = await mt5InitBackend();
-    const { rows } = await db.query(
-      "SELECT type, name, data, value, status, created_at FROM user_settings WHERE user_id = $1 ORDER BY type ASC",
-      [userId],
-    );
-    return rows;
-  });
+  const db = await mt5InitBackend();
+  const { rows } = await db.query(
+    "SELECT type, name, data, value, status, created_at FROM user_settings WHERE user_id = $1 ORDER BY type ASC",
+    [userId],
+  );
+  console.log(`[Settings] repoListUserSettings for user: ${userId}, found ${rows.length} rows`);
+  return rows;
 }
 
 let REDIS_CLIENT = null;
@@ -5862,12 +5858,27 @@ async function _mt5InitBackendInternal() {
     CREATE TABLE IF NOT EXISTS user_settings (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      name TEXT, -- New field
-      type TEXT NOT NULL, -- 'api_key', 'symbols', 'note', system/runtime settings
+      name TEXT,
+      type TEXT NOT NULL,
       data JSONB NOT NULL,
       status TEXT DEFAULT 'ACTIVE',
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS execution_profiles (
+      profile_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      profile_name TEXT NOT NULL,
+      route TEXT NOT NULL DEFAULT 'ea',
+      account_id TEXT,
+      source_ids JSONB DEFAULT '[]',
+      ctrader_mode TEXT DEFAULT 'demo',
+      ctrader_account_id TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     -- DDL Migration for existing installations
@@ -6601,8 +6612,8 @@ async function _mt5InitBackendInternal() {
         (SELECT COUNT(*) FROM user_accounts WHERE user_id = $1) AS accounts_count,
         (SELECT COUNT(*) FROM signals WHERE user_id = $1) AS signals_count,
         (SELECT COUNT(*) FROM trades WHERE user_id = $1) AS trades_count,
-        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count
-        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS profiles_count
+        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count,
+        (SELECT COUNT(*) FROM execution_profiles WHERE user_id = $1) AS profiles_count
     `,
         [oldUserId],
       )
@@ -8827,7 +8838,7 @@ async function _mt5InitBackendInternal() {
         `
         SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
                is_active, metadata, created_at, updated_at
-        FROM user_settings
+        FROM execution_profiles
         ${where}
         ORDER BY is_active DESC, updated_at DESC, created_at DESC
       `,
@@ -8837,7 +8848,7 @@ async function _mt5InitBackendInternal() {
     },
     async getActiveExecutionProfileV2(userId = null) {
       const params = [];
-      let where = `WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE`;
+      let where = `WHERE is_active = true`;
       if (userId) {
         params.push(String(userId || "").trim());
         where += ` AND user_id = $${params.length}`;
@@ -8846,7 +8857,7 @@ async function _mt5InitBackendInternal() {
         `
         SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
                is_active, metadata, created_at, updated_at
-        FROM user_settings
+        FROM execution_profiles
         ${where}
         ORDER BY updated_at DESC, created_at DESC
         LIMIT 1
@@ -8896,27 +8907,31 @@ async function _mt5InitBackendInternal() {
         // Deactivate other profiles for this user
         if (isActive) {
           await client.query(
-            `UPDATE user_settings SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{is_active}', 'false'::jsonb), updated_at = NOW()
-             WHERE user_id = $1 AND type = 'execution_profile'`,
+            `UPDATE execution_profiles SET is_active = false, updated_at = NOW()
+             WHERE user_id = $1`,
             [userId],
           );
         }
-        const data = JSON.stringify({
-          profile_name: profileName,
-          route,
-          account_id: accountId,
-          source_ids: sourceIds,
-          ctrader_mode: ctraderMode,
-          ctrader_account_id: ctraderAccountId,
-          is_active: isActive,
-          metadata,
-        });
         const res = await client.query(
-          `INSERT INTO user_settings (user_id, type, name, data, created_at, updated_at)
-           VALUES ($1, 'execution_profile', $2, $3::jsonb, NOW(), NOW())
-           ON CONFLICT (user_id, type, name)
-           DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-          [userId, profileId, data],
+          `INSERT INTO execution_profiles (profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id, is_active, metadata, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, NOW())
+           ON CONFLICT (profile_id)
+           DO UPDATE SET profile_name = EXCLUDED.profile_name, route = EXCLUDED.route, account_id = EXCLUDED.account_id, 
+                         source_ids = EXCLUDED.source_ids, ctrader_mode = EXCLUDED.ctrader_mode, 
+                         ctrader_account_id = EXCLUDED.ctrader_account_id, is_active = EXCLUDED.is_active, 
+                         metadata = EXCLUDED.metadata, updated_at = NOW()`,
+          [
+            profileId,
+            userId,
+            profileName,
+            route,
+            accountId,
+            JSON.stringify(sourceIds),
+            ctraderMode,
+            ctraderAccountId,
+            isActive,
+            JSON.stringify(metadata),
+          ],
         );
         await client.query("COMMIT");
         return {
@@ -15692,12 +15707,13 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
+      console.log(`[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`);
       await db.query(
         `
         INSERT INTO user_settings (user_id, type, name, data, status)
         VALUES
-          ($1, 'cron', 'market_data', $2::jsonb, 'INACTIVE'),
-          ($1, 'cron', 'ai_analysis', $3::jsonb, 'INACTIVE')
+          ($1, 'cron', 'MARKET_DATA_CRON', $2::jsonb, 'INACTIVE'),
+          ($1, 'cron', 'ANALYSIS_CRON', $3::jsonb, 'INACTIVE')
         ON CONFLICT (user_id, type, name) DO NOTHING
       `,
         [

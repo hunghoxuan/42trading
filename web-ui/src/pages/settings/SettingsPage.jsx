@@ -857,7 +857,7 @@ export default function SettingsPage({
               </div>
             </div>
 
-            {/* WATCHLISTS GROUP */}
+            {/* OTHERS GROUP */}
             <div className="stack-layout" style={{ gap: 8 }}>
               <div
                 style={{
@@ -876,7 +876,7 @@ export default function SettingsPage({
                   className="secondary-button"
                   style={{ padding: "2px 8px", fontSize: 10 }}
                   onClick={() => {
-                    setNewSettingForm({ type: "others", name: "", value: "" });
+                    setNewSettingForm({ type: "note", name: "", value: "" });
                     setShowAddForm(true);
                   }}
                 >
@@ -887,64 +887,13 @@ export default function SettingsPage({
                 {settings
                   .filter(
                     (s) =>
-                      s.type === "trade" ||
-                      s.type === "symbols" ||
-                      s.type === "others",
+                      !["api_key", "cron"].includes(s.type) &&
+                      !s.type.endsWith("_cron") &&
+                      s.name !== "enabled_log_prefixes",
                   )
                   .map((s) => renderSidebarItem(s))}
               </div>
             </div>
-
-            {/* OTHERS GROUP */}
-            {settings.filter(
-              (s) =>
-                ![
-                  "api_key",
-                  "cron",
-                  "trade",
-                  "symbols",
-                  "system_config",
-                  "notification_config",
-                  "others",
-                ].includes(s.type) && !s.type.endsWith("_cron"),
-            ).length > 0 && (
-              <div className="stack-layout" style={{ gap: 8 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div
-                    className="panel-label"
-                    style={{ margin: 0, opacity: 0.8 }}
-                  >
-                    OTHERS
-                  </div>
-                  <button
-                    className="secondary-button"
-                    style={{ padding: "2px 8px", fontSize: 10 }}
-                    onClick={() => {
-                      setNewSettingForm({ type: "note", name: "", value: "" });
-                      setShowAddForm(true);
-                    }}
-                  >
-                    + Add
-                  </button>
-                </div>
-                <div className="stack-layout" style={{ gap: 0 }}>
-                  {settings
-                    .filter(
-                      (s) =>
-                        !["api_key", "cron", "trade", "symbols", "notification_config"].includes(
-                          s.type,
-                        ) && !s.type.endsWith("_cron"),
-                    )
-                    .map((s) => renderSidebarItem(s))}
-                </div>
-              </div>
-            )}
           </div>
         </section>
 
@@ -1261,41 +1210,7 @@ export default function SettingsPage({
                     <option value="INACTIVE">INACTIVE</option>
                   </select>
 
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      if (selectedSetting.type === "cron") {
-                        const nextData = {
-                          ...selectedSetting.data,
-                          provider: cronForm.provider,
-                          timezone: cronForm.timezone,
-                          batch_size: cronForm.batch_size,
-                          symbols: parseSymbolText(cronForm.symbols),
-                          exclude_symbols: parseSymbolText(
-                            cronForm.exclude_symbols,
-                          ),
-                          timeframes: cronForm.timeframes,
-                          cadence_minutes: cronForm.cadence_minutes,
-                          model: cronForm.model,
-                          profile: cronForm.profile,
-                          entry_models: parseTextList(cronForm.entry_models),
-                          directions: cronForm.directions,
-                          order_types: cronForm.order_types,
-                          prompt: cronForm.prompt,
-                        };
-                        saveSetting(
-                          getSettingKey(selectedSetting),
-                          nextData,
-                          selectedSetting.status,
-                        );
-                      } else {
-                        saveSetting(getSettingKey(selectedSetting));
-                      }
-                    }}
-                    disabled={settingsLoading}
-                  >
-                    SAVE
-                  </button>
+                  </select>
 
                   {!SYSTEM_SETTING_TYPES.has(
                     String(selectedSetting.type || ""),
@@ -1643,69 +1558,6 @@ export default function SettingsPage({
                       </>
                     )}
 
-                  <div
-                    style={{
-                      marginTop: 12,
-                      padding: 12,
-                      background: "var(--surface-deep)",
-                      borderRadius: 8,
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <div className="panel-label" style={{ fontSize: 9 }}>
-                      RAW DATA PREVIEW
-                    </div>
-                    <pre style={{ fontSize: 11, margin: 0 }}>
-                      {JSON.stringify(
-                        {
-                          provider: cronForm.provider,
-                          timezone: cronForm.timezone,
-                          batch_size: cronForm.batch_size,
-                          symbols: parseSymbolText(cronForm.symbols),
-                          exclude_symbols: parseSymbolText(
-                            cronForm.exclude_symbols,
-                          ),
-                          timeframes: cronForm.timeframes,
-                          cadence_minutes: cronForm.cadence_minutes,
-                          model: cronForm.model,
-                          profile: cronForm.profile,
-                          entry_models: parseTextList(cronForm.entry_models),
-                          directions: cronForm.directions,
-                          order_types: cronForm.order_types,
-                          prompt: cronForm.prompt,
-                        },
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </div>
-                  {selectedSetting?.data?.last_sync && (
-                    <div
-                      style={{
-                        padding: 12,
-                        background: "var(--surface-deep)",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                      }}
-                    >
-                      <div className="panel-label" style={{ fontSize: 9 }}>
-                        LAST SYNC
-                      </div>
-                      <pre
-                        style={{
-                          fontSize: 11,
-                          margin: 0,
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {JSON.stringify(
-                          selectedSetting.data.last_sync,
-                          null,
-                          2,
-                        )}
-                      </pre>
-                    </div>
-                  )}
                 </div>
               ) : selectedSetting.type === "api_key" ? (
                 <div
@@ -1791,6 +1643,30 @@ export default function SettingsPage({
                     },
                   )}
                 </div>
+              ) : String(selectedSetting.type || "").toLowerCase() === "note" ? (
+                <div className="stack-layout" style={{ gap: 10 }}>
+                  <label className="stack-layout" style={{ gap: 6 }}>
+                    <span className="minor-text">Content</span>
+                    <textarea
+                      rows={20}
+                      style={{
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                        padding: 16,
+                        fontFamily: "inherit",
+                      }}
+                      value={String(selectedSetting.data?.value || "")}
+                      onChange={(e) => {
+                        updateSetting(
+                          getSettingKey(selectedSetting),
+                          "value",
+                          e.target.value,
+                        );
+                      }}
+                      placeholder="Write your notes here..."
+                    />
+                  </label>
+                </div>
               ) : String(selectedSetting.type || "").toLowerCase() ===
                   "symbols" ||
                 String(selectedSetting.type || "").toLowerCase() === "trade" ? (
@@ -1865,6 +1741,51 @@ export default function SettingsPage({
                   </button>
                 </div>
               )}
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  marginTop: 32,
+                  paddingTop: 24,
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <button
+                  className="primary-button"
+                  style={{ padding: "12px 32px", fontSize: 14 }}
+                  onClick={() => {
+                    if (selectedSetting.type === "cron") {
+                      const nextData = {
+                        ...selectedSetting.data,
+                        provider: cronForm.provider,
+                        timezone: cronForm.timezone,
+                        batch_size: cronForm.batch_size,
+                        symbols: parseSymbolText(cronForm.symbols),
+                        exclude_symbols: parseSymbolText(cronForm.exclude_symbols),
+                        timeframes: cronForm.timeframes,
+                        cadence_minutes: cronForm.cadence_minutes,
+                        model: cronForm.model,
+                        profile: cronForm.profile,
+                        entry_models: parseTextList(cronForm.entry_models),
+                        directions: cronForm.directions,
+                        order_types: cronForm.order_types,
+                        prompt: cronForm.prompt,
+                      };
+                      saveSetting(
+                        getSettingKey(selectedSetting),
+                        nextData,
+                        selectedSetting.status,
+                      );
+                    } else {
+                      saveSetting(getSettingKey(selectedSetting));
+                    }
+                  }}
+                  disabled={settingsLoading}
+                >
+                  {settingsLoading ? "SAVING..." : "SAVE CHANGES"}
+                </button>
+              </div>
 
               {settingsMsg && (
                 <div
