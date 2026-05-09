@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 06:24 - f5a1705"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 07:02 - 0bd164e"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

@@ -18,6 +18,7 @@ import {
   buildRrVolRiskText,
   renderHistoryItem,
   extractTradePlanFromTrade,
+  applyLinkedPlanChange,
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
@@ -1325,7 +1326,7 @@ export default function TradesPage() {
                     tradeId: selectedTrade.sid || selectedTrade.id,
                     value: detailPlan,
                     onChange: (k, v) =>
-                      setDetailPlan((p) => ({ ...p, [k]: v })),
+                      setDetailPlan((p) => applyLinkedPlanChange(p, k, v)),
                     onSave: onUpdateTradePlan,
                     onAddTrade: onReEntryTrade,
                     showAddSignalButton: false,

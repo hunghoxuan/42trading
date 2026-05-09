@@ -9,6 +9,7 @@ import {
   buildHeaderMeta, 
   renderHistoryItem,
   extractTradePlanFromSignal,
+  applyLinkedPlanChange,
 } from "../../utils/signalDetailUtils";
 import { showDateTime } from "../../utils/format";
 
@@ -143,7 +144,7 @@ export default function SignalDetailPage() {
               enabled: true,
               hideEditor: false,
               value: detailPlan,
-              onChange: (k, v) => setDetailPlan(p => ({ ...p, [k]: v })),
+              onChange: (k, v) => setDetailPlan(p => applyLinkedPlanChange(p, k, v)),
               onSave: onSaveSignalPlan,
               showSaveButton: !isClosed,
               viewOnly: isClosed,

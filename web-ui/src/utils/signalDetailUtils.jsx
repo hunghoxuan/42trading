@@ -165,6 +165,32 @@ export function formatNum3(v) {
   return String(Number(n.toFixed(3)));
 }
 
+export function applyLinkedPlanChange(prevPlan, key, rawVal) {
+  const next = { ...(prevPlan || {}), [key]: rawVal };
+  const entry = asNum(next.entry);
+  const sl = asNum(next.sl);
+  const tp = asNum(next.tp);
+  const rr = asNum(next.rr);
+  const side = String(next.direction || "").toUpperCase();
+  const isBuy = side === "BUY";
+  const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
+
+  if (risk != null && risk > 0) {
+    if (key === "rr" && rr != null && entry != null && sl != null) {
+      const tpCalc = isBuy ? entry + risk * rr : entry - risk * rr;
+      next.tp = formatNum3(tpCalc);
+    } else if (entry != null && tp != null) {
+      next.rr = formatNum3(Math.abs(tp - entry) / risk);
+    }
+  }
+
+  if (["entry", "tp", "sl", "rr"].includes(key)) {
+    const val = asNum(next[key]);
+    if (val != null) next[key] = formatNum3(val);
+  }
+  return next;
+}
+
 function firstTradePlan(raw = {}) {
   const candidates = [
     raw,

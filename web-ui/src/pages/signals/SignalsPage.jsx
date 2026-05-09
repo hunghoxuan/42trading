@@ -15,6 +15,9 @@ import {
   asNum,
   buildHeaderMeta,
   renderHistoryItem,
+  applyLinkedPlanChange,
+  extractTradePlanFromSignal,
+  formatNum3,
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
@@ -438,30 +441,7 @@ export default function SignalsPage() {
       const value = ["entry", "tp", "sl", "rr"].includes(key)
         ? String(rawValue ?? "").replace(",", ".")
         : rawValue;
-      const next = { ...prev, [key]: value };
-      const entry = asNum(next.entry);
-      const sl = asNum(next.sl);
-      const tp = asNum(next.tp);
-      const rrInput = asNum(next.rr);
-      if (key === "rr") {
-        if (entry != null && sl != null && rrInput != null && rrInput > 0) {
-          const risk = Math.abs(entry - sl);
-          if (risk > 0) {
-            const dir = String(next.direction || "BUY").toUpperCase();
-            const sign = dir === "SELL" ? -1 : 1;
-            next.tp = formatNum3(entry + sign * (risk * rrInput));
-          }
-        }
-      } else if (entry != null && sl != null && tp != null) {
-        const risk = Math.abs(entry - sl);
-        const reward = Math.abs(tp - entry);
-        if (risk > 0 && reward > 0) next.rr = formatNum3(reward / risk);
-      }
-      if (["entry", "tp", "sl", "rr"].includes(key)) {
-        const parsed = asNum(next[key]);
-        next[key] = parsed != null ? formatNum3(parsed) : "";
-      }
-      return next;
+      return applyLinkedPlanChange(prev, key, value);
     });
   };
 

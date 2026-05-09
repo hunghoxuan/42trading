@@ -5,6 +5,7 @@ import {
   formatNote,
   renderHistoryItem,
   shouldShowPnl,
+  applyLinkedPlanChange,
 } from "../utils/signalDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
@@ -82,25 +83,6 @@ function formatNum3(v) {
   return String(Number(v.toFixed(3)));
 }
 
-function applyLinkedPlanChange(prevPlan, key, rawVal) {
-  const next = { ...(prevPlan || {}), [key]: rawVal };
-  const entry = parseNumLoose(next.entry);
-  const sl = parseNumLoose(next.sl);
-  const tp = parseNumLoose(next.tp);
-  const rr = parseNumLoose(next.rr);
-  const side = String(next.direction || "").toUpperCase();
-  const isBuy = side === "BUY";
-  const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
-  if (risk != null && risk > 0) {
-    if (key === "rr" && rr != null && entry != null && sl != null) {
-      const tpCalc = isBuy ? entry + risk * rr : entry - risk * rr;
-      next.tp = formatNum3(tpCalc);
-    } else if (entry != null && tp != null) {
-      next.rr = formatNum3(Math.abs(tp - entry) / risk);
-    }
-  }
-  return next;
-}
 
 function PlanHeader({
   plan,
@@ -658,16 +640,21 @@ export default function SignalDetailCard({
                 <PlanHeader
                   plan={{
                     ...planValue,
-                    onSelectTP: (price) => {
+                    onSelectTP: (price, rrVal) => {
                       if (isMain) {
+                        // Call onChange for TP first. The parent's linkage will update RR.
+                        // But we also call for RR to ensure the exact RR value from the partial TP is used.
                         tradePlan.onChange?.("tp", price);
+                        if (rrVal) tradePlan.onChange?.("rr", rrVal);
                       } else {
-                        setPlanDrafts((prev) => ({
-                          ...prev,
-                          [planId]: applyLinkedPlanChange(prev[planId] || p, "tp", price),
-                        }));
+                        setPlanDrafts((prev) => {
+                          let next = prev[planId] || p;
+                          next = applyLinkedPlanChange(next, "tp", price);
+                          if (rrVal) next = applyLinkedPlanChange(next, "rr", rrVal);
+                          return { ...prev, [planId]: next };
+                        });
                       }
-                    }
+                    },
                   }}
                   symbol={chart?.symbol || "Plan"}
                   isBuy={isBuy}
