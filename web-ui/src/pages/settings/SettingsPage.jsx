@@ -1210,8 +1210,6 @@ export default function SettingsPage({
                     <option value="INACTIVE">INACTIVE</option>
                   </select>
 
-                  </select>
-
                   {!SYSTEM_SETTING_TYPES.has(
                     String(selectedSetting.type || ""),
                   ) && (
@@ -1557,7 +1555,6 @@ export default function SettingsPage({
                         </div>
                       </>
                     )}
-
                 </div>
               ) : selectedSetting.type === "api_key" ? (
                 <div
