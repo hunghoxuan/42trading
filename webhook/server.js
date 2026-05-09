@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 17:08 - 48cb7a3"); // restore notification test/save routes and move watchlist/execution profile management into the intended Settings UX
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 17:34 - 2b68b56"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -9489,7 +9489,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 17:08 - 48cb7a3");
+    throw new Error("v2026.05.09 17:34 - 2b68b56");
   }
   return n;
 }
@@ -11613,7 +11613,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 17:08 - 48cb7a3", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const route = ["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
   const accountId = String(payload.account_id || "").trim() || null;
   const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
     .map((v) => String(v || "").trim())
@@ -12443,7 +12443,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
       return null;
     }
@@ -12597,7 +12597,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 17:08 - 48cb7a3" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 17:34 - 2b68b56" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -13117,6 +13117,72 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (req.method === "POST" && url.pathname === "/v2/ai/templates") {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const payload = await readJson(req);
+      const db = await mt5InitBackend();
+      const config =
+        payload?.config && typeof payload.config === "object"
+          ? payload.config
+          : payload && typeof payload === "object"
+            ? payload
+            : {};
+      const requestedId = String(payload?.template_id || "").trim();
+      const requestedName = String(payload?.name || "").trim();
+      const templateName = requestedName || requestedId || "Unnamed Template";
+      const data = {
+        config,
+        _guide: config?._guide,
+        _schema: config?._schema,
+        saved: payload?.saved || new Date().toISOString(),
+      };
+      await db.query(
+        `INSERT INTO user_settings (user_id, type, name, data)
+         VALUES ($1, 'ai_template', $2, $3::jsonb)
+         ON CONFLICT (user_id, type, name)
+         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+        [CFG.mt5DefaultUserId, templateName, JSON.stringify(data)],
+      );
+      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
+      return json(res, 201, {
+        ok: true,
+        template: {
+          template_id: templateName,
+          name: templateName,
+          config,
+          saved: data.saved,
+          _guide: data._guide,
+          _schema: data._schema,
+        },
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "DELETE" && url.pathname.startsWith("/v2/ai/templates/")) {
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const templateName = decodeURIComponent(url.pathname.split("/").pop() || "");
+      const db = await mt5InitBackend();
+      await db.query(
+        "DELETE FROM user_settings WHERE user_id = $1 AND type = 'ai_template' AND name = $2",
+        [CFG.mt5DefaultUserId, templateName],
+      );
+      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
+      return json(res, 200, { ok: true });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (
     req.method === "GET" &&
     url.pathname === "/v2/settings/execution-profiles"
@@ -13161,7 +13227,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 17:08 - 48cb7a3", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -13228,7 +13294,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 17:08 - 48cb7a3", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -14155,7 +14221,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
@@ -14223,7 +14289,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
     try {
       const payload = await readJson(req);
@@ -14267,7 +14333,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
     try {
       const payload = await readJson(req);
@@ -14303,7 +14369,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
     try {
       const payload = await readJson(req);
@@ -14329,7 +14395,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:08 - 48cb7a3",
+        error: "v2026.05.09 17:34 - 2b68b56",
       });
     try {
       const payload = await readJson(req);

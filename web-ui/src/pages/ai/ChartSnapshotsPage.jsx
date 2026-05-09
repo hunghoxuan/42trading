@@ -288,16 +288,47 @@ function normalizeTemplateConfig(raw) {
 function loadTemplates() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(parsed)
-      ? parsed.map((x) => ({
-          ...x,
-          id: x.id || x.name,
-          config: normalizeTemplateConfig(x?.config || {}),
-        }))
-      : [];
+    return dedupeTemplates(Array.isArray(parsed) ? parsed : []);
   } catch {
     return [];
   }
+}
+
+function normalizeTemplateRecord(raw = {}, fallbackId = "") {
+  const name = String(
+    raw?.name ||
+      raw?.template_id ||
+      raw?.id ||
+      fallbackId ||
+      "Unnamed Template",
+  ).trim();
+  const id = String(
+    raw?.id || raw?.template_id || raw?.name || fallbackId || name,
+  ).trim();
+  return {
+    ...raw,
+    id: id || name,
+    name: name || id || "Unnamed Template",
+    config: normalizeTemplateConfig(raw?.config || {}),
+    _guide: raw?._guide || raw?.config?._guide || null,
+    _schema: raw?._schema || raw?.config?._schema || null,
+    saved:
+      raw?.saved ||
+      raw?.updated_at ||
+      raw?.created_at ||
+      new Date().toISOString(),
+  };
+}
+
+function dedupeTemplates(rows = []) {
+  const map = new Map();
+  for (const raw of Array.isArray(rows) ? rows : []) {
+    const item = normalizeTemplateRecord(raw);
+    const key = String(item.id || item.name || "").trim();
+    if (!key) continue;
+    map.set(key, item);
+  }
+  return Array.from(map.values());
 }
 
 function saveTemplatesToLocal(next) {
@@ -3016,9 +3047,24 @@ export default function ChartSnapshotsPage() {
   };
 
   const saveTemplate = async () => {
-    const name =
-      String(templateName || "").trim() ||
-      `${cfg.symbol} ${cfg.strategies.join("+")}`;
+    try {
+      JSON.parse(String(schemaDraft || "{}"));
+    } catch (e) {
+      setStatus({
+        type: "error",
+        text: `Invalid schema JSON: ${e?.message || "parse error"}`,
+      });
+      return;
+    }
+    // If overriding an existing template, keep its name for ON CONFLICT
+    const existingTemplate =
+      templateId && templateId !== DEFAULT_TEMPLATE_ID
+        ? templates.find((x) => x.id === templateId)
+        : null;
+    const name = existingTemplate
+      ? existingTemplate.name
+      : String(templateName || "").trim() ||
+        `${cfg.symbol} ${cfg.strategies.join("+")}`;
     const payload = {
       ...(templateId && templateId !== DEFAULT_TEMPLATE_ID
         ? { template_id: templateId }
@@ -3036,24 +3082,28 @@ export default function ChartSnapshotsPage() {
     try {
       const out = await api.aiUpsertTemplate(payload);
       const savedTemplate = out?.template || payload;
-      const item = {
-        id: String(
-          savedTemplate.template_id || templateId || `t_${Date.now()}`,
-        ),
-        name: String(savedTemplate.name || name),
-        config: normalizeTemplateConfig(savedTemplate.config || {}),
-        saved: savedTemplate.saved || payload.saved,
-      };
+      const item = normalizeTemplateRecord(
+        {
+          ...savedTemplate,
+          template_id: savedTemplate.template_id || name,
+          name: String(savedTemplate.name || name),
+          config: normalizeTemplateConfig(savedTemplate.config || {}),
+          saved: savedTemplate.saved || payload.saved,
+          _guide: savedTemplate._guide || guideDraft,
+          _schema: savedTemplate._schema || schemaDraft,
+        },
+        name,
+      );
 
-      const next = [
+      const next = dedupeTemplates([
         item,
-        ...templates.filter((x) => x.name !== item.name),
-      ].slice(0, 200);
+        ...templates.filter((x) => x.id !== item.id && x.name !== item.name),
+      ]).slice(0, 200);
       setTemplates(next);
       saveTemplatesToLocal(next);
       setTemplateId(item.id);
-      setTemplateName("");
-      setStatus({ type: "success", text: `Template saved: ${name}` });
+      setTemplateName(item.name);
+      setStatus({ type: "success", text: `Saved: ${item.name}` });
     } catch (e) {
       console.error("[templates] Save failed:", e);
       setStatus({ type: "error", text: `Save failed: ${e.message}` });
@@ -3070,12 +3120,14 @@ export default function ChartSnapshotsPage() {
     setStatus({ type: "warning", text: "Deleting template..." });
     try {
       await api.aiDeleteTemplate(templateId);
-      const next = templates.filter((x) => x.id !== templateId);
+      const next = dedupeTemplates(
+        templates.filter((x) => x.id !== templateId),
+      );
       setTemplates(next);
       saveTemplatesToLocal(next);
-      setTemplateId("");
+      setTemplateId(DEFAULT_TEMPLATE_ID);
       setTemplateName("");
-      setStatus({ type: "success", text: `Template deleted: ${found.name}` });
+      setStatus({ type: "success", text: `Deleted: ${found.name}` });
     } catch (e) {
       console.error("[templates] Delete failed:", e);
       setStatus({ type: "error", text: `Delete failed: ${e.message}` });
@@ -3086,26 +3138,10 @@ export default function ChartSnapshotsPage() {
     try {
       const out = await api.aiListTemplates();
       const rows = Array.isArray(out?.templates) ? out.templates : [];
-
-      const dbTemplates = rows.map((r) => ({
-        id: String(r.template_id || r.id || r.name || `t_${Date.now()}`),
-        name: String(r.name || "Unnamed Template"),
-        config: normalizeTemplateConfig(r.config || {}),
-        _guide: r._guide || null,
-        _schema: r._schema || null,
-        saved:
-          r.saved || r.updated_at || r.created_at || new Date().toISOString(),
-      }));
+      const dbTemplates = dedupeTemplates(rows);
 
       setTemplates((prev) => {
-        // Merge with local storage (legacy), but DB takes priority
-        const next = [...dbTemplates];
-        prev.forEach((p) => {
-          if (!next.find((n) => n.name === p.name)) {
-            next.push(p);
-          }
-        });
-        return next;
+        return dedupeTemplates([...dbTemplates, ...prev]);
       });
     } catch (err) {
       console.warn("[templates] DB Load failed:", err.message);
@@ -3114,8 +3150,19 @@ export default function ChartSnapshotsPage() {
 
   const handleSelectTemplate = (id) => {
     setTemplateId(id);
+    if (!id) {
+      setCfg({ ...DEFAULT_CONFIG });
+      setGuideDraft(GUIDE_TEXT);
+      setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+      setPromptEdited(false);
+      setTemplateName("");
+      setStatus({ type: "success", text: "New template." });
+      return;
+    }
     if (id === DEFAULT_TEMPLATE_ID) {
       setCfg({ ...DEFAULT_CONFIG });
+      setGuideDraft(GUIDE_TEXT);
+      setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
       setPromptEdited(false);
       setTemplateName("");
       setStatus({ type: "success", text: "Default template loaded." });
@@ -3126,13 +3173,20 @@ export default function ChartSnapshotsPage() {
     const savedGuide = found._guide || null;
     const savedSchema = found._schema || null;
     setCfg(normalizeTemplateConfig(found.config || {}));
-    if (savedGuide) setGuideDraft(savedGuide);
-    if (savedSchema) setSchemaDraft(savedSchema);
-    else setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+    setGuideDraft(savedGuide || GUIDE_TEXT);
+    setSchemaDraft(savedSchema || JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
     setTemplateName(found.name || "");
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
   };
+
+  useEffect(() => {
+    if (!templateId || templateId === DEFAULT_TEMPLATE_ID) return;
+    if (!templates.some((x) => x.id === templateId)) {
+      setTemplateId(DEFAULT_TEMPLATE_ID);
+      setTemplateName("");
+    }
+  }, [templates, templateId]);
 
   const loadWatchlist = async () => {
     try {
