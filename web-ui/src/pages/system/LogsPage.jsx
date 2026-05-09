@@ -357,7 +357,21 @@ export default function LogsPage() {
                       </div>
                     </td>
                     <td>
-                      {(ev.status === "ERROR" || ev.error) ? (
+                      {ev.event_type === "EA" ? (
+                        <div className="cell-wrap">
+                          <span className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}>
+                            {ev.metadata?.level || "INFO"}
+                          </span>
+                          <div className="minor-text" style={{ 
+                            maxWidth: "150px", 
+                            overflow: "hidden", 
+                            textOverflow: "ellipsis", 
+                            whiteSpace: "nowrap" 
+                          }}>
+                            {ev.metadata?.message}
+                          </div>
+                        </div>
+                      ) : (ev.status === "ERROR" || ev.error) ? (
                         <span className="badge SL" title={ev.error || "Error"}>ERROR</span>
                       ) : ev.status ? (
                         <span className="badge FILLED">{ev.status}</span>

@@ -144,10 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.09 12:17 - c1f13387",
-); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 12:37 - c6177e1"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -5968,20 +5965,6 @@ async function _mt5InitBackendInternal() {
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS estimated_bars INT;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS be_trigger FLOAT8;
 
-    CREATE TABLE IF NOT EXISTS execution_profiles (
-      profile_id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      profile_name TEXT NOT NULL,
-      route TEXT NOT NULL,
-      account_id TEXT NULL REFERENCES user_accounts(account_id) ON DELETE SET NULL,
-      source_ids JSONB NULL,
-      ctrader_mode TEXT NULL,
-      ctrader_account_id TEXT NULL,
-      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-      metadata JSONB NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
 
     CREATE TABLE IF NOT EXISTS sources (
       id BIGSERIAL PRIMARY KEY,
@@ -6065,16 +6048,7 @@ async function _mt5InitBackendInternal() {
       `CREATE INDEX IF NOT EXISTS idx_market_data_symbol_tf_bar ON market_data(symbol, tf, bar_start, bar_end)`,
     )
     .catch(() => {});
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ea_logs (
-      id SERIAL PRIMARY KEY,
-      account_id TEXT,
-      level TEXT,
-      message TEXT,
-      created_at TIMESTAMPTZ DEFAULT now(),
-      user_id TEXT
-    );
-  `);
+
 
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).catch(() => {});
   await pool
@@ -6226,12 +6200,10 @@ async function _mt5InitBackendInternal() {
 
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS id BIGSERIAL`,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS sid TEXT NULL`,
     )
     .catch(() => {});
 
@@ -6271,27 +6243,22 @@ async function _mt5InitBackendInternal() {
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS source_ids JSONB NULL`,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS ctrader_mode TEXT NULL`,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS ctrader_account_id TEXT NULL`,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS metadata JSONB NULL`,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE execution_profiles ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE`,
     )
     .catch(() => {});
 
@@ -6588,7 +6555,6 @@ async function _mt5InitBackendInternal() {
     // { table: "signals", legacy: "signal_id", prefix: "SIG" } // REMOVED: signal_id column dropped,
     // { table: "trades", legacy: "trade_id", prefix: "TRD" } // REMOVED: trade_id column dropped,
     { table: "sources", legacy: "source_id", prefix: "SRC" },
-    { table: "execution_profiles", legacy: "profile_id", prefix: "PRF" },
   ];
   const UUID_REGEX_SQL =
     "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
@@ -6661,8 +6627,8 @@ async function _mt5InitBackendInternal() {
         (SELECT COUNT(*) FROM user_accounts WHERE user_id = $1) AS accounts_count,
         (SELECT COUNT(*) FROM signals WHERE user_id = $1) AS signals_count,
         (SELECT COUNT(*) FROM trades WHERE user_id = $1) AS trades_count,
-        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count,
-        (SELECT COUNT(*) FROM execution_profiles WHERE user_id = $1) AS profiles_count
+        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count
+        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS profiles_count
     `,
         [oldUserId],
       )
@@ -8887,7 +8853,7 @@ async function _mt5InitBackendInternal() {
         `
         SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
                is_active, metadata, created_at, updated_at
-        FROM execution_profiles
+        FROM user_settings
         ${where}
         ORDER BY is_active DESC, updated_at DESC, created_at DESC
       `,
@@ -8897,7 +8863,7 @@ async function _mt5InitBackendInternal() {
     },
     async getActiveExecutionProfileV2(userId = null) {
       const params = [];
-      let where = `WHERE is_active = TRUE`;
+      let where = `WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE`;
       if (userId) {
         params.push(String(userId || "").trim());
         where += ` AND user_id = $${params.length}`;
@@ -8906,7 +8872,7 @@ async function _mt5InitBackendInternal() {
         `
         SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
                is_active, metadata, created_at, updated_at
-        FROM execution_profiles
+        FROM user_settings
         ${where}
         ORDER BY updated_at DESC, created_at DESC
         LIMIT 1
@@ -9201,7 +9167,6 @@ async function _mt5InitBackendInternal() {
         "trades",
         "logs",
         "sources",
-        "execution_profiles",
         "user_settings",
         "market_data",
         "user_templates",
@@ -19328,9 +19293,9 @@ const appHandler = async (req, res) => {
         try {
           const subCheck = await b.query(
             `SELECT COUNT(*) AS cnt
-             FROM execution_profiles
-             WHERE is_active = TRUE
-               AND source_ids ? $1
+             FROM user_settings
+             WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE
+               AND data->'source_ids' ? $1
                AND user_id != $2`,
             [sourceId, signal.user_id || userId || CFG.mt5DefaultUserId],
           );
@@ -20126,9 +20091,9 @@ const appHandler = async (req, res) => {
       const b = await mt5Backend();
       if (b.log) {
         await b.log(
-          null,
-          "ea_logs",
-          { level, message, account_id: accountId },
+          accountId,
+          "ea",
+          { event: "EA", level, message, account_id: accountId },
           CFG.mt5DefaultUserId,
         );
       }
