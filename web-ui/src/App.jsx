@@ -15,7 +15,6 @@ const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
 const LogsPage = lazy(() => import("./pages/system/LogsPage"));
 const DatabasePage = lazy(() => import("./pages/system/DatabasePage"));
 const UsersPage = lazy(() => import("./pages/system/UsersPage"));
-const SourcesPage = lazy(() => import("./pages/system/SourcesPage"));
 const AccountsV2Page = lazy(() => import("./pages/system/AccountsV2Page"));
 const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
 const StoragePage = lazy(() => import("./pages/system/StoragePage"));
@@ -229,7 +228,6 @@ export default function App() {
                 <NavLink to="/system/logs">Logs</NavLink>
                 <NavLink to="/system/db">DB</NavLink>
                 <NavLink to="/system/users">Users</NavLink>
-                <NavLink to="/system/sources">Sources</NavLink>
                 <hr
                   style={{
                     border: "0",
@@ -444,26 +442,6 @@ export default function App() {
                 )
               }
             />
-            <Route
-              path="/system/sources/:sourceId"
-              element={
-                canAccessSystemPages ? (
-                  <SourcesPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/sources"
-              element={
-                canAccessSystemPages ? (
-                  <SourcesPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/tools/notification" element={<EventsPage />} />
             <Route path="/settings/notifications" element={<EventsPage />} />
@@ -494,7 +472,6 @@ export default function App() {
             />
             <Route
               path="/sources"
-              element={<Navigate to="/system/sources" replace />}
             />
             <Route
               path="/profile"
