@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 17:34 - 2b68b56"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 17:41 - c2488b8"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -9489,7 +9489,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 17:34 - 2b68b56");
+    throw new Error("v2026.05.09 17:41 - c2488b8");
   }
   return n;
 }
@@ -11613,7 +11613,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const route = ["ea", "v2026.05.09 17:41 - c2488b8", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
   const accountId = String(payload.account_id || "").trim() || null;
   const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
     .map((v) => String(v || "").trim())
@@ -12443,7 +12443,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
       return null;
     }
@@ -12597,7 +12597,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 17:34 - 2b68b56" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 17:41 - c2488b8" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -13227,7 +13227,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 17:41 - c2488b8", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -13294,7 +13294,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 17:34 - 2b68b56", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 17:41 - c2488b8", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -13710,6 +13710,1547 @@ const appHandler = async (req, res) => {
       return json(res, 200, { ok: true, items });
     } catch (error) {
       return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/chart/snapshot/batch") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const items = await captureTradingViewSnapshotsBatch({
+        userId: sess.user_id,
+        symbol: body.symbol,
+        provider: body.provider,
+        session_prefix: body.session_prefix || body.sessionPrefix || "",
+        timeframes: body.timeframes,
+        width: body.width,
+        height: body.height,
+        theme: body.theme,
+        lookbackBars: body.lookbackBars,
+        format: body.format,
+        quality: body.quality,
+      });
+      return json(res, 200, { ok: true, items });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/chart/refresh") {
+    const chartTraceId = genTraceId("chart_");
+    const t0 = Date.now();
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const symbols = (
+        Array.isArray(body.symbols) ? body.symbols : [body.symbol]
+      )
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      if (!symbols.length)
+        return json(res, 400, {
+          ok: false,
+          error: "symbol or symbols is required",
+        });
+      const timeframes = (
+        Array.isArray(body.timeframes)
+          ? body.timeframes
+          : String(body.timeframes || body.tfs || "D,4H,1H,15M").split(",")
+      )
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      const types = new Set(
+        (Array.isArray(body.types)
+          ? body.types
+          : String(body.types || "context,snapshots").split(",")
+        )
+          .map((x) =>
+            String(x || "")
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      );
+      const wantsContext = ["context", "bars", "analysis", "tradeplans"].some(
+        (x) => types.has(x),
+      );
+      const wantsSnapshots = ["snapshot", "snapshots", "images"].some((x) =>
+        types.has(x),
+      );
+      const bars = Math.max(
+        50,
+        Math.min(Number(body.bars || body.lookbackBars || 300) || 300, 1000),
+      );
+      const provider = String(body.provider || "ICMARKETS").trim();
+      const force = body.force === true || asBool(body.refresh, false);
+      const sessionPrefix = sanitizeSessionPrefix(
+        body.session_prefix || body.sessionPrefix || "",
+      );
+      const snapshotMaxAgeMs = Math.max(
+        0,
+        Number(
+          body.snapshot_max_age_ms || body.snapshotMaxAgeMs || 15 * 60 * 1000,
+        ) || 0,
+      );
+      const includeSnapshotsInContext =
+        body.include_snapshots === true || body.includeSnapshots === true;
+      const claudeKey = wantsContext
+        ? await loadClaudeApiKeyForUser(userId)
+        : "";
+      if (wantsContext && !claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+
+      const results = [];
+      for (const symbol of symbols) {
+        const row = {
+          symbol: normalizeMarketDataSymbol(symbol),
+          requested_symbol: symbol,
+          provider,
+          timeframes,
+          types: [...types],
+          context: null,
+          snapshots: null,
+          status: "ok",
+          errors: [],
+        };
+
+        if (wantsContext && UPLOAD_TO_CLAUDE) {
+          try {
+            row.context = await buildAiContextBundle({
+              userId,
+              apiKey: claudeKey,
+              symbol,
+              timeframes,
+              bars,
+              provider,
+              forceRefresh: force,
+              forceSnapshot: false,
+              includeSnapshots: includeSnapshotsInContext,
+            });
+          } catch (error) {
+            row.status = "partial";
+            row.errors.push({
+              type: "context",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        if (wantsSnapshots) {
+          try {
+            const cached = force
+              ? {
+                  items: [],
+                  missing_timeframes: timeframes.map((tf) =>
+                    toTradingViewInterval(tf).toUpperCase(),
+                  ),
+                  target_timeframes: timeframes.map((tf) =>
+                    toTradingViewInterval(tf).toUpperCase(),
+                  ),
+                }
+              : findRecentChartSnapshots({
+                  symbol,
+                  provider,
+                  timeframes,
+                  sessionPrefix,
+                  maxAgeMs: snapshotMaxAgeMs,
+                });
+            let created = [];
+            if (cached.missing_timeframes.length) {
+              created = await captureTradingViewSnapshotsBatch({
+                userId,
+                symbol,
+                provider,
+                session_prefix: sessionPrefix,
+                timeframes: cached.missing_timeframes,
+                lookbackBars: bars,
+                format: body.format || "jpg",
+                quality: body.quality || 55,
+                captureConcurrency: body.captureConcurrency || 2,
+              });
+            }
+            row.snapshots = {
+              target_timeframes: cached.target_timeframes,
+              cached: cached.items,
+              created,
+              items: [...cached.items, ...created],
+              matched_count: cached.items.length + created.length,
+              target_count: cached.target_timeframes.length,
+              missing_timeframes: cached.target_timeframes.filter(
+                (tf) =>
+                  ![...cached.items, ...created].some(
+                    (x) => String(x?.timeframe || "").toUpperCase() === tf,
+                  ),
+              ),
+            };
+          } catch (error) {
+            row.status = row.status === "ok" ? "partial" : row.status;
+            row.errors.push({
+              type: "snapshots",
+              error: error instanceof Error ? error.message : String(error),
+            });
+            row.snapshots = row.snapshots || {
+              target_timeframes: timeframes,
+              cached: [],
+              created: [],
+              items: [],
+              matched_count: 0,
+              target_count: timeframes.length,
+              missing_timeframes: timeframes,
+            };
+          }
+        }
+
+        results.push(row);
+      }
+
+      if (notificationManager) {
+        notificationManager.handle("SYSTEM_EVENT", "chart_refresh", {
+          message: `Chart refresh: ${symbols.length} symbols, ${timeframes.length} TFs`,
+          symbols: symbols.length,
+          timeframes: timeframes.length,
+          duration_ms: Date.now() - t0,
+        });
+      }
+      return json(res, 200, {
+        ok: true,
+        generated_at: new Date().toISOString(),
+        symbols: results,
+        context: results.length === 1 ? results[0].context : undefined,
+        snapshots: results.length === 1 ? results[0].snapshots : undefined,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/chart/twelve/candles") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const symbol = String(url.searchParams.get("symbol") || "").trim();
+      const timeframe = String(
+        url.searchParams.get("timeframe") ||
+          url.searchParams.get("tf") ||
+          "15m",
+      ).trim();
+      const bars = Math.max(
+        50,
+        Math.min(Number(url.searchParams.get("bars") || 300) || 300, 1000),
+      );
+      const forceRefresh = asBool(url.searchParams.get("refresh"), false);
+      if (!symbol)
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const snapshot = await buildAnalysisSnapshotFromTwelve({
+        userId,
+        payload: { bars, force_refresh: forceRefresh },
+        symbol,
+        timeframe,
+      });
+      if (String(snapshot?.status || "").toLowerCase() !== "ok") {
+        return json(res, 400, {
+          ok: false,
+          error: snapshot?.reason || "twelve_data_failed",
+          snapshot,
+        });
+      }
+
+      // Add UI metadata fields
+      const updated_time =
+        snapshot.updated_time ||
+        (snapshot.fetched_at
+          ? new Date(snapshot.fetched_at).getTime()
+          : Date.now());
+      const source = snapshot.cache_source || "remote_api";
+      const auto_refresh = parseTfTokenToSeconds(timeframe) || 60; // Refresh based on timeframe
+
+      return json(res, 200, {
+        ok: true,
+        snapshot,
+        source,
+        updated_time,
+        auto_refresh,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/chart/context") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const claudeKey = await loadClaudeApiKeyForUser(userId);
+      if (!claudeKey)
+        return json(res, 400, {
+          ok: false,
+          error: "CLAUDE_API_KEY is missing in Settings.",
+        });
+      const symbol = String(url.searchParams.get("symbol") || "").trim();
+      if (!symbol)
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      const timeframes = String(
+        url.searchParams.get("tfs") ||
+          url.searchParams.get("timeframes") ||
+          "D,4H,1H,15M",
+      )
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const bars = Math.max(
+        50,
+        Math.min(Number(url.searchParams.get("bars") || 300) || 300, 1000),
+      );
+      const provider = String(
+        url.searchParams.get("provider") || "ICMARKETS",
+      ).trim();
+      const forceRefresh = asBool(url.searchParams.get("refresh"), false);
+      const forceSnapshot = asBool(
+        url.searchParams.get("snapshot_refresh"),
+        false,
+      );
+      const includeSnapshots = asBool(
+        url.searchParams.get("include_snapshots"),
+        false,
+      );
+      const bundle = UPLOAD_TO_CLAUDE
+        ? await buildAiContextBundle({
+            userId,
+            apiKey: claudeKey,
+            symbol,
+            timeframes,
+            bars,
+            provider,
+            forceRefresh,
+            forceSnapshot,
+            includeSnapshots,
+          })
+        : { symbol, timeframes: [], context_files: [] };
+      return json(res, 200, { ok: true, ...bundle });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/chart/symbols") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const q = String(
+        url.searchParams.get("q") || url.searchParams.get("text") || "",
+      ).trim();
+      const provider = String(
+        url.searchParams.get("provider") || "ICMARKETS",
+      ).trim();
+      const limit = Math.max(
+        1,
+        Math.min(Number(url.searchParams.get("limit") || 20) || 20, 50),
+      );
+      if (!q) return json(res, 200, { ok: true, items: [] });
+      const items = await fetchTradingViewSymbolSearch(q, provider, limit);
+      return json(res, 200, { ok: true, symbols: items });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/chart/snapshots/analyze") {
+    const analyzeTraceId = genTraceId("analyze_");
+    const t0a = Date.now();
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const reqPrompt = String(body?.prompt || "");
+      const tradesText = String(body?.Trades ?? body?.trades ?? "").trim();
+      const analyzeReqSummary = {
+        event: "AI_ANALYZE_REQUEST",
+        schema_version: AI_RESPONSE_SCHEMA_VERSION,
+        mode:
+          body?.use_context_files === true ||
+          String(body?.context_mode || "").toLowerCase() === "claude"
+            ? "context_files"
+            : "snapshot_files",
+        model: String(body?.model || "claude-sonnet-4-0"),
+        symbol: String(body?.symbol || ""),
+        provider: String(body?.provider || "ICMARKETS"),
+        timeframe: String(body?.timeframe || ""),
+        timeframes: Array.isArray(body?.timeframes)
+          ? body.timeframes
+          : String(body?.tfs || body?.timeframes || "")
+              .split(",")
+              .filter(Boolean),
+        session_prefix: String(
+          body?.session_prefix || body?.sessionPrefix || "",
+        ),
+        bars_count: Number(
+          body?.bars_count || body?.lookbackBars || body?.lookback_bars || 300,
+        ),
+        files_count: Array.isArray(body?.files) ? body.files.length : 0,
+        context_files_count: Array.isArray(body?.context_files)
+          ? body.context_files.length
+          : 0,
+        prompt_hash: hashForLog(reqPrompt),
+        prompt_len: reqPrompt.length,
+        prompt_preview: clipForLog(reqPrompt, 1000),
+        trades_hash: hashForLog(tradesText),
+        trades_len: tradesText.length,
+        attached_images_count: Array.isArray(body?.attached_images)
+          ? body.attached_images.length
+          : 0,
+      };
+      const buildTradesReviewPrompt = (basePrompt, tradesRaw) => {
+        const base = String(basePrompt || "").trim();
+        const tradeText = String(tradesRaw || "").trim();
+        if (!tradeText) return base;
+        const reviewInstruction =
+          "Extract Symbol, Entry, TP, SL from the Trades param text. Do your analysis with the guide and snapshots attached and response if the Trades correct then return the Trade Plan with your analysis with following response format.";
+        return `${base}\n\nTRADES_PARAM_TEXT:\n${tradeText}\n\n${reviewInstruction}`;
+      };
+      const normalizeAttachedImageList = (rawList) => {
+        if (!Array.isArray(rawList)) return [];
+        const out = [];
+        for (const item of rawList.slice(0, 3)) {
+          const raw =
+            typeof item === "string"
+              ? item
+              : String(item?.data_url || item?.dataUrl || "").trim();
+          if (!raw) continue;
+          const m = raw.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+          if (!m) continue;
+          const mediaType = String(m[1] || "").toLowerCase();
+          if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(mediaType)) continue;
+          const data = String(m[2] || "").trim();
+          if (!data) continue;
+          out.push({
+            mediaType: mediaType === "image/jpg" ? "image/jpeg" : mediaType,
+            data,
+          });
+        }
+        return out;
+      };
+      const appendAttachedImages = (contentList, attachedList) => {
+        const normalized = normalizeAttachedImageList(attachedList);
+        for (const img of normalized) {
+          contentList.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: img.mediaType,
+              data: img.data,
+            },
+          });
+        }
+        return normalized.length;
+      };
+      const inferSymbolFromSnapshotFile = (fileNameRaw) => {
+        const safe = String(fileNameRaw || "").trim();
+        if (!safe) return "";
+        const base = path
+          .basename(safe)
+          .replace(/\.(png|jpe?g)$/i, "")
+          .toUpperCase();
+        const parts = base.split("_").filter(Boolean);
+        if (parts.length < 3) return "";
+        let symbolParts = [];
+        if (
+          parts.length >= 5 &&
+          /^\d{8}$/.test(parts[0]) &&
+          /^\d{2}$/.test(parts[1]) &&
+          /^\d{2}$/.test(parts[2])
+        ) {
+          const rest = parts.slice(3);
+          const hasDup =
+            rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
+          symbolParts = rest.slice(0, hasDup ? -2 : -1);
+        } else {
+          const hasDup =
+            parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
+          symbolParts = parts.slice(0, hasDup ? -3 : -2);
+        }
+        if (!symbolParts.length) return "";
+        const KNOWN_PROVIDERS = new Set([
+          "ICMARKETS",
+          "OANDA",
+          "FOREXCOM",
+          "EIGHTCAP",
+          "PEPPERSTONE",
+          "FXCM",
+          "BINANCE",
+          "BYBIT",
+        ]);
+        if (symbolParts.length >= 2 && KNOWN_PROVIDERS.has(symbolParts[0])) {
+          return symbolParts.slice(1).join("_");
+        }
+        return symbolParts.join("_");
+      };
+      const inferSymbolFromRecentSnapshots = () => {
+        try {
+          const files = fs
+            .readdirSync(CHART_SNAPSHOT_DIR)
+            .filter((f) => /\.(png|jpe?g)$/i.test(f))
+            .map((f) => {
+              const st = fs.statSync(path.join(CHART_SNAPSHOT_DIR, f));
+              return { f, t: Number(st.mtimeMs || 0) };
+            })
+            .sort((a, b) => b.t - a.t);
+          for (const item of files) {
+            const inferred = inferSymbolFromSnapshotFile(item.f);
+            if (inferred) return inferred;
+          }
+          return "";
+        } catch {
+          return "";
+        }
+      };
+      const reqSessionPrefix = sanitizeSessionPrefix(
+        body.session_prefix || body.sessionPrefix || "",
+      );
+      const autoSaveInput =
+        body?.auto_save === undefined || body?.auto_save === null
+          ? ""
+          : String(body.auto_save).trim().toLowerCase();
+      const autoSave =
+        autoSaveInput === "signals" || autoSaveInput === "trades"
+          ? autoSaveInput
+          : "";
+      if (
+        body?.auto_save !== undefined &&
+        body?.auto_save !== null &&
+        autoSaveInput !== "null" &&
+        !autoSave
+      ) {
+        return json(res, 400, {
+          ok: false,
+          error: "auto_save must be null, 'signals', or 'trades'",
+        });
+      }
+      const normalizeDirectionToAction = (value) => {
+        const dir = String(value || "")
+          .trim()
+          .toUpperCase();
+        if (dir.includes("SELL") || dir === "SHORT") return "SELL";
+        return "BUY";
+      };
+      const firstAutoSavableTradePlan = (parsed = {}) => {
+        const plans = Array.isArray(parsed?.trade_plan)
+          ? parsed.trade_plan
+          : [];
+        for (const plan of plans) {
+          const entry = Number(plan?.entry);
+          const sl = Number(plan?.sl);
+          const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
+          if (
+            Number.isFinite(entry) &&
+            Number.isFinite(sl) &&
+            Number.isFinite(tp)
+          ) {
+            return { plan, entry, sl, tp };
+          }
+        }
+        return null;
+      };
+      const autoSaveAnalyzeResult = async ({
+        mode,
+        parsedJson,
+        sourceSymbol,
+        providerRaw,
+      }) => {
+        if (!mode) return { enabled: false, mode: null };
+        try {
+          const pick = firstAutoSavableTradePlan(parsedJson);
+          if (!pick) {
+            return {
+              enabled: true,
+              mode,
+              saved: false,
+              error: "No valid trade_plan entry with entry/sl/tp",
+            };
+          }
+          const plan = pick.plan || {};
+          const symbol = String(
+            sourceSymbol || parsedJson?.symbol || body?.symbol || "",
+          )
+            .trim()
+            .toUpperCase();
+          if (!symbol) {
+            return {
+              enabled: true,
+              mode,
+              saved: false,
+              error: "symbol is required for auto_save",
+            };
+          }
+          const source = mt5NormalizeUiSource(
+            `ai_${providerRaw || "claude"}`,
+            "ai_claude",
+          );
+          const action = normalizeDirectionToAction(plan?.direction);
+          const sharedRawJson = {
+            source: "ai_analyze_auto_save",
+            session_id: sessionId,
+            auto_save: mode,
+            analyze_mode: useContextFiles ? "context_files" : "snapshot_files",
+            prompt: String(body?.prompt || ""),
+            symbol,
+            timeframe: String(body?.timeframe || ""),
+            model: String(body?.model || ""),
+            ai_provider: providerRaw || "claude",
+            analysis_result: parsedJson,
+            trade_plan: plan,
+          };
+          if (mode === "signals") {
+            const signalId = mt5GenerateTimeSid();
+            const signalSid = normalizePublicSidBase(`${symbol}_AI`, "SIG");
+            const orderType = mt5NormalizeOrderType({
+              order_type: plan?.type || "limit",
+            });
+            const entryModel = String(plan?.entry_model || "").trim() || null;
+            const note = String(
+              plan?.note || parsedJson?.final_verdict?.note || "",
+            ).trim();
+            await mt5UpsertSignal({
+              signal_id: signalId,
+              sid: signalSid,
+              created_at: mt5NowIso(),
+              user_id: userId,
+              source,
+              source_id: mt5SlugId(source, "tradingview"),
+              symbol,
+              side: mt5MapActionToSide(action),
+              entry: pick.entry,
+              strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
+              entry_model: entryModel,
+              sl: pick.sl,
+              tp: pick.tp,
+              rr_planned: asNum(plan?.rr, null),
+              signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              note,
+              order_type: orderType,
+              raw_json: {
+                ...sharedRawJson,
+                only_signal: true,
+              },
+              status: "NEW",
+            });
+            await mt5Log(
+              signalId,
+              "signals",
+              {
+                event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
+                data: sharedRawJson,
+              },
+              userId,
+            ).catch(() => null);
+            return {
+              enabled: true,
+              mode,
+              saved: true,
+              signal: { signal_id: signalId, sid: signalSid, symbol },
+            };
+          }
+          const sourceId = mt5SlugId(source, "tradingview");
+          await mt5UpsertSourceV2({
+            source_id: sourceId,
+            name: source,
+            kind: sourceId.includes("tv") ? "tv" : "api",
+            auth_mode: "token",
+            is_active: true,
+            metadata: {
+              migrated_from: "ai_analyze_auto_save",
+              signal_source: source,
+            },
+          }).catch(() => null);
+          const fanout = await mt5FanoutSignalTradeV2({
+            signal_id: null,
+            source_id: sourceId,
+            user_id: userId,
+            entry_model: String(plan?.entry_model || "").trim() || null,
+            signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+            chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+            symbol,
+            action,
+            entry: pick.entry,
+            sl: pick.sl,
+            tp: pick.tp,
+            volume: asNum(body?.volume ?? body?.lots, null),
+            rr_planned: asNum(plan?.rr, null),
+            risk_pct_planned: asNum(plan?.risk_pct, null),
+            note: String(
+              plan?.note || parsedJson?.final_verdict?.note || "",
+            ).trim(),
+            sid: normalizePublicSidBase(`${symbol}_AI`, "TRD"),
+            session_prefix: reqSessionPrefix || null,
+            metadata: {
+              event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
+              order_type: String(plan?.type || "limit"),
+              session_prefix: reqSessionPrefix || null,
+              raw_json: sharedRawJson,
+            },
+          });
+          return {
+            enabled: true,
+            mode,
+            saved: true,
+            created: Number(fanout?.created || 0),
+            account_ids: Array.isArray(fanout?.account_ids)
+              ? fanout.account_ids
+              : [],
+          };
+        } catch (error) {
+          return {
+            enabled: true,
+            mode,
+            saved: false,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      };
+      ensureChartSnapshotDir();
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const sessionId = `ai_analyze_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      await (
+        await mt5Backend()
+      ).log(sessionId, "ai", { event: "AI_ANALYSIS", payload: body }, userId);
+      await (
+        await mt5Backend()
+      ).log(sessionId, "ai", analyzeReqSummary, userId);
+      // Determine AI provider from request (default to claude for backward compat)
+      const aiProviderRaw = String(body.ai_provider || "")
+        .replace(/^ai_/i, "")
+        .trim()
+        .toLowerCase();
+      const isClaudeProvider =
+        !aiProviderRaw ||
+        aiProviderRaw === "claude" ||
+        aiProviderRaw === "anthropic";
+
+      // Load all user API keys
+      const userApiKeys = await loadUserApiKeysMap(userId).catch(() => ({}));
+
+      // Resolve the required key based on provider
+      let requiredKeyName = "CLAUDE_API_KEY";
+      let requiredKeyValue = "";
+      if (aiProviderRaw === "openrouter") {
+        requiredKeyName = "OPENROUTER_API_KEY";
+        requiredKeyValue = userApiKeys.OPENROUTER_API_KEY || "";
+      } else if (aiProviderRaw === "openai" || aiProviderRaw === "gpt4o") {
+        requiredKeyName = "OPENAI_API_KEY";
+        requiredKeyValue = userApiKeys.OPENAI_API_KEY || "";
+      } else if (aiProviderRaw === "deepseek") {
+        requiredKeyName = "DEEPSEEK_API_KEY";
+        requiredKeyValue = userApiKeys.DEEPSEEK_API_KEY || "";
+      } else if (aiProviderRaw === "gemini") {
+        requiredKeyName = "GEMINI_API_KEY";
+        requiredKeyValue = userApiKeys.GEMINI_API_KEY || "";
+      } else {
+        // Claude / default
+        requiredKeyValue = userApiKeys.CLAUDE_API_KEY || "";
+      }
+
+      if (!requiredKeyValue) {
+        const providerLabel = requiredKeyName.replace(/_API_KEY$/, "");
+        return json(res, 400, {
+          ok: false,
+          error: `${requiredKeyName} is missing. Please configure it in Settings → API_KEY.`,
+        });
+      }
+
+      const claudeKey = isClaudeProvider ? requiredKeyValue : "";
+
+      // Only Claude provider supports context-files mode
+      let useContextFiles =
+        isClaudeProvider &&
+        (body.use_context_files === true ||
+          String(body.context_mode || "").toLowerCase() === "claude");
+      const contextSymbol =
+        String(body.symbol || "").trim() ||
+        (Array.isArray(body.files)
+          ? body.files
+              .map((f) => inferSymbolFromSnapshotFile(f))
+              .find(Boolean) || ""
+          : "") ||
+        inferSymbolFromRecentSnapshots();
+      // If symbol cannot be inferred, fall back to non-context analyze instead of hard-failing.
+      if (useContextFiles && !contextSymbol) {
+        useContextFiles = false;
+      }
+      if (useContextFiles) {
+        const symbol = contextSymbol;
+        const timeframes = Array.isArray(body.timeframes)
+          ? body.timeframes
+          : String(body.tfs || body.timeframes || "D,4H,1H,15M").split(",");
+        const contextBundle = await Promise.race([
+          buildAiContextBundle({
+            userId,
+            apiKey: claudeKey,
+            symbol,
+            timeframes,
+            bars:
+              Number(
+                body.bars_count ||
+                  body.lookbackBars ||
+                  body.lookback_bars ||
+                  300,
+              ) || 300,
+            provider: String(body.provider || "ICMARKETS"),
+            forceRefresh: body.force_refresh === true,
+            forceSnapshot: body.snapshot_refresh === true,
+            includeSnapshots: true,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Context build timeout (60s)")),
+              60000,
+            ),
+          ),
+        ]);
+        let finalPrompt =
+          String(body.prompt || "").trim() ||
+          "Analyze this chart context and return only JSON.";
+        finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
+        const manifest = {
+          symbol: contextBundle.symbol,
+          current_price: contextBundle.current_price,
+          generated_at: contextBundle.generated_at,
+          instruction:
+            "Use the attached snapshot, bars, prior analysis, and tradeplans files. Reconcile prior analysis and explicitly flag invalid trade plans.",
+          context_files: contextBundle.context_files,
+          timeframe_summaries: (contextBundle.timeframes || []).map((x) => ({
+            tf: x.tf,
+            bar_end: x.bar_end,
+            last_price: x.last_price,
+            freshness: x.freshness,
+            summary: x.summary,
+          })),
+        };
+        finalPrompt += `\n\nCONTEXT_MANIFEST=${JSON.stringify(manifest)}\n\n${buildAiSchemaPromptText()}`;
+        const content = [];
+        const usedSnapshotFiles = [];
+        for (const item of contextBundle.timeframes || []) {
+          const filesForTf = item.files || {};
+          if (filesForTf.snapshot?.file_id) {
+            content.push({
+              type: "image",
+              source: { type: "file", file_id: filesForTf.snapshot.file_id },
+            });
+            if (filesForTf.snapshot?.local_snapshot_file) {
+              usedSnapshotFiles.push(
+                String(filesForTf.snapshot.local_snapshot_file),
+              );
+            }
+          }
+          for (const type of ["bars", "analysis", "tradeplans"]) {
+            const block = makeAiContextTextBlock(
+              filesForTf[type],
+              `${item.tf} ${type}`,
+            );
+            if (block) content.push(block);
+          }
+        }
+        if (!usedSnapshotFiles.length) {
+          try {
+            const autoCreated = await captureTradingViewSnapshotsBatch({
+              symbol: contextBundle.symbol,
+              provider: String(body.provider || "ICMARKETS"),
+              sessionPrefix: reqSessionPrefix || sanitizeSessionPrefix("auto"),
+              tfs: (contextBundle.timeframes || [])
+                .map((x) => toTradingViewInterval(x.tf))
+                .filter(Boolean),
+              lookbackBars:
+                Number(
+                  body.bars_count ||
+                    body.lookbackBars ||
+                    body.lookback_bars ||
+                    300,
+                ) || 300,
+            });
+            for (const created of autoCreated || []) {
+              const fileName = String(created?.file_name || "").trim();
+              if (!fileName) continue;
+              const abs = path.join(CHART_SNAPSHOT_DIR, fileName);
+              if (!fs.existsSync(abs)) continue;
+              const mediaType = snapshotMimeByFileName(fileName);
+              if (!mediaType) continue;
+              content.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType,
+                  data: fs.readFileSync(abs).toString("base64"),
+                },
+              });
+              usedSnapshotFiles.push(fileName);
+            }
+          } catch (captureError) {
+            console.warn(
+              "[snapshot-analyze] context auto-capture fallback failed:",
+              captureError?.message || captureError,
+            );
+          }
+        }
+        if (!usedSnapshotFiles.length) {
+          return json(res, 400, {
+            ok: false,
+            error:
+              "Snapshots are required for analysis, but no snapshot images were available.",
+          });
+        }
+        appendAttachedImages(content, body?.attached_images);
+        content.push({ type: "text", text: finalPrompt });
+        const requestModel =
+          String(body.model || "claude-sonnet-4-0").trim() ||
+          "claude-sonnet-4-0";
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_API_CALL_REQUEST",
+            provider: "claude",
+            mode: "context_files",
+            model: requestModel,
+            symbol: contextBundle.symbol,
+            files_count: usedSnapshotFiles.length,
+          },
+          userId,
+        );
+        const out = await anthropicMessagesWithFallback({
+          apiKey: claudeKey,
+          model: requestModel,
+          messages: [{ role: "user", content }],
+          maxTokens: Number(body.max_tokens || 4500),
+          timeoutMs: 180000,
+          beta: ANTHROPIC_FILES_BETA,
+        });
+        const aiRes = out.response;
+        const resolvedModel = out.modelUsed || requestModel;
+        if (!aiRes.ok) {
+          const errText = await aiRes.text();
+          throw new Error(`Claude API Error (${aiRes.status}): ${errText}`);
+        }
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_API_CALL_RESPONSE",
+            provider: "claude",
+            mode: "context_files",
+            model: resolvedModel,
+            symbol: contextBundle.symbol,
+            ok: true,
+          },
+          userId,
+        );
+        const aiJson = await aiRes.json();
+        const rawResponse = Array.isArray(aiJson?.content)
+          ? aiJson.content
+              .filter((x) => x?.type === "text")
+              .map((x) => String(x?.text || ""))
+              .join("\n")
+          : String(aiJson?.content || "");
+        const extracted = extractJsonFromAiText(rawResponse);
+        const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+        console.log(
+          "[ai-response] symbol=" +
+            (parsedJson?.symbol || "?") +
+            " plans=" +
+            (Array.isArray(parsedJson?.trade_plan)
+              ? parsedJson.trade_plan.length
+              : 0) +
+            " has_analysis=" +
+            !!parsedJson?.market_analysis,
+        );
+        if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
+          console.log(
+            "[ai-response] WARN: bare trade_plan. raw:",
+            rawResponse.slice(0, 500),
+          );
+        }
+        if (
+          parsedJson &&
+          typeof parsedJson === "object" &&
+          !Array.isArray(parsedJson)
+        ) {
+          parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
+        }
+        const autoSaveResult = await autoSaveAnalyzeResult({
+          mode: autoSave,
+          parsedJson,
+          sourceSymbol: contextBundle.symbol,
+          providerRaw: aiProviderRaw || "claude",
+        });
+        const analysisFileUploads = [];
+        try {
+          const firstOk = (contextBundle.timeframes || []).find(
+            (x) => x.status === "ok",
+          );
+          const analysisFileName = aiContextFileName({
+            userId,
+            symbol: contextBundle.symbol,
+            tf: "ALL",
+            barEnd: firstOk?.bar_end || nowUnixSec(),
+            type: "analysis_result",
+          });
+          const analysisAbs = writeAiContextJsonFile(analysisFileName, {
+            kind: "analysis_result",
+            symbol: contextBundle.symbol,
+            generated_at: new Date().toISOString(),
+            timeframes: (contextBundle.timeframes || []).map((x) => ({
+              tf: x.tf,
+              bar_end: x.bar_end,
+            })),
+            analysis: parsedJson,
+          });
+          analysisFileUploads.push(
+            await upsertClaudeContextFile({
+              apiKey: claudeKey,
+              contextKey: `${contextBundle.symbol}:ALL:${firstOk?.bar_end || "latest"}`,
+              type: "analysis_result",
+              absPath: analysisAbs,
+              fileName: analysisFileName,
+              symbol: contextBundle.symbol,
+              tf: "ALL",
+              barEnd: firstOk?.bar_end || nowUnixSec(),
+            }),
+          );
+        } catch (e) {
+          console.warn(
+            "[snapshot-analyze] Failed to upload analysis result context file:",
+            e?.message || e,
+          );
+        }
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_RESPONSE",
+            schema_version: AI_RESPONSE_SCHEMA_VERSION,
+            raw_json: aiJson,
+            context_files: contextBundle.context_files,
+          },
+          userId,
+        );
+        await (
+          await mt5Backend()
+        ).log(
+          sessionId,
+          "ai",
+          {
+            event: "AI_ANALYZE_RESPONSE",
+            mode: "context_files",
+            schema_version: AI_RESPONSE_SCHEMA_VERSION,
+            model: resolvedModel,
+            raw_response_hash: hashForLog(rawResponse),
+            raw_response_len: String(rawResponse || "").length,
+            raw_response_preview: clipForLog(rawResponse, 6000),
+            parsed_has_ai_full_analysis: Boolean(parsedJson?.ai_full_analysis),
+            parsed_has_market_analysis: Boolean(parsedJson?.market_analysis),
+            parsed_trade_plan_count: Array.isArray(parsedJson?.trade_plan)
+              ? parsedJson.trade_plan.length
+              : parsedJson?.trade_plan
+                ? 1
+                : 0,
+            parsed_keys:
+              parsedJson && typeof parsedJson === "object"
+                ? Object.keys(parsedJson).slice(0, 50)
+                : [],
+          },
+          userId,
+        );
+        return json(res, 200, {
+          ok: true,
+          model: resolvedModel,
+          schema_version: AI_RESPONSE_SCHEMA_VERSION,
+          used_files: usedSnapshotFiles,
+          claude_files_mode: "context_files",
+          claude_files: contextBundle.context_files,
+          analysis_files: analysisFileUploads,
+          context_bundle: contextBundle,
+          raw_response: rawResponse,
+          parsed_json: parsedJson,
+          auto_save_result: autoSaveResult,
+          source: "claude_context_cache",
+          updated_time: Date.now(),
+          auto_refresh: 0,
+        });
+      }
+
+      const normalizeTf = (value) => {
+        const raw = String(value || "")
+          .trim()
+          .toUpperCase();
+        if (!raw) return "";
+        if (raw === "1D") return "D";
+        if (raw === "1H") return "60";
+        if (raw === "15") return "15";
+        if (raw === "5") return "5";
+        return raw;
+      };
+      const parseRequestedTimeframes = () => {
+        if (Array.isArray(body.timeframes))
+          return body.timeframes.map(normalizeTf).filter(Boolean);
+        return String(
+          body.tfs || body.timeframe || body.timeframes || "D,240,15,5",
+        )
+          .split(",")
+          .map(normalizeTf)
+          .filter(Boolean);
+      };
+      const normalizeSymbolLoose = (value) =>
+        String(value || "")
+          .trim()
+          .toUpperCase()
+          .replace(/^[A-Z0-9_-]+:/, "")
+          .replace(/[^A-Z0-9]/g, "");
+      const requestedTfs = parseRequestedTimeframes();
+      const requestedSymbol = normalizeSymbolLoose(body.symbol || "");
+      const requestedProvider = String(body.provider || "ICMARKETS")
+        .trim()
+        .toUpperCase();
+      const pickSnapshotFiles = (items) => {
+        if (!items.length) return [];
+        if (!requestedTfs.length) return items.slice(0, 4).map((x) => x.f);
+        const byTf = new Map();
+        for (const item of items) {
+          const parts = String(item.f || "").split("_");
+          const tfRaw = parts.length >= 3 ? parts[2] : "";
+          const tf = normalizeTf(tfRaw);
+          if (!tf || byTf.has(tf)) continue;
+          byTf.set(tf, item.f);
+          if (byTf.size >= requestedTfs.length) break;
+        }
+        const ordered = requestedTfs.map((tf) => byTf.get(tf)).filter(Boolean);
+        if (ordered.length) return ordered.slice(0, 4);
+        return items.slice(0, 4).map((x) => x.f);
+      };
+      let files = Array.isArray(body.files)
+        ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
+        : [];
+      if (!files.length) {
+        const allSnapshots = fs
+          .readdirSync(CHART_SNAPSHOT_DIR)
+          .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
+          .map((f) => {
+            const st = fs.statSync(path.join(CHART_SNAPSHOT_DIR, f));
+            return { f, t: Number(st.mtimeMs || 0) };
+          })
+          .sort((a, b) => b.t - a.t);
+        const sessionMatched = reqSessionPrefix
+          ? allSnapshots.filter((x) => x.f.includes(`_${reqSessionPrefix}_`))
+          : [];
+        const symbolMatched = allSnapshots.filter((x) => {
+          const parts = String(x.f || "").split("_");
+          if (parts.length < 3) return false;
+          const providerOk =
+            String(parts[0] || "").toUpperCase() === requestedProvider;
+          const symbolOk =
+            normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
+          return providerOk && symbolOk;
+        });
+        const pool = sessionMatched.length
+          ? sessionMatched
+          : symbolMatched.length
+            ? symbolMatched
+            : requestedSymbol
+              ? []
+              : allSnapshots;
+        files = pickSnapshotFiles(pool);
+      }
+      if (!files.length && requestedSymbol) {
+        try {
+          const created = await captureTradingViewSnapshotsBatch({
+            symbol: requestedSymbol,
+            provider: requestedProvider,
+            sessionPrefix: reqSessionPrefix || sanitizeSessionPrefix("auto"),
+            tfs: requestedTfs.length ? requestedTfs : ["D", "240", "15", "5"],
+            lookbackBars:
+              Number(
+                body.bars_count ||
+                  body.lookbackBars ||
+                  body.lookback_bars ||
+                  300,
+              ) || 300,
+          });
+          files = Array.isArray(created)
+            ? created
+                .map((x) => String(x.file_name || ""))
+                .filter(Boolean)
+                .slice(0, 4)
+            : [];
+        } catch (captureError) {
+          console.warn(
+            "[snapshot-analyze] auto-capture fallback failed:",
+            captureError?.message || captureError,
+          );
+        }
+      }
+      files = files.slice(0, 4);
+      if (!files.length)
+        return json(res, 400, {
+          ok: false,
+          error: "No snapshots found for analysis.",
+        });
+
+      const snapshotFiles = [];
+      for (const fileNameRaw of files) {
+        const safeName = path.basename(String(fileNameRaw || ""));
+        if (
+          !safeName ||
+          safeName !== fileNameRaw ||
+          !/\.(png|jpg|jpeg)$/i.test(safeName)
+        )
+          continue;
+        const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+        const mediaType = snapshotMimeByFileName(safeName);
+        if (!mediaType) continue;
+        snapshotFiles.push({ fileName: safeName, abs, mediaType });
+      }
+      if (!snapshotFiles.length)
+        return json(res, 400, {
+          ok: false,
+          error: "No valid snapshot images available.",
+        });
+
+      let finalPrompt =
+        String(body.prompt || "").trim() ||
+        "Analyze these chart snapshots and return only JSON.";
+      finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
+
+      // For text-only models (DeepSeek), inject bar data as text since they can't see images
+      const requestModel =
+        String(body.model || "claude-sonnet-4-0").trim() || "claude-sonnet-4-0";
+      if (requestModel.toLowerCase().includes("deepseek")) {
+        try {
+          const symbol = String(body.symbol || "").trim();
+          if (symbol) {
+            const db = await mt5InitBackend();
+            const { rows } = await db.query(
+              `SELECT symbol, tf, bar_start, bar_end, data FROM market_data
+               WHERE symbol = $1 ORDER BY tf, bar_end DESC LIMIT 20`,
+              [symbol],
+            );
+            if (rows.length) {
+              const barLines = rows.map((r) => {
+                const bars =
+                  typeof r.data === "string"
+                    ? JSON.parse(r.data)
+                    : r.data?.bars || [];
+                const lastBar = Array.isArray(bars)
+                  ? bars[bars.length - 1]
+                  : null;
+                const lastPrice = lastBar?.c ?? lastBar?.close ?? null;
+                return `${r.tf}: ${bars.length} bars, latest close=${lastPrice}`;
+              });
+              finalPrompt += `\n\n## MARKET DATA (text-only model — chart images not visible)\nSymbol: ${symbol}\n${barLines.join("\n")}`;
+            }
+          }
+        } catch (e) {
+          console.warn("[deepseek] Failed to load bar data:", e.message);
+        }
+      }
+
+      finalPrompt += `\n\n${buildAiSchemaPromptText()}`;
+
+      let imagePayload = null;
+      let claudeFilesMode = "base64";
+      let claudeFilesError = "";
+      // Only use Claude Files API when Claude provider is selected and key is available
+      if (UPLOAD_TO_CLAUDE && isClaudeProvider && claudeKey) {
+        try {
+          imagePayload = await buildClaudeFileSnapshotContent({
+            apiKey: claudeKey,
+            snapshotFiles,
+          });
+          claudeFilesMode = "files_api";
+        } catch (error) {
+          claudeFilesError =
+            error instanceof Error ? error.message : String(error);
+          imagePayload = buildBase64SnapshotContent(snapshotFiles);
+          claudeFilesMode = "fallback_base64";
+        }
+      } else {
+        imagePayload = buildBase64SnapshotContent(snapshotFiles);
+      }
+
+      const content = [...imagePayload.content];
+      appendAttachedImages(content, body?.attached_images);
+      content.push({
+        type: "text",
+        text: finalPrompt,
+      });
+
+      // Use the ai_provider resolved earlier for callAiProvider
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_API_CALL_REQUEST",
+          provider: aiProviderRaw || "claude",
+          mode: "snapshot_files",
+          model: requestModel,
+          symbol: requestedSymbol,
+          files_count: snapshotFiles.length,
+        },
+        userId,
+      );
+      const aiResult = await callAiProvider({
+        model: requestModel,
+        provider: aiProviderRaw || "",
+        messages: [{ role: "user", content }],
+        maxTokens: Number(body.max_tokens || 4500),
+        timeoutMs: 180000,
+      });
+
+      const rawResponse = aiResult.rawText;
+      const resolvedModel = aiResult.modelUsed;
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_API_CALL_RESPONSE",
+          provider: aiResult.provider || aiProviderRaw || "claude",
+          mode: "snapshot_files",
+          model: resolvedModel,
+          symbol: requestedSymbol,
+          ok: true,
+        },
+        userId,
+      );
+      claudeFilesMode =
+        aiResult.provider === "claude"
+          ? claudeFilesMode || "base64"
+          : aiResult.provider;
+      const extracted = extractJsonFromAiText(rawResponse);
+      const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+      console.log(
+        "[ai-response] symbol=" +
+          (parsedJson?.symbol || "?") +
+          " plans=" +
+          (Array.isArray(parsedJson?.trade_plan)
+            ? parsedJson.trade_plan.length
+            : 0) +
+          " has_analysis=" +
+          !!parsedJson?.market_analysis,
+      );
+      if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
+        console.log(
+          "[ai-response] WARN: bare trade_plan. raw:",
+          rawResponse.slice(0, 500),
+        );
+      }
+      if (
+        parsedJson &&
+        typeof parsedJson === "object" &&
+        !Array.isArray(parsedJson)
+      ) {
+        parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
+      }
+      const autoSaveResult = await autoSaveAnalyzeResult({
+        mode: autoSave,
+        parsedJson,
+        sourceSymbol: requestedSymbol,
+        providerRaw: aiResult.provider || aiProviderRaw || "claude",
+      });
+
+      // Persistence: If we have analysis and bars context, store in market_data metadata
+      // Persistence: If we have analysis and bars context, store in Unified Cache and DB
+      if (
+        (parsedJson.bias ||
+          parsedJson.analysis ||
+          parsedJson.market_analysis ||
+          parsedJson.trade_plan ||
+          parsedJson.final_verdict) &&
+        body.bars &&
+        body.bars.length > 0
+      ) {
+        try {
+          const bars = body.bars;
+          const symbolNorm = normalizeMarketDataSymbol(body.symbol);
+          const tfNorm = normalizeMarketDataTf(body.timeframe);
+
+          // Update Unified Cache (Read-Modify-Write)
+          await repoUpsertUnifiedMarketData(symbolNorm, tfNorm, {
+            bars: bars,
+            market_analysis: parsedJson,
+          }).catch((e) =>
+            console.error(
+              "[snapshot-analyze] Unified Cache Update Failed:",
+              e.message,
+            ),
+          );
+
+          // Legacy DB persistence
+          const barStart = Number(bars[0].time || bars[0].bar_start);
+          const barEnd = Number(
+            bars[bars.length - 1].time || bars[bars.length - 1].bar_end,
+          );
+          if (barStart && barEnd) {
+            await marketDataDbWrite(symbolNorm, tfNorm, {
+              bar_start: barStart,
+              bar_end: barEnd,
+              bars: bars,
+              metadata: parsedJson,
+            }).catch((e) =>
+              console.error("[snapshot-analyze] DB Write Failed:", e.message),
+            );
+          }
+        } catch (e) {
+          console.warn(
+            "[snapshot-analyze] Failed to persist metadata:",
+            e.message,
+          );
+        }
+      }
+
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_RESPONSE",
+          schema_version: AI_RESPONSE_SCHEMA_VERSION,
+          raw_json: parsedJson,
+        },
+        userId,
+      );
+      await (
+        await mt5Backend()
+      ).log(
+        sessionId,
+        "ai",
+        {
+          event: "AI_ANALYZE_RESPONSE",
+          mode: "snapshot_files",
+          schema_version: AI_RESPONSE_SCHEMA_VERSION,
+          model: resolvedModel,
+          raw_response_hash: hashForLog(rawResponse),
+          raw_response_len: String(rawResponse || "").length,
+          raw_response_preview: clipForLog(rawResponse, 6000),
+          parsed_has_ai_full_analysis: Boolean(parsedJson?.ai_full_analysis),
+          parsed_has_market_analysis: Boolean(parsedJson?.market_analysis),
+          parsed_trade_plan_count: Array.isArray(parsedJson?.trade_plan)
+            ? parsedJson.trade_plan.length
+            : parsedJson?.trade_plan
+              ? 1
+              : 0,
+          parsed_keys:
+            parsedJson && typeof parsedJson === "object"
+              ? Object.keys(parsedJson).slice(0, 50)
+              : [],
+        },
+        userId,
+      );
+      return json(res, 200, {
+        ok: true,
+        model: resolvedModel,
+        schema_version: AI_RESPONSE_SCHEMA_VERSION,
+        used_files:
+          imagePayload.usedFiles || snapshotFiles.map((x) => x.fileName),
+        claude_files_mode: claudeFilesMode,
+        claude_files: imagePayload.claudeFiles || [],
+        claude_files_error: claudeFilesError,
+        raw_response: rawResponse,
+        parsed_json: parsedJson,
+        auto_save_result: autoSaveResult,
+        source: "remote_api",
+        updated_time: Date.now(),
+        auto_refresh: 0, // Analysis doesn't need auto-refresh by default
+      });
+    } catch (error) {
+      try {
+        const userId = sess.user_id || CFG.mt5DefaultUserId;
+        await (
+          await mt5Backend()
+        ).log(
+          `ai_analyze_error_${Date.now()}`,
+          "ai",
+          {
+            event: "AI_ANALYZE_ERROR",
+            schema_version: AI_RESPONSE_SCHEMA_VERSION,
+            error: String(error?.message || error),
+            stack_preview: clipForLog(error?.stack || "", 3000),
+          },
+          userId,
+        );
+      } catch {}
+      if (
+        error?.name === "AbortError" ||
+        String(error?.message || "")
+          .toLowerCase()
+          .includes("aborted")
+      ) {
+        return json(res, 504, {
+          ok: false,
+          error:
+            "AI provider timeout while analyzing snapshots. Try fewer charts or a shorter prompt.",
+        });
+      }
+      return json(res, 500, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -14221,7 +15762,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
@@ -14289,7 +15830,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
     try {
       const payload = await readJson(req);
@@ -14333,7 +15874,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
     try {
       const payload = await readJson(req);
@@ -14369,7 +15910,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
     try {
       const payload = await readJson(req);
@@ -14395,7 +15936,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 17:34 - 2b68b56",
+        error: "v2026.05.09 17:41 - c2488b8",
       });
     try {
       const payload = await readJson(req);
