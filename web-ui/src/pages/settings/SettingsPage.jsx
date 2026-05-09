@@ -21,6 +21,7 @@ const API_KEY_NAME_OPTIONS = [
 const STANDARD_API_KEY_NAMES = API_KEY_NAME_OPTIONS.map((x) => x.value);
 
 const SYSTEM_SETTING_TYPES = new Set(["system_config", "notification_config"]);
+const SPECIAL_TABS = new Set(["PROFILE", "NOTIFICATIONS", "EXECUTION_PROFILES"]);
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const DISPLAY_TIMEZONE_OPTIONS = [
   { value: "Local", label: "Local (Browser)" },
@@ -587,6 +588,67 @@ export default function SettingsPage({
     () => settings.find((s) => s.type === "cron" && s.name === "ANALYSIS_CRON"),
     [settings],
   );
+  const apiKeySettings = useMemo(
+    () => settings.filter((s) => s.type === "api_key"),
+    [settings],
+  );
+  const cronSettings = useMemo(
+    () =>
+      settings.filter(
+        (s) =>
+          (s.type === "cron" || s.type.endsWith("_cron")) &&
+          s.name !== "enabled_log_prefixes",
+      ),
+    [settings],
+  );
+  const watchlistSettings = useMemo(
+    () =>
+      settings.filter(
+        (s) =>
+          String(s.type || "").toLowerCase() === "trade" &&
+          String(s.name || "").toUpperCase() === "WATCHLIST",
+      ),
+    [settings],
+  );
+  const aiTemplateSettings = useMemo(
+    () =>
+      settings.filter(
+        (s) => String(s.type || "").toLowerCase() === "ai_template",
+      ),
+    [settings],
+  );
+  const systemConfigSettings = useMemo(
+    () =>
+      settings.filter(
+        (s) => String(s.type || "").toLowerCase() === "system_config",
+      ),
+    [settings],
+  );
+  const noteSettings = useMemo(
+    () => settings.filter((s) => String(s.type || "").toLowerCase() === "note"),
+    [settings],
+  );
+  const advancedSettings = useMemo(
+    () =>
+      settings.filter((s) => {
+        const type = String(s.type || "").toLowerCase();
+        if (
+          [
+            "api_key",
+            "cron",
+            "trade",
+            "ai_template",
+            "system_config",
+            "notification_config",
+            "note",
+          ].includes(type)
+        ) {
+          return false;
+        }
+        return !type.endsWith("_cron");
+      }),
+    [settings],
+  );
 
   useEffect(() => {
     if (!selectedSetting) {
@@ -683,6 +745,14 @@ export default function SettingsPage({
             >
               Notifications
             </button>
+            {canManageExecution && (
+              <button
+                className={`sidebar-item-v2 ${activeTab === "EXECUTION_PROFILES" ? "active" : ""}`}
+                onClick={() => setActiveTab("EXECUTION_PROFILES")}
+              >
+                Execution Profiles
+              </button>
+            )}
           </div>
 
           <div
@@ -814,9 +884,7 @@ export default function SettingsPage({
                 </button>
               </div>
               <div className="stack-layout" style={{ gap: 0 }}>
-                {settings
-                  .filter((s) => s.type === "api_key")
-                  .map((s) => renderSidebarItem(s))}
+                {apiKeySettings.map((s) => renderSidebarItem(s))}
               </div>
             </div>
 
@@ -847,17 +915,52 @@ export default function SettingsPage({
                 </button>
               </div>
               <div className="stack-layout" style={{ gap: 0 }}>
-                {settings
-                  .filter(
-                    (s) =>
-                      (s.type === "cron" || s.type.endsWith("_cron")) &&
-                      s.name !== "enabled_log_prefixes",
-                  )
-                  .map((s) => renderSidebarItem(s))}
+                {cronSettings.map((s) => renderSidebarItem(s))}
               </div>
             </div>
 
-            {/* OTHERS GROUP */}
+            {watchlistSettings.length > 0 && (
+              <div className="stack-layout" style={{ gap: 8 }}>
+                <div
+                  className="panel-label"
+                  style={{ margin: 0, opacity: 0.8 }}
+                >
+                  WATCHLIST
+                </div>
+                <div className="stack-layout" style={{ gap: 0 }}>
+                  {watchlistSettings.map((s) => renderSidebarItem(s))}
+                </div>
+              </div>
+            )}
+
+            {aiTemplateSettings.length > 0 && (
+              <div className="stack-layout" style={{ gap: 8 }}>
+                <div
+                  className="panel-label"
+                  style={{ margin: 0, opacity: 0.8 }}
+                >
+                  AI TEMPLATES
+                </div>
+                <div className="stack-layout" style={{ gap: 0 }}>
+                  {aiTemplateSettings.map((s) => renderSidebarItem(s))}
+                </div>
+              </div>
+            )}
+
+            {systemConfigSettings.length > 0 && (
+              <div className="stack-layout" style={{ gap: 8 }}>
+                <div
+                  className="panel-label"
+                  style={{ margin: 0, opacity: 0.8 }}
+                >
+                  SYSTEM CONFIG
+                </div>
+                <div className="stack-layout" style={{ gap: 0 }}>
+                  {systemConfigSettings.map((s) => renderSidebarItem(s))}
+                </div>
+              </div>
+            )}
+
             <div className="stack-layout" style={{ gap: 8 }}>
               <div
                 style={{
@@ -870,7 +973,7 @@ export default function SettingsPage({
                   className="panel-label"
                   style={{ margin: 0, opacity: 0.8 }}
                 >
-                  OTHERS
+                  NOTES
                 </div>
                 <button
                   className="secondary-button"
@@ -884,16 +987,23 @@ export default function SettingsPage({
                 </button>
               </div>
               <div className="stack-layout" style={{ gap: 0 }}>
-                {settings
-                  .filter(
-                    (s) =>
-                      !["api_key", "cron"].includes(s.type) &&
-                      !s.type.endsWith("_cron") &&
-                      s.name !== "enabled_log_prefixes",
-                  )
-                  .map((s) => renderSidebarItem(s))}
+                {noteSettings.map((s) => renderSidebarItem(s))}
               </div>
             </div>
+
+            {advancedSettings.length > 0 && (
+              <div className="stack-layout" style={{ gap: 8 }}>
+                <div
+                  className="panel-label"
+                  style={{ margin: 0, opacity: 0.8 }}
+                >
+                  ADVANCED
+                </div>
+                <div className="stack-layout" style={{ gap: 0 }}>
+                  {advancedSettings.map((s) => renderSidebarItem(s))}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -1088,75 +1198,131 @@ export default function SettingsPage({
                   </div>
                 </div>
 
-                {/* SECTION: EXECUTION ENGINE */}
-                {canManageExecution && (
-                  <div className="stack-layout" style={{ gap: 16 }}>
-                    <div className="panel-label">EXECUTION ENGINE</div>
-                    <div className="stack-layout" style={{ gap: 16 }}>
-                      <label className="stack-layout" style={{ gap: 6 }}>
-                        <span className="minor-text">Account</span>
-                        <select
-                          value={execForm.account_id}
-                          onChange={(e) =>
-                            setExecForm((p) => ({
-                              ...p,
-                              account_id: e.target.value,
-                            }))
-                          }
+              </div>
+            </div>
+          )}
+
+          {activeTab === "EXECUTION_PROFILES" && canManageExecution && (
+            <div className="fadeIn stack-layout" style={{ gap: 24, maxWidth: 720 }}>
+              <div>
+                <h3 style={{ margin: 0, textTransform: "uppercase" }}>
+                  Execution Profiles
+                </h3>
+                <div className="minor-text" style={{ marginTop: 4 }}>
+                  Configure the active execution route and account mapping.
+                </div>
+              </div>
+              <div className="stack-layout" style={{ gap: 16 }}>
+                <label className="stack-layout" style={{ gap: 6 }}>
+                  <span className="minor-text">Account</span>
+                  <select
+                    value={execForm.account_id}
+                    onChange={(e) =>
+                      setExecForm((p) => ({
+                        ...p,
+                        account_id: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Select account</option>
+                    {execAccounts.map((a) => (
+                      <option key={a.account_id} value={a.account_id}>
+                        {a.name || a.account_id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 16,
+                  }}
+                >
+                  <label className="stack-layout" style={{ gap: 6 }}>
+                    <span className="minor-text">Route</span>
+                    <select
+                      value={execForm.route}
+                      onChange={(e) =>
+                        setExecForm((p) => ({
+                          ...p,
+                          route: e.target.value,
+                        }))
+                      }
+                    >
+                      {ROUTE_OPTIONS.map((x) => (
+                        <option key={x.value} value={x.value}>
+                          {x.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="stack-layout" style={{ gap: 6 }}>
+                    <span className="minor-text">Sources (CSV)</span>
+                    <input
+                      value={execForm.source_ids_csv}
+                      onChange={(e) =>
+                        setExecForm((p) => ({
+                          ...p,
+                          source_ids_csv: e.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <button
+                  className="primary-button"
+                  onClick={applyExecutionProfile}
+                  disabled={execLoading}
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  {execLoading ? "APPLYING..." : "APPLY EXECUTION"}
+                </button>
+                {execMsg && (
+                  <div className="minor-text" style={{ color: "var(--primary)" }}>
+                    {execMsg}
+                  </div>
+                )}
+                {execProfiles.length > 0 && (
+                  <div className="stack-layout" style={{ gap: 8 }}>
+                    <div className="panel-label" style={{ marginBottom: 0 }}>
+                      Saved Profiles
+                    </div>
+                    <div className="stack-layout" style={{ gap: 8 }}>
+                      {execProfiles.map((profile, idx) => (
+                        <div
+                          key={`${String(
+                            profile.profile_id ||
+                              profile.profile_name ||
+                              profile.account_id ||
+                              "profile",
+                          )}:${idx}`}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            padding: "10px 12px",
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                          }}
                         >
-                          <option value="">Select account</option>
-                          {execAccounts.map((a) => (
-                            <option key={a.account_id} value={a.account_id}>
-                              {a.name || a.account_id}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
-                          gap: 16,
-                        }}
-                      >
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Route</span>
-                          <select
-                            value={execForm.route}
-                            onChange={(e) =>
-                              setExecForm((p) => ({
-                                ...p,
-                                route: e.target.value,
-                              }))
-                            }
+                          <div className="stack-layout" style={{ gap: 2 }}>
+                            <strong style={{ fontSize: 13 }}>
+                              {profile.profile_name || profile.profile_id}
+                            </strong>
+                            <span className="minor-text" style={{ fontSize: 11 }}>
+                              {String(profile.route || "").toUpperCase()} ·{" "}
+                              {profile.account_id || "No account"}
+                            </span>
+                          </div>
+                          <span
+                            className={`status-badge ${profile.is_active ? "active" : "inactive"}`}
+                            style={{ alignSelf: "center" }}
                           >
-                            {ROUTE_OPTIONS.map((x) => (
-                              <option key={x.value} value={x.value}>
-                                {x.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Sources (CSV)</span>
-                          <input
-                            value={execForm.source_ids_csv}
-                            onChange={(e) =>
-                              setExecForm((p) => ({
-                                ...p,
-                                source_ids_csv: e.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                      </div>
-                      <button
-                        className="primary-button"
-                        onClick={applyExecutionProfile}
-                        disabled={execLoading}
-                      >
-                        {execLoading ? "APPLYING..." : "APPLY EXECUTION"}
-                      </button>
+                            {profile.is_active ? "ACTIVE" : "INACTIVE"}
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -1164,7 +1330,7 @@ export default function SettingsPage({
             </div>
           )}
 
-          {selectedSetting && (
+          {selectedSetting && !SPECIAL_TABS.has(activeTab) && (
             <div className="fadeIn">
               <div
                 style={{

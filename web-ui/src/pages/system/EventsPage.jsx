@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../api";
 
 const SOUNDS = [
@@ -178,25 +178,6 @@ function EventRow({ event, idx, toggle, setField, state }) {
 export function EventsPageContent() {
   const state = useNotificationState();
   const { events, loading, msg, error, load, save, toggle, setField } = state;
-  const readonlyJson = useMemo(
-    () =>
-      JSON.stringify(
-        (events || []).reduce((acc, ev) => {
-          acc[ev.event] = {
-            toast: ev.toast !== false,
-            console_log: ev.console_log === true,
-            ticker: ev.ticker === true,
-            db_log: ev.db_log !== false,
-            sound: ev.sound || null,
-          };
-          return acc;
-        }, {}),
-        null,
-        2,
-      ),
-    [events],
-  );
-
   return (
     <section className="stack-layout" style={{ gap: 14 }}>
       <div className="panel">
@@ -304,31 +285,6 @@ export function EventsPageContent() {
                 ))}
             </tbody>
           </table>
-        </div>
-        <div
-          className="minor-text"
-          style={{ marginTop: 12, fontSize: 10, lineHeight: 1.6 }}
-        >
-          <strong>Events:</strong> TRADE_ACTIVITY · SIGNAL_ACTIVITY · BROKER_POLL
-          · BROKER_SYNC · SYSTEM_EVENT · REMOTE_API_CALL
-          <br />
-          <strong>Channels:</strong> Toast · Console · Ticker · DB Log · Sound
-        </div>
-        <div style={{ marginTop: 14 }}>
-          <div className="minor-text" style={{ marginBottom: 6 }}>
-            JSON Configuration (read only)
-          </div>
-          <textarea
-            readOnly
-            value={readonlyJson}
-            rows={10}
-            style={{
-              width: "100%",
-              resize: "vertical",
-              fontFamily: "monospace",
-              fontSize: 11,
-            }}
-          />
         </div>
       </div>
     </section>

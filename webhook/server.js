@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 15:54 - 558e10d"); // settings menu cleanup + notification manager dedupe
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 15:56 - 692b836"); // settings menu cleanup + notification manager dedupe
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -9423,7 +9423,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 15:54 - 558e10d");
+    throw new Error("v2026.05.09 15:56 - 692b836");
   }
   return n;
 }
@@ -12269,7 +12269,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
       return null;
     }
@@ -12423,7 +12423,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 15:54 - 558e10d" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 15:56 - 692b836" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -13574,7 +13574,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
@@ -13642,7 +13642,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
     try {
       const payload = await readJson(req);
@@ -13686,7 +13686,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
     try {
       const payload = await readJson(req);
@@ -13722,7 +13722,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
     try {
       const payload = await readJson(req);
@@ -13748,7 +13748,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:54 - 558e10d",
+        error: "v2026.05.09 15:56 - 692b836",
       });
     try {
       const payload = await readJson(req);
