@@ -30,8 +30,16 @@ export function SymbolEntryCell({
   const sideUp = String(side || "-").toUpperCase();
   const sideCls = sideUp === "BUY" ? "side-buy" : "side-sell";
   const st = String(status || "PENDING").toUpperCase();
-  const isFilled = st === "FILLED" || st === "OPEN";
-  const statusCls = isFilled ? "status-solid" : "status-blur";
+  const isError = ["REJECTED", "CANCELLED", "ERROR", "FAIL"].includes(st);
+  const isPending = ["PENDING", "NEW", "PLACED", "LOCKED"].includes(st);
+  const isFilled = st === "FILLED" || st === "OPEN" || st === "START";
+  const statusCls = isError
+    ? "status-error"
+    : isPending
+      ? "status-blur status-pending"
+      : isFilled
+        ? "status-solid"
+        : "status-blur";
   const rrNum = num(rr);
 
   return (
@@ -121,9 +129,30 @@ export function StatusPnlCell({
 }) {
   const pnlNum = num(pnl);
   const st = String(status || "").toUpperCase();
+  const isError = ["REJECTED", "CANCELLED", "ERROR", "FAIL"].includes(st);
   const isPending = ["PENDING", "PLACED", "NEW"].includes(st);
-  const isFinished = ["CLOSED", "TP", "SL", "CANCELLED", "CANCEL"].includes(st);
+  const isFinished = ["CLOSED", "TP", "SL", "CANCEL"].includes(st);
   const isActive = ["OPEN", "FILLED", "PARTIAL", "START"].includes(st);
+
+  // Error states: show status text, hide metrics
+  if (isError) {
+    return (
+      <div className="cell-wrap" style={{ alignItems: "flex-end" }}>
+        <div className="cell-major" style={{ justifyContent: "flex-end" }}>
+          <span
+            className="badge"
+            style={{
+              background: "rgba(156,163,175,0.15)",
+              color: "#9ca3af",
+              fontSize: 11,
+            }}
+          >
+            {st}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   const shouldShowLiveMetrics = (isActive || isFinished) && !hidePnl;
   const shouldShowProjectedMetrics = isPending && !hidePnl;

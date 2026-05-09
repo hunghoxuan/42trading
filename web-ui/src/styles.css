@@ -627,6 +627,19 @@ button:disabled {
     border: 1px solid rgba(239, 68, 68, 0.3) !important;
 }
 
+/* Error states (REJECTED, CANCELLED, ERROR) — gray */
+.side-badge.status-error {
+    background: rgba(156, 163, 175, 0.1) !important;
+    color: #9ca3af !important;
+    border: 1px solid rgba(156, 163, 175, 0.3) !important;
+    box-shadow: none !important;
+}
+
+/* Pending state — yellow border */
+.side-badge.status-pending {
+    border: 1px solid rgba(234, 179, 8, 0.5) !important;
+}
+
 .order-type-label {
     text-transform: capitalize;
     font-weight: 600;
