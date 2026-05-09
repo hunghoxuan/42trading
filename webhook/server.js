@@ -144,10 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.09 13:36 - 0a9fc72",
-); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 13:41 - 0448011"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -11485,6 +11482,26 @@ async function mt5ListAccountsV2(userId = null) {
   const b = await mt5Backend();
   if (!b.listAccountsV2) return [];
   return b.listAccountsV2(userId);
+}
+
+async function mt5ListExecutionProfilesV2(userId) {
+  const b = await mt5Backend();
+  if (!userId) return [];
+  const res = await b.query(
+    `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 ORDER BY name ASC`,
+    [userId]
+  );
+  return res.rows || [];
+}
+
+async function mt5GetActiveExecutionProfileV2(userId) {
+  const b = await mt5Backend();
+  if (!userId) return null;
+  const res = await b.query(
+    `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 AND (data->>'is_active')::boolean IS TRUE LIMIT 1`,
+    [userId]
+  );
+  return res.rows?.[0] || null;
 }
 
 async function mt5RotateSourceSecretV2(sourceId) {
