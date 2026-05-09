@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 18:08 - cf796bb"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 18:34 - e71a752"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -9489,7 +9489,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 18:08 - cf796bb");
+    throw new Error("v2026.05.09 18:34 - e71a752");
   }
   return n;
 }
@@ -11613,7 +11613,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const route = ["ea", "v2026.05.09 18:34 - e71a752", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
   const accountId = String(payload.account_id || "").trim() || null;
   const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
     .map((v) => String(v || "").trim())
@@ -11678,30 +11678,13 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   }
 }
 
-async function mt5RotateSourceSecretV2(sourceId) {
-  const b = await mt5Backend();
-  if (!b.rotateSourceSecretV2) return null;
-  return b.rotateSourceSecretV2(sourceId);
-}
+async function mt5RotateSourceSecretV2(sourceId) { return { ok: false, error: "sources table removed" }; }
 
-async function mt5RevokeSourceSecretV2(sourceId) {
-  const b = await mt5Backend();
-  if (!b.revokeSourceSecretV2) return { ok: false, error: "not supported" };
-  return b.revokeSourceSecretV2(sourceId);
-}
+async function mt5RevokeSourceSecretV2(sourceId) { return { ok: false, error: "sources table removed" }; }
 
-async function mt5GetAccountSubscriptionsV2(accountId) {
-  const b = await mt5Backend();
-  if (!b.getAccountSubscriptionsV2) return [];
-  return b.getAccountSubscriptionsV2(accountId);
-}
+async function mt5GetAccountSubscriptionsV2(accountId) { return []; }
 
-async function mt5ReplaceAccountSubscriptionsV2(accountId, items = []) {
-  const b = await mt5Backend();
-  if (!b.replaceAccountSubscriptionsV2)
-    return { ok: false, error: "not supported" };
-  return b.replaceAccountSubscriptionsV2(accountId, items);
-}
+async function mt5ReplaceAccountSubscriptionsV2(accountId, items) { return { ok: true }; }
 
 async function mt5ListSignalEvents(signalId, limit = 200) {
   const b = await mt5Backend();
@@ -12443,7 +12426,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 18:08 - cf796bb",
+        error: "v2026.05.09 18:34 - e71a752",
       });
       return null;
     }
@@ -12597,7 +12580,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 18:08 - cf796bb" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 18:34 - e71a752" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -13902,7 +13885,7 @@ const appHandler = async (req, res) => {
           eventType: "UI_CREATE_TRADE",
           fallbackIdPrefix: "ui",
         },
-        testSettings,
+        null,
       );
 
       notifyPulse(effectiveUserId, "signals");
@@ -15312,7 +15295,7 @@ const appHandler = async (req, res) => {
     try {
       const type = String(url.searchParams.get("type") || "").trim();
       const name = String(url.searchParams.get("name") || "").trim();
-      const field = String(url.searchParams.get("field") || "v2026.05.09 18:08 - cf796bb").trim();
+      const field = String(url.searchParams.get("field") || "v2026.05.09 18:34 - e71a752").trim();
       if (!type || !name)
         return json(res, 400, { ok: false, error: "Missing type or name" });
       if (type !== "api_key")
@@ -15428,7 +15411,7 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
 
     try {
-      const parts = url.pathname.split("/"); // ["", "v2026.05.09 18:08 - cf796bb", "settings", type, name]
+      const parts = url.pathname.split("/"); // ["", "v2026.05.09 18:34 - e71a752", "settings", type, name]
       const type = decodeURIComponent(parts[3] || "");
       const name = decodeURIComponent(parts[4] || "");
 
@@ -17466,7 +17449,7 @@ const appHandler = async (req, res) => {
         "Content-Disposition": `${dispositionMode}; filename="${finalFileName}"`,
         "Cache-Control": "no-store",
         "Content-Length": body.length,
-        "X-Claude-Content-Source": local ? "v2026.05.09 18:08 - cf796bb" : "claude",
+        "X-Claude-Content-Source": local ? "v2026.05.09 18:34 - e71a752" : "claude",
       });
       res.end(body);
       return;
@@ -18148,7 +18131,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 18:34 - e71a752", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -18213,7 +18196,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2026.05.09 18:08 - cf796bb", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 18:34 - e71a752", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -19216,7 +19199,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:34 - e71a752" });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19281,7 +19264,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:34 - e71a752" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19322,7 +19305,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:34 - e71a752" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19355,7 +19338,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:34 - e71a752" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19378,7 +19361,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 18:08 - cf796bb" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 18:34 - e71a752" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
