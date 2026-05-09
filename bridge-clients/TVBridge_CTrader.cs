@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.08 22:56 - 4846960";
+        private const string BuildVersion = "v2026.05.09 18:53 - 220aade";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -250,8 +250,11 @@ namespace cAlgo.Robots
                     }
 
                     posList.Add(string.Format(CultureInfo.InvariantCulture, 
-                        "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"volume\":{4:F2},\"lots\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"margin\":{10:F2},\"tp_pnl\":{11:F2},\"sl_pnl\":{12:F2},\"label\":\"{13}\",\"status\":\"OPEN\"}}",
-                        sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
+                        "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"MARKET\",\"entry\":{5:F5},\"sl\":{6:F5},\"tp\":{7:F5},\"volume\":{8:F2},\"lots\":{9:F2},\"pnl\":{10:F2},\"pips\":{11:F2},\"commission\":{12:F2},\"swap\":{13:F2},\"margin\":{14:F2},\"tp_pnl\":{15:F2},\"sl_pnl\":{16:F2},\"label\":\"{17}\",\"status\":\"OPEN\"}}",
+                        sid, sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
+                        double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice,
+                        pos.StopLoss ?? 0,
+                        pos.TakeProfit ?? 0,
                         double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
                         double.IsNaN(lotsVal) ? 0 : lotsVal,
                         double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit, 
@@ -275,8 +278,8 @@ namespace cAlgo.Robots
 
                     var sid = (deal.Comment ?? "").Replace("\"", "'");
                     closedList.Add(string.Format(CultureInfo.InvariantCulture, 
-                        "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"symbol_code\":\"{3}\",\"side\":\"{4}\",\"volume\":{5:F2},\"pnl\":{6:F2},\"pips\":{7:F2},\"commission\":{8:F2},\"swap\":{9:F2},\"status\":\"CLOSED\",\"closed_at\":\"{10:O}\",\"label\":\"{11}\"}}",
-                        sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), 
+                        "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"symbol_code\":\"{4}\",\"side\":\"{5}\",\"volume\":{6:F2},\"pnl\":{7:F2},\"pips\":{8:F2},\"commission\":{9:F2},\"swap\":{10:F2},\"status\":\"CLOSED\",\"closed_at\":\"{11:O}\",\"label\":\"{12}\"}}",
+                        sid, sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), 
                         double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits, 
                         double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit, 
                         0.0,
@@ -305,13 +308,14 @@ namespace cAlgo.Robots
                     }
 
                     ordersList.Add(string.Format(CultureInfo.InvariantCulture, 
-                        "{{\"sid\":\"{0}\",\"ticket\":\"{1}\",\"symbol\":\"{2}\",\"side\":\"{3}\",\"type\":\"{4}\",\"volume\":{5:F2},\"lots\":{6:F2},\"target_price\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"label\":\"{10}\",\"status\":\"PENDING\",\"margin\":{11:F2},\"pnl_tp\":{12:F2},\"pnl_sl\":{13:F2}}}",
-                        sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
-                        double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
-                        double.IsNaN(lotsVal) ? 0 : lotsVal,
+                        "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"{5}\",\"target_price\":{6:F5},\"entry\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"volume\":{10:F2},\"lots\":{11:F2},\"label\":\"{12}\",\"status\":\"PENDING\",\"margin\":{13:F2},\"pnl_tp\":{14:F2},\"pnl_sl\":{15:F2}}}",
+                        sid, sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
+                        order.TargetPrice,
                         order.TargetPrice,
                         order.StopLoss ?? 0,
                         order.TakeProfit ?? 0,
+                        double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
+                        double.IsNaN(lotsVal) ? 0 : lotsVal,
                         order.Label,
                         0.0,
                         pnlTp,

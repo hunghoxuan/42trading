@@ -127,8 +127,10 @@ export default function SettingsPage({
     route: "ea",
     account_id: "",
     source_ids_csv: "signal,tradingview",
+    ctrader_mode: "demo",
     ctrader_account_id: "",
   });
+  const [watchlistText, setWatchlistText] = useState("");
   const [logConfig, setLogConfig] = useState([]);
   const [logBusy, setLogBusy] = useState(false);
   const LOG_GROUPS = ["OTHERS_", "SIGNAL_", "ACCOUNT_", "AI_", "SYSTEM_"];
@@ -234,6 +236,22 @@ export default function SettingsPage({
     );
   }
 
+  function loadExecutionProfileIntoForm(profile) {
+    if (!profile || typeof profile !== "object") return;
+    const sourceIds = Array.isArray(profile.source_ids) ? profile.source_ids : [];
+    setExecForm({
+      profile_id: String(profile.profile_id || "default"),
+      profile_name: String(
+        profile.profile_name || profile.profile_id || "default",
+      ),
+      route: String(profile.route || "ea"),
+      account_id: String(profile.account_id || ""),
+      source_ids_csv: sourceIds.length ? sourceIds.join(",") : "signal,tradingview",
+      ctrader_mode: String(profile.ctrader_mode || "demo"),
+      ctrader_account_id: String(profile.ctrader_account_id || ""),
+    });
+  }
+
   async function loadData() {
     try {
       const [prof, exec, sets] = await Promise.all([
@@ -270,21 +288,9 @@ export default function SettingsPage({
         setExecAccounts(accounts);
         setExecProfiles(items);
         if (active) {
-          const sourceIds = Array.isArray(active.source_ids)
-            ? active.source_ids
-            : [];
-          setExecForm({
-            profile_id: String(active.profile_id || "default"),
-            profile_name: String(active.profile_name || "default"),
-            route: String(active.route || "ea"),
-            account_id: String(
-              active.account_id || accounts?.[0]?.account_id || "",
-            ),
-            source_ids_csv: sourceIds.length
-              ? sourceIds.join(",")
-              : "signal,tradingview",
-            ctrader_mode: String(active.ctrader_mode || "demo"),
-            ctrader_account_id: String(active.ctrader_account_id || ""),
+          loadExecutionProfileIntoForm({
+            ...active,
+            account_id: active.account_id || accounts?.[0]?.account_id || "",
           });
         } else if (accounts.length > 0) {
           setExecForm((prev) => ({
@@ -332,8 +338,12 @@ export default function SettingsPage({
           const list = Array.isArray(res?.settings) ? res.settings : [];
           const firstVisible = list.find(
             (s) =>
-              !["notification_config", "system_config"].includes(
+              !["notification_config", "system_config", "execution_profile"].includes(
                 String(s?.type || ""),
+              ) &&
+              !(
+                String(s?.type || "").toLowerCase() === "trade" &&
+                String(s?.name || "").toUpperCase() === "WATCHLIST"
               ),
           );
           if (firstVisible) {
@@ -556,6 +566,48 @@ export default function SettingsPage({
     }
   }
 
+  async function saveExecutionProfile() {
+    const route = String(execForm.route || "")
+      .trim()
+      .toLowerCase();
+    const accountId = String(execForm.account_id || "").trim();
+    if (!accountId) {
+      setExecMsg("Select an account.");
+      return;
+    }
+    setExecLoading(true);
+    try {
+      const sourceIds = String(execForm.source_ids_csv || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const out = await api.v2SaveExecutionProfile({
+        profile_id:
+          String(execForm.profile_id || "default").trim() || "default",
+        profile_name:
+          String(execForm.profile_name || "default").trim() || "default",
+        route,
+        account_id: accountId,
+        source_ids: sourceIds,
+        ctrader_mode:
+          route === "ctrader" ? String(execForm.ctrader_mode || "demo") : "",
+        ctrader_account_id:
+          route === "ctrader"
+            ? String(execForm.ctrader_account_id || "").trim()
+            : "",
+        is_active: false,
+      });
+      setExecProfiles(Array.isArray(out?.items) ? out.items : []);
+      if (out?.item) loadExecutionProfileIntoForm(out.item);
+      setExecMsg("Profile saved.");
+    } catch (error) {
+      setExecMsg(error?.message || "Failed to save profile");
+    } finally {
+      setExecLoading(false);
+      window.setTimeout(() => setExecMsg(""), 4000);
+    }
+  }
+
   async function saveLoggingConfig(next) {
     setLogBusy(true);
     try {
@@ -610,6 +662,10 @@ export default function SettingsPage({
       ),
     [settings],
   );
+  const watchlistSetting = useMemo(
+    () => watchlistSettings[0] || null,
+    [watchlistSettings],
+  );
   const aiTemplateSettings = useMemo(
     () =>
       settings.filter(
@@ -641,6 +697,7 @@ export default function SettingsPage({
             "system_config",
             "notification_config",
             "note",
+            "execution_profile",
           ].includes(type)
         ) {
           return false;
@@ -649,6 +706,18 @@ export default function SettingsPage({
       }),
     [settings],
   );
+
+  useEffect(() => {
+    const arr = Array.isArray(watchlistSetting?.data?.symbols)
+      ? watchlistSetting.data.symbols
+      : [];
+    setWatchlistText(
+      arr
+        .map((x) => String(x || "").trim().toUpperCase())
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }, [watchlistSetting?.name, watchlistSetting?.data]);
 
   useEffect(() => {
     if (!selectedSetting) {
@@ -919,20 +988,6 @@ export default function SettingsPage({
               </div>
             </div>
 
-            {watchlistSettings.length > 0 && (
-              <div className="stack-layout" style={{ gap: 8 }}>
-                <div
-                  className="panel-label"
-                  style={{ margin: 0, opacity: 0.8 }}
-                >
-                  WATCHLIST
-                </div>
-                <div className="stack-layout" style={{ gap: 0 }}>
-                  {watchlistSettings.map((s) => renderSidebarItem(s))}
-                </div>
-              </div>
-            )}
-
             {aiTemplateSettings.length > 0 && (
               <div className="stack-layout" style={{ gap: 8 }}>
                 <div
@@ -1092,7 +1147,7 @@ export default function SettingsPage({
                 </div>
               </div>
 
-              {/* COLUMN 2: APP PREFERENCES & EXECUTION ENGINE */}
+              {/* COLUMN 2: APP PREFERENCES & WATCHLIST */}
               <div className="stack-layout" style={{ gap: 40 }}>
                 {/* SECTION: APP PREFERENCES */}
                 <div className="stack-layout" style={{ gap: 16 }}>
@@ -1198,12 +1253,70 @@ export default function SettingsPage({
                   </div>
                 </div>
 
+                {watchlistSetting && (
+                  <div className="stack-layout" style={{ gap: 16 }}>
+                    <div className="panel-label">WATCHLIST</div>
+                    <div className="stack-layout" style={{ gap: 10 }}>
+                      <label className="stack-layout" style={{ gap: 6 }}>
+                        <span className="minor-text">Symbols (one per line)</span>
+                        <textarea
+                          rows={8}
+                          value={watchlistText}
+                          onChange={(e) => setWatchlistText(e.target.value)}
+                          placeholder="BTCUSD&#10;GBPJPY&#10;XAUUSD"
+                        />
+                      </label>
+                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                        <select
+                          style={{
+                            padding: "4px 8px",
+                            fontSize: 11,
+                            borderRadius: 4,
+                            background: "var(--surface)",
+                            color: "var(--text)",
+                            border: "1px solid var(--border)",
+                          }}
+                          value={String(watchlistSetting.status || "ACTIVE").toUpperCase()}
+                          onChange={(e) =>
+                            setSettings((prev) =>
+                              prev.map((s) =>
+                                getSettingKey(s) === getSettingKey(watchlistSetting)
+                                  ? { ...s, status: e.target.value }
+                                  : s,
+                              ),
+                            )
+                          }
+                        >
+                          <option value="ACTIVE">ACTIVE</option>
+                          <option value="INACTIVE">INACTIVE</option>
+                        </select>
+                        <button
+                          className="primary-button"
+                          onClick={() =>
+                            saveSetting(
+                              getSettingKey(watchlistSetting),
+                              {
+                                ...(watchlistSetting.data || {}),
+                                symbols: parseSymbolText(watchlistText),
+                              },
+                              watchlistSetting.status,
+                            )
+                          }
+                          disabled={settingsLoading}
+                        >
+                          {settingsLoading ? "SAVING..." : "SAVE WATCHLIST"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
             </div>
           )}
 
           {activeTab === "EXECUTION_PROFILES" && canManageExecution && (
-            <div className="fadeIn stack-layout" style={{ gap: 24, maxWidth: 720 }}>
+            <div className="fadeIn stack-layout" style={{ gap: 24, maxWidth: 860 }}>
               <div>
                 <h3 style={{ margin: 0, textTransform: "uppercase" }}>
                   Execution Profiles
@@ -1213,6 +1326,38 @@ export default function SettingsPage({
                 </div>
               </div>
               <div className="stack-layout" style={{ gap: 16 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 16,
+                  }}
+                >
+                  <label className="stack-layout" style={{ gap: 6 }}>
+                    <span className="minor-text">Profile ID</span>
+                    <input
+                      value={execForm.profile_id}
+                      onChange={(e) =>
+                        setExecForm((p) => ({
+                          ...p,
+                          profile_id: e.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="stack-layout" style={{ gap: 6 }}>
+                    <span className="minor-text">Profile Name</span>
+                    <input
+                      value={execForm.profile_name}
+                      onChange={(e) =>
+                        setExecForm((p) => ({
+                          ...p,
+                          profile_name: e.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
                 <label className="stack-layout" style={{ gap: 6 }}>
                   <span className="minor-text">Account</span>
                   <select
@@ -1270,14 +1415,60 @@ export default function SettingsPage({
                     />
                   </label>
                 </div>
-                <button
-                  className="primary-button"
-                  onClick={applyExecutionProfile}
-                  disabled={execLoading}
-                  style={{ alignSelf: "flex-start" }}
-                >
-                  {execLoading ? "APPLYING..." : "APPLY EXECUTION"}
-                </button>
+                {execForm.route === "ctrader" && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 16,
+                    }}
+                  >
+                    <label className="stack-layout" style={{ gap: 6 }}>
+                      <span className="minor-text">cTrader Mode</span>
+                      <select
+                        value={execForm.ctrader_mode}
+                        onChange={(e) =>
+                          setExecForm((p) => ({
+                            ...p,
+                            ctrader_mode: e.target.value,
+                          }))
+                        }
+                      >
+                        <option value="demo">Demo</option>
+                        <option value="live">Live</option>
+                      </select>
+                    </label>
+                    <label className="stack-layout" style={{ gap: 6 }}>
+                      <span className="minor-text">cTrader Account ID</span>
+                      <input
+                        value={execForm.ctrader_account_id}
+                        onChange={(e) =>
+                          setExecForm((p) => ({
+                            ...p,
+                            ctrader_account_id: e.target.value,
+                          }))
+                        }
+                        placeholder="Optional cTrader account id"
+                      />
+                    </label>
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <button
+                    className="secondary-button"
+                    onClick={saveExecutionProfile}
+                    disabled={execLoading}
+                  >
+                    {execLoading ? "SAVING..." : "SAVE PROFILE"}
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={applyExecutionProfile}
+                    disabled={execLoading}
+                  >
+                    {execLoading ? "APPLYING..." : "APPLY EXECUTION"}
+                  </button>
+                </div>
                 {execMsg && (
                   <div className="minor-text" style={{ color: "var(--primary)" }}>
                     {execMsg}
@@ -1297,6 +1488,7 @@ export default function SettingsPage({
                               profile.account_id ||
                               "profile",
                           )}:${idx}`}
+                          onClick={() => loadExecutionProfileIntoForm(profile)}
                           style={{
                             display: "flex",
                             justifyContent: "space-between",
@@ -1304,6 +1496,7 @@ export default function SettingsPage({
                             padding: "10px 12px",
                             border: "1px solid var(--border)",
                             borderRadius: 10,
+                            cursor: "pointer",
                           }}
                         >
                           <div className="stack-layout" style={{ gap: 2 }}>
@@ -1314,6 +1507,14 @@ export default function SettingsPage({
                               {String(profile.route || "").toUpperCase()} ·{" "}
                               {profile.account_id || "No account"}
                             </span>
+                            {profile.route === "ctrader" && (
+                              <span className="minor-text" style={{ fontSize: 11 }}>
+                                {String(profile.ctrader_mode || "demo").toUpperCase()}
+                                {profile.ctrader_account_id
+                                  ? ` · ${profile.ctrader_account_id}`
+                                  : ""}
+                              </span>
+                            )}
                           </div>
                           <span
                             className={`status-badge ${profile.is_active ? "active" : "inactive"}`}
@@ -1330,7 +1531,14 @@ export default function SettingsPage({
             </div>
           )}
 
-          {selectedSetting && !SPECIAL_TABS.has(activeTab) && (
+          {selectedSetting &&
+            !SPECIAL_TABS.has(activeTab) &&
+            !(
+              String(selectedSetting.type || "").toLowerCase() === "trade" &&
+              String(selectedSetting.name || "").toUpperCase() === "WATCHLIST"
+            ) &&
+            String(selectedSetting.type || "").toLowerCase() !==
+              "execution_profile" && (
             <div className="fadeIn">
               <div
                 style={{
