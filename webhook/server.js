@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 13:41 - 0448011"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 13:45 - e4b851c"); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -12538,16 +12538,16 @@ const appHandler = async (req, res) => {
   }
 
   const proto = req?.socket?.encrypted ? "https" : "http";
-  const incomingUrl = new URL(
+  const url = new URL(
     req.url,
     `${proto}://${req.headers.host || "localhost"}`,
   );
 
   // NORMALIZE PATH: Support both /webhook/path and /path for routing
-  if (incomingUrl.pathname.startsWith("/webhook/")) {
-    incomingUrl.pathname = incomingUrl.pathname.substring(8);
-  } else if (incomingUrl.pathname === "/webhook") {
-    incomingUrl.pathname = "/";
+  if (url.pathname.startsWith("/webhook/")) {
+    url.pathname = url.pathname.substring(8);
+  } else if (url.pathname === "/webhook") {
+    url.pathname = "/";
   }
 
   // Optimization: Any incoming webhook/POST potentially changes state
