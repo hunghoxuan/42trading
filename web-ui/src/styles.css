@@ -446,7 +446,7 @@ button:disabled {
     min-height: 0;
 }
 .logs-list-pane {
-    flex: 0 0 50%;
+    flex: 0 0 40%;
     display: flex;
     flex-direction: column;
     background: var(--surface);
