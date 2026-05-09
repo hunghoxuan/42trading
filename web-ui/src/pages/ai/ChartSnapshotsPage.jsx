@@ -1820,6 +1820,9 @@ export default function ChartSnapshotsPage() {
   );
   const [promptEdited, setPromptEdited] = useState(false);
   const [guideDraft, setGuideDraft] = useState(GUIDE_TEXT);
+  const [schemaDraft, setSchemaDraft] = useState(() =>
+    JSON.stringify(AI_RESPONSE_SCHEMA, null, 2),
+  );
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
@@ -3436,46 +3439,34 @@ export default function ChartSnapshotsPage() {
   const settingsTabContentNode = (
     <>
       {settingsTab === "settings" ? settingsFormNode : null}
-      {settingsTab === "prompt" ? (
+      {settingsTab === "strategies" ? (
         <>
           <div className="minor-text">
-            Prompt is the main instruction sent to AI on Analyze.
+            Active strategies with checklists and entry models. Included in
+            Prompt under ## ACTIVE STRATEGIES.
           </div>
           <textarea
             className="snapshot-mono-v2"
             rows={30}
-            value={promptDraft}
-            onChange={(e) => {
-              setPromptDraft(e.target.value);
-              setPromptEdited(true);
-            }}
-          />
-        </>
-      ) : null}
-      {settingsTab === "json" ? (
-        <>
-          <div className="minor-text">
-            JSON Config is included in Analyze request as structured context
-            (Prompt + JSON Config + Guide).
-          </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={30}
-            value={jsonConfigText}
-            readOnly
-            disabled
-          />
-        </>
-      ) : null}
-      {settingsTab === "schema" ? (
-        <>
-          <div className="minor-text">
-            Expected AI Response Schema (JSON format required for parsing).
-          </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={30}
-            value={JSON.stringify(AI_RESPONSE_SCHEMA, null, 2)}
+            value={(() => {
+              const ctx = [];
+              const active = cfg.strategies || [];
+              for (const s of active) {
+                const model = STRATEGY_ENTRY_MODELS[s];
+                if (!model) continue;
+                ctx.push(`### ${s}`);
+                ctx.push(model.description || "");
+                ctx.push("");
+                ctx.push("Checklist:");
+                for (const c of model.checklist || []) {
+                  ctx.push(
+                    `  - [${c.weight || "-"}] ${c.description} (${c.category || ""})`,
+                  );
+                }
+                ctx.push("");
+              }
+              return ctx.join("\n");
+            })()}
             readOnly
           />
         </>
@@ -3483,14 +3474,57 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "guide" ? (
         <>
           <div className="minor-text">
-            Guide is editable and included in Analyze request as additional
-            instructions/checklist context.
+            Analysis instructions — editable. Included in Prompt under ##
+            ANALYSIS INSTRUCTIONS.
           </div>
           <textarea
             className="snapshot-mono-v2"
             rows={30}
             value={guideDraft}
             onChange={(e) => setGuideDraft(e.target.value)}
+          />
+        </>
+      ) : null}
+      {settingsTab === "schema" ? (
+        <>
+          <div className="minor-text">
+            Expected AI Output Schema — editable. Included in Prompt under ##
+            EXPECTED OUTPUT SCHEMA.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={30}
+            value={schemaDraft}
+            onChange={(e) => setSchemaDraft(e.target.value)}
+          />
+        </>
+      ) : null}
+      {settingsTab === "prompt" ? (
+        <>
+          <div className="minor-text">
+            Final composed Prompt (readonly) = SESSION CONFIG + STRATEGIES +
+            ANALYSIS INSTRUCTIONS + OUTPUT SCHEMA.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={30}
+            value={promptDraft}
+            readOnly
+          />
+        </>
+      ) : null}
+      {settingsTab === "json" ? (
+        <>
+          <div className="minor-text">
+            JSON Config = runtime settings as structured JSON. Appended to
+            Prompt as CONFIG:{"{...}"} so AI has access to symbol, timeframes,
+            RR, risk %, session overrides, etc.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={30}
+            value={jsonConfigText}
+            readOnly
           />
         </>
       ) : null}
@@ -4122,7 +4156,12 @@ export default function ChartSnapshotsPage() {
                 {selectedSymbol ? (
                   <div
                     className="snapshot-control-card-v3"
-                    style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}
+                    style={{
+                      display: "flex",
+                      gap: 10,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
                   >
                     <button
                       className="secondary-button"
@@ -4134,12 +4173,18 @@ export default function ChartSnapshotsPage() {
                     </button>
                     <select
                       className="secondary-button"
-                      style={{ height: "34px", padding: "0 10px", fontSize: "12px" }}
+                      style={{
+                        height: "34px",
+                        padding: "0 10px",
+                        fontSize: "12px",
+                      }}
                       value={templateId}
                       onChange={(e) => handleSelectTemplate(e.target.value)}
                     >
                       <option value="">New Template</option>
-                      <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                      <option value={DEFAULT_TEMPLATE_ID}>
+                        Default Template
+                      </option>
                       {templates.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.name}
@@ -4148,7 +4193,11 @@ export default function ChartSnapshotsPage() {
                     </select>
                     <select
                       className="secondary-button"
-                      style={{ height: "34px", padding: "0 10px", fontSize: "12px" }}
+                      style={{
+                        height: "34px",
+                        padding: "0 10px",
+                        fontSize: "12px",
+                      }}
                       value={cfg.profile || "day"}
                       onChange={(e) => setProfilePreset(e.target.value)}
                     >
@@ -4248,7 +4297,9 @@ export default function ChartSnapshotsPage() {
                               const s = normalizeWatchSymbol(searchTerm.trim());
                               setCfgField("symbol", s);
                               const next = [...new Set([...watchlist, s])];
-                              saveWatchlistToDb(next).then(() => setWatchlist(next));
+                              saveWatchlistToDb(next).then(() =>
+                                setWatchlist(next),
+                              );
                             }
                           }}
                           title="Add current symbol"
@@ -4257,7 +4308,10 @@ export default function ChartSnapshotsPage() {
                         </button>
                         <datalist id="tv-symbol-options">
                           {[
-                            ...new Set([...symbolSelectOptions, ...apiSymbolOptions]),
+                            ...new Set([
+                              ...symbolSelectOptions,
+                              ...apiSymbolOptions,
+                            ]),
                           ].map((opt) => (
                             <option key={opt} value={opt} />
                           ))}
@@ -4340,103 +4394,128 @@ export default function ChartSnapshotsPage() {
                   boxShadow: "none",
                 }}
               >
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <textarea
-                  value={tradesText}
-                  onChange={(e) => setTradesText(e.target.value)}
-                  placeholder="Paste Trades free text here..."
-                  style={{ minHeight: 88, resize: "vertical", padding: 8 }}
-                />
                 <div
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setImageDragOver(true);
-                  }}
-                  onDragLeave={() => setImageDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setImageDragOver(false);
-                    const f = e.dataTransfer?.files || null;
-                    addTradeImageFiles(f);
-                  }}
-                  onClick={() => tradeImageInputRef.current?.click()}
                   style={{
-                    border: imageDragOver
-                      ? "1px solid var(--accent)"
-                      : "1px dashed var(--border)",
-                    borderRadius: 6,
-                    padding: "8px 10px",
-                    cursor: "pointer",
-                    background: imageDragOver
-                      ? "rgba(0, 170, 255, 0.08)"
-                      : "transparent",
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
                   }}
                 >
-                  <input
-                    ref={tradeImageInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    style={{ display: "none" }}
-                    onChange={(e) => addTradeImageFiles(e.target.files)}
+                  <textarea
+                    value={tradesText}
+                    onChange={(e) => setTradesText(e.target.value)}
+                    placeholder="Paste Trades free text here..."
+                    style={{ minHeight: 88, resize: "vertical", padding: 8 }}
                   />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <span className="minor-text">
-                      Drag & drop images here, or click to browse
-                    </span>
-                    {attachedTradeImages.length > 0 ? (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {attachedTradeImages.map((img, i) => (
-                          <span
-                            key={i}
-                            className="minor-text"
-                            style={{
-                              background: "var(--surface)",
-                              padding: "2px 8px",
-                              borderRadius: 4,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 4,
-                              fontSize: 11,
-                            }}
-                          >
-                            {img.name}
-                            <button
-                              className="secondary-button"
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setAttachedTradeImages((prev) =>
-                                  prev.filter((_, j) => j !== i),
-                                );
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setImageDragOver(true);
+                    }}
+                    onDragLeave={() => setImageDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setImageDragOver(false);
+                      const f = e.dataTransfer?.files || null;
+                      addTradeImageFiles(f);
+                    }}
+                    onClick={() => tradeImageInputRef.current?.click()}
+                    style={{
+                      border: imageDragOver
+                        ? "1px solid var(--accent)"
+                        : "1px dashed var(--border)",
+                      borderRadius: 6,
+                      padding: "8px 10px",
+                      cursor: "pointer",
+                      background: imageDragOver
+                        ? "rgba(0, 170, 255, 0.08)"
+                        : "transparent",
+                    }}
+                  >
+                    <input
+                      ref={tradeImageInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: "none" }}
+                      onChange={(e) => addTradeImageFiles(e.target.files)}
+                    />
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                      }}
+                    >
+                      <span className="minor-text">
+                        Drag & drop images here, or click to browse
+                      </span>
+                      {attachedTradeImages.length > 0 ? (
+                        <div
+                          style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                        >
+                          {attachedTradeImages.map((img, i) => (
+                            <span
+                              key={i}
+                              className="minor-text"
+                              style={{
+                                background: "var(--surface)",
+                                padding: "2px 8px",
+                                borderRadius: 4,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 11,
                               }}
-                              style={{ fontSize: 10, padding: "0 4px", lineHeight: "16px" }}
                             >
-                              x
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="minor-text">No images attached</span>
-                    )}
-                    {attachedTradeImages.length > 0 && (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAttachedTradeImages([]);
-                        }}
-                        style={{ fontSize: 10, width: "fit-content" }}
-                      >
-                        Clear all
-                      </button>
-                    )}
+                              {img.name}
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAttachedTradeImages((prev) =>
+                                    prev.filter((_, j) => j !== i),
+                                  );
+                                }}
+                                style={{
+                                  fontSize: 10,
+                                  padding: "0 4px",
+                                  lineHeight: "16px",
+                                }}
+                              >
+                                x
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="minor-text">No images attached</span>
+                      )}
+                      {attachedTradeImages.length > 0 && (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAttachedTradeImages([]);
+                          }}
+                          style={{ fontSize: 10, width: "fit-content" }}
+                        >
+                          Clear all
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "center" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr 1fr auto",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
                   <select
                     value={analysisSource}
                     onChange={(e) => {
@@ -4450,7 +4529,12 @@ export default function ChartSnapshotsPage() {
                       }
                     }}
                     className="secondary-button"
-                    style={{ padding: "0 8px", height: 34, fontSize: "12px", width: "100%" }}
+                    style={{
+                      padding: "0 8px",
+                      height: 34,
+                      fontSize: "12px",
+                      width: "100%",
+                    }}
                   >
                     {Object.entries(aiModelConfig.providers).map(([k, v]) => (
                       <option key={k} value={k}>
@@ -4465,7 +4549,12 @@ export default function ChartSnapshotsPage() {
                       localStorage.setItem("ai_model_name", e.target.value);
                     }}
                     className="secondary-button"
-                    style={{ padding: "0 8px", height: 34, fontSize: "11px", width: "100%" }}
+                    style={{
+                      padding: "0 8px",
+                      height: 34,
+                      fontSize: "11px",
+                      width: "100%",
+                    }}
                   >
                     {(
                       aiModelConfig.providers[analysisSource]?.models ||
@@ -4481,7 +4570,12 @@ export default function ChartSnapshotsPage() {
                     className="secondary-button"
                     value={autoSaveMode}
                     onChange={(e) => setAutoSaveMode(e.target.value)}
-                    style={{ height: 34, fontSize: 12, padding: "0 10px", width: "100%" }}
+                    style={{
+                      height: 34,
+                      fontSize: 12,
+                      padding: "0 10px",
+                      width: "100%",
+                    }}
                   >
                     <option value="">Auto Save: None</option>
                     <option value="signals">Auto Save: Signals</option>
@@ -4492,7 +4586,11 @@ export default function ChartSnapshotsPage() {
                     type="button"
                     disabled={analyzing}
                     onClick={() => analyzeSelected({ allowNoSymbol: true })}
-                    style={{ height: 34, padding: "0 16px", whiteSpace: "nowrap" }}
+                    style={{
+                      height: 34,
+                      padding: "0 16px",
+                      whiteSpace: "nowrap",
+                    }}
                   >
                     {analyzing ? "Analyzing..." : "Analyze"}
                   </button>
@@ -4516,76 +4614,76 @@ export default function ChartSnapshotsPage() {
               >
                 {symbolFilterTab === "SMT"
                   ? DEFAULT_SMT_GROUPS.map((group) => (
-                    <div
-                      key={group.name}
-                      style={{
-                        marginBottom: 24,
-                        padding: 12,
-                        background: "rgba(255,255,255,0.02)",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                      }}
-                    >
                       <div
+                        key={group.name}
                         style={{
-                          fontSize: 12,
-                          fontWeight: 800,
-                          marginBottom: 12,
-                          color: "var(--muted)",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.05em",
+                          marginBottom: 24,
+                          padding: 12,
+                          background: "rgba(255,255,255,0.02)",
+                          borderRadius: 8,
+                          border: "1px solid var(--border)",
                         }}
                       >
-                        SMT Group: {group.name}
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 800,
+                            marginBottom: 12,
+                            color: "var(--muted)",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          }}
+                        >
+                          SMT Group: {group.name}
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns:
+                              browserTfs.length === 1
+                                ? "repeat(2, 1fr)"
+                                : "repeat(2, 1fr)",
+                            gap: 12,
+                          }}
+                        >
+                          {group.symbols.map((sym) => (
+                            <Suspense
+                              key={sym}
+                              fallback={
+                                <div className="loading-card">
+                                  Loading Chart...
+                                </div>
+                              }
+                            >
+                              <SymbolChart
+                                symbol={sym}
+                                timeframes={browserTfs}
+                                defaultMode="live"
+                                initialGridCols={masterGridCols}
+                                onAnalyze={(s) => setCfgField("symbol", s)}
+                                onRemove={null}
+                              />
+                            </Suspense>
+                          ))}
+                        </div>
                       </div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns:
-                            browserTfs.length === 1
-                              ? "repeat(2, 1fr)"
-                              : "repeat(2, 1fr)",
-                          gap: 12,
-                        }}
-                      >
-                        {group.symbols.map((sym) => (
-                          <Suspense
-                            key={sym}
-                            fallback={
-                              <div className="loading-card">
-                                Loading Chart...
-                              </div>
-                            }
-                          >
-                            <SymbolChart
-                              symbol={sym}
-                              timeframes={browserTfs}
-                              defaultMode="live"
-                              initialGridCols={masterGridCols}
-                              onAnalyze={(s) => setCfgField("symbol", s)}
-                              onRemove={null}
-                            />
-                          </Suspense>
-                        ))}
-                      </div>
-                    </div>
                     ))
                   : symbolsByTab.slice(0, visibleCount).map((sym) => (
-                    <Suspense
-                      key={sym}
-                      fallback={
-                        <div className="loading-card">Loading Chart...</div>
-                      }
-                    >
-                      <SymbolChart
-                        symbol={sym}
-                        timeframes={browserTfs}
-                        defaultMode="live"
-                        initialGridCols={masterGridCols}
-                        onAnalyze={(s) => setCfgField("symbol", s)}
-                        onRemove={(s) => removeFromWatchlist(s)}
-                      />
-                    </Suspense>
+                      <Suspense
+                        key={sym}
+                        fallback={
+                          <div className="loading-card">Loading Chart...</div>
+                        }
+                      >
+                        <SymbolChart
+                          symbol={sym}
+                          timeframes={browserTfs}
+                          defaultMode="live"
+                          initialGridCols={masterGridCols}
+                          onAnalyze={(s) => setCfgField("symbol", s)}
+                          onRemove={(s) => removeFromWatchlist(s)}
+                        />
+                      </Suspense>
                     ))}
               </div>
             ) : null}{" "}
@@ -4783,7 +4881,31 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("settings")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  Settings
+                  SESSION CONFIG
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-button ${settingsTab === "strategies" ? "active" : ""}`}
+                  onClick={() => setSettingsTab("strategies")}
+                  style={{ fontSize: 11, padding: "4px 10px" }}
+                >
+                  STRATEGIES
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-button ${settingsTab === "guide" ? "active" : ""}`}
+                  onClick={() => setSettingsTab("guide")}
+                  style={{ fontSize: 11, padding: "4px 10px" }}
+                >
+                  ANALYSIS INSTRUCTIONS
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-button ${settingsTab === "schema" ? "active" : ""}`}
+                  onClick={() => setSettingsTab("schema")}
+                  style={{ fontSize: 11, padding: "4px 10px" }}
+                >
+                  OUTPUT SCHEMA
                 </button>
                 <button
                   type="button"
@@ -4800,22 +4922,6 @@ export default function ChartSnapshotsPage() {
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
                   JSON
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button ${settingsTab === "schema" ? "active" : ""}`}
-                  onClick={() => setSettingsTab("schema")}
-                  style={{ fontSize: 11, padding: "4px 10px" }}
-                >
-                  Schema
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button ${settingsTab === "guide" ? "active" : ""}`}
-                  onClick={() => setSettingsTab("guide")}
-                  style={{ fontSize: 11, padding: "4px 10px" }}
-                >
-                  Guide
                 </button>
               </div>
               <div
