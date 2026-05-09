@@ -1406,6 +1406,11 @@ button:disabled {
     font-size: 12px;
     line-height: 1.5;
 }
+.snapshot-mono-v2[readonly] {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--muted);
+    cursor: default;
+}
 .snapshot-actions-under-v2 {
     display: flex;
     justify-content: flex-end;

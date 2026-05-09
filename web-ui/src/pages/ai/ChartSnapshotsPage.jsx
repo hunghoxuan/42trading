@@ -1939,7 +1939,26 @@ export default function ChartSnapshotsPage() {
     ];
     return [...new Set(all.map(configTfToSnapshotTf).filter(Boolean))];
   }, [tfConfig.htf_tfs, tfConfig.exec_tfs, tfConfig.conf_tfs]);
-  const jsonConfigText = useMemo(() => buildJsonConfig(cfg), [cfg]);
+  const jsonConfigText = useMemo(() => {
+    const base = JSON.parse(buildJsonConfig(cfg) || "{}");
+    // Append strategies detail
+    const strategies = {};
+    const active = cfg.strategies || [];
+    for (const s of active) {
+      if (STRATEGY_ENTRY_MODELS[s]) {
+        strategies[s] = STRATEGY_ENTRY_MODELS[s];
+      }
+    }
+    base._strategies = active;
+    base._strategies_detail = Object.keys(strategies).length
+      ? strategies
+      : undefined;
+    base._guide = guideDraft !== GUIDE_TEXT ? guideDraft : undefined;
+    base._schema = schemaDraft;
+    delete base._guide_backup;
+    delete base._schema_backup;
+    return JSON.stringify(base, null, 2);
+  }, [cfg, guideDraft, schemaDraft]);
   const widgetTfs = useMemo(() => {
     const base = [
       ...new Set(
@@ -3005,7 +3024,11 @@ export default function ChartSnapshotsPage() {
         ? { template_id: templateId }
         : {}),
       name,
-      config: normalizeTemplateConfig(cfg),
+      config: {
+        ...normalizeTemplateConfig(cfg),
+        _guide: guideDraft !== GUIDE_TEXT ? guideDraft : undefined,
+        _schema: schemaDraft,
+      },
       saved: new Date().toISOString(),
     };
 
@@ -3098,7 +3121,12 @@ export default function ChartSnapshotsPage() {
     }
     const found = templates.find((x) => x.id === id);
     if (!found?.config) return;
-    setCfg(normalizeTemplateConfig(found.config));
+    const config = normalizeTemplateConfig(found.config);
+    setCfg(config);
+    // Restore saved guide/schema if present
+    if (found.config._guide) setGuideDraft(found.config._guide);
+    if (found.config._schema) setSchemaDraft(found.config._schema);
+    else setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
   };
