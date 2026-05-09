@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 11:57 - 78c1790"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.09 12:17 - c1f13387",
+); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -15592,21 +15595,19 @@ const appHandler = async (req, res) => {
   // AI HUB API
   // =========================
   // =========================
-  // AI HUB API
-  // =========================
+  // AI HUB API — Templates stored in user_settings (type='ai_template')
   if (req.method === "GET" && url.pathname === "/v2/ai/templates") {
     if (!requireAdminKey(req, res, url)) return;
     try {
       const db = await mt5InitBackend();
       const { rows } = await db.query(
-        "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY created_at DESC",
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY created_at DESC",
         [CFG.mt5DefaultUserId],
       );
-      // Flatten data for frontend compatibility
       const templates = rows.map((r) => ({
-        template_id: r.template_id,
+        template_id: r.name,
         name: r.name,
-        ...r.data,
+        ...(r.data && typeof r.data === "object" ? r.data : {}),
       }));
       return json(res, 200, { ok: true, templates });
     } catch (e) {
@@ -15619,43 +15620,42 @@ const appHandler = async (req, res) => {
     try {
       const payload = await readJson(req);
       const db = await mt5InitBackend();
-      const { template_id, name, ...data } = payload;
-      let row;
-      if (template_id) {
-        const { rows } = await db.query(
-          "UPDATE user_templates SET data = $1, name = $2, updated_at = NOW() WHERE id = $3 RETURNING id, name, data",
-          [data, name || data.name || "Unnamed Template", template_id],
-        );
-        row = rows[0];
-      } else {
-        const { rows } = await db.query(
-          "INSERT INTO user_templates (user_id, name, data) VALUES ($1, $2, $3) RETURNING id, name, data",
-          [CFG.mt5DefaultUserId, name || data.name || "New Template", data],
-        );
-        row = rows[0];
-      }
-
+      const { template_id, name, ...rest } = payload;
+      const config = rest.config || rest;
+      const templateName = String(name || config?.name || "Unnamed").trim();
+      const data = JSON.stringify({
+        config,
+        _guide: config._guide,
+        _schema: config._schema,
+        saved: rest.saved || new Date().toISOString(),
+      });
+      await db.query(
+        `INSERT INTO user_settings (user_id, type, name, data)
+         VALUES ($1, 'ai_template', $2, $3::jsonb)
+         ON CONFLICT (user_id, type, name)
+         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+        [CFG.mt5DefaultUserId, templateName, data],
+      );
       await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
       return json(res, 201, {
         ok: true,
-        template: { template_id: row.id, name: row.name, ...row.data },
+        template: { template_id: templateName, name: templateName, config },
       });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/ai/config") {
+  if (req.method === "DELETE" && url.pathname.startsWith("/v2/ai/templates/")) {
     if (!requireAdminKey(req, res, url)) return;
     try {
+      const templateName = decodeURIComponent(url.pathname.split("/").pop());
       const db = await mt5InitBackend();
-      const { rows } = await db.query(
-        "SELECT data as settings FROM user_settings WHERE type = 'api_key' AND user_id = $1",
-        [CFG.mt5DefaultUserId],
+      await db.query(
+        "DELETE FROM user_settings WHERE user_id = $1 AND type = 'ai_template' AND name = $2",
+        [CFG.mt5DefaultUserId, templateName],
       );
-      const rawSettings = rows[0]?.settings || {};
-      const settings = decryptObject(rawSettings); // Decrypt for frontend
-      return json(res, 200, { ok: true, config: { settings } });
+      return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
     }

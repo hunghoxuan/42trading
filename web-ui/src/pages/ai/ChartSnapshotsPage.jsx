@@ -3121,11 +3121,14 @@ export default function ChartSnapshotsPage() {
     }
     const found = templates.find((x) => x.id === id);
     if (!found?.config) return;
-    const config = normalizeTemplateConfig(found.config);
+    // Extract _guide/_schema from raw config before normalization strips them
+    const rawConfig = found.config || {};
+    const savedGuide = rawConfig._guide || null;
+    const savedSchema = rawConfig._schema || null;
+    const config = normalizeTemplateConfig(rawConfig);
     setCfg(config);
-    // Restore saved guide/schema if present
-    if (found.config._guide) setGuideDraft(found.config._guide);
-    if (found.config._schema) setSchemaDraft(found.config._schema);
+    if (savedGuide) setGuideDraft(savedGuide);
+    if (savedSchema) setSchemaDraft(savedSchema);
     else setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
@@ -3544,9 +3547,9 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            Template JSON = full config stored to DB settings as structured JSON. Appended to
-            Prompt as CONFIG:{"{...}"} so AI has access to symbol, timeframes,
-            RR, risk %, session overrides, etc.
+            Template JSON = full config stored to DB settings as structured
+            JSON. Appended to Prompt as CONFIG:{"{...}"} so AI has access to
+            symbol, timeframes, RR, risk %, session overrides, etc.
           </div>
           <textarea
             className="snapshot-mono-v2"
