@@ -2629,6 +2629,19 @@ export default function ChartSnapshotsPage() {
         }
       }
       if (parsed && typeof parsed === "object") {
+        // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
+        const inputSymbol =
+          String(tvSymbol || cfg.symbol || "")
+            .split(":")
+            .pop() || "";
+        if (
+          parsed.symbol &&
+          inputSymbol &&
+          !parsed.symbol.includes(inputSymbol)
+        ) {
+          // Claude returned a different symbol — trust our input
+          parsed.symbol = inputSymbol;
+        }
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
         if (!hasRequiredPlanLevels(parsed)) {

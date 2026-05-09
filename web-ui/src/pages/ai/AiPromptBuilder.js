@@ -1010,6 +1010,7 @@ GENERAL RULES
 - Every TP2 and TP3 reference field must contain a real ID from htf_context.reference_zones[].
 - Use empty string "" for narrative fields when evidence is weak. Never fabricate narrative.
 - Return STRICT JSON only. No markdown. No prose. No commentary outside the JSON.
+- CRITICAL: symbol field must match the configured symbol exactly as specified in SESSION CONFIG. Do not extract symbol from chart titles or exchange prefixes. Use the symbol provided in the prompt.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
