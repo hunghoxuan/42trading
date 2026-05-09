@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 12:37 - c6177e1"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.09 12:41 - ebb4e20",
+); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -6049,7 +6052,6 @@ async function _mt5InitBackendInternal() {
     )
     .catch(() => {});
 
-
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).catch(() => {});
   await pool
     .query(
@@ -6198,14 +6200,6 @@ async function _mt5InitBackendInternal() {
     .query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sid TEXT NULL`)
     .catch(() => {});
 
-  await pool
-    .query(
-    )
-    .catch(() => {});
-  await pool
-    .query(
-    )
-    .catch(() => {});
 
   await pool
     .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry_model TEXT NULL`)
@@ -6240,26 +6234,6 @@ async function _mt5InitBackendInternal() {
     .catch(() => {});
   await pool
     .query(`ALTER TABLE accounts DROP COLUMN IF EXISTS broker_id`)
-    .catch(() => {});
-  await pool
-    .query(
-    )
-    .catch(() => {});
-  await pool
-    .query(
-    )
-    .catch(() => {});
-  await pool
-    .query(
-    )
-    .catch(() => {});
-  await pool
-    .query(
-    )
-    .catch(() => {});
-  await pool
-    .query(
-    )
     .catch(() => {});
 
   // Compatibility migration: absorb legacy AI templates from both the old
@@ -8919,48 +8893,47 @@ async function _mt5InitBackendInternal() {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        // Deactivate other profiles for this user
         if (isActive) {
           await client.query(
-            `UPDATE execution_profiles SET is_active = FALSE, updated_at = NOW() WHERE user_id = $1`,
+            `UPDATE user_settings SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{is_active}', 'false'::jsonb), updated_at = NOW()
+             WHERE user_id = $1 AND type = 'execution_profile'`,
             [userId],
           );
         }
+        const data = JSON.stringify({
+          profile_name: profileName,
+          route,
+          account_id: accountId,
+          source_ids: sourceIds,
+          ctrader_mode: ctraderMode,
+          ctrader_account_id: ctraderAccountId,
+          is_active: isActive,
+          metadata,
+        });
         const res = await client.query(
-          `
-          INSERT INTO execution_profiles (
-            profile_id, user_id, profile_name, route, account_id, source_ids,
-            ctrader_mode, ctrader_account_id, is_active, metadata, created_at, updated_at
-          )
-          VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,NOW(),NOW())
-          ON CONFLICT (profile_id) DO UPDATE SET
-            user_id = EXCLUDED.user_id,
-            profile_name = EXCLUDED.profile_name,
-            route = EXCLUDED.route,
-            account_id = EXCLUDED.account_id,
-            source_ids = EXCLUDED.source_ids,
-            ctrader_mode = EXCLUDED.ctrader_mode,
-            ctrader_account_id = EXCLUDED.ctrader_account_id,
-            is_active = EXCLUDED.is_active,
-            metadata = EXCLUDED.metadata,
-            updated_at = NOW()
-          RETURNING profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
-                    is_active, metadata, created_at, updated_at
-        `,
-          [
-            profileId,
-            userId,
-            profileName,
-            route,
-            accountId,
-            JSON.stringify(sourceIds),
-            ctraderMode,
-            ctraderAccountId,
-            isActive,
-            JSON.stringify(metadata),
-          ],
+          `INSERT INTO user_settings (user_id, type, name, data, created_at, updated_at)
+           VALUES ($1, 'execution_profile', $2, $3::jsonb, NOW(), NOW())
+           ON CONFLICT (user_id, type, name)
+           DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+          [userId, profileId, data],
         );
         await client.query("COMMIT");
-        return { ok: true, item: res.rows?.[0] || null };
+        return {
+          ok: true,
+          item: {
+            profile_id: profileId,
+            user_id: userId,
+            profile_name: profileName,
+            route,
+            account_id: accountId,
+            source_ids: sourceIds,
+            ctrader_mode: ctraderMode,
+            ctrader_account_id: ctraderAccountId,
+            is_active: isActive,
+            metadata,
+          },
+        };
       } catch (error) {
         await client.query("ROLLBACK");
         return {
