@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 13:10 - 7a0b0ad"); // broker sync log writer now matches logs schema; no status/error column inserts
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.09 13:16 - e0ecd2d",
+); // broker sync log writer now matches logs schema; no status/error column inserts
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -1349,7 +1352,9 @@ async function repoListUserSettings(userId) {
     "SELECT type, name, data, value, status, created_at FROM user_settings WHERE user_id = $1 ORDER BY type ASC",
     [userId],
   );
-  console.log(`[Settings] repoListUserSettings for user: ${userId}, found ${rows.length} rows`);
+  console.log(
+    `[Settings] repoListUserSettings for user: ${userId}, found ${rows.length} rows`,
+  );
   return rows;
 }
 
@@ -5242,24 +5247,7 @@ function normalizeSignal(payload) {
   };
 }
 
-function enforceRiskAndPolicy(signal) {
-  if (
-    CFG.allowSymbols.length > 0 &&
-    !CFG.allowSymbols.includes(signal.symbol)
-  ) {
-    throw new Error(`Symbol ${signal.symbol} is not in ALLOW_SYMBOLS`);
-  }
 
-  if (Number.isFinite(CFG.maxRiskPct) && signal.sl !== null) {
-    const risk = Math.abs(signal.price - signal.sl);
-    const riskPct = signal.price > 0 ? (risk / signal.price) * 100 : 0;
-    if (riskPct > CFG.maxRiskPct) {
-      throw new Error(
-        `Risk ${riskPct.toFixed(2)}% exceeds MAX_RISK_PCT ${CFG.maxRiskPct}%`,
-      );
-    }
-  }
-}
 
 function formatSignal(signal) {
   return [
@@ -5363,150 +5351,9 @@ function resolveBinanceSizing(signal) {
   );
 }
 
-async function executeBinance(signal) {
-  if (!CFG.binanceEnabled) {
-    const reason = CFG.binanceMode
-      ? "BINANCE_MODE invalid (use paper|live, or empty to disable)"
-      : "BINANCE_MODE empty (disabled)";
-    return { broker: "binance", status: "skipped", reason };
-  }
-  if (!CFG.binanceApiKey || !CFG.binanceApiSecret) {
-    return {
-      broker: "binance",
-      status: "skipped",
-      reason: "Missing BINANCE_API_KEY/SECRET",
-    };
-  }
-  if (!["spot", "um_futures"].includes(CFG.binanceProduct)) {
-    throw new Error("BINANCE_PRODUCT must be spot|um_futures");
-  }
 
-  const clientOrderId = `tv_${signal.strategy}_${signal.symbol}_${Date.now()}`
-    .replace(/[^a-zA-Z0-9_]/g, "")
-    .slice(0, 36);
-  const sizing = resolveBinanceSizing(signal);
 
-  if (CFG.binanceProduct === "spot") {
-    const order = await binanceSignedRequest("POST", "/api/v3/order", {
-      symbol: signal.symbol,
-      side: signal.side,
-      type: "MARKET",
-      newClientOrderId: clientOrderId,
-      ...sizing,
-    });
 
-    return {
-      broker: "binance",
-      status: "submitted",
-      product: "spot",
-      orderId: order.orderId,
-      clientOrderId,
-    };
-  }
-
-  const entry = await binanceSignedRequest("POST", "/fapi/v1/order", {
-    symbol: signal.symbol,
-    side: signal.side,
-    type: "MARKET",
-    newClientOrderId: clientOrderId,
-    quantity: sizing.quantity,
-  });
-
-  const protective = [];
-  const closeSide = signal.side === "BUY" ? "SELL" : "BUY";
-
-  if (signal.sl !== null) {
-    const slRes = await binanceSignedRequest("POST", "/fapi/v1/order", {
-      symbol: signal.symbol,
-      side: closeSide,
-      type: "STOP_MARKET",
-      stopPrice: String(signal.sl),
-      closePosition: "true",
-      reduceOnly: "true",
-      workingType: "MARK_PRICE",
-    });
-    protective.push({ type: "SL", orderId: slRes.orderId });
-  }
-
-  if (signal.tp !== null) {
-    const tpRes = await binanceSignedRequest("POST", "/fapi/v1/order", {
-      symbol: signal.symbol,
-      side: closeSide,
-      type: "TAKE_PROFIT_MARKET",
-      stopPrice: String(signal.tp),
-      closePosition: "true",
-      reduceOnly: "true",
-      workingType: "MARK_PRICE",
-    });
-    protective.push({ type: "TP", orderId: tpRes.orderId });
-  }
-
-  return {
-    broker: "binance",
-    status: "submitted",
-    product: "um_futures",
-    orderId: entry.orderId,
-    clientOrderId,
-    protective,
-  };
-}
-
-async function executeCTrader(signal, opts = {}) {
-  const mode = String(opts?.mode || CFG.ctraderMode || "")
-    .trim()
-    .toLowerCase();
-  const modeEnabled = ["demo", "live"].includes(mode);
-  const enabled = opts?.forceEnabled ? modeEnabled : CFG.ctraderEnabled;
-  if (!enabled) {
-    const reason = mode
-      ? "CTRADER mode invalid (use demo|live, or empty to disable)"
-      : "CTRADER mode empty (disabled)";
-    return { broker: "ctrader", status: "skipped", reason };
-  }
-  if (!CFG.ctraderExecutorUrl) {
-    return {
-      broker: "ctrader",
-      status: "skipped",
-      reason: "Set CTRADER_EXECUTOR_URL",
-    };
-  }
-
-  const headers = { "Content-Type": "application/json" };
-  if (CFG.ctraderExecutorApiKey) {
-    headers["x-api-key"] = CFG.ctraderExecutorApiKey;
-  }
-
-  const res = await fetch(CFG.ctraderExecutorUrl, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      mode: mode || CFG.ctraderMode,
-      signal,
-      execution_profile: opts?.profile || null,
-    }),
-  });
-
-  const bodyText = await res.text();
-  let body;
-  try {
-    body = JSON.parse(bodyText);
-  } catch {
-    body = { raw: bodyText };
-  }
-
-  if (!res.ok) {
-    throw new Error(
-      `cTrader executor failed ${res.status}: ${JSON.stringify(body)}`,
-    );
-  }
-
-  return {
-    broker: "ctrader",
-    status: "submitted",
-    mode: mode || CFG.ctraderMode,
-    response: body,
-  };
-}
 
 function buildExecSummary(execResults) {
   return execResults
@@ -5523,105 +5370,18 @@ function buildExecSummary(execResults) {
     .join(" | ");
 }
 
-async function resolveExecutionPlan(signal) {
-  const userId =
-    String(signal?.user_id || CFG.mt5DefaultUserId).trim() ||
-    CFG.mt5DefaultUserId;
-  const profile = await mt5GetActiveExecutionProfileV2(userId).catch(
-    () => null,
-  );
-  if (!profile) {
-    return {
-      kind: "legacy",
-      runMt5: true,
-      runBinance: true,
-      runCTrader: true,
-      profile: null,
-    };
-  }
-  const route = String(profile.route || "")
-    .trim()
-    .toLowerCase();
-  if (route === "ctrader") {
-    return {
-      kind: "profile",
-      runMt5: false,
-      runBinance: false,
-      runCTrader: true,
-      ctraderMode: String(
-        profile.ctrader_mode || CFG.ctraderMode || "demo",
-      ).toLowerCase(),
-      profile,
-    };
-  }
-  // `ea` and `v2` both route into MT5 queue. Consumer side differs externally.
-  return {
-    kind: "profile",
-    runMt5: true,
-    runBinance: false,
-    runCTrader: false,
-    profile,
-  };
-}
+
 
 async function handleSignal(payload) {
   const signal = normalizeSignal(payload);
-  enforceRiskAndPolicy(signal);
 
-  const plan = await resolveExecutionPlan(signal);
-  const execResults = [];
-  if (plan.runMt5) {
-    const mt5Res = await executeMt5(signal);
-    execResults.push(mt5Res);
-  } else {
-    execResults.push({
-      broker: "mt5",
-      status: "skipped",
-      reason: "Execution profile route != mt5",
-    });
-  }
-
-  if (plan.runBinance) {
-    const binanceRes = await executeBinance(signal);
-    execResults.push(binanceRes);
-  } else {
-    execResults.push({
-      broker: "binance",
-      status: "skipped",
-      reason: "Execution profile route disabled",
-    });
-  }
-
-  if (plan.runCTrader) {
-    const ctraderRes = await executeCTrader(signal, {
-      mode: plan.ctraderMode,
-      forceEnabled: plan.kind === "profile",
-      profile: plan.profile,
-    });
-    execResults.push(ctraderRes);
-  } else {
-    execResults.push({
-      broker: "ctrader",
-      status: "skipped",
-      reason: "Execution profile route disabled",
-    });
-  }
-
+  // Store as signal in DB, no auto-execution
   const text = formatSignal(signal);
   const telegram = await sendTelegram(text);
 
   return {
     ok: true,
     signal,
-    execution_plan: plan?.profile
-      ? {
-          profile_id: plan.profile.profile_id || null,
-          route: plan.profile.route || null,
-          account_id: plan.profile.account_id || null,
-          ctrader_mode: plan.ctraderMode || null,
-        }
-      : null,
-    execution: execResults,
     telegram,
   };
 }
@@ -5866,20 +5626,6 @@ async function _mt5InitBackendInternal() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS execution_profiles (
-      profile_id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      profile_name TEXT NOT NULL,
-      route TEXT NOT NULL DEFAULT 'ea',
-      account_id TEXT,
-      source_ids JSONB DEFAULT '[]',
-      ctrader_mode TEXT DEFAULT 'demo',
-      ctrader_account_id TEXT,
-      is_active BOOLEAN NOT NULL DEFAULT false,
-      metadata JSONB DEFAULT '{}',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
 
     -- DDL Migration for existing installations
     ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'default';
@@ -6210,7 +5956,6 @@ async function _mt5InitBackendInternal() {
   await pool
     .query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sid TEXT NULL`)
     .catch(() => {});
-
 
   await pool
     .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry_model TEXT NULL`)
@@ -6612,8 +6357,7 @@ async function _mt5InitBackendInternal() {
         (SELECT COUNT(*) FROM user_accounts WHERE user_id = $1) AS accounts_count,
         (SELECT COUNT(*) FROM signals WHERE user_id = $1) AS signals_count,
         (SELECT COUNT(*) FROM trades WHERE user_id = $1) AS trades_count,
-        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count,
-        (SELECT COUNT(*) FROM execution_profiles WHERE user_id = $1) AS profiles_count
+        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count
     `,
         [oldUserId],
       )
@@ -6883,72 +6627,7 @@ async function _mt5InitBackendInternal() {
             : CFG.mt5DefaultLot,
       };
     },
-    async pullAndLockSignalById(signalId) {
-      const sid = String(signalId || "").trim();
-      if (!sid) return null;
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        const sel = await client.query(
-          `
-          SELECT *
-          FROM signals
-          WHERE sid = $1
-             OR raw_json->>'id' = $1
-             OR raw_json->>'sid' = $1
-          ORDER BY CASE WHEN sid = $1 THEN 0 ELSE 1 END, created_at DESC
-          LIMIT 1
-          FOR UPDATE
-        `,
-          [sid],
-        );
-        const row = sel.rows?.[0] || null;
-        if (!row) {
-          await client.query("COMMIT");
-          return null;
-        }
-        const cur = mt5CanonicalStoredStatus(row.status);
-        if (!["NEW", "LOCKED", "PLACED", "START"].includes(cur)) {
-          await client.query("COMMIT");
-          return null;
-        }
-        let outRow = row;
-        if (cur === "NEW") {
-          const upd = await client.query(
-            `
-            UPDATE signals
-            SET status = 'LOCKED'
-            WHERE sid = $1
-            RETURNING *
-          `,
-            [sid],
-          );
-          outRow = upd.rows?.[0] || row;
-        }
-        await client.query("COMMIT");
-        const raw =
-          outRow.raw_json && typeof outRow.raw_json === "object"
-            ? outRow.raw_json
-            : {};
-        const side = String(
-          outRow.side || raw.action || raw.side || "BUY",
-        ).toUpperCase();
-        const volumeRaw = Number(raw.volume ?? raw.lots ?? CFG.mt5DefaultLot);
-        return {
-          ...outRow,
-          action: side,
-          volume:
-            Number.isFinite(volumeRaw) && volumeRaw > 0
-              ? volumeRaw
-              : CFG.mt5DefaultLot,
-        };
-      } catch (e) {
-        await client.query("ROLLBACK");
-        throw e;
-      } finally {
-        client.release();
-      }
-    },
+
     async pullAndLockNextTask(accountId = null) {
       const aid = String(accountId || "").trim();
       const client = await pool.connect();
@@ -7051,12 +6730,7 @@ async function _mt5InitBackendInternal() {
         client.release();
       }
     },
-    async pullAndLockNextSignal() {
-      // Compatibility wrapper
-      const t = await this.pullAndLockNextTask();
-      if (!t || t.type !== "OPEN") return null;
-      return t;
-    },
+
     async fanoutSignalTradeV2(payload = {}) {
       const signalIdRaw = String(payload.sid || "").trim();
       const signalId = signalIdRaw || null;
@@ -8827,138 +8501,9 @@ async function _mt5InitBackendInternal() {
       );
       return res.rows || [];
     },
-    async listExecutionProfilesV2(userId = null) {
-      const params = [];
-      let where = "";
-      if (userId) {
-        params.push(String(userId || "").trim());
-        where = `WHERE user_id = $1`;
-      }
-      const res = await pool.query(
-        `
-        SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
-               is_active, metadata, created_at, updated_at
-        FROM execution_profiles
-        ${where}
-        ORDER BY is_active DESC, updated_at DESC, created_at DESC
-      `,
-        params,
-      );
-      return res.rows || [];
-    },
-    async getActiveExecutionProfileV2(userId = null) {
-      const params = [];
-      let where = `WHERE is_active = true`;
-      if (userId) {
-        params.push(String(userId || "").trim());
-        where += ` AND user_id = $${params.length}`;
-      }
-      const res = await pool.query(
-        `
-        SELECT profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id,
-               is_active, metadata, created_at, updated_at
-        FROM execution_profiles
-        ${where}
-        ORDER BY updated_at DESC, created_at DESC
-        LIMIT 1
-      `,
-        params,
-      );
-      return res.rows?.[0] || null;
-    },
-    async saveExecutionProfileV2(payload = {}) {
-      const profileId =
-        String(payload.profile_id || "default").trim() || "default";
-      const userId =
-        String(payload.user_id || CFG.mt5DefaultUserId).trim() ||
-        CFG.mt5DefaultUserId;
-      const profileName =
-        String(payload.profile_name || profileId).trim() || profileId;
-      const routeRaw = String(payload.route || "")
-        .trim()
-        .toLowerCase();
-      const route = ["ea", "v2", "ctrader"].includes(routeRaw)
-        ? routeRaw
-        : "ea";
-      const accountId = String(payload.account_id || "").trim() || null;
-      const sourceIds = (
-        Array.isArray(payload.source_ids) ? payload.source_ids : []
-      )
-        .map((v) => String(v || "").trim())
-        .filter(Boolean);
-      const ctraderModeRaw = String(payload.ctrader_mode || "")
-        .trim()
-        .toLowerCase();
-      const ctraderMode = ["demo", "live"].includes(ctraderModeRaw)
-        ? ctraderModeRaw
-        : null;
-      const ctraderAccountId =
-        String(payload.ctrader_account_id || "").trim() || null;
-      const isActive =
-        payload.is_active === undefined ? true : Boolean(payload.is_active);
-      const metadata =
-        payload.metadata && typeof payload.metadata === "object"
-          ? payload.metadata
-          : {};
 
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-        // Deactivate other profiles for this user
-        if (isActive) {
-          await client.query(
-            `UPDATE execution_profiles SET is_active = false, updated_at = NOW()
-             WHERE user_id = $1`,
-            [userId],
-          );
-        }
-        const res = await client.query(
-          `INSERT INTO execution_profiles (profile_id, user_id, profile_name, route, account_id, source_ids, ctrader_mode, ctrader_account_id, is_active, metadata, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, NOW())
-           ON CONFLICT (profile_id)
-           DO UPDATE SET profile_name = EXCLUDED.profile_name, route = EXCLUDED.route, account_id = EXCLUDED.account_id, 
-                         source_ids = EXCLUDED.source_ids, ctrader_mode = EXCLUDED.ctrader_mode, 
-                         ctrader_account_id = EXCLUDED.ctrader_account_id, is_active = EXCLUDED.is_active, 
-                         metadata = EXCLUDED.metadata, updated_at = NOW()`,
-          [
-            profileId,
-            userId,
-            profileName,
-            route,
-            accountId,
-            JSON.stringify(sourceIds),
-            ctraderMode,
-            ctraderAccountId,
-            isActive,
-            JSON.stringify(metadata),
-          ],
-        );
-        await client.query("COMMIT");
-        return {
-          ok: true,
-          item: {
-            profile_id: profileId,
-            user_id: userId,
-            profile_name: profileName,
-            route,
-            account_id: accountId,
-            source_ids: sourceIds,
-            ctrader_mode: ctraderMode,
-            ctrader_account_id: ctraderAccountId,
-            is_active: isActive,
-            metadata,
-          },
-        };
-      } catch (error) {
-        await client.query("ROLLBACK");
-        return {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      } finally {
-        client.release();
-      }
-    },
+
+
     async updateAccountV2(accountId, patch = {}) {
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
@@ -9970,7 +9515,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("volume/lots must be > 0");
+    throw new Error("v2026.05.09 13:16 - e0ecd2d");
   }
   return n;
 }
@@ -11662,15 +11207,9 @@ async function mt5UpsertSignal(signal) {
   return b.upsertSignal(signal);
 }
 
-async function mt5PullAndLockNextSignal() {
-  const b = await mt5Backend();
-  return b.pullAndLockNextSignal();
-}
 
-async function mt5PullAndLockSignalById(signalId) {
-  const b = await mt5Backend();
-  return b.pullAndLockSignalById(signalId);
-}
+
+
 
 async function mt5FindSignalById(signalId) {
   const b = await mt5Backend();
@@ -12063,23 +11602,11 @@ async function mt5ListAccountsV2(userId = null) {
   return b.listAccountsV2(userId);
 }
 
-async function mt5ListExecutionProfilesV2(userId = null) {
-  const b = await mt5Backend();
-  if (!b.listExecutionProfilesV2) return [];
-  return b.listExecutionProfilesV2(userId);
-}
 
-async function mt5GetActiveExecutionProfileV2(userId = null) {
-  const b = await mt5Backend();
-  if (!b.getActiveExecutionProfileV2) return null;
-  return b.getActiveExecutionProfileV2(userId);
-}
 
-async function mt5SaveExecutionProfileV2(payload = {}) {
-  const b = await mt5Backend();
-  if (!b.saveExecutionProfileV2) return { ok: false, error: "not supported" };
-  return b.saveExecutionProfileV2(payload);
-}
+
+
+
 
 async function mt5RotateSourceSecretV2(sourceId) {
   const b = await mt5Backend();
@@ -12846,7 +12373,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2 broker auth not supported by backend",
+        error: "v2026.05.09 13:16 - e0ecd2d",
       });
       return null;
     }
@@ -13000,7 +12527,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 13:16 - e0ecd2d" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -13093,70 +12620,7 @@ function mt5DashboardHtml() {
 </html>`;
 }
 
-async function executeMt5(signal) {
-  if (!CFG.mt5Enabled) {
-    return { broker: "mt5", status: "skipped", reason: "MT5_ENABLED=false" };
-  }
-  if (CFG.mt5EaApiKeys.size === 0) {
-    return {
-      broker: "mt5",
-      status: "skipped",
-      reason: "Missing MT5_EA_API_KEYS (or SIGNAL_API_KEY fallback)",
-    };
-  }
 
-  const enqueue = await mt5EnqueueSignalFromPayload(
-    {
-      id: signal.raw?.id || "",
-      action: signal.side,
-      symbol: signal.symbol,
-      volume:
-        signal.quantity && signal.quantity > 0
-          ? signal.quantity
-          : CFG.mt5DefaultLot,
-      sl: signal.sl ?? null,
-      tp: signal.tp ?? null,
-      rr: signal.rr_planned ?? null,
-      risk_money: signal.risk_money_planned ?? null,
-      price: signal.price ?? null,
-      strategy: signal.strategy || null,
-      entry_model:
-        signal.entry_model ||
-        signal.raw?.entry_model ||
-        signal.raw?.entryModel ||
-        signal.strategy ||
-        null,
-      timeframe: signal.timeframe || null,
-      sourceTf:
-        signal.raw?.sourceTf ??
-        signal.raw?.signal_tf ??
-        signal.timeframe ??
-        null,
-      chartTf:
-        signal.raw?.chartTf ??
-        signal.raw?.chart_tf ??
-        signal.raw?.chartTimeframe ??
-        signal.raw?.chart_tf_period ??
-        null,
-      note: signal.note || "",
-      user_id: signal.user_id || CFG.mt5DefaultUserId,
-      order_type: signal.raw?.order_type ?? signal.raw?.orderType ?? "limit",
-      provider: "signal",
-      raw_json: signal.raw || {},
-    },
-    {
-      source: "signal",
-      eventType: "QUEUED_FROM_SIGNAL",
-      fallbackIdPrefix: "sig",
-    },
-  );
-
-  return {
-    broker: "mt5",
-    status: "queued",
-    sid: enqueue.sid,
-  };
-}
 
 const appHandler = async (req, res) => {
   const origin = req.headers.origin;
@@ -15707,7 +15171,9 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      console.log(`[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`);
+      console.log(
+        `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
+      );
       await db.query(
         `
         INSERT INTO user_settings (user_id, type, name, data, status)
@@ -15780,7 +15246,7 @@ const appHandler = async (req, res) => {
     try {
       const type = String(url.searchParams.get("type") || "").trim();
       const name = String(url.searchParams.get("name") || "").trim();
-      const field = String(url.searchParams.get("field") || "value").trim();
+      const field = String(url.searchParams.get("field") || "v2026.05.09 13:16 - e0ecd2d").trim();
       if (!type || !name)
         return json(res, 400, { ok: false, error: "Missing type or name" });
       if (type !== "api_key")
@@ -15896,7 +15362,7 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
 
     try {
-      const parts = url.pathname.split("/"); // ["", "v2", "settings", type, name]
+      const parts = url.pathname.split("/"); // ["", "v2026.05.09 13:16 - e0ecd2d", "settings", type, name]
       const type = decodeURIComponent(parts[3] || "");
       const name = decodeURIComponent(parts[4] || "");
 
@@ -17934,7 +17400,7 @@ const appHandler = async (req, res) => {
         "Content-Disposition": `${dispositionMode}; filename="${finalFileName}"`,
         "Cache-Control": "no-store",
         "Content-Length": body.length,
-        "X-Claude-Content-Source": local ? "vps-local" : "claude",
+        "X-Claude-Content-Source": local ? "v2026.05.09 13:16 - e0ecd2d" : "claude",
       });
       res.end(body);
       return;
@@ -18616,7 +18082,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 13:16 - e0ecd2d", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -18681,7 +18147,7 @@ const appHandler = async (req, res) => {
       const route = String(payload?.route || "")
         .trim()
         .toLowerCase();
-      if (!["ea", "v2", "ctrader"].includes(route)) {
+      if (!["ea", "v2026.05.09 13:16 - e0ecd2d", "ctrader"].includes(route)) {
         return json(res, 400, {
           ok: false,
           error: "route must be one of: ea, v2, ctrader",
@@ -19684,7 +19150,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2 broker api disabled" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 13:16 - e0ecd2d" });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19749,7 +19215,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2 broker api disabled" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 13:16 - e0ecd2d" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19790,7 +19256,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2 broker api disabled" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 13:16 - e0ecd2d" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19823,7 +19289,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2 broker api disabled" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 13:16 - e0ecd2d" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19846,7 +19312,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2 broker api disabled" });
+      return json(res, 404, { ok: false, error: "v2026.05.09 13:16 - e0ecd2d" });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
