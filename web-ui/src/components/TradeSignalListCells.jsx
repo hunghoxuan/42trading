@@ -192,12 +192,14 @@ export function StatusPnlCell({
             )}
           </>
         )}
-        {shouldShowProjectedMetrics && margin != null && margin > 0 && (
+        {shouldShowProjectedMetrics && (
           <div
             className="minor-text"
-            style={{ fontSize: "10px", opacity: 0.5 }}
+            style={{ fontSize: "10px", opacity: 0.7, fontWeight: 500 }}
           >
-            Risk: ${num(margin).toFixed(2)}
+            {num(brokerLots) != null && `${num(brokerLots).toFixed(2)} lots`}
+            {num(brokerVolume) != null && ` (${num(brokerVolume).toLocaleString()} units)`}
+            {num(brokerLots) == null && num(brokerVolume) == null && margin != null && margin > 0 && `Risk: $${num(margin).toFixed(2)}`}
           </div>
         )}
       </div>
