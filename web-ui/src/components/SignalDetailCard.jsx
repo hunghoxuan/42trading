@@ -6,6 +6,7 @@ import {
   renderHistoryItem,
   shouldShowPnl,
   applyLinkedPlanChange,
+  formatNum3,
 } from "../utils/signalDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
@@ -78,10 +79,6 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function formatNum3(v) {
-  if (!Number.isFinite(v)) return "";
-  return String(Number(v.toFixed(3)));
-}
 
 
 function PlanHeader({
