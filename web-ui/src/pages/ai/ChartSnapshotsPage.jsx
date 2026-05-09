@@ -3091,6 +3091,8 @@ export default function ChartSnapshotsPage() {
         id: String(r.template_id || r.id || r.name || `t_${Date.now()}`),
         name: String(r.name || "Unnamed Template"),
         config: normalizeTemplateConfig(r.config || {}),
+        _guide: r._guide || null,
+        _schema: r._schema || null,
         saved:
           r.saved || r.updated_at || r.created_at || new Date().toISOString(),
       }));
@@ -3121,15 +3123,13 @@ export default function ChartSnapshotsPage() {
     }
     const found = templates.find((x) => x.id === id);
     if (!found?.config) return;
-    // Extract _guide/_schema from raw config before normalization strips them
-    const rawConfig = found.config || {};
-    const savedGuide = rawConfig._guide || null;
-    const savedSchema = rawConfig._schema || null;
-    const config = normalizeTemplateConfig(rawConfig);
-    setCfg(config);
+    const savedGuide = found._guide || null;
+    const savedSchema = found._schema || null;
+    setCfg(normalizeTemplateConfig(found.config || {}));
     if (savedGuide) setGuideDraft(savedGuide);
     if (savedSchema) setSchemaDraft(savedSchema);
     else setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+    setTemplateName(found.name || "");
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
   };

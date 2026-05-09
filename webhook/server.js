@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 15:56 - 692b836"); // settings menu cleanup + notification manager dedupe
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 17:04 - 220aade"); // restore notification test/save routes and move watchlist/execution profile management into the intended Settings UX
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7188,10 +7188,27 @@ async function _mt5InitBackendInternal() {
           const pnl = Number.isFinite(pnlRaw) ? pnlRaw : null;
           const volumeRaw = Number(raw.volume || raw.lots);
           const volume = Number.isFinite(volumeRaw) ? volumeRaw : null;
+          const entryRaw = Number(
+            raw.entry ??
+              raw.entry_price ??
+              raw.target_price ??
+              raw.price ??
+              raw.entry_exec,
+          );
+          const entry = Number.isFinite(entryRaw) && entryRaw > 0 ? entryRaw : null;
+          const slRaw = Number(raw.sl ?? raw.stop_loss ?? raw.sl_price);
+          const sl = Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
+          const tpRaw = Number(
+            raw.tp ?? raw.take_profit ?? raw.tp_price ?? raw.target_tp,
+          );
+          const tp = Number.isFinite(tpRaw) && tpRaw > 0 ? tpRaw : null;
           const symbol = String(raw.symbol || "")
             .trim()
             .toUpperCase();
           const action = String(raw.action || raw.side || "")
+            .trim()
+            .toUpperCase();
+          const orderTypeRaw = String(raw.order_type || raw.type || "")
             .trim()
             .toUpperCase();
           const reasonRaw = String(raw.reason || raw.close_reason || "")
@@ -7255,15 +7272,21 @@ async function _mt5InitBackendInternal() {
           const volumeVal = Number(raw.volume || raw.lots || 0);
           const lotsVal = Number(raw.lots ?? volumeVal / 100000);
           const brokerComment = String(raw.comment || "").trim();
+          const note = brokerComment || String(raw.label || "").trim();
 
-          // Use broker comment as SID if it looks like an ID
-          const effectiveSignalId = brokerComment || signalId;
+          // Only treat broker comment as SID when it matches our compact 9-char ID format.
+          const brokerSidCandidate = String(brokerComment || signalId)
+            .replace(/[^a-zA-Z0-9]/g, "")
+            .toUpperCase();
+          const effectiveSignalId =
+            brokerSidCandidate.length === 9 ? brokerSidCandidate : "";
 
           const key = ticket ? `tk:${ticket}` : `sig:${effectiveSignalId}`;
           const prev = merged.get(key);
           if (!prev) {
             merged.set(key, {
               ...raw, // Capture all raw fields from broker (pip_value, leverage, etc.)
+              sid: effectiveSignalId || null,
               signal_id: effectiveSignalId || null,
               ticket,
               ticket_candidates: ticketCandidates,
@@ -7277,7 +7300,12 @@ async function _mt5InitBackendInternal() {
               volume: volumeVal,
               symbol,
               action,
-              order_type: raw.order_type || null,
+              order_type:
+                orderTypeRaw || (executionStatus === "OPEN" ? "MARKET" : null),
+              entry,
+              sl,
+              tp,
+              note,
               status_raw: statusRaw || "UNKNOWN",
               execution_status: executionStatus,
               close_reason: closeReason,
@@ -7306,6 +7334,13 @@ async function _mt5InitBackendInternal() {
             if (volumeVal !== 0) prev.volume = volumeVal;
             if (symbol) prev.symbol = symbol;
             if (action) prev.action = action;
+            if (orderTypeRaw) prev.order_type = orderTypeRaw;
+            else if (!prev.order_type && executionStatus === "OPEN")
+              prev.order_type = "MARKET";
+            if (entry !== null) prev.entry = entry;
+            if (sl !== null) prev.sl = sl;
+            if (tp !== null) prev.tp = tp;
+            if (note) prev.note = note;
             if (closeReason) prev.close_reason = closeReason;
             if (openedAt) prev.opened_at = openedAt;
             if (closedAt) prev.closed_at = closedAt;
@@ -7400,6 +7435,11 @@ async function _mt5InitBackendInternal() {
                 broker_margin = $19::numeric,
                 broker_tp_pnl = $20::numeric,
                 broker_sl_pnl = $21::numeric,
+                entry = COALESCE($22::numeric, entry),
+                entry_exec = COALESCE($22::numeric, entry_exec),
+                sl = COALESCE($23::numeric, sl),
+                tp = COALESCE($24::numeric, tp),
+                note = COALESCE(NULLIF($25::text, ''), note),
                 order_type = COALESCE($12::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
                 broker_trade_id = COALESCE(NULLIF($9::text, ''), broker_trade_id),
@@ -7440,6 +7480,10 @@ async function _mt5InitBackendInternal() {
                 it.margin || 0,
                 it.tp_pnl || it.pnl_tp || 0,
                 it.sl_pnl || it.pnl_sl || 0,
+                it.entry,
+                it.sl,
+                it.tp,
+                it.note || "",
               ],
             );
           }
@@ -7469,6 +7513,11 @@ async function _mt5InitBackendInternal() {
                 broker_margin = $18::numeric,
                 broker_tp_pnl = $19::numeric,
                 broker_sl_pnl = $20::numeric,
+                entry = COALESCE($21::numeric, entry),
+                entry_exec = COALESCE($21::numeric, entry_exec),
+                sl = COALESCE($22::numeric, sl),
+                tp = COALESCE($23::numeric, tp),
+                note = COALESCE(NULLIF($24::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
@@ -7512,6 +7561,10 @@ async function _mt5InitBackendInternal() {
                   it.margin || 0,
                   it.tp_pnl || it.pnl_tp || 0,
                   it.sl_pnl || it.pnl_sl || 0,
+                  it.entry,
+                  it.sl,
+                  it.tp,
+                  it.note || "",
                 ],
               );
             }
@@ -7542,6 +7595,11 @@ async function _mt5InitBackendInternal() {
                 broker_margin = $17::numeric,
                 broker_tp_pnl = $18::numeric,
                 broker_sl_pnl = $19::numeric,
+                entry = COALESCE($20::numeric, entry),
+                entry_exec = COALESCE($20::numeric, entry_exec),
+                sl = COALESCE($21::numeric, sl),
+                tp = COALESCE($22::numeric, tp),
+                note = COALESCE(NULLIF($23::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
@@ -7585,6 +7643,10 @@ async function _mt5InitBackendInternal() {
                 it.margin || 0,
                 it.tp_pnl || 0,
                 it.sl_pnl || 0,
+                it.entry,
+                it.sl,
+                it.tp,
+                it.note || "",
               ],
             );
           }
@@ -7635,7 +7697,7 @@ async function _mt5InitBackendInternal() {
               });
               continue;
             }
-            const discoverySid = String(it.ticket || mt5GenerateTimeSid());
+            const discoverySid = String(it.sid || mt5GenerateTimeSid()).trim();
             const brokerSource = (payload.broker_name || "BROKER")
               .toUpperCase()
               .replace(/\s+/g, "_");
@@ -7656,12 +7718,12 @@ async function _mt5InitBackendInternal() {
               `
             INSERT INTO trades (
               sid, account_id, user_id,
-              symbol, action, volume, entry,
+              symbol, action, order_type, volume, entry, sl, tp, note,
               execution_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::numeric, $7::numeric, 'OPEN', $8::text, $9::jsonb, $10::text, $11::numeric, $12::numeric, $13::numeric, $14::numeric, $15::numeric, $16::numeric, $17::numeric, $18::numeric, $19::numeric, NOW(), NOW())
+            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, 'OPEN', $12::text, $13::jsonb, $14::text, $15::numeric, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
               [
@@ -7670,8 +7732,12 @@ async function _mt5InitBackendInternal() {
                 uid,
                 syncSymbol,
                 syncAction,
+                it.order_type || null,
                 it.volume || 0,
                 it.entry || 0,
+                it.sl || null,
+                it.tp || null,
+                it.note || "",
                 brokerSource,
                 syncMeta,
                 ticketCandidates[0] || "",
@@ -9423,7 +9489,7 @@ function mt5NormalizeVolume(payload) {
   }
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
-    throw new Error("v2026.05.09 15:56 - 692b836");
+    throw new Error("v2026.05.09 17:04 - 220aade");
   }
   return n;
 }
@@ -11489,9 +11555,9 @@ async function mt5ListExecutionProfilesV2(userId) {
   if (!userId) return [];
   const res = await b.query(
     `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 ORDER BY name ASC`,
-    [userId]
+    [userId],
   );
-  return res.rows || [];
+  return (res.rows || []).map(mt5NormalizeExecutionProfileRow);
 }
 
 async function mt5GetActiveExecutionProfileV2(userId) {
@@ -11499,9 +11565,117 @@ async function mt5GetActiveExecutionProfileV2(userId) {
   if (!userId) return null;
   const res = await b.query(
     `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 AND (data->>'is_active')::boolean IS TRUE LIMIT 1`,
-    [userId]
+    [userId],
   );
-  return res.rows?.[0] || null;
+  return res.rows?.[0] ? mt5NormalizeExecutionProfileRow(res.rows[0]) : null;
+}
+
+function mt5NormalizeExecutionProfileRow(row = {}) {
+  const data = row?.data && typeof row.data === "object" ? row.data : {};
+  return {
+    profile_id: String(row?.name || row?.profile_id || "default").trim() || "default",
+    user_id: String(row?.user_id || "").trim(),
+    profile_name:
+      String(data?.profile_name || row?.profile_name || row?.name || "default").trim() ||
+      "default",
+    route: String(data?.route || row?.route || "ea").trim().toLowerCase() || "ea",
+    account_id: String(data?.account_id || row?.account_id || "").trim(),
+    source_ids: Array.isArray(data?.source_ids)
+      ? data.source_ids.map((v) => String(v || "").trim()).filter(Boolean)
+      : [],
+    ctrader_mode:
+      String(data?.ctrader_mode || row?.ctrader_mode || "").trim().toLowerCase() ||
+      "",
+    ctrader_account_id: String(
+      data?.ctrader_account_id || row?.ctrader_account_id || "",
+    ).trim(),
+    is_active:
+      data?.is_active === undefined
+        ? Boolean(row?.is_active)
+        : Boolean(data.is_active),
+    metadata: data?.metadata && typeof data.metadata === "object" ? data.metadata : {},
+    raw: row,
+    created_at: row?.created_at || null,
+    updated_at: row?.updated_at || null,
+  };
+}
+
+async function mt5SaveExecutionProfileV2(payload = {}) {
+  const b = await mt5Backend();
+  const db = b?.query ? b : await mt5InitBackend();
+  const profileId =
+    String(payload.profile_id || "default").trim() || "default";
+  const userId =
+    String(payload.user_id || CFG.mt5DefaultUserId).trim() ||
+    CFG.mt5DefaultUserId;
+  const profileName =
+    String(payload.profile_name || profileId).trim() || profileId;
+  const routeRaw = String(payload.route || "")
+    .trim()
+    .toLowerCase();
+  const route = ["ea", "v2026.05.09 17:04 - 220aade", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const accountId = String(payload.account_id || "").trim() || null;
+  const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
+    .map((v) => String(v || "").trim())
+    .filter(Boolean);
+  const ctraderModeRaw = String(payload.ctrader_mode || "")
+    .trim()
+    .toLowerCase();
+  const ctraderMode = ["demo", "live"].includes(ctraderModeRaw)
+    ? ctraderModeRaw
+    : null;
+  const ctraderAccountId =
+    String(payload.ctrader_account_id || "").trim() || null;
+  const isActive =
+    payload.is_active === undefined ? true : Boolean(payload.is_active);
+  const metadata =
+    payload.metadata && typeof payload.metadata === "object"
+      ? payload.metadata
+      : {};
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (isActive) {
+      await client.query(
+        `UPDATE user_settings
+         SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{is_active}', 'false'::jsonb), updated_at = NOW()
+         WHERE user_id = $1 AND type = 'execution_profile'`,
+        [userId],
+      );
+    }
+    const data = JSON.stringify({
+      profile_name: profileName,
+      route,
+      account_id: accountId,
+      source_ids: sourceIds,
+      ctrader_mode: ctraderMode,
+      ctrader_account_id: ctraderAccountId,
+      is_active: isActive,
+      metadata,
+    });
+    await client.query(
+      `INSERT INTO user_settings (user_id, type, name, data, created_at, updated_at)
+       VALUES ($1, 'execution_profile', $2, $3::jsonb, NOW(), NOW())
+       ON CONFLICT (user_id, type, name)
+       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+      [userId, profileId, data],
+    );
+    await client.query("COMMIT");
+    return {
+      ok: true,
+      item: mt5NormalizeExecutionProfileRow({
+        user_id: userId,
+        name: profileId,
+        data: JSON.parse(data),
+      }),
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    client.release();
+  }
 }
 
 async function mt5RotateSourceSecretV2(sourceId) {
@@ -12269,7 +12443,7 @@ async function requireV2BrokerAccount(req, res, urlObj, payload = null) {
     if (!b.findAccountByApiKeyHash) {
       json(res, 400, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
       return null;
     }
@@ -12423,7 +12597,7 @@ function mt5DashboardHtml() {
 <html>
 <head>
   <meta charset="utf-8" />
-  <meta name="v2026.05.09 15:56 - 692b836" content="width=device-width, initial-scale=1" />
+  <meta name="v2026.05.09 17:04 - 220aade" content="width=device-width, initial-scale=1" />
   <title>MT5 Trades</title>
   <style>
     body { font-family: Arial, sans-serif; background:#0b0f14; color:#e6edf3; margin:0; }
@@ -12786,6 +12960,93 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (req.method === "POST" && url.pathname === "/v2/notifications/test") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const sess = getUiSessionFromReq(req);
+      const payload = await readJson(req).catch(() => ({}));
+      notificationManager.handle("SYSTEM_EVENT", payload.event || "system_event", {
+        user_id: sess.user_id,
+        page: payload.page || null,
+        event: payload.event || "system_event",
+        message:
+          payload.message || "Test notification - all channels firing",
+        type: payload.type || "info",
+        notification: payload.notification !== false,
+        need_refresh: payload.need_refresh || false,
+        comp_refresh: payload.comp_refresh || false,
+        action: payload.action || null,
+        sound: payload.sound || null,
+        position: payload.position || "bottom-right",
+        _force_toast: true,
+        _force_ticker: true,
+        _force_sound: true,
+        _force_db_log: true,
+      });
+      return json(res, 200, {
+        ok: true,
+        sent: {
+          event: payload.event || "system_event",
+          message: payload.message || "Test notification - all channels firing",
+        },
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/notifications/settings") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const sess = getUiSessionFromReq(req);
+      const db = await mt5InitBackend();
+      const { rows } = await db.query(
+        "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
+        [sess.user_id],
+      );
+      const settings =
+        rows[0]?.data && typeof rows[0].data === "object" ? rows[0].data : {};
+      return json(res, 200, { ok: true, settings });
+    } catch {
+      return json(res, 200, { ok: true, settings: {} });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/notifications/settings") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const payload = await readJson(req);
+      const sess = getUiSessionFromReq(req);
+      const settings = payload.settings || payload;
+      const db = await mt5InitBackend();
+      for (const [eventName, config] of Object.entries(settings || {})) {
+        const eventKey = String(eventName)
+          .toUpperCase()
+          .replace(/[^A-Z_]/g, "");
+        if (!eventKey) continue;
+        await db.query(
+          `INSERT INTO user_settings (user_id, type, name, data)
+           VALUES ($1, 'notification_config', $2, $3)
+           ON CONFLICT (user_id, type, name)
+           DO UPDATE SET data = $3, updated_at = NOW()`,
+          [sess.user_id, eventKey, JSON.stringify(config || {})],
+        );
+      }
+      if (global.__notificationManager) {
+        await global.__notificationManager.reloadSettings();
+      }
+      return json(res, 200, { ok: true });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/v2/accounts") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -12875,6 +13136,150 @@ const appHandler = async (req, res) => {
         items,
         active_profile: active || null,
         accounts: accounts || [],
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/settings/execution-profile"
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload);
+      const route = String(payload?.route || "")
+        .trim()
+        .toLowerCase();
+      if (!["ea", "v2026.05.09 17:04 - 220aade", "ctrader"].includes(route)) {
+        return json(res, 400, {
+          ok: false,
+          error: "route must be one of: ea, v2, ctrader",
+        });
+      }
+      const accountId = String(payload?.account_id || "").trim();
+      if (!accountId) {
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      }
+      const sourceIds = (
+        Array.isArray(payload?.source_ids) ? payload.source_ids : []
+      )
+        .map((v) => String(v || "").trim())
+        .filter(Boolean);
+      const save = await mt5SaveExecutionProfileV2({
+        profile_id:
+          String(payload?.profile_id || "default").trim() || "default",
+        profile_name:
+          String(payload?.profile_name || `profile_${route}`).trim() ||
+          `profile_${route}`,
+        user_id: userId,
+        route,
+        account_id: accountId,
+        source_ids: sourceIds,
+        ctrader_mode: String(payload?.ctrader_mode || "")
+          .trim()
+          .toLowerCase(),
+        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
+        is_active: payload?.is_active === true,
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+      });
+      if (!save?.ok) {
+        return json(res, 400, {
+          ok: false,
+          error: save?.error || "failed to save execution profile",
+        });
+      }
+      const rows = await mt5ListExecutionProfilesV2(userId);
+      return json(res, 200, { ok: true, item: save.item || null, items: rows });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/settings/execution-profile/apply"
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const userId = uiEffectiveUserId(req, url, payload);
+      const route = String(payload?.route || "")
+        .trim()
+        .toLowerCase();
+      if (!["ea", "v2026.05.09 17:04 - 220aade", "ctrader"].includes(route)) {
+        return json(res, 400, {
+          ok: false,
+          error: "route must be one of: ea, v2, ctrader",
+        });
+      }
+      const accountId = String(payload?.account_id || "").trim();
+      if (!accountId) {
+        return json(res, 400, { ok: false, error: "account_id is required" });
+      }
+      const sourceIds = (
+        Array.isArray(payload?.source_ids)
+          ? payload.source_ids
+          : ["signal", "tradingview"]
+      )
+        .map((v) => String(v || "").trim())
+        .filter(Boolean);
+      const save = await mt5SaveExecutionProfileV2({
+        profile_id:
+          String(payload?.profile_id || "default").trim() || "default",
+        profile_name:
+          String(payload?.profile_name || `active_${route}`).trim() ||
+          `active_${route}`,
+        user_id: userId,
+        route,
+        account_id: accountId,
+        source_ids: sourceIds,
+        ctrader_mode: String(payload?.ctrader_mode || "")
+          .trim()
+          .toLowerCase(),
+        ctrader_account_id: String(payload?.ctrader_account_id || "").trim(),
+        is_active: true,
+        metadata:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+      });
+      if (!save?.ok) {
+        return json(res, 400, {
+          ok: false,
+          error: save?.error || "failed to apply execution profile",
+        });
+      }
+      const [rows, active] = await Promise.all([
+        mt5ListExecutionProfilesV2(userId),
+        mt5GetActiveExecutionProfileV2(userId),
+      ]);
+      return json(res, 200, {
+        ok: true,
+        item: save.item || null,
+        items: rows,
+        active_profile: active || save.item || null,
       });
     } catch (error) {
       return json(res, 400, {
@@ -13400,6 +13805,15 @@ const appHandler = async (req, res) => {
           url.searchParams.get("source") ||
           url.searchParams.get("strategy"),
       );
+      const model = envStr(
+        url.searchParams.get("entry_model") || url.searchParams.get("model"),
+      );
+      const chartTf = envStr(
+        url.searchParams.get("chart_tf") || url.searchParams.get("chartTf"),
+      );
+      const signalTf = envStr(
+        url.searchParams.get("signal_tf") || url.searchParams.get("timeframe"),
+      );
       const direction = envStr(url.searchParams.get("direction")).toUpperCase();
       const range = envStr(url.searchParams.get("range"), "all").toLowerCase();
       const tradesRes = await mt5ListTradesV2(
@@ -13414,18 +13828,185 @@ const appHandler = async (req, res) => {
         1,
         limit,
       );
-      const rowsByDimension = tradesRes.items || [];
+
+      const allRows = tradesRes.items || [];
+      const rowsByDimension = allRows.filter((r) => {
+        const rowModel = String(r.entry_model || r.metadata?.entry_model || "");
+        if (model && rowModel !== model) return false;
+        const rowChartTf = String(r.chart_tf || r.metadata?.chart_tf || "");
+        if (chartTf && rowChartTf !== chartTf) return false;
+        const rowSignalTf = String(r.signal_tf || r.metadata?.signal_tf || "");
+        if (signalTf && rowSignalTf !== signalTf) return false;
+        return true;
+      });
+
       const period = mt5PeriodRange(range);
       const selectedRows = mt5FilterRows(rowsByDimension, {
         from: period.start,
         to: period.end,
       });
+
       const metrics = mt5ComputeTradeMetrics(selectedRows);
+      const periods = [
+        "all",
+        "today",
+        "yesterday",
+        "last_week",
+        "last_month",
+        "week",
+        "month",
+        "year",
+      ];
+      const periodTotals = {};
+      for (const p of periods) {
+        const pr = mt5PeriodRange(p);
+        const scopedRows = mt5FilterRows(rowsByDimension, {
+          from: pr.start,
+          to: pr.end,
+        });
+        const scopedMetrics = mt5ComputeTradeMetrics(scopedRows);
+        periodTotals[p] = {
+          total_pnl: scopedMetrics.total_pnl,
+          total_rr: scopedMetrics.total_rr,
+          total_trades: scopedMetrics.total_trades,
+          total_wins: scopedMetrics.wins,
+          total_losses: scopedMetrics.losses,
+          win_sum_pnl: scopedMetrics.win_sum_pnl,
+          lose_sum_pnl: scopedMetrics.lose_sum_pnl,
+        };
+      }
+
+      const seriesBucket = range === "today" ? "hour" : "day";
+      const seriesMap = new Map();
+      for (const r of selectedRows) {
+        const s = mt5CanonicalStoredStatus(
+          r.execution_status || r.status || r.close_reason,
+        );
+        if (!["CLOSED", "TP", "SL"].includes(s)) continue;
+        const pnl = Number(r.pnl_realized ?? r.pnl_money_realized);
+        if (!Number.isFinite(pnl)) continue;
+        const d = new Date(r.closed_at || r.ack_at || r.created_at);
+        if (!Number.isFinite(d.getTime())) continue;
+        const key =
+          seriesBucket === "hour"
+            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:00`
+            : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+        seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
+      }
+      const pnlSeries = [...seriesMap.entries()]
+        .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+        .map(([x, y]) => ({ x, y }));
+
+      const symbols = [
+        ...new Set(
+          rowsByDimension
+            .map((r) => String(r.symbol || "").toUpperCase())
+            .filter(Boolean),
+        ),
+      ].sort();
+      const accounts = [
+        ...new Set(allRows.map((r) => envStr(r.account_id)).filter(Boolean)),
+      ].sort();
+      const accountsSummary = await mt5ListAccountsV2(userId);
+
       return json(res, 200, {
         ok: true,
+        version: SERVER_VERSION,
         rows: selectedRows,
         summary: metrics,
         total: selectedRows.length,
+        accounts_summary: accountsSummary || [],
+        filters: {
+          user_id: userId || "",
+          account_id: accountId,
+          symbol,
+          source: sourceId,
+          entry_model: model,
+          chart_tf: chartTf,
+          signal_tf: signalTf,
+          direction,
+          range,
+          accounts,
+          symbols,
+          sources: [
+            ...new Set(allRows.map((r) => mt5StrategyFromRow(r)).filter(Boolean)),
+          ].sort(),
+          entry_models: [
+            ...new Set(allRows.map((r) => mt5EntryModelFromRow(r)).filter(Boolean)),
+          ].sort(),
+          chart_tfs: [
+            ...new Set(
+              allRows
+                .map((r) =>
+                  String(
+                    r.chart_tf ||
+                      r.raw_json?.chart_tf ||
+                      r.raw_json?.chartTf ||
+                      r.raw_json?.chartTimeframe ||
+                      r.signal_tf ||
+                      r.raw_json?.signal_tf ||
+                      r.raw_json?.sourceTf ||
+                      r.raw_json?.timeframe ||
+                      "",
+                  ),
+                )
+                .filter(Boolean),
+            ),
+          ].sort(),
+          signal_tfs: [
+            ...new Set(
+              allRows
+                .map((r) =>
+                  String(
+                    r.signal_tf ||
+                      r.raw_json?.signal_tf ||
+                      r.raw_json?.sourceTf ||
+                      r.raw_json?.timeframe ||
+                      "",
+                  ),
+                )
+                .filter(Boolean),
+            ),
+          ].sort(),
+        },
+        metrics,
+        period_totals: periodTotals,
+        top_winrate: {
+          symbols: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => String(r.symbol || "").toUpperCase(),
+            { limit: 100, includeDirection: false },
+          ),
+          entry_models: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => mt5EntryModelFromRow(r),
+            { limit: 100, includeDirection: false },
+          ),
+          accounts: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => envStr(r.account_id),
+            { limit: 100, includeDirection: false },
+          ),
+          sources: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => mt5StrategyFromRow(r),
+            { limit: 100, includeDirection: false },
+          ),
+          directional: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => {
+              const dir = String(r.action || r.side || "BUY").toLowerCase();
+              const typeRaw = String(
+                r.metadata?.type || r.raw_json?.type || r.order_type || "LIMIT",
+              ).toLowerCase();
+              const capitalize = (s) =>
+                s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+              return `${capitalize(dir)} ${capitalize(typeRaw)}`;
+            },
+            { limit: 100, includeDirection: false },
+          ),
+        },
+        pnl_series: pnlSeries,
       });
     } catch (error) {
       return json(res, 400, {
@@ -13574,7 +14155,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
@@ -13642,7 +14223,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
     try {
       const payload = await readJson(req);
@@ -13686,7 +14267,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
     try {
       const payload = await readJson(req);
@@ -13722,7 +14303,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
     try {
       const payload = await readJson(req);
@@ -13748,7 +14329,7 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5V2BrokerApiEnabled)
       return json(res, 404, {
         ok: false,
-        error: "v2026.05.09 15:56 - 692b836",
+        error: "v2026.05.09 17:04 - 220aade",
       });
     try {
       const payload = await readJson(req);
