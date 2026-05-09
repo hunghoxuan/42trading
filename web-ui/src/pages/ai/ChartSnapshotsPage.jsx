@@ -2722,7 +2722,8 @@ export default function ChartSnapshotsPage() {
       ),
     ];
     const allowNoSymbol = Boolean(opts?.allowNoSymbol);
-    if ((!String(tvSymbol || "").trim() && !allowNoSymbol) || !tfs.length) {
+    const resolvedSymbol = String(tvSymbol || cfg.symbol || "").trim();
+    if ((!resolvedSymbol && !allowNoSymbol) || !tfs.length) {
       setStatus({
         type: "warning",
         text: allowNoSymbol

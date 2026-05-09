@@ -25,6 +25,7 @@ import { api, getRuntimeActiveUserId, setRuntimeActiveUserId } from "./api";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
 import NotificationWatcher from "./components/NotificationWatcher";
+import TickerBar from "./components/TickerBar";
 
 import ToastContainer from "./components/ToastContainer";
 import { normalizeDisplayTimezone } from "./utils/format";
@@ -159,6 +160,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <NotificationWatcher />
+      <TickerBar />
       <ToastContainer />
       <header className="topbar">
         <div className="brand">
@@ -470,9 +472,7 @@ export default function App() {
               path="/accounts-v2"
               element={<Navigate to="/system/accounts" replace />}
             />
-            <Route
-              path="/sources"
-            />
+            <Route path="/sources" />
             <Route
               path="/profile"
               element={<Navigate to="/settings/profile" replace />}
