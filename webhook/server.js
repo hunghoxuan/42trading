@@ -11678,9 +11678,11 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   }
 }
 
-async function mt5RotateSourceSecretV2(sourceId) { return { ok: false, error: "sources table removed" }; }
-
-async function mt5RevokeSourceSecretV2(sourceId) { return { ok: false, error: "sources table removed" }; }
+async function mt5UpsertSourceV2(source) { return null; }
+async function mt5ListSourcesV2() { return []; }
+async function mt5GetSourceByIdV2(sourceId) { return null; }
+async function mt5RotateSourceSecretV2(sourceId) { return { ok: false, error: "removed" }; }
+async function mt5RevokeSourceSecretV2(sourceId) { return { ok: false, error: "removed" }; }
 
 async function mt5GetAccountSubscriptionsV2(accountId) { return []; }
 
