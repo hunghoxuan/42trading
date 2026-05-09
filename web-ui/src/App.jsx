@@ -160,7 +160,6 @@ export default function App() {
   return (
     <div className="app-shell">
       <NotificationWatcher />
-      <TickerBar />
       <ToastContainer />
       <header className="topbar">
         <div className="brand">
@@ -292,6 +291,7 @@ export default function App() {
         </nav>
       </header>
       <SessionClockBar displayTimezone={displayTimezone} />
+      <TickerBar />
 
       <main className="page-wrap">
         <Suspense
