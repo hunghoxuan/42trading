@@ -4504,7 +4504,7 @@ export default function ChartSnapshotsPage() {
                     value={tradesText}
                     onChange={(e) => setTradesText(e.target.value)}
                     placeholder="Paste Trades free text here..."
-                    style={{ minHeight: 88, resize: "vertical", padding: 8 }}
+                    style={{ resize: "vertical", padding: 8 }}
                   />
                   <div
                     onDragOver={(e) => {

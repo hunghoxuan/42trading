@@ -1158,7 +1158,7 @@ export default function TradesPage() {
                           <SymbolEntryCell
                             side={action}
                             symbol={t.symbol}
-                            orderType={t.order_type || "limit"}
+                            orderType={t.metadata?.order_type || t.order_type || "limit"}
                             entry={t.entry || "-"}
                             tp={t.tp || "-"}
                             sl={t.sl || "-"}
