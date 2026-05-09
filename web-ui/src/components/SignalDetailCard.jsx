@@ -79,8 +79,6 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-
-
 function PlanHeader({
   plan,
   symbol,
@@ -220,17 +218,34 @@ function PlanHeader({
             </span>
           )}
           {pnl && (
-            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--foreground)" }}>
+            <span
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "var(--foreground)",
+              }}
+            >
               {pnl}
             </span>
           )}
           {strategy && (
-            <span className="minor-text" style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em" }}>
+            <span
+              className="minor-text"
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.02em",
+              }}
+            >
               {strategy}
             </span>
           )}
           {entryModel && (
-            <span className="minor-text" style={{ fontSize: "10px", fontWeight: 500 }}>
+            <span
+              className="minor-text"
+              style={{ fontSize: "10px", fontWeight: 500 }}
+            >
               {entryModel}
             </span>
           )}
@@ -255,7 +270,11 @@ function PlanHeader({
                     ? "badge-warning"
                     : "badge-success"
               }`}
-              style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+              style={{
+                padding: "1px 5px",
+                fontSize: "9px",
+                textTransform: "capitalize",
+              }}
             >
               {riskTier}
             </span>
@@ -282,7 +301,10 @@ function PlanHeader({
               return (
                 <span
                   key={idx}
-                  style={{ cursor: "pointer", borderBottom: "1px dotted var(--muted-soft)" }}
+                  style={{
+                    cursor: "pointer",
+                    borderBottom: "1px dotted var(--muted-soft)",
+                  }}
                   onClick={() => {
                     if (typeof plan.onSelectTP === "function") {
                       plan.onSelectTP(pt.price, rrPt.replace(/[()]/g, ""));
@@ -299,9 +321,6 @@ function PlanHeader({
     </div>
   );
 }
-
-
-
 
 function ExtraPlanBlock({
   planId,
@@ -484,7 +503,9 @@ export default function SignalDetailCard({
         risk_management: p.risk_management || "",
         entry_condition: p.entry_condition || "",
         exit_condition: p.exit_condition || "",
-        confluence_checklist: Array.isArray(p.confluence_checklist) ? p.confluence_checklist : [],
+        confluence_checklist: Array.isArray(p.confluence_checklist)
+          ? p.confluence_checklist
+          : [],
         reasons_to_skip: Array.isArray(p.reasons_to_skip)
           ? p.reasons_to_skip
           : Array.isArray(p.skipReasons)
@@ -647,7 +668,8 @@ export default function SignalDetailCard({
                         setPlanDrafts((prev) => {
                           let next = prev[planId] || p;
                           next = applyLinkedPlanChange(next, "tp", price);
-                          if (rrVal) next = applyLinkedPlanChange(next, "rr", rrVal);
+                          if (rrVal)
+                            next = applyLinkedPlanChange(next, "rr", rrVal);
                           return { ...prev, [planId]: next };
                         });
                       }
@@ -772,20 +794,68 @@ export default function SignalDetailCard({
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {(() => {
-          const p = plans.find((pl, i) => (i === 0 ? "main" : `suggested_${i}`) === selectedPlanId) || plans[0] || {};
-          const planVal = selectedPlanId === "main" ? tradePlan?.value || p : planDrafts[selectedPlanId] || p;
+          const p =
+            plans.find(
+              (pl, i) =>
+                (i === 0 ? "main" : `suggested_${i}`) === selectedPlanId,
+            ) ||
+            plans[0] ||
+            {};
+          const planVal =
+            selectedPlanId === "main"
+              ? tradePlan?.value || p
+              : planDrafts[selectedPlanId] || p;
 
           const fields = [
             { label: "Source", value: planVal.source || rawData.source },
-            { label: "Confluence Checklist", value: planVal.confluence_checklist || rawData.confluence_checklist || rawData.market_analysis?.confluence_checklist, isList: true, fullWidth: true },
-            { label: "Invalidation", value: planVal.invalidation || rawData.invalidation, fullWidth: true },
-            { label: "Entry Condition", value: planVal.entry_condition || rawData.entry_condition, fullWidth: true },
-            { label: "Exit Condition", value: planVal.exit_condition || rawData.exit_condition, fullWidth: true },
-            { label: "Reasons to skip", value: planVal.reasons_to_skip || planVal.skipReasons || rawData.reasons_to_skip, isList: true, fullWidth: true },
-            { label: "Skip Recommendation", value: planVal.skip_recommendation || planVal.skip || rawData.skip_recommendation, fullWidth: true },
+            {
+              label: "Confluence Checklist",
+              value:
+                planVal.confluence_checklist ||
+                rawData.confluence_checklist ||
+                rawData.market_analysis?.confluence_checklist,
+              isList: true,
+              fullWidth: true,
+            },
+            {
+              label: "Invalidation",
+              value: planVal.invalidation || rawData.invalidation,
+              fullWidth: true,
+            },
+            {
+              label: "Entry Condition",
+              value: planVal.entry_condition || rawData.entry_condition,
+              fullWidth: true,
+            },
+            {
+              label: "Exit Condition",
+              value: planVal.exit_condition || rawData.exit_condition,
+              fullWidth: true,
+            },
+            {
+              label: "Reasons to skip",
+              value:
+                planVal.reasons_to_skip ||
+                planVal.skipReasons ||
+                rawData.reasons_to_skip,
+              isList: true,
+              fullWidth: true,
+            },
+            {
+              label: "Skip Recommendation",
+              value:
+                planVal.skip_recommendation ||
+                planVal.skip ||
+                rawData.skip_recommendation,
+              fullWidth: true,
+            },
           ];
 
-          const hasVal = (v) => v !== null && v !== undefined && String(v) !== "" && (Array.isArray(v) ? v.length > 0 : true);
+          const hasVal = (v) =>
+            v !== null &&
+            v !== undefined &&
+            String(v) !== "" &&
+            (Array.isArray(v) ? v.length > 0 : true);
 
           // Data extraction for Bias/Trend and Analysis
           const raw = rawData;
@@ -797,11 +867,18 @@ export default function SignalDetailCard({
                   ...tf,
                   phase: tf?.phase || tf?.market_phase || "",
                   poiAlign: String(tf?.poiAlign ?? tf?.poi_alignment ?? ""),
-                  keyBreaks: Array.isArray(tf?.strongEvents) ? tf.strongEvents : [],
+                  keyBreaks: Array.isArray(tf?.strongEvents)
+                    ? tf.strongEvents
+                    : [],
                 }))
               : [];
           const analysisText = raw.analysis || m.analysis || "";
-          const rawChecklist = m.confluence_checklist || raw.confluence_checklist || m.checklist || raw.checklist || [];
+          const rawChecklist =
+            m.confluence_checklist ||
+            raw.confluence_checklist ||
+            m.checklist ||
+            raw.checklist ||
+            [];
           let checklist = Array.isArray(rawChecklist) ? rawChecklist : [];
 
           return (
@@ -809,29 +886,100 @@ export default function SignalDetailCard({
               {/* Bias & Trend Cards */}
               {compactTfs.length > 0 && (
                 <div style={{ marginBottom: 24 }}>
-                  <div className="minor-text" style={{ marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Bias & Trend</div>
+                  <div
+                    className="minor-text"
+                    style={{
+                      marginBottom: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Bias & Trend
+                  </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {compactTfs.map((tf) => {
                       const b = tf.bias || "";
                       const isLong = b.toLowerCase().includes("long");
                       const isShort = b.toLowerCase().includes("short");
-                      const biasColor = isLong ? "#26a69a" : isShort ? "#ef5350" : "var(--muted)";
+                      const biasColor = isLong
+                        ? "#26a69a"
+                        : isShort
+                          ? "#ef5350"
+                          : "var(--muted)";
                       return (
-                        <div key={tf.tf} style={{ flex: "1 1 0", minWidth: 140, padding: 10, background: "rgba(255,255,255,0.03)", borderRadius: 8, border: `1px solid ${biasColor}30` }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                        <div
+                          key={tf.tf}
+                          style={{
+                            flex: "1 1 0",
+                            minWidth: 140,
+                            padding: 10,
+                            background: "rgba(255,255,255,0.03)",
+                            borderRadius: 8,
+                            border: `1px solid ${biasColor}30`,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              fontSize: 13,
+                              marginBottom: 4,
+                              display: "flex",
+                              justifyContent: "space-between",
+                            }}
+                          >
                             <span>{tf.tf}</span>
-                            <span style={{ fontSize: 14, color: biasColor }}>{isLong ? "↑" : isShort ? "↓" : ""}</span>
+                            <span style={{ fontSize: 14, color: biasColor }}>
+                              {isLong ? "↑" : isShort ? "↓" : ""}
+                            </span>
                           </div>
-                          <div style={{ fontSize: 10, color: biasColor, fontWeight: 600 }}>{b || "—"}</div>
-                          <div className="minor-text" style={{ fontSize: "9px" }}>{tf.trend || ""} · {tf.structure || ""}</div>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: biasColor,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {b || "—"}
+                          </div>
+                          <div
+                            className="minor-text"
+                            style={{ fontSize: "9px" }}
+                          >
+                            {tf.trend || ""} · {tf.structure || ""}
+                          </div>
                           {tf.price_action_summary && (
-                            <div className="minor-text" style={{ fontSize: "9px", marginTop: 4, fontStyle: "italic", borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 4 }}>
-                              {tf.price_action_summary}
+                            <div
+                              className="minor-text"
+                              style={{
+                                fontSize: "9px",
+                                marginTop: 4,
+                                fontStyle: "italic",
+                                borderTop: "1px solid rgba(255,255,255,0.05)",
+                                paddingTop: 4,
+                              }}
+                            >
+                              {String(
+                                tf.price_action_summary?.recent_move ||
+                                  tf.price_action_summary ||
+                                  "",
+                              )}
                             </div>
                           )}
                           {tf.price_prediction && (
-                            <div style={{ fontSize: "9px", color: "var(--accent-soft)", fontWeight: 600, marginTop: 2 }}>
-                              Pred: {tf.price_prediction}
+                            <div
+                              style={{
+                                fontSize: "9px",
+                                color: "var(--accent-soft)",
+                                fontWeight: 600,
+                                marginTop: 2,
+                              }}
+                            >
+                              Pred:{" "}
+                              {String(
+                                tf.price_prediction?.narrative ||
+                                  tf.price_prediction ||
+                                  "",
+                              )}
                             </div>
                           )}
                         </div>
@@ -843,9 +991,24 @@ export default function SignalDetailCard({
 
               {/* Analysis narrative */}
               {analysisText && (
-                <div style={{ marginBottom: 24, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div
+                  style={{
+                    marginBottom: 24,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
                   <span className="minor-text">Analysis</span>
-                  <div style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: 500, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                  <div
+                    style={{
+                      fontSize: "13px",
+                      color: "var(--foreground)",
+                      fontWeight: 500,
+                      lineHeight: 1.6,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
                     {analysisText}
                   </div>
                 </div>
@@ -853,12 +1016,25 @@ export default function SignalDetailCard({
 
               {/* Checklist */}
               {checklist.length > 0 && (
-                <div style={{ marginBottom: 24, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{
+                    marginBottom: 24,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
                   <span className="minor-text">Checklist</span>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {checklist.map((item, idx) => (
-                      <span key={idx} className="badge badge-mini" style={{ opacity: 0.8 }}>
-                        {typeof item === "object" ? item.item || item.condition : item}
+                      <span
+                        key={idx}
+                        className="badge badge-mini"
+                        style={{ opacity: 0.8 }}
+                      >
+                        {typeof item === "object"
+                          ? item.item || item.condition
+                          : item}
                       </span>
                     ))}
                   </div>
@@ -866,18 +1042,52 @@ export default function SignalDetailCard({
               )}
 
               {/* Other Fields (Invalidation, Conditions, etc.) */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px 30px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "20px 30px",
+                }}
+              >
                 {fields.map((f, i) => {
                   if (!hasVal(f.value)) return null;
                   return (
-                    <div key={i} style={{ gridColumn: f.fullWidth ? "1 / -1" : "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div
+                      key={i}
+                      style={{
+                        gridColumn: f.fullWidth ? "1 / -1" : "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}
+                    >
                       <span className="minor-text">{f.label}</span>
-                      <div style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: 500, lineHeight: 1.5 }}>
+                      <div
+                        style={{
+                          fontSize: "13px",
+                          color: "var(--foreground)",
+                          fontWeight: 500,
+                          lineHeight: 1.5,
+                        }}
+                      >
                         {f.isList ? (
-                          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "12px", opacity: 0.9 }}>
-                            {(Array.isArray(f.value) ? f.value : []).map((item, idx) => <li key={idx}>{item}</li>)}
+                          <ul
+                            style={{
+                              margin: 0,
+                              paddingLeft: 18,
+                              fontSize: "12px",
+                              opacity: 0.9,
+                            }}
+                          >
+                            {(Array.isArray(f.value) ? f.value : []).map(
+                              (item, idx) => (
+                                <li key={idx}>{item}</li>
+                              ),
+                            )}
                           </ul>
-                        ) : f.value}
+                        ) : (
+                          f.value
+                        )}
                       </div>
                     </div>
                   );
@@ -942,11 +1152,9 @@ export default function SignalDetailCard({
                     ...(item.valueStyle || {}),
                   }}
                 >
-                  {typeof item.value === "object" ? (
-                    JSON.stringify(item.value, null, 2)
-                  ) : (
-                    item.value
-                  )}
+                  {typeof item.value === "object"
+                    ? JSON.stringify(item.value, null, 2)
+                    : item.value}
                 </div>
               </div>
             );
@@ -1059,9 +1267,7 @@ export default function SignalDetailCard({
             <SmartContent content={rawData} mode="readonly" />
           ) : (
             <div className="minor-text">
-              {isResponsePending
-                ? pendingResponseText
-                : "No JSON result yet."}
+              {isResponsePending ? pendingResponseText : "No JSON result yet."}
             </div>
           )}
         </div>
