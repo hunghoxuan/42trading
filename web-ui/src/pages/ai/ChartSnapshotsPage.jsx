@@ -1202,8 +1202,10 @@ function extractPositionFromAnalysis(parsed) {
           directionRaw === "B"
         ? "BUY"
         : "";
-  const entry = parseNum(plan.entry ?? parsed?.entry ?? parsed?.price);
-  const sl = parseNum(plan.sl ?? parsed?.sl);
+  const entry = parseNum(
+    plan.entry ?? plan.entry_price ?? parsed?.entry ?? parsed?.price,
+  );
+  const sl = parseNum(plan.sl ?? plan.stop_loss ?? parsed?.sl);
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1227,7 +1229,7 @@ function extractPositionFromAnalysis(parsed) {
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type:
-      String(plan.type || parsed?.type || "limit")
+      String(plan.type || plan.order_type || parsed?.type || "limit")
         .trim()
         .toLowerCase() || "limit",
     note: String(
@@ -1259,7 +1261,9 @@ function extractPositionFromAnalysis(parsed) {
     profile: String(plan?.profile || parsed?.profile || "").trim(),
     entry_condition: String(plan?.entry_condition || "").trim(),
     exit_condition: String(plan?.exit_condition || "").trim(),
-    skip_recommendation: String(plan?.skip_recommendation || "").trim(),
+    skip_recommendation: String(
+      plan?.skip_recommendation || plan?.position_management?.trade_decision || "",
+    ).trim(),
     risk_management: String(plan?.risk_management || "").trim(),
     confluence_checklist: Array.isArray(plan?.confluence_checklist)
       ? plan.confluence_checklist
@@ -1301,8 +1305,10 @@ function extractPositionFromPlan(plan, parsed = {}) {
       : directionRaw.includes("BUY") || directionRaw.includes("LONG")
         ? "BUY"
         : "BUY";
-  const entry = parseNum(item.entry ?? parsed?.entry ?? parsed?.price);
-  const sl = parseNum(item.sl ?? parsed?.sl);
+  const entry = parseNum(
+    item.entry ?? item.entry_price ?? parsed?.entry ?? parsed?.price,
+  );
+  const sl = parseNum(item.sl ?? item.stop_loss ?? parsed?.sl);
   const planTp = getPlanPrimaryTp(item);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1326,7 +1332,7 @@ function extractPositionFromPlan(plan, parsed = {}) {
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type:
-      String(item.type || parsed?.type || "limit")
+      String(item.type || item.order_type || parsed?.type || "limit")
         .trim()
         .toLowerCase() || "limit",
     note: String(
@@ -1358,7 +1364,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
     profile: String(item?.profile || parsed?.profile || "").trim(),
     entry_condition: String(item?.entry_condition || "").trim(),
     exit_condition: String(item?.exit_condition || "").trim(),
-    skip_recommendation: String(item?.skip_recommendation || "").trim(),
+    skip_recommendation: String(
+      item?.skip_recommendation || item?.position_management?.trade_decision || "",
+    ).trim(),
     risk_management: String(item?.risk_management || "").trim(),
     confluence_checklist: Array.isArray(item?.confluence_checklist)
       ? item.confluence_checklist
@@ -1581,7 +1589,6 @@ function parseTradePlanFromRaw(rawText) {
 }
 
 function enrichParsedAnalysis(rawText, parsed) {
-  parsed = normalizeAnalysisContract(parsed);
   const fallback = parseTradePlanFromRaw(rawText) || {};
 
   // If parsed is null or not an object/array, use fallback

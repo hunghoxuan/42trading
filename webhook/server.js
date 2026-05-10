@@ -15761,7 +15761,7 @@ const appHandler = async (req, res) => {
       let signals = [];
       let analysisResult = null;
       try {
-        const parsed = normalizeAiAnalysisContract(JSON.parse(cleanJson));
+        const parsed = JSON.parse(cleanJson);
         if (
           parsed.bias ||
           parsed.analysis ||
@@ -15770,8 +15770,6 @@ const appHandler = async (req, res) => {
           parsed.trade_plan ||
           parsed.final_verdict
         ) {
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-            parsed.schema_version = AI_RESPONSE_SCHEMA_VERSION;
           analysisResult = parsed;
           signals = parsed.signals || [];
         } else if (Array.isArray(parsed)) {
@@ -16874,7 +16872,10 @@ const appHandler = async (req, res) => {
               .join("\n")
           : String(aiJson?.content || "");
         const extracted = extractJsonFromAiText(rawResponse);
-        const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+        const parsedJson =
+          extracted.parsed && typeof extracted.parsed === "object"
+            ? extracted.parsed
+            : {};
         console.log(
           "[ai-response] symbol=" +
             (parsedJson?.symbol || "?") +
@@ -16890,13 +16891,6 @@ const appHandler = async (req, res) => {
             "[ai-response] WARN: bare trade_plan. raw:",
             rawResponse.slice(0, 500),
           );
-        }
-        if (
-          parsedJson &&
-          typeof parsedJson === "object" &&
-          !Array.isArray(parsedJson)
-        ) {
-          parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
         }
         const autoSaveResult = await autoSaveAnalyzeResult({
           mode: autoSave,
@@ -17253,7 +17247,10 @@ const appHandler = async (req, res) => {
           ? claudeFilesMode || "base64"
           : aiResult.provider;
       const extracted = extractJsonFromAiText(rawResponse);
-      const parsedJson = normalizeAiAnalysisContract(extracted.parsed || {});
+      const parsedJson =
+        extracted.parsed && typeof extracted.parsed === "object"
+          ? extracted.parsed
+          : {};
       console.log(
         "[ai-response] symbol=" +
           (parsedJson?.symbol || "?") +
@@ -17269,13 +17266,6 @@ const appHandler = async (req, res) => {
           "[ai-response] WARN: bare trade_plan. raw:",
           rawResponse.slice(0, 500),
         );
-      }
-      if (
-        parsedJson &&
-        typeof parsedJson === "object" &&
-        !Array.isArray(parsedJson)
-      ) {
-        parsedJson.schema_version = AI_RESPONSE_SCHEMA_VERSION;
       }
       const autoSaveResult = await autoSaveAnalyzeResult({
         mode: autoSave,
