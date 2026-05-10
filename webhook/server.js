@@ -16418,6 +16418,60 @@ const appHandler = async (req, res) => {
         if (dir.includes("SELL") || dir === "SHORT") return "SELL";
         return "BUY";
       };
+      const ensureTradePlanCoverageBySymbol = (
+        parsed,
+        requestedSymbolsRaw = [],
+      ) => {
+        const out = parsed && typeof parsed === "object" ? parsed : {};
+        const requested = (Array.isArray(requestedSymbolsRaw)
+          ? requestedSymbolsRaw
+          : []
+        )
+          .map((x) => normalizeSymbolLoose(x))
+          .filter(Boolean);
+        if (!requested.length) return out;
+        const plans = Array.isArray(out.trade_plan) ? out.trade_plan : [];
+        const existing = new Set(
+          plans
+            .map((p) => normalizeSymbolLoose(p?.symbol))
+            .filter(Boolean),
+        );
+        for (const sym of requested) {
+          if (existing.has(sym)) continue;
+          plans.push({
+            symbol: sym,
+            direction: "BUY",
+            profile: "Intraday",
+            order_type: "Market",
+            session: "Any",
+            strategy: "SMC",
+            entry_model: "No valid setup",
+            entry_price: null,
+            stop_loss: null,
+            take_profits: [],
+            risk_reward: null,
+            risk_percent: null,
+            estimated_candles_to_tp1: null,
+            estimate_candles_that_entry_happens: null,
+            entry_trigger: "",
+            mid_trade_invalidation: "",
+            pre_entry_invalidation: "",
+            confluence_score: 0,
+            trade_decision: "Skip",
+            skip_reasons: [
+              {
+                reason: `No valid setup found for ${sym} from current chart files.`,
+                severity: "info",
+              },
+            ],
+            grade: "C",
+            confidence_pct: 0,
+            note: "Auto-added by server to ensure per-symbol coverage.",
+          });
+        }
+        out.trade_plan = plans;
+        return out;
+      };
       const firstAutoSavableTradePlan = (parsed = {}) => {
         const plans = Array.isArray(parsed?.trade_plan)
           ? parsed.trade_plan
@@ -16651,7 +16705,11 @@ const appHandler = async (req, res) => {
         (body.use_context_files === true ||
           String(body.context_mode || "").toLowerCase() === "claude");
       const contextSymbol =
-        String(body.symbol || "").trim() ||
+        String(
+          Array.isArray(body.symbols) && body.symbols.length
+            ? body.symbols[0]
+            : body.symbol || "",
+        ).trim() ||
         (Array.isArray(body.files)
           ? body.files
               .map((f) => inferSymbolFromSnapshotFile(f))
@@ -16840,10 +16898,14 @@ const appHandler = async (req, res) => {
               .join("\n")
           : String(aiJson?.content || "");
         const extracted = extractJsonFromAiText(rawResponse);
-        const parsedJson =
+        let parsedJson =
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        parsedJson = ensureTradePlanCoverageBySymbol(
+          parsedJson,
+          Array.isArray(body.symbols) ? body.symbols : [contextBundle.symbol],
+        );
         console.log(
           "[ai-response] symbol=" +
             (parsedJson?.symbol || "?") +
@@ -17279,10 +17341,11 @@ const appHandler = async (req, res) => {
           ? claudeFilesMode || "base64"
           : aiResult.provider;
       const extracted = extractJsonFromAiText(rawResponse);
-      const parsedJson =
+      let parsedJson =
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      parsedJson = ensureTradePlanCoverageBySymbol(parsedJson, requestedSymbols);
       console.log(
         "[ai-response] symbol=" +
           (parsedJson?.symbol || "?") +
