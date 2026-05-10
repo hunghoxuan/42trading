@@ -14137,6 +14137,7 @@ const appHandler = async (req, res) => {
               : null,
         },
       });
+      notifyPulse(effectiveUserId, "trades");
       return json(res, 200, {
         ok: true,
         created: fanout?.created || 0,

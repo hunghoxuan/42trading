@@ -1906,6 +1906,16 @@ export default function ChartSnapshotsPage() {
 
   const [usedFiles, setUsedFiles] = useState([]);
   const [sessionPrefix, setSessionPrefix] = useState("");
+  const buildAiAnalyzeRoute = (symbols = []) => {
+    const list = (Array.isArray(symbols) ? symbols : [])
+      .map((x) => normalizeWatchSymbol(x))
+      .filter(Boolean);
+    if (!list.length) return "/ai/analyze";
+    const slug = list.join("-");
+    return `/ai/analyze/${encodeURIComponent(slug)}?symbols=${encodeURIComponent(
+      list.join(","),
+    )}`;
+  };
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [watchlist, setWatchlist] = useState([]);
@@ -2252,9 +2262,9 @@ export default function ChartSnapshotsPage() {
     });
     if (key === "symbol") {
       if (value) {
-        navigate(`/ai/browser/${encodeURIComponent(value)}`, { replace: true });
+        navigate(buildAiAnalyzeRoute([value]), { replace: true });
       } else {
-        navigate("/ai/browser", { replace: true });
+        navigate("/ai/analyze", { replace: true });
       }
     }
   };
@@ -3069,7 +3079,7 @@ export default function ChartSnapshotsPage() {
         });
       }
       const validationErr = validatePosition(activePosition);
-      if (validationErr) throw new Error(validationErr);
+      if (validationErr && !overridePosition) throw new Error(validationErr);
       let createdCount = 0;
       let lastCreated = null;
       for (let i = 0; i < signals.length; i++) {
@@ -3110,6 +3120,9 @@ export default function ChartSnapshotsPage() {
 
         const finalPayload = {
           ...payload,
+          symbol: normalizeSignalSymbol(
+            payload.symbol || activePosition?.symbol || tvSymbol || cfg.symbol || "",
+          ),
           source:
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
@@ -3164,6 +3177,13 @@ export default function ChartSnapshotsPage() {
           snapshot_files: chartFiles,
           analysis_snapshot: analysisSnapshotPayload,
         };
+        if (overridePosition) {
+          delete finalPayload.trade_plan;
+          delete finalPayload.market_analysis;
+          delete finalPayload.risk_management;
+          delete finalPayload.final_verdict;
+          delete finalPayload.raw_json;
+        }
         if (mode === "trade") {
           const out = await api.createTrade(finalPayload);
           if (out && typeof out === "object") lastCreated = out;
@@ -3423,7 +3443,18 @@ export default function ChartSnapshotsPage() {
       setSelectedSymbols(routeSymbols);
       return;
     }
-    if (paramSymbol) setCfgField("symbol", decodeURIComponent(paramSymbol));
+    if (paramSymbol) {
+      const decoded = decodeURIComponent(paramSymbol);
+      const slugSymbols = decoded
+        .split("-")
+        .map((x) => normalizeWatchSymbol(x))
+        .filter(Boolean);
+      if (slugSymbols.length > 0) {
+        setSelectedSymbols(slugSymbols);
+        return;
+      }
+      setCfgField("symbol", decoded);
+    }
   }, []);
 
   useEffect(() => {
@@ -3431,10 +3462,9 @@ export default function ChartSnapshotsPage() {
       ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
       : [];
     if (!symbols.length) return;
-    const nextPath = `/ai/browser/${encodeURIComponent(symbols[0])}`;
-    const nextSearch = `?symbols=${encodeURIComponent(symbols.join(","))}`;
-    if (location.pathname !== nextPath || location.search !== nextSearch) {
-      navigate(`${nextPath}${nextSearch}`, { replace: true });
+    const next = buildAiAnalyzeRoute(symbols);
+    if (`${location.pathname}${location.search}` !== next) {
+      navigate(next, { replace: true });
     }
   }, [cfg.symbols]);
 
@@ -5127,6 +5157,24 @@ export default function ChartSnapshotsPage() {
                 {s}
               </span>
             ))}
+          </div>
+        ) : null}
+        {hasResponse ? (
+          <div style={{ marginBottom: 10 }}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => {
+                setAnalysisRaw("");
+                setAnalysisJson("");
+                setAnalysisParsed(null);
+                setSelectedPlanIdx(0);
+                setResponseTab("chart");
+                setStatus({ type: "", text: "" });
+              }}
+            >
+              Back to Analyze
+            </button>
           </div>
         ) : null}
 

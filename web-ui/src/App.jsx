@@ -194,7 +194,7 @@ export default function App() {
             Dashboard
           </NavLink>
           <NavLink
-            to="/ai/browser"
+            to="/ai/analyze"
             className={({ isActive }) => (isActive ? "active" : "")}
           >
             AI
@@ -304,8 +304,12 @@ export default function App() {
             <Route path="/signals/:signalId" element={<SignalsPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/trades/:tradeId" element={<TradesPage />} />
-            <Route path="/ai" element={<Navigate to="/ai/browser" replace />} />
-            <Route path="/ai/browser" element={<ChartSnapshotsPage />} />
+            <Route path="/ai" element={<Navigate to="/ai/analyze" replace />} />
+            <Route path="/ai/analyze" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/analyze/:symbol" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/result" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/result/:symbol" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/browser" element={<Navigate to="/ai/analyze" replace />} />
             <Route
               path="/ai/browser/:symbol"
               element={<ChartSnapshotsPage />}
