@@ -2540,18 +2540,15 @@ export default function ChartSnapshotsPage() {
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
 
       const basePrompt = String(promptDraft || promptText || "").trim();
-      const activeSymbol = String(
-        opts?.symbolOverride || tvSymbol || cfg.symbol || "",
-      ).trim();
       const activeSymbols = Array.isArray(opts?.symbolsOverride)
         ? opts.symbolsOverride.map((x) => String(x || "").trim()).filter(Boolean)
         : Array.isArray(cfg?.symbols)
           ? cfg.symbols.map((x) => String(x || "").trim()).filter(Boolean)
           : [];
+      const activeSymbol = String(
+        activeSymbols[0] || opts?.symbolOverride || tvSymbol || cfg.symbol || "",
+      ).trim();
       const runtimeConfig = JSON.stringify({
-        symbol: String(activeSymbol || cfg.symbol || "")
-          .split(":")
-          .pop(),
         symbols: activeSymbols,
         assetClass: cfg.asset,
         timeframes: [
@@ -2587,26 +2584,6 @@ export default function ChartSnapshotsPage() {
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
-        symbol: (() => {
-          const raw =
-            String(activeSymbol || cfg.symbol || "")
-              .split(":")
-              .pop()
-              ?.trim() || "";
-          const PROVIDER_NAMES = new Set([
-            "ICMARKETS",
-            "OANDA",
-            "FOREXCOM",
-            "EIGHTCAP",
-            "PEPPERSTONE",
-          ]);
-          if (raw && !PROVIDER_NAMES.has(raw.toUpperCase())) return raw;
-          // Fallback to cfg.symbol
-          return String(cfg.symbol || "")
-            .split(":")
-            .pop()
-            ?.trim();
-        })(),
         symbols: activeSymbols,
         timeframe,
         provider,
@@ -2635,17 +2612,15 @@ export default function ChartSnapshotsPage() {
       }
 
       if (Array.isArray(files) && files.length) payload.files = files;
-      if (!String(payload.symbol || "").trim()) {
+      if (!Array.isArray(payload.symbols) || !payload.symbols.length) {
         throw new Error(
-          "Symbol context is empty. Select a symbol before running Analyze.",
+          "Symbols context is empty. Select at least one symbol before Analyze.",
         );
       }
       if (!payload.files || !payload.files.length) {
-        const symbolForSnapshot = String(payload.symbol || "").trim();
-        if (symbolForSnapshot) {
+        if (payload.symbols.length) {
           try {
             const batch = await api.chartSnapshotCreateBatch({
-              symbol: symbolForSnapshot,
               symbols: activeSymbols,
               provider: provider || "ICMARKETS",
               session_prefix: activeSessionPrefix,
@@ -2872,8 +2847,13 @@ export default function ChartSnapshotsPage() {
         sessionPrefix: activeSessionPrefix,
         symbols: targetSymbols,
       });
+      const expectedFilesMin =
+        Math.max(1, targetSymbols.length) *
+        Math.max(1, recent.targetTfTokens.length);
+      const filesForAnalyze =
+        recent.matchedFiles.length >= expectedFilesMin ? recent.matchedFiles : [];
       await analyzeFiles(
-        recent.matchedFiles.length ? recent.matchedFiles : [],
+        filesForAnalyze,
         {
           context: hasContext ? aiContext : undefined,
           symbolOverride: targetSymbols[0] || effectiveSymbol,

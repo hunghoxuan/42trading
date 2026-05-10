@@ -1164,7 +1164,7 @@ export function buildPrompt(cfg) {
   const strategyContext = buildStrategyContext(cfg.strategies);
 
   return `## SESSION CONFIG
-Symbol: ${symbol} | Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
+Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
 Symbols: ${symbolList.join(", ")}
 MinTrades: ${cfg.min_trades || "0"} | MaxTrades: ${cfg.max_trades || "2"} | MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}% | NarrativeLanguage: ${cfg.narrative_language || "English"}
 HTF: ${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
