@@ -3781,17 +3781,22 @@ export default function ChartSnapshotsPage() {
         : [];
     return plans
       .map((p, idx) => {
-        const entry = parseNum(p?.entry);
-        const sl = parseNum(p?.sl);
+        const entry = parseNum(p?.entry ?? p?.entry_price);
+        const sl = parseNum(p?.sl ?? p?.stop_loss);
         const tp = getPlanPrimaryTp(p);
-        const rr = parseNum(p?.rr);
+        const rr = parseNum(p?.rr ?? p?.risk_reward);
+        const skipReasonText = String(
+          p?.position_management?.skips_reasons || "",
+        ).trim();
         return {
           idx,
           raw: p,
           direction: String(p?.direction || "NULL").toUpperCase(),
           strategy: String(p?.strategy || "").trim(),
           entryModel: String(p?.entry_model || p?.model || "").trim(),
-          confidence: parseNum(p?.confidence_pct),
+          confidence:
+            parseNum(p?.confidence_pct) ??
+            confidenceLevelToPct(p?.confidence_level),
           entry,
           sl,
           tp,
@@ -3800,14 +3805,44 @@ export default function ChartSnapshotsPage() {
           trade_type: String(p?.type || p?.order_type || "limit")
             .trim()
             .toLowerCase(),
-          be_trigger: p?.be_trigger ?? p?.be ?? null,
-          invalidation: String(p?.invalidation || "").trim(),
-          confidence_pct: parseNum(p?.confidence_pct),
-          estimated_bars: p?.estimated_bars ?? null,
+          be_trigger:
+            p?.be_trigger ??
+            p?.be ??
+            p?.multiple_exits?.break_even?.price ??
+            null,
+          invalidation: String(
+            p?.invalidation ||
+              p?.pre_entry_invalidation ||
+              p?.position_management?.pre_entry_invalidation ||
+              "",
+          ).trim(),
+          confidence_pct:
+            parseNum(p?.confidence_pct) ??
+            confidenceLevelToPct(p?.confidence_level),
+          estimated_bars:
+            p?.estimated_bars ?? p?.estimate_bars_that_entry_happens ?? null,
           reasons_to_skip: Array.isArray(p?.reasons_to_skip)
             ? p.reasons_to_skip
-            : [],
-          skip_recommendation: p?.skip_recommendation || p?.skip || "",
+            : skipReasonText
+              ? [{ reason: skipReasonText, severity: "" }]
+              : [],
+          skip_recommendation:
+            p?.skip_recommendation ||
+            p?.skip ||
+            p?.position_management?.trade_decision ||
+            "",
+          entry_condition: String(
+            p?.entry_condition ||
+              p?.entry_trigger ||
+              p?.position_management?.entry_trigger ||
+              "",
+          ).trim(),
+          exit_condition: String(
+            p?.exit_condition ||
+              p?.mid_trade_invalidation ||
+              p?.position_management?.mid_trade_invalidation ||
+              "",
+          ).trim(),
         };
       })
       .filter(
