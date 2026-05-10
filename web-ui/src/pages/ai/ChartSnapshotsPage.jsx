@@ -2373,14 +2373,23 @@ export default function ChartSnapshotsPage() {
     const sourceSymbols = requestedSymbols.length
       ? requestedSymbols
       : [symbolRaw, String(tvSymbol || "").toUpperCase()].filter(Boolean);
-    const symbolTokens = new Set();
+    const requestedTokenMap = new Map();
     sourceSymbols.forEach((sym) => {
-      const fullSymbol = sym.includes(":") ? sym : `${providerRaw}:${sym}`;
-      [sym, fullSymbol].forEach((x) => {
-        const tok = sanitizeSnapshotFileToken(x || "");
-        if (tok) symbolTokens.add(tok);
-      });
+      const normalizedSym = String(sym || "").trim().toUpperCase();
+      if (!normalizedSym) return;
+      const withProvider = normalizedSym.includes(":")
+        ? normalizedSym
+        : `${providerRaw}:${normalizedSym}`;
+      const tokenSet = new Set(
+        [normalizedSym, withProvider]
+          .map((x) => sanitizeSnapshotFileToken(x || ""))
+          .filter(Boolean),
+      );
+      requestedTokenMap.set(normalizedSym, tokenSet);
     });
+    const symbolTokens = new Set(
+      Array.from(requestedTokenMap.values()).flatMap((set) => Array.from(set)),
+    );
     const candidates = items
       .map(parseSnapshotMeta)
       .filter((x) => x && x.createdAtMs > 0)
@@ -2396,15 +2405,24 @@ export default function ChartSnapshotsPage() {
       .filter((x) => Math.abs(nowMs - x.createdAtMs) <= 15 * 60 * 1000)
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
 
-    const byTf = new Map();
-    for (const c of candidates) {
-      if (!byTf.has(c.tfToken)) byTf.set(c.tfToken, c.fileName);
+    const matchedFiles = [];
+    for (const reqSym of sourceSymbols) {
+      const req = String(reqSym || "").trim().toUpperCase();
+      const tokenSet = requestedTokenMap.get(req);
+      if (!tokenSet || !tokenSet.size) continue;
+      for (const tf of targetTfTokens) {
+        const hit = candidates.find(
+          (c) => c.tfToken === tf && tokenSet.has(c.symbolToken),
+        );
+        if (hit?.fileName) matchedFiles.push(hit.fileName);
+      }
     }
-    const matchedFiles = targetTfTokens
-      .flatMap((tf) => candidates.filter((c) => c.tfToken === tf).slice(0, requestedSymbols.length || 1))
-      .map((x) => x.fileName)
-      .filter(Boolean);
-    const missingTokens = targetTfTokens.filter((tf) => !byTf.has(tf));
+    const matchedByTf = new Map();
+    matchedFiles.forEach((f) => {
+      const meta = parseSnapshotMeta({ file_name: f, created_at: new Date().toISOString() });
+      if (meta?.tfToken) matchedByTf.set(meta.tfToken, true);
+    });
+    const missingTokens = targetTfTokens.filter((tf) => !matchedByTf.has(tf));
     return {
       matchedFiles,
       targetTfTokens,
@@ -3095,9 +3113,7 @@ export default function ChartSnapshotsPage() {
           source:
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
-          session_prefix: activeSessionPrefix
-            ? `${activeSessionPrefix}_${i}`
-            : undefined,
+          session_prefix: activeSessionPrefix || undefined,
           sid: (() => {
             const s = normalizeSignalSymbol(
               payload.symbol || tvSymbol || cfg.symbol || "",
@@ -3105,7 +3121,7 @@ export default function ChartSnapshotsPage() {
             const p = String(activeSessionPrefix || "")
               .trim()
               .toUpperCase();
-            return s && p ? `${s}_${p}_${i}` : undefined;
+            return s && p ? `${s}_${p}` : undefined;
           })(),
           action: dir === "BUY" || dir === "SELL" ? dir : payload.action,
           entry: parseNum(activePosition.entry) || payload.entry,
@@ -5118,8 +5134,7 @@ export default function ChartSnapshotsPage() {
           <div
             className="browser-grid-v1"
             style={{
-              gridTemplateColumns:
-                selectedSymbols.length > 1 ? "repeat(2, 1fr)" : "1fr",
+              gridTemplateColumns: "1fr",
               gap: 12,
               marginBottom: 20,
             }}
