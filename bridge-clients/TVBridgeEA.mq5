@@ -3252,8 +3252,10 @@ void SyncWithVps()
                posUpdates += "\"status\":\"START\",";
                posUpdates += "\"ticket\":\"" + IntegerToString((long)ticket) + "\",";
                posUpdates += "\"symbol\":\"" + JsonEscape(sym) + "\",";
+               posUpdates += "\"type\":\"MARKET\",";
                posUpdates += "\"lots\":" + DoubleToString(vol, 2) + ",";
                posUpdates += "\"volume\":" + DoubleToString(vol, 2) + ",";
+               posUpdates += "\"entry\":" + DoubleToString(priceOpen, 5) + ",";
                posUpdates += "\"pnl\":" + DoubleToString(pnl, 2) + ",";
                posUpdates += "\"pips\":" + DoubleToString(pips, 1) + ",";
                posUpdates += "\"commission\":" + DoubleToString(comm, 2) + ",";
@@ -3305,6 +3307,8 @@ void SyncWithVps()
                ordUpdates += "\"symbol\":\"" + JsonEscape(sym) + "\",";
                ordUpdates += "\"lots\":" + DoubleToString(vol, 2) + ",";
                ordUpdates += "\"volume\":" + DoubleToString(vol, 2) + ",";
+               ordUpdates += "\"type\":\"" + EnumToString(ordType) + "\",";
+               ordUpdates += "\"entry\":" + DoubleToString(price, 5) + ",";
                ordUpdates += "\"target_price\":" + DoubleToString(price, 5) + ",";
                ordUpdates += "\"sl\":" + DoubleToString(sl, 5) + ",";
                ordUpdates += "\"tp\":" + DoubleToString(tp, 5) + ",";

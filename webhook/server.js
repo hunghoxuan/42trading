@@ -7685,7 +7685,10 @@ async function _mt5InitBackendInternal() {
                 uid,
               );
             }
-          } else if (it.execution_status === "OPEN") {
+          } else if (
+            it.execution_status === "OPEN" ||
+            it.execution_status === "PENDING"
+          ) {
             if (!syncSymbol || !syncAction) {
               results.push({
                 ticket: it.ticket,
@@ -7697,10 +7700,22 @@ async function _mt5InitBackendInternal() {
               });
               continue;
             }
-            const discoverySid = String(it.sid || mt5GenerateTimeSid()).trim();
+            const discoverySid = String(
+              it.sid ||
+              (ticketCandidates[0] ? `M_${ticketCandidates[0]}` : mt5GenerateTimeSid())
+            ).trim();
+            if (ticketCandidates[0]) {
+              const dupCheck = await pool.query(
+                `SELECT sid FROM trades WHERE account_id = $1 AND broker_trade_id = $2 LIMIT 1`,
+                [aid, ticketCandidates[0]]
+              );
+              if (dupCheck.rowCount > 0) continue;
+            }
+
             const brokerSource = (payload.broker_name || "BROKER")
               .toUpperCase()
               .replace(/\s+/g, "_");
+
             await this.upsertSourceV2({
               source_id: brokerSource,
               name: payload.broker_name || brokerSource,
@@ -7723,7 +7738,7 @@ async function _mt5InitBackendInternal() {
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, 'OPEN', $12::text, $13::jsonb, $14::text, $15::numeric, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, NOW(), NOW())
+            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, $12::text, $13::text, $14::jsonb, $15::text, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
               [
@@ -7738,6 +7753,7 @@ async function _mt5InitBackendInternal() {
                 it.sl || null,
                 it.tp || null,
                 it.note || "",
+                it.execution_status,
                 brokerSource,
                 syncMeta,
                 ticketCandidates[0] || "",
