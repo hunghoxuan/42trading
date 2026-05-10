@@ -1679,8 +1679,8 @@ function enrichParsedAnalysis(rawText, parsed) {
   }
 
   // Merge symbol/profile if missing
-  if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
-  if (!res.profile && fallback.profile) res.profile = fallback.profile;
+//   if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
+//   if (!res.profile && fallback.profile) res.profile = fallback.profile;
 
   // Final check for trade_plan
   if (!res.trade_plan && fallback.trade_plan) {
@@ -1710,13 +1710,13 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
     rows.push(
       ...parsed.trade_plan.map((x) => ({
         ...(x || {}),
-        symbol: parsed.symbol || fallback.symbol,
+        symbol: x?.symbol || parsed.symbol || fallback.symbol,
       })),
     );
   if (parsed.trade_setup && typeof parsed.trade_setup === "object") {
     rows.push({
       ...(parsed.trade_setup || {}),
-      symbol: parsed.symbol || fallback.symbol,
+      symbol: parsed.trade_setup?.symbol || parsed.symbol || fallback.symbol,
     });
   }
   if (
@@ -1726,7 +1726,7 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
   ) {
     rows.push({
       ...(parsed.trade_plan || {}),
-      symbol: parsed.symbol || fallback.symbol,
+      symbol: parsed.trade_plan?.symbol || parsed.symbol || fallback.symbol,
     });
   }
   if (!rows.length) rows.push(parsed);
@@ -2860,18 +2860,18 @@ export default function ChartSnapshotsPage() {
         }
       }
       if (parsed && typeof parsed === "object") {
-        // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
-        const inputSymbol = String(activeSymbol || cfg.symbol || "")
-          .split(":")
-          .pop();
-        if (
-          parsed.symbol &&
-          inputSymbol &&
-          !parsed.symbol.includes(inputSymbol)
-        ) {
-          // Claude returned a different symbol — trust our input
-          parsed.symbol = inputSymbol;
-        }
+//         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
+//         const inputSymbol = String(activeSymbol || cfg.symbol || "")
+//           .split(":")
+//           .pop();
+//         if (
+//           parsed.symbol &&
+//           inputSymbol &&
+//           !parsed.symbol.includes(inputSymbol)
+//         ) {
+//           // Claude returned a different symbol — trust our input
+//           parsed.symbol = inputSymbol;
+//         }
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
         if (!hasRequiredPlanLevels(parsed)) {
@@ -4110,6 +4110,7 @@ export default function ChartSnapshotsPage() {
         return {
           idx,
           raw: p,
+          symbol: normalizeSignalSymbol(p?.symbol || ""),
           direction: String(p?.direction || "NULL").toUpperCase(),
           strategy: String(p?.strategy || "").trim(),
           entryModel: String(p?.entry_model || p?.model || "").trim(),
@@ -5445,7 +5446,7 @@ export default function ChartSnapshotsPage() {
                   __raw_plan: plan?.raw || {},
                   __plan_index: idx,
                   symbol: normalizeSignalSymbol(
-                    plan?.raw?.symbol || selectedSymbol,
+                    plan.symbol || plan?.raw?.symbol || "",
                   ),
                   direction: plan.direction,
                   entry: getPlanPositionOverride(plan, idx).entry,
