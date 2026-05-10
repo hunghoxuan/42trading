@@ -82,9 +82,12 @@ function fDateTime(v) {
 }
 
 function signalRefOf(s) {
+  // Prefer sid (UUID) for URLs, fall back to id for backward compat
+  const sid = String(s?.sid || "").trim();
+  if (sid) return sid;
   const idNum = Number(s?.id);
   if (Number.isInteger(idNum) && idNum > 0) return String(idNum);
-  return String(s?.sid || "").trim();
+  return "";
 }
 
 function statusUi(statusRaw) {

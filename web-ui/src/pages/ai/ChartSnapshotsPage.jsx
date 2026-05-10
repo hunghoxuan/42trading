@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  lazy,
+  Suspense,
+} from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { createChart } from "lightweight-charts";
 import { NotificationHub } from "../../services/NotificationHub";
@@ -2043,6 +2051,68 @@ export default function ChartSnapshotsPage() {
 
   const promptText = useMemo(() => buildPrompt(cfg), [cfg]);
 
+  const hydrateFromResultEntry = useCallback(
+    (entry) => {
+      if (!entry || entry.type !== "analyze") return false;
+      const out = entry.data || {};
+      const raw = String(out?.raw_response || "");
+      const parsed = enrichParsedAnalysis(
+        raw,
+        out?.parsed_json || tryParseJsonLoose(raw),
+      );
+      const used = Array.isArray(out?.used_files) ? out.used_files : [];
+      const display = used.length ? used : analysisFilesDisplay;
+      const firstPlanSymbol = normalizeWatchSymbol(
+        parsed?.trade_plan?.[0]?.symbol || "",
+      );
+      const fallbackSymbol = normalizeWatchSymbol(
+        parsed?.symbol || cfg.symbol || "",
+      );
+      const nextSymbol = firstPlanSymbol || fallbackSymbol || "";
+      if (nextSymbol) {
+        setCfg((prev) => ({
+          ...prev,
+          symbol: nextSymbol,
+          symbols: Array.from(
+            new Set(
+              [
+                ...(Array.isArray(prev?.symbols) ? prev.symbols : []),
+                ...(Array.isArray(parsed?.trade_plan)
+                  ? parsed.trade_plan
+                      .map((p) => normalizeWatchSymbol(p?.symbol))
+                      .filter(Boolean)
+                  : []),
+                nextSymbol,
+              ].filter(Boolean),
+            ),
+          ),
+        }));
+      }
+      pendingHydrateRef.current = {
+        raw,
+        parsed: parsed && typeof parsed === "object" ? parsed : null,
+        usedFiles: used,
+        displayFiles: display,
+      };
+      if (out?.source || out?.updated_time) {
+        setMarketMetadata({
+          source: out.source || "",
+          updated_time: out.updated_time || null,
+          auto_refresh: out.auto_refresh || 0,
+        });
+      }
+      setStatus({
+        type: entry.status === "error" ? "error" : "success",
+        text:
+          entry.status === "error"
+            ? String(entry.error || "Analyze result failed.")
+            : `Loaded AI result: ${entry.requestId}`,
+      });
+      return true;
+    },
+    [analysisFilesDisplay, cfg.symbol],
+  );
+
   useEffect(() => {
     // Reset analysis data when symbol changes
     setAnalysisRaw("");
@@ -3509,6 +3579,13 @@ export default function ChartSnapshotsPage() {
   useEffect(() => {
     loadSnapshots();
     const search = new URLSearchParams(location.search || "");
+    const resultId = String(search.get("result") || "").trim();
+    if (resultId) {
+      const hubEntry = NotificationHub.getResult(resultId);
+      if (hubEntry && hydrateFromResultEntry(hubEntry)) {
+        return;
+      }
+    }
     const raw = String(search.get("symbols") || "").trim();
     const routeSymbols = raw
       ? raw
@@ -3535,6 +3612,15 @@ export default function ChartSnapshotsPage() {
   }, []);
 
   useEffect(() => {
+    const search = new URLSearchParams(location.search || "");
+    const resultId = String(search.get("result") || "").trim();
+    if (!resultId) return;
+    const hubEntry = NotificationHub.getResult(resultId);
+    if (hubEntry) hydrateFromResultEntry(hubEntry);
+  }, [location.search, hydrateFromResultEntry]);
+
+  useEffect(() => {
+    if (location.pathname.startsWith("/ai/result")) return;
     const symbols = Array.isArray(cfg?.symbols)
       ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
       : [];
@@ -3644,6 +3730,7 @@ export default function ChartSnapshotsPage() {
             sl: x?.sl,
             updatedAt: x?.updated_at || x?.created_at,
             id: x?.sid || x?.id,
+            sid: x?.sid || null,
           }));
         const normalizedSignals = signalItems
           .filter((x) => allowed.has(String(x?.status || "").toUpperCase()))
@@ -3658,6 +3745,7 @@ export default function ChartSnapshotsPage() {
             sl: x?.sl || x?.sl_price,
             updatedAt: x?.updated_at || x?.created_at,
             id: x?.sid || x?.id,
+            sid: x?.sid || null,
           }));
         const merged = [...normalizedTrades, ...normalizedSignals]
           .sort(
@@ -4584,8 +4672,9 @@ export default function ChartSnapshotsPage() {
                     className="snapshot-activity-card-v4"
                     style={{ cursor: "pointer" }}
                     onClick={() => {
-                      if (x.kind === "trade") navigate(`/trades/${x.id}`);
-                      else navigate(`/signals/${x.id}`);
+                      const ref = x.sid || x.id;
+                      if (x.kind === "trade") navigate(`/trades/${ref}`);
+                      else navigate(`/signals/${ref}`);
                     }}
                   >
                     <div
@@ -5289,165 +5378,6 @@ export default function ChartSnapshotsPage() {
           <Suspense
             fallback={<div className="loading-card">Loading Details...</div>}
           >
-            {analysisTradePlans.length ? (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  marginBottom: 10,
-                  gridTemplateColumns:
-                    analysisTradePlans.length === 2
-                      ? "repeat(2, minmax(0, 1fr))"
-                      : analysisTradePlans.length >= 3
-                        ? "repeat(3, minmax(0, 1fr))"
-                        : "1fr",
-                }}
-              >
-                {analysisTradePlans.map((plan, idx) => {
-                  const planPos = getPlanPositionOverride(plan, idx);
-                  const isActive = idx === selectedPlanIdx;
-                  const multipleExits = Array.isArray(plan?.raw?.take_profits)
-                    ? plan.raw.take_profits
-                    : [];
-                  return (
-                    <article
-                      key={`plan_overview_${idx}`}
-                      className="snapshot-activity-card-v4"
-                      style={{
-                        borderColor: isActive
-                          ? "var(--accent)"
-                          : "var(--border)",
-                        boxShadow: isActive
-                          ? "0 0 0 1px var(--accent) inset"
-                          : "none",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => {
-                        setSelectedPlanIdx(idx);
-                        applyTradePlanToEditor(plan);
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr auto",
-                          gap: 8,
-                          alignItems: "center",
-                        }}
-                      >
-                        <SymbolEntryCell
-                          side={plan.direction}
-                          symbol={normalizeSignalSymbol(
-                            plan.raw?.symbol || selectedSymbol,
-                          )}
-                          orderType={plan.trade_type}
-                          entry={plan.entry}
-                          tp={plan.tp}
-                          sl={plan.sl}
-                          rr={plan.rr}
-                          status={plan.skip_recommendation || "Proceed"}
-                        />
-                        <div
-                          className="minor-text"
-                          style={{ marginTop: 6, marginBottom: 8 }}
-                        >
-                          {plan.strategy || "-"} | {plan.entryModel || "-"}
-                        </div>
-                        {multipleExits.length ? (
-                          <div
-                            className="minor-text"
-                            style={{ marginBottom: 8 }}
-                          >
-                            Exits:{" "}
-                            {multipleExits
-                              .map(
-                                (x) =>
-                                  `${formatNum3(x?.price)} (${x?.close_position_pct ?? "-"}%)`,
-                              )
-                              .join(" | ")}
-                          </div>
-                        ) : null}
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                            gap: 6,
-                            marginBottom: 8,
-                          }}
-                        >
-                          <input
-                            placeholder="Entry"
-                            value={planPos.entry || ""}
-                            onChange={(e) =>
-                              setPlanEditField(idx, "entry", e.target.value)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ width: "100%" }}
-                          />
-                          <input
-                            placeholder="TP"
-                            value={planPos.tp || ""}
-                            onChange={(e) =>
-                              setPlanEditField(idx, "tp", e.target.value)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ width: "100%" }}
-                          />
-                          <input
-                            placeholder="SL"
-                            value={planPos.sl || ""}
-                            onChange={(e) =>
-                              setPlanEditField(idx, "sl", e.target.value)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ width: "100%" }}
-                          />
-                          <input
-                            placeholder="RR"
-                            value={planPos.rr || ""}
-                            onChange={(e) =>
-                              setPlanEditField(idx, "rr", e.target.value)
-                            }
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ width: "100%" }}
-                          />
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            className="secondary-button"
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addBySelection(
-                                "signal",
-                                { ...planPos, symbol: plan.raw?.symbol || "" },
-                                `plan_${idx}`,
-                              );
-                            }}
-                          >
-                            + Signal
-                          </button>
-                          <button
-                            className="primary-button"
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              addBySelection(
-                                "trade",
-                                { ...planPos, symbol: plan.raw?.symbol || "" },
-                                `plan_${idx}`,
-                              );
-                            }}
-                          >
-                            + Trade
-                          </button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
             <SignalDetailCard
               mode="ai"
               hideTabsBeforeResponse={true}
@@ -5503,18 +5433,36 @@ export default function ChartSnapshotsPage() {
                 tab: responseTab,
                 onTabChange: setResponseTab,
                 text: responseText,
-                raw: activePlan
-                  ? {
-                      ...(effectiveParsed || {}),
-                      trade_plan: [activePlan.raw],
-                    }
-                  : effectiveParsed || analysisRaw || analysisJson,
+                raw: effectiveParsed || analysisRaw || analysisJson,
+                schemaVersion: String(effectiveParsed?.schema_version || ""),
                 bars: JSON.stringify(
                   currentBarsSnapshot || { status: "no_cached_bars" },
                   null,
                   2,
                 ),
-                tradePlans: [],
+                tradePlans: analysisTradePlans.map((plan, idx) => ({
+                  ...(plan?.raw || {}),
+                  __raw_plan: plan?.raw || {},
+                  __plan_index: idx,
+                  symbol: normalizeSignalSymbol(
+                    plan?.raw?.symbol || selectedSymbol,
+                  ),
+                  direction: plan.direction,
+                  entry: getPlanPositionOverride(plan, idx).entry,
+                  tp: getPlanPositionOverride(plan, idx).tp,
+                  sl: getPlanPositionOverride(plan, idx).sl,
+                  rr: getPlanPositionOverride(plan, idx).rr,
+                  trade_type: getPlanPositionOverride(plan, idx).trade_type,
+                  note: getPlanPositionOverride(plan, idx).note,
+                  strategy: plan.strategy || plan?.raw?.strategy || "",
+                  entry_model:
+                    plan.entryModel ||
+                    plan?.raw?.entry_model ||
+                    plan?.raw?.entryModel ||
+                    "",
+                  skip_recommendation:
+                    plan.skip_recommendation || plan?.raw?.trade_decision || "",
+                })),
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{
