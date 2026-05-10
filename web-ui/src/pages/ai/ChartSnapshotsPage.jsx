@@ -4279,7 +4279,7 @@ export default function ChartSnapshotsPage() {
               style={{
                 marginBottom: 8,
                 display: "grid",
-                gridTemplateColumns: "minmax(0, 4fr) minmax(320px, 6fr)",
+                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
                 gap: 8,
                 alignItems: "start",
               }}
@@ -4340,9 +4340,8 @@ export default function ChartSnapshotsPage() {
                       <div
                         style={{
                           position: "relative",
-                          flex: 1,
-                          minWidth: 260,
-                          maxWidth: 420,
+                          width: "30%",
+                          minWidth: 120,
                           display: "flex",
                           gap: 4,
                         }}
@@ -4360,7 +4359,7 @@ export default function ChartSnapshotsPage() {
                             }
                           }}
                           placeholder="Search symbol..."
-                          style={{ flex: 1, padding: "6px 10px", fontSize: 13 }}
+                          style={{ flex: 1, padding: "6px 10px", fontSize: 13, minWidth: 0 }}
                         />
                         <button
                           className="secondary-button"
@@ -4429,7 +4428,7 @@ export default function ChartSnapshotsPage() {
                       </select>
                     </div>
                     
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginLeft: selectedSymbol ? 44 : 40, marginTop: 4 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
                       <div className="tf-pills">
                         {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
                           <button
