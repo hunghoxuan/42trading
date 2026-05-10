@@ -252,38 +252,54 @@ const classifySymbol = (s) => {
 };
 
 function normalizeTemplateConfig(raw) {
-  const strategyValue = raw?.strategies || raw?.strategy || ["ICT"];
+  const source =
+    raw?.config && typeof raw.config === "object" ? raw.config : raw || {};
+  const strategyValue =
+    raw?.strategies || source?.strategies || source?.strategy || ["ICT"];
   const strategies = Array.isArray(strategyValue)
     ? strategyValue
     : [String(strategyValue || "ICT")];
   const profileRaw = String(raw?.profile || "")
     .trim()
     .toLowerCase();
+  const normalizedRaw = {
+    ...source,
+    strategies,
+  };
+  const profileFromSource = String(normalizedRaw?.profile || "")
+    .trim()
+    .toLowerCase();
   const profile = PROFILE_PRESETS[profileRaw]
     ? profileRaw
+    : PROFILE_PRESETS[profileFromSource]
+      ? profileFromSource
     : DEFAULT_CONFIG.profile;
   const preset = PROFILE_PRESETS[profile] || PROFILE_PRESETS.day;
   return {
     ...DEFAULT_CONFIG,
-    ...(raw || {}),
-    min_trades: String(raw?.min_trades ?? DEFAULT_CONFIG.min_trades),
-    max_trades: String(raw?.max_trades ?? DEFAULT_CONFIG.max_trades),
+    ...normalizedRaw,
+    min_trades: String(
+      normalizedRaw?.min_trades ?? DEFAULT_CONFIG.min_trades,
+    ),
+    max_trades: String(
+      normalizedRaw?.max_trades ?? DEFAULT_CONFIG.max_trades,
+    ),
     narrative_language:
-      raw?.narrative_language ||
-      raw?.language ||
+      normalizedRaw?.narrative_language ||
+      normalizedRaw?.language ||
       DEFAULT_CONFIG.narrative_language,
     profile,
     htf_tfs:
-      Array.isArray(raw?.htf_tfs) && raw.htf_tfs.length
-        ? raw.htf_tfs
+      Array.isArray(normalizedRaw?.htf_tfs) && normalizedRaw.htf_tfs.length
+        ? normalizedRaw.htf_tfs
         : [...preset.htf_tfs],
     exec_tfs:
-      Array.isArray(raw?.exec_tfs) && raw.exec_tfs.length
-        ? raw.exec_tfs
+      Array.isArray(normalizedRaw?.exec_tfs) && normalizedRaw.exec_tfs.length
+        ? normalizedRaw.exec_tfs
         : [...preset.exec_tfs],
     conf_tfs:
-      Array.isArray(raw?.conf_tfs) && raw.conf_tfs.length
-        ? raw.conf_tfs
+      Array.isArray(normalizedRaw?.conf_tfs) && normalizedRaw.conf_tfs.length
+        ? normalizedRaw.conf_tfs
         : [...preset.conf_tfs],
     strategies: [
       ...new Set(strategies.map((x) => String(x || "").trim()).filter(Boolean)),
@@ -316,13 +332,27 @@ function normalizeTemplateRecord(raw = {}, fallbackId = "") {
     id: id || name,
     name: name || id || "Unnamed Template",
     config: normalizeTemplateConfig(raw?.config || {}),
-    _guide: raw?._guide || raw?.config?._guide || null,
-    _schema: raw?._schema || raw?.config?._schema || null,
+    analysis_instructions:
+      raw?.analysis_instructions ||
+      raw?.config?.analysis_instructions ||
+      raw?._guide ||
+      raw?.config?._guide ||
+      null,
     saved:
       raw?.saved ||
       raw?.updated_at ||
       raw?.created_at ||
       new Date().toISOString(),
+  };
+}
+
+function buildTemplateConfigPayload(cfg, guideText) {
+  const normalized = normalizeTemplateConfig(cfg);
+  const { strategies, ...configOnly } = normalized;
+  return {
+    config: configOnly,
+    strategies: Array.isArray(strategies) ? strategies : [],
+    analysis_instructions: guideText || GUIDE_TEXT,
   };
 }
 
@@ -2051,25 +2081,9 @@ export default function ChartSnapshotsPage() {
     return [...new Set(all.map(configTfToSnapshotTf).filter(Boolean))];
   }, [tfConfig.htf_tfs, tfConfig.exec_tfs, tfConfig.conf_tfs]);
   const jsonConfigText = useMemo(() => {
-    const base = JSON.parse(buildJsonConfig(cfg) || "{}");
-    // Append strategies detail
-    const strategies = {};
-    const active = cfg.strategies || [];
-    for (const s of active) {
-      if (STRATEGY_ENTRY_MODELS[s]) {
-        strategies[s] = STRATEGY_ENTRY_MODELS[s];
-      }
-    }
-    base._strategies = active;
-    base._strategies_detail = Object.keys(strategies).length
-      ? strategies
-      : undefined;
-    base._guide = guideDraft !== GUIDE_TEXT ? guideDraft : undefined;
-    base._schema = schemaDraft;
-    delete base._guide_backup;
-    delete base._schema_backup;
-    return JSON.stringify(base, null, 2);
-  }, [cfg, guideDraft, schemaDraft]);
+    const payload = buildTemplateConfigPayload(cfg, guideDraft);
+    return JSON.stringify(payload, null, 2);
+  }, [cfg, guideDraft]);
   const widgetTfs = useMemo(() => {
     const base = [
       ...new Set(
@@ -3141,15 +3155,6 @@ export default function ChartSnapshotsPage() {
   };
 
   const saveTemplate = async () => {
-    try {
-      JSON.parse(String(schemaDraft || "{}"));
-    } catch (e) {
-      setStatus({
-        type: "error",
-        text: `Invalid schema JSON: ${e?.message || "parse error"}`,
-      });
-      return;
-    }
     // If overriding an existing template, keep its name for ON CONFLICT
     const existingTemplate =
       templateId && templateId !== DEFAULT_TEMPLATE_ID
@@ -3164,11 +3169,7 @@ export default function ChartSnapshotsPage() {
         ? { template_id: templateId }
         : {}),
       name,
-      config: {
-        ...normalizeTemplateConfig(cfg),
-        _guide: guideDraft !== GUIDE_TEXT ? guideDraft : undefined,
-        _schema: schemaDraft,
-      },
+      config: buildTemplateConfigPayload(cfg, guideDraft),
       saved: new Date().toISOString(),
     };
 
@@ -3183,8 +3184,8 @@ export default function ChartSnapshotsPage() {
           name: String(savedTemplate.name || name),
           config: normalizeTemplateConfig(savedTemplate.config || {}),
           saved: savedTemplate.saved || payload.saved,
-          _guide: savedTemplate._guide || guideDraft,
-          _schema: savedTemplate._schema || schemaDraft,
+          analysis_instructions:
+            savedTemplate.analysis_instructions || guideDraft,
         },
         name,
       );
@@ -3264,11 +3265,10 @@ export default function ChartSnapshotsPage() {
     }
     const found = templates.find((x) => x.id === id);
     if (!found?.config) return;
-    const savedGuide = found._guide || null;
-    const savedSchema = found._schema || null;
+    const savedGuide = found.analysis_instructions || null;
     setCfg(normalizeTemplateConfig(found.config || {}));
     setGuideDraft(savedGuide || GUIDE_TEXT);
-    setSchemaDraft(savedSchema || JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+    setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
     setTemplateName(found.name || "");
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
@@ -3498,14 +3498,15 @@ export default function ChartSnapshotsPage() {
 
   const settingsFormNode = (
     <section className="snapshot-settings-v2">
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "flex-end",
-        }}
-      >
+      <div style={{ display: "grid", gap: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+          }}
+        >
         <div style={{ minWidth: 150 }}>
           <label className="minor-text">Profile TFs</label>
           <select
@@ -3534,18 +3535,51 @@ export default function ChartSnapshotsPage() {
           </select>
         </div>
         <div style={{ minWidth: 100 }}>
-          <label className="minor-text">News</label>
+          <label className="minor-text">HTF Bias</label>
           <select
-            value={cfg.news}
-            onChange={(e) => setCfgField("news", e.target.value)}
+            value={cfg.htfbias}
+            onChange={(e) => setCfgField("htfbias", e.target.value)}
             style={{ width: "100%" }}
           >
-            <option value="">None</option>
-            <option>High-impact</option>
-            <option>NFP/FOMC</option>
-            <option>Earnings</option>
+            <option value="">Auto</option>
+            <option>Bullish</option>
+            <option>Bearish</option>
+            <option>Ranging</option>
           </select>
         </div>
+        <div style={{ minWidth: 120 }}>
+          <label className="minor-text">Direction</label>
+          <select
+            value={cfg.dir}
+            onChange={(e) => setCfgField("dir", e.target.value)}
+            style={{ width: "100%" }}
+          >
+            <option>Both</option>
+            <option>Bias</option>
+            <option>Long only</option>
+            <option>Short only</option>
+          </select>
+        </div>
+        <div style={{ minWidth: 60 }}>
+          <label className="minor-text">MinRR</label>
+          <input
+            type="number"
+            min="0.5"
+            step="0.5"
+            value={cfg.rr}
+            onChange={(e) => setCfgField("rr", e.target.value)}
+            style={{ width: "100%" }}
+          />
+        </div>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+          }}
+        >
         <div style={{ minWidth: 100 }}>
           <label className="minor-text">Min Trades</label>
           <input
@@ -3580,42 +3614,19 @@ export default function ChartSnapshotsPage() {
             <option>Deutch</option>
           </select>
         </div>
-        <div style={{ minWidth: 60 }}>
-          <label className="minor-text">MinRR</label>
-          <input
-            type="number"
-            min="0.5"
-            step="0.5"
-            value={cfg.rr}
-            onChange={(e) => setCfgField("rr", e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </div>
         <div style={{ minWidth: 100 }}>
-          <label className="minor-text">HTF Bias</label>
+          <label className="minor-text">News</label>
           <select
-            value={cfg.htfbias}
-            onChange={(e) => setCfgField("htfbias", e.target.value)}
+            value={cfg.news}
+            onChange={(e) => setCfgField("news", e.target.value)}
             style={{ width: "100%" }}
           >
-            <option value="">Auto</option>
-            <option>Bullish</option>
-            <option>Bearish</option>
-            <option>Ranging</option>
+            <option value="">None</option>
+            <option>High-impact</option>
+            <option>NFP/FOMC</option>
+            <option>Earnings</option>
           </select>
         </div>
-        <div style={{ minWidth: 120 }}>
-          <label className="minor-text">Direction</label>
-          <select
-            value={cfg.dir}
-            onChange={(e) => setCfgField("dir", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option>Both</option>
-            <option>Bias</option>
-            <option>Long only</option>
-            <option>Short only</option>
-          </select>
         </div>
       </div>
       <div>
@@ -3701,14 +3712,14 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "schema" ? (
         <>
           <div className="minor-text">
-            Expected AI Output Schema — editable. Included in Prompt under ##
-            EXPECTED OUTPUT SCHEMA.
+            Expected AI Output Schema — readonly and not saved to Template
+            data.
           </div>
           <textarea
             className="snapshot-mono-v2"
             rows={30}
             value={schemaDraft}
-            onChange={(e) => setSchemaDraft(e.target.value)}
+            readOnly
           />
         </>
       ) : null}
@@ -3729,9 +3740,8 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            Template JSON = full config stored to DB settings as structured
-            JSON. Appended to Prompt as CONFIG:{"{...}"} so AI has access to
-            symbol, timeframes, RR, risk %, session overrides, etc.
+            Template payload saved to DB. Only includes `config`,
+            `strategies`, and `analysis_instructions`.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -5179,7 +5189,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("settings")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  SESSION CONFIG
+                  CONFIG
                 </button>
                 <button
                   type="button"
@@ -5195,7 +5205,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("guide")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  ANALYSIS INSTRUCTIONS
+                  GUIDE
                 </button>
                 <button
                   type="button"
@@ -5203,7 +5213,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("schema")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  OUTPUT SCHEMA
+                  RESPONSE
                 </button>
                 <button
                   type="button"
