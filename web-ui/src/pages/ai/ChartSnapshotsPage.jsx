@@ -4285,69 +4285,6 @@ export default function ChartSnapshotsPage() {
               }}
             >
               <div style={{ display: "grid", gap: 6 }}>
-                {selectedSymbol ? (
-                  <div
-                    className="snapshot-control-card-v3"
-                    style={{
-                      display: "flex",
-                      gap: 10,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => setCfgField("symbol", "")}
-                      style={{ fontSize: 12, padding: "4px 8px" }}
-                    >
-                      {"<"}
-                    </button>
-                    <select
-                      className="secondary-button"
-                      style={{
-                        height: "34px",
-                        padding: "0 10px",
-                        fontSize: "12px",
-                      }}
-                      value={templateId}
-                      onChange={(e) => handleSelectTemplate(e.target.value)}
-                    >
-                      <option value="">New Template</option>
-                      <option value={DEFAULT_TEMPLATE_ID}>
-                        Default Template
-                      </option>
-                      {templates.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="secondary-button"
-                      style={{
-                        height: "34px",
-                        padding: "0 10px",
-                        fontSize: "12px",
-                      }}
-                      value={cfg.profile || "day"}
-                      onChange={(e) => setProfilePreset(e.target.value)}
-                    >
-                      {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setSettingsModalOpen(true)}
-                    >
-                      Settings
-                    </button>
-                  </div>
-                ) : (
                   <>
                     <div
                       style={{
@@ -4357,6 +4294,16 @@ export default function ChartSnapshotsPage() {
                         flexWrap: "wrap",
                       }}
                     >
+                      {selectedSymbol && (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => setCfgField("symbol", "")}
+                          style={{ fontSize: 12, padding: "4px 8px" }}
+                        >
+                          {"<"}
+                        </button>
+                      )}
                       {!isSymbolPanelOpen && (
                         <button
                           className="secondary-button"
@@ -4449,69 +4396,133 @@ export default function ChartSnapshotsPage() {
                           ))}
                         </datalist>
                       </div>
+                      <select
+                        className="secondary-button"
+                        style={{
+                          height: "34px",
+                          padding: "0 10px",
+                          fontSize: "12px",
+                        }}
+                        value={cfg.profile || "day"}
+                        onChange={(e) => {
+                          const newProfile = e.target.value;
+                          setProfilePreset(newProfile);
+                          const preset = PROFILE_PRESETS[newProfile];
+                          if (preset) {
+                            const newTfs = [...new Set([
+                              ...(preset.htf_tfs || []),
+                              ...(preset.exec_tfs || []),
+                              ...(preset.conf_tfs || [])
+                            ])];
+                            if (newTfs.length > 0) {
+                              setBrowserTfs(newTfs);
+                              setBrowserTf(newTfs[0]);
+                            }
+                          }
+                        }}
+                      >
+                        {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
+                          <option key={k} value={k}>
+                            {v.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <div className="tf-pills" style={{ marginLeft: 40 }}>
-                      {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
-                        <button
-                          key={tf}
-                          className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
-                          onClick={() => {
-                            setBrowserTfs((prev) => {
-                              if (prev.includes(tf)) {
-                                if (prev.length <= 1) return prev;
-                                return prev.filter((t) => t !== tf);
-                              }
-                              return [...prev, tf];
-                            });
-                            setBrowserTf(tf);
-                          }}
-                        >
-                          {tf.toUpperCase()}
-                        </button>
-                      ))}
-                      <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
-                        <button
+                    
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginLeft: selectedSymbol ? 44 : 40, marginTop: 4 }}>
+                      <div className="tf-pills">
+                        {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
+                          <button
+                            key={tf}
+                            className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
+                            onClick={() => {
+                              setBrowserTfs((prev) => {
+                                if (prev.includes(tf)) {
+                                  if (prev.length <= 1) return prev;
+                                  return prev.filter((t) => t !== tf);
+                                }
+                                return [...prev, tf];
+                              });
+                              setBrowserTf(tf);
+                            }}
+                          >
+                            {tf.toUpperCase()}
+                          </button>
+                        ))}
+                        <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
+                          <button
+                            className="secondary-button"
+                            style={{
+                              width: 28,
+                              height: 28,
+                              padding: 0,
+                              fontSize: 16,
+                              fontWeight: 800,
+                              borderRadius: 6,
+                            }}
+                            onClick={() =>
+                              setMasterGridCols((prev) =>
+                                Math.max(1, (prev ?? 2) - 1),
+                              )
+                            }
+                            title="All: Larger charts"
+                          >
+                            +
+                          </button>
+                          <button
+                            className="secondary-button"
+                            style={{
+                              width: 28,
+                              height: 28,
+                              padding: 0,
+                              fontSize: 16,
+                              fontWeight: 800,
+                              borderRadius: 6,
+                            }}
+                            onClick={() =>
+                              setMasterGridCols((prev) =>
+                                Math.min(6, (prev ?? 2) + 1),
+                              )
+                            }
+                            title="All: Smaller charts"
+                          >
+                            -
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <select
                           className="secondary-button"
                           style={{
-                            width: 28,
-                            height: 28,
-                            padding: 0,
-                            fontSize: 16,
-                            fontWeight: 800,
-                            borderRadius: 6,
+                            height: "30px",
+                            padding: "0 10px",
+                            fontSize: "12px",
                           }}
-                          onClick={() =>
-                            setMasterGridCols((prev) =>
-                              Math.max(1, (prev ?? 2) - 1),
-                            )
-                          }
-                          title="All: Larger charts"
+                          value={templateId}
+                          onChange={(e) => handleSelectTemplate(e.target.value)}
                         >
-                          +
-                        </button>
+                          <option value="">New Template</option>
+                          <option value={DEFAULT_TEMPLATE_ID}>
+                            Default Template
+                          </option>
+                          {templates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
                         <button
+                          type="button"
                           className="secondary-button"
-                          style={{
-                            width: 28,
-                            height: 28,
-                            padding: 0,
-                            fontSize: 16,
-                            fontWeight: 800,
-                            borderRadius: 6,
-                          }}
-                          onClick={() =>
-                            setMasterGridCols((prev) =>
-                              Math.min(6, (prev ?? 2) + 1),
-                            )
-                          }
-                          title="All: Smaller charts"
+                          onClick={() => setSettingsModalOpen(true)}
+                          style={{ height: "30px", fontSize: "12px", padding: "0 10px" }}
                         >
-                          -
+                          Settings
                         </button>
                       </div>
                     </div>
                   </>
-                )}
               </div>
 
               <div
@@ -4745,78 +4756,90 @@ export default function ChartSnapshotsPage() {
                 }}
               >
                 {symbolFilterTab === "SMT"
-                  ? DEFAULT_SMT_GROUPS.map((group) => (
-                      <div
-                        key={group.name}
-                        style={{
-                          marginBottom: 24,
-                          padding: 12,
-                          background: "rgba(255,255,255,0.02)",
-                          borderRadius: 8,
-                          border: "1px solid var(--border)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 12,
-                            fontWeight: 800,
-                            marginBottom: 12,
-                            color: "var(--muted)",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          SMT Group: {group.name}
-                        </div>
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns:
-                              browserTfs.length === 1
-                                ? "repeat(2, 1fr)"
-                                : "repeat(2, 1fr)",
-                            gap: 12,
-                          }}
-                        >
-                          {group.symbols.map((sym) => (
-                            <Suspense
-                              key={sym}
-                              fallback={
-                                <div className="loading-card">
-                                  Loading Chart...
-                                </div>
-                              }
+                  ? (() => {
+                      const q = String(searchTerm || "").trim().toUpperCase();
+                      return DEFAULT_SMT_GROUPS.map((group) => {
+                        const filteredSyms = q
+                          ? group.symbols.filter((s) => s.toUpperCase().includes(q))
+                          : group.symbols;
+                        if (filteredSyms.length === 0) return null;
+                        return (
+                          <div
+                            key={group.name}
+                            style={{
+                              marginBottom: 24,
+                              padding: 12,
+                              background: "rgba(255,255,255,0.02)",
+                              borderRadius: 8,
+                              border: "1px solid var(--border)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 800,
+                                marginBottom: 12,
+                                color: "var(--muted)",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                              }}
                             >
-                              <SymbolChart
-                                symbol={sym}
-                                timeframes={browserTfs}
-                                defaultMode="live"
-                                initialGridCols={masterGridCols}
-                                onAnalyze={(s) => setCfgField("symbol", s)}
-                                onRemove={null}
-                              />
-                            </Suspense>
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  : symbolsByTab.slice(0, visibleCount).map((sym) => (
-                      <Suspense
-                        key={sym}
-                        fallback={
-                          <div className="loading-card">Loading Chart...</div>
-                        }
-                      >
-                        <SymbolChart
-                          symbol={sym}
-                          timeframes={browserTfs}
-                          defaultMode="live"
-                          initialGridCols={masterGridCols}
-                          onAnalyze={(s) => setCfgField("symbol", s)}
-                          onRemove={(s) => removeFromWatchlist(s)}
-                        />
-                      </Suspense>
-                    ))}
+                              SMT Group: {group.name}
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(2, 1fr)",
+                                gap: 12,
+                              }}
+                            >
+                              {filteredSyms.map((sym) => (
+                                <Suspense
+                                  key={sym}
+                                  fallback={
+                                    <div className="loading-card">
+                                      Loading Chart...
+                                    </div>
+                                  }
+                                >
+                                  <SymbolChart
+                                    symbol={sym}
+                                    timeframes={browserTfs}
+                                    defaultMode="live"
+                                    initialGridCols={masterGridCols}
+                                    onAnalyze={(s) => setCfgField("symbol", s)}
+                                    onRemove={null}
+                                  />
+                                </Suspense>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()
+                  : (() => {
+                      const q = String(searchTerm || "").trim().toUpperCase();
+                      const filtered = q
+                        ? symbolsByTab.filter((s) => s.toUpperCase().includes(q))
+                        : symbolsByTab;
+                      return filtered.slice(0, visibleCount).map((sym) => (
+                        <Suspense
+                          key={sym}
+                          fallback={
+                            <div className="loading-card">Loading Chart...</div>
+                          }
+                        >
+                          <SymbolChart
+                            symbol={sym}
+                            timeframes={browserTfs}
+                            defaultMode="live"
+                            initialGridCols={masterGridCols}
+                            onAnalyze={(s) => setCfgField("symbol", s)}
+                            onRemove={(s) => removeFromWatchlist(s)}
+                          />
+                        </Suspense>
+                      ));
+                    })()}
               </div>
             ) : null}{" "}
           </div>
