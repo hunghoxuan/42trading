@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { createChart } from "lightweight-charts";
+import { NotificationHub } from "../../services/NotificationHub";
 import {
   showDateTime,
   isSameDay,
@@ -255,8 +256,9 @@ const classifySymbol = (s) => {
 function normalizeTemplateConfig(raw) {
   const source =
     raw?.config && typeof raw.config === "object" ? raw.config : raw || {};
-  const strategyValue =
-    raw?.strategies || source?.strategies || source?.strategy || ["ICT"];
+  const strategyValue = raw?.strategies ||
+    source?.strategies ||
+    source?.strategy || ["ICT"];
   const strategies = Array.isArray(strategyValue)
     ? strategyValue
     : [String(strategyValue || "ICT")];
@@ -274,17 +276,13 @@ function normalizeTemplateConfig(raw) {
     ? profileRaw
     : PROFILE_PRESETS[profileFromSource]
       ? profileFromSource
-    : DEFAULT_CONFIG.profile;
+      : DEFAULT_CONFIG.profile;
   const preset = PROFILE_PRESETS[profile] || PROFILE_PRESETS.day;
   return {
     ...DEFAULT_CONFIG,
     ...normalizedRaw,
-    min_trades: String(
-      normalizedRaw?.min_trades ?? DEFAULT_CONFIG.min_trades,
-    ),
-    max_trades: String(
-      normalizedRaw?.max_trades ?? DEFAULT_CONFIG.max_trades,
-    ),
+    min_trades: String(normalizedRaw?.min_trades ?? DEFAULT_CONFIG.min_trades),
+    max_trades: String(normalizedRaw?.max_trades ?? DEFAULT_CONFIG.max_trades),
     narrative_language:
       normalizedRaw?.narrative_language ||
       normalizedRaw?.language ||
@@ -2383,7 +2381,13 @@ export default function ChartSnapshotsPage() {
     const nowMs = Date.now();
     const activeSessionPrefix = String(opts.sessionPrefix || "").trim();
     const requestedSymbols = Array.isArray(opts.symbols)
-      ? opts.symbols.map((x) => String(x || "").trim().toUpperCase()).filter(Boolean)
+      ? opts.symbols
+          .map((x) =>
+            String(x || "")
+              .trim()
+              .toUpperCase(),
+          )
+          .filter(Boolean)
       : [];
     const targetTfTokens = [
       ...new Set(
@@ -2406,7 +2410,9 @@ export default function ChartSnapshotsPage() {
       : [symbolRaw, String(tvSymbol || "").toUpperCase()].filter(Boolean);
     const requestedTokenMap = new Map();
     sourceSymbols.forEach((sym) => {
-      const normalizedSym = String(sym || "").trim().toUpperCase();
+      const normalizedSym = String(sym || "")
+        .trim()
+        .toUpperCase();
       if (!normalizedSym) return;
       const withProvider = normalizedSym.includes(":")
         ? normalizedSym
@@ -2438,7 +2444,9 @@ export default function ChartSnapshotsPage() {
 
     const matchedFiles = [];
     for (const reqSym of sourceSymbols) {
-      const req = String(reqSym || "").trim().toUpperCase();
+      const req = String(reqSym || "")
+        .trim()
+        .toUpperCase();
       const tokenSet = requestedTokenMap.get(req);
       if (!tokenSet || !tokenSet.size) continue;
       for (const tf of targetTfTokens) {
@@ -2450,7 +2458,10 @@ export default function ChartSnapshotsPage() {
     }
     const matchedByTf = new Map();
     matchedFiles.forEach((f) => {
-      const meta = parseSnapshotMeta({ file_name: f, created_at: new Date().toISOString() });
+      const meta = parseSnapshotMeta({
+        file_name: f,
+        created_at: new Date().toISOString(),
+      });
       if (meta?.tfToken) matchedByTf.set(meta.tfToken, true);
     });
     const missingTokens = targetTfTokens.filter((tf) => !matchedByTf.has(tf));
@@ -2556,7 +2567,6 @@ export default function ChartSnapshotsPage() {
     }
   };
 
-
   const analyzeFiles = async (files = [], opts = {}) => {
     const hasCorePlanLevels = (parsed) => {
       const plans = Array.isArray(parsed?.trade_plan) ? parsed.trade_plan : [];
@@ -2584,18 +2594,23 @@ export default function ChartSnapshotsPage() {
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
     try {
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
-      const context =
-        null;
+      const context = null;
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
 
       const basePrompt = String(promptDraft || promptText || "").trim();
       const activeSymbols = Array.isArray(opts?.symbolsOverride)
-        ? opts.symbolsOverride.map((x) => String(x || "").trim()).filter(Boolean)
+        ? opts.symbolsOverride
+            .map((x) => String(x || "").trim())
+            .filter(Boolean)
         : Array.isArray(cfg?.symbols)
           ? cfg.symbols.map((x) => String(x || "").trim()).filter(Boolean)
           : [];
       const activeSymbol = String(
-        activeSymbols[0] || opts?.symbolOverride || tvSymbol || cfg.symbol || "",
+        activeSymbols[0] ||
+          opts?.symbolOverride ||
+          tvSymbol ||
+          cfg.symbol ||
+          "",
       ).trim();
       const runtimeConfig = JSON.stringify({
         symbols: activeSymbols,
@@ -2669,16 +2684,22 @@ export default function ChartSnapshotsPage() {
       if (!payload.files || !payload.files.length) {
         if (payload.symbols.length) {
           try {
-            const batch = await api.chartSnapshotCreateBatch({
-              symbols: activeSymbols,
-              provider: provider || "ICMARKETS",
-              session_prefix: activeSessionPrefix,
-              tfs:
-                Array.isArray(snapshotTfs) && snapshotTfs.length
-                  ? snapshotTfs
-                  : ["D", "240", "15", "5"],
-              lookbackBars: Number(cfg.lookbackBars || 300) || 300,
-            });
+            const { promise: snapPromise } = NotificationHub.track(
+              "snapshot",
+              { symbol: activeSymbols.join(",") },
+              () =>
+                api.chartSnapshotCreateBatch({
+                  symbols: activeSymbols,
+                  provider: provider || "ICMARKETS",
+                  session_prefix: activeSessionPrefix,
+                  tfs:
+                    Array.isArray(snapshotTfs) && snapshotTfs.length
+                      ? snapshotTfs
+                      : ["D", "240", "15", "5"],
+                  lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+                }),
+            );
+            const batch = await snapPromise;
             const freshFiles = Array.isArray(batch?.items)
               ? batch.items
                   .map((x) => String(x?.file_name || "").trim())
@@ -2692,24 +2713,30 @@ export default function ChartSnapshotsPage() {
       }
 
       let out;
-      try {
-        out = await api.chartSnapshotsAnalyze(payload);
-      } catch (firstErr) {
-        // If Claude file references are stale, retry without them
-        const msg = String(firstErr?.message || firstErr || "");
-        if (
-          msg.includes("not_found_error") ||
-          msg.includes("not found") ||
-          msg.includes("404")
-        ) {
-          payload.context_files = [];
-          payload.use_context_files = false;
-          payload.context_mode = "none";
-          out = await api.chartSnapshotsAnalyze(payload);
-        } else {
-          throw firstErr;
-        }
-      }
+      const { promise: analyzePromise } = NotificationHub.track(
+        "analyze",
+        { symbol: activeSymbol },
+        async () => {
+          try {
+            return await api.chartSnapshotsAnalyze(payload);
+          } catch (firstErr) {
+            // If Claude file references are stale, retry without them
+            const msg = String(firstErr?.message || firstErr || "");
+            if (
+              msg.includes("not_found_error") ||
+              msg.includes("not found") ||
+              msg.includes("404")
+            ) {
+              payload.context_files = [];
+              payload.use_context_files = false;
+              payload.context_mode = "none";
+              return await api.chartSnapshotsAnalyze(payload);
+            }
+            throw firstErr;
+          }
+        },
+      );
+      out = await analyzePromise;
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return out;
       if (out?.source || out?.updated_time) {
         setMarketMetadata({
@@ -2900,15 +2927,14 @@ export default function ChartSnapshotsPage() {
         Math.max(1, targetSymbols.length) *
         Math.max(1, recent.targetTfTokens.length);
       const filesForAnalyze =
-        recent.matchedFiles.length >= expectedFilesMin ? recent.matchedFiles : [];
-      await analyzeFiles(
-        filesForAnalyze,
-        {
-          context: hasContext ? aiContext : undefined,
-          symbolOverride: targetSymbols[0] || effectiveSymbol,
-          symbolsOverride: targetSymbols,
-        },
-      );
+        recent.matchedFiles.length >= expectedFilesMin
+          ? recent.matchedFiles
+          : [];
+      await analyzeFiles(filesForAnalyze, {
+        context: hasContext ? aiContext : undefined,
+        symbolOverride: targetSymbols[0] || effectiveSymbol,
+        symbolsOverride: targetSymbols,
+      });
     } catch (e) {
       const msg = String(e?.message || e || "Analyze preflight failed.");
       const normalized = normalizeUiStatus("error", msg);
@@ -3049,12 +3075,7 @@ export default function ChartSnapshotsPage() {
 
       if (!signals.length) {
         const symbolManual = normalizeSignalSymbol(
-          String(
-            overridePosition?.symbol ||
-              tvSymbol ||
-              cfg.symbol ||
-              "",
-          )
+          String(overridePosition?.symbol || tvSymbol || cfg.symbol || "")
             .split(":")
             .pop(),
         );
@@ -3142,7 +3163,11 @@ export default function ChartSnapshotsPage() {
         const finalPayload = {
           ...payload,
           symbol: normalizeSignalSymbol(
-            payload.symbol || activePosition?.symbol || tvSymbol || cfg.symbol || "",
+            payload.symbol ||
+              activePosition?.symbol ||
+              tvSymbol ||
+              cfg.symbol ||
+              "",
           ),
           source:
             String(payload?.source || analysisSource || "ai_claude").trim() ||
@@ -3211,10 +3236,28 @@ export default function ChartSnapshotsPage() {
           delete finalPayload.final_verdict;
         }
         if (mode === "trade") {
-          const out = await api.createTrade(finalPayload);
+          const { promise: tradePromise } = NotificationHub.track(
+            "create_trade",
+            {
+              symbol: String(
+                finalPayload?.symbol || activePosition?.symbol || "",
+              ),
+            },
+            () => api.createTrade(finalPayload),
+          );
+          const out = await tradePromise;
           if (out && typeof out === "object") lastCreated = out;
         } else {
-          const out = await api.createSignal(finalPayload);
+          const { promise: signalPromise } = NotificationHub.track(
+            "create_signal",
+            {
+              symbol: String(
+                finalPayload?.symbol || activePosition?.symbol || "",
+              ),
+            },
+            () => api.createSignal(finalPayload),
+          );
+          const out = await signalPromise;
           if (out && typeof out === "object") lastCreated = out;
         }
         createdCount += 1;
@@ -3644,70 +3687,70 @@ export default function ChartSnapshotsPage() {
             alignItems: "flex-end",
           }}
         >
-        <div style={{ minWidth: 150 }}>
-          <label className="minor-text">Profile TFs</label>
-          <select
-            value={cfg.profile || "day"}
-            onChange={(e) => setProfilePreset(e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option value="position">{PROFILE_PRESETS.position.label}</option>
-            <option value="swing">{PROFILE_PRESETS.swing.label}</option>
-            <option value="day">{PROFILE_PRESETS.day.label}</option>
-            <option value="scalper">{PROFILE_PRESETS.scalper.label}</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 100 }}>
-          <label className="minor-text">Sessions</label>
-          <select
-            value={cfg.session}
-            onChange={(e) => setCfgField("session", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option>Any</option>
-            <option>London</option>
-            <option>New York</option>
-            <option>Asian</option>
-            <option>London+NY</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 100 }}>
-          <label className="minor-text">HTF Bias</label>
-          <select
-            value={cfg.htfbias}
-            onChange={(e) => setCfgField("htfbias", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option value="">Auto</option>
-            <option>Bullish</option>
-            <option>Bearish</option>
-            <option>Ranging</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 120 }}>
-          <label className="minor-text">Direction</label>
-          <select
-            value={cfg.dir}
-            onChange={(e) => setCfgField("dir", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option>Both</option>
-            <option>Bias</option>
-            <option>Long only</option>
-            <option>Short only</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 60 }}>
-          <label className="minor-text">MinRR</label>
-          <input
-            type="number"
-            min="0.5"
-            step="0.5"
-            value={cfg.rr}
-            onChange={(e) => setCfgField("rr", e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </div>
+          <div style={{ minWidth: 150 }}>
+            <label className="minor-text">Profile TFs</label>
+            <select
+              value={cfg.profile || "day"}
+              onChange={(e) => setProfilePreset(e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option value="position">{PROFILE_PRESETS.position.label}</option>
+              <option value="swing">{PROFILE_PRESETS.swing.label}</option>
+              <option value="day">{PROFILE_PRESETS.day.label}</option>
+              <option value="scalper">{PROFILE_PRESETS.scalper.label}</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 100 }}>
+            <label className="minor-text">Sessions</label>
+            <select
+              value={cfg.session}
+              onChange={(e) => setCfgField("session", e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option>Any</option>
+              <option>London</option>
+              <option>New York</option>
+              <option>Asian</option>
+              <option>London+NY</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 100 }}>
+            <label className="minor-text">HTF Bias</label>
+            <select
+              value={cfg.htfbias}
+              onChange={(e) => setCfgField("htfbias", e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option value="">Auto</option>
+              <option>Bullish</option>
+              <option>Bearish</option>
+              <option>Ranging</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 120 }}>
+            <label className="minor-text">Direction</label>
+            <select
+              value={cfg.dir}
+              onChange={(e) => setCfgField("dir", e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option>Both</option>
+              <option>Bias</option>
+              <option>Long only</option>
+              <option>Short only</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 60 }}>
+            <label className="minor-text">MinRR</label>
+            <input
+              type="number"
+              min="0.5"
+              step="0.5"
+              value={cfg.rr}
+              onChange={(e) => setCfgField("rr", e.target.value)}
+              style={{ width: "100%" }}
+            />
+          </div>
         </div>
         <div
           style={{
@@ -3717,53 +3760,55 @@ export default function ChartSnapshotsPage() {
             alignItems: "flex-end",
           }}
         >
-        <div style={{ minWidth: 100 }}>
-          <label className="minor-text">Min Trades</label>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={cfg.min_trades || "0"}
-            onChange={(e) => setCfgField("min_trades", e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </div>
-        <div style={{ minWidth: 100 }}>
-          <label className="minor-text">Max Trades</label>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            value={cfg.max_trades || "2"}
-            onChange={(e) => setCfgField("max_trades", e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </div>
-        <div style={{ minWidth: 120 }}>
-          <label className="minor-text">Narrative Language</label>
-          <select
-            value={cfg.narrative_language || "English"}
-            onChange={(e) => setCfgField("narrative_language", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option>Vietnamese</option>
-            <option>English</option>
-            <option>Deutch</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 100 }}>
-          <label className="minor-text">News</label>
-          <select
-            value={cfg.news}
-            onChange={(e) => setCfgField("news", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option value="">None</option>
-            <option>High-impact</option>
-            <option>NFP/FOMC</option>
-            <option>Earnings</option>
-          </select>
-        </div>
+          <div style={{ minWidth: 100 }}>
+            <label className="minor-text">Min Trades</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={cfg.min_trades || "0"}
+              onChange={(e) => setCfgField("min_trades", e.target.value)}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ minWidth: 100 }}>
+            <label className="minor-text">Max Trades</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={cfg.max_trades || "2"}
+              onChange={(e) => setCfgField("max_trades", e.target.value)}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ minWidth: 120 }}>
+            <label className="minor-text">Narrative Language</label>
+            <select
+              value={cfg.narrative_language || "English"}
+              onChange={(e) =>
+                setCfgField("narrative_language", e.target.value)
+              }
+              style={{ width: "100%" }}
+            >
+              <option>Vietnamese</option>
+              <option>English</option>
+              <option>Deutch</option>
+            </select>
+          </div>
+          <div style={{ minWidth: 100 }}>
+            <label className="minor-text">News</label>
+            <select
+              value={cfg.news}
+              onChange={(e) => setCfgField("news", e.target.value)}
+              style={{ width: "100%" }}
+            >
+              <option value="">None</option>
+              <option>High-impact</option>
+              <option>NFP/FOMC</option>
+              <option>Earnings</option>
+            </select>
+          </div>
         </div>
       </div>
       <div>
@@ -3849,8 +3894,7 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "schema" ? (
         <>
           <div className="minor-text">
-            Expected AI Output Schema — readonly and not saved to Template
-            data.
+            Expected AI Output Schema — readonly and not saved to Template data.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -3877,8 +3921,8 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            Template payload saved to DB. Only includes `config`,
-            `strategies`, and `analysis_instructions`.
+            Template payload saved to DB. Only includes `config`, `strategies`,
+            and `analysis_instructions`.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -4032,17 +4076,7 @@ export default function ChartSnapshotsPage() {
           ).trim(),
         };
       })
-      .filter(
-        (x) =>
-          x.raw &&
-          typeof x.raw === "object" &&
-          Number.isFinite(x.entry) &&
-          Number.isFinite(x.sl) &&
-          Number.isFinite(x.tp) &&
-          x.entry > 0 &&
-          x.sl > 0 &&
-          x.tp > 0,
-      );
+      .filter((x) => x.raw && typeof x.raw === "object");
   }, [effectiveParsed]);
   const setPlanEditField = (idx, key, value) => {
     setPlanEdits((prev) => ({
@@ -4439,7 +4473,9 @@ export default function ChartSnapshotsPage() {
                             className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
                             onClick={() => {
                               setCfg((prev) => {
-                                const prevSelected = Array.isArray(prev?.symbols)
+                                const prevSelected = Array.isArray(
+                                  prev?.symbols,
+                                )
                                   ? prev.symbols
                                   : [];
                                 const exists = prevSelected.includes(s);
@@ -5232,7 +5268,9 @@ export default function ChartSnapshotsPage() {
               (sym) => (
                 <Suspense
                   key={sym}
-                  fallback={<div className="loading-card">Loading Chart...</div>}
+                  fallback={
+                    <div className="loading-card">Loading Chart...</div>
+                  }
                 >
                   <SymbolChart
                     symbol={sym}
@@ -5276,7 +5314,9 @@ export default function ChartSnapshotsPage() {
                       key={`plan_overview_${idx}`}
                       className="snapshot-activity-card-v4"
                       style={{
-                        borderColor: isActive ? "var(--accent)" : "var(--border)",
+                        borderColor: isActive
+                          ? "var(--accent)"
+                          : "var(--border)",
                         boxShadow: isActive
                           ? "0 0 0 1px var(--accent) inset"
                           : "none",
@@ -5314,7 +5354,10 @@ export default function ChartSnapshotsPage() {
                           {plan.strategy || "-"} | {plan.entryModel || "-"}
                         </div>
                         {multipleExits.length ? (
-                          <div className="minor-text" style={{ marginBottom: 8 }}>
+                          <div
+                            className="minor-text"
+                            style={{ marginBottom: 8 }}
+                          >
                             Exits:{" "}
                             {multipleExits
                               .map(

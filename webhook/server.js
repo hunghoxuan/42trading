@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.10 10:55 - schema24"); // ai response schema v2.4 compatibility: normalize multiple_exits/position_management for UI + DB
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.10 17:41 - multi-symbol-gt2-fix"); // multi-symbol analyze >2: prompt mapping + per-symbol plan coverage + legacy cap removal
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -820,7 +820,7 @@ function buildAiSchemaPromptText() {
   return `You are an expert ICT technical analyst.
 Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown, or trailing commas.
 All fields required. Enums must match. Use null only where price data is unavailable.
-Array limits: htf_context<=2, ltf_analysis<=2, trade_plan<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
+Array limits: htf_context<=2, ltf_analysis<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
 Trade plans must be actionable and internally consistent.
 IMPORTANT: You MUST include a trade_plan array with at least 1 actionable plan (direction, entry_price, stop_loss, take_profit). Include multiple_exits when available. trade_plan is REQUIRED.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
@@ -17227,11 +17227,25 @@ const appHandler = async (req, res) => {
             .filter(Boolean),
         ),
       ];
+      const symbolFileMap = requestedSymbols.map((sym) => ({
+        symbol: sym,
+        files: snapshotFiles
+          .map((x) => x.fileName)
+          .filter(
+            (f) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(f)) === sym,
+          ),
+      }));
 
       let finalPrompt =
         String(body.prompt || "").trim() ||
         "Analyze these chart snapshots and return only JSON.";
       finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
+      finalPrompt += `\n\nMULTI_SYMBOL_INPUT=${JSON.stringify({
+        requested_symbols: requestedSymbols,
+        symbol_files: symbolFileMap,
+        instruction:
+          "Analyze EACH requested symbol using only its mapped files. Return at least 1 trade_plan item per requested symbol. If no valid setup for a symbol, return trade_decision='Skip' for that symbol with skip_reasons.",
+      })}`;
 
       // For text-only models (DeepSeek), inject bar data as text since they can't see images
       const requestModel =

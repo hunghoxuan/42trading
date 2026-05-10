@@ -26,6 +26,7 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
 import NotificationWatcher from "./components/NotificationWatcher";
 import TickerBar from "./components/TickerBar";
+import NotificationDot from "./components/NotificationDot";
 
 import ToastContainer from "./components/ToastContainer";
 import { normalizeDisplayTimezone } from "./utils/format";
@@ -212,6 +213,8 @@ export default function App() {
             Trades
           </NavLink>
 
+          <NotificationDot />
+
           <div style={{ flex: 1 }} />
 
           {canAccessSystemPages && (
@@ -306,10 +309,16 @@ export default function App() {
             <Route path="/trades/:tradeId" element={<TradesPage />} />
             <Route path="/ai" element={<Navigate to="/ai/analyze" replace />} />
             <Route path="/ai/analyze" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/analyze/:symbol" element={<ChartSnapshotsPage />} />
+            <Route
+              path="/ai/analyze/:symbol"
+              element={<ChartSnapshotsPage />}
+            />
             <Route path="/ai/result" element={<ChartSnapshotsPage />} />
             <Route path="/ai/result/:symbol" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/browser" element={<Navigate to="/ai/analyze" replace />} />
+            <Route
+              path="/ai/browser"
+              element={<Navigate to="/ai/analyze" replace />}
+            />
             <Route
               path="/ai/browser/:symbol"
               element={<ChartSnapshotsPage />}

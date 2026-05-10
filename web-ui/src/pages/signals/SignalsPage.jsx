@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
+import { NotificationHub } from "../../services/NotificationHub";
 
 const SignalDetailCard = lazy(
   () => import("../../components/SignalDetailCard"),
@@ -99,7 +100,6 @@ function statusUi(statusRaw) {
   return { cls: "OTHER", label: s || "UNKNOWN" };
 }
 
-
 function signalRiskSize(s, details) {
   const cands = [
     s?.risk_money_planned,
@@ -121,7 +121,6 @@ function signalRiskSize(s, details) {
   const est = Math.abs(entry - sl) * vol;
   return Number.isFinite(est) ? est : null;
 }
-
 
 function compactStrategy(item = {}) {
   const raw =
@@ -365,27 +364,36 @@ export default function SignalsPage() {
         : extractTradePlanFromSignal(signal);
     try {
       setDetailPlanBusy((p) => ({ ...p, trade: true }));
-      await api.createTradeFromSignal(targetSignalId, {
-        direction: plan.direction,
-        trade_type: plan.trade_type,
-        entry: asNum(plan.entry),
-        tp: asNum(plan.tp),
-        sl: asNum(plan.sl),
-        rr: asNum(plan.rr),
-        note: plan.note,
-        confidence_pct: asNum(plan.confidence_pct),
-        invalidation: plan.invalidation,
-        estimated_bars: asNum(plan.estimated_bars),
-        profile: plan.profile,
-        exit_condition: plan.exit_condition,
-        entry_condition: plan.entry_condition,
-        risk_management: plan.risk_management,
-        risk_pct: asNum(plan.risk_pct),
-        risk_money: asNum(plan.risk_money),
-        skip_recommendation: plan.skip_recommendation,
-        confluence_checklist: plan.confluence_checklist,
-        be_trigger: asNum(plan.be_trigger),
-      });
+      const symbolForTrack = String(
+        signal?.symbol || selectedSignal?.symbol || "",
+      );
+      const { promise: tradePromise } = NotificationHub.track(
+        "create_trade",
+        { symbol: symbolForTrack },
+        () =>
+          api.createTradeFromSignal(targetSignalId, {
+            direction: plan.direction,
+            trade_type: plan.trade_type,
+            entry: asNum(plan.entry),
+            tp: asNum(plan.tp),
+            sl: asNum(plan.sl),
+            rr: asNum(plan.rr),
+            note: plan.note,
+            confidence_pct: asNum(plan.confidence_pct),
+            invalidation: plan.invalidation,
+            estimated_bars: asNum(plan.estimated_bars),
+            profile: plan.profile,
+            exit_condition: plan.exit_condition,
+            entry_condition: plan.entry_condition,
+            risk_management: plan.risk_management,
+            risk_pct: asNum(plan.risk_pct),
+            risk_money: asNum(plan.risk_money),
+            skip_recommendation: plan.skip_recommendation,
+            confluence_checklist: plan.confluence_checklist,
+            be_trigger: asNum(plan.be_trigger),
+          }),
+      );
+      await tradePromise;
       setDetailPlanMsg({ type: "success", text: "Trade queued from signal." });
     } catch (e) {
       const msg = String(e?.message || e || "Failed to add trade from signal.");
@@ -425,7 +433,12 @@ export default function SignalsPage() {
         timeframe: String(createForm.timeframe || "manual").trim(),
         note: String(createForm.note || "").trim(),
       };
-      const out = await api.createTrade(payload);
+      const { promise: tradePromise } = NotificationHub.track(
+        "create_trade",
+        { symbol: payload.symbol },
+        () => api.createTrade(payload),
+      );
+      const out = await tradePromise;
       setCreateMsg(`Signal created: ${out?.trade?.sid || "ok"}`);
       setCreateMode(false);
       await loadSignals();

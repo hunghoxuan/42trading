@@ -1,4 +1,5 @@
 import { api } from "../../api";
+import { NotificationHub } from "../../services/NotificationHub";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useRealtimeData } from "../../hooks/useRealtimeData";
@@ -476,7 +477,12 @@ export default function TradesPage() {
         timeframe: String(createForm.timeframe || "manual").trim(),
         note: String(createForm.note || "").trim(),
       };
-      await api.createTrade(payload);
+      const { promise: tradePromise } = NotificationHub.track(
+        "create_trade",
+        { symbol: payload.symbol },
+        () => api.createTrade(payload),
+      );
+      await tradePromise;
       setCreateMsg("Trade created");
       setCreateMode(false);
       await loadTrades();
@@ -1158,7 +1164,9 @@ export default function TradesPage() {
                           <SymbolEntryCell
                             side={action}
                             symbol={t.symbol}
-                            orderType={t.metadata?.order_type || t.order_type || "limit"}
+                            orderType={
+                              t.metadata?.order_type || t.order_type || "limit"
+                            }
                             entry={t.entry || "-"}
                             tp={t.tp || "-"}
                             sl={t.sl || "-"}
