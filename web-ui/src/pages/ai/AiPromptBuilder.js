@@ -803,6 +803,9 @@ export const DEFAULT_CONFIG = {
   asset: "Auto detect",
   session: "Any",
   rr: "2",
+  min_trades: "0",
+  max_trades: "2",
+  narrative_language: "English",
   risk: "1",
   lookbackBars: "300",
   strategies: ["SMC", "Price Action", "Market Structure"],
@@ -856,6 +859,8 @@ export const GUIDE_TEXT = `
 You are a Senior ICT + Price Action + Market Structure institutional trader.
 Analyze the uploaded chart(s) by following ALL steps below IN ORDER.
 Return STRICT JSON only. No markdown. No prose. No explanation outside JSON.
+Narrative language rule: all narrative text values must use NarrativeLanguage from SESSION CONFIG.
+Keep all JSON keys, object structure, and enum tokens exactly per schema; never translate keys.
 
 ═══════════════════════════════════════════════════════════
 STEP 1 — HTF ANALYSIS (Bias, Direction, TP Anchors)
@@ -1155,7 +1160,7 @@ export function buildPrompt(cfg) {
 
   return `## SESSION CONFIG
 Symbol: ${symbol} | Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
-MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}% | NoteLanguage: ${cfg.language || "English"}
+MinTrades: ${cfg.min_trades || "0"} | MaxTrades: ${cfg.max_trades || "2"} | MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}% | NarrativeLanguage: ${cfg.narrative_language || "English"}
 HTF: ${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
 Execution: ${tfConfig.exec_tfs.map((x) => String(x).toUpperCase()).join(", ")}
 Confirmation: ${tfConfig.conf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
@@ -1187,9 +1192,12 @@ export function buildJsonConfig(cfg) {
         profile: tfConfig.profile,
         asset_class: cfg.asset,
         note_language: cfg.language || "English",
+        narrative_language: cfg.narrative_language || "English",
         strategy: cfg.strategies.join(" + "),
         strategies: cfg.strategies,
         session: cfg.session,
+        min_trades: Number(cfg.min_trades || 0),
+        max_trades: Number(cfg.max_trades || 2),
         min_rr: Number(tfConfig.rr),
         max_risk_pct: Number(cfg.risk),
         daily_adr_filter: true,

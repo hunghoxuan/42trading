@@ -266,6 +266,12 @@ function normalizeTemplateConfig(raw) {
   return {
     ...DEFAULT_CONFIG,
     ...(raw || {}),
+    min_trades: String(raw?.min_trades ?? DEFAULT_CONFIG.min_trades),
+    max_trades: String(raw?.max_trades ?? DEFAULT_CONFIG.max_trades),
+    narrative_language:
+      raw?.narrative_language ||
+      raw?.language ||
+      DEFAULT_CONFIG.narrative_language,
     profile,
     htf_tfs:
       Array.isArray(raw?.htf_tfs) && raw.htf_tfs.length
@@ -3527,6 +3533,53 @@ export default function ChartSnapshotsPage() {
             <option>London+NY</option>
           </select>
         </div>
+        <div style={{ minWidth: 100 }}>
+          <label className="minor-text">News</label>
+          <select
+            value={cfg.news}
+            onChange={(e) => setCfgField("news", e.target.value)}
+            style={{ width: "100%" }}
+          >
+            <option value="">None</option>
+            <option>High-impact</option>
+            <option>NFP/FOMC</option>
+            <option>Earnings</option>
+          </select>
+        </div>
+        <div style={{ minWidth: 100 }}>
+          <label className="minor-text">Min Trades</label>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={cfg.min_trades || "0"}
+            onChange={(e) => setCfgField("min_trades", e.target.value)}
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ minWidth: 100 }}>
+          <label className="minor-text">Max Trades</label>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={cfg.max_trades || "2"}
+            onChange={(e) => setCfgField("max_trades", e.target.value)}
+            style={{ width: "100%" }}
+          />
+        </div>
+        <div style={{ minWidth: 120 }}>
+          <label className="minor-text">Narrative Language</label>
+          <select
+            value={cfg.narrative_language || "English"}
+            onChange={(e) => setCfgField("narrative_language", e.target.value)}
+            style={{ width: "100%" }}
+          >
+            <option>Vietnamese</option>
+            <option>English</option>
+            <option>Deutch</option>
+          </select>
+        </div>
         <div style={{ minWidth: 60 }}>
           <label className="minor-text">MinRR</label>
           <input
@@ -3562,19 +3615,6 @@ export default function ChartSnapshotsPage() {
             <option>Bias</option>
             <option>Long only</option>
             <option>Short only</option>
-          </select>
-        </div>
-        <div style={{ minWidth: 110 }}>
-          <label className="minor-text">News</label>
-          <select
-            value={cfg.news}
-            onChange={(e) => setCfgField("news", e.target.value)}
-            style={{ width: "100%" }}
-          >
-            <option value="">None</option>
-            <option>High-impact</option>
-            <option>NFP/FOMC</option>
-            <option>Earnings</option>
           </select>
         </div>
       </div>
