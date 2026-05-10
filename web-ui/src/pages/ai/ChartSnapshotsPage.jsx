@@ -5385,7 +5385,7 @@ export default function ChartSnapshotsPage() {
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
-                  activePlan?.raw?.symbol || selectedSymbol,
+                  activePlan?.symbol || activePlan?.raw?.symbol || "",
                 ),
                 interval: timeframe,
                 entryPrice: position.entry,
@@ -5405,7 +5405,7 @@ export default function ChartSnapshotsPage() {
                     </div>
                     <TradeSignalChart
                       symbol={normalizeSignalSymbol(
-                        activePlan?.raw?.symbol || cfg.symbol,
+                        activePlan?.symbol || activePlan?.raw?.symbol || "",
                       )}
                       interval={timeframe}
                       analysisSnapshot={effectiveChartSnapshot}
