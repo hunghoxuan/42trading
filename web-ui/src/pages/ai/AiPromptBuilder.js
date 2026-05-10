@@ -1017,7 +1017,8 @@ SKIP REASONS: populate skip_reasons[] ONLY when trade_decision is Wait, Reduce, 
 GENERAL RULES
 ═══════════════════════════════════════════════════════════
 - Analyze HTF → LTF in sequence. Never reverse this order.
-- Maximum 2 trade plans. Sort descending by confidence_pct.
+- Return trade plans for all configured symbols with readable snapshot evidence.
+- Sort descending by confidence_pct within each symbol.
 - Do not generate BUY and SELL plans simultaneously unless both pass the gate independently.
 - PD array IDs must be consistent across ltf_analysis, confluence checklist, and trade plan.
 - Every TP2 and TP3 reference field must contain a real ID from htf_context.reference_zones[].
@@ -1130,7 +1131,7 @@ export function buildEnumString() {
         relevance: ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"],
       },
       limits: {
-        max_trade_plans: 4,
+        max_trade_plans: 24,
         max_pd_arrays: 6,
         max_key_levels: 6,
         max_reference_zones: 6,
