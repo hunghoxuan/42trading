@@ -1,3 +1,44 @@
+# Multi-Agent Deployment Ledger (Read First)
+
+Use this section for parallel-agent safety and deploy ordering.
+
+## Current Deploy Lock
+
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: `Set lock_status=LOCKED before deploy; release after verification.`
+
+## Required Entry Template
+
+Copy and fill:
+
+```md
+### [YYYY-MM-DD HH:mm UTC] AGENT:<name>
+- status: DOING | DONE | DEPLOYED | DEPLOY_BLOCKED
+- branch: <branch>
+- commit: <sha>
+- scope: <files/modules>
+- merge_to_main: NO | YES (sha)
+- deploy:
+  - owner: <name>
+  - server_version: <value>
+  - ea_version: <value>
+  - result: PASS | FAIL
+- verify:
+  - /health:
+  - /ui asset:
+  - key endpoint:
+- handoff_next: <agent/none>
+```
+
+## Parallel Agents Rule (A -> B -> C)
+
+- Agent A merge -> deploy -> verify -> post ledger.
+- Agent B must pull latest main after A deploy, then merge/deploy/verify.
+- Agent C repeats only after B posts success.
+- If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
 # Handoff — 2026-05-08
 
 > From: Codex session

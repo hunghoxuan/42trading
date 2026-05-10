@@ -1080,3 +1080,21 @@
   - `rtk npm --prefix web-ui run build` ✅
 - **Deploy Status**:
   - Ready to deploy.
+# Session Log: 2026-05-10 17:55
+- **Starting Task**:
+  - Define conflict-safe multi-agent process for commit/merge/push/deploy/handoff sync.
+- **Work Accomplished**:
+  - Added mandatory multi-agent deploy safety rules: deploy lock, main-first deploy source, ordered parallel deploy chain, and verification gate.
+  - Added mandatory handoff sync contract: ownership claim, done payload, merge/deploy state, and overlap conflict rule.
+  - Added mailbox deployment ledger template and deploy lock section for 3-agent parallel workflows.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/.agents/rules/deploy.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/rules/handoff.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
+- **Technical Decisions**:
+  - Deployment source of truth is `origin/main`; avoid local-only deploy drift.
+  - Enforce serialized deploy ownership even when coding is parallel.
+- **Verification**:
+  - Manual doc consistency check ✅
+- **Deploy Status**:
+  - Not deployed (docs/process updates only).
