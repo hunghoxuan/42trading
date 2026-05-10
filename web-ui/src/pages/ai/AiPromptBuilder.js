@@ -1024,6 +1024,9 @@ GENERAL RULES
 - Use empty string "" for narrative fields when evidence is weak. Never fabricate narrative.
 - Return STRICT JSON only. No markdown. No prose. No commentary outside the JSON.
 - CRITICAL: trade_plan[].symbol must match one of configured Symbols in SESSION CONFIG exactly. Do not extract symbols from chart titles or exchange prefixes.
+- CRITICAL MULTI-SYMBOL: treat snapshot files as grouped by symbol token in filename.
+- For EACH symbol listed in SESSION CONFIG Symbols that has readable files, return at least 1 trade_plan item for that symbol.
+- If a symbol is unreadable/missing required chart evidence, still return 1 trade_plan for that symbol with trade_decision="Skip" and non-empty skip_reasons.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────

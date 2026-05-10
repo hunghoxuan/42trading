@@ -16341,9 +16341,18 @@ const appHandler = async (req, res) => {
             rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
           symbolParts = rest.slice(0, hasDup ? -2 : -1);
         } else {
-          const hasDup =
-            parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
-          symbolParts = parts.slice(0, hasDup ? -3 : -2);
+          // Supported compact patterns:
+          // - PROVIDER_SYMBOL_TF
+          // - PROVIDER_SYMBOL_SESSION_TF
+          // - PROVIDER_SYMBOL_SESSION_TF_DUP
+          if (parts.length === 3) {
+            // PROVIDER_SYMBOL_TF -> keep provider+symbol, strip tf
+            symbolParts = parts.slice(0, 2);
+          } else {
+            const hasDup =
+              parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
+            symbolParts = parts.slice(0, hasDup ? -3 : -2);
+          }
         }
         if (!symbolParts.length) return "";
         const KNOWN_PROVIDERS = new Set([
