@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { createChart } from "lightweight-charts";
 import {
   showDateTime,
@@ -1839,6 +1839,7 @@ function validatePosition(pos = {}) {
 
 export default function ChartSnapshotsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { symbol: paramSymbol } = useParams();
   const [cfg, setCfg] = useState(DEFAULT_CONFIG);
   const [templates, setTemplates] = useState(() => loadTemplates());
@@ -1924,6 +1925,7 @@ export default function ChartSnapshotsPage() {
     note: "",
   });
   const [barsCache, setBarsCache] = useState({});
+  const [selectedPlanIdx, setSelectedPlanIdx] = useState(0);
   const [aiContext, setAiContext] = useState(null);
   const [barsLoading, setBarsLoading] = useState(false);
   const [autoFlow, setAutoFlow] = useState({
@@ -2256,6 +2258,20 @@ export default function ChartSnapshotsPage() {
       }
     }
   };
+  const setSelectedSymbols = (symbols = []) => {
+    const next = [
+      ...new Set(
+        (Array.isArray(symbols) ? symbols : [])
+          .map((x) => normalizeWatchSymbol(x))
+          .filter(Boolean),
+      ),
+    ];
+    setCfg((prev) => ({
+      ...prev,
+      symbols: next,
+      symbol: next[0] || "",
+    }));
+  };
   const resetPositionLocal = () => {
     if (effectiveParsed && typeof effectiveParsed === "object") {
       setPosition(extractPositionFromAnalysis(effectiveParsed));
@@ -2584,6 +2600,7 @@ export default function ChartSnapshotsPage() {
             .pop()
             ?.trim();
         })(),
+        symbols: activeSymbols,
         timeframe,
         provider,
         timeframes: snapshotTfs,
@@ -2622,6 +2639,7 @@ export default function ChartSnapshotsPage() {
           try {
             const batch = await api.chartSnapshotCreateBatch({
               symbol: symbolForSnapshot,
+              symbols: activeSymbols,
               provider: provider || "ICMARKETS",
               session_prefix: activeSessionPrefix,
               tfs:
@@ -2843,36 +2861,17 @@ export default function ChartSnapshotsPage() {
     setStatus({ type: "", text: "" });
     try {
       const hasContext = true; // backend handles context bundle in analyze
-      const outputs = [];
-      for (const sym of targetSymbols) {
-        const recent = resolveRecentSnapshots({
-          sessionPrefix: activeSessionPrefix,
-        });
-        const out = await analyzeFiles(recent.matchedFiles.length ? recent.matchedFiles : [], {
+      const recent = resolveRecentSnapshots({
+        sessionPrefix: activeSessionPrefix,
+      });
+      await analyzeFiles(
+        recent.matchedFiles.length ? recent.matchedFiles : [],
+        {
           context: hasContext ? aiContext : undefined,
-          symbolOverride: sym,
+          symbolOverride: targetSymbols[0] || effectiveSymbol,
           symbolsOverride: targetSymbols,
-        });
-        if (out) outputs.push(out);
-      }
-      if (outputs.length > 1) {
-        const mergedPlans = [];
-        outputs.forEach((out) => {
-          const parsed = enrichParsedAnalysis(
-            String(out?.raw_response || ""),
-            out?.parsed_json || tryParseJsonLoose(String(out?.raw_response || "")),
-          );
-          const plans = Array.isArray(parsed?.trade_plan)
-            ? parsed.trade_plan
-            : parsed?.trade_plan && typeof parsed.trade_plan === "object"
-              ? [parsed.trade_plan]
-              : [];
-          mergedPlans.push(...plans);
-        });
-        const merged = { trade_plan: mergedPlans };
-        setAnalysisParsed(merged);
-        setAnalysisJson(JSON.stringify(merged, null, 2));
-      }
+        },
+      );
     } catch (e) {
       const msg = String(e?.message || e || "Analyze preflight failed.");
       const normalized = normalizeUiStatus("error", msg);
@@ -3013,7 +3012,12 @@ export default function ChartSnapshotsPage() {
 
       if (!signals.length) {
         const symbolManual = normalizeSignalSymbol(
-          String(tvSymbol || cfg.symbol || "")
+          String(
+            overridePosition?.symbol ||
+              tvSymbol ||
+              cfg.symbol ||
+              "",
+          )
             .split(":")
             .pop(),
         );
@@ -3403,9 +3407,32 @@ export default function ChartSnapshotsPage() {
 
   useEffect(() => {
     loadSnapshots();
-    // Read symbol from URL param
+    const search = new URLSearchParams(location.search || "");
+    const raw = String(search.get("symbols") || "").trim();
+    const routeSymbols = raw
+      ? raw
+          .split(",")
+          .map((x) => normalizeWatchSymbol(x))
+          .filter(Boolean)
+      : [];
+    if (routeSymbols.length) {
+      setSelectedSymbols(routeSymbols);
+      return;
+    }
     if (paramSymbol) setCfgField("symbol", decodeURIComponent(paramSymbol));
   }, []);
+
+  useEffect(() => {
+    const symbols = Array.isArray(cfg?.symbols)
+      ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
+      : [];
+    if (!symbols.length) return;
+    const nextPath = `/ai/browser/${encodeURIComponent(symbols[0])}`;
+    const nextSearch = `?symbols=${encodeURIComponent(symbols.join(","))}`;
+    if (location.pathname !== nextPath || location.search !== nextSearch) {
+      navigate(`${nextPath}${nextSearch}`, { replace: true });
+    }
+  }, [cfg.symbols]);
 
   useEffect(() => {
     loadWatchlist();
@@ -3949,6 +3976,10 @@ export default function ChartSnapshotsPage() {
           x.tp > 0,
       );
   }, [effectiveParsed]);
+  const activePlan = useMemo(
+    () => analysisTradePlans[selectedPlanIdx] || analysisTradePlans[0] || null,
+    [analysisTradePlans, selectedPlanIdx],
+  );
   const selectedSymbol = String(cfg.symbol || paramSymbol || "").trim();
   const selectedSymbols = Array.isArray(cfg?.symbols)
     ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
@@ -3958,6 +3989,15 @@ export default function ChartSnapshotsPage() {
     if (!plan?.raw) return;
     setPosition(extractPositionFromPlan(plan.raw, effectiveParsed || {}));
   };
+
+  useEffect(() => {
+    if (!analysisTradePlans.length) return;
+    const clamped = Math.min(
+      Math.max(0, selectedPlanIdx),
+      analysisTradePlans.length - 1,
+    );
+    if (clamped !== selectedPlanIdx) setSelectedPlanIdx(clamped);
+  }, [analysisTradePlans, selectedPlanIdx]);
 
   useEffect(() => {
     if (!liteChartRef.current || responseTab !== "chart") return;
@@ -5069,19 +5109,49 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
+        {selectedSymbols.length > 1 ? (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            {selectedSymbols.map((s) => (
+              <span key={`selected_${s}`} className="snapshot-tag-v2 active">
+                {s}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
         {!hasResponse && selectedSymbol && (
-          <div style={{ marginBottom: 20 }}>
-            <Suspense
-              fallback={<div className="loading-card">Loading Chart...</div>}
-            >
-              <SymbolChart
-                symbol={selectedSymbol}
-                timeframes={widgetTfs}
-                defaultMode="live"
-                onAnalyze={() => analyzeSelected()}
-                onRemove={null}
-              />
-            </Suspense>
+          <div
+            className="browser-grid-v1"
+            style={{
+              gridTemplateColumns:
+                selectedSymbols.length > 1 ? "repeat(2, 1fr)" : "1fr",
+              gap: 12,
+              marginBottom: 20,
+            }}
+          >
+            {(selectedSymbols.length ? selectedSymbols : [selectedSymbol]).map(
+              (sym) => (
+                <Suspense
+                  key={sym}
+                  fallback={<div className="loading-card">Loading Chart...</div>}
+                >
+                  <SymbolChart
+                    symbol={sym}
+                    timeframes={widgetTfs}
+                    defaultMode="live"
+                    onAnalyze={() => analyzeSelected()}
+                    onRemove={null}
+                  />
+                </Suspense>
+              ),
+            )}
           </div>
         )}
 
@@ -5089,12 +5159,94 @@ export default function ChartSnapshotsPage() {
           <Suspense
             fallback={<div className="loading-card">Loading Details...</div>}
           >
+            {analysisTradePlans.length ? (
+              <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+                {analysisTradePlans.map((plan, idx) => {
+                  const planPos = extractPositionFromPlan(
+                    plan.raw,
+                    effectiveParsed || {},
+                  );
+                  const isActive = idx === selectedPlanIdx;
+                  return (
+                    <article
+                      key={`plan_overview_${idx}`}
+                      className="snapshot-activity-card-v4"
+                      style={{
+                        borderColor: isActive ? "var(--accent)" : "var(--border)",
+                        boxShadow: isActive
+                          ? "0 0 0 1px var(--accent) inset"
+                          : "none",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => {
+                        setSelectedPlanIdx(idx);
+                        applyTradePlanToEditor(plan);
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr auto",
+                          gap: 8,
+                          alignItems: "center",
+                        }}
+                      >
+                        <SymbolEntryCell
+                          side={plan.direction}
+                          symbol={normalizeSignalSymbol(
+                            plan.raw?.symbol || selectedSymbol,
+                          )}
+                          orderType={plan.trade_type}
+                          entry={plan.entry}
+                          tp={plan.tp}
+                          sl={plan.sl}
+                          rr={plan.rr}
+                          status={plan.skip_recommendation || "Proceed"}
+                        />
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addBySelection(
+                                "signal",
+                                { ...planPos, symbol: plan.raw?.symbol || "" },
+                                `plan_${idx}`,
+                              );
+                            }}
+                          >
+                            + Signal
+                          </button>
+                          <button
+                            className="primary-button"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              addBySelection(
+                                "trade",
+                                { ...planPos, symbol: plan.raw?.symbol || "" },
+                                `plan_${idx}`,
+                              );
+                            }}
+                          >
+                            + Trade
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
             <SignalDetailCard
               mode="ai"
               hideTabsBeforeResponse={true}
               chart={{
                 enabled: true,
-                symbol: selectedSymbol,
+                symbol: normalizeSignalSymbol(
+                  activePlan?.raw?.symbol || selectedSymbol,
+                ),
                 interval: timeframe,
                 entryPrice: position.entry,
                 slPrice: position.sl,
@@ -5112,7 +5264,9 @@ export default function ChartSnapshotsPage() {
                       Chart ({timeframe}): Twelve + PD Arrays
                     </div>
                     <TradeSignalChart
-                      symbol={cfg.symbol}
+                      symbol={normalizeSignalSymbol(
+                        activePlan?.raw?.symbol || cfg.symbol,
+                      )}
                       interval={timeframe}
                       analysisSnapshot={effectiveChartSnapshot}
                       entryPrice={position.entry}
@@ -5140,7 +5294,12 @@ export default function ChartSnapshotsPage() {
                 tab: responseTab,
                 onTabChange: setResponseTab,
                 text: responseText,
-                raw: effectiveParsed || analysisRaw || analysisJson,
+                raw: activePlan
+                  ? {
+                      ...(effectiveParsed || {}),
+                      trade_plan: [activePlan.raw],
+                    }
+                  : effectiveParsed || analysisRaw || analysisJson,
                 bars: JSON.stringify(
                   currentBarsSnapshot || { status: "no_cached_bars" },
                   null,
