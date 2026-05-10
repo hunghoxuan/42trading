@@ -108,6 +108,16 @@ function PlanHeader({
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
+  const estimatedBars = plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
+  const confidenceLevel = (plan.confidence_level || "").toLowerCase();
+  const riskLevel = (plan.risk_level || plan.risk_tier || "").toLowerCase();
+  const mx = plan.multiple_exits || {};
+  const mxExits = [
+    mx.break_even?.price != null && { label: "BE", price: mx.break_even.price },
+    mx.tp1?.price != null && { label: "TP1", price: mx.tp1.price },
+    mx.tp2?.price != null && { label: "TP2", price: mx.tp2.price },
+    mx.full_tp?.price != null && { label: "TP3", price: mx.full_tp.price },
+  ].filter(Boolean);
 
   return (
     <div
@@ -202,13 +212,8 @@ function PlanHeader({
           textAlign: "right",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
+        {/* Row 1: status + pnl */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {status && (
             <span
               className={`badge ${status.cls} badge-mini`}
@@ -228,60 +233,97 @@ function PlanHeader({
               {pnl}
             </span>
           )}
-          {strategy && (
-            <span
-              className="minor-text"
-              style={{
-                fontSize: "10px",
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.02em",
-              }}
-            >
-              {strategy}
-            </span>
-          )}
-          {entryModel && (
-            <span
-              className="minor-text"
-              style={{ fontSize: "10px", fontWeight: 500 }}
-            >
-              {entryModel}
-            </span>
-          )}
-          {confidenceText && (
-            <span
-              style={{
-                fontSize: "11px",
-                fontWeight: 700,
-                color: "var(--accent)",
-                opacity: 0.9,
-              }}
-            >
-              {confidenceText}
-            </span>
-          )}
-          {riskTier && (
-            <span
-              className={`badge badge-mini ${
-                riskTier.toLowerCase() === "high"
-                  ? "badge-danger"
-                  : riskTier.toLowerCase() === "medium"
-                    ? "badge-warning"
-                    : "badge-success"
-              }`}
-              style={{
-                padding: "1px 5px",
-                fontSize: "9px",
-                textTransform: "capitalize",
-              }}
-            >
-              {riskTier}
-            </span>
-          )}
         </div>
 
-        {partials.length > 0 && (
+        {/* Row 2: estimate_bars / confidence_level / risk_level badges */}
+        {(estimatedBars != null || confidenceLevel || riskLevel) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {estimatedBars != null && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  background: "rgba(120,120,200,0.15)",
+                  color: "var(--muted-bright)",
+                  border: "1px solid rgba(120,120,200,0.25)",
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                }}
+              >
+                ~{estimatedBars}b
+              </span>
+            )}
+            {confidenceLevel && (
+              <span
+                className={`badge badge-mini ${
+                  confidenceLevel === "high"
+                    ? "badge-success"
+                    : confidenceLevel === "medium"
+                      ? "badge-warning"
+                      : "badge-danger"
+                }`}
+                style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+              >
+                {confidenceLevel} conf
+              </span>
+            )}
+            {riskLevel && (
+              <span
+                className={`badge badge-mini ${
+                  riskLevel === "high"
+                    ? "badge-danger"
+                    : riskLevel === "medium"
+                      ? "badge-warning"
+                      : "badge-success"
+                }`}
+                style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+              >
+                {riskLevel} risk
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Row 3: strategy | entry_model | confidence% */}
+        {(strategy || entryModel || confidenceText) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {strategy && (
+              <span
+                className="minor-text"
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                {strategy}
+              </span>
+            )}
+            {entryModel && (
+              <span
+                className="minor-text"
+                style={{ fontSize: "10px", fontWeight: 500 }}
+              >
+                {entryModel}
+              </span>
+            )}
+            {confidenceText && (
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  color: "var(--accent)",
+                  opacity: 0.9,
+                }}
+              >
+                {confidenceText}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Row 4: multiple_exits + partial_tps — clickable to set TP/RR */}
+        {(partials.length > 0 || mxExits.length > 0) && (
           <div
             style={{
               fontSize: "9.5px",
@@ -289,8 +331,35 @@ function PlanHeader({
               display: "flex",
               gap: 8,
               opacity: 0.8,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
             }}
           >
+            {mxExits.map((ex, idx) => {
+              const exPrice = parseNumLoose(ex.price);
+              let rrEx = "";
+              if (risk && exPrice != null && entry != null) {
+                const r = Math.abs(exPrice - entry) / risk;
+                rrEx = `(${r.toFixed(1)}r)`;
+              }
+              return (
+                <span
+                  key={`mx_${idx}`}
+                  style={{
+                    cursor: "pointer",
+                    borderBottom: "1px dotted var(--accent-soft)",
+                    color: "var(--accent)",
+                  }}
+                  onClick={() => {
+                    if (typeof plan.onSelectTP === "function") {
+                      plan.onSelectTP(ex.price, rrEx.replace(/[()]/g, ""));
+                    }
+                  }}
+                >
+                  {ex.label}: {ex.price} {rrEx}
+                </span>
+              );
+            })}
             {partials.map((pt, idx) => {
               const ptPrice = parseNumLoose(pt.price);
               let rrPt = "";

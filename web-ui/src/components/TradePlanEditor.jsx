@@ -298,9 +298,9 @@ export function TradePlanEditor({
 
         <NumericInline label="Entry" k="entry" />
 
-        <NumericInline label="Risk / Reward" k="rr" step="0.1" min="0.3" max="10" sliderOverride={{ min: 0.5, max: 8, step: 0.1 }} />
-
         <NumericInline label="Take Profit" k="tp" />
+
+        <NumericInline label="Risk / Reward" k="rr" step="0.1" min="0.3" max="10" sliderOverride={{ min: 0.5, max: 8, step: 0.1 }} />
 
         <NumericInline label="Stop Loss" k="sl" />
       </div>
