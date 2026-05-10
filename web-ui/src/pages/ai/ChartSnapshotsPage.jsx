@@ -2497,13 +2497,31 @@ export default function ChartSnapshotsPage() {
         prompt: composedPrompt,
         session_prefix: activeSessionPrefix,
         max_tokens: 4500,
-        symbol:
-          String(tvSymbol || cfg.symbol || "")
-            .split(":")
-            .pop() ||
-          inferSymbolFromSnapshotToken(
-            parseSnapshotMeta(items[0] || {})?.symbolToken || "",
-          ),
+        symbol: (() => {
+          const raw =
+            String(tvSymbol || cfg.symbol || "")
+              .split(":")
+              .pop()
+              ?.trim() || "";
+          const PROVIDER_NAMES = new Set([
+            "ICMARKETS",
+            "OANDA",
+            "FOREXCOM",
+            "EIGHTCAP",
+            "PEPPERSTONE",
+          ]);
+          if (raw && !PROVIDER_NAMES.has(raw.toUpperCase())) return raw;
+          // Fallback to cfg.symbol
+          return (
+            String(cfg.symbol || "")
+              .split(":")
+              .pop()
+              ?.trim() ||
+            inferSymbolFromSnapshotToken(
+              parseSnapshotMeta(items[0] || {})?.symbolToken || "",
+            )
+          );
+        })(),
         timeframe,
         provider,
         timeframes: snapshotTfs,
@@ -2723,7 +2741,22 @@ export default function ChartSnapshotsPage() {
     ];
     const allowNoSymbol = Boolean(opts?.allowNoSymbol);
     const resolvedSymbol = String(tvSymbol || cfg.symbol || "").trim();
-    if ((!resolvedSymbol && !allowNoSymbol) || !tfs.length) {
+    // Never use provider name as symbol (e.g. ICMARKETS)
+    const PROVIDER_NAMES = new Set([
+      "ICMARKETS",
+      "OANDA",
+      "FOREXCOM",
+      "EIGHTCAP",
+      "PEPPERSTONE",
+    ]);
+    const effectiveSymbol =
+      resolvedSymbol && !PROVIDER_NAMES.has(resolvedSymbol.toUpperCase())
+        ? resolvedSymbol
+        : String(cfg.symbol || "")
+            .split(":")
+            .pop()
+            ?.trim() || "";
+    if ((!effectiveSymbol && !allowNoSymbol) || !tfs.length) {
       setStatus({
         type: "warning",
         text: allowNoSymbol
