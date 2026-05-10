@@ -638,15 +638,20 @@ function normalizeAnalysisContract(parsed) {
         ) ??
         x?.take_profit ??
         x?.multiple_exits?.full_tp?.price ??
-        (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+        x?.tp3 ??
+        x?.tp1 ??
+        x?.tp ??
+        null,
       tp2:
         planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
         x?.multiple_exits?.tp2?.price ??
-        (x?.tp2 ?? null),
+        x?.tp2 ??
+        null,
       tp3:
         planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
         x?.multiple_exits?.full_tp?.price ??
-        (x?.tp3 ?? null),
+        x?.tp3 ??
+        null,
       estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
       rr: x?.risk_reward ?? x?.rr ?? null,
       risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
@@ -821,15 +826,19 @@ function normalizeAnalysisContract(parsed) {
           ) ??
           x?.take_profit ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? x?.tp ?? null),
+          x?.tp3 ??
+          x?.tp ??
+          null,
         tp2:
           planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
           x?.multiple_exits?.tp2?.price ??
-          (x?.tp2 ?? null),
+          x?.tp2 ??
+          null,
         tp3:
           planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? null),
+          x?.tp3 ??
+          null,
         estimated_bars:
           x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
@@ -1262,7 +1271,9 @@ function extractPositionFromAnalysis(parsed) {
     entry_condition: String(plan?.entry_condition || "").trim(),
     exit_condition: String(plan?.exit_condition || "").trim(),
     skip_recommendation: String(
-      plan?.skip_recommendation || plan?.position_management?.trade_decision || "",
+      plan?.skip_recommendation ||
+        plan?.position_management?.trade_decision ||
+        "",
     ).trim(),
     risk_management: String(plan?.risk_management || "").trim(),
     confluence_checklist: Array.isArray(plan?.confluence_checklist)
@@ -1365,7 +1376,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
     entry_condition: String(item?.entry_condition || "").trim(),
     exit_condition: String(item?.exit_condition || "").trim(),
     skip_recommendation: String(
-      item?.skip_recommendation || item?.position_management?.trade_decision || "",
+      item?.skip_recommendation ||
+        item?.position_management?.trade_decision ||
+        "",
     ).trim(),
     risk_management: String(item?.risk_management || "").trim(),
     confluence_checklist: Array.isArray(item?.confluence_checklist)
@@ -1892,8 +1905,6 @@ export default function ChartSnapshotsPage() {
   });
   const [barsCache, setBarsCache] = useState({});
   const [barsLoading, setBarsLoading] = useState(false);
-  const [aiContext, setAiContext] = useState(null);
-  const [contextLoading, setContextLoading] = useState(false);
   const [autoFlow, setAutoFlow] = useState({
     runId: 0,
     context: "idle",
@@ -2458,36 +2469,6 @@ export default function ChartSnapshotsPage() {
     }
   };
 
-  const loadAiContext = async (opts = {}) => {
-    const symbol = normalizeSignalSymbol(tvSymbol || cfg.symbol || "");
-    if (!symbol) return null;
-    setContextLoading(true);
-    try {
-      const out = await api.chartContext({
-        symbol,
-        provider,
-        tfs: snapshotTfs,
-        bars: Number(cfg.lookbackBars || 300) || 300,
-        refresh: opts.refresh ? 1 : 0,
-        include_snapshots: opts.includeSnapshots ? 1 : 0,
-      });
-      setAiContext(out && typeof out === "object" ? out : null);
-      setMarketMetadata({
-        source: "chart_context",
-        updated_time: Date.now(),
-        auto_refresh: 0,
-      });
-      return out;
-    } catch (e) {
-      setStatus({
-        type: "warning",
-        text: String(e?.message || e || "Failed to load AI context."),
-      });
-      return null;
-    } finally {
-      setContextLoading(false);
-    }
-  };
 
   const analyzeFiles = async (files = [], opts = {}) => {
     const hasCorePlanLevels = (parsed) => {
@@ -2517,7 +2498,7 @@ export default function ChartSnapshotsPage() {
     try {
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
       const context =
-        opts.context || (await loadAiContext({ includeSnapshots: true }));
+        null;
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
 
       const basePrompt = String(promptDraft || promptText || "").trim();
@@ -2830,10 +2811,7 @@ export default function ChartSnapshotsPage() {
 
     setStatus({ type: "", text: "" });
     try {
-      const contextRows = Array.isArray(aiContext?.timeframes)
-        ? aiContext.timeframes
-        : [];
-      const hasContext = contextRows.length > 0;
+      const hasContext = true; // backend handles context bundle in analyze
       const recent = resolveRecentSnapshots({
         sessionPrefix: activeSessionPrefix,
       });
@@ -4347,243 +4325,263 @@ export default function ChartSnapshotsPage() {
               }}
             >
               <div style={{ display: "grid", gap: 6 }}>
-                  <>
+                <>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 12,
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {selectedSymbol && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => setCfgField("symbol", "")}
+                        style={{ fontSize: 12, padding: "4px 8px" }}
+                      >
+                        {"<"}
+                      </button>
+                    )}
+                    {!isSymbolPanelOpen && (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => setIsSymbolPanelOpen(true)}
+                        title="Expand symbols panel"
+                        style={{
+                          width: 28,
+                          height: 28,
+                          padding: 0,
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {">>"}
+                      </button>
+                    )}
+                    <select
+                      className="secondary-button"
+                      value={symbolFilterTab}
+                      onChange={(e) => {
+                        setSymbolFilterTab(e.target.value);
+                        setVisibleCount(8);
+                      }}
+                      style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
+                    >
+                      <option value="FAVOURITE">Watchlist</option>
+                      <option value="CRYPTO">Crypto</option>
+                      <option value="FOREX">Forex</option>
+                      <option value="COMMODITY">Commodity</option>
+                      <option value="INDICES">Indices</option>
+                      <option value="SMT">SMT</option>
+                    </select>
                     <div
                       style={{
+                        position: "relative",
+                        width: "30%",
+                        minWidth: 120,
                         display: "flex",
-                        gap: 12,
-                        alignItems: "center",
-                        flexWrap: "wrap",
+                        gap: 4,
                       }}
                     >
-                      {selectedSymbol && (
+                      <input
+                        list="tv-symbol-options"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && searchTerm.trim()) {
+                            setCfgField(
+                              "symbol",
+                              normalizeWatchSymbol(searchTerm.trim()),
+                            );
+                          }
+                        }}
+                        placeholder="Search symbol..."
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          fontSize: 13,
+                          minWidth: 0,
+                        }}
+                      />
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        style={{
+                          width: 28,
+                          minWidth: 28,
+                          padding: "4px 0",
+                          fontSize: 14,
+                        }}
+                        onClick={() => {
+                          if (searchTerm.trim()) {
+                            const s = normalizeWatchSymbol(searchTerm.trim());
+                            setCfgField("symbol", s);
+                            const next = [...new Set([...watchlist, s])];
+                            saveWatchlistToDb(next).then(() =>
+                              setWatchlist(next),
+                            );
+                          }
+                        }}
+                        title="Add current symbol"
+                      >
+                        +
+                      </button>
+                      <datalist id="tv-symbol-options">
+                        {[
+                          ...new Set([
+                            ...symbolSelectOptions,
+                            ...apiSymbolOptions,
+                          ]),
+                        ].map((opt) => (
+                          <option key={opt} value={opt} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <select
+                      className="secondary-button"
+                      style={{
+                        height: "34px",
+                        padding: "0 10px",
+                        fontSize: "12px",
+                      }}
+                      value={cfg.profile || "day"}
+                      onChange={(e) => {
+                        const newProfile = e.target.value;
+                        setProfilePreset(newProfile);
+                        const preset = PROFILE_PRESETS[newProfile];
+                        if (preset) {
+                          const newTfs = [
+                            ...new Set([
+                              ...(preset.htf_tfs || []),
+                              ...(preset.exec_tfs || []),
+                              ...(preset.conf_tfs || []),
+                            ]),
+                          ];
+                          if (newTfs.length > 0) {
+                            setBrowserTfs(newTfs);
+                            setBrowserTf(newTfs[0]);
+                          }
+                        }
+                      }}
+                    >
+                      {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
+                        <option key={k} value={k}>
+                          {v.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                      marginTop: 4,
+                    }}
+                  >
+                    <div className="tf-pills">
+                      {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
                         <button
-                          className="secondary-button"
-                          type="button"
-                          onClick={() => setCfgField("symbol", "")}
-                          style={{ fontSize: 12, padding: "4px 8px" }}
+                          key={tf}
+                          className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
+                          onClick={() => {
+                            setBrowserTfs((prev) => {
+                              if (prev.includes(tf)) {
+                                if (prev.length <= 1) return prev;
+                                return prev.filter((t) => t !== tf);
+                              }
+                              return [...prev, tf];
+                            });
+                            setBrowserTf(tf);
+                          }}
                         >
-                          {"<"}
+                          {tf.toUpperCase()}
                         </button>
-                      )}
-                      {!isSymbolPanelOpen && (
+                      ))}
+                      <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
                         <button
                           className="secondary-button"
-                          type="button"
-                          onClick={() => setIsSymbolPanelOpen(true)}
-                          title="Expand symbols panel"
                           style={{
                             width: 28,
                             height: 28,
                             padding: 0,
-                            fontSize: 12,
-                            fontWeight: 700,
+                            fontSize: 16,
+                            fontWeight: 800,
+                            borderRadius: 6,
                           }}
-                        >
-                          {">>"}
-                        </button>
-                      )}
-                      <select
-                        className="secondary-button"
-                        value={symbolFilterTab}
-                        onChange={(e) => {
-                          setSymbolFilterTab(e.target.value);
-                          setVisibleCount(8);
-                        }}
-                        style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
-                      >
-                        <option value="FAVOURITE">Watchlist</option>
-                        <option value="CRYPTO">Crypto</option>
-                        <option value="FOREX">Forex</option>
-                        <option value="COMMODITY">Commodity</option>
-                        <option value="INDICES">Indices</option>
-                        <option value="SMT">SMT</option>
-                      </select>
-                      <div
-                        style={{
-                          position: "relative",
-                          width: "30%",
-                          minWidth: 120,
-                          display: "flex",
-                          gap: 4,
-                        }}
-                      >
-                        <input
-                          list="tv-symbol-options"
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && searchTerm.trim()) {
-                              setCfgField(
-                                "symbol",
-                                normalizeWatchSymbol(searchTerm.trim()),
-                              );
-                            }
-                          }}
-                          placeholder="Search symbol..."
-                          style={{ flex: 1, padding: "6px 10px", fontSize: 13, minWidth: 0 }}
-                        />
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          style={{
-                            width: 28,
-                            minWidth: 28,
-                            padding: "4px 0",
-                            fontSize: 14,
-                          }}
-                          onClick={() => {
-                            if (searchTerm.trim()) {
-                              const s = normalizeWatchSymbol(searchTerm.trim());
-                              setCfgField("symbol", s);
-                              const next = [...new Set([...watchlist, s])];
-                              saveWatchlistToDb(next).then(() =>
-                                setWatchlist(next),
-                              );
-                            }
-                          }}
-                          title="Add current symbol"
+                          onClick={() =>
+                            setMasterGridCols((prev) =>
+                              Math.max(1, (prev ?? 2) - 1),
+                            )
+                          }
+                          title="All: Larger charts"
                         >
                           +
                         </button>
-                        <datalist id="tv-symbol-options">
-                          {[
-                            ...new Set([
-                              ...symbolSelectOptions,
-                              ...apiSymbolOptions,
-                            ]),
-                          ].map((opt) => (
-                            <option key={opt} value={opt} />
-                          ))}
-                        </datalist>
-                      </div>
-                      <select
-                        className="secondary-button"
-                        style={{
-                          height: "34px",
-                          padding: "0 10px",
-                          fontSize: "12px",
-                        }}
-                        value={cfg.profile || "day"}
-                        onChange={(e) => {
-                          const newProfile = e.target.value;
-                          setProfilePreset(newProfile);
-                          const preset = PROFILE_PRESETS[newProfile];
-                          if (preset) {
-                            const newTfs = [...new Set([
-                              ...(preset.htf_tfs || []),
-                              ...(preset.exec_tfs || []),
-                              ...(preset.conf_tfs || [])
-                            ])];
-                            if (newTfs.length > 0) {
-                              setBrowserTfs(newTfs);
-                              setBrowserTf(newTfs[0]);
-                            }
-                          }
-                        }}
-                      >
-                        {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
-                          <option key={k} value={k}>
-                            {v.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
-                      <div className="tf-pills">
-                        {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
-                          <button
-                            key={tf}
-                            className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
-                            onClick={() => {
-                              setBrowserTfs((prev) => {
-                                if (prev.includes(tf)) {
-                                  if (prev.length <= 1) return prev;
-                                  return prev.filter((t) => t !== tf);
-                                }
-                                return [...prev, tf];
-                              });
-                              setBrowserTf(tf);
-                            }}
-                          >
-                            {tf.toUpperCase()}
-                          </button>
-                        ))}
-                        <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
-                          <button
-                            className="secondary-button"
-                            style={{
-                              width: 28,
-                              height: 28,
-                              padding: 0,
-                              fontSize: 16,
-                              fontWeight: 800,
-                              borderRadius: 6,
-                            }}
-                            onClick={() =>
-                              setMasterGridCols((prev) =>
-                                Math.max(1, (prev ?? 2) - 1),
-                              )
-                            }
-                            title="All: Larger charts"
-                          >
-                            +
-                          </button>
-                          <button
-                            className="secondary-button"
-                            style={{
-                              width: 28,
-                              height: 28,
-                              padding: 0,
-                              fontSize: 16,
-                              fontWeight: 800,
-                              borderRadius: 6,
-                            }}
-                            onClick={() =>
-                              setMasterGridCols((prev) =>
-                                Math.min(6, (prev ?? 2) + 1),
-                              )
-                            }
-                            title="All: Smaller charts"
-                          >
-                            -
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                        <select
+                        <button
                           className="secondary-button"
                           style={{
-                            height: "30px",
-                            padding: "0 10px",
-                            fontSize: "12px",
+                            width: 28,
+                            height: 28,
+                            padding: 0,
+                            fontSize: 16,
+                            fontWeight: 800,
+                            borderRadius: 6,
                           }}
-                          value={templateId}
-                          onChange={(e) => handleSelectTemplate(e.target.value)}
+                          onClick={() =>
+                            setMasterGridCols((prev) =>
+                              Math.min(6, (prev ?? 2) + 1),
+                            )
+                          }
+                          title="All: Smaller charts"
                         >
-                          <option value="">New Template</option>
-                          <option value={DEFAULT_TEMPLATE_ID}>
-                            Default Template
-                          </option>
-                          {templates.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          onClick={() => setSettingsModalOpen(true)}
-                          style={{ height: "30px", fontSize: "12px", padding: "0 10px" }}
-                        >
-                          Settings
+                          -
                         </button>
                       </div>
                     </div>
-                  </>
+
+                    <div
+                      style={{ display: "flex", gap: 10, alignItems: "center" }}
+                    >
+                      <select
+                        className="secondary-button"
+                        style={{
+                          height: "30px",
+                          padding: "0 10px",
+                          fontSize: "12px",
+                        }}
+                        value={templateId}
+                        onChange={(e) => handleSelectTemplate(e.target.value)}
+                      >
+                        <option value="">New Template</option>
+                        <option value={DEFAULT_TEMPLATE_ID}>
+                          Default Template
+                        </option>
+                        {templates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setSettingsModalOpen(true)}
+                        style={{
+                          height: "30px",
+                          fontSize: "12px",
+                          padding: "0 10px",
+                        }}
+                      >
+                        Settings
+                      </button>
+                    </div>
+                  </div>
+                </>
               </div>
 
               <div
@@ -4818,10 +4816,14 @@ export default function ChartSnapshotsPage() {
               >
                 {symbolFilterTab === "SMT"
                   ? (() => {
-                      const q = String(searchTerm || "").trim().toUpperCase();
+                      const q = String(searchTerm || "")
+                        .trim()
+                        .toUpperCase();
                       return DEFAULT_SMT_GROUPS.map((group) => {
                         const filteredSyms = q
-                          ? group.symbols.filter((s) => s.toUpperCase().includes(q))
+                          ? group.symbols.filter((s) =>
+                              s.toUpperCase().includes(q),
+                            )
                           : group.symbols;
                         if (filteredSyms.length === 0) return null;
                         return (
@@ -4879,9 +4881,13 @@ export default function ChartSnapshotsPage() {
                       });
                     })()
                   : (() => {
-                      const q = String(searchTerm || "").trim().toUpperCase();
+                      const q = String(searchTerm || "")
+                        .trim()
+                        .toUpperCase();
                       const filtered = q
-                        ? symbolsByTab.filter((s) => s.toUpperCase().includes(q))
+                        ? symbolsByTab.filter((s) =>
+                            s.toUpperCase().includes(q),
+                          )
                         : symbolsByTab;
                       return filtered.slice(0, visibleCount).map((sym) => (
                         <Suspense
