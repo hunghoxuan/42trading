@@ -16857,6 +16857,13 @@ const appHandler = async (req, res) => {
           sourceSymbol: contextBundle.symbol,
           providerRaw: aiProviderRaw || "claude",
         });
+        const usedSymbols = [
+          ...new Set(
+            usedSnapshotFiles
+              .map((f) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(f)))
+              .filter(Boolean),
+          ),
+        ];
         const analysisFileUploads = [];
         try {
           const firstOk = (contextBundle.timeframes || []).find(
@@ -16942,6 +16949,7 @@ const appHandler = async (req, res) => {
           model: resolvedModel,
           schema_version: AI_RESPONSE_SCHEMA_VERSION,
           used_files: usedSnapshotFiles,
+          used_symbols: usedSymbols,
           claude_files_mode: "context_files",
           claude_files: contextBundle.context_files,
           analysis_files: analysisFileUploads,
@@ -16982,26 +16990,55 @@ const appHandler = async (req, res) => {
           .toUpperCase()
           .replace(/^[A-Z0-9_-]+:/, "")
           .replace(/[^A-Z0-9]/g, "");
+      const requestedSymbols = (
+        Array.isArray(body.symbols) && body.symbols.length
+          ? body.symbols
+          : [body.symbol]
+      )
+        .map((x) => normalizeSymbolLoose(x))
+        .filter(Boolean)
+        .slice(0, 12);
       const requestedTfs = parseRequestedTimeframes();
-      const requestedSymbol = normalizeSymbolLoose(body.symbol || "");
+      const requestedSymbol = requestedSymbols[0] || "";
       const requestedProvider = String(body.provider || "ICMARKETS")
         .trim()
         .toUpperCase();
       const pickSnapshotFiles = (items) => {
         if (!items.length) return [];
-        if (!requestedTfs.length) return items.slice(0, 4).map((x) => x.f);
-        const byTf = new Map();
-        for (const item of items) {
-          const parts = String(item.f || "").split("_");
-          const tfRaw = parts.length >= 3 ? parts[2] : "";
-          const tf = normalizeTf(tfRaw);
-          if (!tf || byTf.has(tf)) continue;
-          byTf.set(tf, item.f);
-          if (byTf.size >= requestedTfs.length) break;
+        const maxFiles = Math.max(
+          4,
+          Math.min(24, Math.max(1, requestedSymbols.length) * Math.max(1, requestedTfs.length || 4)),
+        );
+        if (!requestedTfs.length) return items.slice(0, maxFiles).map((x) => x.f);
+        const out = [];
+        const candidateSymbols = requestedSymbols.length
+          ? requestedSymbols
+          : Array.from(
+              new Set(
+                items
+                  .map((x) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.f)))
+                  .filter(Boolean),
+              ),
+            );
+        for (const sym of candidateSymbols) {
+          const byTf = new Map();
+          for (const item of items) {
+            const f = String(item.f || "");
+            const inferred = normalizeSymbolLoose(inferSymbolFromSnapshotFile(f));
+            if (sym && inferred && sym !== inferred) continue;
+            const parts = f.split("_");
+            const tfRaw = parts.length >= 3 ? parts[2] : "";
+            const tf = normalizeTf(tfRaw);
+            if (!tf || byTf.has(tf)) continue;
+            byTf.set(tf, f);
+          }
+          for (const tf of requestedTfs) {
+            const f = byTf.get(tf);
+            if (f) out.push(f);
+          }
         }
-        const ordered = requestedTfs.map((tf) => byTf.get(tf)).filter(Boolean);
-        if (ordered.length) return ordered.slice(0, 4);
-        return items.slice(0, 4).map((x) => x.f);
+        if (out.length) return out.slice(0, maxFiles);
+        return items.slice(0, maxFiles).map((x) => x.f);
       };
       let files = Array.isArray(body.files)
         ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
@@ -17036,10 +17073,10 @@ const appHandler = async (req, res) => {
               : allSnapshots;
         files = pickSnapshotFiles(pool);
       }
-      if (!files.length && requestedSymbol) {
+      if (!files.length && requestedSymbols.length) {
         try {
           const created = await captureTradingViewSnapshotsBatch({
-            symbol: requestedSymbol,
+            symbols: requestedSymbols,
             provider: requestedProvider,
             sessionPrefix: reqSessionPrefix || sanitizeSessionPrefix("auto"),
             tfs: requestedTfs.length ? requestedTfs : ["D", "240", "15", "5"],
@@ -17055,7 +17092,17 @@ const appHandler = async (req, res) => {
             ? created
                 .map((x) => String(x.file_name || ""))
                 .filter(Boolean)
-                .slice(0, 4)
+                .slice(
+                  0,
+                  Math.max(
+                    4,
+                    Math.min(
+                      24,
+                      Math.max(1, requestedSymbols.length) *
+                        Math.max(1, requestedTfs.length || 4),
+                    ),
+                  ),
+                )
             : [];
         } catch (captureError) {
           console.warn(
@@ -17064,7 +17111,17 @@ const appHandler = async (req, res) => {
           );
         }
       }
-      files = files.slice(0, 4);
+      files = files.slice(
+        0,
+        Math.max(
+          4,
+          Math.min(
+            24,
+            Math.max(1, requestedSymbols.length || 1) *
+              Math.max(1, requestedTfs.length || 4),
+          ),
+        ),
+      );
       if (!files.length)
         return json(res, 400, {
           ok: false,
@@ -17091,6 +17148,13 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "No valid snapshot images available.",
         });
+      const usedSymbols = [
+        ...new Set(
+          snapshotFiles
+            .map((x) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.fileName)))
+            .filter(Boolean),
+        ),
+      ];
 
       let finalPrompt =
         String(body.prompt || "").trim() ||
@@ -17328,6 +17392,7 @@ const appHandler = async (req, res) => {
         schema_version: AI_RESPONSE_SCHEMA_VERSION,
         used_files:
           imagePayload.usedFiles || snapshotFiles.map((x) => x.fileName),
+        used_symbols: usedSymbols,
         claude_files_mode: claudeFilesMode,
         claude_files: imagePayload.claudeFiles || [],
         claude_files_error: claudeFilesError,
