@@ -2351,6 +2351,9 @@ export default function ChartSnapshotsPage() {
   const resolveRecentSnapshots = (opts = {}) => {
     const nowMs = Date.now();
     const activeSessionPrefix = String(opts.sessionPrefix || "").trim();
+    const requestedSymbols = Array.isArray(opts.symbols)
+      ? opts.symbols.map((x) => String(x || "").trim().toUpperCase()).filter(Boolean)
+      : [];
     const targetTfTokens = [
       ...new Set(
         snapshotTfs.map((x) => toTradingViewInterval(x).toUpperCase()),
@@ -2367,14 +2370,17 @@ export default function ChartSnapshotsPage() {
     const providerRaw = String(provider || "")
       .trim()
       .toUpperCase();
-    const fullSymbol = symbolRaw.includes(":")
-      ? symbolRaw
-      : `${providerRaw}:${symbolRaw}`;
-    const symbolTokens = new Set(
-      [symbolRaw, fullSymbol, tvSymbol]
-        .map((x) => sanitizeSnapshotFileToken(x || ""))
-        .filter(Boolean),
-    );
+    const sourceSymbols = requestedSymbols.length
+      ? requestedSymbols
+      : [symbolRaw, String(tvSymbol || "").toUpperCase()].filter(Boolean);
+    const symbolTokens = new Set();
+    sourceSymbols.forEach((sym) => {
+      const fullSymbol = sym.includes(":") ? sym : `${providerRaw}:${sym}`;
+      [sym, fullSymbol].forEach((x) => {
+        const tok = sanitizeSnapshotFileToken(x || "");
+        if (tok) symbolTokens.add(tok);
+      });
+    });
     const candidates = items
       .map(parseSnapshotMeta)
       .filter((x) => x && x.createdAtMs > 0)
@@ -2395,7 +2401,8 @@ export default function ChartSnapshotsPage() {
       if (!byTf.has(c.tfToken)) byTf.set(c.tfToken, c.fileName);
     }
     const matchedFiles = targetTfTokens
-      .map((tf) => byTf.get(tf))
+      .flatMap((tf) => candidates.filter((c) => c.tfToken === tf).slice(0, requestedSymbols.length || 1))
+      .map((x) => x.fileName)
       .filter(Boolean);
     const missingTokens = targetTfTokens.filter((tf) => !byTf.has(tf));
     return {
@@ -2863,6 +2870,7 @@ export default function ChartSnapshotsPage() {
       const hasContext = true; // backend handles context bundle in analyze
       const recent = resolveRecentSnapshots({
         sessionPrefix: activeSessionPrefix,
+        symbols: targetSymbols,
       });
       await analyzeFiles(
         recent.matchedFiles.length ? recent.matchedFiles : [],
@@ -5160,7 +5168,19 @@ export default function ChartSnapshotsPage() {
             fallback={<div className="loading-card">Loading Details...</div>}
           >
             {analysisTradePlans.length ? (
-              <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gap: 8,
+                  marginBottom: 10,
+                  gridTemplateColumns:
+                    analysisTradePlans.length === 2
+                      ? "repeat(2, minmax(0, 1fr))"
+                      : analysisTradePlans.length >= 3
+                        ? "repeat(3, minmax(0, 1fr))"
+                        : "1fr",
+                }}
+              >
                 {analysisTradePlans.map((plan, idx) => {
                   const planPos = extractPositionFromPlan(
                     plan.raw,
@@ -5305,7 +5325,7 @@ export default function ChartSnapshotsPage() {
                   null,
                   2,
                 ),
-                tradePlans: analysisTradePlans,
+                tradePlans: [],
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{
