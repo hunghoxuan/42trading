@@ -9,6 +9,7 @@ import {
 } from "../../utils/format";
 
 import { api } from "../../api";
+import { showToast } from "../../components/ToastContainer";
 import TradeSignalChart from "../../components/TradeSignalChart";
 import { chartFetchManager } from "../../services/chartFetchManager";
 
@@ -1408,6 +1409,25 @@ function extractPositionFromPlan(plan, parsed = {}) {
   };
 }
 
+function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
+  const sym = normalizeSignalSymbol(symbol || "");
+  if (!parsed || typeof parsed !== "object") return {};
+  const cloned = { ...parsed };
+  const plans = Array.isArray(parsed.trade_plan)
+    ? parsed.trade_plan
+    : parsed?.trade_plan && typeof parsed.trade_plan === "object"
+      ? [parsed.trade_plan]
+      : [];
+  const selected =
+    plan && typeof plan === "object"
+      ? [plan]
+      : plans.filter(
+          (p) => normalizeSignalSymbol(String(p?.symbol || "")) === sym,
+        );
+  cloned.trade_plan = selected;
+  return cloned;
+}
+
 function normalizeSignalSymbol(symbolRaw) {
   const s = String(symbolRaw || "")
     .trim()
@@ -1936,6 +1956,7 @@ export default function ChartSnapshotsPage() {
   });
   const [barsCache, setBarsCache] = useState({});
   const [selectedPlanIdx, setSelectedPlanIdx] = useState(0);
+  const [planEdits, setPlanEdits] = useState({});
   const [aiContext, setAiContext] = useState(null);
   const [barsLoading, setBarsLoading] = useState(false);
   const [autoFlow, setAutoFlow] = useState({
@@ -3173,7 +3194,13 @@ export default function ChartSnapshotsPage() {
             parsed?.final_verdict && typeof parsed.final_verdict === "object"
               ? parsed.final_verdict
               : undefined,
-          raw_json: parsed && typeof parsed === "object" ? parsed : undefined,
+          raw_json:
+            parsed && typeof parsed === "object"
+              ? buildPerSymbolRawJson(
+                  parsed,
+                  payload.symbol || activePosition?.symbol || "",
+                )
+              : undefined,
           snapshot_files: chartFiles,
           analysis_snapshot: analysisSnapshotPayload,
         };
@@ -3182,7 +3209,6 @@ export default function ChartSnapshotsPage() {
           delete finalPayload.market_analysis;
           delete finalPayload.risk_management;
           delete finalPayload.final_verdict;
-          delete finalPayload.raw_json;
         }
         if (mode === "trade") {
           const out = await api.createTrade(finalPayload);
@@ -3202,10 +3228,18 @@ export default function ChartSnapshotsPage() {
       setManualAddedMode(mode);
       setStatus({ type: "success", text: msg });
       setActionMessage("add", "success", msg);
+      showToast({ message: msg, type: "success", position: "bottom-right" });
+      console.log("[ai-add]", {
+        mode,
+        createdCount,
+        session_prefix: activeSessionPrefix,
+      });
     } catch (e) {
       const msg = String(e?.message || e || "Add Signal failed.");
       setStatus({ type: "error", text: msg });
       setActionMessage("add", "error", msg);
+      showToast({ message: msg, type: "error", position: "bottom-right" });
+      console.error("[ai-add-error]", { mode, message: msg });
     } finally {
       setAddingSignal(false);
       setSubmittingPlanId(null);
@@ -4010,6 +4044,29 @@ export default function ChartSnapshotsPage() {
           x.tp > 0,
       );
   }, [effectiveParsed]);
+  const setPlanEditField = (idx, key, value) => {
+    setPlanEdits((prev) => ({
+      ...prev,
+      [idx]: {
+        ...(prev[idx] || {}),
+        [key]: String(value ?? ""),
+      },
+    }));
+  };
+  const getPlanPositionOverride = (plan, idx) => {
+    const base = extractPositionFromPlan(plan?.raw, effectiveParsed || {});
+    const edit = planEdits[idx] || {};
+    return {
+      ...base,
+      symbol: normalizeSignalSymbol(plan?.raw?.symbol || ""),
+      entry: edit.entry ?? base.entry ?? "",
+      tp: edit.tp ?? base.tp ?? "",
+      sl: edit.sl ?? base.sl ?? "",
+      rr: edit.rr ?? base.rr ?? "",
+      trade_type: edit.trade_type ?? base.trade_type ?? "limit",
+      note: edit.note ?? base.note ?? "",
+    };
+  };
   const activePlan = useMemo(
     () => analysisTradePlans[selectedPlanIdx] || analysisTradePlans[0] || null,
     [analysisTradePlans, selectedPlanIdx],
@@ -5143,22 +5200,6 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
-        {selectedSymbols.length > 1 ? (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              marginBottom: 10,
-            }}
-          >
-            {selectedSymbols.map((s) => (
-              <span key={`selected_${s}`} className="snapshot-tag-v2 active">
-                {s}
-              </span>
-            ))}
-          </div>
-        ) : null}
         {hasResponse ? (
           <div style={{ marginBottom: 10 }}>
             <button
@@ -5225,11 +5266,11 @@ export default function ChartSnapshotsPage() {
                 }}
               >
                 {analysisTradePlans.map((plan, idx) => {
-                  const planPos = extractPositionFromPlan(
-                    plan.raw,
-                    effectiveParsed || {},
-                  );
+                  const planPos = getPlanPositionOverride(plan, idx);
                   const isActive = idx === selectedPlanIdx;
+                  const multipleExits = Array.isArray(plan?.raw?.take_profits)
+                    ? plan.raw.take_profits
+                    : [];
                   return (
                     <article
                       key={`plan_overview_${idx}`}
@@ -5266,6 +5307,68 @@ export default function ChartSnapshotsPage() {
                           rr={plan.rr}
                           status={plan.skip_recommendation || "Proceed"}
                         />
+                        <div
+                          className="minor-text"
+                          style={{ marginTop: 6, marginBottom: 8 }}
+                        >
+                          {plan.strategy || "-"} | {plan.entryModel || "-"}
+                        </div>
+                        {multipleExits.length ? (
+                          <div className="minor-text" style={{ marginBottom: 8 }}>
+                            Exits:{" "}
+                            {multipleExits
+                              .map(
+                                (x) =>
+                                  `${formatNum3(x?.price)} (${x?.close_position_pct ?? "-"}%)`,
+                              )
+                              .join(" | ")}
+                          </div>
+                        ) : null}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                            gap: 6,
+                            marginBottom: 8,
+                          }}
+                        >
+                          <input
+                            placeholder="Entry"
+                            value={planPos.entry || ""}
+                            onChange={(e) =>
+                              setPlanEditField(idx, "entry", e.target.value)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%" }}
+                          />
+                          <input
+                            placeholder="TP"
+                            value={planPos.tp || ""}
+                            onChange={(e) =>
+                              setPlanEditField(idx, "tp", e.target.value)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%" }}
+                          />
+                          <input
+                            placeholder="SL"
+                            value={planPos.sl || ""}
+                            onChange={(e) =>
+                              setPlanEditField(idx, "sl", e.target.value)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%" }}
+                          />
+                          <input
+                            placeholder="RR"
+                            value={planPos.rr || ""}
+                            onChange={(e) =>
+                              setPlanEditField(idx, "rr", e.target.value)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ width: "100%" }}
+                          />
+                        </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button
                             className="secondary-button"
