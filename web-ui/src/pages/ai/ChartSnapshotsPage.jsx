@@ -1904,6 +1904,7 @@ export default function ChartSnapshotsPage() {
     note: "",
   });
   const [barsCache, setBarsCache] = useState({});
+  const [aiContext, setAiContext] = useState(null);
   const [barsLoading, setBarsLoading] = useState(false);
   const [autoFlow, setAutoFlow] = useState({
     runId: 0,
