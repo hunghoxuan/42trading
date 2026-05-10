@@ -6740,6 +6740,7 @@ async function _mt5InitBackendInternal() {
         );
         let created = 0;
         const accountIds = [];
+        const sids = [];
         for (const row of accounts.rows || []) {
           const aid = row.account_id;
           const tradeSid = await allocateUniqueSid(client, "trades");
@@ -6795,6 +6796,7 @@ async function _mt5InitBackendInternal() {
           if ((ins.rowCount || 0) > 0) {
             created++;
             accountIds.push(aid);
+            sids.push(tradeSid);
             await client.query(
               `INSERT INTO logs (object_id, object_table, metadata, user_id) VALUES ($1,'trades',$2,$3)`,
               [
@@ -6811,7 +6813,7 @@ async function _mt5InitBackendInternal() {
         }
         await client.query("COMMIT");
         bumpPulse(userId);
-        return { created, account_ids: accountIds };
+        return { created, account_ids: accountIds, sids };
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;
@@ -14184,11 +14186,14 @@ const appHandler = async (req, res) => {
         },
       });
       notifyPulse(effectiveUserId, "trades");
+      const actualSid = Array.isArray(fanout?.sids) && fanout.sids.length > 0
+        ? fanout.sids[0]
+        : tradeSidBase;
       return json(res, 200, {
         ok: true,
         created: fanout?.created || 0,
-        sid: tradeSidBase,
-        trade: { sid: tradeSidBase },
+        sid: actualSid,
+        trade: { sid: actualSid },
         account_ids: fanout?.account_ids || [],
       });
     } catch (error) {

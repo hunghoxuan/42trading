@@ -242,7 +242,7 @@ export function StatusPnlCell({
           }}
         >
           {tpPnl != null && num(tpPnl) !== 0 ? (
-            <span className="money-pos" style={{ opacity: 0.7 }}>
+            <span className="money-pos">
               +${num(tpPnl).toFixed(1)}
             </span>
           ) : (
@@ -250,7 +250,7 @@ export function StatusPnlCell({
           )}{" "}
           /{" "}
           {slPnl != null && num(slPnl) !== 0 ? (
-            <span className="money-neg" style={{ opacity: 0.7 }}>
+            <span className="money-neg">
               -${Math.abs(num(slPnl)).toFixed(1)}
             </span>
           ) : (

@@ -263,6 +263,46 @@ export default function TradeDetailPage() {
   return (
     <section className="stack-layout" style={{ gap: 14 }}>
       <p style={{ marginBottom: 0 }}><Link to="/trades" className="minor-text">← BACK TO TRADES</Link></p>
+      {trade.execution_status === "PENDING" && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ background: "#ef5350", borderColor: "#ef5350" }}
+            onClick={async () => {
+              if (!confirm("Cancel this trade?")) return;
+              try {
+                await api.cancelTrades({ ids: [trade.sid || trade.id] });
+                window.location.reload();
+              } catch (e) {
+                setError(e?.message || "Cancel failed");
+              }
+            }}
+          >
+            Cancel Trade
+          </button>
+        </div>
+      )}
+      {trade.execution_status === "FILLED" && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ background: "#ff9800", borderColor: "#ff9800" }}
+            onClick={async () => {
+              if (!confirm("Close this trade?")) return;
+              try {
+                await api.v2UpdateTrade(trade.sid || trade.id, { execution_status: "CLOSED" });
+                window.location.reload();
+              } catch (e) {
+                setError(e?.message || "Close failed");
+              }
+            }}
+          >
+            Close Trade
+          </button>
+        </div>
+      )}
       <div className="panel">
         <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
           <SignalDetailCard

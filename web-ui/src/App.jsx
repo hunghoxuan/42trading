@@ -213,8 +213,6 @@ export default function App() {
             Trades
           </NavLink>
 
-          <NotificationDot />
-
           <div style={{ flex: 1 }} />
 
           {canAccessSystemPages && (
@@ -279,6 +277,7 @@ export default function App() {
               </button>
             </div>
           </div>
+          <NotificationDot />
           <button
             onClick={toggleTheme}
             className="secondary-button"
