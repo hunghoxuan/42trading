@@ -1089,7 +1089,7 @@ export function buildSchemaString() {
 export function buildEnumString() {
   return JSON.stringify(
     {
-      schema_version: "2.3",
+      schema_version: "2.4",
       enums: {
         tf: ["MN", "W", "D", "4H", "1H", "15M", "5M", "1M"],
         trend: ["Bullish", "Bearish", "Sideway"],
@@ -1173,7 +1173,7 @@ export function buildJsonConfig(cfg) {
   const tfConfig = getEffectiveTfConfig(cfg);
   return JSON.stringify(
     {
-      version: "2.3",
+      version: "2.4",
       saved_at: new Date().toISOString(),
       config: {
         symbol: cfg.symbol,
