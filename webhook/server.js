@@ -3425,12 +3425,31 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
       "Playwright not found. Install in webhook or web-ui workspace.",
     );
   }
-  const inputTfs = Array.isArray(opts.timeframes) ? opts.timeframes : [];
+  const inputTfs = Array.isArray(opts.timeframes)
+    ? opts.timeframes
+    : Array.isArray(opts.tfs)
+      ? opts.tfs
+      : [];
   const normalized = inputTfs
     .map((tf) => String(tf || "").trim())
     .filter(Boolean)
     .slice(0, 10);
   const timeframes = normalized.length ? normalized : ["15m", "4h", "1D"];
+  const symbols = (
+    Array.isArray(opts.symbols) && opts.symbols.length
+      ? opts.symbols
+      : [opts.symbol]
+  )
+    .map((s) => String(s || "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  if (!symbols.length) {
+    throw new Error("symbol or symbols is required");
+  }
+  const tasks = [];
+  for (const symbol of symbols) {
+    for (const tf of timeframes) tasks.push({ symbol, tf });
+  }
   const requestedConcurrency = Math.max(
     1,
     Math.min(
@@ -3443,7 +3462,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
       ),
     ),
   );
-  const concurrency = Math.min(requestedConcurrency, timeframes.length);
+  const concurrency = Math.min(requestedConcurrency, tasks.length);
   const executablePath = resolvePlaywrightChromiumExecutablePath();
   const browser = await playwright.chromium.launch({
     headless: true,
@@ -3455,28 +3474,30 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     ],
   });
   try {
-    const items = new Array(timeframes.length);
+    const items = new Array(tasks.length);
     let cursor = 0;
 
     async function worker() {
       while (true) {
         const idx = cursor;
         cursor += 1;
-        if (idx >= timeframes.length) return;
-        const tf = timeframes[idx];
+        if (idx >= tasks.length) return;
+        const task = tasks[idx];
         try {
           const one = await captureTradingViewSnapshotWithBrowser(browser, {
             ...opts,
-            timeframe: tf,
-            tf,
+            symbol: task.symbol,
+            timeframe: task.tf,
+            tf: task.tf,
           });
           items[idx] = one;
         } catch (error) {
           if (isLikelyChromiumCrash(error)) {
             const one = await captureTradingViewSnapshot({
               ...opts,
-              timeframe: tf,
-              tf,
+              symbol: task.symbol,
+              timeframe: task.tf,
+              tf: task.tf,
             });
             items[idx] = one;
           } else {
@@ -15894,9 +15915,11 @@ const appHandler = async (req, res) => {
       const items = await captureTradingViewSnapshotsBatch({
         userId: sess.user_id,
         symbol: body.symbol,
+        symbols: body.symbols,
         provider: body.provider,
         session_prefix: body.session_prefix || body.sessionPrefix || "",
-        timeframes: body.timeframes,
+        timeframes: Array.isArray(body.timeframes) ? body.timeframes : body.tfs,
+        tfs: body.tfs,
         width: body.width,
         height: body.height,
         theme: body.theme,
