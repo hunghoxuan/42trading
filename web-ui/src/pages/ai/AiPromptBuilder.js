@@ -805,7 +805,7 @@ export const DEFAULT_CONFIG = {
   rr: "2",
   risk: "1",
   lookbackBars: "300",
-  strategies: ["ICT", "Price Action", "Market Structure"],
+  strategies: ["SMC", "Price Action", "Market Structure"],
   profile: "day",
   htf_tfs: [...PROFILE_PRESETS.day.htf_tfs],
   exec_tfs: [...PROFILE_PRESETS.day.exec_tfs],
@@ -928,9 +928,9 @@ failed_critical[]: list ONLY High-weight items NOT met.
   Include impact — why this missing condition matters for this specific trade.
   Medium and Low failures are NOT listed — silently reflected in score.
 
-GATE CHECK — must pass before Step 4:
-  high_weight_passed / high_weight_total >= 0.75
-  If this gate fails → trade_plan = []  STOP. Do not evaluate entry models.
+GATE CHECK — score quality before Step 4:
+  high_weight_passed / high_weight_total >= 0.75 is ideal.
+  If this gate fails, still evaluate the best candidate setup and set trade_decision accordingly (Wait/Reduce/Skip).
 
 ═══════════════════════════════════════════════════════════
 STEP 4 — ENTRY MODEL SELECTION
@@ -959,7 +959,12 @@ INTERNAL CONSISTENCY RULES — ALL of the following must be true simultaneously:
 ═══════════════════════════════════════════════════════════
 STEP 5 — TRADE PLAN CONSTRUCTION
 ═══════════════════════════════════════════════════════════
-Only construct a trade plan when ALL of the following are satisfied:
+Construct at least one best-candidate trade plan whenever chart data is readable.
+Use trade_decision to reflect quality:
+  Proceed = all core conditions satisfied
+  Wait/Reduce/Skip = one or more conditions weak/failed
+
+Core conditions for high-quality Proceed setup:
   ✓ Checklist gate passed: high_weight_passed / high_weight_total >= 0.75
   ✓ weighted_score >= 65
   ✓ Entry model trigger identifiable on LTF now or imminently
@@ -967,7 +972,8 @@ Only construct a trade plan when ALL of the following are satisfied:
   ✓ ADR has sufficient remaining range to reach TP1
   ✓ No unresolved conflicting HTF structure directly opposing the trade
 
-If ANY condition fails → return trade_plan = []. Never force a setup.
+Do NOT return empty trade_plan just because confidence is low.
+Return empty trade_plan only when chart is unreadable or symbol/timeframe data is missing.
 
 ENTRY PRICE: from LTF pd_array zone (OB top/bottom for buys/sells, FVG 50% midpoint).
 STOP LOSS: from entry model sl_logic — beyond zone extreme plus buffer. Never inside the zone.
@@ -999,6 +1005,7 @@ GRADE RULES — use min_rr from CONTEXT above:
 
 SKIP REASONS: populate skip_reasons[] ONLY when trade_decision is Wait, Reduce, or Skip.
   Leave skip_reasons as empty array [] when trade_decision is Proceed.
+  For schema v2.4 also mirror this summary into position_management.skips_reasons.
 
 ═══════════════════════════════════════════════════════════
 GENERAL RULES
