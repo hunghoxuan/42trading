@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.09 19:31 - 728f356"); // template selector now fully reloads config, guide, and schema for New, Default, and saved templates
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.10 10:55 - schema24"); // ai response schema v2.4 compatibility: normalize multiple_exits/position_management for UI + DB
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -822,7 +822,7 @@ Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown,
 All fields required. Enums must match. Use null only where price data is unavailable.
 Array limits: htf_context<=2, ltf_analysis<=2, trade_plan<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
 Trade plans must be actionable and internally consistent.
-IMPORTANT: You MUST include a trade_plan array with at least 1 actionable plan (direction, entry_price, stop_loss, take_profits). trade_plan is REQUIRED.
+IMPORTANT: You MUST include a trade_plan array with at least 1 actionable plan (direction, entry_price, stop_loss, take_profit). Include multiple_exits when available. trade_plan is REQUIRED.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
 SCHEMA=${JSON.stringify(AI_RESPONSE_SCHEMA)}`;
 }
@@ -9903,6 +9903,65 @@ function parseSnapshotChecklist(payload = {}) {
     .filter((x) => x.strategy || x.condition || x.note);
 }
 
+function confidenceLevelToPct(level) {
+  const v = String(level || "")
+    .trim()
+    .toLowerCase();
+  if (v === "high") return 80;
+  if (v === "normal") return 60;
+  if (v === "low") return 40;
+  return null;
+}
+
+function planTakeProfitsRaw(plan = {}) {
+  const list = Array.isArray(plan?.take_profits) ? [...plan.take_profits] : [];
+  if (!list.length) {
+    const mx = plan?.multiple_exits || {};
+    if (mx?.tp2) list.push(mx.tp2);
+    if (mx?.full_tp) list.push(mx.full_tp);
+  }
+  return list;
+}
+
+function planTakeProfitValue(tpLike) {
+  if (tpLike && typeof tpLike === "object") return tpLike.price ?? null;
+  return tpLike ?? null;
+}
+
+function planPartialTps(plan = {}) {
+  const fromTakeProfits = planTakeProfitsRaw(plan).map((t) => ({
+    price: t?.price ?? null,
+    size_pct: t?.close_position_pct ?? null,
+    rr: t?.reward_to_risk ?? null,
+  }));
+  if (fromTakeProfits.length) return fromTakeProfits;
+  const mx = plan?.multiple_exits || {};
+  return ["break_even", "tp2", "full_tp"]
+    .filter((k) => mx && typeof mx[k] === "object")
+    .map((k) => ({
+      price: mx[k]?.price ?? null,
+      size_pct: mx[k]?.position_pct ?? null,
+      rr: mx[k]?.risk_reward ?? null,
+    }));
+}
+
+function planDecisionText(plan = {}) {
+  const decision =
+    plan?.trade_decision || plan?.position_management?.trade_decision || "";
+  return decision === "Proceed" ? "" : String(decision || "");
+}
+
+function planSkipReasons(plan = {}) {
+  if (Array.isArray(plan?.skip_reasons)) {
+    return plan.skip_reasons.map((r) => ({
+      reason: r?.reason || "",
+      severity: r?.severity || "",
+    }));
+  }
+  const text = String(plan?.position_management?.skips_reasons || "").trim();
+  return text ? [{ reason: text, severity: "" }] : [];
+}
+
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
@@ -9925,38 +9984,39 @@ function normalizeAiAnalysisContract(input = {}) {
       sl: x?.stop_loss ?? x?.sl ?? null,
       be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
       tp:
-        Array.isArray(x?.take_profits) && x.take_profits[2]
-          ? x.take_profits[2].price
-          : Array.isArray(x?.take_profits) &&
-              x.take_profits[x.take_profits.length - 1]
-            ? x.take_profits[x.take_profits.length - 1].price
-            : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
-      tp2: Array.isArray(x?.take_profits)
-        ? (x.take_profits[1]?.price ?? null)
-        : (x?.tp2 ?? null),
-      tp3: Array.isArray(x?.take_profits)
-        ? (x.take_profits[2]?.price ?? null)
-        : (x?.tp3 ?? null),
+        planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
+        planTakeProfitValue(
+          planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
+        ) ??
+        x?.take_profit ??
+        x?.multiple_exits?.full_tp?.price ??
+        (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+      tp2:
+        planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
+        x?.multiple_exits?.tp2?.price ??
+        (x?.tp2 ?? null),
+      tp3:
+        planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
+        x?.multiple_exits?.full_tp?.price ??
+        (x?.tp3 ?? null),
       estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
       rr: x?.risk_reward ?? x?.rr ?? null,
       risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
-      partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
-        (t) => ({
-          price: t?.price ?? null,
-          size_pct: t?.close_position_pct ?? null,
-          rr: t?.reward_to_risk ?? null,
-        }),
-      ),
-      confidence_pct: x?.confidence_pct ?? null,
-      skip_recommendation:
-        x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
-      reasons_to_skip: (Array.isArray(x?.skip_reasons)
-        ? x.skip_reasons
-        : []
-      ).map((r) => ({ reason: r?.reason || "", severity: r?.severity || "" })),
-      entry_condition: x?.entry_trigger || "",
-      exit_condition: x?.mid_trade_invalidation || "",
-      invalidation: x?.pre_entry_invalidation || "",
+      partial_tps: planPartialTps(x),
+      confidence_pct:
+        x?.confidence_pct ?? confidenceLevelToPct(x?.confidence_level),
+      skip_recommendation: planDecisionText(x),
+      reasons_to_skip: planSkipReasons(x),
+      entry_condition:
+        x?.entry_trigger || x?.position_management?.entry_trigger || "",
+      exit_condition:
+        x?.mid_trade_invalidation ||
+        x?.position_management?.mid_trade_invalidation ||
+        "",
+      invalidation:
+        x?.pre_entry_invalidation ||
+        x?.position_management?.pre_entry_invalidation ||
+        "",
       note: x?.note || "",
     }));
     return out;
@@ -10116,46 +10176,47 @@ function normalizeAiAnalysisContract(input = {}) {
         sl: x?.stop_loss ?? x?.sl ?? null,
         be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
         tp:
-          Array.isArray(x?.take_profits) && x.take_profits[2]
-            ? x.take_profits[2].price
-            : Array.isArray(x?.take_profits) &&
-                x.take_profits[x.take_profits.length - 1]
-              ? x.take_profits[x.take_profits.length - 1].price
-              : (x?.tp3 ?? x?.tp ?? null),
+          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
+          planTakeProfitValue(
+            planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
+          ) ??
+          x?.take_profit ??
+          x?.multiple_exits?.full_tp?.price ??
+          (x?.tp3 ?? x?.tp ?? null),
         tp2:
-          Array.isArray(x?.take_profits) && x.take_profits[1]
-            ? x.take_profits[1].price
-            : (x?.tp2 ?? null),
+          planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
+          x?.multiple_exits?.tp2?.price ??
+          (x?.tp2 ?? null),
         tp3:
-          Array.isArray(x?.take_profits) && x.take_profits[2]
-            ? x.take_profits[2].price
-            : (x?.tp3 ?? null),
+          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
+          x?.multiple_exits?.full_tp?.price ??
+          (x?.tp3 ?? null),
         estimated_bars:
           x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
         rr: x?.risk_reward ?? x?.rr ?? null,
-        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
-          (t) => ({
-            price: t.price,
-            size_pct: t.close_position_pct,
-            rr: t.reward_to_risk,
-          }),
-        ),
+        partial_tps: planPartialTps(x),
         confluence_checklist: Array.isArray(x?.confluence_checklist)
           ? x.confluence_checklist
           : [],
-        reasons_to_skip: (Array.isArray(x?.skip_reasons)
-          ? x.skip_reasons
-          : []
-        ).map((r) => ({ reason: r.reason || "", severity: r.severity || "" })),
-        skip_recommendation:
-          x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
-        entry_condition: x?.entry_trigger || "",
-        exit_condition: x?.mid_trade_invalidation || "",
+        reasons_to_skip: planSkipReasons(x),
+        skip_recommendation: planDecisionText(x),
+        entry_condition:
+          x?.entry_trigger || x?.position_management?.entry_trigger || "",
+        exit_condition:
+          x?.mid_trade_invalidation ||
+          x?.position_management?.mid_trade_invalidation ||
+          "",
         risk_management:
           x?.grade === "A" ? "normal" : x?.grade === "B" ? "low" : "high",
-        invalidation: x?.pre_entry_invalidation || "",
-        confidence_pct: x?.confidence_pct ?? x?.confluence_score ?? null,
+        invalidation:
+          x?.pre_entry_invalidation ||
+          x?.position_management?.pre_entry_invalidation ||
+          "",
+        confidence_pct:
+          x?.confidence_pct ??
+          x?.confluence_score ??
+          confidenceLevelToPct(x?.confidence_level),
         note: x?.note || "",
       }));
     }
@@ -10300,7 +10361,9 @@ function normalizeAiAnalysisContract(input = {}) {
     if (
       first?.entry_price !== undefined ||
       first?.stop_loss !== undefined ||
-      first?.take_profits !== undefined
+      first?.take_profits !== undefined ||
+      first?.take_profit !== undefined ||
+      first?.multiple_exits !== undefined
     ) {
       out.trade_plan = out.trade_plan.map((x) => ({
         direction: x?.direction || x?.dir || "",
@@ -10312,39 +10375,39 @@ function normalizeAiAnalysisContract(input = {}) {
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
         tp:
-          Array.isArray(x?.take_profits) && x.take_profits.length > 0
-            ? (x.take_profits[x.take_profits.length - 1]?.price ?? null)
-            : (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
-        tp2: Array.isArray(x?.take_profits)
-          ? (x.take_profits[1]?.price ?? null)
-          : (x?.tp2 ?? null),
-        tp3: Array.isArray(x?.take_profits)
-          ? (x.take_profits[2]?.price ?? null)
-          : (x?.tp3 ?? null),
+          planTakeProfitValue(
+            planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
+          ) ??
+          x?.take_profit ??
+          x?.multiple_exits?.full_tp?.price ??
+          (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+        tp2:
+          planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
+          x?.multiple_exits?.tp2?.price ??
+          (x?.tp2 ?? null),
+        tp3:
+          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
+          x?.multiple_exits?.full_tp?.price ??
+          (x?.tp3 ?? null),
         estimated_bars:
           x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         rr: x?.risk_reward ?? x?.rr ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
-        partial_tps: (Array.isArray(x?.take_profits) ? x.take_profits : []).map(
-          (t) => ({
-            price: t?.price ?? null,
-            size_pct: t?.close_position_pct ?? null,
-            rr: t?.reward_to_risk ?? null,
-          }),
-        ),
-        confidence_pct: x?.confidence_pct ?? null,
-        skip_recommendation:
-          x?.trade_decision === "Proceed" ? "" : x?.trade_decision || "",
-        reasons_to_skip: (Array.isArray(x?.skip_reasons)
-          ? x.skip_reasons
-          : []
-        ).map((r) => ({
-          reason: r?.reason || "",
-          severity: r?.severity || "",
-        })),
-        entry_condition: x?.entry_trigger || "",
-        exit_condition: x?.mid_trade_invalidation || "",
-        invalidation: x?.pre_entry_invalidation || "",
+        partial_tps: planPartialTps(x),
+        confidence_pct:
+          x?.confidence_pct ?? confidenceLevelToPct(x?.confidence_level),
+        skip_recommendation: planDecisionText(x),
+        reasons_to_skip: planSkipReasons(x),
+        entry_condition:
+          x?.entry_trigger || x?.position_management?.entry_trigger || "",
+        exit_condition:
+          x?.mid_trade_invalidation ||
+          x?.position_management?.mid_trade_invalidation ||
+          "",
+        invalidation:
+          x?.pre_entry_invalidation ||
+          x?.position_management?.pre_entry_invalidation ||
+          "",
         note: x?.note || "",
         risk_management: x?.risk_management || "",
       }));

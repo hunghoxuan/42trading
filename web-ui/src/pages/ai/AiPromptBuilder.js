@@ -972,9 +972,9 @@ If ANY condition fails → return trade_plan = []. Never force a setup.
 ENTRY PRICE: from LTF pd_array zone (OB top/bottom for buys/sells, FVG 50% midpoint).
 STOP LOSS: from entry model sl_logic — beyond zone extreme plus buffer. Never inside the zone.
 TP1: nearest LTF liquidity (EQH/EQL, PDH/PDL) reachable within remaining ADR.
-TP2: HTF reference_zone — reference field must contain the zone ID from htf_context.
-TP3: HTF DOL target — reference field must contain the zone ID from htf_context.
-All take_profits[].reference fields must link to a real htf_context reference_zones[].id.
+TP2: HTF reference_zone target when present in multiple_exits.tp2.
+TP3: HTF DOL target when present in multiple_exits.full_tp.
+Any reference IDs included in notes must map to a real htf_context reference_zones[].id.
 
 ORDER TYPE:
   Limit      → price has not yet reached the entry zone (default)
@@ -1092,8 +1092,8 @@ export function buildEnumString() {
       schema_version: "2.3",
       enums: {
         tf: ["MN", "W", "D", "4H", "1H", "15M", "5M", "1M"],
-        trend: ["Bullish", "Bearish", "Ranging"],
-        structure: ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
+        trend: ["Bullish", "Bearish", "Sideway"],
+        structure: ["BOS", "CHoCH", "MSB", "Continuation", "Sideway"],
         phase: [
           "Trending",
           "Retracement",
@@ -1148,7 +1148,7 @@ export function buildPrompt(cfg) {
 
   return `## SESSION CONFIG
 Symbol: ${symbol} | Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
-MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}%
+MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}% | NoteLanguage: ${cfg.language || "English"}
 HTF: ${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
 Execution: ${tfConfig.exec_tfs.map((x) => String(x).toUpperCase()).join(", ")}
 Confirmation: ${tfConfig.conf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
@@ -1179,6 +1179,7 @@ export function buildJsonConfig(cfg) {
         symbol: cfg.symbol,
         profile: tfConfig.profile,
         asset_class: cfg.asset,
+        note_language: cfg.language || "English",
         strategy: cfg.strategies.join(" + "),
         strategies: cfg.strategies,
         session: cfg.session,
