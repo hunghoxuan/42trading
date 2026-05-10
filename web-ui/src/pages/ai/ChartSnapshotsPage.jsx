@@ -451,29 +451,6 @@ function parseSnapshotMeta(it) {
   };
 }
 
-function inferSymbolFromSnapshotToken(token) {
-  const raw = String(token || "")
-    .trim()
-    .toUpperCase();
-  if (!raw) return "";
-  const parts = raw.split("_").filter(Boolean);
-  if (!parts.length) return "";
-  const KNOWN_PROVIDERS = new Set([
-    "ICMARKETS",
-    "OANDA",
-    "FOREXCOM",
-    "EIGHTCAP",
-    "PEPPERSTONE",
-    "FXCM",
-    "BINANCE",
-    "BYBIT",
-  ]);
-  if (parts.length >= 2 && KNOWN_PROVIDERS.has(parts[0])) {
-    return parts.slice(1).join("_");
-  }
-  return raw;
-}
-
 function makeSessionPrefix() {
   const now = Date.now().toString(36).toUpperCase();
   const rnd = Math.random().toString(36).slice(2, 7).toUpperCase();
@@ -2576,15 +2553,10 @@ export default function ChartSnapshotsPage() {
           ]);
           if (raw && !PROVIDER_NAMES.has(raw.toUpperCase())) return raw;
           // Fallback to cfg.symbol
-          return (
-            String(cfg.symbol || "")
-              .split(":")
-              .pop()
-              ?.trim() ||
-            inferSymbolFromSnapshotToken(
-              parseSnapshotMeta(items[0] || {})?.symbolToken || "",
-            )
-          );
+          return String(cfg.symbol || "")
+            .split(":")
+            .pop()
+            ?.trim();
         })(),
         timeframe,
         provider,
@@ -2613,6 +2585,11 @@ export default function ChartSnapshotsPage() {
       }
 
       if (Array.isArray(files) && files.length) payload.files = files;
+      if (!String(payload.symbol || "").trim()) {
+        throw new Error(
+          "Symbol context is empty. Select a symbol before running Analyze.",
+        );
+      }
       if (!payload.files || !payload.files.length) {
         const symbolForSnapshot = String(payload.symbol || "").trim();
         if (symbolForSnapshot) {
@@ -3246,7 +3223,10 @@ export default function ChartSnapshotsPage() {
   const handleSelectTemplate = (id) => {
     setTemplateId(id);
     if (!id) {
-      setCfg({ ...DEFAULT_CONFIG });
+      setCfg((prev) => ({
+        ...DEFAULT_CONFIG,
+        symbol: String(prev?.symbol || "").trim(),
+      }));
       setGuideDraft(GUIDE_TEXT);
       setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
       setPromptEdited(false);
@@ -3255,7 +3235,10 @@ export default function ChartSnapshotsPage() {
       return;
     }
     if (id === DEFAULT_TEMPLATE_ID) {
-      setCfg({ ...DEFAULT_CONFIG });
+      setCfg((prev) => ({
+        ...DEFAULT_CONFIG,
+        symbol: String(prev?.symbol || "").trim(),
+      }));
       setGuideDraft(GUIDE_TEXT);
       setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
       setPromptEdited(false);
@@ -3266,7 +3249,13 @@ export default function ChartSnapshotsPage() {
     const found = templates.find((x) => x.id === id);
     if (!found?.config) return;
     const savedGuide = found.analysis_instructions || null;
-    setCfg(normalizeTemplateConfig(found.config || {}));
+    setCfg((prev) => {
+      const next = normalizeTemplateConfig(found.config || {});
+      if (!String(next?.symbol || "").trim()) {
+        next.symbol = String(prev?.symbol || "").trim();
+      }
+      return next;
+    });
     setGuideDraft(savedGuide || GUIDE_TEXT);
     setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
     setTemplateName(found.name || "");
