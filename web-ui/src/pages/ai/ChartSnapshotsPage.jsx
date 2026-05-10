@@ -288,6 +288,13 @@ function normalizeTemplateConfig(raw) {
       normalizedRaw?.narrative_language ||
       normalizedRaw?.language ||
       DEFAULT_CONFIG.narrative_language,
+    symbols: Array.isArray(normalizedRaw?.symbols)
+      ? normalizedRaw.symbols
+          .map((x) => normalizeWatchSymbol(x))
+          .filter(Boolean)
+      : normalizedRaw?.symbol
+        ? [normalizeWatchSymbol(normalizedRaw.symbol)]
+        : [],
     profile,
     htf_tfs:
       Array.isArray(normalizedRaw?.htf_tfs) && normalizedRaw.htf_tfs.length
@@ -2230,7 +2237,17 @@ export default function ChartSnapshotsPage() {
   };
 
   const setCfgField = (key, value) => {
-    setCfg((prev) => ({ ...prev, [key]: value }));
+    setCfg((prev) => {
+      if (key === "symbol") {
+        const normalized = normalizeWatchSymbol(value);
+        const prevSymbols = Array.isArray(prev?.symbols) ? prev.symbols : [];
+        const nextSymbols = normalized
+          ? [normalized, ...prevSymbols.filter((x) => x !== normalized)]
+          : prevSymbols;
+        return { ...prev, symbol: normalized, symbols: nextSymbols };
+      }
+      return { ...prev, [key]: value };
+    });
     if (key === "symbol") {
       if (value) {
         navigate(`/ai/browser/${encodeURIComponent(value)}`, { replace: true });
@@ -2500,10 +2517,19 @@ export default function ChartSnapshotsPage() {
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return null;
 
       const basePrompt = String(promptDraft || promptText || "").trim();
+      const activeSymbol = String(
+        opts?.symbolOverride || tvSymbol || cfg.symbol || "",
+      ).trim();
+      const activeSymbols = Array.isArray(opts?.symbolsOverride)
+        ? opts.symbolsOverride.map((x) => String(x || "").trim()).filter(Boolean)
+        : Array.isArray(cfg?.symbols)
+          ? cfg.symbols.map((x) => String(x || "").trim()).filter(Boolean)
+          : [];
       const runtimeConfig = JSON.stringify({
-        symbol: String(tvSymbol || cfg.symbol || "")
+        symbol: String(activeSymbol || cfg.symbol || "")
           .split(":")
           .pop(),
+        symbols: activeSymbols,
         assetClass: cfg.asset,
         timeframes: [
           ...tfConfig.htf_tfs,
@@ -2540,7 +2566,7 @@ export default function ChartSnapshotsPage() {
         max_tokens: 4500,
         symbol: (() => {
           const raw =
-            String(tvSymbol || cfg.symbol || "")
+            String(activeSymbol || cfg.symbol || "")
               .split(":")
               .pop()
               ?.trim() || "";
@@ -2689,10 +2715,9 @@ export default function ChartSnapshotsPage() {
       }
       if (parsed && typeof parsed === "object") {
         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
-        const inputSymbol =
-          String(tvSymbol || cfg.symbol || "")
-            .split(":")
-            .pop() || "";
+        const inputSymbol = String(activeSymbol || cfg.symbol || "")
+          .split(":")
+          .pop();
         if (
           parsed.symbol &&
           inputSymbol &&
@@ -2781,6 +2806,9 @@ export default function ChartSnapshotsPage() {
       ),
     ];
     const allowNoSymbol = Boolean(opts?.allowNoSymbol);
+    const selectedSymbols = Array.isArray(cfg?.symbols)
+      ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
+      : [];
     const resolvedSymbol = String(tvSymbol || cfg.symbol || "").trim();
     // Never use provider name as symbol (e.g. ICMARKETS)
     const PROVIDER_NAMES = new Set([
@@ -2797,7 +2825,12 @@ export default function ChartSnapshotsPage() {
             .split(":")
             .pop()
             ?.trim() || "";
-    if ((!effectiveSymbol && !allowNoSymbol) || !tfs.length) {
+    const targetSymbols = selectedSymbols.length
+      ? selectedSymbols
+      : effectiveSymbol
+        ? [effectiveSymbol]
+        : [];
+    if ((!targetSymbols.length && !allowNoSymbol) || !tfs.length) {
       setStatus({
         type: "warning",
         text: allowNoSymbol
@@ -2810,15 +2843,35 @@ export default function ChartSnapshotsPage() {
     setStatus({ type: "", text: "" });
     try {
       const hasContext = true; // backend handles context bundle in analyze
-      const recent = resolveRecentSnapshots({
-        sessionPrefix: activeSessionPrefix,
-      });
-      if (recent.matchedFiles.length > 0) {
-        await analyzeFiles(recent.matchedFiles, {
-          context: hasContext ? aiContext : undefined,
+      const outputs = [];
+      for (const sym of targetSymbols) {
+        const recent = resolveRecentSnapshots({
+          sessionPrefix: activeSessionPrefix,
         });
-      } else {
-        await analyzeFiles([], { context: hasContext ? aiContext : undefined });
+        const out = await analyzeFiles(recent.matchedFiles.length ? recent.matchedFiles : [], {
+          context: hasContext ? aiContext : undefined,
+          symbolOverride: sym,
+          symbolsOverride: targetSymbols,
+        });
+        if (out) outputs.push(out);
+      }
+      if (outputs.length > 1) {
+        const mergedPlans = [];
+        outputs.forEach((out) => {
+          const parsed = enrichParsedAnalysis(
+            String(out?.raw_response || ""),
+            out?.parsed_json || tryParseJsonLoose(String(out?.raw_response || "")),
+          );
+          const plans = Array.isArray(parsed?.trade_plan)
+            ? parsed.trade_plan
+            : parsed?.trade_plan && typeof parsed.trade_plan === "object"
+              ? [parsed.trade_plan]
+              : [];
+          mergedPlans.push(...plans);
+        });
+        const merged = { trade_plan: mergedPlans };
+        setAnalysisParsed(merged);
+        setAnalysisJson(JSON.stringify(merged, null, 2));
       }
     } catch (e) {
       const msg = String(e?.message || e || "Analyze preflight failed.");
@@ -3897,6 +3950,9 @@ export default function ChartSnapshotsPage() {
       );
   }, [effectiveParsed]);
   const selectedSymbol = String(cfg.symbol || paramSymbol || "").trim();
+  const selectedSymbols = Array.isArray(cfg?.symbols)
+    ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
+    : [];
 
   const applyTradePlanToEditor = (plan) => {
     if (!plan?.raw) return;
@@ -4197,8 +4253,8 @@ export default function ChartSnapshotsPage() {
                           );
                           // Actually, we want to check if the current 'selection' matches this group.
                           // But cfg.symbol is single. For the UI 'selection' state in the grid:
-                          const currentGroupActive = group.symbols.includes(
-                            cfg.symbol,
+                          const currentGroupActive = group.symbols.some((s) =>
+                            selectedSymbols.includes(s),
                           );
 
                           return (
@@ -4207,8 +4263,12 @@ export default function ChartSnapshotsPage() {
                               type="button"
                               className={`secondary-button snapshot-tag-v2 ${currentGroupActive ? "active" : ""}`}
                               onClick={() => {
-                                // Select the first symbol to trigger the group-filtered grid
-                                setCfgField("symbol", group.symbols[0]);
+                                const next = [...new Set(group.symbols)];
+                                setCfg((prev) => ({
+                                  ...prev,
+                                  symbols: next,
+                                  symbol: next[0] || "",
+                                }));
                               }}
                             >
                               {group.name}
@@ -4245,13 +4305,23 @@ export default function ChartSnapshotsPage() {
                         >
                           <button
                             type="button"
-                            className={`secondary-button snapshot-tag-v2 ${normalizeWatchSymbol(cfg.symbol) === s ? "active" : ""}`}
-                            onClick={() =>
-                              setCfgField(
-                                "symbol",
-                                normalizeWatchSymbol(cfg.symbol) === s ? "" : s,
-                              )
-                            }
+                            className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
+                            onClick={() => {
+                              setCfg((prev) => {
+                                const prevSelected = Array.isArray(prev?.symbols)
+                                  ? prev.symbols
+                                  : [];
+                                const exists = prevSelected.includes(s);
+                                const nextSelected = exists
+                                  ? prevSelected.filter((x) => x !== s)
+                                  : [...prevSelected, s];
+                                return {
+                                  ...prev,
+                                  symbols: nextSelected,
+                                  symbol: nextSelected[0] || "",
+                                };
+                              });
+                            }}
                           >
                             {s}
                           </button>
@@ -4874,7 +4944,7 @@ export default function ChartSnapshotsPage() {
                 </div>
               </div>
             </div>
-            {!selectedSymbol ? (
+            {!selectedSymbols.length ? (
               <div
                 className="browser-grid-v1"
                 style={{
@@ -4945,7 +5015,13 @@ export default function ChartSnapshotsPage() {
                                     timeframes={browserTfs}
                                     defaultMode="live"
                                     initialGridCols={masterGridCols}
-                                    onAnalyze={(s) => setCfgField("symbol", s)}
+                                    onAnalyze={(s) =>
+                                      setCfg((prev) => ({
+                                        ...prev,
+                                        symbol: s,
+                                        symbols: [s],
+                                      }))
+                                    }
                                     onRemove={null}
                                   />
                                 </Suspense>
@@ -4976,7 +5052,13 @@ export default function ChartSnapshotsPage() {
                             timeframes={browserTfs}
                             defaultMode="live"
                             initialGridCols={masterGridCols}
-                            onAnalyze={(s) => setCfgField("symbol", s)}
+                            onAnalyze={(s) =>
+                              setCfg((prev) => ({
+                                ...prev,
+                                symbol: s,
+                                symbols: [s],
+                              }))
+                            }
                             onRemove={(s) => removeFromWatchlist(s)}
                           />
                         </Suspense>

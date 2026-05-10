@@ -800,6 +800,7 @@ export const PROFILE_PRESETS = {
 
 export const DEFAULT_CONFIG = {
   symbol: "",
+  symbols: [],
   asset: "Auto detect",
   session: "Any",
   rr: "2",
@@ -1022,7 +1023,7 @@ GENERAL RULES
 - Every TP2 and TP3 reference field must contain a real ID from htf_context.reference_zones[].
 - Use empty string "" for narrative fields when evidence is weak. Never fabricate narrative.
 - Return STRICT JSON only. No markdown. No prose. No commentary outside the JSON.
-- CRITICAL: symbol field must match the configured symbol exactly as specified in SESSION CONFIG. Do not extract symbol from chart titles or exchange prefixes. Use the symbol provided in the prompt.
+- CRITICAL: trade_plan[].symbol must match one of configured Symbols in SESSION CONFIG exactly. Do not extract symbols from chart titles or exchange prefixes.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1146,6 +1147,10 @@ export function buildPrompt(cfg) {
       tfConfig.profile
     ] || "daily";
   const symbol = String(cfg.symbol || "UK100").trim() || "UK100";
+  const symbols = Array.isArray(cfg.symbols)
+    ? cfg.symbols.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  const symbolList = symbols.length ? symbols : [symbol];
   const strategy = cfg.strategies.join(", ") || "ICT";
 
   const context = [];
@@ -1160,6 +1165,7 @@ export function buildPrompt(cfg) {
 
   return `## SESSION CONFIG
 Symbol: ${symbol} | Asset: ${cfg.asset} | Session: ${cfg.session || "Any"} | Profile: ${profileLabel}
+Symbols: ${symbolList.join(", ")}
 MinTrades: ${cfg.min_trades || "0"} | MaxTrades: ${cfg.max_trades || "2"} | MinRR: ${tfConfig.rr} | MaxRisk: ${cfg.risk}% | NarrativeLanguage: ${cfg.narrative_language || "English"}
 HTF: ${tfConfig.htf_tfs.map((x) => String(x).toUpperCase()).join(", ")}
 Execution: ${tfConfig.exec_tfs.map((x) => String(x).toUpperCase()).join(", ")}
@@ -1189,6 +1195,7 @@ export function buildJsonConfig(cfg) {
       saved_at: new Date().toISOString(),
       config: {
         symbol: cfg.symbol,
+        symbols: symbolList,
         profile: tfConfig.profile,
         asset_class: cfg.asset,
         note_language: cfg.language || "English",
