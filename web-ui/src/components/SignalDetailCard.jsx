@@ -92,6 +92,7 @@ function PlanHeader({
   const sl = parseNumLoose(plan.sl);
   const tp = parseNumLoose(plan.tp);
   const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
+  const resolvedSymbol = plan.symbol || symbol;
 
   const rrNum = Number(String(plan.rr ?? "").replace(",", "."));
   const rrText = Number.isFinite(rrNum) ? `${rrNum.toFixed(1)}r` : "0.0r";
@@ -108,7 +109,8 @@ function PlanHeader({
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
-  const estimatedBars = plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
+  const estimatedBars =
+    plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
   const confidenceLevel = (plan.confidence_level || "").toLowerCase();
   const riskLevel = (plan.risk_level || plan.risk_tier || "").toLowerCase();
   const mx = plan.multiple_exits || {};
@@ -160,7 +162,7 @@ function PlanHeader({
                 color: "var(--foreground)",
               }}
             >
-              {symbol}
+              {resolvedSymbol}
             </span>
             {!simplified && (
               <span
@@ -237,7 +239,15 @@ function PlanHeader({
 
         {/* Row 2: estimate_bars / confidence_level / risk_level badges */}
         {(estimatedBars != null || confidenceLevel || riskLevel) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
             {estimatedBars != null && (
               <span
                 className="badge badge-mini"
@@ -261,7 +271,11 @@ function PlanHeader({
                       ? "badge-warning"
                       : "badge-danger"
                 }`}
-                style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  textTransform: "capitalize",
+                }}
               >
                 {confidenceLevel} conf
               </span>
@@ -275,7 +289,11 @@ function PlanHeader({
                       ? "badge-warning"
                       : "badge-success"
                 }`}
-                style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize" }}
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  textTransform: "capitalize",
+                }}
               >
                 {riskLevel} risk
               </span>
@@ -285,7 +303,15 @@ function PlanHeader({
 
         {/* Row 3: strategy | entry_model | confidence% */}
         {(strategy || entryModel || confidenceText) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
             {strategy && (
               <span
                 className="minor-text"
@@ -539,6 +565,11 @@ export default function SignalDetailCard({
       estimated_bars: tradePlan?.value?.estimated_bars,
     },
   ];
+  const selectedPlanIndex =
+    selectedPlanId === "main"
+      ? 0
+      : Math.max(0, Number(String(selectedPlanId).replace("suggested_", "")));
+  const selectedPlanFromList = plans[selectedPlanIndex] || plans[0] || {};
 
   const hasTradePlanData = useMemo(() => {
     const p = plans[0] || {};
@@ -652,6 +683,45 @@ export default function SignalDetailCard({
   // Use raw data from multiple possible fields
   const rawData =
     response?.raw || response?.raw_json || response?.metadata || {};
+  const schemaVersion = String(
+    response?.schemaVersion || rawData?.schema_version || "",
+  ).trim();
+  const isSchema24 = schemaVersion.startsWith("2.4");
+  const selectedPlanRaw =
+    planDrafts[selectedPlanId] ||
+    selectedPlanFromList?.__raw_plan ||
+    selectedPlanFromList ||
+    {};
+  const selectedPlanSymbol = String(
+    selectedPlanRaw?.symbol ||
+      selectedPlanFromList?.symbol ||
+      chart?.symbol ||
+      "",
+  )
+    .trim()
+    .toUpperCase();
+  const selectedRawData = useMemo(() => {
+    if (!rawData || typeof rawData !== "object") return rawData;
+    const cloned = { ...rawData };
+    const allPlans = Array.isArray(rawData?.trade_plan)
+      ? rawData.trade_plan
+      : [];
+    if (allPlans.length > 0) {
+      const pick =
+        allPlans[selectedPlanIndex] ||
+        allPlans.find((p) => {
+          const sym = String(p?.symbol || "")
+            .trim()
+            .toUpperCase();
+          return selectedPlanSymbol && sym === selectedPlanSymbol;
+        }) ||
+        allPlans[0];
+      cloned.trade_plan = pick ? [pick] : [];
+    } else if (selectedPlanRaw && Object.keys(selectedPlanRaw).length) {
+      cloned.trade_plan = [selectedPlanRaw];
+    }
+    return cloned;
+  }, [rawData, selectedPlanIndex, selectedPlanRaw, selectedPlanSymbol]);
 
   return (
     <div className="trade-detail-content">
@@ -744,7 +814,9 @@ export default function SignalDetailCard({
                       }
                     },
                   }}
-                  symbol={chart?.symbol || "Plan"}
+                  symbol={
+                    planValue?.symbol || p?.symbol || chart?.symbol || "Plan"
+                  }
                   isBuy={isBuy}
                   simplified={isSimplified}
                   status={tradePlan.status}
@@ -949,6 +1021,113 @@ export default function SignalDetailCard({
             raw.checklist ||
             [];
           let checklist = Array.isArray(rawChecklist) ? rawChecklist : [];
+
+          if (isSchema24) {
+            const plan24 = selectedPlanRaw || {};
+            const tf24 = Array.isArray(raw?.market_analysis?.timeframes)
+              ? raw.market_analysis.timeframes
+              : [];
+            const mx = plan24?.multiple_exits || {};
+            const mxRows = [
+              mx?.break_even?.price != null
+                ? `BE: ${mx.break_even.price} (${mx.break_even.risk_reward ?? "-"}r)`
+                : "",
+              mx?.tp2?.price != null
+                ? `TP2: ${mx.tp2.price} (${mx.tp2.risk_reward ?? "-"}r)`
+                : "",
+              mx?.full_tp?.price != null
+                ? `TP3: ${mx.full_tp.price} (${mx.full_tp.risk_reward ?? "-"}r)`
+                : "",
+            ].filter(Boolean);
+            const skips = Array.isArray(
+              plan24?.position_management?.skips_reasons,
+            )
+              ? plan24.position_management.skips_reasons
+              : [];
+            return (
+              <div style={{ padding: "10px 4px" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 16,
+                  }}
+                >
+                  <div>
+                    <span className="minor-text">Strategy</span>
+                    <div>{plan24?.strategy || "-"}</div>
+                  </div>
+                  <div>
+                    <span className="minor-text">Entry Model</span>
+                    <div>{plan24?.entry_model || "-"}</div>
+                  </div>
+                  <div>
+                    <span className="minor-text">Trade Decision</span>
+                    <div>{plan24?.trade_decision || "-"}</div>
+                  </div>
+                  <div>
+                    <span className="minor-text">Confidence</span>
+                    <div>{plan24?.confidence_pct ?? "-"}</div>
+                  </div>
+                </div>
+                {mxRows.length ? (
+                  <div style={{ marginTop: 14 }}>
+                    <span className="minor-text">Multiple Exits</span>
+                    <div>{mxRows.join(" | ")}</div>
+                  </div>
+                ) : null}
+                {tf24.length ? (
+                  <div style={{ marginTop: 14 }}>
+                    <span className="minor-text">Timeframes</span>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+                        gap: 8,
+                      }}
+                    >
+                      {tf24.map((tf) => (
+                        <div
+                          key={String(tf?.tf || tf?.timeframe || Math.random())}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 8,
+                            padding: 8,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700 }}>
+                            {tf?.tf || tf?.timeframe || "-"}
+                          </div>
+                          <div className="minor-text">
+                            {tf?.bias || "-"} · {tf?.trend || "-"}
+                          </div>
+                          <div className="minor-text" style={{ marginTop: 4 }}>
+                            {tf?.price_prediction?.narrative ||
+                              tf?.analysis ||
+                              ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {skips.length ? (
+                  <div style={{ marginTop: 14 }}>
+                    <span className="minor-text">Skip Reasons</span>
+                    <ul style={{ margin: 0, paddingLeft: 16 }}>
+                      {skips.map((x, i) => (
+                        <li key={i}>
+                          {typeof x === "string"
+                            ? x
+                            : x?.reason || JSON.stringify(x)}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            );
+          }
 
           return (
             <div style={{ padding: "10px 4px" }}>
@@ -1297,24 +1476,26 @@ export default function SignalDetailCard({
           fallback={<div className="loading-container">Loading chart...</div>}
         >
           <SymbolChart
-            symbol={chart?.symbol}
+            symbol={selectedPlanSymbol || chart?.symbol}
             timeframes={selectedTfs}
             defaultMode={chart?.mode || "cache"}
             initialGridCols={Math.min(2, selectedTfs.length || 1)}
-            entryPrice={chart?.entryPrice}
-            slPrice={chart?.slPrice}
-            tpPrice={chart?.tpPrice}
+            entryPrice={selectedPlanRaw?.entry || chart?.entryPrice}
+            slPrice={selectedPlanRaw?.sl || chart?.slPrice}
+            tpPrice={selectedPlanRaw?.tp || chart?.tpPrice}
             createdAt={chart?.createdAt}
             openedAt={chart?.openedAt}
             closedAt={chart?.closedAt}
             onPlanLevelChange={chart?.onPlanLevelChange}
-            analysisSnapshot={rawData}
+            analysisSnapshot={selectedRawData}
             hasTradePlan={Boolean(
               tradePlan?.value?.entry ||
               tradePlan?.value?.tp ||
               tradePlan?.value?.sl,
             )}
-            hasAnalysis={Boolean(rawData && Object.keys(rawData).length > 0)}
+            hasAnalysis={Boolean(
+              selectedRawData && Object.keys(selectedRawData).length > 0,
+            )}
             skipFetch={false}
           />
         </Suspense>
@@ -1332,8 +1513,15 @@ export default function SignalDetailCard({
             overflow: "auto",
           }}
         >
-          {rawData && Object.keys(rawData).length > 0 ? (
-            <SmartContent content={rawData} mode="readonly" />
+          {(
+            mode === "ai"
+              ? selectedPlanRaw && Object.keys(selectedPlanRaw).length > 0
+              : selectedRawData && Object.keys(selectedRawData).length > 0
+          ) ? (
+            <SmartContent
+              content={mode === "ai" ? selectedPlanRaw : selectedRawData}
+              mode="readonly"
+            />
           ) : (
             <div className="minor-text">
               {isResponsePending ? pendingResponseText : "No JSON result yet."}

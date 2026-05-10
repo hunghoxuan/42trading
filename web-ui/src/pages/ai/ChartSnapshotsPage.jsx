@@ -2785,7 +2785,7 @@ export default function ChartSnapshotsPage() {
       let out;
       const { promise: analyzePromise } = NotificationHub.track(
         "analyze",
-        { symbol: activeSymbol },
+        { symbol: activeSymbols.join(",") || activeSymbol },
         async () => {
           try {
             return await api.chartSnapshotsAnalyze(payload);
