@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.10 19:30 - f425b47"); // AI result cards now use trade-detail style + result route hydration
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.10 19:30 - f425b47",
+); // AI result cards now use trade-detail style + result route hydration
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7216,7 +7219,8 @@ async function _mt5InitBackendInternal() {
               raw.price ??
               raw.entry_exec,
           );
-          const entry = Number.isFinite(entryRaw) && entryRaw > 0 ? entryRaw : null;
+          const entry =
+            Number.isFinite(entryRaw) && entryRaw > 0 ? entryRaw : null;
           const slRaw = Number(raw.sl ?? raw.stop_loss ?? raw.sl_price);
           const sl = Number.isFinite(slRaw) && slRaw > 0 ? slRaw : null;
           const tpRaw = Number(
@@ -7723,12 +7727,14 @@ async function _mt5InitBackendInternal() {
             }
             const discoverySid = String(
               it.sid ||
-              (ticketCandidates[0] ? `M_${ticketCandidates[0]}` : mt5GenerateTimeSid())
+                (ticketCandidates[0]
+                  ? `M_${ticketCandidates[0]}`
+                  : mt5GenerateTimeSid()),
             ).trim();
             if (ticketCandidates[0]) {
               const dupCheck = await pool.query(
                 `SELECT sid FROM trades WHERE account_id = $1 AND broker_trade_id = $2 LIMIT 1`,
-                [aid, ticketCandidates[0]]
+                [aid, ticketCandidates[0]],
               );
               if (dupCheck.rowCount > 0) continue;
             }
@@ -10011,15 +10017,20 @@ function normalizeAiAnalysisContract(input = {}) {
         ) ??
         x?.take_profit ??
         x?.multiple_exits?.full_tp?.price ??
-        (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+        x?.tp3 ??
+        x?.tp1 ??
+        x?.tp ??
+        null,
       tp2:
         planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
         x?.multiple_exits?.tp2?.price ??
-        (x?.tp2 ?? null),
+        x?.tp2 ??
+        null,
       tp3:
         planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
         x?.multiple_exits?.full_tp?.price ??
-        (x?.tp3 ?? null),
+        x?.tp3 ??
+        null,
       estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
       rr: x?.risk_reward ?? x?.rr ?? null,
       risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
@@ -10203,15 +10214,19 @@ function normalizeAiAnalysisContract(input = {}) {
           ) ??
           x?.take_profit ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? x?.tp ?? null),
+          x?.tp3 ??
+          x?.tp ??
+          null,
         tp2:
           planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
           x?.multiple_exits?.tp2?.price ??
-          (x?.tp2 ?? null),
+          x?.tp2 ??
+          null,
         tp3:
           planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? null),
+          x?.tp3 ??
+          null,
         estimated_bars:
           x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
@@ -10401,15 +10416,20 @@ function normalizeAiAnalysisContract(input = {}) {
           ) ??
           x?.take_profit ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? x?.tp1 ?? x?.tp ?? null),
+          x?.tp3 ??
+          x?.tp1 ??
+          x?.tp ??
+          null,
         tp2:
           planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
           x?.multiple_exits?.tp2?.price ??
-          (x?.tp2 ?? null),
+          x?.tp2 ??
+          null,
         tp3:
           planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
           x?.multiple_exits?.full_tp?.price ??
-          (x?.tp3 ?? null),
+          x?.tp3 ??
+          null,
         estimated_bars:
           x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
         rr: x?.risk_reward ?? x?.rr ?? null,
@@ -11673,19 +11693,25 @@ async function mt5GetActiveExecutionProfileV2(userId) {
 function mt5NormalizeExecutionProfileRow(row = {}) {
   const data = row?.data && typeof row.data === "object" ? row.data : {};
   return {
-    profile_id: String(row?.name || row?.profile_id || "default").trim() || "default",
+    profile_id:
+      String(row?.name || row?.profile_id || "default").trim() || "default",
     user_id: String(row?.user_id || "").trim(),
     profile_name:
-      String(data?.profile_name || row?.profile_name || row?.name || "default").trim() ||
-      "default",
-    route: String(data?.route || row?.route || "ea").trim().toLowerCase() || "ea",
+      String(
+        data?.profile_name || row?.profile_name || row?.name || "default",
+      ).trim() || "default",
+    route:
+      String(data?.route || row?.route || "ea")
+        .trim()
+        .toLowerCase() || "ea",
     account_id: String(data?.account_id || row?.account_id || "").trim(),
     source_ids: Array.isArray(data?.source_ids)
       ? data.source_ids.map((v) => String(v || "").trim()).filter(Boolean)
       : [],
     ctrader_mode:
-      String(data?.ctrader_mode || row?.ctrader_mode || "").trim().toLowerCase() ||
-      "",
+      String(data?.ctrader_mode || row?.ctrader_mode || "")
+        .trim()
+        .toLowerCase() || "",
     ctrader_account_id: String(
       data?.ctrader_account_id || row?.ctrader_account_id || "",
     ).trim(),
@@ -11693,7 +11719,8 @@ function mt5NormalizeExecutionProfileRow(row = {}) {
       data?.is_active === undefined
         ? Boolean(row?.is_active)
         : Boolean(data.is_active),
-    metadata: data?.metadata && typeof data.metadata === "object" ? data.metadata : {},
+    metadata:
+      data?.metadata && typeof data.metadata === "object" ? data.metadata : {},
     raw: row,
     created_at: row?.created_at || null,
     updated_at: row?.updated_at || null,
@@ -11703,8 +11730,7 @@ function mt5NormalizeExecutionProfileRow(row = {}) {
 async function mt5SaveExecutionProfileV2(payload = {}) {
   const b = await mt5Backend();
   const db = b?.query ? b : await mt5InitBackend();
-  const profileId =
-    String(payload.profile_id || "default").trim() || "default";
+  const profileId = String(payload.profile_id || "default").trim() || "default";
   const userId =
     String(payload.user_id || CFG.mt5DefaultUserId).trim() ||
     CFG.mt5DefaultUserId;
@@ -11713,9 +11739,15 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
   const routeRaw = String(payload.route || "")
     .trim()
     .toLowerCase();
-  const route = ["ea", "v2026.05.09 19:31 - 728f356", "ctrader"].includes(routeRaw) ? routeRaw : "ea";
+  const route = ["ea", "v2026.05.09 19:31 - 728f356", "ctrader"].includes(
+    routeRaw,
+  )
+    ? routeRaw
+    : "ea";
   const accountId = String(payload.account_id || "").trim() || null;
-  const sourceIds = (Array.isArray(payload.source_ids) ? payload.source_ids : [])
+  const sourceIds = (
+    Array.isArray(payload.source_ids) ? payload.source_ids : []
+  )
     .map((v) => String(v || "").trim())
     .filter(Boolean);
   const ctraderModeRaw = String(payload.ctrader_mode || "")
@@ -11772,21 +11804,38 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
     };
   } catch (error) {
     await client.query("ROLLBACK");
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     client.release();
   }
 }
 
-async function mt5UpsertSourceV2(source) { return null; }
-async function mt5ListSourcesV2() { return []; }
-async function mt5GetSourceByIdV2(sourceId) { return null; }
-async function mt5RotateSourceSecretV2(sourceId) { return { ok: false, error: "removed" }; }
-async function mt5RevokeSourceSecretV2(sourceId) { return { ok: false, error: "removed" }; }
+async function mt5UpsertSourceV2(source) {
+  return null;
+}
+async function mt5ListSourcesV2() {
+  return [];
+}
+async function mt5GetSourceByIdV2(sourceId) {
+  return null;
+}
+async function mt5RotateSourceSecretV2(sourceId) {
+  return { ok: false, error: "removed" };
+}
+async function mt5RevokeSourceSecretV2(sourceId) {
+  return { ok: false, error: "removed" };
+}
 
-async function mt5GetAccountSubscriptionsV2(accountId) { return []; }
+async function mt5GetAccountSubscriptionsV2(accountId) {
+  return [];
+}
 
-async function mt5ReplaceAccountSubscriptionsV2(accountId, items) { return { ok: true }; }
+async function mt5ReplaceAccountSubscriptionsV2(accountId, items) {
+  return { ok: true };
+}
 
 async function mt5ListSignalEvents(signalId, limit = 200) {
   const b = await mt5Backend();
@@ -14141,6 +14190,8 @@ const appHandler = async (req, res) => {
       return json(res, 200, {
         ok: true,
         created: fanout?.created || 0,
+        sid: tradeSidBase,
+        trade: { sid: tradeSidBase },
         account_ids: fanout?.account_ids || [],
       });
     } catch (error) {
@@ -15325,7 +15376,9 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      console.log(`[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`);
+      console.log(
+        `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
+      );
       await db.query(
         `
         INSERT INTO user_settings (user_id, type, name, data, status)
@@ -15398,7 +15451,9 @@ const appHandler = async (req, res) => {
     try {
       const type = String(url.searchParams.get("type") || "").trim();
       const name = String(url.searchParams.get("name") || "").trim();
-      const field = String(url.searchParams.get("field") || "v2026.05.09 19:31 - 728f356").trim();
+      const field = String(
+        url.searchParams.get("field") || "v2026.05.09 19:31 - 728f356",
+      ).trim();
       if (!type || !name)
         return json(res, 400, { ok: false, error: "Missing type or name" });
       if (type !== "api_key")
@@ -16424,18 +16479,15 @@ const appHandler = async (req, res) => {
         requestedSymbolsRaw = [],
       ) => {
         const out = parsed && typeof parsed === "object" ? parsed : {};
-        const requested = (Array.isArray(requestedSymbolsRaw)
-          ? requestedSymbolsRaw
-          : []
+        const requested = (
+          Array.isArray(requestedSymbolsRaw) ? requestedSymbolsRaw : []
         )
           .map((x) => normalizeSymbolLoose(x))
           .filter(Boolean);
         if (!requested.length) return out;
         const plans = Array.isArray(out.trade_plan) ? out.trade_plan : [];
         const existing = new Set(
-          plans
-            .map((p) => normalizeSymbolLoose(p?.symbol))
-            .filter(Boolean),
+          plans.map((p) => normalizeSymbolLoose(p?.symbol)).filter(Boolean),
         );
         for (const sym of requested) {
           if (existing.has(sym)) continue;
@@ -17079,16 +17131,23 @@ const appHandler = async (req, res) => {
         if (!items.length) return [];
         const maxFiles = Math.max(
           4,
-          Math.min(24, Math.max(1, requestedSymbols.length) * Math.max(1, requestedTfs.length || 4)),
+          Math.min(
+            24,
+            Math.max(1, requestedSymbols.length) *
+              Math.max(1, requestedTfs.length || 4),
+          ),
         );
-        if (!requestedTfs.length) return items.slice(0, maxFiles).map((x) => x.f);
+        if (!requestedTfs.length)
+          return items.slice(0, maxFiles).map((x) => x.f);
         const out = [];
         const candidateSymbols = requestedSymbols.length
           ? requestedSymbols
           : Array.from(
               new Set(
                 items
-                  .map((x) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.f)))
+                  .map((x) =>
+                    normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.f)),
+                  )
                   .filter(Boolean),
               ),
             );
@@ -17096,7 +17155,9 @@ const appHandler = async (req, res) => {
           const byTf = new Map();
           for (const item of items) {
             const f = String(item.f || "");
-            const inferred = normalizeSymbolLoose(inferSymbolFromSnapshotFile(f));
+            const inferred = normalizeSymbolLoose(
+              inferSymbolFromSnapshotFile(f),
+            );
             if (sym && inferred && sym !== inferred) continue;
             const parts = f.split("_");
             const tfRaw = parts.length >= 3 ? parts[2] : "";
@@ -17223,7 +17284,9 @@ const appHandler = async (req, res) => {
       const usedSymbols = [
         ...new Set(
           snapshotFiles
-            .map((x) => normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.fileName)))
+            .map((x) =>
+              normalizeSymbolLoose(inferSymbolFromSnapshotFile(x.fileName)),
+            )
             .filter(Boolean),
         ),
       ];
@@ -17360,7 +17423,10 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
-      parsedJson = ensureTradePlanCoverageBySymbol(parsedJson, requestedSymbols);
+      parsedJson = ensureTradePlanCoverageBySymbol(
+        parsedJson,
+        requestedSymbols,
+      );
       console.log(
         "[ai-response] symbol=" +
           (parsedJson?.symbol || "?") +
@@ -17631,7 +17697,9 @@ const appHandler = async (req, res) => {
         "Content-Disposition": `${dispositionMode}; filename="${finalFileName}"`,
         "Cache-Control": "no-store",
         "Content-Length": body.length,
-        "X-Claude-Content-Source": local ? "v2026.05.09 19:31 - 728f356" : "claude",
+        "X-Claude-Content-Source": local
+          ? "v2026.05.09 19:31 - 728f356"
+          : "claude",
       });
       res.end(body);
       return;
@@ -19381,7 +19449,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 19:31 - 728f356" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
     try {
       const payload = req.method === "POST" ? await readJson(req) : null;
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19446,7 +19517,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 19:31 - 728f356" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19487,7 +19561,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 19:31 - 728f356" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19520,7 +19597,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 19:31 - 728f356" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
@@ -19543,7 +19623,10 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
-      return json(res, 404, { ok: false, error: "v2026.05.09 19:31 - 728f356" });
+      return json(res, 404, {
+        ok: false,
+        error: "v2026.05.09 19:31 - 728f356",
+      });
     try {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);

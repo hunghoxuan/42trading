@@ -1679,8 +1679,8 @@ function enrichParsedAnalysis(rawText, parsed) {
   }
 
   // Merge symbol/profile if missing
-//   if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
-//   if (!res.profile && fallback.profile) res.profile = fallback.profile;
+  //   if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
+  //   if (!res.profile && fallback.profile) res.profile = fallback.profile;
 
   // Final check for trade_plan
   if (!res.trade_plan && fallback.trade_plan) {
@@ -1950,7 +1950,7 @@ export default function ChartSnapshotsPage() {
   const [analysisFilesDisplay, setAnalysisFilesDisplay] = useState([]);
   const [autoSaveResult, setAutoSaveResult] = useState(null);
   const [manualAddedMode, setManualAddedMode] = useState("");
-  const [addedEntity, setAddedEntity] = useState(null);
+  const [addedEntities, setAddedEntities] = useState({});
   const [position, setPosition] = useState({
     direction: "BUY",
     entry: "",
@@ -2823,7 +2823,8 @@ export default function ChartSnapshotsPage() {
           out?.auto_save_result,
           autoMode === "trades" ? "trade" : "signal",
         );
-        if (autoEntity) setAddedEntity(autoEntity);
+        if (autoEntity)
+          setAddedEntities((prev) => ({ ...prev, main: autoEntity }));
       }
       setAnalysisRaw(raw);
       let parsed = enrichParsedAnalysis(
@@ -2860,18 +2861,18 @@ export default function ChartSnapshotsPage() {
         }
       }
       if (parsed && typeof parsed === "object") {
-//         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
-//         const inputSymbol = String(activeSymbol || cfg.symbol || "")
-//           .split(":")
-//           .pop();
-//         if (
-//           parsed.symbol &&
-//           inputSymbol &&
-//           !parsed.symbol.includes(inputSymbol)
-//         ) {
-//           // Claude returned a different symbol — trust our input
-//           parsed.symbol = inputSymbol;
-//         }
+        //         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
+        //         const inputSymbol = String(activeSymbol || cfg.symbol || "")
+        //           .split(":")
+        //           .pop();
+        //         if (
+        //           parsed.symbol &&
+        //           inputSymbol &&
+        //           !parsed.symbol.includes(inputSymbol)
+        //         ) {
+        //           // Claude returned a different symbol — trust our input
+        //           parsed.symbol = inputSymbol;
+        //         }
         setAnalysisParsed(parsed);
         setAnalysisJson(JSON.stringify(parsed, null, 2));
         if (!hasRequiredPlanLevels(parsed)) {
@@ -3333,7 +3334,11 @@ export default function ChartSnapshotsPage() {
         createdCount += 1;
       }
       const createdEntity = resolveCreatedId(lastCreated || {}, mode);
-      if (createdEntity) setAddedEntity(createdEntity);
+      if (createdEntity && submittingPlanId)
+        setAddedEntities((prev) => ({
+          ...prev,
+          [submittingPlanId]: createdEntity,
+        }));
       const msg =
         mode === "trade"
           ? `Added ${createdCount} trade request(s).`
@@ -4036,7 +4041,7 @@ export default function ChartSnapshotsPage() {
     setSessionPrefix("");
     setAutoSaveResult(null);
     setManualAddedMode("");
-    setAddedEntity(null);
+    setAddedEntities({});
     setStatus({ type: "success", text: "New analyze session started." });
   };
   const resetToDefaultBrowser = () => {
@@ -5474,38 +5479,30 @@ export default function ChartSnapshotsPage() {
                 onChange: updatePositionField,
                 showSaveButton: false,
                 showAddSignalButton:
-                  (addedEntity?.kind === "signal" &&
-                    Boolean(addedEntity?.id)) ||
-                  (!autoSavedSignal &&
-                    !autoSavedTrades &&
-                    !manuallyAddedTrade &&
-                    !manuallyAddedSignal),
+                  !autoSavedSignal &&
+                  !autoSavedTrades &&
+                  !manuallyAddedTrade &&
+                  !manuallyAddedSignal,
                 showAddTradeButton:
-                  (addedEntity?.kind === "trade" && Boolean(addedEntity?.id)) ||
-                  (!Boolean(addedEntity?.id) &&
-                    !autoSavedTrades &&
-                    !manuallyAddedTrade),
+                  !autoSavedTrades &&
+                  !manuallyAddedTrade,
                 showResetButton: true,
                 onReset: resetToDefaultBrowser,
                 resetLabel: "Back",
-                addSignalLabel:
-                  addedEntity?.kind === "signal" && addedEntity?.id
-                    ? "Signal added"
-                    : "+ Signal",
-                addTradeLabel:
-                  addedEntity?.kind === "trade" && addedEntity?.id
-                    ? "Trade added"
-                    : "+ Trade",
+                addSignalLabel: "+ Signal",
+                addTradeLabel: "+ Trade",
                 onAddSignal: (pos, planId = "main") => {
-                  if (addedEntity?.kind === "signal" && addedEntity?.id) {
-                    navigate(`/signals/${addedEntity.id}`);
+                  const ent = addedEntities[planId];
+                  if (ent?.kind === "signal" && ent?.id) {
+                    navigate(`/signals/${ent.id}`);
                     return;
                   }
                   addBySelection("signal", pos, planId);
                 },
                 onAddTrade: (pos, planId = "main") => {
-                  if (addedEntity?.kind === "trade" && addedEntity?.id) {
-                    navigate(`/trades/${addedEntity.id}`);
+                  const ent = addedEntities[planId];
+                  if (ent?.kind === "trade" && ent?.id) {
+                    navigate(`/trades/${ent.id}`);
                     return;
                   }
                   addBySelection("trade", pos, planId);
@@ -5537,7 +5534,7 @@ export default function ChartSnapshotsPage() {
             {actionStatus.text}
           </span>
         ) : null}
-        {addedEntity?.kind === "trade" && addedEntity?.id ? (
+        {(() => { const lastAdded = Object.values(addedEntities).pop(); return lastAdded?.kind === "trade" && lastAdded?.id; })() ? (
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button
               type="button"
@@ -5549,7 +5546,7 @@ export default function ChartSnapshotsPage() {
             <button
               type="button"
               className="primary-button"
-              onClick={() => navigate(`/trades/${addedEntity.id}`)}
+              onClick={() => navigate(`/trades/${Object.values(addedEntities).pop()?.id}`)}
             >
               Goto Trade
             </button>

@@ -773,7 +773,7 @@ export default function SignalDetailCard({
             const isBuy = String(p.direction).toUpperCase() === "BUY";
             const isSimplified = !isSelected;
             const planValue = isMain
-              ? tradePlan.value
+              ? { ...p, ...tradePlan.value }
               : planDrafts[planId] || p;
             return (
               <div
