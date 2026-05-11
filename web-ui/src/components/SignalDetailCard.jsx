@@ -894,6 +894,7 @@ export default function SignalDetailCard({
                     showResetButton={tradePlan.showResetButton !== false}
                     busy={tradePlan.busy || {}}
                     disabled={Boolean(tradePlan.disabled)}
+                    lockTradeFields={Boolean(tradePlan.lockTradeFields)}
                     viewOnly={Boolean(tradePlan.viewOnly)}
                     error={tradePlan.error || ""}
                   />
@@ -918,6 +919,7 @@ export default function SignalDetailCard({
                     busy={tradePlan.busy || {}}
                     disabled={true}
                     viewOnly={true}
+                    lockTradeFields={true}
                   />
                 )}
                 {isMain && tradePlan.successMessage && (

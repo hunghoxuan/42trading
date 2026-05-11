@@ -113,7 +113,9 @@ function redirectToLogin() {
   }
   if (window.location.pathname.endsWith("/login")) return;
   const base = window.location.pathname.startsWith("/ui") ? "/ui" : "";
-  const returnUrl = encodeURIComponent(window.location.pathname + window.location.search);
+  const returnUrl = encodeURIComponent(
+    window.location.pathname + window.location.search,
+  );
   const loginPath = `${base}/login?return_url=${returnUrl}`;
   window.location.assign(loginPath);
 }
@@ -735,6 +737,29 @@ export const api = {
     post(`/v2/signals/${encodeURIComponent(signalId)}/trade`, payload),
   saveTradePlan: (tradeId, payload = {}) =>
     post(`/v2/trades/${encodeURIComponent(tradeId)}/trade-plan/save`, payload),
+  uploadTradeFile: async (tradeId, file) => {
+    const API_KEY = runtimeApiKey();
+    const base = runtimeApiBase();
+    const form = new FormData();
+    form.append("file", file);
+    const headers = {};
+    if (API_KEY) headers["x-api-key"] = API_KEY;
+    const res = await fetch(
+      `${base}/v2/trades/${encodeURIComponent(tradeId)}/files/upload`,
+      { method: "POST", headers, body: form },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || `Upload failed (${res.status})`);
+    }
+    return res.json();
+  },
+  listTradeFiles: (tradeId) =>
+    get(`/v2/trades/${encodeURIComponent(tradeId)}/files`),
+  deleteTradeFile: (tradeId, fileName) =>
+    del(
+      `/v2/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(fileName)}`,
+    ),
   deleteTrades: (params) => post("/mt5/trades/delete", params),
   cancelTrades: (params) => post("/mt5/trades/cancel", params),
   renewTrades: (params) => post("/mt5/trades/renew", params),
@@ -834,11 +859,14 @@ export const api = {
   notificationStream: () => {
     // Returns an EventSource — caller manages lifecycle
     const base = runtimeApiBase();
-    return new EventSource(`${base}/v2/notifications/stream`, { withCredentials: true });
+    return new EventSource(`${base}/v2/notifications/stream`, {
+      withCredentials: true,
+    });
   },
   notificationEvents: () => get("/v2/notifications/events"),
   notificationSettings: () => get("/v2/notifications/settings"),
-  notificationSaveSettings: (settings) => post("/v2/notifications/settings", { settings }),
+  notificationSaveSettings: (settings) =>
+    post("/v2/notifications/settings", { settings }),
   notificationTest: (payload = {}) => post("/v2/notifications/test", payload),
   deleteSetting: (type, name) =>
     del(`/v2/settings/${encodeURIComponent(type)}/${encodeURIComponent(name)}`),

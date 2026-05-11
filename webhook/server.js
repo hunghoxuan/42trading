@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.11 13:28 - 3a5c0d55"); // AI result cards now use trade-detail style + result route hydration
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.12 10:00 - trade-files",
+); // trade file uploads: drag-drop attachments per trade + note-edit for FILLED/CLOSED
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -480,6 +483,7 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   AI_CONTEXT_FILE_DIR,
   ".claude-context-files.json",
 );
+const TRADE_FILES_DIR = path.resolve(__dirname, "trade_files");
 const ANTHROPIC_FILES_BETA = "files-api-2025-04-14";
 
 // Toggle: upload context files + snapshots to Claude Files API (file_id refs)
@@ -2825,6 +2829,64 @@ function ensureAiContextFileDir() {
   if (!fs.existsSync(AI_CONTEXT_FILE_DIR)) {
     fs.mkdirSync(AI_CONTEXT_FILE_DIR, { recursive: true });
   }
+}
+
+function ensureTradeFilesDir(sid) {
+  const dir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function parseTradeFileName(raw) {
+  // Sanitize: keep only safe chars, collapse whitespace, max 200 chars
+  return (
+    String(raw || "file")
+      .replace(/[^a-zA-Z0-9._\-\s]/g, "_")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .substring(0, 200)
+      .replace(/^_+|_+$/g, "") || "file"
+  );
+}
+
+async function parseMultipartFile(req) {
+  const contentType = String(req.headers["content-type"] || "");
+  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/);
+  if (!boundaryMatch) throw new Error("No multipart boundary found");
+  const boundary = boundaryMatch[1] || boundaryMatch[2];
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  const raw = Buffer.concat(chunks);
+
+  const parts = raw.toString("binary").split(`--${boundary}`);
+  for (const part of parts) {
+    if (!part.includes("Content-Disposition") || part.startsWith("--"))
+      continue;
+
+    const headerEnd = part.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+    const headerSection = part.substring(0, headerEnd);
+    const bodyStart = headerEnd + 4;
+    let body = part.substring(bodyStart);
+    // Remove trailing \r\n
+    if (body.endsWith("\r\n")) body = body.substring(0, body.length - 2);
+
+    const nameMatch = headerSection.match(/name="([^"]+)"/);
+    const filenameMatch = headerSection.match(/filename="([^"]+)"/);
+    if (nameMatch && filenameMatch) {
+      return {
+        fieldName: nameMatch[1],
+        fileName: parseTradeFileName(filenameMatch[1]),
+        data: Buffer.from(body, "binary"),
+      };
+    }
+  }
+  throw new Error("No file found in multipart body");
 }
 
 function sanitizeSnapshotToken(value, fallback = "chart") {
@@ -14186,9 +14248,10 @@ const appHandler = async (req, res) => {
         },
       });
       notifyPulse(effectiveUserId, "trades");
-      const actualSid = Array.isArray(fanout?.sids) && fanout.sids.length > 0
-        ? fanout.sids[0]
-        : tradeSidBase;
+      const actualSid =
+        Array.isArray(fanout?.sids) && fanout.sids.length > 0
+          ? fanout.sids[0]
+          : tradeSidBase;
       return json(res, 200, {
         ok: true,
         created: fanout?.created || 0,
@@ -19193,6 +19256,124 @@ const appHandler = async (req, res) => {
         row.user_id || userId || CFG.mt5DefaultUserId,
       );
       return json(res, 200, { ok: true, item: row });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Trade file attachments ---
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/trades\/[^/]+\/files\/upload$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url, null)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files\/upload$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, { ok: false, error: "trade sid is required" });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+
+      const file = await parseMultipartFile(req);
+      const dir = ensureTradeFilesDir(sid);
+      const destPath = path.join(dir, file.fileName);
+      // If file already exists, append a timestamp suffix
+      let finalPath = destPath;
+      if (fs.existsSync(destPath)) {
+        const ext = path.extname(file.fileName);
+        const base = path.basename(file.fileName, ext);
+        finalPath = path.join(dir, `${base}_${Date.now()}${ext}`);
+      }
+      fs.writeFileSync(finalPath, file.data);
+
+      return json(res, 200, {
+        ok: true,
+        file: {
+          name: path.basename(finalPath),
+          size: file.data.length,
+        },
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/files$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url, null)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, { ok: false, error: "trade sid is required" });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const dir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
+      const files = [];
+      if (fs.existsSync(dir)) {
+        for (const entry of fs.readdirSync(dir)) {
+          const abs = path.join(dir, entry);
+          try {
+            const st = fs.statSync(abs);
+            if (st.isFile()) {
+              files.push({ name: entry, size: st.size });
+            }
+          } catch {}
+        }
+      }
+      return json(res, 200, { ok: true, files });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "DELETE" &&
+    /^\/v2\/trades\/[^/]+\/files\/.+$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url, null)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/files\/(.+)$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
+      if (!tradeRef || !fileName)
+        return json(res, 400, {
+          ok: false,
+          error: "trade sid and filename are required",
+        });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const safeName = path.basename(fileName);
+      const abs = path.join(TRADE_FILES_DIR, `trade-${sid}`, safeName);
+      if (!fs.existsSync(abs))
+        return json(res, 404, { ok: false, error: "file not found" });
+      fs.unlinkSync(abs);
+      return json(res, 200, { ok: true });
     } catch (error) {
       return json(res, 400, {
         ok: false,

@@ -3,11 +3,13 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { NotificationHub } from "../../services/NotificationHub";
 
-const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
+const SignalDetailCard = lazy(
+  () => import("../../components/SignalDetailCard"),
+);
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
-import { 
-  asNum, 
-  buildHeaderMeta, 
+import {
+  asNum,
+  buildHeaderMeta,
   renderHistoryItem,
   extractTradePlanFromTrade,
   validateTradePlan,
@@ -18,7 +20,11 @@ function PnlDisplay({ value }) {
   const n = asNum(value);
   if (n == null) return <span className="minor-text">-</span>;
   const cls = n < 0 ? "money-neg" : "money-pos";
-  return <span className={cls} style={{ fontWeight: 800 }}>${n.toFixed(2)}</span>;
+  return (
+    <span className={cls} style={{ fontWeight: 800 }}>
+      ${n.toFixed(2)}
+    </span>
+  );
 }
 
 function statusUi(statusRaw) {
@@ -64,10 +70,12 @@ function inferDirection(entry, tp, sl, fallback = "BUY") {
 }
 
 function deriveOrderType(direction, entry, lastPrice, fallback = "limit") {
-  if (!Number.isFinite(entry) || !Number.isFinite(lastPrice)) return String(fallback || "limit").toLowerCase();
+  if (!Number.isFinite(entry) || !Number.isFinite(lastPrice))
+    return String(fallback || "limit").toLowerCase();
   const eps = Math.max(Math.abs(lastPrice) * 0.00002, 0.00001);
   if (Math.abs(entry - lastPrice) <= eps) return "market";
-  if (String(direction).toUpperCase() === "BUY") return entry < lastPrice ? "limit" : "stop";
+  if (String(direction).toUpperCase() === "BUY")
+    return entry < lastPrice ? "limit" : "stop";
   return entry > lastPrice ? "limit" : "stop";
 }
 
@@ -76,10 +84,14 @@ function orderTypeRuleError(direction, orderType, entry, lastPrice) {
   const side = String(direction || "").toUpperCase();
   const typ = String(orderType || "").toLowerCase();
   if (typ === "market") return "";
-  if (side === "BUY" && typ === "limit" && !(entry < lastPrice)) return "Buy Limit requires Entry < last price.";
-  if (side === "BUY" && typ === "stop" && !(entry > lastPrice)) return "Buy Stop requires Entry > last price.";
-  if (side === "SELL" && typ === "limit" && !(entry > lastPrice)) return "Sell Limit requires Entry > last price.";
-  if (side === "SELL" && typ === "stop" && !(entry < lastPrice)) return "Sell Stop requires Entry < last price.";
+  if (side === "BUY" && typ === "limit" && !(entry < lastPrice))
+    return "Buy Limit requires Entry < last price.";
+  if (side === "BUY" && typ === "stop" && !(entry > lastPrice))
+    return "Buy Stop requires Entry > last price.";
+  if (side === "SELL" && typ === "limit" && !(entry > lastPrice))
+    return "Sell Limit requires Entry > last price.";
+  if (side === "SELL" && typ === "stop" && !(entry < lastPrice))
+    return "Sell Stop requires Entry < last price.";
   return "";
 }
 
@@ -91,10 +103,22 @@ export default function TradeDetailPage() {
   const [error, setError] = useState("");
   const [planError, setPlanError] = useState("");
   const [detailTfTab, setDetailTfTab] = useState("ENTRY");
-  const [detailPlan, setDetailPlan] = useState({ direction: "BUY", trade_type: "limit", entry: "", tp: "", sl: "", rr: "", note: "" });
+  const [detailPlan, setDetailPlan] = useState({
+    direction: "BUY",
+    trade_type: "limit",
+    entry: "",
+    tp: "",
+    sl: "",
+    rr: "",
+    note: "",
+  });
 
   const lastPrice = useMemo(() => {
-    const p = asNum(trade?.last_price ?? trade?.metadata?.last_price ?? trade?.raw_json?.last_price);
+    const p = asNum(
+      trade?.last_price ??
+        trade?.metadata?.last_price ??
+        trade?.raw_json?.last_price,
+    );
     return p;
   }, [trade]);
 
@@ -105,29 +129,55 @@ export default function TradeDetailPage() {
       const tp = asNum(next.tp);
       const sl = asNum(next.sl);
       const rr = asNum(next.rr);
-      const directionFromForm = String(next.direction || prev.direction || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+      const directionFromForm =
+        String(next.direction || prev.direction || "BUY").toUpperCase() ===
+        "SELL"
+          ? "SELL"
+          : "BUY";
       const direction = ["entry", "tp", "sl"].includes(key)
         ? inferDirection(entry, tp, sl, directionFromForm)
         : directionFromForm;
       next.direction = direction;
 
-      if (key === "rr" && Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(rr) && rr > 0) {
+      if (
+        key === "rr" &&
+        Number.isFinite(entry) &&
+        Number.isFinite(sl) &&
+        Number.isFinite(rr) &&
+        rr > 0
+      ) {
         const risk = Math.abs(entry - sl);
         if (risk > 0) {
-          const nextTp = direction === "BUY" ? entry + risk * rr : entry - risk * rr;
+          const nextTp =
+            direction === "BUY" ? entry + risk * rr : entry - risk * rr;
           next.tp = formatNum3(nextTp);
         }
-      } else if (["entry", "tp", "sl"].includes(key) && Number.isFinite(entry) && Number.isFinite(tp) && Number.isFinite(sl)) {
+      } else if (
+        ["entry", "tp", "sl"].includes(key) &&
+        Number.isFinite(entry) &&
+        Number.isFinite(tp) &&
+        Number.isFinite(sl)
+      ) {
         const risk = Math.abs(entry - sl);
         const reward = Math.abs(tp - entry);
         if (risk > 0) next.rr = formatNum3(reward / risk);
       }
 
       const nextEntry = asNum(next.entry);
-      next.trade_type = deriveOrderType(next.direction, nextEntry, lastPrice, next.trade_type || prev.trade_type || "limit");
+      next.trade_type = deriveOrderType(
+        next.direction,
+        nextEntry,
+        lastPrice,
+        next.trade_type || prev.trade_type || "limit",
+      );
 
       const baseErr = validateTradePlan(next, { skipRrCheck: false });
-      const typeErr = orderTypeRuleError(next.direction, next.trade_type, asNum(next.entry), lastPrice);
+      const typeErr = orderTypeRuleError(
+        next.direction,
+        next.trade_type,
+        asNum(next.entry),
+        lastPrice,
+      );
       setPlanError(baseErr || typeErr || "");
       return next;
     });
@@ -142,7 +192,10 @@ export default function TradeDetailPage() {
           api.v2Trades({ q: tradeId }),
         ]);
         setEvents(Array.isArray(evs?.items) ? evs.items : []);
-        const t = Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
+        const t =
+          Array.isArray(data?.items) && data.items.length
+            ? data.items[0]
+            : null;
         setTrade(t);
         if (t) {
           setDetailPlan(extractTradePlanFromTrade(t));
@@ -161,14 +214,30 @@ export default function TradeDetailPage() {
     const action = String(trade.action || trade.side || "-").toUpperCase();
     const rr = asNum(trade.rr_planned);
     const pnl = asNum(trade.pnl_realized);
-    const meta = trade?.metadata && typeof trade.metadata === "object" ? trade.metadata : {};
-    const raw = (trade?.raw_json && typeof trade.raw_json === "object" && Object.keys(trade.raw_json).length > 0)
-      ? trade.raw_json
-      : (trade?.metadata?.raw_json && typeof trade.metadata.raw_json === "object" ? trade.metadata.raw_json : (trade?.metadata || {}));
+    const meta =
+      trade?.metadata && typeof trade.metadata === "object"
+        ? trade.metadata
+        : {};
+    const raw =
+      trade?.raw_json &&
+      typeof trade.raw_json === "object" &&
+      Object.keys(trade.raw_json).length > 0
+        ? trade.raw_json
+        : trade?.metadata?.raw_json &&
+            typeof trade.metadata.raw_json === "object"
+          ? trade.metadata.raw_json
+          : trade?.metadata || {};
     const vol = asNum(meta.used_volume) ?? asNum(trade.volume);
-    const plannedVol = asNum(meta.requested_volume) ?? asNum(raw.volume) ?? asNum(trade.volume);
-    const riskSize = asNum(meta.risk_money_actual ?? trade.risk_money_actual ?? trade.risk_money_planned);
-    const riskPct = asNum(meta.riskPct ?? meta.risk_pct ?? raw.riskPct ?? raw.risk_pct);
+    const plannedVol =
+      asNum(meta.requested_volume) ?? asNum(raw.volume) ?? asNum(trade.volume);
+    const riskSize = asNum(
+      meta.risk_money_actual ??
+        trade.risk_money_actual ??
+        trade.risk_money_planned,
+    );
+    const riskPct = asNum(
+      meta.riskPct ?? meta.risk_pct ?? raw.riskPct ?? raw.risk_pct,
+    );
     const reward = asNum(meta.reward_money_planned);
     const headerMeta = buildHeaderMeta({
       statusRaw: trade.execution_status,
@@ -179,7 +248,11 @@ export default function TradeDetailPage() {
       riskSizeRaw: riskSize,
       riskPctRaw: riskPct,
       rewardSizeRaw: reward,
-      updatedAtRaw: trade.updated_at || trade.closed_at || trade.opened_at || trade.created_at,
+      updatedAtRaw:
+        trade.updated_at ||
+        trade.closed_at ||
+        trade.opened_at ||
+        trade.created_at,
       statusUi,
       volumeSizeRaw: asNum(meta.broker_data?.volume_size),
     });
@@ -191,13 +264,27 @@ export default function TradeDetailPage() {
       ...headerMeta,
     });
   }, [trade]);
-  const isClosed = useMemo(() => {
-    return ["FILLED", "CLOSED", "CANCELLED", "TP", "SL", "FAIL", "EXPIRED"].includes(String(trade?.execution_status || "").toUpperCase());
+  const isTerminal = useMemo(() => {
+    return ["TP", "SL", "FAIL", "EXPIRED"].includes(
+      String(trade?.execution_status || "").toUpperCase(),
+    );
+  }, [trade?.execution_status]);
+  const isLocked = useMemo(() => {
+    return ["FILLED", "CLOSED", "CANCELLED"].includes(
+      String(trade?.execution_status || "").toUpperCase(),
+    );
   }, [trade?.execution_status]);
 
   async function onUpdateTradePlan() {
     if (!trade) return;
-    const validErr = validateTradePlan(detailPlan, { skipRrCheck: false }) || orderTypeRuleError(detailPlan.direction, detailPlan.trade_type, asNum(detailPlan.entry), lastPrice);
+    const validErr =
+      validateTradePlan(detailPlan, { skipRrCheck: false }) ||
+      orderTypeRuleError(
+        detailPlan.direction,
+        detailPlan.trade_type,
+        asNum(detailPlan.entry),
+        lastPrice,
+      );
     if (validErr) {
       setPlanError(validErr);
       return;
@@ -220,7 +307,8 @@ export default function TradeDetailPage() {
         api.v2Trades({ q: tradeId }),
       ]);
       setEvents(Array.isArray(evs?.items) ? evs.items : []);
-      const t = Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
+      const t =
+        Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
       setTrade(t);
     } catch (e) {
       setError(e?.message || "Update failed");
@@ -231,7 +319,14 @@ export default function TradeDetailPage() {
 
   async function onReEntryTrade() {
     if (!trade) return;
-    const validErr = validateTradePlan(detailPlan, { skipRrCheck: false }) || orderTypeRuleError(detailPlan.direction, detailPlan.trade_type, asNum(detailPlan.entry), lastPrice);
+    const validErr =
+      validateTradePlan(detailPlan, { skipRrCheck: false }) ||
+      orderTypeRuleError(
+        detailPlan.direction,
+        detailPlan.trade_type,
+        asNum(detailPlan.entry),
+        lastPrice,
+      );
     if (validErr) {
       setPlanError(validErr);
       return;
@@ -263,7 +358,11 @@ export default function TradeDetailPage() {
 
   return (
     <section className="stack-layout" style={{ gap: 14 }}>
-      <p style={{ marginBottom: 0 }}><Link to="/trades" className="minor-text">← BACK TO TRADES</Link></p>
+      <p style={{ marginBottom: 0 }}>
+        <Link to="/trades" className="minor-text">
+          ← BACK TO TRADES
+        </Link>
+      </p>
       {trade.execution_status === "PENDING" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
@@ -273,7 +372,12 @@ export default function TradeDetailPage() {
             onClick={async () => {
               if (!confirm("Cancel this trade?")) return;
               try {
-                const { promise: cp } = NotificationHub.track("cancel_trade", { symbol: trade.symbol, sid: trade.sid || trade.id }, () => api.cancelTrades({ ids: [trade.sid || trade.id] })); await cp;
+                const { promise: cp } = NotificationHub.track(
+                  "cancel_trade",
+                  { symbol: trade.symbol, sid: trade.sid || trade.id },
+                  () => api.cancelTrades({ ids: [trade.sid || trade.id] }),
+                );
+                await cp;
                 window.location.reload();
               } catch (e) {
                 setError(e?.message || "Cancel failed");
@@ -293,7 +397,15 @@ export default function TradeDetailPage() {
             onClick={async () => {
               if (!confirm("Close this trade?")) return;
               try {
-                const { promise: clp } = NotificationHub.track("close_trade", { symbol: trade.symbol, sid: trade.sid || trade.id }, () => api.v2UpdateTrade(trade.sid || trade.id, { execution_status: "CLOSED" })); await clp;
+                const { promise: clp } = NotificationHub.track(
+                  "close_trade",
+                  { symbol: trade.symbol, sid: trade.sid || trade.id },
+                  () =>
+                    api.v2UpdateTrade(trade.sid || trade.id, {
+                      execution_status: "CLOSED",
+                    }),
+                );
+                await clp;
                 window.location.reload();
               } catch (e) {
                 setError(e?.message || "Close failed");
@@ -305,7 +417,9 @@ export default function TradeDetailPage() {
         </div>
       )}
       <div className="panel">
-        <Suspense fallback={<div className="loading-card">Loading Details...</div>}>
+        <Suspense
+          fallback={<div className="loading-card">Loading Details...</div>}
+        >
           <SignalDetailCard
             mode="trade"
             header={header}
@@ -320,8 +434,9 @@ export default function TradeDetailPage() {
               onSave: onUpdateTradePlan,
               onAddTrade: onReEntryTrade,
               showAddSignalButton: false,
-              showSaveButton: !isClosed,
-              viewOnly: isClosed,
+              showSaveButton: !isTerminal,
+              viewOnly: isTerminal,
+              lockTradeFields: isLocked,
               error: planError,
               status: statusUi(trade.execution_status),
               volume: `${trade.volume ?? "-"} lots`,
@@ -338,59 +453,240 @@ export default function TradeDetailPage() {
               entryPrice: asNum(detailPlan.entry) ?? asNum(trade.entry),
               slPrice: asNum(detailPlan.sl) ?? asNum(trade.sl),
               tpPrice: asNum(detailPlan.tp) ?? asNum(trade.tp),
-              onPlanLevelChange: (levelKey, levelValue) => applyPlanChange(levelKey, formatNum3(levelValue)),
+              onPlanLevelChange: (levelKey, levelValue) =>
+                applyPlanChange(levelKey, formatNum3(levelValue)),
               createdAt: trade.created_at,
               openedAt: trade.opened_at,
               closedAt: trade.closed_at,
-              analysisSnapshot: trade?.metadata?.analysis_snapshot || trade?.raw_json?.analysis_snapshot || null,
+              analysisSnapshot:
+                trade?.metadata?.analysis_snapshot ||
+                trade?.raw_json?.analysis_snapshot ||
+                null,
             }}
             metaItems={[
               { label: "Trade SID", value: trade.sid || "-" },
               { label: "Signal SID", value: trade.signal_sid || "-" },
-              { label: "Direction", value: detailPlan.direction || trade.action || "-" },
-              { label: "Order Type", value: detailPlan.trade_type || detailPlan.order_type || "-" },
-              { label: "Strategy", value: detailPlan.strategy || trade.strategy || "-" },
-              { label: "Entry Model", value: detailPlan.entry_model || trade.entry_model || "-" },
-              { label: "Model", value: trade.model || trade.metadata?.model || "-" },
-              { label: "Source", value: trade.source_id || trade.source || "-" },
-              { label: "Profile", value: detailPlan.profile || trade.profile || "-" },
-              { label: "Session", value: detailPlan.session || trade.session_prefix || trade.metadata?.session_prefix || "-" },
+              {
+                label: "Direction",
+                value: detailPlan.direction || trade.action || "-",
+              },
+              {
+                label: "Order Type",
+                value: detailPlan.trade_type || detailPlan.order_type || "-",
+              },
+              {
+                label: "Strategy",
+                value: detailPlan.strategy || trade.strategy || "-",
+              },
+              {
+                label: "Entry Model",
+                value: detailPlan.entry_model || trade.entry_model || "-",
+              },
+              {
+                label: "Model",
+                value: trade.model || trade.metadata?.model || "-",
+              },
+              {
+                label: "Source",
+                value: trade.source_id || trade.source || "-",
+              },
+              {
+                label: "Profile",
+                value: detailPlan.profile || trade.profile || "-",
+              },
+              {
+                label: "Session",
+                value:
+                  detailPlan.session ||
+                  trade.session_prefix ||
+                  trade.metadata?.session_prefix ||
+                  "-",
+              },
               { label: "Entry", value: detailPlan.entry || trade.entry || "-" },
               { label: "TP", value: detailPlan.tp || trade.tp || "-" },
               { label: "SL", value: detailPlan.sl || trade.sl || "-" },
               { label: "RR", value: detailPlan.rr || trade.rr_planned || "-" },
-              { label: "Confidence", value: detailPlan.confidence_pct != null ? `${detailPlan.confidence_pct}%` : detailPlan.confidence_level || "-" },
-              { label: "Risk Level", value: detailPlan.risk_level || trade.metadata?.risk_level || "-" },
-              { label: "Risk %", value: detailPlan.risk_pct != null ? `${detailPlan.risk_pct}%` : "-" },
-              { label: "Risk $", value: detailPlan.risk_money != null ? `$${Number(detailPlan.risk_money).toFixed(2)}` : "-" },
+              {
+                label: "Confidence",
+                value:
+                  detailPlan.confidence_pct != null
+                    ? `${detailPlan.confidence_pct}%`
+                    : detailPlan.confidence_level || "-",
+              },
+              {
+                label: "Risk Level",
+                value:
+                  detailPlan.risk_level || trade.metadata?.risk_level || "-",
+              },
+              {
+                label: "Risk %",
+                value:
+                  detailPlan.risk_pct != null ? `${detailPlan.risk_pct}%` : "-",
+              },
+              {
+                label: "Risk $",
+                value:
+                  detailPlan.risk_money != null
+                    ? `$${Number(detailPlan.risk_money).toFixed(2)}`
+                    : "-",
+              },
               { label: "Invalidation", value: detailPlan.invalidation || "-" },
               { label: "BE Trigger", value: detailPlan.be_trigger || "-" },
               { label: "Est. Bars", value: detailPlan.estimated_bars || "-" },
-              { label: "Status", value: statusUi(trade.execution_status).label },
+              {
+                label: "Status",
+                value: statusUi(trade.execution_status).label,
+              },
               { label: "Broker Ticket", value: brokerTicketOf(trade) },
               { label: "Account", value: trade.account_id || "-" },
               { label: "Volume", value: `${trade.volume ?? "-"} lots` },
-              { label: "Signal TF", value: formatTimeframe(trade.signal_tf || trade.tf || "-") },
-              { label: "Chart TF", value: formatTimeframe(trade.chart_tf || "-") },
-              { label: "Only Signal", value: trade.only_signal != null ? String(trade.only_signal) : "-" },
+              {
+                label: "Signal TF",
+                value: formatTimeframe(trade.signal_tf || trade.tf || "-"),
+              },
+              {
+                label: "Chart TF",
+                value: formatTimeframe(trade.chart_tf || "-"),
+              },
+              {
+                label: "Only Signal",
+                value:
+                  trade.only_signal != null ? String(trade.only_signal) : "-",
+              },
               { label: "Created", value: fDateTime(trade.created_at) },
-              { label: "Entry Condition", value: detailPlan.entry_condition || "-", fullWidth: true },
-              { label: "Exit Condition", value: detailPlan.exit_condition || "-", fullWidth: true },
-              { label: "Trade Decision", value: detailPlan.trade_decision || detailPlan.skip_recommendation || "-" },
-              { label: "Risk Management", value: detailPlan.risk_management || "-" },
-              { label: "Multiple Exits", value: detailPlan.multiple_exits && Object.keys(detailPlan.multiple_exits).length ? JSON.stringify(detailPlan.multiple_exits, null, 2) : "-", fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-              { label: "Partial TPs", value: Array.isArray(detailPlan.partial_tps) && detailPlan.partial_tps.length ? JSON.stringify(detailPlan.partial_tps, null, 2) : "-", fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-              { label: "Checklist", value: Array.isArray(detailPlan.confluence_checklist) && detailPlan.confluence_checklist.length ? JSON.stringify(detailPlan.confluence_checklist, null, 2) : "-", fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-              { label: "Reasons to Skip", value: Array.isArray(detailPlan.reasons_to_skip) && detailPlan.reasons_to_skip.length ? JSON.stringify(detailPlan.reasons_to_skip, null, 2) : "-", fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
-              { label: "Snapshot Files", value: Array.isArray(trade.snapshot_files) && trade.snapshot_files.length ? trade.snapshot_files.join(", ") : Array.isArray(trade.metadata?.snapshot_files) && trade.metadata.snapshot_files.length ? trade.metadata.snapshot_files.join(", ") : "-", fullWidth: true },
-              { label: "AI Analysis", value: detailPlan.ai_full_analysis && Object.keys(detailPlan.ai_full_analysis).length ? JSON.stringify(detailPlan.ai_full_analysis, null, 2) : "-", fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
+              {
+                label: "Entry Condition",
+                value: detailPlan.entry_condition || "-",
+                fullWidth: true,
+              },
+              {
+                label: "Exit Condition",
+                value: detailPlan.exit_condition || "-",
+                fullWidth: true,
+              },
+              {
+                label: "Trade Decision",
+                value:
+                  detailPlan.trade_decision ||
+                  detailPlan.skip_recommendation ||
+                  "-",
+              },
+              {
+                label: "Risk Management",
+                value: detailPlan.risk_management || "-",
+              },
+              {
+                label: "Multiple Exits",
+                value:
+                  detailPlan.multiple_exits &&
+                  Object.keys(detailPlan.multiple_exits).length
+                    ? JSON.stringify(detailPlan.multiple_exits, null, 2)
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
+              {
+                label: "Partial TPs",
+                value:
+                  Array.isArray(detailPlan.partial_tps) &&
+                  detailPlan.partial_tps.length
+                    ? JSON.stringify(detailPlan.partial_tps, null, 2)
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
+              {
+                label: "Checklist",
+                value:
+                  Array.isArray(detailPlan.confluence_checklist) &&
+                  detailPlan.confluence_checklist.length
+                    ? JSON.stringify(detailPlan.confluence_checklist, null, 2)
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
+              {
+                label: "Reasons to Skip",
+                value:
+                  Array.isArray(detailPlan.reasons_to_skip) &&
+                  detailPlan.reasons_to_skip.length
+                    ? JSON.stringify(detailPlan.reasons_to_skip, null, 2)
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
+              {
+                label: "Snapshot Files",
+                value:
+                  Array.isArray(trade.snapshot_files) &&
+                  trade.snapshot_files.length
+                    ? trade.snapshot_files.join(", ")
+                    : Array.isArray(trade.metadata?.snapshot_files) &&
+                        trade.metadata.snapshot_files.length
+                      ? trade.metadata.snapshot_files.join(", ")
+                      : "-",
+                fullWidth: true,
+              },
+              {
+                label: "AI Analysis",
+                value:
+                  detailPlan.ai_full_analysis &&
+                  Object.keys(detailPlan.ai_full_analysis).length
+                    ? JSON.stringify(detailPlan.ai_full_analysis, null, 2)
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
               { label: "Note", value: trade.note || "-", fullWidth: true },
-              { label: "Raw JSON", value: JSON.stringify(trade.raw_json || {}, null, 2), fullWidth: true, valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" } },
+              {
+                label: "Raw JSON",
+                value: JSON.stringify(trade.raw_json || {}, null, 2),
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
             ]}
             history={{
               enabled: true,
-              items: [...events].sort((a, b) => new Date(b.event_time || b.created_at || 0).getTime() - new Date(a.event_time || a.created_at || 0).getTime()),
-              renderItem: (ev, idx) => renderHistoryItem(ev, idx, { formatDateTime: fDateTime, includeTicket: true }),
+              items: [...events].sort(
+                (a, b) =>
+                  new Date(b.event_time || b.created_at || 0).getTime() -
+                  new Date(a.event_time || a.created_at || 0).getTime(),
+              ),
+              renderItem: (ev, idx) =>
+                renderHistoryItem(ev, idx, {
+                  formatDateTime: fDateTime,
+                  includeTicket: true,
+                }),
             }}
           />
         </Suspense>

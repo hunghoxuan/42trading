@@ -302,7 +302,11 @@ export default function TradesPage() {
   // Sync filter when sub-menu (URL param) changes
   useEffect(() => {
     const status = searchParams.get("status") || "FILLED";
-    setFilter((f) => f.execution_status !== status ? { ...f, execution_status: status, page: 1 } : f);
+    setFilter((f) =>
+      f.execution_status !== status
+        ? { ...f, execution_status: status, page: 1 }
+        : f,
+    );
   }, [searchParams]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
@@ -1035,13 +1039,25 @@ export default function TradesPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={listMode === "compact" ? { flex: "0 0 44px", minWidth: 44, overflow: "hidden", minWidth: 150, paddingTop: 40 } : { flex: "0 0 40%" }}
+          style={
+            listMode === "compact"
+              ? {
+                  flex: "0 0 44px",
+                  minWidth: 44,
+                  overflow: "hidden",
+                  minWidth: 150,
+                  paddingTop: 40,
+                }
+              : { flex: "0 0 40%" }
+          }
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setListMode(listMode === "compact" ? "full" : "compact")}
+              onClick={() =>
+                setListMode(listMode === "compact" ? "full" : "compact")
+              }
               title={listMode === "compact" ? "Expand" : "Collapse"}
               style={{
                 width: 28,
@@ -1084,19 +1100,48 @@ export default function TradesPage() {
                         marginBottom: 3,
                         borderRadius: 6,
                         fontSize: 10,
-                        border: isActive ? "1px solid var(--accent)" : "1px solid var(--border)",
-                        background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
+                        border: isActive
+                          ? "1px solid var(--accent)"
+                          : "1px solid var(--border)",
+                        background: isActive
+                          ? "rgba(255,255,255,0.05)"
+                          : "transparent",
                       }}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ fontWeight: 700, fontSize: 10, color: action === "SELL" ? "#ef5350" : "#26a69a" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 10,
+                            color: action === "SELL" ? "#ef5350" : "#26a69a",
+                          }}
+                        >
                           {t.symbol || "-"}
                         </span>
-                        <span style={{ fontWeight: 700, fontSize: 10, color: pnl >= 0 ? "#10b981" : "#ef4444" }}>
-                          {pnl >= 0 ? "+" : ""}{pnl.toFixed(0)}
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 10,
+                            color: pnl >= 0 ? "#10b981" : "#ef4444",
+                          }}
+                        >
+                          {pnl >= 0 ? "+" : ""}
+                          {pnl.toFixed(0)}
                         </span>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          marginTop: 2,
+                        }}
+                      >
                         <span style={{ color: "var(--muted)", fontSize: 9 }}>
                           {t.entry || "-"} → {t.tp || "-"}
                         </span>
@@ -1109,223 +1154,227 @@ export default function TradesPage() {
                 })}
               </div>
             ) : (
-            <table className={`events-table${listMode === "compact" ? " compact-list" : ""}`}>
-              <thead>
-                <tr>
-                  <th style={{ width: 30 }}>
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setSelectedIds((prev) => {
-                          const next = new Set(prev);
-                          rows.forEach((r) => {
-                            if (checked) next.add(tradeKeyOf(r));
-                            else next.delete(tradeKeyOf(r));
+              <table
+                className={`events-table${listMode === "compact" ? " compact-list" : ""}`}
+              >
+                <thead>
+                  <tr>
+                    <th style={{ width: 30 }}>
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            rows.forEach((r) => {
+                              if (checked) next.add(tradeKeyOf(r));
+                              else next.delete(tradeKeyOf(r));
+                            });
+                            return next;
                           });
-                          return next;
-                        });
-                      }}
-                    />
-                  </th>
-                  <th
-                    onClick={() => toggleSort("symbol")}
-                    style={{ cursor: "pointer" }}
-                  >
-                    POSITION{sortMarker("symbol")}
-                  </th>
-                  <th
-                    onClick={() => toggleSort("strategy")}
-                    style={{ cursor: "pointer" }}
-                  >
-                    INFO{sortMarker("strategy")}
-                  </th>
-                  <th
-                    onClick={() => toggleSort("pnl")}
-                    style={{ cursor: "pointer" }}
-                  >
-                    STATUS{sortMarker("pnl")}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && rows.length === 0 ? (
-                  <tr>
-                    <td colSpan="4" className="loading">
-                      Loading trades...
-                    </td>
-                  </tr>
-                ) : sortedRows.length === 0 ? (
-                  <tr>
-                    <td colSpan="4" className="empty-state">
-                      No trades found.
-                    </td>
-                  </tr>
-                ) : (
-                  sortedRows.map((t) => {
-                    const status = statusUi(t.execution_status);
-                    const action = String(
-                      t.action || t.side || "-",
-                    ).toUpperCase();
-                    const actionCls =
-                      action === "BUY" ? "side-buy" : "side-sell";
-                    const strategyLabel = compactStrategy(t);
-                    const rr = calcRr(t);
-                    const acc = accountById.get(String(t.account_id || ""));
-                    const accountName = String(
-                      acc?.name || t.account_id || "-",
-                    );
-                    const brokerName = brokerNameFromAccount(acc);
-                    const pnl =
-                      asNum(t.broker_pnl) ??
-                      asNum(t.pnl_realized) ??
-                      asNum(t.net_pnl) ??
-                      asNum(t.pnl);
-                    const stRaw = String(
-                      t.execution_status || "",
-                    ).toUpperCase();
-                    const showPnl =
-                      stRaw !== "PENDING" && pnl != null && pnl !== 0;
-                    const rrDisplay = asNum(t.rr_planned) ?? rr;
-                    const timeValue = fDateTime(auditTimestampRaw(t));
-                    const isSelected =
-                      tradeKeyOf(selectedTrade) === tradeKeyOf(t);
-                    const flashFields =
-                      changedFields.get(String(t.sid || "").trim()) ||
-                      new Set();
-                    return (
-                      <tr
-                        key={tradeKeyOf(t)}
-                        className={isSelected ? "active" : ""}
-                        onClick={() => {
-                          const k = tradeKeyOf(t);
-                          if (tradeKeyOf(selectedTrade) === k) {
-                            // Deselect — back to list
-                            setSelectedTrade(null);
-                            selectedTradeIdRef.current = "";
-                            navigate("/trades", { replace: true });
-                          } else {
-                            selectedTradeIdRef.current = k;
-                            setSelectedTrade(t);
-                            navigate(`/trades/${k}`, { replace: true });
-                          }
                         }}
-                      >
-                        <td onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={selectedIds.has(tradeKeyOf(t))}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setSelectedIds((prev) => {
-                                const next = new Set(prev);
-                                if (checked) next.add(tradeKeyOf(t));
-                                else next.delete(tradeKeyOf(t));
-                                return next;
-                              });
-                            }}
-                          />
-                        </td>
-                        <td>
-                          <SymbolEntryCell
-                            side={action}
-                            symbol={t.symbol}
-                            orderType={
-                              t.metadata?.order_type || t.order_type || "limit"
+                      />
+                    </th>
+                    <th
+                      onClick={() => toggleSort("symbol")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      POSITION{sortMarker("symbol")}
+                    </th>
+                    <th
+                      onClick={() => toggleSort("strategy")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      INFO{sortMarker("strategy")}
+                    </th>
+                    <th
+                      onClick={() => toggleSort("pnl")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      STATUS{sortMarker("pnl")}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && rows.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="loading">
+                        Loading trades...
+                      </td>
+                    </tr>
+                  ) : sortedRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="empty-state">
+                        No trades found.
+                      </td>
+                    </tr>
+                  ) : (
+                    sortedRows.map((t) => {
+                      const status = statusUi(t.execution_status);
+                      const action = String(
+                        t.action || t.side || "-",
+                      ).toUpperCase();
+                      const actionCls =
+                        action === "BUY" ? "side-buy" : "side-sell";
+                      const strategyLabel = compactStrategy(t);
+                      const rr = calcRr(t);
+                      const acc = accountById.get(String(t.account_id || ""));
+                      const accountName = String(
+                        acc?.name || t.account_id || "-",
+                      );
+                      const brokerName = brokerNameFromAccount(acc);
+                      const pnl =
+                        asNum(t.broker_pnl) ??
+                        asNum(t.pnl_realized) ??
+                        asNum(t.net_pnl) ??
+                        asNum(t.pnl);
+                      const stRaw = String(
+                        t.execution_status || "",
+                      ).toUpperCase();
+                      const showPnl =
+                        stRaw !== "PENDING" && pnl != null && pnl !== 0;
+                      const rrDisplay = asNum(t.rr_planned) ?? rr;
+                      const timeValue = fDateTime(auditTimestampRaw(t));
+                      const isSelected =
+                        tradeKeyOf(selectedTrade) === tradeKeyOf(t);
+                      const flashFields =
+                        changedFields.get(String(t.sid || "").trim()) ||
+                        new Set();
+                      return (
+                        <tr
+                          key={tradeKeyOf(t)}
+                          className={isSelected ? "active" : ""}
+                          onClick={() => {
+                            const k = tradeKeyOf(t);
+                            if (tradeKeyOf(selectedTrade) === k) {
+                              // Deselect — back to list
+                              setSelectedTrade(null);
+                              selectedTradeIdRef.current = "";
+                              navigate("/trades", { replace: true });
+                            } else {
+                              selectedTradeIdRef.current = k;
+                              setSelectedTrade(t);
+                              navigate(`/trades/${k}`, { replace: true });
                             }
-                            entry={t.entry || "-"}
-                            tp={t.tp || "-"}
-                            sl={t.sl || "-"}
-                            rr={rrDisplay}
-                            status={t.execution_status}
-                          />
-                        </td>
-                        <td>
-                          <PositionAuditCell
-                            source={displaySource(t)}
-                            strategy={strategyLabel}
-                            timeText={timeValue}
-                            sid={String(t.sid || "-")}
-                            brokerId={brokerTicketOf(t)}
-                            confidence={
-                              t.confidence_pct ||
-                              t.raw_json?.confidence_pct ||
-                              t.raw_json?.confidence
-                            }
-                            riskManagement={
-                              t.raw_json?.risk_management ||
-                              t.metadata?.risk_management
-                            }
-                            riskPct={
-                              asNum(t.risk_pct_planned) ??
-                              asNum(t.metadata?.risk_pct) ??
-                              asNum(t.raw_json?.risk_pct) ??
-                              asNum(t.raw_json?.riskPct) ??
-                              asNum(t.volume)
-                            }
-                          />
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <StatusPnlCell
-                            status={t.execution_status}
-                            hideStatus={true}
-                            statusNode={
-                              <span
-                                className={`badge ${status.cls}`}
-                                style={{ cursor: "pointer" }}
-                                title="Edit trade status / PnL"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openTradeEditModal(t);
-                                }}
-                              >
-                                {status.label}
-                              </span>
-                            }
-                            pnl={pnl}
-                            margin={tradeRiskSize(t)}
-                            tpPnl={
-                              stRaw === "CLOSED" ||
-                              stRaw === "TP" ||
-                              stRaw === "SL"
-                                ? t.entry_exec || t.entry
-                                : t.broker_tp_pnl
-                            }
-                            slPnl={
-                              stRaw === "CLOSED" ||
-                              stRaw === "TP" ||
-                              stRaw === "SL"
-                                ? t.last_price || t.tp
-                                : t.broker_sl_pnl
-                            }
-                            showFilledDetails={
-                              stRaw === "OPEN" || stRaw === "FILLED"
-                            }
-                            brokerVolume={
-                              asNum(t.broker_volume) ??
-                              asNum(t.metadata?.broker_data?.volume) ??
-                              "-"
-                            }
-                            brokerLots={
-                              asNum(t.broker_lots) ??
-                              asNum(t.metadata?.broker_data?.lots) ??
-                              "-"
-                            }
-                            brokerPips={
-                              asNum(t.broker_pips) ??
-                              asNum(t.metadata?.broker_data?.pips) ??
-                              "-"
-                            }
-                            flashFields={flashFields}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                          }}
+                        >
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(tradeKeyOf(t))}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(tradeKeyOf(t));
+                                  else next.delete(tradeKeyOf(t));
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <SymbolEntryCell
+                              side={action}
+                              symbol={t.symbol}
+                              orderType={
+                                t.metadata?.order_type ||
+                                t.order_type ||
+                                "limit"
+                              }
+                              entry={t.entry || "-"}
+                              tp={t.tp || "-"}
+                              sl={t.sl || "-"}
+                              rr={rrDisplay}
+                              status={t.execution_status}
+                            />
+                          </td>
+                          <td>
+                            <PositionAuditCell
+                              source={displaySource(t)}
+                              strategy={strategyLabel}
+                              timeText={timeValue}
+                              sid={String(t.sid || "-")}
+                              brokerId={brokerTicketOf(t)}
+                              confidence={
+                                t.confidence_pct ||
+                                t.raw_json?.confidence_pct ||
+                                t.raw_json?.confidence
+                              }
+                              riskManagement={
+                                t.raw_json?.risk_management ||
+                                t.metadata?.risk_management
+                              }
+                              riskPct={
+                                asNum(t.risk_pct_planned) ??
+                                asNum(t.metadata?.risk_pct) ??
+                                asNum(t.raw_json?.risk_pct) ??
+                                asNum(t.raw_json?.riskPct) ??
+                                asNum(t.volume)
+                              }
+                            />
+                          </td>
+                          <td style={{ textAlign: "right" }}>
+                            <StatusPnlCell
+                              status={t.execution_status}
+                              hideStatus={true}
+                              statusNode={
+                                <span
+                                  className={`badge ${status.cls}`}
+                                  style={{ cursor: "pointer" }}
+                                  title="Edit trade status / PnL"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openTradeEditModal(t);
+                                  }}
+                                >
+                                  {status.label}
+                                </span>
+                              }
+                              pnl={pnl}
+                              margin={tradeRiskSize(t)}
+                              tpPnl={
+                                stRaw === "CLOSED" ||
+                                stRaw === "TP" ||
+                                stRaw === "SL"
+                                  ? t.entry_exec || t.entry
+                                  : t.broker_tp_pnl
+                              }
+                              slPnl={
+                                stRaw === "CLOSED" ||
+                                stRaw === "TP" ||
+                                stRaw === "SL"
+                                  ? t.last_price || t.tp
+                                  : t.broker_sl_pnl
+                              }
+                              showFilledDetails={
+                                stRaw === "OPEN" || stRaw === "FILLED"
+                              }
+                              brokerVolume={
+                                asNum(t.broker_volume) ??
+                                asNum(t.metadata?.broker_data?.volume) ??
+                                "-"
+                              }
+                              brokerLots={
+                                asNum(t.broker_lots) ??
+                                asNum(t.metadata?.broker_data?.lots) ??
+                                "-"
+                              }
+                              brokerPips={
+                                asNum(t.broker_pips) ??
+                                asNum(t.metadata?.broker_data?.pips) ??
+                                "-"
+                              }
+                              flashFields={flashFields}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             )}
           </div>
         </div>
@@ -1334,7 +1383,6 @@ export default function TradesPage() {
           className="logs-detail-pane component-frozen-wrap"
           style={{ flex: 1, minWidth: 0 }}
         >
-
           {editBusy && (
             <div className="frozen-overlay">
               <div className="spinner" />
@@ -1417,15 +1465,12 @@ export default function TradesPage() {
                       setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
                     onAddTrade: onReEntryTrade,
                     showAddSignalButton: false,
-                    showSaveButton: ![
-                      "FILLED",
-                      "CLOSED",
-                      "CANCELLED",
-                      "TP",
-                      "SL",
-                      "FAIL",
-                      "EXPIRED",
-                    ].includes(
+                    showSaveButton: !["TP", "SL", "FAIL", "EXPIRED"].includes(
+                      String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase(),
+                    ),
+                    lockTradeFields: ["FILLED", "CLOSED", "CANCELLED"].includes(
                       String(
                         selectedTrade.execution_status || "",
                       ).toUpperCase(),
@@ -1440,11 +1485,18 @@ export default function TradesPage() {
                         ? async () => {
                             if (!confirm("Cancel this trade?")) return;
                             try {
-                              const { promise: cancelPromise } = NotificationHub.track(
-                                "cancel_trade",
-                                { symbol: selectedTrade.symbol || "", sid: selectedTrade.sid || selectedTrade.id },
-                                () => api.cancelTrades({ q: selectedTrade.sid || selectedTrade.id }),
-                              );
+                              const { promise: cancelPromise } =
+                                NotificationHub.track(
+                                  "cancel_trade",
+                                  {
+                                    symbol: selectedTrade.symbol || "",
+                                    sid: selectedTrade.sid || selectedTrade.id,
+                                  },
+                                  () =>
+                                    api.cancelTrades({
+                                      q: selectedTrade.sid || selectedTrade.id,
+                                    }),
+                                );
                               await cancelPromise;
                               await loadTrades();
                             } catch (e) {
@@ -1459,11 +1511,19 @@ export default function TradesPage() {
                         ? async () => {
                             if (!confirm("Close this trade?")) return;
                             try {
-                              const { promise: closePromise } = NotificationHub.track(
-                                "close_trade",
-                                { symbol: selectedTrade.symbol || "", sid: selectedTrade.sid || selectedTrade.id },
-                                () => api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" }),
-                              );
+                              const { promise: closePromise } =
+                                NotificationHub.track(
+                                  "close_trade",
+                                  {
+                                    symbol: selectedTrade.symbol || "",
+                                    sid: selectedTrade.sid || selectedTrade.id,
+                                  },
+                                  () =>
+                                    api.v2UpdateTrade(
+                                      selectedTrade.sid || selectedTrade.id,
+                                      { execution_status: "CLOSED" },
+                                    ),
+                                );
                               await closePromise;
                               await loadTrades();
                             } catch (e) {
@@ -1471,15 +1531,7 @@ export default function TradesPage() {
                             }
                           }
                         : null,
-                    viewOnly: [
-                      "FILLED",
-                      "CLOSED",
-                      "CANCELLED",
-                      "TP",
-                      "SL",
-                      "FAIL",
-                      "EXPIRED",
-                    ].includes(
+                    viewOnly: ["TP", "SL", "FAIL", "EXPIRED"].includes(
                       String(
                         selectedTrade.execution_status || "",
                       ).toUpperCase(),
