@@ -1046,7 +1046,7 @@ export default function TradesPage() {
                 fontWeight: 700,
               }}
             >
-              {"<<"}
+              {listMode === "compact" ? ">>" : "<<"}
             </button>
           </div>
           {loading && (
