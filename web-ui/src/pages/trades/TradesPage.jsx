@@ -1030,14 +1030,14 @@ export default function TradesPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={listMode === "compact" ? { width: "10%", minWidth: 120 } : listMode === "full" ? {} : { display: "none" }}
+          style={listMode === "compact" ? { flex: "0 0 44px", minWidth: 44, overflow: "hidden" } : { flex: "0 0 40%" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setListMode("compact")}
-              title="Compact list"
+              onClick={() => setListMode(listMode === "compact" ? "full" : "compact")}
+              title={listMode === "compact" ? "Expand" : "Collapse"}
               style={{
                 width: 28,
                 height: 28,
@@ -1279,29 +1279,9 @@ export default function TradesPage() {
 
         <div
           className="logs-detail-pane component-frozen-wrap"
-          style={listMode === "full" ? {} : { gridColumn: "1 / -1" }}
+          style={{ flex: 1, minWidth: 0 }}
         >
-          {listMode === "compact" && (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setListMode("full")}
-              title="Expand list"
-              style={{
-                position: "absolute",
-                top: 8,
-                left: 8,
-                zIndex: 2,
-                width: 28,
-                height: 28,
-                padding: 0,
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {">>"}
-            </button>
-          )}
+
           {editBusy && (
             <div className="frozen-overlay">
               <div className="spinner" />
