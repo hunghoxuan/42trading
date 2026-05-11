@@ -23,8 +23,12 @@ import {
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
-  { value: "NEW", label: "NEW" },
+  { value: "", label: "ALL STATUSES" },
+  { value: "PENDING", label: "PENDING" },
+  { value: "FILLED", label: "FILLED" },
+  { value: "CLOSED", label: "CLOSED" },
   { value: "CANCELLED", label: "CANCELLED" },
+  { value: "ERROR", label: "ERROR" },
 ];
 const BULK_ACTIONS = [
   { value: "", label: "BULK ACTION..." },
