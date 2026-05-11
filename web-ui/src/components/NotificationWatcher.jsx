@@ -4,6 +4,8 @@ import { playSound, SoundEvents } from "../utils/SoundManager";
 import { showToast } from "./ToastContainer";
 import { NotificationHub } from "../services/NotificationHub";
 
+window.__tickerFilledTrades = window.__tickerFilledTrades || [];
+
 /**
  * Global component: SSE stream listener for real-time notifications.
  * Dispatches events to: browser notification, console log, ticker, page refresh, sound.
@@ -123,6 +125,43 @@ export default function NotificationWatcher() {
       try {
         NotificationHub.emit(p.event, p.sub_type || "", p);
       } catch {}
+
+      // Right ticker: keep FILLED trades (OPEN/FILLED) from broker sync
+      const eventName = String(p.event || "").toUpperCase();
+      const dataList = Array.isArray(p.data) ? p.data : [];
+      if (eventName === "BROKER_SYNC" && dataList.length) {
+        const existing = new Map(
+          (window.__tickerFilledTrades || []).map((t) => [String(t.sid), t]),
+        );
+        let changed = false;
+        for (const row of dataList) {
+          const sid = String(row?.sid || "").trim();
+          if (!sid) continue;
+          const status = String(row?.execution_status || "").trim().toUpperCase();
+          const isFilled = status === "OPEN" || status === "FILLED";
+          if (!isFilled) {
+            if (existing.has(sid)) { existing.delete(sid); changed = true; }
+            continue;
+          }
+          const next = {
+            sid,
+            symbol: String(row?.symbol || "").toUpperCase(),
+            pnl: row?.pnl_realized ?? row?.broker_pnl ?? row?.pnl ?? 0,
+            ts: Date.now(),
+          };
+          const prev = existing.get(sid);
+          if (!prev || prev.symbol !== next.symbol || Number(prev.pnl) !== Number(next.pnl)) {
+            existing.set(sid, next);
+            changed = true;
+          }
+        }
+        if (changed) {
+          window.__tickerFilledTrades = [...existing.values()]
+            .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
+            .slice(0, 12);
+          window.dispatchEvent(new CustomEvent("ticker-update"));
+        }
+      }
     } catch (e) {
       console.warn("[NotificationWatcher] Failed to handle event:", e);
     }
