@@ -2173,7 +2173,7 @@ export default function ChartSnapshotsPage() {
   const jsonConfigText = useMemo(() => {
     const payload = buildTemplateConfigPayload(cfg, guideUserDraft, schemaUserDraft);
     return JSON.stringify(payload, null, 2);
-  }, [cfg, guideDraft]);
+  }, [cfg, guideUserDraft]);
   const widgetTfs = useMemo(() => {
     const base = [
       ...new Set(
