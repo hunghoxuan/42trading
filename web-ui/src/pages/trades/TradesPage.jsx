@@ -1057,6 +1057,48 @@ export default function TradesPage() {
           )}
           {error ? <div className="error">{error}</div> : null}
           <div className="events-table-wrap">
+            {listMode === "compact" ? (
+              <div style={{ padding: 4, overflow: "auto", height: "100%" }}>
+                {sortedRows.map((t) => {
+                  const pnl = Number(t.pnl_realized || t.broker_pnl || 0);
+                  const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
+                  return (
+                    <div
+                      key={t.sid || t.id}
+                      onClick={() => {
+                        const k = tradeKeyOf(t);
+                        selectedTradeIdRef.current = k;
+                        setSelectedTrade(t);
+                        navigate(`/trades/${k}`, { replace: true });
+                      }}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "3px 6px",
+                        marginBottom: 2,
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
+                      }}
+                    >
+                      <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                        {t.symbol || "-"}
+                      </span>
+                      <span style={{
+                        fontWeight: 700,
+                        marginLeft: 6,
+                        color: pnl >= 0 ? "#10b981" : "#ef4444",
+                        whiteSpace: "nowrap",
+                      }}>
+                        {pnl >= 0 ? "+" : ""}{pnl.toFixed(0)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <table className={`events-table${listMode === "compact" ? " compact-list" : ""}`}>
               <thead>
                 <tr>
@@ -1274,6 +1316,7 @@ export default function TradesPage() {
                 )}
               </tbody>
             </table>
+            )}
           </div>
         </div>
 

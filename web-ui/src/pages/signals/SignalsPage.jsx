@@ -799,13 +799,13 @@ export default function SignalsPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={listMode === "compact" ? { width: "10%", minWidth: 120 } : listMode === "full" ? {} : { display: "none" }}
+          style={listMode === "compact" ? { flex: "0 0 180px", minWidth: 180, overflow: "hidden" } : { flex: "0 0 40%" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setListMode("compact")}
+              onClick={() => setListMode(listMode === "compact" ? "full" : "compact")}
               title="Compact list"
               style={{
                 width: 28,
@@ -815,7 +815,7 @@ export default function SignalsPage() {
                 fontWeight: 700,
               }}
             >
-              {"<<"}
+              {listMode === "compact" ? ">>" : "<<"}
             </button>
           </div>
           {loading && (
@@ -831,6 +831,48 @@ export default function SignalsPage() {
             </div>
           ) : null}
           <div className="events-table-wrap">
+            {listMode === "compact" ? (
+              <div style={{ padding: 4, overflow: "auto", height: "100%" }}>
+                {sortedRows.map((t) => {
+                  const ref = signalRefOf(t);
+                  const isActive = signalRefOf(selectedSignal) === ref;
+                  return (
+                    <div
+                      key={ref}
+                      onClick={() => {
+                        selectedSignalIdRef.current = ref;
+                        setSelectedSignal(t);
+                        navigate(`/signals/${ref}`, { replace: true });
+                      }}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "3px 6px",
+                        marginBottom: 2,
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
+                      }}
+                    >
+                      <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                        {t.symbol || "-"}
+                      </span>
+                      <span style={{
+                        fontWeight: 700,
+                        marginLeft: 6,
+                        fontSize: 10,
+                        color: String(t.action || t.side || "").toUpperCase() === "SELL" ? "#ef4444" : "#10b981",
+                        whiteSpace: "nowrap",
+                      }}>
+                        {String(t.action || t.side || "-").toUpperCase().charAt(0)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <table className={`events-table${listMode === "compact" ? " compact-list" : ""}`}>
               <thead>
                 <tr>
@@ -1033,34 +1075,15 @@ export default function SignalsPage() {
                 )}
               </tbody>
             </table>
+            )}
           </div>
         </div>
 
         <div
           className="logs-detail-pane component-frozen-wrap"
-          style={listMode === "full" ? {} : { gridColumn: "1 / -1" }}
+          style={listMode === "full" ? {} : { flex: 1, minWidth: 0 }}
         >
-          {listMode === "compact" && (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setListMode("full")}
-              title="Expand list"
-              style={{
-                position: "absolute",
-                top: 8,
-                left: 8,
-                zIndex: 2,
-                width: 28,
-                height: 28,
-                padding: 0,
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {">>"}
-            </button>
-          )}
+
           {(detailPlanBusy.save ||
             detailPlanBusy.trade ||
             detailPlanBusy.signal) && (
