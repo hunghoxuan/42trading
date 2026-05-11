@@ -1030,7 +1030,7 @@ export default function TradesPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={listMode === "compact" ? { width: "10%", minWidth: 120 } : listMode === "full" ? {} : { display: "none" }}
+          style={listMode === "compact" ? { flex: "0 0 72px", minWidth: 72, overflow: "hidden" } : listMode === "full" ? {} : { display: "none" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
@@ -1280,7 +1280,7 @@ export default function TradesPage() {
 
         <div
           className="logs-detail-pane component-frozen-wrap"
-          style={listMode === "full" ? {} : { gridColumn: "1 / -1" }}
+          style={listMode === "full" ? {} : { flex: 1, minWidth: 0 }}
         >
           {listMode === "compact" && (
             <button
