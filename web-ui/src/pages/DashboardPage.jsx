@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { showDateTime, sortTimeframes } from "../utils/format";
-import { AdvancedOrderPanel } from "../components/AdvancedOrderPanel";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
@@ -135,8 +134,7 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
-  const [showAdvancedOrder, setShowAdvancedOrder] = useState(false);
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
+    const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
   const [calendarData, setCalendarData] = useState(null);
   const [filters, setFilters] = useState({
@@ -212,7 +210,7 @@ export default function DashboardPage() {
           Last refreshed: {lastRefreshAt ? showDateTime(lastRefreshAt) : "-"} (auto {Math.round(AUTO_REFRESH_MS/1000)}s)
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18, alignItems: 'start' }} className="dashboard-main-grid">
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 20%', gap: 18, alignItems: 'start' }} className="dashboard-main-grid">
         <div className="stack-layout" style={{ gap: 18 }}>
       {/* Heartbeat cards removed per request, info moved to Accounts table */}
 
@@ -364,8 +362,9 @@ export default function DashboardPage() {
                   const pnl = item ? Number(item.pnl || item.pnl_money || 0) : null;
                   cells.push(
                     <div key={d} style={{
-                      padding: '2px', borderRadius: 3, fontSize: 9,
-                      background: pnl != null ? (pnl > 0 ? 'rgba(38,166,154,0.15)' : pnl < 0 ? 'rgba(239,83,80,0.15)' : 'transparent') : 'transparent',
+                      padding: '3px', borderRadius: 4, fontSize: 9,
+                      border: pnl != null ? (pnl > 0 ? '1.5px solid rgba(38,166,154,0.5)' : pnl < 0 ? '1.5px solid rgba(239,83,80,0.5)' : '1px solid var(--border)') : '1px solid transparent',
+                      background: 'transparent',
                       cursor: pnl != null ? 'pointer' : 'default',
                     }} title={pnl != null ? `${dateStr}: $${pnl.toFixed(2)}` : dateStr}>
                       <div style={{ fontWeight: 600 }}>{d}</div>
@@ -382,16 +381,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Advanced Order — hidden by default */}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="secondary-button" style={{ fontSize: 10, padding: '2px 8px' }}
-              onClick={() => setShowAdvancedOrder(v => !v)}>
-              {showAdvancedOrder ? '▼ Hide' : '▶'} Advanced Order
-            </button>
-          </div>
-          {showAdvancedOrder && (
-            <AdvancedOrderPanel accountId={filters.account_id} initialSymbol={filters.symbol} />
-          )}
+
         </div>
       </div>
     </div>

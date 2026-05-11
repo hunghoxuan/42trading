@@ -4821,14 +4821,7 @@ export default function ChartSnapshotsPage() {
               marginTop: "auto",
             }}
           >
-            <div
-              className="snapshot-gallery-head-v2"
-              style={{ marginBottom: 6 }}
-            >
-              <span className="panel-label" style={{ margin: 0 }}>
-                Related Pending / Filled / New
-              </span>
-            </div>
+
             <div
               className="snapshot-activity-list-v4"
               style={{ flex: 1, overflowY: "auto" }}
@@ -4847,7 +4840,8 @@ export default function ChartSnapshotsPage() {
                     style={{ cursor: "pointer" }}
                     onClick={() => {
                       const ref = x.sid || x.id;
-                      if (x.kind === "trade") navigate(`/trades/${ref}`);
+                      const k = String(x.kind || "").toUpperCase();
+                      if (k === "TRADE" || k === "trade") navigate(`/trades/${ref}`);
                       else navigate(`/signals/${ref}`);
                     }}
                   >
