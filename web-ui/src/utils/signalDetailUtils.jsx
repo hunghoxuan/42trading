@@ -510,6 +510,30 @@ export function extractTradePlanFromTrade(trade = {}) {
         : Array.isArray(plan.reasons_to_skip)
           ? plan.reasons_to_skip
         : [],
+    session: String(
+      trade.session_prefix ||
+        meta.session_prefix ||
+        raw.session_prefix ||
+        plan.session ||
+        "",
+    ),
+    multiple_exits: plan.multiple_exits || raw.multiple_exits || {},
+    risk_level: String(
+      plan.risk_level || raw.risk_level || meta.risk_level || "",
+    ),
+    confidence_level: String(
+      plan.confidence_level || raw.confidence_level || meta.confidence_level || "",
+    ),
+    trade_decision: String(
+      plan.trade_decision ||
+        plan.position_management?.trade_decision ||
+        raw.trade_decision ||
+        "",
+    ),
+    ai_full_analysis: plan.ai_full_analysis || raw.ai_full_analysis || {},
+    order_type: String(
+      plan.order_type || raw.order_type || meta.order_type || "limit",
+    ),
   };
 }
 
