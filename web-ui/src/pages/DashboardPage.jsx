@@ -12,7 +12,9 @@ const RANGE_OPTIONS = [
   { val: "month", lab: "This Month" },
   { val: "year", lab: "This Year" },
 ];
-const AUTO_REFRESH_MS = Number(localStorage.getItem("tvbridge_refresh_ms") || 10000);
+const AUTO_REFRESH_MS = Number(
+  localStorage.getItem("tvbridge_refresh_ms") || 10000,
+);
 
 const PERIOD_DISPLAY = [
   { key: "all", lab: "All times" },
@@ -25,7 +27,10 @@ const PERIOD_DISPLAY = [
 function asMoney(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "0.00";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function asMoneySigned(v) {
@@ -71,7 +76,7 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
 
   const toggleSort = (key) => {
     if (sortKey === key) {
-      setSortDir(prev => prev === "ASC" ? "DESC" : "ASC");
+      setSortDir((prev) => (prev === "ASC" ? "DESC" : "ASC"));
     } else {
       setSortKey(key);
       setSortDir("DESC");
@@ -80,10 +85,16 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
 
   const sortedRows = [...rows].sort((a, b) => {
     let va, vb;
-    if (sortKey === "Name") { va = String(a.key); vb = String(b.key); }
-    else if (sortKey === "WR") { va = a.win_rate; vb = b.win_rate; }
-    else if (sortKey === "PnL") { va = a.pnl_total; vb = b.pnl_total; }
-    else return 0;
+    if (sortKey === "Name") {
+      va = String(a.key);
+      vb = String(b.key);
+    } else if (sortKey === "WR") {
+      va = a.win_rate;
+      vb = b.win_rate;
+    } else if (sortKey === "PnL") {
+      va = a.pnl_total;
+      vb = b.pnl_total;
+    } else return 0;
 
     if (va === vb) return 0;
     const res = va > vb ? 1 : -1;
@@ -97,30 +108,142 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
 
   return (
     <div className="panel fadeIn">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <div className="panel-label" style={{ margin: 0 }}>{rows.length} {noun.toUpperCase()}</div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "16px",
+        }}
+      >
+        <div className="panel-label" style={{ margin: 0 }}>
+          {rows.length} {noun.toUpperCase()}
+        </div>
       </div>
       {rows.length === 0 ? (
         <div className="minor-text">No data.</div>
       ) : (
         <div className="mini-table">
-          <div className="mini-table-head wide" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '8px', marginBottom: '8px', background: 'transparent', display: 'flex', gap: '12px' }}>
-            <span onClick={() => toggleSort("Name")} style={{ flex: '2.5', fontSize: '10px', fontWeight: 800, color: 'var(--muted)', cursor: 'pointer' }}>NAME{sortMarker("Name")}</span>
-            <span onClick={() => toggleSort("WR")} style={{ flex: '1.8', textAlign: 'right', fontSize: '10px', fontWeight: 800, color: 'var(--muted)', cursor: 'pointer' }}>WR% (W/L){sortMarker("WR")}</span>
-            <span onClick={() => toggleSort("PnL")} style={{ flex: '1.5', textAlign: 'right', fontSize: '10px', fontWeight: 800, color: 'var(--muted)', cursor: 'pointer' }}>PNL{sortMarker("PnL")}</span>
-            <span onClick={() => toggleSort("RR")} style={{ flex: '1', textAlign: 'right', fontSize: '10px', fontWeight: 800, color: 'var(--muted)', cursor: 'pointer' }}>RR{sortMarker("RR")}</span>
+          <div
+            className="mini-table-head wide"
+            style={{
+              borderBottom: "1px solid var(--border)",
+              paddingBottom: "8px",
+              marginBottom: "8px",
+              background: "transparent",
+              display: "flex",
+              gap: "12px",
+            }}
+          >
+            <span
+              onClick={() => toggleSort("Name")}
+              style={{
+                flex: "2.5",
+                fontSize: "10px",
+                fontWeight: 800,
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              NAME{sortMarker("Name")}
+            </span>
+            <span
+              onClick={() => toggleSort("WR")}
+              style={{
+                flex: "1.8",
+                textAlign: "right",
+                fontSize: "10px",
+                fontWeight: 800,
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              WR% (W/L){sortMarker("WR")}
+            </span>
+            <span
+              onClick={() => toggleSort("PnL")}
+              style={{
+                flex: "1.5",
+                textAlign: "right",
+                fontSize: "10px",
+                fontWeight: 800,
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              PNL{sortMarker("PnL")}
+            </span>
+            <span
+              onClick={() => toggleSort("RR")}
+              style={{
+                flex: "1",
+                textAlign: "right",
+                fontSize: "10px",
+                fontWeight: 800,
+                color: "var(--muted)",
+                cursor: "pointer",
+              }}
+            >
+              RR{sortMarker("RR")}
+            </span>
           </div>
           {sortedRows.map((r) => (
-            <div className="mini-table-row wide" key={r.key} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <span className="mini-name" style={{ flex: '2.5', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.key}>
+            <div
+              className="mini-table-row wide"
+              key={r.key}
+              style={{
+                padding: "6px 0",
+                borderBottom: "1px solid var(--border)",
+                display: "flex",
+                gap: "12px",
+                alignItems: "center",
+              }}
+            >
+              <span
+                className="mini-name"
+                style={{
+                  flex: "2.5",
+                  fontWeight: 700,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+                title={r.key}
+              >
                 {nameFormatter ? nameFormatter(r.key, r) : r.key}
               </span>
-              <span style={{ flex: '1.8', textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <span
+                style={{
+                  flex: "1.8",
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 <span style={{ fontWeight: 700 }}>{asPct(r.win_rate)}</span>
-                <span className="minor-text" style={{ fontSize: '10px', marginLeft: '4px' }}>{r.wins}/{r.losses}</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: "10px", marginLeft: "4px" }}
+                >
+                  {r.wins}/{r.losses}
+                </span>
               </span>
-              <span style={{ flex: '1.5', textAlign: 'right' }} className={moneyClass(r.pnl_total)}>{asMoneySigned(r.pnl_total)}</span>
-              <span style={{ flex: '1', textAlign: 'right', fontSize: '10px', fontWeight: 700 }} className={moneyClass(r.rr_total)}>{asRR(r.rr_total)}</span>
+              <span
+                style={{ flex: "1.5", textAlign: "right" }}
+                className={moneyClass(r.pnl_total)}
+              >
+                {asMoneySigned(r.pnl_total)}
+              </span>
+              <span
+                style={{
+                  flex: "1",
+                  textAlign: "right",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                }}
+                className={moneyClass(r.rr_total)}
+              >
+                {asRR(r.rr_total)}
+              </span>
             </div>
           ))}
         </div>
@@ -134,8 +257,12 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
-    const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
-  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(() =>
+    new Date().getMonth(),
+  );
+  const [calendarYear, setCalendarYear] = useState(() =>
+    new Date().getFullYear(),
+  );
   const [calendarData, setCalendarData] = useState(null);
   const [filters, setFilters] = useState({
     account_id: "",
@@ -155,7 +282,7 @@ export default function DashboardPage() {
     try {
       const [resp, accs] = await Promise.all([
         api.dashboardAdvanced(filters),
-        api.v2Accounts()
+        api.v2Accounts(),
       ]);
       setData(resp);
       setAccounts(Array.isArray(accs?.items) ? accs.items : []);
@@ -170,221 +297,564 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-  }, [filters.account_id, filters.symbol, filters.source, filters.entry_model, filters.direction, filters.chart_tf, filters.signal_tf, filters.range]);
+  }, [
+    filters.account_id,
+    filters.symbol,
+    filters.source,
+    filters.entry_model,
+    filters.direction,
+    filters.chart_tf,
+    filters.signal_tf,
+    filters.range,
+  ]);
 
   useEffect(() => {
     const t = setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible"
+      )
+        return;
       load();
     }, AUTO_REFRESH_MS);
     return () => clearInterval(t);
-  }, [filters.account_id, filters.symbol, filters.source, filters.entry_model, filters.direction, filters.chart_tf, filters.signal_tf, filters.range]);
+  }, [
+    filters.account_id,
+    filters.symbol,
+    filters.source,
+    filters.entry_model,
+    filters.direction,
+    filters.chart_tf,
+    filters.signal_tf,
+    filters.range,
+  ]);
 
   useEffect(() => {
-    api.dashboardSeries("month", filters.user_id).then((res) => {
-      if (res?.ok && Array.isArray(res?.series)) {
+    api
+      .dashboardSeries("month")
+      .then((res) => {
         const map = {};
-        res.series.forEach((item) => {
-          map[String(item.date || item.day || "").slice(0, 10)] = item;
-        });
+        if (res?.ok && Array.isArray(res?.series)) {
+          res.series.forEach((item) => {
+            const d = String(item.date || item.day || "").slice(0, 10);
+            if (d) map[d] = item;
+          });
+        }
         setCalendarData(map);
-      }
-    }).catch(() => {});
-  }, [filters.user_id, filters.account_id]);
+      })
+      .catch(() => setCalendarData({}));
+  }, []);
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="loading">Loading dashboard...</div>;
 
   const m = data.metrics || {};
   const periodTotals = data.period_totals || {};
-  const top = data.top_winrate || { symbols: [], entry_models: [], accounts: [] };
+  const top = data.top_winrate || {
+    symbols: [],
+    entry_models: [],
+    accounts: [],
+  };
   const f = data.filters || {};
-  const accountRows = Array.isArray(data.accounts_summary) ? data.accounts_summary : [];
-  const accountNameById = new Map(accountRows.map((a) => [String(a.account_id || ""), String(a.name || a.account_id || "")]));
+  const accountRows = Array.isArray(data.accounts_summary)
+    ? data.accounts_summary
+    : [];
+  const accountNameById = new Map(
+    accountRows.map((a) => [
+      String(a.account_id || ""),
+      String(a.name || a.account_id || ""),
+    ]),
+  );
 
   return (
     <section className="stack-layout fadeIn">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <h2 className="page-title" style={{ margin: 0 }}>Dashboard</h2>
-        <span className="minor-text" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-          Last refreshed: {lastRefreshAt ? showDateTime(lastRefreshAt) : "-"} (auto {Math.round(AUTO_REFRESH_MS/1000)}s)
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <h2 className="page-title" style={{ margin: 0 }}>
+          Dashboard
+        </h2>
+        <span
+          className="minor-text"
+          style={{ textAlign: "right", whiteSpace: "nowrap" }}
+        >
+          Last refreshed: {lastRefreshAt ? showDateTime(lastRefreshAt) : "-"}{" "}
+          (auto {Math.round(AUTO_REFRESH_MS / 1000)}s)
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 20%', gap: 18, alignItems: 'start' }} className="dashboard-main-grid">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 20%",
+          gap: 18,
+          alignItems: "start",
+        }}
+        className="dashboard-main-grid"
+      >
         <div className="stack-layout" style={{ gap: 18 }}>
-      {/* Heartbeat cards removed per request, info moved to Accounts table */}
+          {/* Heartbeat cards removed per request, info moved to Accounts table */}
 
-      <div className="toolbar-panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px' }}>
-        <div className="toolbar-group dashboard-summary-highlights" style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
-          <div className="summary-item">
-            <span className="minor-text" style={{ fontSize: '10px' }}>TOTAL</span>
-            <div style={{ fontWeight: 800, fontSize: '16px' }}>{m.total_trades || 0}</div>
-          </div>
-          <div className="summary-item">
-            <span className="minor-text" style={{ fontSize: '10px' }}>PENDING</span>
-            <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--accent)' }}>{m.count_pending || 0}</div>
-          </div>
-          <div className="summary-item">
-            <span className="minor-text" style={{ fontSize: '10px' }}>FILLED</span>
-            <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--success)' }}>{m.count_filled || 0}</div>
-          </div>
-          <div className="summary-item">
-            <span className="minor-text" style={{ fontSize: '10px' }}>WINS</span>
-            <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--success)' }}>{m.wins || 0}</div>
-          </div>
-          <div className="summary-item">
-            <span className="minor-text" style={{ fontSize: '10px' }}>LOSSES</span>
-            <div style={{ fontWeight: 800, fontSize: '16px', color: 'var(--error)' }}>{m.losses || 0}</div>
-          </div>
-        </div>
-
-        <div className="toolbar-group toolbar-filters" style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end", flex: 1 }}>
-          <select value={filters.account_id} onChange={(e) => setFilters((prev) => ({ ...prev, account_id: e.target.value }))}>
-            <option value="">All accounts</option>
-            {(f.accounts || []).map((v) => <option key={v} value={v}>{accountNameById.get(String(v)) || v}</option>)}
-          </select>
-          <select value={filters.symbol} onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}>
-            <option value="">All symbols</option>
-            {(f.symbols || []).map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-          <select value={filters.source} onChange={(e) => setFilters((prev) => ({ ...prev, source: e.target.value }))}>
-            <option value="">All Sources</option>
-            {(f.sources || []).map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-          <select value={filters.entry_model} onChange={(e) => setFilters((prev) => ({ ...prev, entry_model: e.target.value }))}>
-            <option value="">All Models</option>
-            {(f.entry_models || []).map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-          <select value={filters.direction} onChange={(e) => setFilters((prev) => ({ ...prev, direction: e.target.value }))}>
-            <option value="">All Direction</option>
-            <option value="BUY">Buy</option>
-            <option value="SELL">Sell</option>
-          </select>
-          <select value={filters.chart_tf} onChange={(e) => setFilters((prev) => ({ ...prev, chart_tf: e.target.value }))}>
-            <option value="">Chart TF</option>
-            {(sortTimeframes(f.chart_tfs || [], "desc")).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
-          </select>
-          <select value={filters.signal_tf} onChange={(e) => setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))}>
-            <option value="">Signal TF</option>
-            {(sortTimeframes(f.signal_tfs || [], "desc")).map(v => <option key={v} value={v}>{formatTimeframe(v)}</option>)}
-          </select>
-          <select value={filters.range} onChange={(e) => setFilters((prev) => ({ ...prev, range: e.target.value }))}>
-            {RANGE_OPTIONS.map((r) => <option key={r.val} value={r.val}>{r.lab}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="period-box-grid" style={{ display: 'grid', gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: '16px' }}>
-        {PERIOD_DISPLAY.map((conf) => {
-          const v = periodTotals[conf.key] || {};
-          const winrate = v.total_wins + v.total_losses > 0 
-            ? (v.total_wins / (v.total_wins + v.total_losses)) * 100 
-            : 0;
-
-          return (
-            <article className="kpi-card" key={conf.key}>
-              <div className="panel-label">{conf.lab.toUpperCase()}</div>
-              <div className="period-big-line">
-                <span className={`kpi-value ${moneyClass(v.total_pnl)}`} style={{ fontSize: '24px' }}>
-                  {asMoneySigned(v.total_pnl || 0)}
+          <div
+            className="toolbar-panel"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "8px 16px",
+            }}
+          >
+            <div
+              className="toolbar-group dashboard-summary-highlights"
+              style={{ display: "flex", gap: "20px", alignItems: "center" }}
+            >
+              <div className="summary-item">
+                <span className="minor-text" style={{ fontSize: "10px" }}>
+                  TOTAL
                 </span>
+                <div style={{ fontWeight: 800, fontSize: "16px" }}>
+                  {m.total_trades || 0}
+                </div>
               </div>
-              <div className="minor-text" style={{ marginTop: '8px', fontSize: '10px', whiteSpace: 'nowrap', opacity: 0.9 }}>
-                T: {v.total_trades || 0} | 
-                W: {v.total_wins} <span className="money-pos">{asMoneySigned(v.win_sum_pnl || 0)}</span> | 
-                L: {v.total_losses} <span className="money-neg">{asMoneySigned(v.lose_sum_pnl || 0)}</span> | 
-                WR: {asPct(winrate)} | 
-                RR: {asRR(v.total_rr || 0)}
+              <div className="summary-item">
+                <span className="minor-text" style={{ fontSize: "10px" }}>
+                  PENDING
+                </span>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    color: "var(--accent)",
+                  }}
+                >
+                  {m.count_pending || 0}
+                </div>
               </div>
-            </article>
-          );
-        })}
-      </div>
-
-      <div className="dashboard-grid tables" style={{ display: 'grid', gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: '16px' }}>
-        <TableBlock title="Symbols" noun="Symbols" rows={Array.isArray(top.symbols) ? top.symbols : []} />
-        <TableBlock title="Entry Model" noun="Models" rows={Array.isArray(top.entry_models) ? top.entry_models : []} />
-        <TableBlock title="Sources" noun="Sources" rows={Array.isArray(top.sources) ? top.sources : []} />
-        <TableBlock title="Order Type" noun="Order Type" rows={Array.isArray(top.directional) ? top.directional : []} />
-        <TableBlock title="Accounts" noun="Accounts" rows={Array.isArray(top.accounts) ? top.accounts : []} nameFormatter={(id) => {
-          const acc = accounts.find(a => a.account_id === id);
-          if (!acc) return id;
-          const lastSync = acc.updated_at || acc.created_at;
-          const lastSyncDate = lastSync ? new Date(lastSync) : null;
-          const diffMin = lastSyncDate ? (new Date() - lastSyncDate) / 60000 : 999;
-          const isOnline = diffMin < 5;
-          const isIdle = diffMin >= 5 && diffMin < 60;
-          const statusCls = isOnline ? 'online' : isIdle ? 'idle' : 'offline';
-          return (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span 
-                className={`status-dot ${statusCls}`} 
-                style={{ width: 7, height: 7, flexShrink: 0, borderRadius: '50%' }} 
-                title={`Last synced: ${lastSyncDate ? showDateTime(lastSyncDate) : 'Never'}`}
-              />
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 600 }}>{acc.name || id}</span>
+              <div className="summary-item">
+                <span className="minor-text" style={{ fontSize: "10px" }}>
+                  FILLED
+                </span>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    color: "var(--success)",
+                  }}
+                >
+                  {m.count_filled || 0}
+                </div>
+              </div>
+              <div className="summary-item">
+                <span className="minor-text" style={{ fontSize: "10px" }}>
+                  WINS
+                </span>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    color: "var(--success)",
+                  }}
+                >
+                  {m.wins || 0}
+                </div>
+              </div>
+              <div className="summary-item">
+                <span className="minor-text" style={{ fontSize: "10px" }}>
+                  LOSSES
+                </span>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: "16px",
+                    color: "var(--error)",
+                  }}
+                >
+                  {m.losses || 0}
+                </div>
+              </div>
             </div>
-          );
-        }} />
-        </div>
 
-        {/* Right column: Calendar + Advanced Order */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Monthly PnL Calendar */}
-          <div className="panel fadeIn" style={{ padding: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <button className="secondary-button" style={{ fontSize: 10, padding: '2px 6px' }}
-                onClick={() => {
-                  if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(y => y - 1); }
-                  else setCalendarMonth(m => m - 1);
-                }}>◀</button>
-              <span style={{ fontSize: 12, fontWeight: 700 }}>
-                {new Date(calendarYear, calendarMonth).toLocaleString('default', { month: 'long', year: 'numeric' })}
-              </span>
-              <button className="secondary-button" style={{ fontSize: 10, padding: '2px 6px' }}
-                onClick={() => {
-                  if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(y => y + 1); }
-                  else setCalendarMonth(m => m + 1);
-                }}>▶</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, textAlign: 'center', fontSize: 9 }}>
-              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
-                <span key={d} style={{ fontWeight: 700, color: 'var(--muted)', padding: '2px 0' }}>{d}</span>
-              ))}
-              {(() => {
-                const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
-                const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-                const cells = [];
-                for (let i = 0; i < firstDay; i++) cells.push(<span key={"e"+i} />);
-                for (let d = 1; d <= daysInMonth; d++) {
-                  const dateStr = `${calendarYear}-${String(calendarMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-                  const item = calendarData ? calendarData[dateStr] : null;
-                  const pnl = item ? Number(item.pnl || item.pnl_money || 0) : null;
-                  cells.push(
-                    <div key={d} style={{
-                      padding: '3px', borderRadius: 4, fontSize: 9,
-                      border: pnl != null ? (pnl > 0 ? '1.5px solid rgba(38,166,154,0.5)' : pnl < 0 ? '1.5px solid rgba(239,83,80,0.5)' : '1px solid var(--border)') : '1px solid transparent',
-                      background: 'transparent',
-                      cursor: pnl != null ? 'pointer' : 'default',
-                    }} title={pnl != null ? `${dateStr}: $${pnl.toFixed(2)}` : dateStr}>
-                      <div style={{ fontWeight: 600 }}>{d}</div>
-                      {pnl != null && (
-                        <div style={{ color: pnl > 0 ? 'var(--success)' : 'var(--error)', fontSize: 8 }}>
-                          {pnl > 0 ? '+' : ''}{pnl.toFixed(0)}
-                        </div>
-                      )}
-                    </div>
-                  );
+            <div
+              className="toolbar-group toolbar-filters"
+              style={{
+                display: "flex",
+                gap: "8px",
+                flexWrap: "wrap",
+                justifyContent: "flex-end",
+                flex: 1,
+              }}
+            >
+              <select
+                value={filters.account_id}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    account_id: e.target.value,
+                  }))
                 }
-                return cells;
-              })()}
+              >
+                <option value="">All accounts</option>
+                {(f.accounts || []).map((v) => (
+                  <option key={v} value={v}>
+                    {accountNameById.get(String(v)) || v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.symbol}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, symbol: e.target.value }))
+                }
+              >
+                <option value="">All symbols</option>
+                {(f.symbols || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.source}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, source: e.target.value }))
+                }
+              >
+                <option value="">All Sources</option>
+                {(f.sources || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.entry_model}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    entry_model: e.target.value,
+                  }))
+                }
+              >
+                <option value="">All Models</option>
+                {(f.entry_models || []).map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.direction}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, direction: e.target.value }))
+                }
+              >
+                <option value="">All Direction</option>
+                <option value="BUY">Buy</option>
+                <option value="SELL">Sell</option>
+              </select>
+              <select
+                value={filters.chart_tf}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, chart_tf: e.target.value }))
+                }
+              >
+                <option value="">Chart TF</option>
+                {sortTimeframes(f.chart_tfs || [], "desc").map((v) => (
+                  <option key={v} value={v}>
+                    {formatTimeframe(v)}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.signal_tf}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))
+                }
+              >
+                <option value="">Signal TF</option>
+                {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (
+                  <option key={v} value={v}>
+                    {formatTimeframe(v)}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={filters.range}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, range: e.target.value }))
+                }
+              >
+                {RANGE_OPTIONS.map((r) => (
+                  <option key={r.val} value={r.val}>
+                    {r.lab}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
+          <div
+            className="period-box-grid"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            {PERIOD_DISPLAY.map((conf) => {
+              const v = periodTotals[conf.key] || {};
+              const winrate =
+                v.total_wins + v.total_losses > 0
+                  ? (v.total_wins / (v.total_wins + v.total_losses)) * 100
+                  : 0;
 
+              return (
+                <article className="kpi-card" key={conf.key}>
+                  <div className="panel-label">{conf.lab.toUpperCase()}</div>
+                  <div className="period-big-line">
+                    <span
+                      className={`kpi-value ${moneyClass(v.total_pnl)}`}
+                      style={{ fontSize: "24px" }}
+                    >
+                      {asMoneySigned(v.total_pnl || 0)}
+                    </span>
+                  </div>
+                  <div
+                    className="minor-text"
+                    style={{
+                      marginTop: "8px",
+                      fontSize: "10px",
+                      whiteSpace: "nowrap",
+                      opacity: 0.9,
+                    }}
+                  >
+                    T: {v.total_trades || 0} | W: {v.total_wins}{" "}
+                    <span className="money-pos">
+                      {asMoneySigned(v.win_sum_pnl || 0)}
+                    </span>{" "}
+                    | L: {v.total_losses}{" "}
+                    <span className="money-neg">
+                      {asMoneySigned(v.lose_sum_pnl || 0)}
+                    </span>{" "}
+                    | WR: {asPct(winrate)} | RR: {asRR(v.total_rr || 0)}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div
+            className="dashboard-grid tables"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: "16px",
+            }}
+          >
+            <TableBlock
+              title="Symbols"
+              noun="Symbols"
+              rows={Array.isArray(top.symbols) ? top.symbols : []}
+            />
+            <TableBlock
+              title="Entry Model"
+              noun="Models"
+              rows={Array.isArray(top.entry_models) ? top.entry_models : []}
+            />
+            <TableBlock
+              title="Sources"
+              noun="Sources"
+              rows={Array.isArray(top.sources) ? top.sources : []}
+            />
+            <TableBlock
+              title="Order Type"
+              noun="Order Type"
+              rows={Array.isArray(top.directional) ? top.directional : []}
+            />
+            <TableBlock
+              title="Accounts"
+              noun="Accounts"
+              rows={Array.isArray(top.accounts) ? top.accounts : []}
+              nameFormatter={(id) => {
+                const acc = accounts.find((a) => a.account_id === id);
+                if (!acc) return id;
+                const lastSync = acc.updated_at || acc.created_at;
+                const lastSyncDate = lastSync ? new Date(lastSync) : null;
+                const diffMin = lastSyncDate
+                  ? (new Date() - lastSyncDate) / 60000
+                  : 999;
+                const isOnline = diffMin < 5;
+                const isIdle = diffMin >= 5 && diffMin < 60;
+                const statusCls = isOnline
+                  ? "online"
+                  : isIdle
+                    ? "idle"
+                    : "offline";
+                return (
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <span
+                      className={`status-dot ${statusCls}`}
+                      style={{
+                        width: 7,
+                        height: 7,
+                        flexShrink: 0,
+                        borderRadius: "50%",
+                      }}
+                      title={`Last synced: ${lastSyncDate ? showDateTime(lastSyncDate) : "Never"}`}
+                    />
+                    <span
+                      style={{
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {acc.name || id}
+                    </span>
+                  </div>
+                );
+              }}
+            />
+          </div>
+
+          {/* Right column: Calendar + Advanced Order */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Monthly PnL Calendar */}
+            <div className="panel fadeIn" style={{ padding: 12 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 8,
+                }}
+              >
+                <button
+                  className="secondary-button"
+                  style={{ fontSize: 10, padding: "2px 6px" }}
+                  onClick={() => {
+                    if (calendarMonth === 0) {
+                      setCalendarMonth(11);
+                      setCalendarYear((y) => y - 1);
+                    } else setCalendarMonth((m) => m - 1);
+                  }}
+                >
+                  ◀
+                </button>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>
+                  {new Date(calendarYear, calendarMonth).toLocaleString(
+                    "default",
+                    { month: "long", year: "numeric" },
+                  )}
+                </span>
+                <button
+                  className="secondary-button"
+                  style={{ fontSize: 10, padding: "2px 6px" }}
+                  onClick={() => {
+                    if (calendarMonth === 11) {
+                      setCalendarMonth(0);
+                      setCalendarYear((y) => y + 1);
+                    } else setCalendarMonth((m) => m + 1);
+                  }}
+                >
+                  ▶
+                </button>
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(7, 1fr)",
+                  gap: 2,
+                  textAlign: "center",
+                  fontSize: 9,
+                }}
+              >
+                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
+                  <span
+                    key={d}
+                    style={{
+                      fontWeight: 700,
+                      color: "var(--muted)",
+                      padding: "2px 0",
+                    }}
+                  >
+                    {d}
+                  </span>
+                ))}
+                {(() => {
+                  const firstDay = new Date(
+                    calendarYear,
+                    calendarMonth,
+                    1,
+                  ).getDay();
+                  const daysInMonth = new Date(
+                    calendarYear,
+                    calendarMonth + 1,
+                    0,
+                  ).getDate();
+                  const cells = [];
+                  for (let i = 0; i < firstDay; i++)
+                    cells.push(<span key={"e" + i} />);
+                  for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                    const item = calendarData ? calendarData[dateStr] : null;
+                    const pnl = item
+                      ? Number(item.pnl || item.pnl_money || 0)
+                      : null;
+                    cells.push(
+                      <div
+                        key={d}
+                        style={{
+                          padding: "3px",
+                          borderRadius: 4,
+                          fontSize: 9,
+                          border:
+                            pnl != null
+                              ? pnl > 0
+                                ? "1.5px solid rgba(38,166,154,0.5)"
+                                : pnl < 0
+                                  ? "1.5px solid rgba(239,83,80,0.5)"
+                                  : "1px solid var(--border)"
+                              : "1px solid transparent",
+                          background: "transparent",
+                          cursor: pnl != null ? "pointer" : "default",
+                        }}
+                        title={
+                          pnl != null
+                            ? `${dateStr}: $${pnl.toFixed(2)}`
+                            : dateStr
+                        }
+                      >
+                        <div style={{ fontWeight: 600 }}>{d}</div>
+                        {pnl != null && (
+                          <div
+                            style={{
+                              color:
+                                pnl > 0 ? "var(--success)" : "var(--error)",
+                              fontSize: 8,
+                            }}
+                          >
+                            {pnl > 0 ? "+" : ""}
+                            {pnl.toFixed(0)}
+                          </div>
+                        )}
+                      </div>,
+                    );
+                  }
+                  return cells;
+                })()}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
-);
+    </section>
+  );
 }
