@@ -303,7 +303,11 @@ function PlanHeader({
         )}
 
         {/* Row 3: source | strategy | entry_model | confidence | risk — one row */}
-        {(sourceVal || strategy || entryModel || confidenceText || riskLevel) && (
+        {(sourceVal ||
+          strategy ||
+          entryModel ||
+          confidenceText ||
+          riskLevel) && (
           <div
             style={{
               display: "flex",
@@ -315,27 +319,62 @@ function PlanHeader({
             }}
           >
             {sourceVal && (
-              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 500, opacity: 0.7 }}>
+              <span
+                className="minor-text"
+                style={{ fontSize: "9px", fontWeight: 500, opacity: 0.7 }}
+              >
                 {sourceVal}
               </span>
             )}
             {strategy && (
-              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
+              <span
+                className="minor-text"
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.02em",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {strategy}
               </span>
             )}
             {entryModel && (
-              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 500, whiteSpace: "nowrap" }}>
+              <span
+                className="minor-text"
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {entryModel}
               </span>
             )}
             {confidenceText && (
-              <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--accent)", opacity: 0.9, whiteSpace: "nowrap" }}>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  color: "var(--accent)",
+                  opacity: 0.9,
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {confidenceText}
               </span>
             )}
             {riskLevel && (
-              <span className="badge badge-mini" style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize", whiteSpace: "nowrap" }}>
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  textTransform: "capitalize",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {riskLevel}
               </span>
             )}
@@ -838,6 +877,8 @@ export default function SignalDetailCard({
                       }
                     }}
                     onReset={tradePlan.onReset}
+                    onCancel={tradePlan.onCancel}
+                    onClose={tradePlan.onClose}
                     onSave={tradePlan.onSave}
                     onAddSignal={(pos) =>
                       tradePlan.onAddSignal?.(pos || planValue, planId)
