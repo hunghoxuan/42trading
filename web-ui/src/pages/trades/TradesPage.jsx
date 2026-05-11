@@ -560,6 +560,17 @@ export default function TradesPage() {
       if (found) {
         setSelectedTrade(found);
         selectedTradeIdRef.current = tradeId;
+      } else {
+        // Trade not in filtered list — try direct lookup (e.g. PENDING trade with FILLED filter)
+        api.v2Trades({ q: tradeId }).then((data) => {
+          const t = Array.isArray(data?.items) && data.items.length
+            ? data.items[0]
+            : null;
+          if (t) {
+            setSelectedTrade(t);
+            selectedTradeIdRef.current = tradeId;
+          }
+        }).catch(() => {});
       }
     }
   }, [tradeId, rows.length]);
@@ -1486,7 +1497,7 @@ export default function TradesPage() {
                       label: "Risk (%)",
                       value:
                         detailPlan.risk_pct != null
-                          ? `${(Number(detailPlan.risk_pct) * 100).toFixed(2)}%`
+                          ? `${Number(detailPlan.risk_pct).toFixed(2)}%`
                           : "-",
                       group: "source",
                     },
@@ -1537,6 +1548,94 @@ export default function TradesPage() {
                     {
                       label: "Est. Bars",
                       value: detailPlan.estimated_bars || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Direction",
+                      value: detailPlan.direction || selectedTrade.action || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Order Type",
+                      value: detailPlan.trade_type || detailPlan.order_type || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Model",
+                      value: selectedTrade.model || selectedTrade.metadata?.model || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Session",
+                      value: detailPlan.session || selectedTrade.session_prefix || selectedTrade.metadata?.session_prefix || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Entry",
+                      value: detailPlan.entry || selectedTrade.entry || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "TP",
+                      value: detailPlan.tp || selectedTrade.tp || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "SL",
+                      value: detailPlan.sl || selectedTrade.sl || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "RR",
+                      value: detailPlan.rr || selectedTrade.rr_planned || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Confidence Level",
+                      value: detailPlan.confidence_level || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Risk Level",
+                      value: detailPlan.risk_level || selectedTrade.metadata?.risk_level || "-",
+                      group: "source",
+                    },
+                    {
+                      label: "Multiple Exits",
+                      value: detailPlan.multiple_exits && Object.keys(detailPlan.multiple_exits).length ? JSON.stringify(detailPlan.multiple_exits, null, 2) : "-",
+                      fullWidth: true,
+                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                    },
+                    {
+                      label: "Partial TPs",
+                      value: Array.isArray(detailPlan.partial_tps) && detailPlan.partial_tps.length ? JSON.stringify(detailPlan.partial_tps, null, 2) : "-",
+                      fullWidth: true,
+                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                    },
+                    {
+                      label: "Trade Decision",
+                      value: detailPlan.trade_decision || detailPlan.skip_recommendation || "-",
+                    },
+                    {
+                      label: "Reasons to Skip",
+                      value: Array.isArray(detailPlan.reasons_to_skip) && detailPlan.reasons_to_skip.length ? JSON.stringify(detailPlan.reasons_to_skip, null, 2) : "-",
+                      fullWidth: true,
+                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                    },
+                    {
+                      label: "Snapshot Files",
+                      value: Array.isArray(selectedTrade.snapshot_files) && selectedTrade.snapshot_files.length ? selectedTrade.snapshot_files.join(", ") : "-",
+                      fullWidth: true,
+                    },
+                    {
+                      label: "AI Analysis",
+                      value: detailPlan.ai_full_analysis && Object.keys(detailPlan.ai_full_analysis).length ? JSON.stringify(detailPlan.ai_full_analysis, null, 2) : "-",
+                      fullWidth: true,
+                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                    },
+                    {
+                      label: "Only Signal",
+                      value: selectedTrade.only_signal != null ? String(selectedTrade.only_signal) : "-",
                       group: "source",
                     },
                     {
