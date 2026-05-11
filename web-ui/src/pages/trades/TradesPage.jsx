@@ -1,7 +1,7 @@
 import { api } from "../../api";
 import { NotificationHub } from "../../services/NotificationHub";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useRealtimeData } from "../../hooks/useRealtimeData";
 
 const SignalDetailCard = lazy(
@@ -23,12 +23,8 @@ import {
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
-  { value: "", label: "ALL STATUSES" },
-  { value: "PENDING", label: "PENDING" },
-  { value: "FILLED", label: "FILLED" },
-  { value: "CLOSED", label: "CLOSED" },
+  { value: "NEW", label: "NEW" },
   { value: "CANCELLED", label: "CANCELLED" },
-  { value: "ERROR", label: "ERROR" },
 ];
 const BULK_ACTIONS = [
   { value: "", label: "BULK ACTION..." },
@@ -218,6 +214,7 @@ function displaySource(item = {}) {
 }
 
 export default function TradesPage() {
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { tradeId } = useParams();
   const [rows, setRows] = useState([]);
@@ -292,7 +289,7 @@ export default function TradesPage() {
     side: "",
     entry_model: "",
     chart_tf: "",
-    execution_status: "FILLED",
+    execution_status: searchParams.get("status") || "FILLED",
     range: "all",
     page: 1,
     pageSize: 50,

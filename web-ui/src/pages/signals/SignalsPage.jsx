@@ -23,16 +23,8 @@ import {
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
-  { value: "", label: "ALL STATUSES" },
   { value: "NEW", label: "NEW" },
-  { value: "LOCKED", label: "LOCKED" },
-  { value: "PLACED", label: "PLACED" },
-  { value: "START", label: "START" },
-  { value: "TP", label: "TP" },
-  { value: "SL", label: "SL" },
-  { value: "CANCEL", label: "CANCEL" },
-  { value: "FAIL", label: "FAIL" },
-  { value: "EXPIRED", label: "EXPIRED" },
+  { value: "CANCELLED", label: "CANCELLED" },
 ];
 const BULK_ACTIONS = [
   "",
@@ -213,7 +205,7 @@ export default function SignalsPage() {
   const [filter, setFilter] = useState({
     q: "",
     symbol: "",
-    status: "",
+    status: "NEW",
     range: "",
     source: "",
     entry_model: "",
@@ -714,32 +706,8 @@ export default function SignalsPage() {
               <option key={s}>{s}</option>
             ))}
           </select>
-          <select
-            value={filter.chart_tf}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">CHART TF</option>
-            {sortTimeframes(advFilters.chart_tfs, "desc").map((s) => (
-              <option key={s} value={s}>
-                {formatTimeframe(s)}
-              </option>
-            ))}
-          </select>
-          <select
-            value={filter.signal_tf}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, signal_tf: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">SIGNAL TF</option>
-            {sortTimeframes(advFilters.signal_tfs, "desc").map((s) => (
-              <option key={s} value={s}>
-                {formatTimeframe(s)}
-              </option>
-            ))}
-          </select>
+
+
           <select
             value={filter.range}
             onChange={(e) =>

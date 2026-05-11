@@ -206,12 +206,19 @@ export default function App() {
           >
             Signals
           </NavLink>
-          <NavLink
-            to="/trades"
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            Trades
-          </NavLink>
+          <div className="nav-dropdown">
+            <NavLink
+              to="/trades"
+              className={({ isActive }) => (isActive ? "active" : "")}
+            >
+              Trades
+            </NavLink>
+            <div className="nav-dropdown-menu">
+              <NavLink to="/trades?status=PENDING">Pending</NavLink>
+              <NavLink to="/trades?status=FILLED">Filled</NavLink>
+              <NavLink to="/trades?status=CLOSED">Closed</NavLink>
+            </div>
+          </div>
 
           <div style={{ flex: 1 }} />
 
