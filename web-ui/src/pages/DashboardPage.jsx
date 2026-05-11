@@ -727,7 +727,8 @@ export default function DashboardPage() {
           {/* Right column: Calendar + Advanced Order */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Monthly PnL Calendar */}
-            <div className="panel fadeIn" style={{ padding: 12 }}>
+            <div className="panel fadeIn" style={{ padding: 12, position: "sticky", top: 12 }}>
+              <div className="panel-label" style={{ marginBottom: 8 }}>PnL Calendar</div>
               <div
                 style={{
                   display: "flex",
@@ -771,9 +772,9 @@ export default function DashboardPage() {
                 style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(7, 1fr)",
-                  gap: 2,
+                  gap: 3,
                   textAlign: "center",
-                  fontSize: 9,
+                  fontSize: 11,
                 }}
               >
                 {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
@@ -812,9 +813,9 @@ export default function DashboardPage() {
                       <div
                         key={d}
                         style={{
-                          padding: "3px",
+                          padding: "4px 2px",
                           borderRadius: 4,
-                          fontSize: 9,
+                          fontSize: 11,
                           border:
                             pnl != null
                               ? pnl > 0
@@ -838,7 +839,7 @@ export default function DashboardPage() {
                             style={{
                               color:
                                 pnl > 0 ? "var(--success)" : "var(--error)",
-                              fontSize: 8,
+                              fontSize: 9, fontWeight: 700,
                             }}
                           >
                             {pnl > 0 ? "+" : ""}
