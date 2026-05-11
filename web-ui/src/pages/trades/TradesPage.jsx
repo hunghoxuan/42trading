@@ -1328,8 +1328,10 @@ export default function TradesPage() {
                         const rj = selectedTrade?.raw_json;
                         const obj = rj && typeof rj === "object" ? rj : (typeof rj === "string" ? JSON.parse(rj) : {});
                         const tp = Array.isArray(obj?.trade_plan) ? obj.trade_plan : (obj?.trade_plan ? [obj.trade_plan] : []);
-                        return tp.length ? tp : [obj].filter(x => x && typeof x === "object" && (x.direction || x.entry_price || x.entry));
-                      } catch (_) { return []; }
+                        const result = tp.length ? tp : [obj].filter(x => x && typeof x === "object" && (x.direction || x.entry_price || x.entry));
+                        // Always return at least one plan so buttons render
+                        return result.length ? result : [{ direction: selectedTrade?.action || "BUY", entry: selectedTrade?.entry, tp: selectedTrade?.tp, sl: selectedTrade?.sl }];
+                      } catch (_) { return [{ direction: "BUY" }]; }
                     })(),
                   }}
                   tradePlan={{
