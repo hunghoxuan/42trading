@@ -218,7 +218,7 @@ function displaySource(item = {}) {
 }
 
 export default function TradesPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { tradeId } = useParams();
   const [rows, setRows] = useState([]);
@@ -936,13 +936,11 @@ export default function TradesPage() {
           </select>
           <select
             value={filter.execution_status}
-            onChange={(e) =>
-              setFilter((f) => ({
-                ...f,
-                execution_status: e.target.value,
-                page: 1,
-              }))
-            }
+            onChange={(e) => {
+              const v = e.target.value;
+              setFilter((f) => ({ ...f, execution_status: v, page: 1 }));
+              setSearchParams(v ? { status: v } : {});
+            }}
           >
             {STATUS_OPTIONS.map((s) => (
               <option key={s.value || "all"} value={s.value}>
