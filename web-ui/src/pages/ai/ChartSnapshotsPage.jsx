@@ -2631,7 +2631,12 @@ export default function ChartSnapshotsPage() {
     }
     setBarsLoading(true);
     try {
-      const out = await api.chartTwelveCandles(sym, tf, bars, forceRefresh);
+      const { promise: barsPromise } = NotificationHub.track(
+        "twelve_data",
+        { symbol: sym, timeframe: tf },
+        () => api.chartTwelveCandles(sym, tf, bars, forceRefresh),
+      );
+      const out = await barsPromise;
       if (out?.source || out?.updated_time) {
         setMarketMetadata({
           source: out.source || "",

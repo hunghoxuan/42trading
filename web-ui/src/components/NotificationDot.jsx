@@ -27,6 +27,13 @@ var TYPE_META = {
       return "/system/files?result=" + (r.requestId || "");
     },
   },
+  twelve_data: {
+    icon: "📡",
+    label: "Twelve Data",
+    nav: function (r) {
+      return "/ai/analyze";
+    },
+  },
   create_trade: {
     icon: "📈",
     label: "Trade",
@@ -44,6 +51,10 @@ var TYPE_META = {
     nav: function (r) {
       var sid =
         (r.data && r.data.signal && r.data.signal.sid) ||
+        (r.data && r.data.signal && r.data.signal.signal_id) ||
+        (r.data && r.data.signal && r.data.signal.id) ||
+        (r.data && r.data.signal_id) ||
+        (r.data && r.data.id) ||
         (r.data && r.data.sid) ||
         "";
       return sid ? "/signals/" + sid : "/signals";
