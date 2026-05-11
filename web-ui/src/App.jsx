@@ -25,7 +25,6 @@ import { api, getRuntimeActiveUserId, setRuntimeActiveUserId } from "./api";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
 import NotificationWatcher from "./components/NotificationWatcher";
-import TickerBar from "./components/TickerBar";
 import NotificationDot from "./components/NotificationDot";
 
 import ToastContainer from "./components/ToastContainer";
@@ -293,8 +292,6 @@ export default function App() {
         </nav>
       </header>
       <SessionClockBar displayTimezone={displayTimezone} />
-      <TickerBar />
-
       <main className="page-wrap">
         <Suspense
           fallback={<div className="loading-container">Loading page...</div>}

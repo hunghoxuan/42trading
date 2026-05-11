@@ -2,7 +2,6 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
-import TickerBar from "../../components/TickerBar";
 
 function fDateTime(v) {
   return showDateTime(v);
@@ -439,9 +438,6 @@ export default function LogsPage() {
           )}
         </div>
       </div>
-      <div style={{ position: "sticky", bottom: 0, zIndex: 10 }}>
-        <TickerBar />
-      </div>
-    </section>
+</section>
   );
 }

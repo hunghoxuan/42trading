@@ -2,9 +2,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { api } from "../api";
 import { playSound, SoundEvents } from "../utils/SoundManager";
 import { showToast } from "./ToastContainer";
-
-window.__tickerEvents = window.__tickerEvents || [];
-window.__tickerFilledTrades = window.__tickerFilledTrades || [];
+import { NotificationHub } from "../services/NotificationHub";
 
 /**
  * Global component: SSE stream listener for real-time notifications.
@@ -50,8 +48,18 @@ export default function NotificationWatcher() {
       const ns = p.notification_settings || {};
       const userPref = prefsRef.current[p.event] || {};
       // Read toast/ticker from notification_settings (legacy) or top-level payload (NotificationManager)
-      const effectiveToast = ns.toast !== undefined ? ns.toast : (p.toast !== undefined ? p.toast : true);
-      const effectiveTicker = ns.ticker !== undefined ? ns.ticker : (p.ticker !== undefined ? p.ticker : true);
+      const effectiveToast =
+        ns.toast !== undefined
+          ? ns.toast
+          : p.toast !== undefined
+            ? p.toast
+            : true;
+      const effectiveTicker =
+        ns.ticker !== undefined
+          ? ns.ticker
+          : p.ticker !== undefined
+            ? p.ticker
+            : true;
       const shouldShowToast =
         effectiveToast !== false &&
         p.notification !== false &&
@@ -76,83 +84,7 @@ export default function NotificationWatcher() {
         });
       }
 
-      // 3. Ticker messages — dedup: skip if same message+event as last entry
-      if (showTicker) {
-        const eventName = String(p.event || "").toUpperCase();
-        const dataList = Array.isArray(p.data) ? p.data : [];
-        const firstSid =
-          dataList.find((x) => String(x?.sid || "").trim())?.sid || "";
-        const route =
-          String(p.route || "").trim() ||
-          (firstSid ? `/trades/${firstSid}` : "") ||
-          (String(p.page || "").trim() ? String(p.page).trim() : "") ||
-          (String(p.page_id || "").toLowerCase() === "trades" ? "/trades" : "") ||
-          (String(p.page_id || "").toLowerCase() === "signals"
-            ? "/signals"
-            : "");
-        const last = window.__tickerEvents[window.__tickerEvents.length - 1];
-        if (!last || last.message !== p.message || last.event !== p.event) {
-          window.__tickerEvents.push({
-            ts: Date.now(),
-            event: p.event,
-            message: p.message,
-            type: p.type,
-            route,
-          });
-          if (window.__tickerEvents.length > 50) window.__tickerEvents.shift();
-        }
-
-        // 3b. Right ticker: keep FILLED trades (OPEN/FILLED in backend semantics)
-        if (eventName === "BROKER_SYNC" && dataList.length) {
-          const existing = new Map(
-            (window.__tickerFilledTrades || []).map((t) => [String(t.sid), t]),
-          );
-          let changed = false;
-          for (const row of dataList) {
-            const sid = String(row?.sid || "").trim();
-            if (!sid) continue;
-            const status = String(row?.execution_status || "")
-              .trim()
-              .toUpperCase();
-            const isFilled = status === "OPEN" || status === "FILLED";
-            if (!isFilled) {
-              if (existing.has(sid)) {
-                existing.delete(sid);
-                changed = true;
-              }
-              continue;
-            }
-            const next = {
-              sid,
-              symbol: String(row?.symbol || "").toUpperCase(),
-              pnl:
-                row?.pnl_realized ??
-                row?.broker_pnl ??
-                row?.pnl ??
-                0,
-              ts: Date.now(),
-            };
-            const prev = existing.get(sid);
-            if (
-              !prev ||
-              prev.symbol !== next.symbol ||
-              Number(prev.pnl) !== Number(next.pnl)
-            ) {
-              existing.set(sid, next);
-              changed = true;
-            }
-          }
-          if (changed) {
-            window.__tickerFilledTrades = [...existing.values()]
-              .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0))
-              .slice(0, 12);
-          }
-        }
-
-        window.dispatchEvent(new CustomEvent("ticker-update"));
-      }
-
-      // 4. Page refresh
+// 4. Page refresh
       if (p.need_refresh && p.page) {
         const currentPath = window.location.pathname;
         if (
@@ -186,6 +118,11 @@ export default function NotificationWatcher() {
       if (playAudio) {
         playSound(sseSound);
       }
+
+      // Bridge to NotificationHub for cross-page persistence
+      try {
+        NotificationHub.emit(p.event, p.sub_type || "", p);
+      } catch {}
     } catch (e) {
       console.warn("[NotificationWatcher] Failed to handle event:", e);
     }

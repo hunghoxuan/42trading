@@ -1407,9 +1407,12 @@ export default function TradesPage() {
                         ? async () => {
                             if (!confirm("Cancel this trade?")) return;
                             try {
-                              await api.cancelTrades({
-                                q: selectedTrade.sid || selectedTrade.id,
-                              });
+                              const { promise: cancelPromise } = NotificationHub.track(
+                                "cancel_trade",
+                                { symbol: selectedTrade.symbol || "", sid: selectedTrade.sid || selectedTrade.id },
+                                () => api.cancelTrades({ q: selectedTrade.sid || selectedTrade.id }),
+                              );
+                              await cancelPromise;
                               await loadTrades();
                             } catch (e) {
                               setError(e?.message || "Cancel failed");
@@ -1423,10 +1426,12 @@ export default function TradesPage() {
                         ? async () => {
                             if (!confirm("Close this trade?")) return;
                             try {
-                              await api.v2UpdateTrade(
-                                selectedTrade.sid || selectedTrade.id,
-                                { execution_status: "CLOSED" },
+                              const { promise: closePromise } = NotificationHub.track(
+                                "close_trade",
+                                { symbol: selectedTrade.symbol || "", sid: selectedTrade.sid || selectedTrade.id },
+                                () => api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" }),
                               );
+                              await closePromise;
                               await loadTrades();
                             } catch (e) {
                               setError(e?.message || "Close failed");

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
+import { NotificationHub } from "../../services/NotificationHub";
 
 const SignalDetailCard = lazy(() => import("../../components/SignalDetailCard"));
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
@@ -272,7 +273,7 @@ export default function TradeDetailPage() {
             onClick={async () => {
               if (!confirm("Cancel this trade?")) return;
               try {
-                await api.cancelTrades({ ids: [trade.sid || trade.id] });
+                const { promise: cp } = NotificationHub.track("cancel_trade", { symbol: trade.symbol, sid: trade.sid || trade.id }, () => api.cancelTrades({ ids: [trade.sid || trade.id] })); await cp;
                 window.location.reload();
               } catch (e) {
                 setError(e?.message || "Cancel failed");
@@ -292,7 +293,7 @@ export default function TradeDetailPage() {
             onClick={async () => {
               if (!confirm("Close this trade?")) return;
               try {
-                await api.v2UpdateTrade(trade.sid || trade.id, { execution_status: "CLOSED" });
+                const { promise: clp } = NotificationHub.track("close_trade", { symbol: trade.symbol, sid: trade.sid || trade.id }, () => api.v2UpdateTrade(trade.sid || trade.id, { execution_status: "CLOSED" })); await clp;
                 window.location.reload();
               } catch (e) {
                 setError(e?.message || "Close failed");

@@ -46,17 +46,7 @@ function emit(evt, sub, pay) {
       }),
     );
   }
-  if (pay && pay.ticker) {
-    window.__tickerEvents = window.__tickerEvents || [];
-    window.__tickerEvents.push({
-      ts: Date.now(),
-      event: pay.event || evt,
-      message: pay.message || "",
-      type: pay.type || "info",
-    });
-    if (window.__tickerEvents.length > 50) window.__tickerEvents.shift();
-    window.dispatchEvent(new CustomEvent("ticker-update"));
-  }
+
 }
 
 function on(evt, fn) {

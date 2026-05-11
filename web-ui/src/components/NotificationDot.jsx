@@ -34,6 +34,22 @@ var TYPE_META = {
       return "/ai/analyze";
     },
   },
+  cancel_trade: {
+    icon: "🚫",
+    label: "Cancel Trade",
+    nav: function (r) {
+      var sid = (r.data && r.data.sid) || "";
+      return sid ? "/trades/" + sid : "/trades";
+    },
+  },
+  close_trade: {
+    icon: "✅",
+    label: "Close Trade",
+    nav: function (r) {
+      var sid = (r.data && r.data.sid) || "";
+      return sid ? "/trades/" + sid : "/trades";
+    },
+  },
   create_trade: {
     icon: "📈",
     label: "Trade",
