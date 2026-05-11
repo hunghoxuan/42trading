@@ -214,9 +214,24 @@ export default function App() {
               Trades
             </NavLink>
             <div className="nav-dropdown-menu">
-              <NavLink to="/trades?status=PENDING">Pending</NavLink>
-              <NavLink to="/trades?status=FILLED">Filled</NavLink>
-              <NavLink to="/trades?status=CLOSED">Closed</NavLink>
+              <NavLink
+                to="/trades?status=PENDING"
+                isActive={(_, loc) => loc.pathname === "/trades" && new URLSearchParams(loc.search).get("status") === "PENDING"}
+              >
+                Pending
+              </NavLink>
+              <NavLink
+                to="/trades?status=FILLED"
+                isActive={(_, loc) => loc.pathname === "/trades" && new URLSearchParams(loc.search).get("status") === "FILLED"}
+              >
+                Filled
+              </NavLink>
+              <NavLink
+                to="/trades?status=CLOSED"
+                isActive={(_, loc) => loc.pathname === "/trades" && new URLSearchParams(loc.search).get("status") === "CLOSED"}
+              >
+                Closed
+              </NavLink>
             </div>
           </div>
 
