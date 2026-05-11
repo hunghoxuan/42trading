@@ -234,7 +234,7 @@ export default function TradesPage() {
   const [bulkAction, setBulkAction] = useState("");
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [createMode, setCreateMode] = useState(false);
-  const [isListOpen, setIsListOpen] = useState(true);
+  const [listMode, setListMode] = useState("compact"); // "compact" | "full"
   const [createMsg, setCreateMsg] = useState("");
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
@@ -1030,14 +1030,14 @@ export default function TradesPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={isListOpen ? {} : { display: "none" }}
+          style={listMode === "compact" ? { width: "10%", minWidth: 120 } : listMode === "full" ? {} : { display: "none" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setIsListOpen(false)}
-              title="Hide list"
+              onClick={() => setListMode("compact")}
+              title="Compact list"
               style={{
                 width: 28,
                 height: 28,
@@ -1057,7 +1057,7 @@ export default function TradesPage() {
           )}
           {error ? <div className="error">{error}</div> : null}
           <div className="events-table-wrap">
-            <table className="events-table">
+            <table className={`events-table${listMode === "compact" ? " compact-list" : ""}`}>
               <thead>
                 <tr>
                   <th style={{ width: 30 }}>
@@ -1279,14 +1279,14 @@ export default function TradesPage() {
 
         <div
           className="logs-detail-pane component-frozen-wrap"
-          style={isListOpen ? {} : { gridColumn: "1 / -1" }}
+          style={listMode === "full" ? {} : { gridColumn: "1 / -1" }}
         >
-          {!isListOpen && (
+          {listMode === "compact" && (
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setIsListOpen(true)}
-              title="Show list"
+              onClick={() => setListMode("full")}
+              title="Expand list"
               style={{
                 position: "absolute",
                 top: 8,

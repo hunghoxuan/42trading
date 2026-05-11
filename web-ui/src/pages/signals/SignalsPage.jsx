@@ -168,7 +168,7 @@ export default function SignalsPage() {
     signal_tfs: [],
   });
   const [createMode, setCreateMode] = useState(false);
-  const [isListOpen, setIsListOpen] = useState(true);
+  const [listMode, setListMode] = useState("compact");
   const [createMsg, setCreateMsg] = useState("");
   const [detailTfTab, setDetailTfTab] = useState("ENTRY");
   const [detailPlan, setDetailPlan] = useState({
@@ -799,14 +799,14 @@ export default function SignalsPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={isListOpen ? {} : { display: "none" }}
+          style={listMode === "compact" ? { width: "10%", minWidth: 120 } : listMode === "full" ? {} : { display: "none" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setIsListOpen(false)}
-              title="Hide list"
+              onClick={() => setListMode("compact")}
+              title="Compact list"
               style={{
                 width: 28,
                 height: 28,
@@ -831,7 +831,7 @@ export default function SignalsPage() {
             </div>
           ) : null}
           <div className="events-table-wrap">
-            <table className="events-table">
+            <table className={`events-table${listMode === "compact" ? " compact-list" : ""}`}>
               <thead>
                 <tr>
                   <th style={{ width: "30px" }}>
@@ -1038,14 +1038,14 @@ export default function SignalsPage() {
 
         <div
           className="logs-detail-pane component-frozen-wrap"
-          style={isListOpen ? {} : { gridColumn: "1 / -1" }}
+          style={listMode === "full" ? {} : { gridColumn: "1 / -1" }}
         >
-          {!isListOpen && (
+          {listMode === "compact" && (
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setIsListOpen(true)}
-              title="Show list"
+              onClick={() => setListMode("full")}
+              title="Expand list"
               style={{
                 position: "absolute",
                 top: 8,

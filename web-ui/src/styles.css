@@ -1852,3 +1852,14 @@ button:disabled {
     border-radius: 8px;
     background: #0b1220;
 }
+
+/* Compact trade/signal list */
+.compact-list th:not(.col-position):not(.col-pnl),
+.compact-list td:not(.col-position):not(.col-pnl) {
+  display: none;
+}
+.compact-list .col-position,
+.compact-list .col-pnl {
+  font-size: 10px;
+  padding: 2px 4px;
+}
