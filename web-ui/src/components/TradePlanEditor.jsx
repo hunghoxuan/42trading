@@ -224,6 +224,33 @@ export function TradePlanEditor({
               )}
             </div>
           )}
+          {/* Cancel/Close buttons always visible in view mode if provided */}
+          {(typeof onCancel === "function" || typeof onClose === "function") && (
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 10 }}>
+              {typeof onCancel === "function" && (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onCancel(); }}
+                  disabled={controlsDisabled}
+                  style={{ height: "24px", fontSize: "11px", padding: "0 10px", color: "#ef5350", borderColor: "#ef5350" }}
+                >
+                  Cancel
+                </button>
+              )}
+              {typeof onClose === "function" && (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onClose(); }}
+                  disabled={controlsDisabled}
+                  style={{ height: "24px", fontSize: "11px", padding: "0 10px", color: "#ff9800", borderColor: "#ff9800" }}
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
 

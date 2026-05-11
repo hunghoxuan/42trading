@@ -1364,7 +1364,7 @@ export default function TradesPage() {
                       ? async () => {
                           if (!confirm("Cancel this trade?")) return;
                           try {
-                            await api.cancelTrades({ ids: [selectedTrade.sid || selectedTrade.id] });
+                            await api.cancelTrades({ q: selectedTrade.sid || selectedTrade.id });
                             await loadTrades();
                           } catch (e) {
                             setError(e?.message || "Cancel failed");
