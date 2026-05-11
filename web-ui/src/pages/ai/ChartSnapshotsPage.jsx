@@ -31,11 +31,14 @@ import {
   STRATEGY_ENTRY_MODELS,
   PROFILE_PRESETS,
   DEFAULT_CONFIG,
-  AI_RESPONSE_SCHEMA,
-  GUIDE_TEXT,
+  GUIDE_SYSTEM,
+  GUIDE_USER_DEFAULT,
+  SCHEMA_SYSTEM,
+  SCHEMA_USER_DEFAULT,
   getEffectiveTfConfig,
   buildPrompt,
   buildJsonConfig,
+  buildSchemaString,
 } from "./AiPromptBuilder";
 import {
   SymbolEntryCell,
@@ -350,8 +353,11 @@ function normalizeTemplateRecord(raw = {}, fallbackId = "") {
       raw?.analysis_instructions ||
       raw?.config?.analysis_instructions ||
       raw?._guide ||
-      raw?.config?._guide ||
-      null,
+      "",
+    schema_additions:
+      raw?.schema_additions ||
+      raw?.config?.schema_additions ||
+      "{}",
     saved:
       raw?.saved ||
       raw?.updated_at ||
@@ -360,13 +366,14 @@ function normalizeTemplateRecord(raw = {}, fallbackId = "") {
   };
 }
 
-function buildTemplateConfigPayload(cfg, guideText) {
+function buildTemplateConfigPayload(cfg, guideText, schemaText) {
   const normalized = normalizeTemplateConfig(cfg);
   const { strategies, ...configOnly } = normalized;
   return {
     config: configOnly,
     strategies: Array.isArray(strategies) ? strategies : [],
-    analysis_instructions: guideText || GUIDE_TEXT,
+    analysis_instructions: guideText || "",
+    schema_additions: schemaText || "{}",
   };
 }
 
@@ -1980,13 +1987,11 @@ export default function ChartSnapshotsPage() {
   });
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
-    buildPrompt(DEFAULT_CONFIG),
+    buildPrompt(DEFAULT_CONFIG, "", "{}"),
   );
   const [promptEdited, setPromptEdited] = useState(false);
-  const [guideDraft, setGuideDraft] = useState(GUIDE_TEXT);
-  const [schemaDraft, setSchemaDraft] = useState(() =>
-    JSON.stringify(AI_RESPONSE_SCHEMA, null, 2),
-  );
+  const [guideUserDraft, setGuideUserDraft] = useState(GUIDE_USER_DEFAULT);
+  const [schemaUserDraft, setSchemaUserDraft] = useState(SCHEMA_USER_DEFAULT);
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
@@ -2049,7 +2054,7 @@ export default function ChartSnapshotsPage() {
     );
   }, [watchlist, cfg.symbol]);
 
-  const promptText = useMemo(() => buildPrompt(cfg), [cfg]);
+  const promptText = useMemo(() => buildPrompt(cfg, guideUserDraft, schemaUserDraft), [cfg]);
 
   const hydrateFromResultEntry = useCallback(
     (entry) => {
@@ -2166,7 +2171,7 @@ export default function ChartSnapshotsPage() {
     return [...new Set(all.map(configTfToSnapshotTf).filter(Boolean))];
   }, [tfConfig.htf_tfs, tfConfig.exec_tfs, tfConfig.conf_tfs]);
   const jsonConfigText = useMemo(() => {
-    const payload = buildTemplateConfigPayload(cfg, guideDraft);
+    const payload = buildTemplateConfigPayload(cfg, guideUserDraft, schemaUserDraft);
     return JSON.stringify(payload, null, 2);
   }, [cfg, guideDraft]);
   const widgetTfs = useMemo(() => {
@@ -2698,11 +2703,11 @@ export default function ChartSnapshotsPage() {
         news: cfg.news || null,
         notes: cfg.notes || null,
       });
-      const guideOverride = String(guideDraft || "").trim();
+      const guideOverride = String(guideUserDraft || "").trim();
       const composedPrompt = [
         basePrompt,
         `CONFIG:${runtimeConfig}`,
-        guideOverride && guideOverride !== GUIDE_TEXT
+        guideOverride
           ? `USER_GUIDE:${guideOverride}`
           : "",
       ]
@@ -3379,7 +3384,7 @@ export default function ChartSnapshotsPage() {
         ? { template_id: templateId }
         : {}),
       name,
-      config: buildTemplateConfigPayload(cfg, guideDraft),
+      config: buildTemplateConfigPayload(cfg, guideUserDraft, schemaUserDraft),
       saved: new Date().toISOString(),
     };
 
@@ -3395,7 +3400,9 @@ export default function ChartSnapshotsPage() {
           config: normalizeTemplateConfig(savedTemplate.config || {}),
           saved: savedTemplate.saved || payload.saved,
           analysis_instructions:
-            savedTemplate.analysis_instructions || guideDraft,
+            savedTemplate.analysis_instructions || guideUserDraft,
+          schema_additions:
+            savedTemplate.schema_additions || schemaUserDraft,
         },
         name,
       );
@@ -3460,8 +3467,8 @@ export default function ChartSnapshotsPage() {
         ...DEFAULT_CONFIG,
         symbol: String(prev?.symbol || "").trim(),
       }));
-      setGuideDraft(GUIDE_TEXT);
-      setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+      setGuideUserDraft(GUIDE_USER_DEFAULT);
+      setSchemaUserDraft(SCHEMA_USER_DEFAULT);
       setPromptEdited(false);
       setTemplateName("");
       setStatus({ type: "success", text: "New template." });
@@ -3472,8 +3479,8 @@ export default function ChartSnapshotsPage() {
         ...DEFAULT_CONFIG,
         symbol: String(prev?.symbol || "").trim(),
       }));
-      setGuideDraft(GUIDE_TEXT);
-      setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+      setGuideUserDraft(GUIDE_USER_DEFAULT);
+      setSchemaUserDraft(SCHEMA_USER_DEFAULT);
       setPromptEdited(false);
       setTemplateName("");
       setStatus({ type: "success", text: "Default template loaded." });
@@ -3489,8 +3496,9 @@ export default function ChartSnapshotsPage() {
       }
       return next;
     });
-    setGuideDraft(savedGuide || GUIDE_TEXT);
-    setSchemaDraft(JSON.stringify(AI_RESPONSE_SCHEMA, null, 2));
+    const savedSchema = found.schema_additions || found.config?.schema_additions || SCHEMA_USER_DEFAULT;
+    setGuideUserDraft(savedGuide || GUIDE_USER_DEFAULT);
+    setSchemaUserDraft(savedSchema);
     setTemplateName(found.name || "");
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
@@ -3972,28 +3980,49 @@ export default function ChartSnapshotsPage() {
       ) : null}
       {settingsTab === "guide" ? (
         <>
-          <div className="minor-text">
-            Analysis instructions — editable. Included in Prompt under ##
-            ANALYSIS INSTRUCTIONS.
+          <div className="minor-text" style={{ marginBottom: 8 }}>
+            System Instructions (readonly) — always included in prompt.
           </div>
           <textarea
             className="snapshot-mono-v2"
-            rows={30}
-            value={guideDraft}
-            onChange={(e) => setGuideDraft(e.target.value)}
+            rows={18}
+            value={GUIDE_SYSTEM}
+            readOnly
+            style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
+          />
+          <div className="minor-text" style={{ marginTop: 16, marginBottom: 8 }}>
+            Your Custom Instructions (editable) — appended after system instructions. Saved to template.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={12}
+            value={guideUserDraft}
+            onChange={(e) => setGuideUserDraft(e.target.value)}
+            placeholder="Add your custom trading rules, preferences, or overrides here..."
           />
         </>
       ) : null}
       {settingsTab === "schema" ? (
         <>
-          <div className="minor-text">
-            Expected AI Output Schema — readonly and not saved to Template data.
+          <div className="minor-text" style={{ marginBottom: 8 }}>
+            System Schema (readonly) — base output structure.
           </div>
           <textarea
             className="snapshot-mono-v2"
-            rows={30}
-            value={schemaDraft}
+            rows={14}
+            value={JSON.stringify(SCHEMA_SYSTEM, null, 2)}
             readOnly
+            style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
+          />
+          <div className="minor-text" style={{ marginTop: 16, marginBottom: 8 }}>
+            Your Schema Additions (editable JSON) — merged as {"{"}"extra": ...{"}"} in final schema. Saved to template.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={10}
+            value={schemaUserDraft}
+            onChange={(e) => setSchemaUserDraft(e.target.value)}
+            placeholder='{"custom_field": "value"}'
           />
         </>
       ) : null}

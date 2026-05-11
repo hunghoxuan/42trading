@@ -849,6 +849,9 @@ export const AI_RESPONSE_SCHEMA_VERSION = String(
   AI_SCHEMA_SPEC.version || "2.3",
 );
 export const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
+export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
+export const SCHEMA_USER_DEFAULT = "{}";
+export const GUIDE_USER_DEFAULT = "";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GUIDE TEXT — injected directly into the prompt.
@@ -856,7 +859,14 @@ export const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
 // Every rule must be unambiguous. The AI reads this as its operating procedure.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const GUIDE_TEXT = `
+// ── Split GUIDE / SCHEMA into system + user parts ──
+// System = readonly, always included, never saved to template.
+// User   = editable textarea, saved to template, appended after system.
+//
+// Final Guide  = GUIDE_SYSTEM + "\n\n## USER INSTRUCTIONS\n" + guideUser
+// Final Schema = { ...SCHEMA_SYSTEM, extra: schemaUserObj }
+
+export const GUIDE_SYSTEM = `
 You are a Senior ICT + Price Action + Market Structure institutional trader.
 Analyze the uploaded chart(s) by following ALL steps below IN ORDER.
 Return STRICT JSON only. No markdown. No prose. No explanation outside JSON.
@@ -1098,8 +1108,16 @@ function buildStrategyContext(strategies) {
 // FIX: now serializes the actual AI_RESPONSE_SCHEMA so the AI sees the exact
 // output field structure. Previous version only returned enums — the AI had
 // to guess field names.
-export function buildSchemaString() {
-  return JSON.stringify(AI_RESPONSE_SCHEMA, null, 2);
+export function buildSchemaString(userSchemaJson) {
+  var base = SCHEMA_SYSTEM || {};
+  var extra = {};
+  try {
+    if (userSchemaJson) extra = JSON.parse(userSchemaJson);
+  } catch (_) {}
+  if (typeof extra !== "object" || !extra) extra = {};
+  var merged = Object.assign({}, base);
+  if (Object.keys(extra).length) merged.extra = extra;
+  return JSON.stringify(merged, null, 2);
 }
 
 // Builds enum and constraint reference appended after the schema.
@@ -1144,7 +1162,9 @@ export function buildEnumString() {
   );
 }
 
-export function buildPrompt(cfg) {
+export function buildPrompt(cfg, guideUser, schemaUser) {
+  if (!guideUser) guideUser = "";
+  if (!schemaUser) schemaUser = "{}";
   const tfConfig = getEffectiveTfConfig(cfg);
   const profileLabel =
     { position: "position", swing: "swing", day: "daily", scalper: "scalping" }[
@@ -1181,11 +1201,11 @@ ${context.length ? `Overrides: ${context.join(" | ")}` : ""}
 ${strategyContext}
 
 ## ANALYSIS INSTRUCTIONS
-${GUIDE_TEXT}
+${GUIDE_SYSTEM}${guideUser ? "\n\n## USER INSTRUCTIONS\n" + guideUser : ""}
 
 ## EXPECTED OUTPUT SCHEMA
 Return your response as JSON exactly matching this structure:
-${buildSchemaString()}
+${buildSchemaString(schemaUser)}
 
 ## FIELD CONSTRAINTS
 ${buildEnumString()}`;
