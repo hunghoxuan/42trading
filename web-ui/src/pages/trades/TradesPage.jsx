@@ -1308,6 +1308,46 @@ export default function TradesPage() {
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
+              {String(selectedTrade.execution_status || "").toUpperCase() === "PENDING" && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ background: "#ef5350", borderColor: "#ef5350" }}
+                    onClick={async () => {
+                      if (!confirm("Cancel this trade?")) return;
+                      try {
+                        await api.cancelTrades({ ids: [selectedTrade.sid || selectedTrade.id] });
+                        await loadTrades();
+                      } catch (e) {
+                        setError(e?.message || "Cancel failed");
+                      }
+                    }}
+                  >
+                    Cancel Trade
+                  </button>
+                </div>
+              )}
+              {String(selectedTrade.execution_status || "").toUpperCase() === "FILLED" && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    style={{ background: "#ff9800", borderColor: "#ff9800" }}
+                    onClick={async () => {
+                      if (!confirm("Close this trade?")) return;
+                      try {
+                        await api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" });
+                        await loadTrades();
+                      } catch (e) {
+                        setError(e?.message || "Close failed");
+                      }
+                    }}
+                  >
+                    Close Trade
+                  </button>
+                </div>
+              )}
               <Suspense
                 fallback={
                   <div className="loading-card">Loading Details...</div>
@@ -1315,6 +1355,22 @@ export default function TradesPage() {
               >
                 <SignalDetailCard
                   mode="trade"
+                  response={{
+                    raw: (() => {
+                      try {
+                        const rj = selectedTrade?.raw_json;
+                        return rj && typeof rj === "object" ? rj : (typeof rj === "string" ? JSON.parse(rj) : {});
+                      } catch (_) { return selectedTrade?.raw_json || {}; }
+                    })(),
+                    tradePlans: (() => {
+                      try {
+                        const rj = selectedTrade?.raw_json;
+                        const obj = rj && typeof rj === "object" ? rj : (typeof rj === "string" ? JSON.parse(rj) : {});
+                        const tp = Array.isArray(obj?.trade_plan) ? obj.trade_plan : (obj?.trade_plan ? [obj.trade_plan] : []);
+                        return tp.length ? tp : [obj].filter(x => x && typeof x === "object" && (x.direction || x.entry_price || x.entry));
+                      } catch (_) { return []; }
+                    })(),
+                  }}
                   tradePlan={{
                     enabled: true,
                     hideEditor: false,
