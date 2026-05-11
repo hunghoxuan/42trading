@@ -109,6 +109,7 @@ function PlanHeader({
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
+  const sourceVal = plan.source || plan.model || "";
   const estimatedBars =
     plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
   const confidenceLevel = (plan.confidence_level || "").toLowerCase();
@@ -301,48 +302,41 @@ function PlanHeader({
           </div>
         )}
 
-        {/* Row 3: strategy | entry_model | confidence% */}
-        {(strategy || entryModel || confidenceText) && (
+        {/* Row 3: source | strategy | entry_model | confidence | risk — one row */}
+        {(sourceVal || strategy || entryModel || confidenceText || riskLevelRaw) && (
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              flexWrap: "wrap",
+              gap: 8,
+              flexWrap: "nowrap",
               justifyContent: "flex-end",
+              overflow: "hidden",
             }}
           >
+            {sourceVal && (
+              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 500, opacity: 0.7 }}>
+                {sourceVal}
+              </span>
+            )}
             {strategy && (
-              <span
-                className="minor-text"
-                style={{
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.02em",
-                }}
-              >
+              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.02em", whiteSpace: "nowrap" }}>
                 {strategy}
               </span>
             )}
             {entryModel && (
-              <span
-                className="minor-text"
-                style={{ fontSize: "10px", fontWeight: 500 }}
-              >
+              <span className="minor-text" style={{ fontSize: "9px", fontWeight: 500, whiteSpace: "nowrap" }}>
                 {entryModel}
               </span>
             )}
             {confidenceText && (
-              <span
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  color: "var(--accent)",
-                  opacity: 0.9,
-                }}
-              >
+              <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--accent)", opacity: 0.9, whiteSpace: "nowrap" }}>
                 {confidenceText}
+              </span>
+            )}
+            {riskLevelRaw && (
+              <span className="badge badge-mini" style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize", whiteSpace: "nowrap" }}>
+                {riskLevelRaw}
               </span>
             )}
           </div>

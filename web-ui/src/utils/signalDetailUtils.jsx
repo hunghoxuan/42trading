@@ -277,10 +277,15 @@ export function calcRrFromSignal(s) {
 }
 
 export function extractTradePlanFromSignal(signal = {}) {
-  const raw =
-    signal?.raw_json && typeof signal.raw_json === "object"
-      ? signal.raw_json
-      : {};
+  const raw = (() => {
+    const rj = signal?.raw_json;
+    if (!rj) return {};
+    if (typeof rj === "object") return rj;
+    if (typeof rj === "string") {
+      try { return JSON.parse(rj); } catch (_) { return {}; }
+    }
+    return {};
+  })();
   const tradePlan = firstTradePlan(raw);
   const sideRaw = String(
     signal?.action || signal?.side || tradePlan?.direction || "",
@@ -398,8 +403,15 @@ export function extractTradePlanFromSignal(signal = {}) {
 export function extractTradePlanFromTrade(trade = {}) {
   const meta =
     trade?.metadata && typeof trade.metadata === "object" ? trade.metadata : {};
-  const raw =
-    trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+  const raw = (() => {
+    const rj = trade?.raw_json;
+    if (!rj) return {};
+    if (typeof rj === "object") return rj;
+    if (typeof rj === "string") {
+      try { return JSON.parse(rj); } catch (_) { return {}; }
+    }
+    return {};
+  })();
   const plan = firstTradePlan({
     ...raw,
     metadata: meta,

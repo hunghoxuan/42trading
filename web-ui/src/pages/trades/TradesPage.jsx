@@ -1308,46 +1308,7 @@ export default function TradesPage() {
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
-              {String(selectedTrade.execution_status || "").toUpperCase() === "PENDING" && (
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    style={{ background: "#ef5350", borderColor: "#ef5350" }}
-                    onClick={async () => {
-                      if (!confirm("Cancel this trade?")) return;
-                      try {
-                        await api.cancelTrades({ ids: [selectedTrade.sid || selectedTrade.id] });
-                        await loadTrades();
-                      } catch (e) {
-                        setError(e?.message || "Cancel failed");
-                      }
-                    }}
-                  >
-                    Cancel Trade
-                  </button>
-                </div>
-              )}
-              {String(selectedTrade.execution_status || "").toUpperCase() === "FILLED" && (
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    style={{ background: "#ff9800", borderColor: "#ff9800" }}
-                    onClick={async () => {
-                      if (!confirm("Close this trade?")) return;
-                      try {
-                        await api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" });
-                        await loadTrades();
-                      } catch (e) {
-                        setError(e?.message || "Close failed");
-                      }
-                    }}
-                  >
-                    Close Trade
-                  </button>
-                </div>
-              )}
+
               <Suspense
                 fallback={
                   <div className="loading-card">Loading Details...</div>
@@ -1380,6 +1341,7 @@ export default function TradesPage() {
                     onChange: (k, v) =>
                       setDetailPlan((p) => applyLinkedPlanChange(p, k, v)),
                     onSave: onUpdateTradePlan,
+                    onReset: () => selectedTrade && setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
                     onAddTrade: onReEntryTrade,
                     showAddSignalButton: false,
                     showSaveButton: ![
@@ -1395,6 +1357,31 @@ export default function TradesPage() {
                         selectedTrade.execution_status || "",
                       ).toUpperCase(),
                     ),
+                    saveLabel: "Save",
+                    showResetButton: true,
+                    resetLabel: "Reset",
+                    onCancel: String(selectedTrade.execution_status || "").toUpperCase() === "PENDING"
+                      ? async () => {
+                          if (!confirm("Cancel this trade?")) return;
+                          try {
+                            await api.cancelTrades({ ids: [selectedTrade.sid || selectedTrade.id] });
+                            await loadTrades();
+                          } catch (e) {
+                            setError(e?.message || "Cancel failed");
+                          }
+                        }
+                      : null,
+                    onClose: String(selectedTrade.execution_status || "").toUpperCase() === "FILLED"
+                      ? async () => {
+                          if (!confirm("Close this trade?")) return;
+                          try {
+                            await api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" });
+                            await loadTrades();
+                          } catch (e) {
+                            setError(e?.message || "Close failed");
+                          }
+                        }
+                      : null,
                     viewOnly: [
                       "FILLED",
                       "CLOSED",

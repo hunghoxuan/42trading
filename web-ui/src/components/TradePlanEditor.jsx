@@ -36,6 +36,8 @@ export function TradePlanEditor({
   onAddSignal,
   onAddTrade,
   onReset,
+  onCancel,
+  onClose,
   showSaveButton,
   showAddSignalButton,
   showAddTradeButton,
@@ -374,6 +376,42 @@ export function TradePlanEditor({
               ) : (
                 resolvedSaveLabel
               )}
+            </button>
+          ) : null}
+          {typeof onCancel === "function" ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onCancel}
+              disabled={controlsDisabled}
+              style={{
+                height: "26px",
+                fontSize: "11px",
+                padding: "0 10px",
+                borderRadius: "4px",
+                color: "#ef5350",
+                borderColor: "#ef5350",
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
+          {typeof onClose === "function" ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onClose}
+              disabled={controlsDisabled}
+              style={{
+                height: "26px",
+                fontSize: "11px",
+                padding: "0 10px",
+                borderRadius: "4px",
+                color: "#ff9800",
+                borderColor: "#ff9800",
+              }}
+            >
+              Close
             </button>
           ) : null}
           {effectiveShowAddSignal ? (
