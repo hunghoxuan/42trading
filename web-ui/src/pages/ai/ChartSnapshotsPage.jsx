@@ -356,9 +356,7 @@ function normalizeTemplateRecord(raw = {}, fallbackId = "") {
       raw?._guide ||
       "",
     schema_additions:
-      raw?.schema_additions ||
-      raw?.config?.schema_additions ||
-      "{}",
+      raw?.schema_additions || raw?.config?.schema_additions || "{}",
     saved:
       raw?.saved ||
       raw?.updated_at ||
@@ -2060,7 +2058,10 @@ export default function ChartSnapshotsPage() {
     );
   }, [watchlist, cfg.symbol]);
 
-  const promptText = useMemo(() => buildPrompt(cfg, guideUserDraft, schemaUserDraft), [cfg]);
+  const promptText = useMemo(
+    () => buildPrompt(cfg, guideUserDraft, schemaUserDraft),
+    [cfg],
+  );
 
   const hydrateFromResultEntry = useCallback(
     (entry) => {
@@ -2177,7 +2178,11 @@ export default function ChartSnapshotsPage() {
     return [...new Set(all.map(configTfToSnapshotTf).filter(Boolean))];
   }, [tfConfig.htf_tfs, tfConfig.exec_tfs, tfConfig.conf_tfs]);
   const jsonConfigText = useMemo(() => {
-    const payload = buildTemplateConfigPayload(cfg, guideUserDraft, schemaUserDraft);
+    const payload = buildTemplateConfigPayload(
+      cfg,
+      guideUserDraft,
+      schemaUserDraft,
+    );
     return JSON.stringify(payload, null, 2);
   }, [cfg, guideUserDraft]);
   const widgetTfs = useMemo(() => {
@@ -2713,9 +2718,7 @@ export default function ChartSnapshotsPage() {
       const composedPrompt = [
         basePrompt,
         `CONFIG:${runtimeConfig}`,
-        guideOverride
-          ? `USER_GUIDE:${guideOverride}`
-          : "",
+        guideOverride ? `USER_GUIDE:${guideOverride}` : "",
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -3407,8 +3410,7 @@ export default function ChartSnapshotsPage() {
           saved: savedTemplate.saved || payload.saved,
           analysis_instructions:
             savedTemplate.analysis_instructions || guideUserDraft,
-          schema_additions:
-            savedTemplate.schema_additions || schemaUserDraft,
+          schema_additions: savedTemplate.schema_additions || schemaUserDraft,
         },
         name,
       );
@@ -3502,7 +3504,10 @@ export default function ChartSnapshotsPage() {
       }
       return next;
     });
-    const savedSchema = found.schema_additions || found.config?.schema_additions || SCHEMA_USER_DEFAULT;
+    const savedSchema =
+      found.schema_additions ||
+      found.config?.schema_additions ||
+      SCHEMA_USER_DEFAULT;
     setGuideUserDraft(savedGuide || GUIDE_USER_DEFAULT);
     setSchemaUserDraft(savedSchema);
     setTemplateName(found.name || "");
@@ -4007,7 +4012,8 @@ export default function ChartSnapshotsPage() {
           {guideSubTab === "user" ? (
             <>
               <div className="minor-text" style={{ marginBottom: 8 }}>
-                Your Custom Instructions — appended after system instructions. Saved to template.
+                Your Custom Instructions — appended after system instructions.
+                Saved to template.
               </div>
               <textarea
                 className="snapshot-mono-v2"
@@ -4045,8 +4051,12 @@ export default function ChartSnapshotsPage() {
             readOnly
             style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
           />
-          <div className="minor-text" style={{ marginTop: 16, marginBottom: 8 }}>
-            Your Schema Additions (editable JSON) — merged as {"{"}"extra": ...{"}"} in final schema. Saved to template.
+          <div
+            className="minor-text"
+            style={{ marginTop: 16, marginBottom: 8 }}
+          >
+            Your Schema Additions (editable JSON) — merged as {"{"}"extra": ...
+            {"}"} in final schema. Saved to template.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -4074,7 +4084,8 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            Template payload saved to DB. Includes config, strategies, analysis_instructions, and schema_additions.
+            Template payload saved to DB. Includes config, strategies,
+            analysis_instructions, and schema_additions.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -4088,8 +4099,9 @@ export default function ChartSnapshotsPage() {
         <>
           <div className="minor-text" style={{ marginBottom: 8 }}>
             Response Mapping — define how AI response fields map to UI display.
-            Format: each field has a fixed label and a mapping chain using || for fallbacks.
-            Readonly fields cannot be customized; editable fields can.
+            Format: each field has a fixed label and a mapping chain using ||
+            for fallbacks. Readonly fields cannot be customized; editable fields
+            can.
           </div>
           <textarea
             className="snapshot-mono-v2"
@@ -5525,23 +5537,38 @@ export default function ChartSnapshotsPage() {
                   __raw_plan: plan?.raw || {},
                   __plan_index: idx,
                   symbol: normalizeSignalSymbol(
-                    plan.symbol || plan?.raw?.symbol || "",
+                    plan?.raw?.symbol || plan.symbol || "",
                   ),
-                  direction: plan.direction,
-                  entry: getPlanPositionOverride(plan, idx).entry,
-                  tp: getPlanPositionOverride(plan, idx).tp,
-                  sl: getPlanPositionOverride(plan, idx).sl,
-                  rr: getPlanPositionOverride(plan, idx).rr,
-                  trade_type: getPlanPositionOverride(plan, idx).trade_type,
-                  note: getPlanPositionOverride(plan, idx).note,
-                  strategy: plan.strategy || plan?.raw?.strategy || "",
+                  direction: plan?.raw?.direction || plan.direction,
+                  entry: getPlanPositionOverride(plan, idx).entry || plan?.raw?.entry_price || plan?.raw?.entry,
+                  tp: getPlanPositionOverride(plan, idx).tp || plan?.raw?.take_profit || plan?.raw?.tp,
+                  sl: getPlanPositionOverride(plan, idx).sl || plan?.raw?.stop_loss || plan?.raw?.sl,
+                  rr: getPlanPositionOverride(plan, idx).rr || plan?.raw?.risk_reward || plan?.raw?.rr,
+                  trade_type: getPlanPositionOverride(plan, idx).trade_type || plan?.raw?.order_type || plan?.raw?.type || "limit",
+                  note: getPlanPositionOverride(plan, idx).note || plan?.raw?.note || "",
+                  strategy: plan?.raw?.strategy || plan.strategy || "",
                   entry_model:
-                    plan.entryModel ||
                     plan?.raw?.entry_model ||
                     plan?.raw?.entryModel ||
+                    plan.entryModel ||
                     "",
                   skip_recommendation:
-                    plan.skip_recommendation || plan?.raw?.trade_decision || "",
+                    plan?.raw?.skip_recommendation ||
+                    plan?.raw?.position_management?.trade_decision ||
+                    plan?.raw?.trade_decision ||
+                    plan.skip_recommendation ||
+                    "",
+                  confidence_level: plan?.raw?.confidence_level || "",
+                  risk_level: plan?.raw?.risk_level || plan?.raw?.risk_tier || "",
+                  confluence_checklist:
+                    plan?.raw?.ai_full_analysis?.confluence_checklists ||
+                    plan?.raw?.confluence_checklist ||
+                    [],
+                  reasons_to_skip:
+                    plan?.raw?.reasons_to_skip ||
+                    (plan?.raw?.position_management?.skips_reasons
+                      ? [{ reason: plan.raw.position_management.skips_reasons, severity: "" }]
+                      : plan.reasons_to_skip || []),
                 })),
                 snapshotFiles: chartFiles,
               }}
@@ -5557,9 +5584,7 @@ export default function ChartSnapshotsPage() {
                   !autoSavedTrades &&
                   !manuallyAddedTrade &&
                   !manuallyAddedSignal,
-                showAddTradeButton:
-                  !autoSavedTrades &&
-                  !manuallyAddedTrade,
+                showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
                 showResetButton: true,
                 onReset: resetToDefaultBrowser,
                 resetLabel: "Back",
@@ -5608,7 +5633,10 @@ export default function ChartSnapshotsPage() {
             {actionStatus.text}
           </span>
         ) : null}
-        {(() => { const lastAdded = Object.values(addedEntities).pop(); return lastAdded?.kind === "trade" && lastAdded?.id; })() ? (
+        {(() => {
+          const lastAdded = Object.values(addedEntities).pop();
+          return lastAdded?.kind === "trade" && lastAdded?.id;
+        })() ? (
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button
               type="button"
@@ -5620,7 +5648,9 @@ export default function ChartSnapshotsPage() {
             <button
               type="button"
               className="primary-button"
-              onClick={() => navigate(`/trades/${Object.values(addedEntities).pop()?.id}`)}
+              onClick={() =>
+                navigate(`/trades/${Object.values(addedEntities).pop()?.id}`)
+              }
             >
               Goto Trade
             </button>
