@@ -562,15 +562,19 @@ export default function TradesPage() {
         selectedTradeIdRef.current = tradeId;
       } else {
         // Trade not in filtered list — try direct lookup (e.g. PENDING trade with FILLED filter)
-        api.v2Trades({ q: tradeId }).then((data) => {
-          const t = Array.isArray(data?.items) && data.items.length
-            ? data.items[0]
-            : null;
-          if (t) {
-            setSelectedTrade(t);
-            selectedTradeIdRef.current = tradeId;
-          }
-        }).catch(() => {});
+        api
+          .v2Trades({ q: tradeId })
+          .then((data) => {
+            const t =
+              Array.isArray(data?.items) && data.items.length
+                ? data.items[0]
+                : null;
+            if (t) {
+              setSelectedTrade(t);
+              selectedTradeIdRef.current = tradeId;
+            }
+          })
+          .catch(() => {});
       }
     }
   }, [tradeId, rows.length]);
@@ -1308,7 +1312,6 @@ export default function TradesPage() {
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
-
               <Suspense
                 fallback={
                   <div className="loading-card">Loading Details...</div>
@@ -1320,18 +1323,51 @@ export default function TradesPage() {
                     raw: (() => {
                       try {
                         const rj = selectedTrade?.raw_json;
-                        return rj && typeof rj === "object" ? rj : (typeof rj === "string" ? JSON.parse(rj) : {});
-                      } catch (_) { return selectedTrade?.raw_json || {}; }
+                        return rj && typeof rj === "object"
+                          ? rj
+                          : typeof rj === "string"
+                            ? JSON.parse(rj)
+                            : {};
+                      } catch (_) {
+                        return selectedTrade?.raw_json || {};
+                      }
                     })(),
                     tradePlans: (() => {
                       try {
                         const rj = selectedTrade?.raw_json;
-                        const obj = rj && typeof rj === "object" ? rj : (typeof rj === "string" ? JSON.parse(rj) : {});
-                        const tp = Array.isArray(obj?.trade_plan) ? obj.trade_plan : (obj?.trade_plan ? [obj.trade_plan] : []);
-                        const result = tp.length ? tp : [obj].filter(x => x && typeof x === "object" && (x.direction || x.entry_price || x.entry));
+                        const obj =
+                          rj && typeof rj === "object"
+                            ? rj
+                            : typeof rj === "string"
+                              ? JSON.parse(rj)
+                              : {};
+                        const tp = Array.isArray(obj?.trade_plan)
+                          ? obj.trade_plan
+                          : obj?.trade_plan
+                            ? [obj.trade_plan]
+                            : [];
+                        const result = tp.length
+                          ? tp
+                          : [obj].filter(
+                              (x) =>
+                                x &&
+                                typeof x === "object" &&
+                                (x.direction || x.entry_price || x.entry),
+                            );
                         // Always return at least one plan so buttons render
-                        return result.length ? result : [{ direction: selectedTrade?.action || "BUY", entry: selectedTrade?.entry, tp: selectedTrade?.tp, sl: selectedTrade?.sl }];
-                      } catch (_) { return [{ direction: "BUY" }]; }
+                        return result.length
+                          ? result
+                          : [
+                              {
+                                direction: selectedTrade?.action || "BUY",
+                                entry: selectedTrade?.entry,
+                                tp: selectedTrade?.tp,
+                                sl: selectedTrade?.sl,
+                              },
+                            ];
+                      } catch (_) {
+                        return [{ direction: "BUY" }];
+                      }
                     })(),
                   }}
                   tradePlan={{
@@ -1343,7 +1379,9 @@ export default function TradesPage() {
                     onChange: (k, v) =>
                       setDetailPlan((p) => applyLinkedPlanChange(p, k, v)),
                     onSave: onUpdateTradePlan,
-                    onReset: () => selectedTrade && setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
+                    onReset: () =>
+                      selectedTrade &&
+                      setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
                     onAddTrade: onReEntryTrade,
                     showAddSignalButton: false,
                     showSaveButton: ![
@@ -1362,28 +1400,39 @@ export default function TradesPage() {
                     saveLabel: "Save",
                     showResetButton: true,
                     resetLabel: "Reset",
-                    onCancel: String(selectedTrade.execution_status || "").toUpperCase() === "PENDING"
-                      ? async () => {
-                          if (!confirm("Cancel this trade?")) return;
-                          try {
-                            await api.cancelTrades({ q: selectedTrade.sid || selectedTrade.id });
-                            await loadTrades();
-                          } catch (e) {
-                            setError(e?.message || "Cancel failed");
+                    onCancel:
+                      String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase() === "PENDING"
+                        ? async () => {
+                            if (!confirm("Cancel this trade?")) return;
+                            try {
+                              await api.cancelTrades({
+                                q: selectedTrade.sid || selectedTrade.id,
+                              });
+                              await loadTrades();
+                            } catch (e) {
+                              setError(e?.message || "Cancel failed");
+                            }
                           }
-                        }
-                      : null,
-                    onClose: String(selectedTrade.execution_status || "").toUpperCase() === "FILLED"
-                      ? async () => {
-                          if (!confirm("Close this trade?")) return;
-                          try {
-                            await api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, { execution_status: "CLOSED" });
-                            await loadTrades();
-                          } catch (e) {
-                            setError(e?.message || "Close failed");
+                        : null,
+                    onClose:
+                      String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase() === "FILLED"
+                        ? async () => {
+                            if (!confirm("Close this trade?")) return;
+                            try {
+                              await api.v2UpdateTrade(
+                                selectedTrade.sid || selectedTrade.id,
+                                { execution_status: "CLOSED" },
+                              );
+                              await loadTrades();
+                            } catch (e) {
+                              setError(e?.message || "Close failed");
+                            }
                           }
-                        }
-                      : null,
+                        : null,
                     viewOnly: [
                       "FILLED",
                       "CLOSED",
@@ -1597,22 +1646,31 @@ export default function TradesPage() {
                     },
                     {
                       label: "Direction",
-                      value: detailPlan.direction || selectedTrade.action || "-",
+                      value:
+                        detailPlan.direction || selectedTrade.action || "-",
                       group: "source",
                     },
                     {
                       label: "Order Type",
-                      value: detailPlan.trade_type || detailPlan.order_type || "-",
+                      value:
+                        detailPlan.trade_type || detailPlan.order_type || "-",
                       group: "source",
                     },
                     {
                       label: "Model",
-                      value: selectedTrade.model || selectedTrade.metadata?.model || "-",
+                      value:
+                        selectedTrade.model ||
+                        selectedTrade.metadata?.model ||
+                        "-",
                       group: "source",
                     },
                     {
                       label: "Session",
-                      value: detailPlan.session || selectedTrade.session_prefix || selectedTrade.metadata?.session_prefix || "-",
+                      value:
+                        detailPlan.session ||
+                        selectedTrade.session_prefix ||
+                        selectedTrade.metadata?.session_prefix ||
+                        "-",
                       group: "source",
                     },
                     {
@@ -1642,45 +1700,94 @@ export default function TradesPage() {
                     },
                     {
                       label: "Risk Level",
-                      value: detailPlan.risk_level || selectedTrade.metadata?.risk_level || "-",
+                      value:
+                        detailPlan.risk_level ||
+                        selectedTrade.metadata?.risk_level ||
+                        "-",
                       group: "source",
                     },
                     {
                       label: "Multiple Exits",
-                      value: detailPlan.multiple_exits && Object.keys(detailPlan.multiple_exits).length ? JSON.stringify(detailPlan.multiple_exits, null, 2) : "-",
+                      value:
+                        detailPlan.multiple_exits &&
+                        Object.keys(detailPlan.multiple_exits).length
+                          ? JSON.stringify(detailPlan.multiple_exits, null, 2)
+                          : "-",
                       fullWidth: true,
-                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                      valueStyle: {
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      },
                     },
                     {
                       label: "Partial TPs",
-                      value: Array.isArray(detailPlan.partial_tps) && detailPlan.partial_tps.length ? JSON.stringify(detailPlan.partial_tps, null, 2) : "-",
+                      value:
+                        Array.isArray(detailPlan.partial_tps) &&
+                        detailPlan.partial_tps.length
+                          ? JSON.stringify(detailPlan.partial_tps, null, 2)
+                          : "-",
                       fullWidth: true,
-                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                      valueStyle: {
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      },
                     },
                     {
                       label: "Trade Decision",
-                      value: detailPlan.trade_decision || detailPlan.skip_recommendation || "-",
+                      value:
+                        detailPlan.trade_decision ||
+                        detailPlan.skip_recommendation ||
+                        "-",
                     },
                     {
                       label: "Reasons to Skip",
-                      value: Array.isArray(detailPlan.reasons_to_skip) && detailPlan.reasons_to_skip.length ? JSON.stringify(detailPlan.reasons_to_skip, null, 2) : "-",
+                      value:
+                        Array.isArray(detailPlan.reasons_to_skip) &&
+                        detailPlan.reasons_to_skip.length
+                          ? JSON.stringify(detailPlan.reasons_to_skip, null, 2)
+                          : "-",
                       fullWidth: true,
-                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                      valueStyle: {
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      },
                     },
                     {
                       label: "Snapshot Files",
-                      value: Array.isArray(selectedTrade.snapshot_files) && selectedTrade.snapshot_files.length ? selectedTrade.snapshot_files.join(", ") : "-",
+                      value:
+                        Array.isArray(selectedTrade.snapshot_files) &&
+                        selectedTrade.snapshot_files.length
+                          ? selectedTrade.snapshot_files.join(", ")
+                          : "-",
                       fullWidth: true,
                     },
                     {
                       label: "AI Analysis",
-                      value: detailPlan.ai_full_analysis && Object.keys(detailPlan.ai_full_analysis).length ? JSON.stringify(detailPlan.ai_full_analysis, null, 2) : "-",
+                      value:
+                        detailPlan.ai_full_analysis &&
+                        Object.keys(detailPlan.ai_full_analysis).length
+                          ? JSON.stringify(detailPlan.ai_full_analysis, null, 2)
+                          : "-",
                       fullWidth: true,
-                      valueStyle: { whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
+                      valueStyle: {
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      },
                     },
                     {
                       label: "Only Signal",
-                      value: selectedTrade.only_signal != null ? String(selectedTrade.only_signal) : "-",
+                      value:
+                        selectedTrade.only_signal != null
+                          ? String(selectedTrade.only_signal)
+                          : "-",
                       group: "source",
                     },
                     {
@@ -1891,10 +1998,6 @@ export default function TradesPage() {
                       }),
                   }}
                   formatDateTime={fDateTime}
-                  response={{
-                    raw: selectedTrade?.raw_json,
-                    metadata: selectedTrade?.metadata,
-                  }}
                 />
               </Suspense>
               {createMode ? (
