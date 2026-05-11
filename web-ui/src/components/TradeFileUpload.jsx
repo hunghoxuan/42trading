@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api } from "../api";
+import { api, getRuntimeApiBase } from "../api";
 
 function fmtSize(bytes) {
   if (!bytes || bytes === 0) return "0 B";
@@ -9,11 +9,20 @@ function fmtSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
+function isImage(name) {
+  return /\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/i.test(String(name || ""));
+}
+
+function fileUrl(tradeId, name) {
+  return `${getRuntimeApiBase()}/v2/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(name)}/content`;
+}
+
 export function TradeFileUpload({ tradeId, disabled = false }) {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState("");
+  const [previewFile, setPreviewFile] = useState(null);
   const inputRef = useRef(null);
 
   const loadFiles = useCallback(async () => {
@@ -62,6 +71,7 @@ export function TradeFileUpload({ tradeId, disabled = false }) {
     if (!tradeId) return;
     try {
       await api.deleteTradeFile(tradeId, fileName);
+      if (previewFile === fileName) setPreviewFile(null);
       await loadFiles();
     } catch (e) {
       setError(e?.message || "Delete failed");
@@ -91,41 +101,129 @@ export function TradeFileUpload({ tradeId, disabled = false }) {
       {files.length > 0 && (
         <div style={{ marginBottom: 6 }}>
           {files.map((f) => (
-            <div
-              key={f.name}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "4px 8px",
-                marginBottom: 2,
-                background: "rgba(255,255,255,0.03)",
-                borderRadius: 4,
-                fontSize: 10,
-                color: "var(--text)",
-              }}
-            >
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                📎 {f.name}
-                {f.size ? <span style={{ color: "var(--muted)", marginLeft: 6 }}>{fmtSize(f.size)}</span> : null}
-              </span>
-              {!disabled && (
-                <button
+            <div key={f.name}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "4px 8px",
+                  marginBottom: 2,
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 4,
+                  fontSize: 10,
+                  color: "var(--text)",
+                }}
+              >
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    cursor: "pointer",
+                  }}
+                  onClick={() =>
+                    setPreviewFile(previewFile === f.name ? null : f.name)
+                  }
+                  title={
+                    isImage(f.name) ? "Click to preview" : "Click for details"
+                  }
+                >
+                  {isImage(f.name) ? "🖼 " : "📎 "}
+                  {f.name}
+                  {f.size ? (
+                    <span style={{ color: "var(--muted)", marginLeft: 6 }}>
+                      {fmtSize(f.size)}
+                    </span>
+                  ) : null}
+                </span>
+                <a
+                  href={fileUrl(tradeId, f.name)}
+                  download={f.name}
                   className="secondary-button"
-                  onClick={() => handleDelete(f.name)}
                   style={{
                     height: "18px",
                     fontSize: "9px",
                     padding: "0 6px",
-                    marginLeft: 8,
-                    color: "#ef5350",
-                    borderColor: "transparent",
-                    background: "transparent",
+                    marginLeft: 4,
+                    textDecoration: "none",
+                    lineHeight: "18px",
                   }}
-                  title="Delete file"
+                  title="Download"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  ✕
-                </button>
+                  ⬇
+                </a>
+                {!disabled && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleDelete(f.name)}
+                    style={{
+                      height: "18px",
+                      fontSize: "9px",
+                      padding: "0 6px",
+                      marginLeft: 4,
+                      color: "#ef5350",
+                      borderColor: "transparent",
+                      background: "transparent",
+                    }}
+                    title="Delete file"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Image preview */}
+              {previewFile === f.name && isImage(f.name) && (
+                <div
+                  style={{
+                    marginBottom: 4,
+                    padding: "4px",
+                    background: "rgba(0,0,0,0.2)",
+                    borderRadius: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  <img
+                    src={fileUrl(tradeId, f.name)}
+                    alt={f.name}
+                    style={{
+                      maxWidth: "100%",
+                      maxHeight: 200,
+                      borderRadius: 4,
+                      cursor: "pointer",
+                    }}
+                    onClick={() =>
+                      window.open(fileUrl(tradeId, f.name), "_blank")
+                    }
+                    title="Click to open full size"
+                  />
+                </div>
+              )}
+
+              {/* Non-image preview */}
+              {previewFile === f.name && !isImage(f.name) && (
+                <div
+                  style={{
+                    marginBottom: 4,
+                    padding: "6px 8px",
+                    background: "rgba(0,0,0,0.2)",
+                    borderRadius: 4,
+                    fontSize: 10,
+                    color: "var(--muted)",
+                  }}
+                >
+                  <a
+                    href={fileUrl(tradeId, f.name)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    Open file in new tab
+                  </a>
+                </div>
               )}
             </div>
           ))}
@@ -170,7 +268,10 @@ export function TradeFileUpload({ tradeId, disabled = false }) {
       )}
 
       {error && (
-        <span className="minor-text msg-error" style={{ fontSize: 9, display: "block", marginTop: 4 }}>
+        <span
+          className="minor-text msg-error"
+          style={{ fontSize: 9, display: "block", marginTop: 4 }}
+        >
           {error}
         </span>
       )}

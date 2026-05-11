@@ -485,7 +485,11 @@ export function TradePlanEditor({
               >
                 Strategic Note
               </label>
-              <SmartContent content={value.note || ""} mode="editable" />
+              <SmartContent
+                content={value.note || ""}
+                mode="editable"
+                onChange={(v) => update("note", v)}
+              />
               <TradeFileUpload tradeId={tradeId} disabled={controlsDisabled} />
             </div>
 

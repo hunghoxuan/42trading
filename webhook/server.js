@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.12 10:00 - trade-files",
-); // trade file uploads: drag-drop attachments per trade + note-edit for FILLED/CLOSED
+  "v2026.05.12 11:00 - trade-files-v2",
+); // trade file uploads v2: fix note onChange, image preview, download, FILLED constraint
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -6203,7 +6203,7 @@ async function _mt5InitBackendInternal() {
       `
     ALTER TABLE trades
     ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['PENDING','OPEN','CLOSED','REJECTED','CANCELLED']))
+    CHECK (execution_status = ANY (ARRAY['PENDING','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
   `,
     )
     .catch(() => {});
@@ -19374,6 +19374,64 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "file not found" });
       fs.unlinkSync(abs);
       return json(res, 200, { ok: true });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Serve file content for preview/download
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/files\/.+\/content$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const m = url.pathname.match(
+        /^\/v2\/trades\/([^/]+)\/files\/(.+)\/content$/,
+      );
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
+      if (!tradeRef || !fileName)
+        return json(res, 400, {
+          ok: false,
+          error: "trade sid and filename are required",
+        });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const safeName = path.basename(fileName);
+      const abs = path.join(TRADE_FILES_DIR, `trade-${sid}`, safeName);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
+        return json(res, 404, { ok: false, error: "file not found" });
+      const ext = path.extname(safeName).toLowerCase();
+      const mimeTypes = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".svg": "image/svg+xml",
+        ".bmp": "image/bmp",
+        ".ico": "image/x-icon",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".json": "application/json",
+        ".csv": "text/csv",
+      };
+      const contentType = mimeTypes[ext] || "application/octet-stream";
+      const data = fs.readFileSync(abs);
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Content-Length": data.length,
+        "Cache-Control": "private, max-age=3600",
+      });
+      res.end(data);
+      return;
     } catch (error) {
       return json(res, 400, {
         ok: false,
