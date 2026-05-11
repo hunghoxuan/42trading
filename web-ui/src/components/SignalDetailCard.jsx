@@ -303,7 +303,7 @@ function PlanHeader({
         )}
 
         {/* Row 3: source | strategy | entry_model | confidence | risk — one row */}
-        {(sourceVal || strategy || entryModel || confidenceText || riskLevelRaw) && (
+        {(sourceVal || strategy || entryModel || confidenceText || riskLevel) && (
           <div
             style={{
               display: "flex",
@@ -334,9 +334,9 @@ function PlanHeader({
                 {confidenceText}
               </span>
             )}
-            {riskLevelRaw && (
+            {riskLevel && (
               <span className="badge badge-mini" style={{ padding: "1px 5px", fontSize: "9px", textTransform: "capitalize", whiteSpace: "nowrap" }}>
-                {riskLevelRaw}
+                {riskLevel}
               </span>
             )}
           </div>
