@@ -299,6 +299,12 @@ export default function TradesPage() {
     pageSize: 50,
   });
 
+  // Sync filter when sub-menu (URL param) changes
+  useEffect(() => {
+    const status = searchParams.get("status") || "FILLED";
+    setFilter((f) => f.execution_status !== status ? { ...f, execution_status: status, page: 1 } : f);
+  }, [searchParams]);
+
   const query = useMemo(() => ({ ...filter }), [filter]);
   const [sortKey, setSortKey] = useState("audit");
   const [sortDir, setSortDir] = useState("desc");
