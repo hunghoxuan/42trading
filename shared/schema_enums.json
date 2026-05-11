@@ -1,0 +1,34 @@
+{
+  "schema_version": "2.4",
+  "enums": {
+    "tf": ["MN", "W", "D", "4H", "1H", "15M", "5M", "1M"],
+    "trend": ["Bullish", "Bearish", "Sideway"],
+    "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Sideway"],
+    "phase": [
+      "Trending",
+      "Retracement",
+      "Reversal",
+      "Consolidation",
+      "Breakout",
+      "Breakdown",
+      "Distribution",
+      "Accumulation"
+    ],
+    "bias": ["Long", "Short", "Neutral"],
+    "direction": ["Bullish", "Bearish"],
+    "weight": ["High", "Medium", "Low"],
+    "order_type": ["Limit", "Stop Limit", "Market"],
+    "trade_decision": ["Proceed", "Wait", "Reduce", "Skip"],
+    "severity": ["High", "Medium", "Low"],
+    "grade": ["A", "B", "C", "NoTrade"],
+    "relevance": ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"]
+  },
+  "limits": {
+    "max_trade_plans": 24,
+    "max_pd_arrays": 6,
+    "max_key_levels": 6,
+    "max_reference_zones": 6,
+    "max_key_events": 8,
+    "max_expected_path": 5
+  }
+}

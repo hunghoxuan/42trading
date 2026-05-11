@@ -40,6 +40,7 @@ import {
   buildJsonConfig,
   buildSchemaString,
 } from "./AiPromptBuilder";
+import RESPONSE_MAPPING_RAW from "../../../../shared/response_mapping.json";
 import {
   SymbolEntryCell,
   StatusPnlCell,
@@ -1992,6 +1993,11 @@ export default function ChartSnapshotsPage() {
   const [promptEdited, setPromptEdited] = useState(false);
   const [guideUserDraft, setGuideUserDraft] = useState(GUIDE_USER_DEFAULT);
   const [schemaUserDraft, setSchemaUserDraft] = useState(SCHEMA_USER_DEFAULT);
+  const [guideSubTab, setGuideSubTab] = useState("user");
+  const [schemaSubTab, setSchemaSubTab] = useState("user");
+  const [responseMappingDraft, setResponseMappingDraft] = useState(() =>
+    JSON.stringify(RESPONSE_MAPPING_RAW, null, 2),
+  );
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
@@ -3980,26 +3986,51 @@ export default function ChartSnapshotsPage() {
       ) : null}
       {settingsTab === "guide" ? (
         <>
-          <div className="minor-text" style={{ marginBottom: 8 }}>
-            System Instructions (readonly) — always included in prompt.
+          <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+            <button
+              type="button"
+              className={`secondary-button ${guideSubTab === "user" ? "active" : ""}`}
+              onClick={() => setGuideSubTab("user")}
+              style={{ fontSize: 11, padding: "3px 10px" }}
+            >
+              User Custom
+            </button>
+            <button
+              type="button"
+              className={`secondary-button ${guideSubTab === "system" ? "active" : ""}`}
+              onClick={() => setGuideSubTab("system")}
+              style={{ fontSize: 11, padding: "3px 10px" }}
+            >
+              System
+            </button>
           </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={18}
-            value={GUIDE_SYSTEM}
-            readOnly
-            style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
-          />
-          <div className="minor-text" style={{ marginTop: 16, marginBottom: 8 }}>
-            Your Custom Instructions (editable) — appended after system instructions. Saved to template.
-          </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={12}
-            value={guideUserDraft}
-            onChange={(e) => setGuideUserDraft(e.target.value)}
-            placeholder="Add your custom trading rules, preferences, or overrides here..."
-          />
+          {guideSubTab === "user" ? (
+            <>
+              <div className="minor-text" style={{ marginBottom: 8 }}>
+                Your Custom Instructions — appended after system instructions. Saved to template.
+              </div>
+              <textarea
+                className="snapshot-mono-v2"
+                rows={30}
+                value={guideUserDraft}
+                onChange={(e) => setGuideUserDraft(e.target.value)}
+                placeholder="Add your custom trading rules, preferences, or overrides here..."
+              />
+            </>
+          ) : (
+            <>
+              <div className="minor-text" style={{ marginBottom: 8 }}>
+                System Instructions (readonly) — always included in prompt.
+              </div>
+              <textarea
+                className="snapshot-mono-v2"
+                rows={30}
+                value={GUIDE_SYSTEM}
+                readOnly
+                style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
+              />
+            </>
+          )}
         </>
       ) : null}
       {settingsTab === "schema" ? (
@@ -4043,14 +4074,28 @@ export default function ChartSnapshotsPage() {
       {settingsTab === "json" ? (
         <>
           <div className="minor-text">
-            Template payload saved to DB. Only includes `config`, `strategies`,
-            and `analysis_instructions`.
+            Template payload saved to DB. Includes config, strategies, analysis_instructions, and schema_additions.
           </div>
           <textarea
             className="snapshot-mono-v2"
             rows={30}
             value={jsonConfigText}
             readOnly
+          />
+        </>
+      ) : null}
+      {settingsTab === "mapping" ? (
+        <>
+          <div className="minor-text" style={{ marginBottom: 8 }}>
+            Response Mapping — define how AI response fields map to UI display.
+            Format: each field has a fixed label and a mapping chain using || for fallbacks.
+            Readonly fields cannot be customized; editable fields can.
+          </div>
+          <textarea
+            className="snapshot-mono-v2"
+            rows={30}
+            value={responseMappingDraft}
+            onChange={(e) => setResponseMappingDraft(e.target.value)}
           />
         </>
       ) : null}
@@ -5607,14 +5652,6 @@ export default function ChartSnapshotsPage() {
                 </button>
                 <button
                   type="button"
-                  className={`secondary-button ${settingsTab === "strategies" ? "active" : ""}`}
-                  onClick={() => setSettingsTab("strategies")}
-                  style={{ fontSize: 11, padding: "4px 10px" }}
-                >
-                  STRATEGIES
-                </button>
-                <button
-                  type="button"
                   className={`secondary-button ${settingsTab === "guide" ? "active" : ""}`}
                   onClick={() => setSettingsTab("guide")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
@@ -5627,7 +5664,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => setSettingsTab("schema")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
-                  RESPONSE
+                  SCHEMA
                 </button>
                 <button
                   type="button"
@@ -5639,11 +5676,27 @@ export default function ChartSnapshotsPage() {
                 </button>
                 <button
                   type="button"
+                  className={`secondary-button ${settingsTab === "strategies" ? "active" : ""}`}
+                  onClick={() => setSettingsTab("strategies")}
+                  style={{ fontSize: 11, padding: "4px 10px" }}
+                >
+                  STRATEGIES
+                </button>
+                <button
+                  type="button"
                   className={`secondary-button ${settingsTab === "json" ? "active" : ""}`}
                   onClick={() => setSettingsTab("json")}
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
                   Template
+                </button>
+                <button
+                  type="button"
+                  className={`secondary-button ${settingsTab === "mapping" ? "active" : ""}`}
+                  onClick={() => setSettingsTab("mapping")}
+                  style={{ fontSize: 11, padding: "4px 10px" }}
+                >
+                  Mapping
                 </button>
               </div>
               <div

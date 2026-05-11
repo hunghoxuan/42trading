@@ -1,0 +1,21 @@
+{
+  "fields": {
+    "entry":       { "label": "Entry",        "readonly": true,  "mapping": "entry_price || entry" },
+    "tp":          { "label": "TP",           "readonly": true,  "mapping": "take_profit || tp" },
+    "sl":          { "label": "SL",           "readonly": true,  "mapping": "stop_loss || sl" },
+    "direction":   { "label": "Direction",    "readonly": true,  "mapping": "direction || action" },
+    "symbol":      { "label": "Symbol",       "readonly": true,  "mapping": "symbol" },
+    "strategy":    { "label": "Strategy",     "readonly": true,  "mapping": "strategy" },
+    "entry_model": { "label": "Entry Model",  "readonly": true,  "mapping": "entry_model || entryModel || model" },
+    "rr":          { "label": "RR",           "readonly": true,  "mapping": "risk_reward || rr" },
+    "confidence":  { "label": "Confidence",   "readonly": true,  "mapping": "confidence_pct || confidence" },
+    "risk_pct":    { "label": "Risk %",       "readonly": true,  "mapping": "risk_percent || risk_pct" },
+    "estimated_bars": { "label": "Est. Bars", "readonly": true,  "mapping": "estimated_bars || estimate_bars_that_entry_happens" },
+    "note":        { "label": "Note",         "readonly": false, "mapping": "note" },
+    "invalidation": { "label": "Invalidation", "readonly": false, "mapping": "invalidation" },
+    "entry_condition": { "label": "Entry Condition", "readonly": false, "mapping": "entry_condition || entry_trigger" },
+    "exit_condition":  { "label": "Exit Condition",  "readonly": false, "mapping": "exit_condition || mid_trade_invalidation" },
+    "risk_management": { "label": "Risk Mgmt", "readonly": false, "mapping": "risk_management" },
+    "skip_recommendation": { "label": "Skip Rec", "readonly": false, "mapping": "skip_recommendation || trade_decision" }
+  }
+}
