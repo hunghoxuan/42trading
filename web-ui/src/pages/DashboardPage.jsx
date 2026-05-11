@@ -135,6 +135,10 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
+  const [showAdvancedOrder, setShowAdvancedOrder] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [calendarData, setCalendarData] = useState(null);
   const [filters, setFilters] = useState({
     account_id: "",
     symbol: "",
@@ -178,6 +182,18 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, [filters.account_id, filters.symbol, filters.source, filters.entry_model, filters.direction, filters.chart_tf, filters.signal_tf, filters.range]);
 
+  useEffect(() => {
+    api.dashboardSeries("month", filters.user_id).then((res) => {
+      if (res?.ok && Array.isArray(res?.series)) {
+        const map = {};
+        res.series.forEach((item) => {
+          map[String(item.date || item.day || "").slice(0, 10)] = item;
+        });
+        setCalendarData(map);
+      }
+    }).catch(() => {});
+  }, [filters.user_id, filters.account_id]);
+
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="loading">Loading dashboard...</div>;
 
@@ -196,7 +212,7 @@ export default function DashboardPage() {
           Last refreshed: {lastRefreshAt ? showDateTime(lastRefreshAt) : "-"} (auto {Math.round(AUTO_REFRESH_MS/1000)}s)
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18, alignItems: 'start' }} className="dashboard-main-grid">
         <div className="stack-layout" style={{ gap: 18 }}>
       {/* Heartbeat cards removed per request, info moved to Accounts table */}
 
@@ -260,7 +276,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="period-box-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)", gap: '16px' }}>
+      <div className="period-box-grid" style={{ display: 'grid', gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: '16px' }}>
         {PERIOD_DISPLAY.map((conf) => {
           const v = periodTotals[conf.key] || {};
           const winrate = v.total_wins + v.total_losses > 0 
@@ -287,7 +303,7 @@ export default function DashboardPage() {
         })}
       </div>
 
-      <div className="dashboard-grid tables" style={{ gridTemplateColumns: "repeat(5, 1fr)", gap: '16px' }}>
+      <div className="dashboard-grid tables" style={{ display: 'grid', gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: '16px' }}>
         <TableBlock title="Symbols" noun="Symbols" rows={Array.isArray(top.symbols) ? top.symbols : []} />
         <TableBlock title="Entry Model" noun="Models" rows={Array.isArray(top.entry_models) ? top.entry_models : []} />
         <TableBlock title="Sources" noun="Sources" rows={Array.isArray(top.sources) ? top.sources : []} />
@@ -313,8 +329,71 @@ export default function DashboardPage() {
           );
         }} />
         </div>
+
+        {/* Right column: Calendar + Advanced Order */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Monthly PnL Calendar */}
+          <div className="panel fadeIn" style={{ padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <button className="secondary-button" style={{ fontSize: 10, padding: '2px 6px' }}
+                onClick={() => {
+                  if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(y => y - 1); }
+                  else setCalendarMonth(m => m - 1);
+                }}>◀</button>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>
+                {new Date(calendarYear, calendarMonth).toLocaleString('default', { month: 'long', year: 'numeric' })}
+              </span>
+              <button className="secondary-button" style={{ fontSize: 10, padding: '2px 6px' }}
+                onClick={() => {
+                  if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(y => y + 1); }
+                  else setCalendarMonth(m => m + 1);
+                }}>▶</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, textAlign: 'center', fontSize: 9 }}>
+              {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+                <span key={d} style={{ fontWeight: 700, color: 'var(--muted)', padding: '2px 0' }}>{d}</span>
+              ))}
+              {(() => {
+                const firstDay = new Date(calendarYear, calendarMonth, 1).getDay();
+                const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                const cells = [];
+                for (let i = 0; i < firstDay; i++) cells.push(<span key={"e"+i} />);
+                for (let d = 1; d <= daysInMonth; d++) {
+                  const dateStr = `${calendarYear}-${String(calendarMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+                  const item = calendarData ? calendarData[dateStr] : null;
+                  const pnl = item ? Number(item.pnl || item.pnl_money || 0) : null;
+                  cells.push(
+                    <div key={d} style={{
+                      padding: '2px', borderRadius: 3, fontSize: 9,
+                      background: pnl != null ? (pnl > 0 ? 'rgba(38,166,154,0.15)' : pnl < 0 ? 'rgba(239,83,80,0.15)' : 'transparent') : 'transparent',
+                      cursor: pnl != null ? 'pointer' : 'default',
+                    }} title={pnl != null ? `${dateStr}: $${pnl.toFixed(2)}` : dateStr}>
+                      <div style={{ fontWeight: 600 }}>{d}</div>
+                      {pnl != null && (
+                        <div style={{ color: pnl > 0 ? 'var(--success)' : 'var(--error)', fontSize: 8 }}>
+                          {pnl > 0 ? '+' : ''}{pnl.toFixed(0)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                return cells;
+              })()}
+            </div>
+          </div>
+
+          {/* Advanced Order — hidden by default */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="secondary-button" style={{ fontSize: 10, padding: '2px 8px' }}
+              onClick={() => setShowAdvancedOrder(v => !v)}>
+              {showAdvancedOrder ? '▼ Hide' : '▶'} Advanced Order
+            </button>
+          </div>
+          {showAdvancedOrder && (
+            <AdvancedOrderPanel accountId={filters.account_id} initialSymbol={filters.symbol} />
+          )}
+        </div>
       </div>
-      <AdvancedOrderPanel accountId={filters.account_id} initialSymbol={filters.symbol} />
     </div>
   </section>
 );
