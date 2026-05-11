@@ -1060,10 +1060,12 @@ export default function TradesPage() {
             {listMode === "compact" ? (
               <div style={{ padding: 4, overflow: "auto", height: "100%" }}>
                 {sortedRows.map((t) => {
-                  const pnl = Number(t.pnl_realized || t.broker_pnl || 0);
                   const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
+                  const action = String(t.action || t.side || "").toUpperCase();
+                  const pnl = Number(t.pnl_realized || t.broker_pnl || 0);
+                  const rr = Number(t.rr_planned || 0);
                   return (
-                    <div
+                    <article
                       key={t.sid || t.id}
                       onClick={() => {
                         const k = tradeKeyOf(t);
@@ -1072,29 +1074,32 @@ export default function TradesPage() {
                         navigate(`/trades/${k}`, { replace: true });
                       }}
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "3px 6px",
-                        marginBottom: 2,
-                        borderRadius: 4,
                         cursor: "pointer",
-                        fontSize: 11,
-                        background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
+                        padding: "4px 6px",
+                        marginBottom: 3,
+                        borderRadius: 6,
+                        fontSize: 10,
+                        border: isActive ? "1px solid var(--accent)" : "1px solid var(--border)",
+                        background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
                       }}
                     >
-                      <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                        {t.symbol || "-"}
-                      </span>
-                      <span style={{
-                        fontWeight: 700,
-                        marginLeft: 6,
-                        color: pnl >= 0 ? "#10b981" : "#ef4444",
-                        whiteSpace: "nowrap",
-                      }}>
-                        {pnl >= 0 ? "+" : ""}{pnl.toFixed(0)}
-                      </span>
-                    </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 700, fontSize: 10, color: action === "SELL" ? "#ef5350" : "#26a69a" }}>
+                          {t.symbol || "-"}
+                        </span>
+                        <span style={{ fontWeight: 700, fontSize: 10, color: pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                          {pnl >= 0 ? "+" : ""}{pnl.toFixed(0)}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                        <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                          {t.entry || "-"} → {t.tp || "-"}
+                        </span>
+                        <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                          {Number.isFinite(rr) ? rr.toFixed(1) + "r" : "-"}
+                        </span>
+                      </div>
+                    </article>
                   );
                 })}
               </div>

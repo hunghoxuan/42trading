@@ -836,8 +836,10 @@ export default function SignalsPage() {
                 {sortedRows.map((t) => {
                   const ref = signalRefOf(t);
                   const isActive = signalRefOf(selectedSignal) === ref;
+                  const action = String(t.action || t.side || "").toUpperCase();
+                  const rr = Number(t.rr_planned || 0);
                   return (
-                    <div
+                    <article
                       key={ref}
                       onClick={() => {
                         selectedSignalIdRef.current = ref;
@@ -845,30 +847,32 @@ export default function SignalsPage() {
                         navigate(`/signals/${ref}`, { replace: true });
                       }}
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "3px 6px",
-                        marginBottom: 2,
-                        borderRadius: 4,
                         cursor: "pointer",
-                        fontSize: 11,
-                        background: isActive ? "rgba(255,255,255,0.08)" : "transparent",
+                        padding: "4px 6px",
+                        marginBottom: 3,
+                        borderRadius: 6,
+                        fontSize: 10,
+                        border: isActive ? "1px solid var(--accent)" : "1px solid var(--border)",
+                        background: isActive ? "rgba(255,255,255,0.05)" : "transparent",
                       }}
                     >
-                      <span style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                        {t.symbol || "-"}
-                      </span>
-                      <span style={{
-                        fontWeight: 700,
-                        marginLeft: 6,
-                        fontSize: 10,
-                        color: String(t.action || t.side || "").toUpperCase() === "SELL" ? "#ef4444" : "#10b981",
-                        whiteSpace: "nowrap",
-                      }}>
-                        {String(t.action || t.side || "-").toUpperCase().charAt(0)}
-                      </span>
-                    </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 700, fontSize: 10, color: action === "SELL" ? "#ef5350" : "#26a69a" }}>
+                          {t.symbol || "-"}
+                        </span>
+                        <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                          {String(t.status || "-").toUpperCase()}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                        <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                          {t.entry || "-"} → {t.tp || "-"}
+                        </span>
+                        <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                          {Number.isFinite(rr) ? rr.toFixed(1) + "r" : "-"}
+                        </span>
+                      </div>
+                    </article>
                   );
                 })}
               </div>
