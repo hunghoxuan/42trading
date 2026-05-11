@@ -1,7 +1,7 @@
-import AI_SCHEMA_SPEC from "../../../../shared/ai_response_schema.json";
-import GUIDE_SYSTEM_RAW from "../../../../shared/guide_system.json";
-import SCHEMA_ENUMS from "../../../../shared/schema_enums.json";
-import RESPONSE_MAPPING from "../../../../shared/response_mapping.json";
+import AI_SCHEMA_SPEC from "../../../../config/ai_response_schema.json";
+import GUIDE_SYSTEM from "../../../../config/guide_system.md?raw";
+import SCHEMA_ENUMS from "../../../../config/schema_enums.json";
+import RESPONSE_MAPPING from "../../../../config/response_mapping.json";
 
 // AI Prompt Builder — constants and functions for building AI analysis prompts
 
@@ -855,6 +855,7 @@ export const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
 export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
 export const SCHEMA_USER_DEFAULT = "{}";
 export const GUIDE_USER_DEFAULT = "";
+export { GUIDE_SYSTEM };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GUIDE TEXT — injected directly into the prompt.
@@ -869,7 +870,6 @@ export const GUIDE_USER_DEFAULT = "";
 // Final Guide  = GUIDE_SYSTEM + "\n\n## USER INSTRUCTIONS\n" + guideUser
 // Final Schema = { ...SCHEMA_SYSTEM, extra: schemaUserObj }
 
-export const GUIDE_SYSTEM = GUIDE_SYSTEM_RAW.text;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER FUNCTIONS

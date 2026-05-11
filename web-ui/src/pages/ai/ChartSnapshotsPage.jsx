@@ -40,7 +40,7 @@ import {
   buildJsonConfig,
   buildSchemaString,
 } from "./AiPromptBuilder";
-import RESPONSE_MAPPING_RAW from "../../../../shared/response_mapping.json";
+import RESPONSE_MAPPING_RAW from "../../../../config/response_mapping.json";
 import {
   SymbolEntryCell,
   StatusPnlCell,

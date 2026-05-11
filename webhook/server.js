@@ -809,7 +809,7 @@ const CFG = {
   ),
 };
 
-const AI_SCHEMA_SPEC = require("../shared/ai_response_schema.json");
+const AI_SCHEMA_SPEC = require("../config/ai_response_schema.json");
 const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "2.3");
 const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
 
