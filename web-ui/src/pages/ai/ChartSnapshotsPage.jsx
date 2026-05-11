@@ -1971,6 +1971,8 @@ export default function ChartSnapshotsPage() {
   const [planEdits, setPlanEdits] = useState({});
   const [aiContext, setAiContext] = useState(null);
   const [barsLoading, setBarsLoading] = useState(false);
+  const [barsStatus, setBarsStatus] = useState({}); // { [tf]: { status: 'cached'|'loading'|'none', time: ... } }
+  const [snapshotStatus, setSnapshotStatus] = useState({});
   const [autoFlow, setAutoFlow] = useState({
     runId: 0,
     context: "idle",
@@ -2620,6 +2622,81 @@ export default function ChartSnapshotsPage() {
       };
     }
     return { type, text: msg };
+  };
+
+  const fetchAllBars = async (symbol, tfs, bars) => {
+    const sym = normalizeSignalSymbol(symbol || "");
+    if (!sym) return;
+    const status = {};
+    for (const tf of tfs) {
+      status[tf] = { status: "loading" };
+    }
+    setBarsStatus({ ...status });
+    for (const tf of tfs) {
+      try {
+        const cacheKey = `${sym}|${tf}|${bars}`;
+        const cached = barsCache[cacheKey];
+        if (cached && cached.bar_end) {
+          const age = Date.now() - cached.bar_end * 1000;
+          if (age < 300000) { // 5 min
+            status[tf] = { status: "cached", time: new Date(cached.bar_end * 1000).toLocaleTimeString() };
+            setBarsStatus({ ...status });
+            continue;
+          }
+        }
+        const out = await api.chartTwelveCandles(sym, tf, bars, true);
+        const snap = out?.snapshot ? normalizeSnapshotBars(out.snapshot, tf) : null;
+        if (snap && snap.bars?.length) {
+          setBarsCache((prev) => ({ ...prev, [cacheKey]: snap }));
+          status[tf] = { status: "cached", time: new Date().toLocaleTimeString() };
+        } else {
+          status[tf] = { status: "none" };
+        }
+      } catch (_) {
+        status[tf] = { status: "none" };
+      }
+      setBarsStatus({ ...status });
+    }
+  };
+
+  const fetchAllSnapshots = async (symbol, tfs, sessionPrefix, provider) => {
+    const sym = normalizeSignalSymbol(symbol || "");
+    if (!sym || !tfs.length) return;
+    const status = {};
+    for (const tf of tfs) {
+      status[tf] = { status: "loading" };
+    }
+    setSnapshotStatus({ ...status });
+    try {
+      const { promise: snapPromise } = NotificationHub.track(
+        "snapshot",
+        { symbol: sym },
+        () => api.chartSnapshotCreateBatch({
+          symbols: [sym],
+          provider: provider || "ICMARKETS",
+          session_prefix: sessionPrefix || "",
+          tfs,
+          lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+        }),
+      );
+      const batch = await snapPromise;
+      const items = Array.isArray(batch?.items) ? batch.items : [];
+      for (const tf of tfs) {
+        const found = items.find((x) => {
+          const f = String(x?.file_name || "");
+          return f.includes(`_${tf}_`) || f.includes(`_${tf.toUpperCase()}_`);
+        });
+        status[tf] = found
+          ? { status: "snapshot", time: new Date(found.created_at || Date.now()).toLocaleTimeString() }
+          : { status: "none" };
+        setSnapshotStatus({ ...status });
+      }
+    } catch (_) {
+      for (const tf of tfs) {
+        status[tf] = { status: "none" };
+      }
+      setSnapshotStatus({ ...status });
+    }
   };
 
   const fetchBarsSnapshot = async (symbol, tf, bars, forceRefresh = false) => {
@@ -5496,8 +5573,34 @@ export default function ChartSnapshotsPage() {
                 onDetailTfTabChange: setSelectedEntryTf,
                 entryNode: (
                   <div className="snapshot-live-card-v3">
-                    <div className="minor-text" style={{ marginBottom: 12 }}>
-                      Chart ({timeframe}): Twelve + PD Arrays
+                    <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      {snapshotTfs.map((tf) => {
+                        const s = barsStatus[tf] || {};
+                        const icon = s.status === "cached" ? "✅" : s.status === "loading" ? "⏳" : "❌";
+                        return (
+                          <span key={tf} className="minor-text" style={{ fontSize: "10px", padding: "2px 6px", background: "rgba(255,255,255,0.05)", borderRadius: 4 }}>
+                            {icon} {tf} {s.time || (s.status === "none" ? "No cache" : "")}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ fontSize: "10px", padding: "2px 8px" }}
+                        onClick={() => fetchAllBars(cfg.symbol || tvSymbol, snapshotTfs, Number(cfg.lookbackBars || 300) || 300)}
+                      >
+                        📊 Cache
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ fontSize: "10px", padding: "2px 8px" }}
+                        onClick={() => fetchAllSnapshots(cfg.symbol || tvSymbol, snapshotTfs, sessionPrefix, provider)}
+                      >
+                        📷 Snapshot
+                      </button>
                     </div>
                     <TradeSignalChart
                       symbol={normalizeSignalSymbol(
