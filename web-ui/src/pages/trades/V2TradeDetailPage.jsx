@@ -458,6 +458,8 @@ export default function TradeDetailPage() {
               createdAt: trade.created_at,
               openedAt: trade.opened_at,
               closedAt: trade.closed_at,
+              provider: trade.provider || trade.metadata?.provider || "ICMARKETS",
+              sessionPrefix: trade.session_prefix || trade.metadata?.session_prefix || "",
               analysisSnapshot:
                 trade?.metadata?.analysis_snapshot ||
                 trade?.raw_json?.analysis_snapshot ||

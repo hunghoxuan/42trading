@@ -21,7 +21,10 @@ const STATUS_COLORS = {
 };
 
 function normSym(s) {
-  return String(s || "").toUpperCase().replace("/", "").replace(".", "");
+  return String(s || "")
+    .toUpperCase()
+    .replace("/", "")
+    .replace(".", "");
 }
 
 function liveTfToTvInterval(tf) {
@@ -39,7 +42,8 @@ function liveTfToTvInterval(tf) {
 function toTradingViewTimezone() {
   const mode = localStorage.getItem("ui_display_timezone") || "UTC";
   if (mode === "UTC") return "Etc/UTC";
-  if (mode === "Local") return Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
+  if (mode === "Local")
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
   return mode;
 }
 
@@ -54,7 +58,7 @@ function timeAgo(ts) {
   return Math.floor(hrs / 24) + "d ago";
 }
 
-function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
+function TfHeader({ tf, context, master, mode, analysisSnapshot, barsStatus, snapshotStatus }) {
   const showSnapshotBadge = useMemo(() => {
     if (mode !== "snapshots") return false;
     const snap = master?.snapshots?.[tf.toLowerCase()];
@@ -65,20 +69,30 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
     const rawBias = context?.bias || analysisSnapshot?.htf_context?.bias;
     if (!rawBias) return null;
     const b = String(rawBias).toUpperCase();
-    if (b === "LONG" || b === "BULLISH") return { label: "BULL", color: "#10b981" };
-    if (b === "SHORT" || b === "BEARISH") return { label: "BEAR", color: "#ef4444" };
+    if (b === "LONG" || b === "BULLISH")
+      return { label: "BULL", color: "#10b981" };
+    if (b === "SHORT" || b === "BEARISH")
+      return { label: "BEAR", color: "#ef4444" };
     return { label: "NEUT", color: "var(--muted)" };
   }, [context, analysisSnapshot]);
 
+  const barStat = barsStatus?.[tf] || barsStatus?.[tf.toLowerCase()];
+  const snapStat = snapshotStatus?.[tf] || snapshotStatus?.[tf.toLowerCase()];
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}
+    >
       <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
       {context?.cache_source && (
         <span
           style={{
             fontSize: 8,
             fontWeight: 600,
-            color: context.cache_source === "memory" || context.cache_source === "db" ? "#10b981" : "#f59e0b",
+            color:
+              context.cache_source === "memory" || context.cache_source === "db"
+                ? "#10b981"
+                : "#f59e0b",
             background: "rgba(0,0,0,0.2)",
             padding: "0 3px",
             borderRadius: 2,
@@ -88,7 +102,11 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
           }}
           title={context.reason || ""}
         >
-          {context.cache_source === "memory" ? "MEM" : context.cache_source === "db" ? "DB" : "API"}
+          {context.cache_source === "memory"
+            ? "MEM"
+            : context.cache_source === "db"
+              ? "DB"
+              : "API"}
         </span>
       )}
       {htfBias && (
@@ -104,6 +122,36 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot }) {
           }}
         >
           {htfBias.label}
+        </span>
+      )}
+      {barStat && barStat.status !== "none" && (
+        <span
+          style={{
+            fontSize: 8,
+            fontWeight: 600,
+            color: barStat.status === "cached" ? "#10b981" : "#f59e0b",
+            background: "rgba(0,0,0,0.2)",
+            padding: "0 3px",
+            borderRadius: 2,
+          }}
+          title={barStat.status === "cached" ? `Cached ${barStat.time || ""}` : "Loading..."}
+        >
+          {barStat.status === "cached" ? `✅ ${barStat.time || ""}` : "⏳"}
+        </span>
+      )}
+      {snapStat && snapStat.status !== "none" && (
+        <span
+          style={{
+            fontSize: 8,
+            fontWeight: 600,
+            color: snapStat.status === "snapshot" ? "#10b981" : "#f59e0b",
+            background: "rgba(0,0,0,0.2)",
+            padding: "0 3px",
+            borderRadius: 2,
+          }}
+          title={snapStat.status === "snapshot" ? `Snapshot ${snapStat.time || ""}` : "Loading..."}
+        >
+          {snapStat.status === "snapshot" ? `📷 ${snapStat.time || ""}` : "⏳"}
         </span>
       )}
       {showSnapshotBadge && (
@@ -132,6 +180,9 @@ export default function SymbolChart({
   analysisSnapshot = null,
   hasTradePlan = false,
   hasAnalysis = false,
+  hideRefresh = false,
+  barsStatus = null,
+  snapshotStatus = null,
   skipFetch = false,
 }) {
   const rootRef = useRef(null);
@@ -142,7 +193,10 @@ export default function SymbolChart({
   const cleanSym = useMemo(() => normSym(symbol), [symbol]);
   const defaultGridCols = useMemo(() => {
     const maxCols = Math.max(1, timeframes?.length || 4);
-    if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
+    if (
+      Number.isFinite(Number(initialGridCols)) &&
+      Number(initialGridCols) > 0
+    ) {
       return Math.min(maxCols, Math.max(1, Number(initialGridCols)));
     }
     return maxCols;
@@ -160,7 +214,10 @@ export default function SymbolChart({
   const [tradePlanBusy, setTradePlanBusy] = useState(false);
 
   useEffect(() => {
-    if (Number.isFinite(Number(initialGridCols)) && Number(initialGridCols) > 0) {
+    if (
+      Number.isFinite(Number(initialGridCols)) &&
+      Number(initialGridCols) > 0
+    ) {
       setGridCols(Number(initialGridCols));
     } else {
       setGridCols(Math.max(1, timeframes?.length || 1));
@@ -406,7 +463,11 @@ export default function SymbolChart({
                 Live
               </button>
               <button
-                className={canShowTradePlanOverlays ? "primary-button" : "secondary-button"}
+                className={
+                  canShowTradePlanOverlays
+                    ? "primary-button"
+                    : "secondary-button"
+                }
                 style={{
                   fontSize: 10,
                   fontWeight: 700,
@@ -425,12 +486,17 @@ export default function SymbolChart({
                       setMode("cache");
                     } else {
                       setMode("live");
-                      setLastError("TradePlan bars unavailable. Showing Live chart.");
+                      setLastError(
+                        "TradePlan bars unavailable. Showing Live chart.",
+                      );
                     }
                   } catch (e) {
                     setMode("live");
                     setLastError(
-                      String(e?.message || "TradePlan fetch failed. Showing Live chart."),
+                      String(
+                        e?.message ||
+                          "TradePlan fetch failed. Showing Live chart.",
+                      ),
                     );
                   } finally {
                     setTradePlanBusy(false);
@@ -445,7 +511,11 @@ export default function SymbolChart({
               {overlayButtons.map(({ key, label }) => (
                 <button
                   key={key}
-                  className={overlays[key] && canShowTradePlanOverlays ? "primary-button" : "secondary-button"}
+                  className={
+                    overlays[key] && canShowTradePlanOverlays
+                      ? "primary-button"
+                      : "secondary-button"
+                  }
                   onClick={() => toggleOverlay(key)}
                   type="button"
                   disabled={!canShowTradePlanOverlays}
@@ -502,6 +572,7 @@ export default function SymbolChart({
               fontSize: 14,
               lineHeight: 1,
               minWidth: 22,
+              display: hideRefresh ? "none" : undefined,
               fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.max(1, prev - 1))}
@@ -518,6 +589,7 @@ export default function SymbolChart({
               fontSize: 14,
               lineHeight: 1,
               minWidth: 22,
+              display: hideRefresh ? "none" : undefined,
               fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.min(6, prev + 1))}
@@ -534,6 +606,7 @@ export default function SymbolChart({
               fontSize: 11,
               lineHeight: 1,
               minWidth: 22,
+              display: hideRefresh ? "none" : undefined,
             }}
             onClick={() => {
               if (mode === "live") return;
@@ -554,6 +627,7 @@ export default function SymbolChart({
               fontSize: 11,
               lineHeight: 1,
               minWidth: 22,
+              display: hideRefresh ? "none" : undefined,
               display: showControls ? "block" : "none",
             }}
             onClick={() => onAnalyze?.(symbol, timeframes)}
@@ -584,6 +658,8 @@ export default function SymbolChart({
                 master={master}
                 mode={mode}
                 analysisSnapshot={analysisSnapshot}
+                barsStatus={barsStatus}
+                snapshotStatus={snapshotStatus}
               />
               {isLive ? (
                 <iframe
