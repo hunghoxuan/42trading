@@ -334,10 +334,12 @@ export default function DashboardPage() {
       .dashboardSeries("month")
       .then((res) => {
         const map = {};
-        if (res?.ok && Array.isArray(res?.series)) {
-          res.series.forEach((item) => {
-            const d = String(item.date || item.day || "").slice(0, 10);
-            if (d) map[d] = item;
+        const series = res?.points || res?.series || [];
+        if (res?.ok && Array.isArray(series)) {
+          series.forEach((item) => {
+            const d = String(item.x || item.date || item.day || "").slice(0, 10);
+            const pnl = Number(item.y ?? item.pnl ?? item.pnl_money ?? 0);
+            if (d) map[d] = { pnl, date: d };
           });
         }
         setCalendarData(map);
@@ -727,8 +729,13 @@ export default function DashboardPage() {
           {/* Right column: Calendar + Advanced Order */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Monthly PnL Calendar */}
-            <div className="panel fadeIn" style={{ padding: 12, position: "sticky", top: 12 }}>
-              <div className="panel-label" style={{ marginBottom: 8 }}>PnL Calendar</div>
+            <div
+              className="panel fadeIn"
+              style={{ padding: 12, position: "sticky", top: 12 }}
+            >
+              <div className="panel-label" style={{ marginBottom: 8 }}>
+                PnL Calendar
+              </div>
               <div
                 style={{
                   display: "flex",
@@ -839,7 +846,8 @@ export default function DashboardPage() {
                             style={{
                               color:
                                 pnl > 0 ? "var(--success)" : "var(--error)",
-                              fontSize: 9, fontWeight: 700,
+                              fontSize: 9,
+                              fontWeight: 700,
                             }}
                           >
                             {pnl > 0 ? "+" : ""}
