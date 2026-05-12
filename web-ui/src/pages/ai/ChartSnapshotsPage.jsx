@@ -2075,15 +2075,19 @@ function enrichParsedAnalysis(rawText, parsed) {
   //   if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
   //   if (!res.profile && fallback.profile) res.profile = fallback.profile;
 
-  // Recover trade plans from raw AI text when JSON parse fails
-  if (
-    (!Array.isArray(res.trade_plan) || res.trade_plan.length === 0) &&
-    rawText &&
-    rawText.includes('"trade_plan"')
-  ) {
+  // Always try raw-text recovery — tryParseJsonLoose may return bad data
+  if (rawText && rawText.includes('"trade_plan"')) {
     const recovered = recoverTradePlansFromRaw(rawText);
     if (recovered.length) {
-      res.trade_plan = recovered;
+      // Prefer recovered plans if they have valid prices or more entries
+      const existingValid = (Array.isArray(res.trade_plan) ? res.trade_plan : [])
+        .filter((p) => p && !String(p.entry_model || "").includes("No valid setup"));
+      const recoveredValid = recovered.filter(
+        (p) => p && (Number(p.entry_price ?? p.entry) > 0 || Number(p.stop_loss ?? p.sl) > 0),
+      );
+      if (recoveredValid.length >= existingValid.length || !existingValid.length) {
+        res.trade_plan = recovered;
+      }
     }
   }
 
