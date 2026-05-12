@@ -6,7 +6,7 @@ REPORT_DIR="${ROOT_DIR}/test-results"
 mkdir -p "${REPORT_DIR}"
 
 BASE_URL="${BASE_URL:-https://trade.mozasolution.com/webhook}"
-ENDPOINT="${ENDPOINT:-/v2/ai/analyze}"
+ENDPOINT="${ENDPOINT:-/v2/chart/snapshots/analyze}"
 API_KEY="${API_KEY:-}"
 SYMBOL="${SYMBOL:-US30}"
 MODEL="${MODEL:-claude-sonnet-4-0}"
