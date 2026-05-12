@@ -722,6 +722,38 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
+  if (Array.isArray(out.analyses) && out.analyses.length > 0) {
+    const entries = out.analyses.filter((x) => x && typeof x === "object");
+    const analysisPlans = entries.flatMap((e) =>
+      Array.isArray(e.trade_plan)
+        ? e.trade_plan.map((p) => ({
+            ...(p || {}),
+            symbol: String(p?.symbol || e?.symbol || "").trim(),
+          }))
+        : [],
+    );
+    if (analysisPlans.length) {
+      const rootPlans = Array.isArray(out.trade_plan)
+        ? out.trade_plan
+            .filter((p) => p && typeof p === "object")
+            .map((p) => ({ ...(p || {}) }))
+        : [];
+      out.trade_plan = [...rootPlans, ...analysisPlans];
+    }
+    if (!out.ai_full_analysis) {
+      const first = entries[0] || {};
+      out.symbol = String(first?.symbol || out?.symbol || "").trim();
+      out.ai_full_analysis = {
+        htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        confluence_checklist:
+          first?.confluence_checklist &&
+          typeof first.confluence_checklist === "object"
+            ? first.confluence_checklist
+            : {},
+      };
+    }
+  }
   if (Array.isArray(out.symbols) && out.symbols.length > 0) {
     const entries = out.symbols.filter((x) => x && typeof x === "object");
     const symbolPlans = entries.flatMap((e) =>
