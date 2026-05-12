@@ -10,7 +10,7 @@ MODEL="${MODEL:-claude-sonnet-4-0}"
 PROVIDER="${PROVIDER:-claude}"
 BARS_COUNT="${BARS_COUNT:-300}"
 PROMPT="${PROMPT:-Analyze requested symbols. Return JSON only.}"
-MAX_TOKENS="${MAX_TOKENS:-4500}"
+MAX_TOKENS="${MAX_TOKENS:-8000}"
 OUT_JSON="${OUT_JSON:-/tmp/analyze_v2_response.json}"
 OUT_HEADERS="${OUT_HEADERS:-/tmp/analyze_v2_headers.txt}"
 

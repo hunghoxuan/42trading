@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.12 20:12 - e7b1a9d4",
+  "v2026.05.12 21:30 - max-tokens-8k",
 ); // recover trade_plan from raw malformed JSON before coverage fallback
 
 const SERVER_LOG_DIR = envStr(
@@ -5067,7 +5067,7 @@ async function loadAiConfig() {
 async function callAiProvider({
   model,
   messages,
-  maxTokens = 4500,
+  maxTokens = 8000,
   timeoutMs = 180000,
   provider: explicitProvider = "",
 }) {
@@ -16285,7 +16285,7 @@ const appHandler = async (req, res) => {
         if (!requestModel) requestModel = "claude-sonnet-4-0";
         bodyData = {
           model: requestModel,
-          max_tokens: 4500,
+          max_tokens: 8000,
           messages: [{ role: "user", content: finalPrompt }],
         };
       } else {
@@ -17553,7 +17553,7 @@ const appHandler = async (req, res) => {
           apiKey: claudeKey,
           model: requestModel,
           messages: [{ role: "user", content }],
-          maxTokens: Number(body.max_tokens || 4500),
+          maxTokens: Number(body.max_tokens || 8000),
           timeoutMs: 180000,
           beta: ANTHROPIC_FILES_BETA,
         });
@@ -18039,7 +18039,7 @@ const appHandler = async (req, res) => {
         model: requestModel,
         provider: aiProviderRaw || "",
         messages: [{ role: "user", content }],
-        maxTokens: Number(body.max_tokens || 4500),
+        maxTokens: Number(body.max_tokens || 8000),
         timeoutMs: 180000,
       });
 
