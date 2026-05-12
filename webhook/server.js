@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.12 11:00 - trade-files-v2",
-); // trade file uploads v2: fix note onChange, image preview, download, FILLED constraint
+  "v2026.05.12 12:05 - broker-sync-no-sid-fix",
+); // broker sync: avoid missing upsertSourceV2 crash and support discovered no-sid trades
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7804,19 +7804,6 @@ async function _mt5InitBackendInternal() {
               .toUpperCase()
               .replace(/\s+/g, "_");
 
-            await this.upsertSourceV2({
-              source_id: brokerSource,
-              name: payload.broker_name || brokerSource,
-              kind: "broker",
-              auth_mode: "token",
-              is_active: true,
-              metadata: {
-                discovered_via: "broker_sync_v2",
-                account_id: aid,
-                broker_name: payload.broker_name || brokerSource,
-              },
-            });
-
             await pool.query(
               `
             INSERT INTO trades (
@@ -7860,6 +7847,7 @@ async function _mt5InitBackendInternal() {
             results.push({
               ticket: it.ticket,
               sid: discoverySid,
+              suggested_sid: discoverySid,
               status: "Added",
               symbol: it.symbol,
               action: it.action,
