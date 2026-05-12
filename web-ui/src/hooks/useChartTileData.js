@@ -129,6 +129,7 @@ export function useSymbolChartData({
       setStatus("LOADING");
       setError(null);
       if (mode === "snapshots") setSnapMsg("Fetching...");
+      // Note: keep existing data visible during re-fetch (don't clear setData)
       console.log("[ChartData] refresh symbol=" + sym + " mode=" + mode + " tfs=" + tfs.join(","));
 
       try {

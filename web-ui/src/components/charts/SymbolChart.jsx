@@ -607,8 +607,8 @@ export default function SymbolChart({
                   showPdArrays={overlays.pdArrays}
                   showKeyLevels={overlays.keyLevels}
                   onPlanLevelChange={onPlanLevelChange}
-                  syncedCrosshair={syncedCrosshair}
-                  onCrosshairSync={setSyncedCrosshair}
+                  syncedCrosshair={status === "LOADING" ? null : syncedCrosshair}
+                  onCrosshairSync={status === "LOADING" ? undefined : setSyncedCrosshair}
                   onBarsLoaded={handleBarsLoaded}
                 />
               ) : (
