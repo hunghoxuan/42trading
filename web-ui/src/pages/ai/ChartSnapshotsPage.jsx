@@ -2330,16 +2330,16 @@ export default function ChartSnapshotsPage() {
     };
   }, [currentBarsSnapshot, effectiveParsed]);
 
-  const hasResponse = useMemo(
+  const hasAnalyzeResponse = useMemo(
     () =>
       Boolean(
         (analysisRaw || "").trim() ||
         (analysisJson || "").trim() ||
-        (effectiveParsed &&
-          typeof effectiveParsed === "object" &&
-          Object.keys(effectiveParsed).length > 0),
+        (analysisParsed &&
+          typeof analysisParsed === "object" &&
+          Object.keys(analysisParsed).length > 0),
       ),
-    [analysisRaw, analysisJson, effectiveParsed],
+    [analysisRaw, analysisJson, analysisParsed],
   );
   const responseText = useMemo(
     () => buildFriendlyResponse(effectiveParsed),
@@ -5621,7 +5621,7 @@ export default function ChartSnapshotsPage() {
           >
             <SignalDetailCard
               mode="ai"
-              hideTabsBeforeResponse={false}
+              hideTabsBeforeResponse={true}
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
@@ -5702,9 +5702,9 @@ export default function ChartSnapshotsPage() {
               }}
               response={{
                 enabled: true,
-                hasData: hasResponse,
+                hasData: hasAnalyzeResponse,
                 pending: analyzing,
-                pendingText: hasResponse
+                pendingText: hasAnalyzeResponse
                   ? "Refreshing analysis result..."
                   : "Analyzing screenshots...",
                 label: "Response",
