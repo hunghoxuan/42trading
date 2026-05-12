@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 17:28 - 5de7f4a1"); // enforce skip on incomplete entry/sl/tp across all trade_plan schema variants
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:21 - d3a11f62"); // recover multi-symbol nested trade_plan before fallback coverage injection
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16831,11 +16831,44 @@ const appHandler = async (req, res) => {
           .filter(Boolean);
         if (!requested.length) return out;
         const plans = Array.isArray(out.trade_plan) ? out.trade_plan : [];
+        const collectNestedPlansForSymbol = (sym) => {
+          const pickFromEntries = (entries) => {
+            if (!Array.isArray(entries)) return [];
+            return entries.flatMap((entry) => {
+              if (!entry || typeof entry !== "object") return [];
+              const entrySymbol = normalizeSymbolLoose(entry.symbol);
+              if (entrySymbol !== sym) return [];
+              const tp = entry.trade_plan;
+              const rows = Array.isArray(tp)
+                ? tp
+                : tp && typeof tp === "object"
+                  ? [tp]
+                  : [];
+              return rows
+                .filter((p) => p && typeof p === "object")
+                .map((p) => ({
+                  ...(p || {}),
+                  symbol: String(p?.symbol || entry?.symbol || sym).trim(),
+                }));
+            });
+          };
+          return [
+            ...pickFromEntries(out.analysis_data),
+            ...pickFromEntries(out.symbols),
+            ...pickFromEntries(out.analyses),
+          ];
+        };
         const existing = new Set(
           plans.map((p) => normalizeSymbolLoose(p?.symbol)).filter(Boolean),
         );
         for (const sym of requested) {
           if (existing.has(sym)) continue;
+          const recovered = collectNestedPlansForSymbol(sym);
+          if (recovered.length) {
+            plans.push(...recovered);
+            existing.add(sym);
+            continue;
+          }
           plans.push({
             symbol: sym,
             direction: "BUY",
