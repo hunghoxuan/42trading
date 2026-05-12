@@ -159,10 +159,12 @@ def extract_parsed_plan(parsed_plan: Dict[str, Any]) -> Dict[str, Optional[float
     return {"entry": entry, "sl": sl, "tp": tp}
 
 def is_skip_plan(plan: Dict[str, Any]) -> bool:
+    rm = plan.get("risk_management")
+    rm_skip = rm.get("skip_decision") if isinstance(rm, dict) else ""
     decision = str(
         plan.get("skip_recommendation")
         or plan.get("trade_decision")
-        or (plan.get("risk_management") or {}).get("skip_decision")
+        or rm_skip
         or ""
     ).strip().lower()
     return decision == "skip"
