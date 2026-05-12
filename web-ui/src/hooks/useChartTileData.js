@@ -19,6 +19,8 @@ export function useSymbolChartData({
   timeframes = ["D", "4H", "15M", "5M"],
   mode = "fixed",
   skipFetch = false,
+  provider = "ICMARKETS",
+  sessionPrefix = "",
 }) {
   const [status, setStatus] = useState("IDLE");
   const [data, setData] = useState({}); // { "4h": { bars, snapshot, created_at }, ... }
@@ -43,6 +45,8 @@ export function useSymbolChartData({
         // Snapshot mode: use batch snapshot API
         const batch = await api.chartSnapshotCreateBatch({
           symbols: [sym],
+          provider,
+          session_prefix: sessionPrefix,
           tfs,
           lookbackBars: 300,
         });

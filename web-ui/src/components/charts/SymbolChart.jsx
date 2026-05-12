@@ -199,6 +199,8 @@ export default function SymbolChart({
   barsStatus = null,
   snapshotStatus = null,
   skipFetch = false,
+  provider = "ICMARKETS",
+  sessionPrefix = "",
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -260,6 +262,8 @@ export default function SymbolChart({
       timeframes,
       mode: pendingMode || mode,
       skipFetch,
+      provider,
+      sessionPrefix,
     });
 
   const sortedTfs = useMemo(
@@ -325,7 +329,7 @@ export default function SymbolChart({
     }
     // Re-click same mode: force refresh
     if (mode === newMode && !pendingMode && status !== "LOADING") {
-      refresh({ force: true });
+      refresh({ force: false });
       return;
     }
     setPendingMode(newMode);
