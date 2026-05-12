@@ -574,6 +574,16 @@ export default function SymbolChart({
                   style={{ height: chartHeight }}
                   src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_top_toolbar=1&hide_legend=1&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                 />
+              ) : mode === "snapshots" && master?.snapshots?.[tf.toLowerCase()] ? (
+                /* Snapshot image */
+                <div style={{ position: "relative", height: chartHeight, overflow: "hidden", borderRadius: 6 }}>
+                  <img
+                    src={`${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}?view=1`}
+                    alt={`snapshot-${tf}`}
+                    style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
+                    onError={(e) => { e.target.style.display = "none"; }}
+                  />
+                </div>
               ) : hasBars ? (
                 <TradeSignalChart
                   key={`tsc-${symbol}-${tf}`}

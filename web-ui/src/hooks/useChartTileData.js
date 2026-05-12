@@ -81,7 +81,7 @@ export function useSymbolChartData({
                   bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
                   bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
                   last_price: snap?.last_price ?? null,
-                  cache_source: out?.source || "api",
+                  cache_source: out?.source || "remote_api",
                 },
               };
             } catch (e) {
