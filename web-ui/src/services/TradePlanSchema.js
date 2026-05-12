@@ -347,6 +347,27 @@ export function resolvePlans(root) {
  */
 export function resolvePlan(p, ctx) {
   if (!ctx) ctx = {};
+  const entry = resolveField(p, "entry", ctx);
+  const tp = resolveField(p, "tp", ctx);
+  const tp2 = resolveField(p, "tp2", ctx);
+  const tp3 = resolveField(p, "tp3", ctx);
+  const sl = resolveField(p, "sl", ctx);
+  const skipRecommendation = resolveField(p, "skip_recommendation", ctx);
+  const tradeDecision = resolveField(p, "trade_decision", ctx);
+  const hasLevels =
+    Number.isFinite(Number(entry)) &&
+    Number.isFinite(Number(sl)) &&
+    Number.isFinite(Number(tp3 ?? tp2 ?? tp));
+  const decisionRaw = String(
+    skipRecommendation || tradeDecision || "",
+  ).trim().toLowerCase();
+  const proceeding =
+    !decisionRaw ||
+    decisionRaw === "proceed" ||
+    decisionRaw === "trade" ||
+    decisionRaw === "enter";
+  const forcedSkip = !hasLevels && proceeding;
+  const skipText = "Skip";
   return {
     symbol: resolveField(p, "symbol", ctx),
     direction: resolveField(p, "direction", ctx),
@@ -358,11 +379,11 @@ export function resolvePlan(p, ctx) {
     entry_model: resolveField(p, "entry_model", ctx),
     source: resolveField(p, "source", ctx),
 
-    entry: resolveField(p, "entry", ctx),
-    tp: resolveField(p, "tp", ctx),
-    tp2: resolveField(p, "tp2", ctx),
-    tp3: resolveField(p, "tp3", ctx),
-    sl: resolveField(p, "sl", ctx),
+    entry,
+    tp,
+    tp2,
+    tp3,
+    sl,
     rr: resolveField(p, "rr", ctx),
     be_trigger: resolveField(p, "be_trigger", ctx),
 
@@ -381,8 +402,8 @@ export function resolvePlan(p, ctx) {
     entry_condition: resolveField(p, "entry_condition", ctx),
     exit_condition: resolveField(p, "exit_condition", ctx),
     risk_management: resolveField(p, "risk_management", ctx),
-    skip_recommendation: resolveField(p, "skip_recommendation", ctx),
-    trade_decision: resolveField(p, "trade_decision", ctx),
+    skip_recommendation: forcedSkip ? skipText : skipRecommendation,
+    trade_decision: forcedSkip ? skipText : tradeDecision,
 
     partial_tps: resolveField(p, "partial_tps", ctx),
     confluence_checklist: resolveField(p, "confluence_checklist", ctx),

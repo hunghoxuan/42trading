@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 16:04 - 2cbcad6e"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 17:28 - 5de7f4a1"); // enforce skip on incomplete entry/sl/tp across all trade_plan schema variants
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10149,6 +10149,26 @@ function dedupeTradePlans(plans = []) {
   return out;
 }
 
+function planPrimaryTpNumber(plan = {}) {
+  return Number(
+    plan?.tp3 ??
+      plan?.tp2 ??
+      plan?.tp ??
+      plan?.take_profit ??
+      plan?.multiple_exits?.full_tp?.price ??
+      plan?.multiple_exits?.tp2?.price ??
+      plan?.multiple_exits?.tp3?.price ??
+      NaN,
+  );
+}
+
+function hasNumericEntrySlTp(plan = {}) {
+  const entry = Number(plan?.entry ?? plan?.entry_price ?? NaN);
+  const sl = Number(plan?.sl ?? plan?.stop_loss ?? NaN);
+  const tp = planPrimaryTpNumber(plan);
+  return Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp);
+}
+
 function enforceActionableTradePlans(payload = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return payload;
@@ -10156,11 +10176,7 @@ function enforceActionableTradePlans(payload = {}) {
   if (!Array.isArray(out.trade_plan)) return out;
   out.trade_plan = dedupeTradePlans(out.trade_plan).map((plan) => {
     if (!plan || typeof plan !== "object") return plan;
-    const entry = Number(plan?.entry);
-    const sl = Number(plan?.sl);
-    const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
-    const hasPrices =
-      Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp);
+    const hasPrices = hasNumericEntrySlTp(plan);
     const decisionRaw = String(
       plan?.skip_recommendation ||
         plan?.trade_decision ||

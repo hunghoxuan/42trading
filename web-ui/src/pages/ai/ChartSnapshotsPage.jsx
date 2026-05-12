@@ -737,6 +737,26 @@ function dedupeTradePlans(plans = []) {
   return out;
 }
 
+function planPrimaryTpNumber(plan = {}) {
+  return Number(
+    plan?.tp3 ??
+      plan?.tp2 ??
+      plan?.tp ??
+      plan?.take_profit ??
+      plan?.multiple_exits?.full_tp?.price ??
+      plan?.multiple_exits?.tp2?.price ??
+      plan?.multiple_exits?.tp3?.price ??
+      NaN,
+  );
+}
+
+function hasNumericEntrySlTp(plan = {}) {
+  const entry = Number(plan?.entry ?? plan?.entry_price ?? NaN);
+  const sl = Number(plan?.sl ?? plan?.stop_loss ?? NaN);
+  const tp = planPrimaryTpNumber(plan);
+  return Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp);
+}
+
 function enforceActionableTradePlans(payload = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return payload;
@@ -744,11 +764,7 @@ function enforceActionableTradePlans(payload = {}) {
   if (!Array.isArray(out.trade_plan)) return out;
   out.trade_plan = dedupeTradePlans(out.trade_plan).map((plan) => {
     if (!plan || typeof plan !== "object") return plan;
-    const entry = Number(plan?.entry);
-    const sl = Number(plan?.sl);
-    const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
-    const hasPrices =
-      Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp);
+    const hasPrices = hasNumericEntrySlTp(plan);
     const decisionRaw = String(
       plan?.skip_recommendation ||
         plan?.trade_decision ||
@@ -4547,9 +4563,27 @@ export default function ChartSnapshotsPage() {
         const sl = parseNum(p?.sl ?? p?.stop_loss);
         const tp = getPlanPrimaryTp(p);
         const rr = parseNum(p?.rr ?? p?.risk_reward);
+        const hasValidLevels = hasNumericEntrySlTp(p);
+        const normalizedDecision = String(
+          p?.skip_recommendation ||
+            p?.skip ||
+            p?.position_management?.trade_decision ||
+            p?.trade_decision ||
+            "",
+        )
+          .trim()
+          .toLowerCase();
+        const forcedSkip =
+          !hasValidLevels &&
+          (!normalizedDecision ||
+            normalizedDecision === "proceed" ||
+            normalizedDecision === "trade" ||
+            normalizedDecision === "enter");
         const skipReasonText = String(
           p?.position_management?.skips_reasons || "",
         ).trim();
+        const missingReason =
+          "Missing entry/stop-loss/take-profit in AI response. Auto-marked as Skip.";
         return {
           idx,
           raw: p,
@@ -4564,7 +4598,6 @@ export default function ChartSnapshotsPage() {
           sl,
           tp,
           rr,
-          note: String(p?.note || "").trim(),
           trade_type: String(p?.type || p?.order_type || "limit")
             .trim()
             .toLowerCase(),
@@ -4584,16 +4617,20 @@ export default function ChartSnapshotsPage() {
             confidenceLevelToPct(p?.confidence_level),
           estimated_bars:
             p?.estimated_bars ?? p?.estimate_bars_that_entry_happens ?? null,
-          reasons_to_skip: Array.isArray(p?.reasons_to_skip)
-            ? p.reasons_to_skip
-            : skipReasonText
-              ? [{ reason: skipReasonText, severity: "" }]
-              : [],
-          skip_recommendation:
-            p?.skip_recommendation ||
-            p?.skip ||
-            p?.position_management?.trade_decision ||
-            "",
+          reasons_to_skip: forcedSkip
+            ? [{ reason: missingReason, severity: "warning" }]
+            : Array.isArray(p?.reasons_to_skip)
+              ? p.reasons_to_skip
+              : skipReasonText
+                ? [{ reason: skipReasonText, severity: "" }]
+                : [],
+          skip_recommendation: forcedSkip
+            ? "Skip"
+            : p?.skip_recommendation ||
+              p?.skip ||
+              p?.position_management?.trade_decision ||
+              "",
+          trade_decision: forcedSkip ? "Skip" : String(p?.trade_decision || "").trim(),
           entry_condition: String(
             p?.entry_condition ||
               p?.entry_trigger ||
@@ -4606,6 +4643,11 @@ export default function ChartSnapshotsPage() {
               p?.position_management?.mid_trade_invalidation ||
               "",
           ).trim(),
+          note:
+            forcedSkip && !String(p?.note || "").trim()
+              ? missingReason
+              : String(p?.note || "").trim(),
+          has_valid_levels: hasValidLevels,
         };
       })
       .filter((x) => x.raw && typeof x.raw === "object");

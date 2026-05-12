@@ -158,6 +158,15 @@ def extract_parsed_plan(parsed_plan: Dict[str, Any]) -> Dict[str, Optional[float
     tp = pick_numeric(parsed_plan, ["tp", "tp3", "tp2", "take_profit"])
     return {"entry": entry, "sl": sl, "tp": tp}
 
+def is_skip_plan(plan: Dict[str, Any]) -> bool:
+    decision = str(
+        plan.get("skip_recommendation")
+        or plan.get("trade_decision")
+        or (plan.get("risk_management") or {}).get("skip_decision")
+        or ""
+    ).strip().lower()
+    return decision == "skip"
+
 with open(path, "r", encoding="utf-8") as f:
     api = json.load(f)
 
@@ -253,6 +262,15 @@ if failed:
 if fallback_hit and any(v is not None for v in raw_vals.values()):
     print("[FAIL] fallback plan replaced valid parsed plan")
     sys.exit(1)
+
+if not is_skip_plan(parsed_plan):
+    missing_numeric = [k for k in checks if parsed_vals[k] is None]
+    if missing_numeric:
+        print(
+            "[FAIL] parsed non-Skip plan has non-numeric entry/sl/tp:",
+            ", ".join(missing_numeric),
+        )
+        sys.exit(1)
 
 print("[PASS] parse mapping looks correct (raw_response -> parsed_json)")
 sys.exit(0)
