@@ -98,8 +98,6 @@ export function useSymbolChartData({
       setError(null);
       if (mode === "snapshots") setSnapMsg("Fetching...");
       console.log("[ChartData] refresh symbol=" + sym + " mode=" + mode + " tfs=" + tfs.join(","));
-      const trackType = mode === "snapshots" ? "snapshot" : "twelve_data";
-      const { requestId } = NotificationHub.track(trackType, { symbol: sym }, () => Promise.resolve(null));
 
       try {
         const result = await chartFetchManager.enqueue(
