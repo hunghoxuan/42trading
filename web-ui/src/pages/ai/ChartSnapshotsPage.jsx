@@ -666,7 +666,7 @@ function normalizeAnalysisContract(parsed) {
   const out = { ...parsed };
   if (Array.isArray(out.analysis_data) && out.analysis_data.length > 0) {
     const entries = out.analysis_data.filter((x) => x && typeof x === "object");
-    const mergedPlans = entries.flatMap((e) =>
+    const nestedPlans = entries.flatMap((e) =>
       Array.isArray(e.trade_plan)
         ? e.trade_plan.map((p) => ({
             ...(p || {}),
@@ -674,6 +674,11 @@ function normalizeAnalysisContract(parsed) {
           }))
         : [],
     );
+    const rootPlans = Array.isArray(out.trade_plan)
+      ? out.trade_plan
+          .filter((p) => p && typeof p === "object")
+          .map((p) => ({ ...(p || {}) }))
+      : [];
     const first = entries[0] || {};
     const mtf =
       first?.multi_timeframes_analysis &&
@@ -682,7 +687,7 @@ function normalizeAnalysisContract(parsed) {
         : {};
     out.symbol = String(first?.symbol || out?.symbol || "").trim();
     out.ai_full_analysis = mtf;
-    out.trade_plan = mergedPlans;
+    out.trade_plan = [...rootPlans, ...nestedPlans];
   }
   if (
     !out.ai_full_analysis &&

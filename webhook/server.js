@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:52 - 0e654c8c"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:04 - e37c490c"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10060,7 +10060,7 @@ function normalizeAiAnalysisContract(input = {}) {
   // NEW schema (v2.6): analysis_data[] root
   if (Array.isArray(out.analysis_data) && out.analysis_data.length > 0) {
     const entries = out.analysis_data.filter((x) => x && typeof x === "object");
-    const mergedPlans = entries.flatMap((e) =>
+    const nestedPlans = entries.flatMap((e) =>
       Array.isArray(e.trade_plan)
         ? e.trade_plan.map((p) => ({
             ...(p || {}),
@@ -10068,6 +10068,11 @@ function normalizeAiAnalysisContract(input = {}) {
           }))
         : [],
     );
+    const rootPlans = Array.isArray(out.trade_plan)
+      ? out.trade_plan
+          .filter((p) => p && typeof p === "object")
+          .map((p) => ({ ...(p || {}) }))
+      : [];
     const first = entries[0] || {};
     const mtf =
       first?.multi_timeframes_analysis &&
@@ -10076,7 +10081,8 @@ function normalizeAiAnalysisContract(input = {}) {
         : {};
     out.symbol = String(first?.symbol || out?.symbol || "").trim();
     out.ai_full_analysis = mtf;
-    out.trade_plan = mergedPlans;
+    // Keep root trade_plan too. Some providers put plans at root, not per analysis_data item.
+    out.trade_plan = [...rootPlans, ...nestedPlans];
   }
 
   // BARE trade_plan: AI returned trade_plan directly (no ai_full_analysis wrapper)
