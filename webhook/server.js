@@ -10335,13 +10335,15 @@ function dedupeTradePlans(plans = []) {
 
 function planPrimaryTpNumber(plan = {}) {
   return Number(
-    plan?.tp3 ??
-      plan?.tp2 ??
-      plan?.tp ??
+    plan?.tp ??
       plan?.take_profit ??
+      plan?.tp3 ??
+      plan?.tp2 ??
+      plan?.tp1 ??
       plan?.multiple_exits?.full_tp?.price ??
-      plan?.multiple_exits?.tp2?.price ??
       plan?.multiple_exits?.tp3?.price ??
+      plan?.multiple_exits?.tp2?.price ??
+      plan?.multiple_exits?.tp1?.price ??
       NaN,
   );
 }

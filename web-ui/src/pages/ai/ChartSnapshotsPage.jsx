@@ -739,13 +739,15 @@ function dedupeTradePlans(plans = []) {
 
 function planPrimaryTpNumber(plan = {}) {
   return Number(
-    plan?.tp3 ??
-      plan?.tp2 ??
-      plan?.tp ??
+    plan?.tp ??
       plan?.take_profit ??
+      plan?.tp3 ??
+      plan?.tp2 ??
+      plan?.tp1 ??
       plan?.multiple_exits?.full_tp?.price ??
-      plan?.multiple_exits?.tp2?.price ??
       plan?.multiple_exits?.tp3?.price ??
+      plan?.multiple_exits?.tp2?.price ??
+      plan?.multiple_exits?.tp1?.price ??
       NaN,
   );
 }
@@ -1996,7 +1998,7 @@ function recoverTradePlansFromRaw(rawText) {
         String(plan.trade_id || ""),
         Number(plan.entry_price ?? plan.entry ?? NaN),
         Number(plan.stop_loss ?? plan.sl ?? NaN),
-        Number(plan.take_profit ?? plan.tp ?? plan.tp3 ?? NaN),
+        Number(plan.tp ?? plan.take_profit ?? plan.tp3 ?? plan.tp2 ?? plan.tp1 ?? plan.multiple_exits?.tp1?.price ?? NaN),
       ]);
       if (seen.has(key)) continue;
       seen.add(key);
