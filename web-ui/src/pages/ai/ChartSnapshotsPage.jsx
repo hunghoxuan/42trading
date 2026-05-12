@@ -1549,9 +1549,28 @@ function extractJsonCandidate(textRaw) {
 }
 
 function tryParseJsonLoose(textRaw) {
+  const tryDecode = (value) => {
+    let cur = value;
+    for (let i = 0; i < 3; i += 1) {
+      if (cur && typeof cur === "object") return cur;
+      if (typeof cur !== "string") return null;
+      const trimmed = cur.trim();
+      if (!trimmed) return null;
+      try {
+        cur = JSON.parse(trimmed);
+      } catch {
+        return null;
+      }
+    }
+    return cur && typeof cur === "object" ? cur : null;
+  };
+  const direct = tryDecode(textRaw);
+  if (direct) return direct;
   const candidate = extractJsonCandidate(textRaw);
   if (!candidate) return null;
   try {
+    const decoded = tryDecode(candidate);
+    if (decoded) return decoded;
     return JSON.parse(candidate);
   } catch {
     try {
@@ -1591,6 +1610,8 @@ function tryParseJsonLoose(textRaw) {
         repaired += ch;
       }
       repaired = repaired.replace(/,\s*([}\]])/g, "$1");
+      const decoded = tryDecode(repaired);
+      if (decoded) return decoded;
       return JSON.parse(repaired);
     } catch {
       return null;
@@ -2951,35 +2972,6 @@ export default function ChartSnapshotsPage() {
         raw,
         tryParseJsonLoose(raw),
       );
-      // Claude can occasionally return plan shells with null entry/sl/tp.
-      // Retry once with stronger instruction to force concrete numeric levels.
-      const shouldRepairOnce =
-        String(analysisSource || "").toLowerCase() === "ai_claude" &&
-        !hasCorePlanLevels(parsed);
-      if (shouldRepairOnce) {
-        const strictRetryPrompt = `${composedPrompt}\n\nIMPORTANT: Return at least one trade_plan item with numeric entry, sl, tp. Do not return null for these three fields.`;
-        const retryPayload = {
-          ...payload,
-          prompt: strictRetryPrompt,
-          force_refresh: true,
-          snapshot_refresh: true,
-        };
-        try {
-          const retryOut = await api.chartSnapshotsAnalyze(retryPayload);
-          const retryRaw = String(retryOut?.raw_response || "");
-          const retryParsed = enrichParsedAnalysis(
-            retryRaw,
-            tryParseJsonLoose(retryRaw),
-          );
-          if (hasCorePlanLevels(retryParsed)) {
-            out = retryOut;
-            parsed = retryParsed;
-            setAnalysisRaw(retryRaw);
-          }
-        } catch {
-          // Keep first response if retry fails.
-        }
-      }
       if (parsed && typeof parsed === "object") {
         //         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
         //         const inputSymbol = String(activeSymbol || cfg.symbol || "")
@@ -5174,7 +5166,7 @@ export default function ChartSnapshotsPage() {
                         style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
                         title="Number of bars"
                       >
-                        {["50", "100", "200", "300", "500"].map((v) => (
+                        {["50", "100", "200", "300", "500", "700", "1000"].map((v) => (
                           <option key={v} value={v}>{v} bars</option>
                         ))}
                       </select>
