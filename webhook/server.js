@@ -144,10 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.12 12:05 - broker-sync-no-sid-fix",
-); // broker sync: avoid missing upsertSourceV2 crash and support discovered no-sid trades
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:38 - 1a82db00"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10023,24 +10020,64 @@ function planPartialTps(plan = {}) {
 
 function planDecisionText(plan = {}) {
   const decision =
-    plan?.trade_decision || plan?.position_management?.trade_decision || "";
+    plan?.risk_management?.skip_decision ||
+    plan?.trade_decision ||
+    plan?.position_management?.trade_decision ||
+    "";
   return decision === "Proceed" ? "" : String(decision || "");
 }
 
 function planSkipReasons(plan = {}) {
+  const normalizeReasons = (value) => {
+    if (Array.isArray(value)) {
+      return value.map((r) => ({
+        reason: r?.reason || String(r || ""),
+        severity: r?.severity || "",
+      }));
+    }
+    const text = String(value || "").trim();
+    return text ? [{ reason: text, severity: "" }] : [];
+  };
+  const rmReasons = normalizeReasons(plan?.risk_management?.skip_reasons);
+  if (rmReasons.length) return rmReasons;
   if (Array.isArray(plan?.skip_reasons)) {
     return plan.skip_reasons.map((r) => ({
       reason: r?.reason || "",
       severity: r?.severity || "",
     }));
   }
-  const text = String(plan?.position_management?.skips_reasons || "").trim();
+  const text = String(
+    plan?.position_management?.skips_reasons ||
+      plan?.position_management?.skip_reasons ||
+      "",
+  ).trim();
   return text ? [{ reason: text, severity: "" }] : [];
 }
 
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
+  // NEW schema (v2.6): analysis_data[] root
+  if (Array.isArray(out.analysis_data) && out.analysis_data.length > 0) {
+    const entries = out.analysis_data.filter((x) => x && typeof x === "object");
+    const mergedPlans = entries.flatMap((e) =>
+      Array.isArray(e.trade_plan)
+        ? e.trade_plan.map((p) => ({
+            ...(p || {}),
+            symbol: String(p?.symbol || e?.symbol || "").trim(),
+          }))
+        : [],
+    );
+    const first = entries[0] || {};
+    const mtf =
+      first?.multi_timeframes_analysis &&
+      typeof first.multi_timeframes_analysis === "object"
+        ? first.multi_timeframes_analysis
+        : {};
+    out.symbol = String(first?.symbol || out?.symbol || "").trim();
+    out.ai_full_analysis = mtf;
+    out.trade_plan = mergedPlans;
+  }
 
   // BARE trade_plan: AI returned trade_plan directly (no ai_full_analysis wrapper)
   // Normalize old field names → legacy market_analysis format
@@ -16570,6 +16607,17 @@ const appHandler = async (req, res) => {
                 severity: "info",
               },
             ],
+            risk_management: {
+              grade: "C",
+              risk_percent: null,
+              confidence_pct: 0,
+              estimate_mins_that_entry_happens: null,
+              skip_decision: "Skip",
+              skip_reasons: `No valid setup found for ${sym} from current chart files.`,
+              entry_trigger: "",
+              mid_trade_invalidation: "",
+              pre_entry_invalidation: "",
+            },
             grade: "C",
             confidence_pct: 0,
             note: "Auto-added by server to ensure per-symbol coverage.",
@@ -17008,6 +17056,7 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        parsedJson = normalizeAiAnalysisContract(parsedJson);
         parsedJson = ensureTradePlanCoverageBySymbol(
           parsedJson,
           Array.isArray(body.symbols) ? body.symbols : [contextBundle.symbol],
@@ -17476,6 +17525,7 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      parsedJson = normalizeAiAnalysisContract(parsedJson);
       parsedJson = ensureTradePlanCoverageBySymbol(
         parsedJson,
         requestedSymbols,
@@ -18872,10 +18922,16 @@ const appHandler = async (req, res) => {
         : "limit";
       rawPatch.trade_plan = {
         direction: side || null,
+        order_type:
+          tradeType === "stop" ? "Stop Limit" : tradeType === "market" ? "Market" : "Limit",
         entry: Number.isFinite(entry) ? entry : null,
+        entry_price: Number.isFinite(entry) ? entry : null,
         sl: Number.isFinite(sl) ? sl : null,
+        stop_loss: Number.isFinite(sl) ? sl : null,
         tp1: Number.isFinite(tp) ? tp : null,
+        take_profit: Number.isFinite(tp) ? tp : null,
         rr: Number.isFinite(rr) ? rr : null,
+        risk_reward: Number.isFinite(rr) ? rr : null,
         type: rawPatch.order_type,
         note: note || null,
       };
@@ -19182,6 +19238,24 @@ const appHandler = async (req, res) => {
           ? tradeType
           : "limit",
         rr_planned: Number.isFinite(rr) ? rr : null,
+        trade_plan: {
+          direction: side || null,
+          order_type:
+            tradeType === "stop"
+              ? "Stop Limit"
+              : tradeType === "market"
+                ? "Market"
+                : "Limit",
+          entry: Number.isFinite(entry) ? entry : null,
+          entry_price: Number.isFinite(entry) ? entry : null,
+          sl: Number.isFinite(sl) ? sl : null,
+          stop_loss: Number.isFinite(sl) ? sl : null,
+          tp: Number.isFinite(tp) ? tp : null,
+          take_profit: Number.isFinite(tp) ? tp : null,
+          rr: Number.isFinite(rr) ? rr : null,
+          risk_reward: Number.isFinite(rr) ? rr : null,
+          note: note || null,
+        },
       };
       if (payload.invalidation) metaPatch.invalidation = payload.invalidation;
       if (payload.exit_condition)

@@ -626,18 +626,37 @@ function planPartialTps(plan = {}) {
 
 function planDecisionText(plan = {}) {
   const decision =
-    plan?.trade_decision || plan?.position_management?.trade_decision || "";
+    plan?.risk_management?.skip_decision ||
+    plan?.trade_decision ||
+    plan?.position_management?.trade_decision ||
+    "";
   return decision === "Proceed" ? "" : String(decision || "");
 }
 
 function planSkipReasons(plan = {}) {
+  const normalizeReasons = (value) => {
+    if (Array.isArray(value)) {
+      return value.map((r) => ({
+        reason: r?.reason || String(r || ""),
+        severity: r?.severity || "",
+      }));
+    }
+    const text = String(value || "").trim();
+    return text ? [{ reason: text, severity: "" }] : [];
+  };
+  const rmReasons = normalizeReasons(plan?.risk_management?.skip_reasons);
+  if (rmReasons.length) return rmReasons;
   if (Array.isArray(plan?.skip_reasons)) {
     return plan.skip_reasons.map((r) => ({
       reason: r?.reason || "",
       severity: r?.severity || "",
     }));
   }
-  const text = String(plan?.position_management?.skips_reasons || "").trim();
+  const text = String(
+    plan?.position_management?.skips_reasons ||
+      plan?.position_management?.skip_reasons ||
+      "",
+  ).trim();
   return text ? [{ reason: text, severity: "" }] : [];
 }
 

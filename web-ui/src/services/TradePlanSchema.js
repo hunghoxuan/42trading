@@ -208,6 +208,7 @@ export function resolveField(p, field, ctx) {
       return p?.risk_management || ctx?.risk_management || "";
     case "skip_recommendation":
       return (
+        p?.risk_management?.skip_decision ||
         p?.skip_recommendation ||
         p?.position_management?.trade_decision ||
         p?.trade_decision ||
@@ -216,6 +217,7 @@ export function resolveField(p, field, ctx) {
       );
     case "trade_decision":
       return (
+        p?.risk_management?.skip_decision ||
         p?.trade_decision ||
         p?.position_management?.trade_decision ||
         ctx?.trade_decision ||
@@ -244,13 +246,18 @@ export function resolveField(p, field, ctx) {
           ? ctx.confluence_checklist
           : [];
     case "reasons_to_skip":
-      return Array.isArray(p?.reasons_to_skip)
-        ? p.reasons_to_skip
-        : Array.isArray(p?.skipReasons)
-          ? p.skipReasons
-          : Array.isArray(ctx?.reasons_to_skip)
-            ? ctx.reasons_to_skip
-            : [];
+      return Array.isArray(p?.risk_management?.skip_reasons)
+        ? p.risk_management.skip_reasons
+        : typeof p?.risk_management?.skip_reasons === "string" &&
+            p.risk_management.skip_reasons.trim()
+          ? [{ reason: p.risk_management.skip_reasons.trim(), severity: "" }]
+          : Array.isArray(p?.reasons_to_skip)
+            ? p.reasons_to_skip
+            : Array.isArray(p?.skipReasons)
+              ? p.skipReasons
+              : Array.isArray(ctx?.reasons_to_skip)
+                ? ctx.reasons_to_skip
+                : [];
 
     // ── Nested objects ──
     case "multiple_exits":
@@ -282,6 +289,16 @@ export function resolveField(p, field, ctx) {
  */
 export function extractPlans(root) {
   if (!root || typeof root !== "object") return [];
+  if (Array.isArray(root.analysis_data) && root.analysis_data.length) {
+    return root.analysis_data.flatMap((item) =>
+      Array.isArray(item?.trade_plan)
+        ? item.trade_plan.map((p) => ({
+            ...(p || {}),
+            symbol: p?.symbol || item?.symbol || "",
+          }))
+        : [],
+    );
+  }
 
   // Case 1: root has trade_plan array
   if (Array.isArray(root.trade_plan)) return root.trade_plan;
