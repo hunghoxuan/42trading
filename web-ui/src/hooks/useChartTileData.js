@@ -42,26 +42,28 @@ export function useSymbolChartData({
       console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
 
       if (mode === "snapshots") {
-        // Snapshot mode: use batch snapshot API
-        const batch = await api.chartSnapshotCreateBatch({
-          symbols: [sym],
-          provider,
-          session_prefix: sessionPrefix,
-          tfs,
-          lookbackBars: 300,
-        });
-        console.log("[ChartData] snapshots batch ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
+        // Snapshot mode: list existing snapshots from VPS
+        const batch = await api.chartSnapshots(100);
+        console.log("[ChartData] snapshots list ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
         const items = Array.isArray(batch?.items) ? batch.items : [];
+        // Filter by symbol (case-insensitive match in file_name)
+        const symUpper = sym.toUpperCase();
+        const matchingItems = items.filter((x) => {
+          const f = String(x?.file_name || "").toUpperCase();
+          return f.includes(symUpper);
+        });
+        console.log("[ChartData] snapshots matching symbol=" + sym + " count=" + matchingItems.length);
         for (const tf of tfs) {
           const key = tfNorm(tf);
-          const found = items.find((x) => {
+          const found = matchingItems.find((x) => {
             const f = String(x?.file_name || "");
             return f.includes("_" + tf + "_") || f.includes("_" + tf.toUpperCase() + "_");
           });
           entries[key] = {
             bars: [],
-            snapshot: found ? { file_name: found.file_name, file_path: found.file_path } : null,
+            snapshot: found ? { file_name: found.file_name, file_path: found.url || found.file_path } : null,
           };
+          if (found) console.log("[ChartData] snapshot match tf=" + tf + " file=" + found.file_name);
         }
       } else {
         // Cache mode: fetch bars per TF via Twelve Data (parallel)

@@ -582,7 +582,7 @@ export default function SymbolChart({
                 /* Snapshot image */
                 <div style={{ position: "relative", height: chartHeight, overflow: "hidden", borderRadius: 6 }}>
                   <img
-                    src={`${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}?view=1`}
+                    src={master.snapshots[tf.toLowerCase()].url || `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}`}
                     alt={`snapshot-${tf}`}
                     style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
                     onError={(e) => { e.target.style.display = "none"; }}
