@@ -2002,9 +2002,7 @@ export default function ChartSnapshotsPage() {
       .filter(Boolean);
     if (!list.length) return "/ai/analyze";
     const slug = list.join("-");
-    return `/ai/analyze/${encodeURIComponent(slug)}?symbols=${encodeURIComponent(
-      list.join(","),
-    )}`;
+    return `/ai/analyze/${encodeURIComponent(slug)}`;
   };
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -4924,7 +4922,7 @@ export default function ChartSnapshotsPage() {
         className="panel snapshot-col-v3 snapshot-col-settings-v3"
         style={isSymbolPanelOpen ? {} : { gridColumn: "1 / -1" }}
       >
-        {!hasResponse && (
+        {!hasAnalyzeResponse && (
           <div className="fadeIn">
             <div
               className=""
@@ -5566,7 +5564,7 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
-        {hasResponse ? (
+        {hasAnalyzeResponse ? (
           <div style={{ marginBottom: 10 }}>
             <button
               className="secondary-button"
@@ -5585,7 +5583,7 @@ export default function ChartSnapshotsPage() {
           </div>
         ) : null}
 
-        {!hasResponse && selectedSymbol && (
+        {!hasAnalyzeResponse && selectedSymbol && (
           <div
             className="browser-grid-v1"
             style={{
