@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:21 - d3a11f62"); // recover multi-symbol nested trade_plan before fallback coverage injection
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:44 - 8c1ab9f0"); // robust JSON extraction for wrapped/escaped multi-symbol analyze responses
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -4701,6 +4701,44 @@ function findRecentChartSnapshots({
 }
 
 function extractJsonFromAiText(rawText) {
+  const extractBalancedJsonObject = (text) => {
+    const src = String(text || "");
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < src.length; i += 1) {
+      const ch = src[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") {
+        if (depth === 0) start = i;
+        depth += 1;
+        continue;
+      }
+      if (ch === "}") {
+        if (depth > 0) depth -= 1;
+        if (depth === 0 && start >= 0) {
+          return src.slice(start, i + 1);
+        }
+      }
+    }
+    return "";
+  };
   const raw = String(rawText || "");
   let clean = raw.trim();
   if (clean.includes("```")) {
@@ -4725,6 +4763,37 @@ function extractJsonFromAiText(rawText) {
     const reparsed = tryParse(parsed);
     if (reparsed == null) break;
     parsed = reparsed;
+  }
+  if (parsed == null) {
+    const balanced = extractBalancedJsonObject(clean) || extractBalancedJsonObject(raw);
+    if (balanced) {
+      parsed = tryParse(balanced);
+      for (let i = 0; i < 2; i += 1) {
+        if (typeof parsed !== "string") break;
+        const reparsed = tryParse(parsed);
+        if (reparsed == null) break;
+        parsed = reparsed;
+      }
+    }
+  }
+  if (parsed == null) {
+    const trimmed = clean.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      const inner = trimmed.slice(1, -1);
+      const unescaped = inner
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t")
+        .replace(/\\\\/g, "\\");
+      parsed = tryParse(unescaped);
+      for (let i = 0; i < 2; i += 1) {
+        if (typeof parsed !== "string") break;
+        const reparsed = tryParse(parsed);
+        if (reparsed == null) break;
+        parsed = reparsed;
+      }
+    }
   }
   return { parsed, clean };
 }
