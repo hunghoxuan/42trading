@@ -300,9 +300,6 @@ export default function SymbolChart({
     return fromMaster || fromReports;
   }, [master, loadedTfs]);
 
-    if (status === "LOADING") return false;
-    if (hasAnyBars) return false;
-    
 
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {
