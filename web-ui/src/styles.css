@@ -1299,10 +1299,6 @@ button:disabled {
     color: #c8d5e8;
     letter-spacing: 0.15px;
 }
-.snapshot-activity-row-bot {
-    font-size: 10px;
-    color: #94a7c3;
-}
 .snapshot-activity-top-v4 {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1363,7 +1359,8 @@ button:disabled {
 }
 .snapshot-tag-v2 {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: 9px;
+    font-weight: 200;
 }
 .snapshot-tag-v2.active,
 .snapshot-tabs-v2 .secondary-button.active,
@@ -1419,7 +1416,7 @@ button:disabled {
 }
 .snapshot-tabs-v2 {
     display: flex;
-    gap: 8px;
+    gap: 1px;
     align-items: center;
     flex-wrap: wrap;
 }

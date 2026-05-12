@@ -1110,6 +1110,26 @@ function tfToSeconds(tfRaw) {
   return 900;
 }
 
+const LOOKBACK_PRESET_SECONDS = {
+  "1w": 7 * 24 * 60 * 60,
+  "2w": 14 * 24 * 60 * 60,
+  "1mo": 30 * 24 * 60 * 60,
+};
+
+function resolveLookbackBarsValue(lookbackRaw, tfRaw = "15m") {
+  const raw = String(lookbackRaw || "300")
+    .trim()
+    .toLowerCase();
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    return Math.max(50, Math.min(1000, Number.isFinite(n) ? n : 300));
+  }
+  const sec = LOOKBACK_PRESET_SECONDS[raw];
+  if (!Number.isFinite(sec) || sec <= 0) return 300;
+  const tfSec = Math.max(60, tfToSeconds(tfRaw));
+  return Math.max(50, Math.min(1000, Math.ceil(sec / tfSec)));
+}
+
 function normalizeSnapshotBars(snapshot, tfRaw = "") {
   const rawBars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
   if (!rawBars.length) return snapshot;
@@ -2254,7 +2274,7 @@ export default function ChartSnapshotsPage() {
   );
   const currentBarsKey = useMemo(
     () =>
-      `${normalizedSymbolForBars}|${timeframe}|${Number(cfg.lookbackBars || 300) || 300}`,
+      `${normalizedSymbolForBars}|${timeframe}|${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)}`,
     [normalizedSymbolForBars, timeframe, cfg.lookbackBars],
   );
   const currentBarsSnapshot = barsCache[currentBarsKey] || null;
@@ -2714,7 +2734,7 @@ export default function ChartSnapshotsPage() {
           provider: provider || "ICMARKETS",
           session_prefix: sessionPrefix || "",
           tfs,
-          lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+          lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
           quality: Number(cfg.snapshotQuality || 80) || 80,
         }),
       );
@@ -2862,7 +2882,7 @@ export default function ChartSnapshotsPage() {
         timeframe,
         provider,
         timeframes: snapshotTfs,
-        bars_count: Number(cfg.lookbackBars || 300) || 300,
+        bars_count: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
         use_context_files: useContextFiles,
         context_mode: useContextFiles ? "claude" : "none",
         context_files: contextFiles,
@@ -2906,7 +2926,7 @@ export default function ChartSnapshotsPage() {
                     Array.isArray(snapshotTfs) && snapshotTfs.length
                       ? snapshotTfs
                       : ["D", "240", "15", "5"],
-                  lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+                  lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
                   quality: Number(cfg.snapshotQuality || 80) || 80,
                 }),
             );
@@ -5164,10 +5184,18 @@ export default function ChartSnapshotsPage() {
                         value={cfg.lookbackBars || "300"}
                         onChange={(e) => setCfgField("lookbackBars", e.target.value)}
                         style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
-                        title="Number of bars"
+                        title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
                       >
-                        {["50", "100", "200", "300", "500", "700", "1000"].map((v) => (
-                          <option key={v} value={v}>{v} bars</option>
+                        {["50", "100", "200", "300", "500", "700", "1000", "1w", "2w", "1mo"].map((v) => (
+                          <option key={v} value={v}>
+                            {v === "1w"
+                              ? "1 week"
+                              : v === "2w"
+                                ? "2 weeks"
+                                : v === "1mo"
+                                  ? "1 month"
+                                  : `${v} bars`}
+                          </option>
                         ))}
                       </select>
                       <select
@@ -5628,7 +5656,13 @@ export default function ChartSnapshotsPage() {
                         type="button"
                         className="secondary-button"
                         style={{ fontSize: "10px", padding: "2px 8px" }}
-                        onClick={() => fetchAllBars(cfg.symbol || tvSymbol, snapshotTfs, Number(cfg.lookbackBars || 300) || 300)}
+                        onClick={() =>
+                          fetchAllBars(
+                            cfg.symbol || tvSymbol,
+                            snapshotTfs,
+                            resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
+                          )
+                        }
                       >
                         📊 Cache
                       </button>

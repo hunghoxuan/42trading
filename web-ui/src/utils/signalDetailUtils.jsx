@@ -192,11 +192,30 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
 }
 
 function firstTradePlan(raw = {}) {
+  let rawResponseParsed = null;
+  try {
+    const rawText = String(raw?.raw_response || "").trim();
+    if (rawText) {
+      let cur = rawText;
+      for (let i = 0; i < 3; i += 1) {
+        if (cur && typeof cur === "object") {
+          rawResponseParsed = cur;
+          break;
+        }
+        if (typeof cur !== "string") break;
+        cur = JSON.parse(cur);
+      }
+      if (!rawResponseParsed && cur && typeof cur === "object")
+        rawResponseParsed = cur;
+    }
+  } catch {
+    rawResponseParsed = null;
+  }
   const candidates = [
     raw,
+    rawResponseParsed,
     raw?.analysis_result,
     raw?.analysis,
-    raw?.parsed_json,
     raw?.raw_json,
     raw?.metadata,
     raw?.metadata?.raw_json,
@@ -206,6 +225,15 @@ function firstTradePlan(raw = {}) {
   ];
   for (const src of candidates) {
     if (!src || typeof src !== "object") continue;
+    if (Array.isArray(src?.analysis_data) && src.analysis_data.length) {
+      for (const entry of src.analysis_data) {
+        if (Array.isArray(entry?.trade_plan) && entry.trade_plan.length) {
+          const first = entry.trade_plan[0] || {};
+          if (!first?.symbol && entry?.symbol) first.symbol = entry.symbol;
+          return first;
+        }
+      }
+    }
     if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
       return src.trade_plan[0] || {};
     if (Array.isArray(src?.tradePlan) && src.tradePlan.length)
