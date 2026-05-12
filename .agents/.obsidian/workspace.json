@@ -207,6 +207,8 @@
   },
   "active": "4bf2b34a6a4ef4d8",
   "lastOpenFiles": [
+    "wiki/ai-response-schema-migration-runbook.md",
+    "skills/ai-response-schema-migration.md",
     "2026-05-03.md",
     "rules/memory-governance.md",
     "wiki/entry_models/index.md",
@@ -237,8 +239,6 @@
     "wiki/EA_Risk_Execution_Telemetry.md",
     "wiki/EA_Development.md",
     "wiki",
-    "rules/cli.md",
-    "knowledge/token-efficient-toolchain.md",
     "features",
     "handoff",
     "communication",

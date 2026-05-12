@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.09 18:53 - 220aade";
+        private const string BuildVersion = "v2026.05.12 15:49 - enhanced-stability";
         
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -75,6 +75,8 @@ namespace cAlgo.Robots
         private int _pollCount = 0;
         private int _successPolls = 0;
         private int _syncCount = 0;
+        private int _consecutiveErrors = 0;
+        private DateTime _lastErrorClearTime = DateTime.Now;
 
         // REGISTRY: Tracks all processed signals to prevent duplicates
         private HashSet<string> _processedSignalIds = new HashSet<string>();
@@ -89,10 +91,23 @@ namespace cAlgo.Robots
         }
         private Dictionary<string, List<PartialTP>> _tradePartials = new Dictionary<string, List<PartialTP>>();
         private HashSet<string> _executedPartials = new HashSet<string>(); // key: ticket_partialIdx
+        private Dictionary<string, string> _ticketSidMap = new Dictionary<string, string>(); // ticket -> sid backfill for empty comments
 
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         private bool _isBusy = false;
+
+        private string ResolveSid(string ticket, string commentSid)
+        {
+            var sid = string.IsNullOrWhiteSpace(commentSid) ? "" : commentSid.Trim();
+            if (!string.IsNullOrEmpty(sid)) return sid;
+            var key = string.IsNullOrWhiteSpace(ticket) ? "" : ticket.Trim();
+            if (string.IsNullOrEmpty(key)) return "";
+            string mapped;
+            if (_ticketSidMap.TryGetValue(key, out mapped) && !string.IsNullOrWhiteSpace(mapped))
+                return mapped.Trim();
+            return "";
+        }
 
         protected override void OnStart()
         {
@@ -194,20 +209,53 @@ namespace cAlgo.Robots
                             double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
                             volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
                             
+                            // Check if we can close at least the minimum volume
                             if (volToClose >= symbol.VolumeInUnitsMin)
                             {
-                                var res = ClosePosition(pos, volToClose);
-                                if (res.IsSuccessful)
+                                // Also check that we're not trying to close more than the position size
+                                if (volToClose <= pos.VolumeInUnits)
                                 {
-                                    _executedPartials.Add(pKey);
-                                    Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
+                                    var res = ClosePosition(pos, volToClose);
+                                    if (res.IsSuccessful)
+                                    {
+                                        _executedPartials.Add(pKey);
+                                        Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
+                                    }
+                                    else
+                                    {
+                                        Print("[Partial] Close failed for {0}: {1}", pos.Id, res.Error);
+                                    }
+                                }
+                                else
+                                {
+                                    // If partial would close more than position size, close entire position
+                                    var res = ClosePosition(pos);
+                                    if (res.IsSuccessful)
+                                    {
+                                        _executedPartials.Add(pKey);
+                                        Print("[Partial] Closed entire position {0} ({1}% partial exceeded position size)", pos.Id, p.SizePct);
+                                    }
                                 }
                             }
                             else
                             {
-                                // If remaining volume is too small to split, just mark as done to avoid spamming
-                                _executedPartials.Add(pKey);
-                                Print("[Partial] Skipped {0} (Volume too small for partial)", pos.Id);
+                                // If remaining volume is too small to split, check if we should close entire position
+                                if (pos.VolumeInUnits >= symbol.VolumeInUnitsMin)
+                                {
+                                    // Close entire position if partial is too small but position is valid
+                                    var res = ClosePosition(pos);
+                                    if (res.IsSuccessful)
+                                    {
+                                        _executedPartials.Add(pKey);
+                                        Print("[Partial] Closed entire position {0} (partial too small: {1} units)", pos.Id, volToClose);
+                                    }
+                                }
+                                else
+                                {
+                                    // If position itself is too small, just mark as done
+                                    _executedPartials.Add(pKey);
+                                    Print("[Partial] Skipped {0} (Position too small for any partial)", pos.Id);
+                                }
                             }
                         }
                     }
@@ -221,6 +269,23 @@ namespace cAlgo.Robots
             _isBusy = true;
             try
             {
+                // Perform memory cleanup periodically
+                if (_pollCount % 10 == 0) // Every 10 polls
+                {
+                    CleanupOldEntries();
+                }
+
+                // Apply exponential backoff for consecutive errors
+                if (_consecutiveErrors > 0)
+                {
+                    int backoffSeconds = Math.Min(30, (int)Math.Pow(2, _consecutiveErrors - 1));
+                    if (backoffSeconds > PollSeconds)
+                    {
+                        Print("[Backoff] Delaying poll for {0}s due to {1} consecutive errors", backoffSeconds, _consecutiveErrors);
+                        Task.Delay(backoffSeconds * 1000).Wait();
+                    }
+                }
+
                 var accId = Account.UserId.ToString();
                 var balance = Account.Balance;
                 var equity = Account.Equity;
@@ -230,7 +295,7 @@ namespace cAlgo.Robots
                 
                 // Sync ALL positions for Manual Discovery / Auto-Adopt
                 foreach (var pos in Positions) {
-                    var sid = (pos.Comment ?? "").Replace("\"", "'");
+                    var sid = ResolveSid(pos.Id.ToString(), pos.Comment).Replace("\"", "'");
                     var s = Symbols.GetSymbol(pos.SymbolName);
                     double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
                     
@@ -276,7 +341,7 @@ namespace cAlgo.Robots
                     if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
                     if (closedList.Count >= 20) break;
 
-                    var sid = (deal.Comment ?? "").Replace("\"", "'");
+                    var sid = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
                     closedList.Add(string.Format(CultureInfo.InvariantCulture, 
                         "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"symbol_code\":\"{4}\",\"side\":\"{5}\",\"volume\":{6:F2},\"pnl\":{7:F2},\"pips\":{8:F2},\"commission\":{9:F2},\"swap\":{10:F2},\"status\":\"CLOSED\",\"closed_at\":\"{11:O}\",\"label\":\"{12}\"}}",
                         sid, sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), 
@@ -290,7 +355,7 @@ namespace cAlgo.Robots
 
                 var ordersList = new List<string>();
                 foreach (var order in PendingOrders) {
-                    var sid = (order.Comment ?? "").Replace("\"", "'");
+                    var sid = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
                     var s = Symbols.GetSymbol(order.SymbolName);
                     double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
                     
@@ -408,6 +473,15 @@ namespace cAlgo.Robots
                         _lastPollTime = DateTime.Now;
                         _pollStatus = "OK";
                         _lastPollErr = "None";
+                        
+                        // Reset error counter on successful poll
+                        if (_consecutiveErrors > 0)
+                        {
+                            _consecutiveErrors = 0;
+                            _lastErrorClearTime = DateTime.Now;
+                            Print("[Recovery] Error counter reset after successful poll");
+                        }
+                        
                         var json = await response.Content.ReadAsStringAsync();
                         BeginInvokeOnMainThread(() => ProcessResponse(json));
                     }
@@ -417,6 +491,10 @@ namespace cAlgo.Robots
                         _pollStatus = "FAIL";
                         _lastPollErr = await response.Content.ReadAsStringAsync();
                         if (string.IsNullOrEmpty(_lastPollErr)) _lastPollErr = "HTTP " + (int)response.StatusCode;
+                        
+                        // Increment error counter for non-successful responses
+                        _consecutiveErrors++;
+                        Print("[Error] Poll failed: {0} (consecutive errors: {1})", _lastPollErr, _consecutiveErrors);
                     }
                 }
             }
@@ -425,6 +503,10 @@ namespace cAlgo.Robots
                 _apiStatus = "???";
                 _pollStatus = "ERROR"; 
                 _lastPollErr = ex.Message; 
+                
+                // Increment error counter for exceptions
+                _consecutiveErrors++;
+                Print("[Error] Poll exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
         }
 
@@ -630,6 +712,49 @@ namespace cAlgo.Robots
             RefreshDebugPanel();
         }
 
+        private void CleanupOldEntries()
+        {
+            // Clean up old processed signal IDs to prevent memory growth
+            if (_processedSignalIds.Count > 1000)
+            {
+                var toRemove = _processedSignalIds.Take(_processedSignalIds.Count - 500).ToList();
+                foreach (var id in toRemove)
+                {
+                    _processedSignalIds.Remove(id);
+                }
+                Print("[Cleanup] Removed {0} old signal IDs from memory", toRemove.Count);
+            }
+
+            // Clean up old synced closed tickets
+            if (_syncedClosedTickets.Count > 500)
+            {
+                var toRemove = _syncedClosedTickets.Take(_syncedClosedTickets.Count - 250).ToList();
+                foreach (var ticket in toRemove)
+                {
+                    _syncedClosedTickets.Remove(ticket);
+                }
+                Print("[Cleanup] Removed {0} old closed tickets from memory", toRemove.Count);
+            }
+
+            // Clean up old partial TP tracking
+            if (_executedPartials.Count > 200)
+            {
+                var toRemove = _executedPartials.Take(_executedPartials.Count - 100).ToList();
+                foreach (var key in toRemove)
+                {
+                    _executedPartials.Remove(key);
+                }
+                Print("[Cleanup] Removed {0} old partial TP keys from memory", toRemove.Count);
+            }
+
+            // Auto-clear error state after 5 minutes of successful operation
+            if (_consecutiveErrors > 0 && (DateTime.Now - _lastErrorClearTime).TotalMinutes > 5)
+            {
+                _consecutiveErrors = 0;
+                Print("[Recovery] Error counter reset after 5 minutes of stable operation");
+            }
+        }
+
         private async Task SyncWithVpsAsync(string accId, double bal, double eq, double marg, string brokerName, List<string> posList, List<string> ordersList, List<string> closedList, HashSet<string> activeTicketIds, List<string> metricsList)
         {
             _syncStatus = "SYNCING";
@@ -647,6 +772,15 @@ namespace cAlgo.Robots
                 if (response.IsSuccessStatusCode) {
                     _apiStatus = "OK";
                     _syncCount++; _syncStatus = "OK"; _lastSyncTime = DateTime.Now; _lastSyncErr = "None";
+                    
+                    // Reset error counter on successful sync
+                    if (_consecutiveErrors > 0)
+                    {
+                        _consecutiveErrors = 0;
+                        _lastErrorClearTime = DateTime.Now;
+                        Print("[Recovery] Error counter reset after successful sync");
+                    }
+                    
                     var json = await response.Content.ReadAsStringAsync();
                     ParseSyncResults(json, activeTicketIds);
                 } else { 
@@ -654,6 +788,10 @@ namespace cAlgo.Robots
                     _syncStatus = "FAIL (" + (int)response.StatusCode + ")"; 
                     _lastSyncErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
                     if (string.IsNullOrEmpty(_lastSyncErr)) _lastSyncErr = "Server Rejected Payload";
+                    
+                    // Increment error counter for failed sync
+                    _consecutiveErrors++;
+                    Print("[Error] Sync failed: {0} (consecutive errors: {1})", _lastSyncErr, _consecutiveErrors);
                 }
             }
             catch (Exception ex) { 
@@ -661,6 +799,10 @@ namespace cAlgo.Robots
                 _apiStatus = "???";
                 _syncStatus = "ERROR"; 
                 _lastSyncErr = FormatServerErrorForPanel(ex.Message); 
+                
+                // Increment error counter for sync exceptions
+                _consecutiveErrors++;
+                Print("[Error] Sync exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
         }
 
@@ -739,6 +881,10 @@ namespace cAlgo.Robots
                     var displayTicket = string.IsNullOrEmpty(ticket) || ticket == "null" ? "-" : ticket;
                     var displaySid = string.IsNullOrEmpty(sid) || sid == "null" ? "NO_SID" : sid;
                     var detail = !string.IsNullOrEmpty(err) ? err : reason;
+                    if (!string.IsNullOrEmpty(ticket) && !string.IsNullOrEmpty(sid) && sid != "null")
+                    {
+                        _ticketSidMap[ticket] = sid;
+                    }
                     if (!string.IsNullOrEmpty(detail)) {
                         resList.Add(string.Format("{0} | {1} {2} {3} [{4}: {5}]", displayTicket, displaySid, act, sym, status, detail));
                     } else {
@@ -779,6 +925,7 @@ namespace cAlgo.Robots
                 var bl = new StringBuilder();
                 var pollTimeStr = _lastPollTime == DateTime.MinValue ? "WAITING..." : _lastPollTime.ToString("HH:mm:ss");
                 bl.AppendLine(string.Format("EVENT POLL: {0}, {1}", _pollStatus, pollTimeStr));
+                if (_consecutiveErrors > 0) bl.AppendLine(string.Format("ERR CNT: {0}", _consecutiveErrors));
                 foreach (var sig in _signalHistory) bl.AppendLine("  " + sig);
                 if (_lastPollErr != "None") bl.AppendLine("ERR: " + (_lastPollErr.Length > 50 ? _lastPollErr.Substring(0, 50) : _lastPollErr));
                 
