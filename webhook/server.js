@@ -5067,7 +5067,7 @@ async function loadAiConfig() {
 async function callAiProvider({
   model,
   messages,
-  maxTokens = 8000,
+  maxTokens = 16000,
   timeoutMs = 180000,
   provider: explicitProvider = "",
 }) {
@@ -16285,7 +16285,7 @@ const appHandler = async (req, res) => {
         if (!requestModel) requestModel = "claude-sonnet-4-0";
         bodyData = {
           model: requestModel,
-          max_tokens: 8000,
+          max_tokens: 16000,
           messages: [{ role: "user", content: finalPrompt }],
         };
       } else {
@@ -17553,7 +17553,7 @@ const appHandler = async (req, res) => {
           apiKey: claudeKey,
           model: requestModel,
           messages: [{ role: "user", content }],
-          maxTokens: Number(body.max_tokens || 8000),
+          maxTokens: Number(body.max_tokens || 16000),
           timeoutMs: 180000,
           beta: ANTHROPIC_FILES_BETA,
         });
@@ -18039,7 +18039,7 @@ const appHandler = async (req, res) => {
         model: requestModel,
         provider: aiProviderRaw || "",
         messages: [{ role: "user", content }],
-        maxTokens: Number(body.max_tokens || 8000),
+        maxTokens: Number(body.max_tokens || 16000),
         timeoutMs: 180000,
       });
 
