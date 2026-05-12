@@ -58,7 +58,15 @@ function timeAgo(ts) {
   return Math.floor(hrs / 24) + "d ago";
 }
 
-function TfHeader({ tf, context, master, mode, analysisSnapshot, barsStatus, snapshotStatus }) {
+function TfHeader({
+  tf,
+  context,
+  master,
+  mode,
+  analysisSnapshot,
+  barsStatus,
+  snapshotStatus,
+}) {
   const showSnapshotBadge = useMemo(() => {
     if (mode !== "snapshots") return false;
     const snap = master?.snapshots?.[tf.toLowerCase()];
@@ -134,7 +142,11 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot, barsStatus, sna
             padding: "0 3px",
             borderRadius: 2,
           }}
-          title={barStat.status === "cached" ? `Cached ${barStat.time || ""}` : "Loading..."}
+          title={
+            barStat.status === "cached"
+              ? `Cached ${barStat.time || ""}`
+              : "Loading..."
+          }
         >
           {barStat.status === "cached" ? `✅ ${barStat.time || ""}` : "⏳"}
         </span>
@@ -149,7 +161,11 @@ function TfHeader({ tf, context, master, mode, analysisSnapshot, barsStatus, sna
             padding: "0 3px",
             borderRadius: 2,
           }}
-          title={snapStat.status === "snapshot" ? `Snapshot ${snapStat.time || ""}` : "Loading..."}
+          title={
+            snapStat.status === "snapshot"
+              ? `Snapshot ${snapStat.time || ""}`
+              : "Loading..."
+          }
         >
           {snapStat.status === "snapshot" ? `📷 ${snapStat.time || ""}` : "⏳"}
         </span>
@@ -300,7 +316,6 @@ export default function SymbolChart({
     return fromMaster || fromReports;
   }, [master, loadedTfs]);
 
-
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {
       setMode("live");
@@ -440,15 +455,15 @@ export default function SymbolChart({
               }}
             >
               {MODE_LABELS[m]}
-              {(pendingMode || mode) === m &&
-                status === "LOADING" &&
-                " \u23F3"}
+              {(pendingMode || mode) === m && status === "LOADING" && " \u23F3"}
             </button>
           ))}
           {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
           {hasTradePlan && mode === "cache" && hasAnyBars && (
             <>
-              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>|</span>
+              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
+                |
+              </span>
               {overlayButtons.map(({ key, label }) => (
                 <button
                   key={key}
@@ -478,7 +493,8 @@ export default function SymbolChart({
               padding: 0,
               fontSize: 14,
               lineHeight: 1,
-              minWidth: 22,              fontWeight: 700,
+              minWidth: 22,
+              fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.max(1, prev - 1))}
             title="Larger charts (fewer columns)"
@@ -493,14 +509,15 @@ export default function SymbolChart({
               padding: 0,
               fontSize: 14,
               lineHeight: 1,
-              minWidth: 22,              fontWeight: 700,
+              minWidth: 22,
+              fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.min(6, prev + 1))}
             title="Smaller charts (more columns)"
           >
             -
           </button>
-                    <button
+          <button
             className="secondary-button"
             style={{
               width: 22,
@@ -530,6 +547,8 @@ export default function SymbolChart({
           const isLive = mode === "live";
           const context = master?.context?.[tf.toLowerCase()];
           const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+          const hasBars = (master?.bars?.[tf.toLowerCase()] || []).length > 0;
+          const noData = !isLive && !hasBars && status !== "LOADING";
 
           return (
             <div key={`${mode}-${tf}`} style={{ minWidth: 0 }}>
@@ -550,7 +569,7 @@ export default function SymbolChart({
                   style={{ height: chartHeight }}
                   src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_top_toolbar=1&hide_legend=1&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                 />
-              ) : (
+              ) : hasBars ? (
                 <TradeSignalChart
                   key={`tsc-${symbol}-${tf}`}
                   chartId={chartId}
@@ -573,6 +592,10 @@ export default function SymbolChart({
                   onCrosshairSync={setSyncedCrosshair}
                   onBarsLoaded={handleBarsLoaded}
                 />
+              ) : (
+                <div style={{ height: chartHeight, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 11 }}>
+                  {status === "LOADING" ? "Loading..." : "No data"}
+                </div>
               )}
             </div>
           );
