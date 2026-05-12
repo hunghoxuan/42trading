@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:46 - de394bf0"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 16:04 - 2cbcad6e"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10121,12 +10121,40 @@ function collectTradePlansByRules(root) {
   return out;
 }
 
+function dedupeTradePlans(plans = []) {
+  const list = Array.isArray(plans) ? plans : [];
+  const seen = new Set();
+  const out = [];
+  for (const p of list) {
+    if (!p || typeof p !== "object") continue;
+    const key = [
+      String(p.symbol || "").trim().toUpperCase(),
+      String(p.direction || p.dir || "").trim().toUpperCase(),
+      Number(p.entry ?? p.entry_price ?? NaN),
+      Number(p.sl ?? p.stop_loss ?? NaN),
+      Number(
+        p.tp ??
+          p.take_profit ??
+          p.tp3 ??
+          p.multiple_exits?.tp3?.price ??
+          NaN,
+      ),
+      String(p.entry_model || "").trim().toUpperCase(),
+      String(p.strategy || "").trim().toUpperCase(),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
 function enforceActionableTradePlans(payload = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return payload;
   const out = { ...payload };
   if (!Array.isArray(out.trade_plan)) return out;
-  out.trade_plan = out.trade_plan.map((plan) => {
+  out.trade_plan = dedupeTradePlans(out.trade_plan).map((plan) => {
     if (!plan || typeof plan !== "object") return plan;
     const entry = Number(plan?.entry);
     const sl = Number(plan?.sl);
@@ -10819,6 +10847,9 @@ function normalizeAiAnalysisContract(input = {}) {
       },
       note: out.verdict.note ?? "",
     };
+  }
+  if (Array.isArray(out.trade_plan)) {
+    out.trade_plan = dedupeTradePlans(out.trade_plan);
   }
   return enforceActionableTradePlans(out);
 }
