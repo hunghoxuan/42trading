@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:51 - 11cf8736"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:52 - 0e654c8c"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
