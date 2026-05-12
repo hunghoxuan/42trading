@@ -812,6 +812,7 @@ export const DEFAULT_CONFIG = {
   narrative_language: "English",
   risk: "1",
   lookbackBars: "300",
+  snapshotQuality: "80",
   strategies: ["SMC", "Price Action", "Market Structure"],
   profile: "day",
   htf_tfs: [...PROFILE_PRESETS.day.htf_tfs],
@@ -851,7 +852,10 @@ export const DEFAULT_CONFIG = {
 export const AI_RESPONSE_SCHEMA_VERSION = String(
   AI_SCHEMA_SPEC.version || "2.3",
 );
-export const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
+export const AI_RESPONSE_SCHEMA =
+  AI_SCHEMA_SPEC?.schema && typeof AI_SCHEMA_SPEC.schema === "object"
+    ? AI_SCHEMA_SPEC.schema
+    : AI_SCHEMA_SPEC || {};
 export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
 export const SCHEMA_USER_DEFAULT = "{}";
 export const GUIDE_USER_DEFAULT = "";
@@ -869,7 +873,6 @@ export { GUIDE_SYSTEM };
 //
 // Final Guide  = GUIDE_SYSTEM + "\n\n## USER INSTRUCTIONS\n" + guideUser
 // Final Schema = { ...SCHEMA_SYSTEM, extra: schemaUserObj }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER FUNCTIONS
@@ -1009,7 +1012,7 @@ export function buildJsonConfig(cfg) {
   const tfConfig = getEffectiveTfConfig(cfg);
   return JSON.stringify(
     {
-      version: "2.4",
+      version: "2.6",
       saved_at: new Date().toISOString(),
       config: {
         symbol: cfg.symbol,

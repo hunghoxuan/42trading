@@ -645,6 +645,26 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
+  if (Array.isArray(out.analysis_data) && out.analysis_data.length > 0) {
+    const entries = out.analysis_data.filter((x) => x && typeof x === "object");
+    const mergedPlans = entries.flatMap((e) =>
+      Array.isArray(e.trade_plan)
+        ? e.trade_plan.map((p) => ({
+            ...(p || {}),
+            symbol: String(p?.symbol || e?.symbol || "").trim(),
+          }))
+        : [],
+    );
+    const first = entries[0] || {};
+    const mtf =
+      first?.multi_timeframes_analysis &&
+      typeof first.multi_timeframes_analysis === "object"
+        ? first.multi_timeframes_analysis
+        : {};
+    out.symbol = String(first?.symbol || out?.symbol || "").trim();
+    out.ai_full_analysis = mtf;
+    out.trade_plan = mergedPlans;
+  }
   if (
     !out.ai_full_analysis &&
     Array.isArray(out.trade_plan) &&
@@ -1320,8 +1340,8 @@ function hasRequiredPlanLevels(parsed) {
       : [];
   if (!plans.length) return false;
   return plans.some((p) => {
-    const entry = parseNum(p?.entry);
-    const sl = parseNum(p?.sl);
+    const entry = parseNum(p?.entry ?? p?.entry_price);
+    const sl = parseNum(p?.sl ?? p?.stop_loss);
     const tp = getPlanPrimaryTp(p);
     return (
       Number.isFinite(entry) &&
@@ -1651,23 +1671,24 @@ function parseTradePlanFromRaw(rawText) {
 
 function enrichParsedAnalysis(rawText, parsed) {
   const fallback = parseTradePlanFromRaw(rawText) || {};
+  const normalized = normalizeAnalysisContract(parsed);
 
   // If parsed is null or not an object/array, use fallback
-  if (!parsed || typeof parsed !== "object") {
+  if (!normalized || typeof normalized !== "object") {
     return fallback;
   }
 
   let res = {};
 
   // Case 1: AI returned an array of trade plans directly
-  if (Array.isArray(parsed)) {
+  if (Array.isArray(normalized)) {
     res = {
       ...fallback,
-      trade_plan: parsed,
+      trade_plan: normalized,
     };
   } else {
     // Case 2: AI returned a full object
-    res = { ...parsed };
+    res = { ...normalized };
 
     // Ensure trade_plan is an array if it's a single object
     if (res.trade_plan && !Array.isArray(res.trade_plan)) {
@@ -2068,7 +2089,7 @@ export default function ChartSnapshotsPage() {
       const raw = String(out?.raw_response || "");
       const parsed = enrichParsedAnalysis(
         raw,
-        out?.parsed_json || tryParseJsonLoose(raw),
+        tryParseJsonLoose(raw),
       );
       const used = Array.isArray(out?.used_files) ? out.used_files : [];
       const display = used.length ? used : analysisFilesDisplay;
@@ -2673,6 +2694,7 @@ export default function ChartSnapshotsPage() {
           session_prefix: sessionPrefix || "",
           tfs,
           lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+          quality: Number(cfg.snapshotQuality || 80) || 80,
         }),
       );
       const batch = await snapPromise;
@@ -2733,20 +2755,25 @@ export default function ChartSnapshotsPage() {
 
   const analyzeFiles = async (files = [], opts = {}) => {
     const hasCorePlanLevels = (parsed) => {
-      const plans = Array.isArray(parsed?.trade_plan) ? parsed.trade_plan : [];
+      const plans = Array.isArray(parsed?.trade_plan)
+        ? parsed.trade_plan
+        : parsed?.trade_plan && typeof parsed.trade_plan === "object"
+          ? [parsed.trade_plan]
+          : [];
       if (!plans.length) return false;
-      const first = plans[0] || {};
-      const entry = Number(first.entry);
-      const sl = Number(first.sl);
-      const tp = Number(first.tp);
-      return (
-        Number.isFinite(entry) &&
-        Number.isFinite(sl) &&
-        Number.isFinite(tp) &&
-        entry !== 0 &&
-        sl !== 0 &&
-        tp !== 0
-      );
+      return plans.some((p) => {
+        const entry = parseNum(p?.entry ?? p?.entry_price);
+        const sl = parseNum(p?.sl ?? p?.stop_loss);
+        const tp = getPlanPrimaryTp(p);
+        return (
+          Number.isFinite(entry) &&
+          Number.isFinite(sl) &&
+          Number.isFinite(tp) &&
+          entry !== 0 &&
+          sl !== 0 &&
+          tp !== 0
+        );
+      });
     };
     setAnalyzing(true);
     setStatus({ type: "info", text: "Analyzing screenshots..." });
@@ -2859,6 +2886,7 @@ export default function ChartSnapshotsPage() {
                       ? snapshotTfs
                       : ["D", "240", "15", "5"],
                   lookbackBars: Number(cfg.lookbackBars || 300) || 300,
+                  quality: Number(cfg.snapshotQuality || 80) || 80,
                 }),
             );
             const batch = await snapPromise;
@@ -2921,7 +2949,7 @@ export default function ChartSnapshotsPage() {
       setAnalysisRaw(raw);
       let parsed = enrichParsedAnalysis(
         raw,
-        out?.parsed_json || tryParseJsonLoose(raw),
+        tryParseJsonLoose(raw),
       );
       // Claude can occasionally return plan shells with null entry/sl/tp.
       // Retry once with stronger instruction to force concrete numeric levels.
@@ -2941,7 +2969,7 @@ export default function ChartSnapshotsPage() {
           const retryRaw = String(retryOut?.raw_response || "");
           const retryParsed = enrichParsedAnalysis(
             retryRaw,
-            retryOut?.parsed_json || tryParseJsonLoose(retryRaw),
+            tryParseJsonLoose(retryRaw),
           );
           if (hasCorePlanLevels(retryParsed)) {
             out = retryOut;
@@ -4627,28 +4655,25 @@ export default function ChartSnapshotsPage() {
             >
               {"<<"}
             </button>
-            <span className="minor-text" style={{ fontSize: 11 }}>
-              {symbolsByTab.length} symbols
-            </span>
+            <select
+              className="secondary-button"
+              value={symbolFilterTab}
+              onChange={(e) => {
+                setSymbolFilterTab(e.target.value);
+                setVisibleCount(8);
+              }}
+              style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
+            >
+              <option value="FAVOURITE">Watchlist</option>
+              <option value="CRYPTO">Crypto</option>
+              <option value="FOREX">Forex</option>
+              <option value="COMMODITY">Commodity</option>
+              <option value="INDICES">Indices</option>
+              <option value="SMT">SMT</option>
+            </select>
           </div>
           {isSymbolPanelOpen && (
             <>
-              <select
-                className="secondary-button"
-                value={symbolFilterTab}
-                onChange={(e) => {
-                  setSymbolFilterTab(e.target.value);
-                  setVisibleCount(8);
-                }}
-                style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
-              >
-                <option value="FAVOURITE">Watchlist</option>
-                <option value="CRYPTO">Crypto</option>
-                <option value="FOREX">Forex</option>
-                <option value="COMMODITY">Commodity</option>
-                <option value="INDICES">Indices</option>
-                <option value="SMT">SMT</option>
-              </select>
               <div className="snapshot-watchlist-v2">
                 {(() => {
                   if (symbolFilterTab === "SMT") {
@@ -4819,10 +4844,19 @@ export default function ChartSnapshotsPage() {
                 symbolActivity.items.map((x) => {
                   const pnlNum = Number(x?.pnl);
                   const hasPnl = Number.isFinite(pnlNum);
+                  const isSignal =
+                    String(x?.kind || "").toUpperCase() === "SIGNAL";
+                  const sideText = String(x?.side || "").toUpperCase();
+                  const isBuy = sideText.includes("BUY");
+                  const isSell = sideText.includes("SELL");
+                  const sideColor = isBuy
+                    ? "#24e38f"
+                    : isSell
+                      ? "#ff5a5a"
+                      : "#c8d5e8";
                   const pnlText = hasPnl
                     ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
                     : "0";
-                  const isPos = hasPnl ? pnlNum > 0 : false;
                   const entryTxt = Number.isFinite(Number(x?.entry))
                     ? Number(x.entry).toFixed(
                         Number(x.entry) >= 100 ? 1 : Number(x.entry) >= 10 ? 2 : 4,
@@ -4833,9 +4867,6 @@ export default function ChartSnapshotsPage() {
                         Number(x.tp) >= 100 ? 1 : Number(x.tp) >= 10 ? 2 : 4,
                       )
                     : "-";
-                  const rrTxt = Number.isFinite(Number(x?.rr))
-                    ? `${Number(x.rr).toFixed(1)}r`
-                    : "0.0r";
                   return (
                     <article
                       key={`${x.kind}_${x.id}`}
@@ -4850,22 +4881,25 @@ export default function ChartSnapshotsPage() {
                       }}
                     >
                       <div className="snapshot-activity-row-top">
-                        <strong
+                        <span
                           style={{
-                            color: isPos ? "#24e38f" : "#ff5a5a",
+                            color: sideColor,
                             letterSpacing: 0.2,
                           }}
                         >
                           {String(x.symbol || "").toUpperCase()}
-                        </strong>
-                        <strong style={{ color: isPos ? "#24e38f" : "#ff5a5a" }}>
-                          {pnlText}
-                        </strong>
+                        </span>
+                        {!isSignal ? (
+                          <span style={{ color: sideColor }}>
+                            {pnlText}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
                       </div>
                       <div className="snapshot-activity-row-mid">
                         {entryTxt} → {tpTxt}
                       </div>
-                      <div className="snapshot-activity-row-bot">{rrTxt}</div>
                     </article>
                   );
                 })}
@@ -5131,6 +5165,28 @@ export default function ChartSnapshotsPage() {
                           <option key={t.id} value={t.id}>
                             {t.name}
                           </option>
+                        ))}
+                      </select>
+                      <select
+                        className="secondary-button"
+                        value={cfg.lookbackBars || "300"}
+                        onChange={(e) => setCfgField("lookbackBars", e.target.value)}
+                        style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+                        title="Number of bars"
+                      >
+                        {["50", "100", "200", "300", "500"].map((v) => (
+                          <option key={v} value={v}>{v} bars</option>
+                        ))}
+                      </select>
+                      <select
+                        className="secondary-button"
+                        value={cfg.snapshotQuality || "80"}
+                        onChange={(e) => setCfgField("snapshotQuality", e.target.value)}
+                        style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+                        title="Snapshot image quality"
+                      >
+                        {["60", "70", "80", "90", "100"].map((v) => (
+                          <option key={v} value={v}>Q{v}</option>
                         ))}
                       </select>
                       <button
