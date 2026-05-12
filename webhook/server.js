@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:38 - 1a82db00"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 14:51 - 11cf8736"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10087,6 +10087,7 @@ function normalizeAiAnalysisContract(input = {}) {
     !out.market_analysis
   ) {
     out.trade_plan = out.trade_plan.map((x) => ({
+      symbol: String(x?.symbol || out?.symbol || "").trim(),
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.order_type || x?.type || "",
@@ -10284,6 +10285,7 @@ function normalizeAiAnalysisContract(input = {}) {
     }
     if (Array.isArray(out.trade_plan)) {
       out.trade_plan = out.trade_plan.map((x) => ({
+        symbol: String(x?.symbol || out?.symbol || "").trim(),
         direction: x?.direction || x?.dir || "",
         profile: x?.profile || "",
         type: x?.order_type || x?.type || "",
@@ -10488,6 +10490,7 @@ function normalizeAiAnalysisContract(input = {}) {
       first?.multiple_exits !== undefined
     ) {
       out.trade_plan = out.trade_plan.map((x) => ({
+        symbol: String(x?.symbol || out?.symbol || "").trim(),
         direction: x?.direction || x?.dir || "",
         profile: x?.profile || "",
         type: x?.order_type || x?.type || "limit",
@@ -10548,6 +10551,7 @@ function normalizeAiAnalysisContract(input = {}) {
         ? [out.tradePlan]
         : [];
     out.trade_plan = tradePlans.map((x) => ({
+      symbol: String(x?.symbol || out?.symbol || "").trim(),
       direction: x?.direction ?? x?.dir ?? "",
       profile: x?.profile ?? "",
       type: x?.type ?? "",

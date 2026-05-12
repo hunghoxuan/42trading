@@ -690,6 +690,7 @@ function normalizeAnalysisContract(parsed) {
     !out.market_analysis
   ) {
     out.trade_plan = out.trade_plan.map((x) => ({
+      symbol: String(x?.symbol || out?.symbol || "").trim(),
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.order_type || x?.type || "",
@@ -878,6 +879,7 @@ function normalizeAnalysisContract(parsed) {
     }
     if (Array.isArray(out.trade_plan)) {
       out.trade_plan = out.trade_plan.map((x) => ({
+        symbol: String(x?.symbol || out?.symbol || "").trim(),
         direction: x?.direction || x?.dir || "",
         profile: x?.profile || "",
         type: x?.order_type || x?.type || "",
@@ -1035,6 +1037,7 @@ function normalizeAnalysisContract(parsed) {
         ? [out.tradePlan]
         : [];
     out.trade_plan = tradePlans.map((x) => ({
+      symbol: String(x?.symbol || out?.symbol || "").trim(),
       direction: x?.direction || x?.dir || "",
       profile: x?.profile || "",
       type: x?.type || "",
