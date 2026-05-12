@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { chartFetchManager } from "../services/chartFetchManager";
 import { api } from "../api";
-import { NotificationHub } from "../services/NotificationHub";
 
 function tfNorm(tf) {
   return String(tf || "")
