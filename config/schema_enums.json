@@ -1,9 +1,10 @@
 {
-  "schema_version": "2.4",
+  "schema_version": "2.6",
   "enums": {
-    "tf": ["MN", "W", "D", "4H", "1H", "15M", "5M", "1M"],
-    "trend": ["Bullish", "Bearish", "Sideway"],
-    "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Sideway"],
+    "htf_timeframe": ["D", "4H", "W"],
+    "ltf_timeframe": ["15m", "5m", "1m"],
+    "trend": ["Bullish", "Bearish", "Ranging"],
+    "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
     "phase": [
       "Trending",
       "Retracement",
@@ -15,20 +16,50 @@
       "Accumulation"
     ],
     "bias": ["Long", "Short", "Neutral"],
-    "direction": ["Bullish", "Bearish"],
-    "weight": ["High", "Medium", "Low"],
+    "direction": ["Bullish", "Bearish", "Neutral"],
+    "order_side": ["BUY", "SELL"],
     "order_type": ["Limit", "Stop Limit", "Market"],
-    "trade_decision": ["Proceed", "Wait", "Reduce", "Skip"],
-    "severity": ["High", "Medium", "Low"],
-    "grade": ["A", "B", "C", "NoTrade"],
-    "relevance": ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"]
+    "profile": ["Position", "Swing", "Intraday", "Scalp"],
+    "session": ["Asian", "London", "NewYork", "Overlap"],
+    "strategy": [
+      "ICT",
+      "Price Action",
+      "Market Structure",
+      "Wyckoff",
+      "EMA Trend",
+      "Breakout",
+      "VWAP"
+    ],
+    "weight": ["High", "Medium", "Low"],
+    "confidence": ["Low", "Medium", "High"],
+    "status": ["Fresh", "Tested", "Mitigated", "Broken"],
+    "risk_grade": ["A", "B", "C", "NoTrade"],
+    "skip_decision": ["Proceed", "Low_Vol", "Skip"],
+    "zone_type": [
+      "OB",
+      "FVG",
+      "Breaker",
+      "Void",
+      "BSL",
+      "SSL",
+      "PDH",
+      "PDL",
+      "EQH",
+      "EQL",
+      "WeeklyOpen",
+      "DailyOpen",
+      "MidnightOpen"
+    ]
   },
   "limits": {
-    "max_trade_plans": 24,
+    "max_symbols_per_response": 24,
+    "max_htf_context_per_symbol": 6,
+    "max_ltf_analysis_per_symbol": 6,
     "max_pd_arrays": 6,
     "max_key_levels": 6,
     "max_reference_zones": 6,
     "max_key_events": 8,
-    "max_expected_path": 5
+    "max_expected_path": 5,
+    "max_trade_plans": 24
   }
 }

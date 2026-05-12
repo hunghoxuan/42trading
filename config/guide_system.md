@@ -3,6 +3,7 @@ Analyze the uploaded chart(s) by following ALL steps below IN ORDER.
 Return STRICT JSON only. No markdown. No prose. No explanation outside JSON.
 Narrative language rule: all narrative text values must use NarrativeLanguage from SESSION CONFIG.
 Keep all JSON keys, object structure, and enum tokens exactly per schema; never translate keys.
+Schema alignment: target `ai_response_schema.json` v2.6 root format (`analysis_data[]`).
 
 ═══════════════════════════════════════════════════════════
 STEP 1 — HTF ANALYSIS (Bias, Direction, TP Anchors)
@@ -150,9 +151,9 @@ GRADE RULES — use min_rr from CONTEXT above:
   C = weighted_score 50–64 OR risk_reward borderline within 0.3 of min_rr
   NoTrade = weighted_score < 50 OR gate failed OR risk_reward < min_rr
 
-SKIP REASONS: populate skip_reasons[] ONLY when trade_decision is Wait, Reduce, or Skip.
-  Leave skip_reasons as empty array [] when trade_decision is Proceed.
-  For schema v2.4 also mirror this summary into position_management.skips_reasons.
+SKIP REASONS: populate `risk_management.skip_reasons` ONLY when `risk_management.skip_decision` is Low_Vol or Skip.
+  Keep `risk_management.skip_reasons` empty when `risk_management.skip_decision` is Proceed.
+  Backward compatibility: you may also mirror to legacy `trade_decision/skip_reasons` fields.
 
 ═══════════════════════════════════════════════════════════
 GENERAL RULES
@@ -164,6 +165,7 @@ GENERAL RULES
 - PD array IDs must be consistent across ltf_analysis, confluence checklist, and trade plan.
 - Every TP2 and TP3 reference field must contain a real ID from htf_context.reference_zones[].
 - Use empty string "" for narrative fields when evidence is weak. Never fabricate narrative.
+- Price precision rule: `entry`, `tp`, and `sl` must use the same or very similar decimal precision as the prices shown in the chart snapshot for that symbol.
 - Return STRICT JSON only. No markdown. No prose. No commentary outside the JSON.
 - CRITICAL: trade_plan[].symbol must match one of configured Symbols in SESSION CONFIG exactly. Do not extract symbols from chart titles or exchange prefixes.
 - CRITICAL MULTI-SYMBOL: treat snapshot files as grouped by symbol token in filename.
