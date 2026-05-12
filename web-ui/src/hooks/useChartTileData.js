@@ -130,13 +130,9 @@ export function useSymbolChartData({
       console.log("[ChartData] refresh symbol=" + sym + " mode=" + mode + " tfs=" + tfs.join(","));
 
       try {
-        const result = await chartFetchManager.enqueue(
-          sym,
-          tfs[0] || "4H",
-          () => fetchAll(opts),
-        );
+        const result = await fetchAll(opts);
         if (!mountedRef.current) return null;
-        const entries = result.data?.entries || {};
+        const entries = result?.entries || {};
         const hasBars = Object.values(entries).some((e) => e.bars?.length > 0);
         const hasSnap = Object.values(entries).some((e) => e.snapshot);
         setData(entries);
@@ -149,7 +145,7 @@ export function useSymbolChartData({
           }
           setStatus("READY");
           setSnapMsg("Snapshots ready");
-          return result;
+          return { data: { entries } };
         }
         if (!hasBars) {
           if (opts.force || mode !== "cache") {
@@ -158,16 +154,13 @@ export function useSymbolChartData({
           }
           return null;
         }
-        if (result.stale) setStatus("STALE");
-        else if (result.error) {
-          setStatus(result.data ? "STALE" : "ERROR");
-          setError(result.error);
-        } else setStatus("READY");
+        setStatus("READY");
         return result;
       } catch (err) {
         if (!mountedRef.current) return null;
         setStatus("ERROR");
         setError(String(err?.message || err || "Failed"));
+        console.warn("[ChartData] refresh error:", err?.message || err);
         return null;
       }
     },

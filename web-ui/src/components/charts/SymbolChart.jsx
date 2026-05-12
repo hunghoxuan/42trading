@@ -622,7 +622,7 @@ export default function SymbolChart({
                     fontSize: 11,
                   }}
                 >
-                  {status === "LOADING" ? "Loading..." : "No data"}
+                  {status === "LOADING" ? "Loading..." : mode === "snapshots" ? "No snapshots — click 📷 to capture" : "No data — click C to fetch"}
                 </div>
               )}
             </div>
