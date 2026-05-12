@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:21 - 5ec0a87c"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:30 - e64832fc"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10115,6 +10115,39 @@ function enforceActionableTradePlans(payload = {}) {
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
+  // Alternate schema variant: symbols[] with per-symbol trade_plan
+  if (Array.isArray(out.symbols) && out.symbols.length > 0) {
+    const entries = out.symbols.filter((x) => x && typeof x === "object");
+    const symbolPlans = entries.flatMap((e) =>
+      Array.isArray(e.trade_plan)
+        ? e.trade_plan.map((p) => ({
+            ...(p || {}),
+            symbol: String(p?.symbol || e?.symbol || "").trim(),
+          }))
+        : [],
+    );
+    if (symbolPlans.length) {
+      const rootPlans = Array.isArray(out.trade_plan)
+        ? out.trade_plan
+            .filter((p) => p && typeof p === "object")
+            .map((p) => ({ ...(p || {}) }))
+        : [];
+      out.trade_plan = [...rootPlans, ...symbolPlans];
+    }
+    if (!out.ai_full_analysis) {
+      const first = entries[0] || {};
+      out.symbol = String(first?.symbol || out?.symbol || "").trim();
+      out.ai_full_analysis = {
+        htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        confluence_checklist:
+          first?.confluence_checklist &&
+          typeof first.confluence_checklist === "object"
+            ? first.confluence_checklist
+            : {},
+      };
+    }
+  }
   // NEW schema (v2.6): analysis_data[] root
   if (Array.isArray(out.analysis_data) && out.analysis_data.length > 0) {
     const entries = out.analysis_data.filter((x) => x && typeof x === "object");

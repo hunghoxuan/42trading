@@ -188,6 +188,16 @@ if not isinstance(raw_plans, list) and isinstance(raw_obj.get("analysis_data"), 
                         p = {**p, "symbol": e.get("symbol", "")}
                     merged.append(p)
     raw_plans = merged
+if not isinstance(raw_plans, list) and isinstance(raw_obj.get("symbols"), list):
+    merged = []
+    for e in raw_obj["symbols"]:
+        if isinstance(e, dict) and isinstance(e.get("trade_plan"), list):
+            for p in e["trade_plan"]:
+                if isinstance(p, dict):
+                    if not p.get("symbol"):
+                        p = {**p, "symbol": e.get("symbol", "")}
+                    merged.append(p)
+    raw_plans = merged
 
 parsed_plans = parsed.get("trade_plan")
 
