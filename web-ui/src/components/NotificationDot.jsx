@@ -81,6 +81,7 @@ var TYPE_META = {
 function statusIcon(s) {
   if (s === "running") return "⏳";
   if (s === "ok") return "✅";
+  if (s === "no_data") return "⚠️";
   return "❌";
 }
 
@@ -296,7 +297,7 @@ export default function NotificationDot() {
                   <span style={{ fontSize: "14px", flexShrink: 0 }}>
                     {statusIcon(entry.status)}
                   </span>
-                  <span style={{ flexShrink: 0 }}>{meta.icon}</span>
+                  
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 500 }}>
                       {meta.label}

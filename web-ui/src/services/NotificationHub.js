@@ -46,7 +46,6 @@ function emit(evt, sub, pay) {
       }),
     );
   }
-
 }
 
 function on(evt, fn) {
@@ -131,14 +130,21 @@ function track(type, pay, fetchFn) {
 
 function done(entry) {
   var icon = ICONS[entry.type] || "🔔";
-  var msg =
-    entry.status === "ok"
-      ? icon + " " + entry.type + ": " + (entry.symbol || "done")
-      : icon + " " + entry.type + " failed: " + (entry.error || "error");
+  var msg, evType;
+  if (entry.status === "ok") {
+    msg = icon + " " + entry.type + ": " + (entry.symbol || "done");
+    evType = "info";
+  } else if (entry.status === "no_data") {
+    msg = icon + " " + entry.type + ": " + (entry.symbol || "") + " - no data";
+    evType = "warning";
+  } else {
+    msg = icon + " " + entry.type + " failed: " + (entry.error || "error");
+    evType = "error";
+  }
   emit("SYSTEM_EVENT", "api_complete", {
     message: msg,
     requestId: entry.requestId,
-    type: "info",
+    type: evType,
     ticker: true,
     toast: true,
     data: entry,

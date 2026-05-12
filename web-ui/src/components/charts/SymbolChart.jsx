@@ -323,9 +323,14 @@ export default function SymbolChart({
       setLastError(null);
       return;
     }
+    // Re-click same mode: force refresh
+    if (mode === newMode && !pendingMode && status !== "LOADING") {
+      refresh({ force: true });
+      return;
+    }
     setPendingMode(newMode);
     setLastError(null);
-  }, []);
+  }, [mode, pendingMode, status, refresh]);
 
   const btnColor = (m) => {
     const active = pendingMode || mode;
@@ -593,7 +598,16 @@ export default function SymbolChart({
                   onBarsLoaded={handleBarsLoaded}
                 />
               ) : (
-                <div style={{ height: chartHeight, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", fontSize: 11 }}>
+                <div
+                  style={{
+                    height: chartHeight,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--muted)",
+                    fontSize: 11,
+                  }}
+                >
                   {status === "LOADING" ? "Loading..." : "No data"}
                 </div>
               )}
