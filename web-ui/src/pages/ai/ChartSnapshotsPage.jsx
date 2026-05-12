@@ -660,6 +660,64 @@ function planSkipReasons(plan = {}) {
   return text ? [{ reason: text, severity: "" }] : [];
 }
 
+function enforceActionableTradePlans(payload = {}) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload))
+    return payload;
+  const out = { ...payload };
+  if (!Array.isArray(out.trade_plan)) return out;
+  out.trade_plan = out.trade_plan.map((plan) => {
+    if (!plan || typeof plan !== "object") return plan;
+    const entry = Number(plan?.entry);
+    const sl = Number(plan?.sl);
+    const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
+    const hasPrices =
+      Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp);
+    const decisionRaw = String(
+      plan?.skip_recommendation ||
+        plan?.trade_decision ||
+        plan?.risk_management?.skip_decision ||
+        "",
+    )
+      .trim()
+      .toLowerCase();
+    const proceeding =
+      !decisionRaw ||
+      decisionRaw === "proceed" ||
+      decisionRaw === "trade" ||
+      decisionRaw === "enter";
+    if (hasPrices || !proceeding) return plan;
+    const reasonText =
+      "Missing entry/stop-loss/take-profit in AI response. Auto-marked as Skip.";
+    const reasons = Array.isArray(plan?.reasons_to_skip)
+      ? [...plan.reasons_to_skip]
+      : [];
+    if (!reasons.some((r) => String(r?.reason || "").includes("Missing entry"))) {
+      reasons.push({ reason: reasonText, severity: "warning" });
+    }
+    return {
+      ...plan,
+      skip_recommendation: "Skip",
+      trade_decision: "Skip",
+      reasons_to_skip: reasons,
+      risk_management:
+        plan?.risk_management && typeof plan.risk_management === "object"
+          ? {
+              ...plan.risk_management,
+              skip_decision: "Skip",
+              skip_reasons:
+                plan.risk_management.skip_reasons ||
+                reasonText,
+            }
+          : {
+              skip_decision: "Skip",
+              skip_reasons: reasonText,
+            },
+      note: String(plan?.note || "").trim() || reasonText,
+    };
+  });
+  return out;
+}
+
 function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
@@ -746,7 +804,7 @@ function normalizeAnalysisContract(parsed) {
         "",
       note: x?.note || "",
     }));
-    return out;
+    return enforceActionableTradePlans(out);
   }
   if (out.ai_full_analysis && typeof out.ai_full_analysis === "object") {
     const a = out.ai_full_analysis;
@@ -944,7 +1002,7 @@ function normalizeAnalysisContract(parsed) {
       }));
     }
     delete out.ai_full_analysis;
-    return out;
+    return enforceActionableTradePlans(out);
   }
   if (
     !out.market_analysis &&
@@ -1101,7 +1159,7 @@ function normalizeAnalysisContract(parsed) {
       note: out.verdict.note || "",
     };
   }
-  return out;
+  return enforceActionableTradePlans(out);
 }
 
 function normalizeTfLabelToLower(tfRaw) {
