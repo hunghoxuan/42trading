@@ -35,49 +35,76 @@ export function useSymbolChartData({
   const fetchAll = useCallback(
     async (opts = {}) => {
       if (!sym) throw new Error("Symbol required");
-      const types =
-        mode === "snapshots"
-          ? ["context", "bars", "snapshots"]
-          : ["context", "bars"];
-      const out = await api.chartRefresh({
-        symbols: [sym],
-        timeframes: tfs,
-        types,
-        bars: 300,
-        force: opts.force === true,
-      });
-      const symbolData = out?.symbols?.[0] || out || {};
-      const contextData = symbolData?.context || out?.context || {};
-      const tfRows = Array.isArray(contextData?.timeframes)
-        ? contextData.timeframes
-        : [];
       const entries = {};
-      for (const row of tfRows) {
-        const key = tfNorm(row?.tf || row?.timeframe || "");
-        if (!key) continue;
-        entries[key] = {
-          bars: Array.isArray(row?.bars) ? row.bars : [],
-          bar_start: row?.bar_start || row?.bars?.[0]?.time,
-          bar_end: row?.bar_end || row?.bars?.[row?.bars?.length - 1]?.time,
-          last_price: row?.last_price ?? null,
-          cache_source: row?.cache_source || null,
-          reason: row?.reason || null,
-        };
+      const force = opts.force === true;
+      console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
+
+      if (mode === "snapshots") {
+        // Snapshot mode: use batch snapshot API
+        const batch = await api.chartSnapshotCreateBatch({
+          symbols: [sym],
+          tfs,
+          lookbackBars: 300,
+        });
+        console.log("[ChartData] snapshots batch ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
+        const items = Array.isArray(batch?.items) ? batch.items : [];
+        for (const tf of tfs) {
+          const key = tfNorm(tf);
+          const found = items.find((x) => {
+            const f = String(x?.file_name || "");
+            return f.includes("_" + tf + "_") || f.includes("_" + tf.toUpperCase() + "_");
+          });
+          entries[key] = {
+            bars: [],
+            snapshot: found ? { file_name: found.file_name, file_path: found.file_path } : null,
+          };
+        }
+      } else {
+        // Cache mode: fetch bars per TF via Twelve Data (parallel)
+        const results = await Promise.allSettled(
+          tfs.map(async (tf) => {
+            const key = tfNorm(tf);
+            try {
+              const cached = chartFetchManager.get(sym, key);
+              if (cached && !force) {
+                console.log("[ChartData] cache hit tf=" + tf);
+                return { key, data: cached };
+              }
+              console.log("[ChartData] twelve fetch tf=" + tf);
+              const out = await api.chartTwelveCandles(sym, tf, 300, force);
+              console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
+              const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
+              return {
+                key,
+                data: {
+                  bars: Array.isArray(snap?.bars) ? snap.bars : [],
+                  bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
+                  bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
+                  last_price: snap?.last_price ?? null,
+                  cache_source: out?.source || "api",
+                },
+              };
+            } catch (e) {
+              console.warn("[ChartData] twelve tf=" + tf + " error=" + (e?.message || String(e)));
+              return { key, data: { bars: [] } };
+            }
+          }),
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled" && r.value) {
+            entries[r.value.key] = r.value.data;
+          }
+        }
+        // Ensure all TFs have an entry
+        for (const tf of tfs) {
+          const key = tfNorm(tf);
+          if (!entries[key]) entries[key] = { bars: [] };
+        }
       }
-      const snapItems = Array.isArray(symbolData?.snapshots?.items)
-        ? symbolData.snapshots.items
-        : Array.isArray(out?.snapshots?.items)
-          ? out.snapshots.items
-          : [];
-      for (const item of snapItems) {
-        const key = tfNorm(item?.timeframe || item?.tf || "");
-        if (!key || !entries[key]) continue;
-        entries[key].snapshot = {
-          file_name: item?.file_name || "",
-          file_path: item?.file_path || "",
-        };
-      }
-      const hasAny = Object.values(entries).some((e) => e.bars?.length > 0);
+
+      const hasAny = Object.values(entries).some(
+        (e) => e.bars?.length > 0 || e.snapshot,
+      );
       if (!hasAny) throw new Error("No data from provider");
       return { symbol: sym, entries };
     },
@@ -107,7 +134,19 @@ export function useSymbolChartData({
         if (!mountedRef.current) return null;
         const entries = result.data?.entries || {};
         const hasBars = Object.values(entries).some((e) => e.bars?.length > 0);
+        const hasSnap = Object.values(entries).some((e) => e.snapshot);
         setData(entries);
+        if (mode === "snapshots") {
+          if (!hasSnap) {
+            setStatus("ERROR");
+            setError("No snapshots");
+            setSnapMsg("Snapshots unavailable");
+            return null;
+          }
+          setStatus("READY");
+          setSnapMsg("Snapshots ready");
+          return result;
+        }
         if (!hasBars) {
           if (opts.force || mode !== "cache") {
             setStatus("ERROR");
@@ -120,10 +159,6 @@ export function useSymbolChartData({
           setStatus(result.data ? "STALE" : "ERROR");
           setError(result.error);
         } else setStatus("READY");
-        if (mode === "snapshots") {
-          const hasSnap = Object.values(entries).some((e) => e.snapshot);
-          setSnapMsg(hasSnap ? "Snapshots ready" : "Snapshots unavailable");
-        }
         return result;
       } catch (err) {
         if (!mountedRef.current) return null;
