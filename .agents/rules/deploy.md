@@ -18,11 +18,18 @@
 
 - Single deploy owner at a time. Declare owner in `.agents/sync/MAILBOX.md` before deploy.
 - Never deploy from stale local code.
+- Never deploy unpushed local commits.
+- Before deploy, your fix commit must exist on `origin/main` (or be merged to `main` then pushed).
 - Before deploy, always run:
   - `rtk git fetch origin`
   - `rtk git checkout main`
   - `rtk git pull --ff-only origin main`
   - `rtk git merge --ff-only <your-branch>` (or merge PR first, then pull main)
+- If other agents pushed while you were coding, merge those commits first:
+  - `rtk git fetch origin`
+  - `rtk git checkout main`
+  - `rtk git pull --ff-only origin main`
+  - then replay/merge your work and push again before deploy.
 - Deploy source of truth is `origin/main`. If your fix is only local/unpushed, do not deploy yet.
 - If multiple agents finish in parallel, deploy order is strict:
   1. Agent A merges to `main`, deploys, verifies.
