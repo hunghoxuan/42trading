@@ -660,6 +660,55 @@ function planSkipReasons(plan = {}) {
   return text ? [{ reason: text, severity: "" }] : [];
 }
 
+const DEFAULT_TRADE_PLAN_PATHS = [
+  "trade_plan",
+  "analysis_data[].trade_plan",
+  "symbols[].trade_plan",
+  "analyses[].trade_plan",
+];
+
+function extractByRulePath(root, rulePath) {
+  const pathText = String(rulePath || "").trim();
+  if (!pathText) return [];
+  const steps = pathText.split(".").map((s) => s.trim()).filter(Boolean);
+  let current = [root];
+  for (const step of steps) {
+    const isArrayStep = step.endsWith("[]");
+    const key = isArrayStep ? step.slice(0, -2) : step;
+    const next = [];
+    for (const node of current) {
+      if (!node || typeof node !== "object") continue;
+      const value = node[key];
+      if (isArrayStep) {
+        if (Array.isArray(value)) next.push(...value);
+      } else if (value !== undefined && value !== null) {
+        next.push(value);
+      }
+    }
+    current = next;
+    if (!current.length) break;
+  }
+  return current;
+}
+
+function collectTradePlansByRules(root) {
+  const paths = Array.isArray(RESPONSE_MAPPING_RAW?.trade_plan_paths)
+    ? RESPONSE_MAPPING_RAW.trade_plan_paths
+    : DEFAULT_TRADE_PLAN_PATHS;
+  const out = [];
+  for (const p of paths) {
+    const hits = extractByRulePath(root, p);
+    for (const item of hits) {
+      if (Array.isArray(item)) {
+        for (const x of item) if (x && typeof x === "object") out.push(x);
+      } else if (item && typeof item === "object") {
+        out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
 function enforceActionableTradePlans(payload = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return payload;
@@ -722,6 +771,13 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
+  const mappedPlans = collectTradePlansByRules(out).map((p) => ({ ...(p || {}) }));
+  if (
+    mappedPlans.length &&
+    (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
+  ) {
+    out.trade_plan = mappedPlans;
+  }
   if (Array.isArray(out.analyses) && out.analyses.length > 0) {
     const entries = out.analyses.filter((x) => x && typeof x === "object");
     const analysisPlans = entries.flatMap((e) =>

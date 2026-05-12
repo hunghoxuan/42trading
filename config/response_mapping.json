@@ -1,4 +1,16 @@
 {
+  "trade_plan_paths": [
+    "trade_plan",
+    "analysis_data[].trade_plan",
+    "symbols[].trade_plan",
+    "analyses[].trade_plan"
+  ],
+  "symbol_paths": [
+    "symbol",
+    "analysis_data[].symbol",
+    "symbols[].symbol",
+    "analyses[].symbol"
+  ],
   "fields": {
     "symbol": { "label": "Symbol", "readonly": true, "mapping": "trade_plan[].symbol || analysis_data[].symbol" },
     "direction": { "label": "Direction", "readonly": true, "mapping": "trade_plan[].direction || action" },

@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:40 - 287209c9"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 15:46 - de394bf0"); // AI schema v2.6 mapping sync: prompt/config/ui/parser/db compatibility
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10054,6 +10054,73 @@ function planSkipReasons(plan = {}) {
   return text ? [{ reason: text, severity: "" }] : [];
 }
 
+const RESPONSE_MAPPING_PATH = path.join(
+  __dirname,
+  "..",
+  "config",
+  "response_mapping.json",
+);
+
+function loadResponseMappingRules() {
+  try {
+    if (!fs.existsSync(RESPONSE_MAPPING_PATH)) return {};
+    const parsed = JSON.parse(fs.readFileSync(RESPONSE_MAPPING_PATH, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const RESPONSE_MAPPING_RULES = loadResponseMappingRules();
+const DEFAULT_TRADE_PLAN_PATHS = [
+  "trade_plan",
+  "analysis_data[].trade_plan",
+  "symbols[].trade_plan",
+  "analyses[].trade_plan",
+];
+
+function extractByRulePath(root, rulePath) {
+  const pathText = String(rulePath || "").trim();
+  if (!pathText) return [];
+  const steps = pathText.split(".").map((s) => s.trim()).filter(Boolean);
+  let current = [root];
+  for (const step of steps) {
+    const isArrayStep = step.endsWith("[]");
+    const key = isArrayStep ? step.slice(0, -2) : step;
+    const next = [];
+    for (const node of current) {
+      if (!node || typeof node !== "object") continue;
+      const value = node[key];
+      if (isArrayStep) {
+        if (Array.isArray(value)) next.push(...value);
+      } else {
+        if (value !== undefined && value !== null) next.push(value);
+      }
+    }
+    current = next;
+    if (!current.length) break;
+  }
+  return current;
+}
+
+function collectTradePlansByRules(root) {
+  const paths = Array.isArray(RESPONSE_MAPPING_RULES?.trade_plan_paths)
+    ? RESPONSE_MAPPING_RULES.trade_plan_paths
+    : DEFAULT_TRADE_PLAN_PATHS;
+  const out = [];
+  for (const p of paths) {
+    const hits = extractByRulePath(root, p);
+    for (const item of hits) {
+      if (Array.isArray(item)) {
+        for (const x of item) if (x && typeof x === "object") out.push(x);
+      } else if (item && typeof item === "object") {
+        out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
 function enforceActionableTradePlans(payload = {}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     return payload;
@@ -10115,6 +10182,13 @@ function enforceActionableTradePlans(payload = {}) {
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
+  const mappedPlans = collectTradePlansByRules(out).map((p) => ({ ...(p || {}) }));
+  if (
+    mappedPlans.length &&
+    (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
+  ) {
+    out.trade_plan = mappedPlans;
+  }
   // Alternate schema variant: analyses[] with per-symbol trade_plan
   if (Array.isArray(out.analyses) && out.analyses.length > 0) {
     const entries = out.analyses.filter((x) => x && typeof x === "object");
