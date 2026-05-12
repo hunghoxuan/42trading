@@ -1891,6 +1891,83 @@ function tryParseJsonLoose(textRaw) {
   }
 }
 
+
+function recoverTradePlansFromRaw(rawText) {
+  const raw = String(rawText || "");
+  let clean = raw.trim();
+  // Strip markdown
+  if (clean.includes("```")) {
+    const m = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (m) clean = m[1];
+  }
+  clean = clean.replace(/^```json/, "").replace(/```$/, "").trim();
+  // Unescape JSON-string-wrapped responses
+  if (clean.startsWith('"') && clean.endsWith('"') && clean.length > 2) {
+    clean = clean.slice(1, -1)
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, "\n")
+      .replace(/\\t/g, "\t")
+      .replace(/\\\\/g, "\\")
+      .trim();
+  }
+  if (!clean) return [];
+
+  const extractBalancedArray = (text, startIdx) => {
+    let depth = 0, inString = false, escaped = false;
+    for (let i = startIdx; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escaped) { escaped = false; continue; }
+        if (ch === "\\") { escaped = true; continue; }
+        if (ch === '"') { inString = false; continue; }
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === "[") { depth++; continue; }
+      if (ch === "]") {
+        if (depth > 0) depth--;
+        if (depth === 0) return text.slice(startIdx, i + 1);
+      }
+    }
+    return "";
+  };
+
+  const out = [];
+  const seen = new Set();
+  const symbolRe = /"symbol"\s*:\s*"([^"]+)"/g;
+  let m;
+  while ((m = symbolRe.exec(clean)) !== null) {
+    const sym = String(m[1] || "").trim().toUpperCase();
+    if (!sym) continue;
+    const lookahead = clean.slice(m.index, Math.min(clean.length, m.index + 20000));
+    const tpIdx = lookahead.search(/"trade_plan"\s*:/);
+    if (tpIdx < 0) continue;
+    const bracketIdx = clean.indexOf("[", m.index + tpIdx);
+    if (bracketIdx < 0) continue;
+    const arrText = extractBalancedArray(clean, bracketIdx);
+    if (!arrText) continue;
+    let arr = null;
+    try { arr = JSON.parse(arrText); } catch (_) { continue; }
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr) {
+      if (!p || typeof p !== "object") continue;
+      const plan = { ...p };
+      if (!plan.symbol) plan.symbol = sym;
+      const key = JSON.stringify([
+        String(plan.symbol || "").toUpperCase(),
+        String(plan.trade_id || ""),
+        Number(plan.entry_price ?? plan.entry ?? NaN),
+        Number(plan.stop_loss ?? plan.sl ?? NaN),
+        Number(plan.take_profit ?? plan.tp ?? plan.tp3 ?? NaN),
+      ]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(plan);
+    }
+  }
+  return out;
+}
+
 function parseTradePlanFromRaw(rawText) {
   const raw = String(rawText || "");
   if (!raw) return null;
@@ -1997,6 +2074,18 @@ function enrichParsedAnalysis(rawText, parsed) {
   // Merge symbol/profile if missing
   //   if (!res.symbol && fallback.symbol) res.symbol = fallback.symbol;
   //   if (!res.profile && fallback.profile) res.profile = fallback.profile;
+
+  // Recover trade plans from raw AI text when JSON parse fails
+  if (
+    (!Array.isArray(res.trade_plan) || res.trade_plan.length === 0) &&
+    rawText &&
+    rawText.includes('"trade_plan"')
+  ) {
+    const recovered = recoverTradePlansFromRaw(rawText);
+    if (recovered.length) {
+      res.trade_plan = recovered;
+    }
+  }
 
   // Final check for trade_plan
   if (!res.trade_plan && fallback.trade_plan) {
