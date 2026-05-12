@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:44 - 8c1ab9f0"); // robust JSON extraction for wrapped/escaped multi-symbol analyze responses
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:56 - 4f2c9b71"); // deterministic per-item trade_plan parsing across root + nested arrays
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -16899,7 +16899,63 @@ const appHandler = async (req, res) => {
           .map((x) => normalizeSymbolLoose(x))
           .filter(Boolean);
         if (!requested.length) return out;
-        const plans = Array.isArray(out.trade_plan) ? out.trade_plan : [];
+        const parseTradePlanItem = (plan, fallbackSymbol = "") => {
+          if (!plan || typeof plan !== "object") return null;
+          const tpFromMultiple =
+            plan?.multiple_exits?.full_tp?.price ??
+            plan?.multiple_exits?.tp3?.price ??
+            plan?.multiple_exits?.tp2?.price ??
+            null;
+          const parsedPlan = {
+            ...(plan || {}),
+            symbol: String(plan?.symbol || fallbackSymbol || "").trim(),
+            entry: plan?.entry ?? plan?.entry_price ?? null,
+            sl: plan?.sl ?? plan?.stop_loss ?? null,
+            tp:
+              plan?.tp3 ??
+              plan?.tp2 ??
+              plan?.tp ??
+              plan?.take_profit ??
+              tpFromMultiple ??
+              null,
+          };
+          return parsedPlan;
+        };
+        const collectAllTradePlans = () => {
+          const result = [];
+          const pushOne = (p, sym = "") => {
+            const parsedOne = parseTradePlanItem(p, sym);
+            if (parsedOne) result.push(parsedOne);
+          };
+          const rootPlans = Array.isArray(out.trade_plan)
+            ? out.trade_plan
+            : out?.trade_plan && typeof out.trade_plan === "object"
+              ? [out.trade_plan]
+              : [];
+          for (const p of rootPlans) pushOne(p, out.symbol || "");
+          const fromEntries = (entries) => {
+            if (!Array.isArray(entries)) return;
+            for (const e of entries) {
+              if (!e || typeof e !== "object") continue;
+              const rows = Array.isArray(e.trade_plan)
+                ? e.trade_plan
+                : e?.trade_plan && typeof e.trade_plan === "object"
+                  ? [e.trade_plan]
+                  : [];
+              for (const p of rows) pushOne(p, e.symbol || "");
+            }
+          };
+          fromEntries(out.analysis_data);
+          fromEntries(out.symbols);
+          fromEntries(out.analyses);
+          return dedupeTradePlans(result);
+        };
+        const normalizedAllPlans = collectAllTradePlans();
+        const plans = normalizedAllPlans.length
+          ? [...normalizedAllPlans]
+          : Array.isArray(out.trade_plan)
+            ? [...out.trade_plan]
+            : [];
         const collectNestedPlansForSymbol = (sym) => {
           const pickFromEntries = (entries) => {
             if (!Array.isArray(entries)) return [];
