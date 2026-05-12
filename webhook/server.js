@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 19:56 - 4f2c9b71"); // deterministic per-item trade_plan parsing across root + nested arrays
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 20:12 - e7b1a9d4"); // recover trade_plan from raw malformed JSON before coverage fallback
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -4796,6 +4796,94 @@ function extractJsonFromAiText(rawText) {
     }
   }
   return { parsed, clean };
+}
+
+function recoverTradePlansFromRawAiText(rawText) {
+  const raw = String(rawText || "");
+  let clean = raw.trim();
+  if (clean.includes("```")) {
+    const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match) clean = match[1];
+  }
+  clean = clean
+    .replace(/^```json/, "")
+    .replace(/```$/, "")
+    .trim();
+  if (!clean) return [];
+
+  const extractBalancedArray = (text, startIndex) => {
+    const src = String(text || "");
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = startIndex; i < src.length; i += 1) {
+      const ch = src[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "[") {
+        depth += 1;
+        continue;
+      }
+      if (ch === "]") {
+        if (depth > 0) depth -= 1;
+        if (depth === 0) return src.slice(startIndex, i + 1);
+      }
+    }
+    return "";
+  };
+
+  const out = [];
+  const seen = new Set();
+  const symbolRe = /"symbol"\s*:\s*"([^"]+)"/g;
+  for (let m = symbolRe.exec(clean); m; m = symbolRe.exec(clean)) {
+    const sym = String(m[1] || "").trim().toUpperCase();
+    if (!sym) continue;
+    const lookahead = clean.slice(m.index, Math.min(clean.length, m.index + 20000));
+    const tpIdx = lookahead.search(/"trade_plan"\s*:/);
+    if (tpIdx < 0) continue;
+    const absTpIdx = m.index + tpIdx;
+    const bracketIdx = clean.indexOf("[", absTpIdx);
+    if (bracketIdx < 0) continue;
+    const arrText = extractBalancedArray(clean, bracketIdx);
+    if (!arrText) continue;
+    let arr = null;
+    try {
+      arr = JSON.parse(arrText);
+    } catch {
+      arr = null;
+    }
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr) {
+      if (!p || typeof p !== "object") continue;
+      const plan = { ...(p || {}) };
+      if (!plan.symbol) plan.symbol = sym;
+      const key = JSON.stringify([
+        String(plan.symbol || "").toUpperCase(),
+        String(plan.trade_id || ""),
+        Number(plan.entry_price ?? plan.entry ?? NaN),
+        Number(plan.stop_loss ?? plan.sl ?? NaN),
+        Number(plan.take_profit ?? plan.tp ?? plan.tp3 ?? NaN),
+      ]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(plan);
+    }
+  }
+  return out;
 }
 
 async function anthropicListModels(apiKey) {
@@ -17470,6 +17558,16 @@ const appHandler = async (req, res) => {
             ? extracted.parsed
             : {};
         parsedJson = normalizeAiAnalysisContract(parsedJson);
+        if (
+          (!Array.isArray(parsedJson?.trade_plan) ||
+            parsedJson.trade_plan.length === 0) &&
+          rawResponse.includes("\"trade_plan\"")
+        ) {
+          const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
+          if (recoveredPlans.length) {
+            parsedJson.trade_plan = recoveredPlans;
+          }
+        }
         parsedJson = ensureTradePlanCoverageBySymbol(
           parsedJson,
           Array.isArray(body.symbols) ? body.symbols : [contextBundle.symbol],
@@ -17939,6 +18037,16 @@ const appHandler = async (req, res) => {
           ? extracted.parsed
           : {};
       parsedJson = normalizeAiAnalysisContract(parsedJson);
+      if (
+        (!Array.isArray(parsedJson?.trade_plan) ||
+          parsedJson.trade_plan.length === 0) &&
+        rawResponse.includes("\"trade_plan\"")
+      ) {
+        const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
+        if (recoveredPlans.length) {
+          parsedJson.trade_plan = recoveredPlans;
+        }
+      }
       parsedJson = ensureTradePlanCoverageBySymbol(
         parsedJson,
         requestedSymbols,
