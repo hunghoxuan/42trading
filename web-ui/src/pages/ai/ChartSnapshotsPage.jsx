@@ -41,10 +41,6 @@ import {
   buildSchemaString,
 } from "./AiPromptBuilder";
 import RESPONSE_MAPPING_RAW from "../../../../config/response_mapping.json";
-import {
-  SymbolEntryCell,
-  StatusPnlCell,
-} from "../../components/TradeSignalListCells";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
@@ -4637,35 +4633,22 @@ export default function ChartSnapshotsPage() {
           </div>
           {isSymbolPanelOpen && (
             <>
-              <div className="snapshot-tabs-v2" style={{ flexWrap: "wrap" }}>
-                {[
-                  "FAVOURITE",
-                  "CRYPTO",
-                  "FOREX",
-                  "COMMODITY",
-                  "INDICES",
-                  "SMT",
-                ].map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    className={`secondary-button snapshot-tag-v2 ${symbolFilterTab === tab ? "active" : ""}`}
-                    onClick={() => setSymbolFilterTab(tab)}
-                  >
-                    {tab === "FAVOURITE"
-                      ? "Watchlist"
-                      : tab === "CRYPTO"
-                        ? "Crypto"
-                        : tab === "FOREX"
-                          ? "Forex"
-                          : tab === "COMMODITY"
-                            ? "Commodity"
-                            : tab === "INDICES"
-                              ? "Indices"
-                              : "SMT"}
-                  </button>
-                ))}
-              </div>
+              <select
+                className="secondary-button"
+                value={symbolFilterTab}
+                onChange={(e) => {
+                  setSymbolFilterTab(e.target.value);
+                  setVisibleCount(8);
+                }}
+                style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
+              >
+                <option value="FAVOURITE">Watchlist</option>
+                <option value="CRYPTO">Crypto</option>
+                <option value="FOREX">Forex</option>
+                <option value="COMMODITY">Commodity</option>
+                <option value="INDICES">Indices</option>
+                <option value="SMT">SMT</option>
+              </select>
               <div className="snapshot-watchlist-v2">
                 {(() => {
                   if (symbolFilterTab === "SMT") {
@@ -4833,45 +4816,59 @@ export default function ChartSnapshotsPage() {
                 <div className="minor-text">No related trades/signals.</div>
               ) : null}
               {!symbolActivity.loading &&
-                symbolActivity.items.map((x) => (
-                  <article
-                    key={`${x.kind}_${x.id}`}
-                    className="snapshot-activity-card-v4"
-                    style={{ cursor: "pointer" }}
-                    onClick={() => {
-                      const ref = x.sid || x.id;
-                      const k = String(x.kind || "").toUpperCase();
-                      if (k === "TRADE" || k === "trade") navigate(`/trades/${ref}`);
-                      else navigate(`/signals/${ref}`);
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr auto",
-                        alignItems: "center",
-                        gap: 8,
+                symbolActivity.items.map((x) => {
+                  const pnlNum = Number(x?.pnl);
+                  const hasPnl = Number.isFinite(pnlNum);
+                  const pnlText = hasPnl
+                    ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
+                    : "0";
+                  const isPos = hasPnl ? pnlNum > 0 : false;
+                  const entryTxt = Number.isFinite(Number(x?.entry))
+                    ? Number(x.entry).toFixed(
+                        Number(x.entry) >= 100 ? 1 : Number(x.entry) >= 10 ? 2 : 4,
+                      )
+                    : "-";
+                  const tpTxt = Number.isFinite(Number(x?.tp))
+                    ? Number(x.tp).toFixed(
+                        Number(x.tp) >= 100 ? 1 : Number(x.tp) >= 10 ? 2 : 4,
+                      )
+                    : "-";
+                  const rrTxt = Number.isFinite(Number(x?.rr))
+                    ? `${Number(x.rr).toFixed(1)}r`
+                    : "0.0r";
+                  return (
+                    <article
+                      key={`${x.kind}_${x.id}`}
+                      className="snapshot-activity-card-v4 compact"
+                      style={{ cursor: "pointer" }}
+                      onClick={() => {
+                        const ref = x.sid || x.id;
+                        const k = String(x.kind || "").toUpperCase();
+                        if (k === "TRADE" || k === "trade")
+                          navigate(`/trades/${ref}`);
+                        else navigate(`/signals/${ref}`);
                       }}
                     >
-                      <SymbolEntryCell
-                        side={x.side}
-                        symbol={x.symbol}
-                        orderType={x.type}
-                        entry={x.entry}
-                        tp={x.tp}
-                        sl={x.sl}
-                        rr={x.rr}
-                        status={x.status}
-                      />
-                      <StatusPnlCell
-                        hideStatus={true}
-                        pnl={x.pnl}
-                        brokerPips={x.pips}
-                        showFilledDetails={false}
-                      />
-                    </div>
-                  </article>
-                ))}
+                      <div className="snapshot-activity-row-top">
+                        <strong
+                          style={{
+                            color: isPos ? "#24e38f" : "#ff5a5a",
+                            letterSpacing: 0.2,
+                          }}
+                        >
+                          {String(x.symbol || "").toUpperCase()}
+                        </strong>
+                        <strong style={{ color: isPos ? "#24e38f" : "#ff5a5a" }}>
+                          {pnlText}
+                        </strong>
+                      </div>
+                      <div className="snapshot-activity-row-mid">
+                        {entryTxt} → {tpTxt}
+                      </div>
+                      <div className="snapshot-activity-row-bot">{rrTxt}</div>
+                    </article>
+                  );
+                })}
             </div>
           </div>
         </div>

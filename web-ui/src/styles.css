@@ -192,6 +192,7 @@ body {
     color: var(--text);
     border-color: var(--accent);
     border-bottom: 1px solid var(--accent);
+    background: rgba(14, 202, 255, 0.08);
 }
 
 /* Layouts */
@@ -1277,6 +1278,30 @@ button:disabled {
     padding: 8px 10px;
     display: grid;
     gap: 4px;
+}
+.snapshot-activity-card-v4.compact {
+    border-color: rgba(33, 206, 255, 0.35);
+    border-radius: 9px;
+    background: linear-gradient(180deg, rgba(13, 22, 36, 0.96) 0%, rgba(9, 16, 28, 0.96) 100%);
+    padding: 7px 9px;
+    gap: 3px;
+}
+.snapshot-activity-row-top {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    line-height: 1.2;
+}
+.snapshot-activity-row-mid {
+    font-size: 10px;
+    color: #c8d5e8;
+    letter-spacing: 0.15px;
+}
+.snapshot-activity-row-bot {
+    font-size: 10px;
+    color: #94a7c3;
 }
 .snapshot-activity-top-v4 {
     display: grid;
