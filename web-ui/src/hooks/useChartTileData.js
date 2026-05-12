@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { chartFetchManager } from "../services/chartFetchManager";
 import { api } from "../api";
+import { NotificationHub } from "../services/NotificationHub";
 
 function tfNorm(tf) {
   return String(tf || "")
@@ -96,6 +97,10 @@ export function useSymbolChartData({
       setStatus("LOADING");
       setError(null);
       if (mode === "snapshots") setSnapMsg("Fetching...");
+      console.log("[ChartData] refresh symbol=" + sym + " mode=" + mode + " tfs=" + tfs.join(","));
+      const trackType = mode === "snapshots" ? "snapshot" : "twelve_data";
+      const { requestId } = NotificationHub.track(trackType, { symbol: sym }, () => Promise.resolve(null));
+
       try {
         const result = await chartFetchManager.enqueue(
           sym,

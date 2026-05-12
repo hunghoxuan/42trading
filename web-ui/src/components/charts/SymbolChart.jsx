@@ -11,7 +11,7 @@ import {
 } from "../../utils/format";
 
 const MODES = ["live", "cache", "snapshots"];
-const MODE_LABELS = { live: "Live", cache: "Cache", snapshots: "Snapshots" };
+const MODE_LABELS = { live: "Live", cache: "C", snapshots: "S" };
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
   LOADING: "#f59e0b",
@@ -180,7 +180,6 @@ export default function SymbolChart({
   analysisSnapshot = null,
   hasTradePlan = false,
   hasAnalysis = false,
-  hideRefresh = false,
   barsStatus = null,
   snapshotStatus = null,
   skipFetch = false,
@@ -211,7 +210,6 @@ export default function SymbolChart({
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
-  const [tradePlanBusy, setTradePlanBusy] = useState(false);
 
   useEffect(() => {
     if (
@@ -302,33 +300,9 @@ export default function SymbolChart({
     return fromMaster || fromReports;
   }, [master, loadedTfs]);
 
-  // If loading finished (READY/ERROR) and still no bars anywhere -> auto switch to Live
-  const needsFallback = useMemo(() => {
-    if (mode === "live") return false;
     if (status === "LOADING") return false;
     if (hasAnyBars) return false;
-    // If skipFetch is true, status is READY immediately, so we should wait a bit?
-    // Actually, TradeSignalChart starts loading immediately.
-    return true;
-  }, [mode, status, hasAnyBars]);
-
-  useEffect(() => {
-    if (mode !== "cache") return;
-    if (status === "LOADING") return;
-    if (hasAnyBars) return;
-    setLastError("TradePlan bars unavailable. Showing Live chart.");
-  }, [mode, status, hasAnyBars]);
-
-  useEffect(() => {
-    if (hasTradePlan && hasAnyBars) {
-      if (!entryPrice && !tpPrice && !slPrice) {
-        // If we have bars but no levels, maybe stay in Live if it was live?
-        // But usually TradePlan mode is preferred if we have a plan.
-      } else if (mode === "live") {
-        setMode("cache");
-      }
-    }
-  }, [hasTradePlan, hasAnyBars, entryPrice, tpPrice, slPrice]);
+    
 
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {
@@ -380,8 +354,6 @@ export default function SymbolChart({
 
   const showControls = !(hasTradePlan && hasAnalysis);
   const tvTimezone = toTradingViewTimezone();
-  const canShowTradePlanOverlays =
-    hasTradePlan && mode === "cache" && hasAnyBars;
   const overlayButtons = [
     { key: "plan1", label: "P1" },
     { key: "plan2", label: "P2" },
@@ -446,122 +418,60 @@ export default function SymbolChart({
             )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {hasTradePlan ? (
+          {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
+          {MODES.map((m) => (
+            <button
+              key={m}
+              className="secondary-button"
+              onClick={() => handleModeClick(m)}
+              disabled={status === "LOADING"}
+              title={btnTitle(m)}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "3px 8px",
+                borderRadius: 4,
+                color: btnColor(m),
+                borderColor:
+                  (pendingMode || mode) === m
+                    ? btnColor(m) + "60"
+                    : "var(--border)",
+                background:
+                  (pendingMode || mode) === m
+                    ? btnColor(m) + "12"
+                    : "transparent",
+              }}
+            >
+              {MODE_LABELS[m]}
+              {(pendingMode || mode) === m &&
+                status === "LOADING" &&
+                " \u23F3"}
+            </button>
+          ))}
+          {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
+          {hasTradePlan && mode === "cache" && hasAnyBars && (
             <>
-              <button
-                className="secondary-button"
-                onClick={() => setMode("live")}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  color: mode === "live" ? "#10b981" : "var(--muted)",
-                  borderColor: mode === "live" ? "#10b98160" : "var(--border)",
-                }}
-              >
-                Live
-              </button>
-              <button
-                className={
-                  canShowTradePlanOverlays
-                    ? "primary-button"
-                    : "secondary-button"
-                }
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                }}
-                onClick={async () => {
-                  setTradePlanBusy(true);
-                  setLastError(null);
-                  try {
-                    await refresh();
-                    const hasBarsAfter = Object.values(master?.bars || {}).some(
-                      (b) => Array.isArray(b) && b.length > 0,
-                    );
-                    if (hasBarsAfter || hasAnyBars) {
-                      setMode("cache");
-                    } else {
-                      setMode("live");
-                      setLastError(
-                        "TradePlan bars unavailable. Showing Live chart.",
-                      );
-                    }
-                  } catch (e) {
-                    setMode("live");
-                    setLastError(
-                      String(
-                        e?.message ||
-                          "TradePlan fetch failed. Showing Live chart.",
-                      ),
-                    );
-                  } finally {
-                    setTradePlanBusy(false);
-                  }
-                }}
-              >
-                {tradePlanBusy ? "Loading..." : "TradePlan"}
-              </button>
-              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
-                |
-              </span>
+              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>|</span>
               {overlayButtons.map(({ key, label }) => (
                 <button
                   key={key}
                   className={
-                    overlays[key] && canShowTradePlanOverlays
-                      ? "primary-button"
-                      : "secondary-button"
+                    overlays[key] ? "primary-button" : "secondary-button"
                   }
                   onClick={() => toggleOverlay(key)}
                   type="button"
-                  disabled={!canShowTradePlanOverlays}
                   style={{
                     fontSize: 10,
                     fontWeight: 700,
                     padding: "3px 7px",
                     borderRadius: 4,
                     minWidth: 28,
-                    opacity: canShowTradePlanOverlays ? 1 : 0.6,
                   }}
                 >
                   {label}
                 </button>
               ))}
             </>
-          ) : (
-            MODES.map((m) => (
-              <button
-                key={m}
-                className="secondary-button"
-                onClick={() => handleModeClick(m)}
-                disabled={status === "LOADING"}
-                title={btnTitle(m)}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  color: btnColor(m),
-                  borderColor:
-                    (pendingMode || mode) === m
-                      ? btnColor(m) + "60"
-                      : "var(--border)",
-                  background:
-                    (pendingMode || mode) === m
-                      ? btnColor(m) + "12"
-                      : "transparent",
-                }}
-              >
-                {MODE_LABELS[m]}
-                {(pendingMode || mode) === m &&
-                  status === "LOADING" &&
-                  " \u23F3"}
-              </button>
-            ))
           )}
           <button
             className="secondary-button"
@@ -571,9 +481,7 @@ export default function SymbolChart({
               padding: 0,
               fontSize: 14,
               lineHeight: 1,
-              minWidth: 22,
-              display: hideRefresh ? "none" : undefined,
-              fontWeight: 700,
+              minWidth: 22,              fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.max(1, prev - 1))}
             title="Larger charts (fewer columns)"
@@ -588,16 +496,14 @@ export default function SymbolChart({
               padding: 0,
               fontSize: 14,
               lineHeight: 1,
-              minWidth: 22,
-              display: hideRefresh ? "none" : undefined,
-              fontWeight: 700,
+              minWidth: 22,              fontWeight: 700,
             }}
             onClick={() => setGridCols((prev) => Math.min(6, prev + 1))}
             title="Smaller charts (more columns)"
           >
             -
           </button>
-          <button
+                    <button
             className="secondary-button"
             style={{
               width: 22,
@@ -606,28 +512,6 @@ export default function SymbolChart({
               fontSize: 11,
               lineHeight: 1,
               minWidth: 22,
-              display: hideRefresh ? "none" : undefined,
-            }}
-            onClick={() => {
-              if (mode === "live") return;
-              const fresh = chartFetchManager.isFresh(cleanSym, 60000);
-              refresh({ force: !fresh });
-            }}
-            disabled={status === "LOADING" || mode === "live"}
-            title="Refresh"
-          >
-            {status === "LOADING" ? "\u23F3" : "\u21BB"}
-          </button>
-          <button
-            className="secondary-button"
-            style={{
-              width: 22,
-              height: 22,
-              padding: 0,
-              fontSize: 11,
-              lineHeight: 1,
-              minWidth: 22,
-              display: hideRefresh ? "none" : undefined,
               display: showControls ? "block" : "none",
             }}
             onClick={() => onAnalyze?.(symbol, timeframes)}
@@ -646,7 +530,7 @@ export default function SymbolChart({
         }}
       >
         {sortedTfs.map((tf) => {
-          const isLive = mode === "live" || needsFallback;
+          const isLive = mode === "live";
           const context = master?.context?.[tf.toLowerCase()];
           const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
 

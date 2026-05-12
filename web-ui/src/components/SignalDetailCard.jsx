@@ -575,10 +575,6 @@ export default function SignalDetailCard({
   const [selectedTfs, setSelectedTfs] = useState([]);
   const [chartModes, setChartModes] = useState(["static", "live"]);
   const [multiChartData, setMultiChartData] = useState({});
-  const [barsStatus, setBarsStatus] = useState({});
-  const [snapshotStatus, setSnapshotStatus] = useState({});
-  const [cacheBusy, setCacheBusy] = useState(false);
-  const [snapshotBusy, setSnapshotBusy] = useState(false);
 
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState("main");
@@ -719,81 +715,6 @@ export default function SignalDetailCard({
     setChartModes((prev) =>
       prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
     );
-
-
-  const fetchAllBars = async (symbolRaw, tfs) => {
-    // Normalize symbol: strip provider prefix (e.g. ICMARKETS:EURUSD -> EURUSD)
-    const sym = String(symbolRaw || "").trim().toUpperCase();
-    const symbol = sym.includes(":") ? sym.split(":").pop().trim() : sym;
-    if (!symbol || !tfs.length) return;
-    console.log("[Cache] fetchAllBars symbol=" + symbol + " tfs=" + tfs.join(","));
-    const status = {};
-    for (const tf of tfs) status[tf] = { status: "loading" };
-    setBarsStatus({ ...status });
-    setCacheBusy(true);
-    for (const tf of tfs) {
-      try {
-        // Call API directly (no NotificationHub.track) to avoid dedup across TFs
-        const out = await api.chartTwelveCandles(symbol, tf, 300, true);
-        console.log("[Cache] tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
-        const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
-        if (snap && Array.isArray(snap.bars) && snap.bars.length > 0) {
-          status[tf] = { status: "cached", time: new Date().toLocaleTimeString() };
-        } else {
-          status[tf] = { status: "none" };
-        }
-      } catch (e) {
-        console.warn("[Cache] tf=" + tf + " error=" + (e?.message || String(e)));
-        status[tf] = { status: "none" };
-      }
-      setBarsStatus({ ...status });
-    }
-    setCacheBusy(false);
-  };
-
-  const fetchAllSnapshots = async (symbolRaw, tfs, sessionPrefix, provider) => {
-    // Normalize symbol
-    const sym = String(symbolRaw || "").trim().toUpperCase();
-    const symbol = sym.includes(":") ? sym.split(":").pop().trim() : sym;
-    if (!symbol || !tfs.length) return;
-    console.log("[Snapshot] fetchAllSnapshots symbol=" + symbol + " tfs=" + tfs.join(","));
-    const status = {};
-    for (const tf of tfs) status[tf] = { status: "loading" };
-    setSnapshotStatus({ ...status });
-    setSnapshotBusy(true);
-    try {
-      const { promise } = NotificationHub.track(
-        "snapshot",
-        { symbol },
-        () => api.chartSnapshotCreateBatch({
-          symbols: [symbol],
-          provider: provider || "ICMARKETS",
-          session_prefix: sessionPrefix || "",
-          tfs,
-          lookbackBars: 300,
-        }),
-      );
-      const batch = await promise;
-      console.log("[Snapshot] batch ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
-      const items = Array.isArray(batch?.items) ? batch.items : [];
-      for (const tf of tfs) {
-        const found = items.find((x) => {
-          const f = String(x?.file_name || "");
-          return f.includes("_" + tf + "_") || f.includes("_" + tf.toUpperCase() + "_");
-        });
-        status[tf] = found
-          ? { status: "snapshot", time: new Date(found.created_at || Date.now()).toLocaleTimeString() }
-          : { status: "none" };
-        setSnapshotStatus({ ...status });
-      }
-    } catch (e) {
-      console.warn("[Snapshot] error=" + (e?.message || String(e)));
-      for (const tf of tfs) status[tf] = { status: "none" };
-      setSnapshotStatus({ ...status });
-    }
-    setSnapshotBusy(false);
-  };
-
 
   // Use raw data from multiple possible fields
   const rawData =
@@ -1594,104 +1515,7 @@ export default function SignalDetailCard({
         <Suspense
           fallback={<div className="loading-container">Loading chart...</div>}
         >
-          {chart?.symbol && selectedTfs.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                marginBottom: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              {selectedTfs.map((tf) => {
-                const bs = barsStatus[tf] || barsStatus[tf.toLowerCase()];
-                const ss =
-                  snapshotStatus[tf] || snapshotStatus[tf.toLowerCase()];
-                return (
-                  <span
-                    key={tf}
-                    style={{
-                      fontSize: 10,
-                      color: "var(--muted)",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 3,
-                    }}
-                  >
-                    <span style={{ fontWeight: 700 }}>{tf}</span>
-                    {bs && bs.status !== "none" ? (
-                      <span
-                        style={{
-                          color: bs.status === "cached" ? "#10b981" : "#f59e0b",
-                          fontSize: 9,
-                        }}
-                      >
-                        {bs.status === "cached" ? `✅ ${bs.time}` : "⏳"}
-                      </span>
-                    ) : (
-                      <span
-                        style={{
-                          color: "var(--muted)",
-                          fontSize: 9,
-                          opacity: 0.5,
-                        }}
-                      >
-                        ❌
-                      </span>
-                    )}
-                    {ss && ss.status !== "none" ? (
-                      <span
-                        style={{
-                          color:
-                            ss.status === "snapshot" ? "#10b981" : "#f59e0b",
-                          fontSize: 9,
-                          marginLeft: 2,
-                        }}
-                      >
-                        {ss.status === "snapshot" ? `📷 ${ss.time}` : "⏳"}
-                      </span>
-                    ) : (
-                      <span
-                        style={{
-                          color: "var(--muted)",
-                          fontSize: 9,
-                          opacity: 0.5,
-                          marginLeft: 2,
-                        }}
-                      >
-                        ❌
-                      </span>
-                    )}
-                  </span>
-                );
-              })}
-              <button
-                className="secondary-button"
-                onClick={() => fetchAllBars(chart.symbol, selectedTfs)}
-                disabled={cacheBusy}
-                style={{ fontSize: 10, padding: "2px 8px", marginLeft: 8 }}
-              >
-                {cacheBusy ? "⏳" : "📊"} Cache
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  fetchAllSnapshots(
-                    chart.symbol,
-                    selectedTfs,
-                    chart?.sessionPrefix,
-                    chart?.provider,
-                  )
-                }
-                disabled={snapshotBusy}
-                style={{ fontSize: 10, padding: "2px 8px" }}
-              >
-                {snapshotBusy ? "⏳" : "📷"} Snapshot
-              </button>
-            </div>
-          )}
-          <SymbolChart
+                    <SymbolChart
             symbol={selectedPlanSymbol || chart?.symbol}
             timeframes={selectedTfs}
             defaultMode={chart?.mode || "cache"}
@@ -1713,9 +1537,6 @@ export default function SignalDetailCard({
               selectedRawData && Object.keys(selectedRawData).length > 0,
             )}
             skipFetch={false}
-            hideRefresh={true}
-            barsStatus={barsStatus}
-            snapshotStatus={snapshotStatus}
           />
         </Suspense>
       </div>
