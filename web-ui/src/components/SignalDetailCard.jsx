@@ -720,27 +720,30 @@ export default function SignalDetailCard({
       prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
     );
 
-  const fetchAllBars = async (symbol, tfs) => {
+
+  const fetchAllBars = async (symbolRaw, tfs) => {
+    // Normalize symbol: strip provider prefix (e.g. ICMARKETS:EURUSD -> EURUSD)
+    const sym = String(symbolRaw || "").trim().toUpperCase();
+    const symbol = sym.includes(":") ? sym.split(":").pop().trim() : sym;
     if (!symbol || !tfs.length) return;
+    console.log("[Cache] fetchAllBars symbol=" + symbol + " tfs=" + tfs.join(","));
     const status = {};
     for (const tf of tfs) status[tf] = { status: "loading" };
     setBarsStatus({ ...status });
     setCacheBusy(true);
     for (const tf of tfs) {
       try {
-        const { promise } = NotificationHub.track(
-          "twelve_data",
-          { symbol, timeframe: tf },
-          () => api.chartTwelveCandles(symbol, tf, 300, true),
-        );
-        const out = await promise;
+        // Call API directly (no NotificationHub.track) to avoid dedup across TFs
+        const out = await api.chartTwelveCandles(symbol, tf, 300, true);
+        console.log("[Cache] tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
         const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
-        if (snap && snap.bars?.length) {
+        if (snap && Array.isArray(snap.bars) && snap.bars.length > 0) {
           status[tf] = { status: "cached", time: new Date().toLocaleTimeString() };
         } else {
           status[tf] = { status: "none" };
         }
-      } catch (_) {
+      } catch (e) {
+        console.warn("[Cache] tf=" + tf + " error=" + (e?.message || String(e)));
         status[tf] = { status: "none" };
       }
       setBarsStatus({ ...status });
@@ -748,8 +751,12 @@ export default function SignalDetailCard({
     setCacheBusy(false);
   };
 
-  const fetchAllSnapshots = async (symbol, tfs, sessionPrefix, provider) => {
+  const fetchAllSnapshots = async (symbolRaw, tfs, sessionPrefix, provider) => {
+    // Normalize symbol
+    const sym = String(symbolRaw || "").trim().toUpperCase();
+    const symbol = sym.includes(":") ? sym.split(":").pop().trim() : sym;
     if (!symbol || !tfs.length) return;
+    console.log("[Snapshot] fetchAllSnapshots symbol=" + symbol + " tfs=" + tfs.join(","));
     const status = {};
     for (const tf of tfs) status[tf] = { status: "loading" };
     setSnapshotStatus({ ...status });
@@ -767,18 +774,20 @@ export default function SignalDetailCard({
         }),
       );
       const batch = await promise;
+      console.log("[Snapshot] batch ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
       const items = Array.isArray(batch?.items) ? batch.items : [];
       for (const tf of tfs) {
         const found = items.find((x) => {
           const f = String(x?.file_name || "");
-          return f.includes(`_${tf}_`) || f.includes(`_${tf.toUpperCase()}_`);
+          return f.includes("_" + tf + "_") || f.includes("_" + tf.toUpperCase() + "_");
         });
         status[tf] = found
           ? { status: "snapshot", time: new Date(found.created_at || Date.now()).toLocaleTimeString() }
           : { status: "none" };
         setSnapshotStatus({ ...status });
       }
-    } catch (_) {
+    } catch (e) {
+      console.warn("[Snapshot] error=" + (e?.message || String(e)));
       for (const tf of tfs) status[tf] = { status: "none" };
       setSnapshotStatus({ ...status });
     }
@@ -1586,23 +1595,74 @@ export default function SignalDetailCard({
           fallback={<div className="loading-container">Loading chart...</div>}
         >
           {chart?.symbol && selectedTfs.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 8,
+                flexWrap: "wrap",
+              }}
+            >
               {selectedTfs.map((tf) => {
                 const bs = barsStatus[tf] || barsStatus[tf.toLowerCase()];
-                const ss = snapshotStatus[tf] || snapshotStatus[tf.toLowerCase()];
+                const ss =
+                  snapshotStatus[tf] || snapshotStatus[tf.toLowerCase()];
                 return (
-                  <span key={tf} style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 3 }}>
+                  <span
+                    key={tf}
+                    style={{
+                      fontSize: 10,
+                      color: "var(--muted)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 3,
+                    }}
+                  >
                     <span style={{ fontWeight: 700 }}>{tf}</span>
                     {bs && bs.status !== "none" ? (
-                      <span style={{ color: bs.status === "cached" ? "#10b981" : "#f59e0b", fontSize: 9 }}>
+                      <span
+                        style={{
+                          color: bs.status === "cached" ? "#10b981" : "#f59e0b",
+                          fontSize: 9,
+                        }}
+                      >
                         {bs.status === "cached" ? `✅ ${bs.time}` : "⏳"}
                       </span>
-                    ) : <span style={{ color: "var(--muted)", fontSize: 9, opacity: 0.5 }}>❌</span>}
+                    ) : (
+                      <span
+                        style={{
+                          color: "var(--muted)",
+                          fontSize: 9,
+                          opacity: 0.5,
+                        }}
+                      >
+                        ❌
+                      </span>
+                    )}
                     {ss && ss.status !== "none" ? (
-                      <span style={{ color: ss.status === "snapshot" ? "#10b981" : "#f59e0b", fontSize: 9, marginLeft: 2 }}>
+                      <span
+                        style={{
+                          color:
+                            ss.status === "snapshot" ? "#10b981" : "#f59e0b",
+                          fontSize: 9,
+                          marginLeft: 2,
+                        }}
+                      >
                         {ss.status === "snapshot" ? `📷 ${ss.time}` : "⏳"}
                       </span>
-                    ) : <span style={{ color: "var(--muted)", fontSize: 9, opacity: 0.5, marginLeft: 2 }}>❌</span>}
+                    ) : (
+                      <span
+                        style={{
+                          color: "var(--muted)",
+                          fontSize: 9,
+                          opacity: 0.5,
+                          marginLeft: 2,
+                        }}
+                      >
+                        ❌
+                      </span>
+                    )}
                   </span>
                 );
               })}
@@ -1616,7 +1676,14 @@ export default function SignalDetailCard({
               </button>
               <button
                 className="secondary-button"
-                onClick={() => fetchAllSnapshots(chart.symbol, selectedTfs, chart?.sessionPrefix, chart?.provider)}
+                onClick={() =>
+                  fetchAllSnapshots(
+                    chart.symbol,
+                    selectedTfs,
+                    chart?.sessionPrefix,
+                    chart?.provider,
+                  )
+                }
                 disabled={snapshotBusy}
                 style={{ fontSize: 10, padding: "2px 8px" }}
               >
