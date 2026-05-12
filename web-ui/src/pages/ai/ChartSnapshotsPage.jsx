@@ -5621,11 +5621,16 @@ export default function ChartSnapshotsPage() {
           >
             <SignalDetailCard
               mode="ai"
-              hideTabsBeforeResponse={true}
+              hideTabsBeforeResponse={false}
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
-                  activePlan?.symbol || activePlan?.raw?.symbol || "",
+                  activePlan?.symbol ||
+                    activePlan?.raw?.symbol ||
+                    selectedSymbol ||
+                    cfg.symbol ||
+                    tvSymbol ||
+                    "",
                 ),
                 interval: timeframe,
                 entryPrice: position.entry,
@@ -5718,7 +5723,12 @@ export default function ChartSnapshotsPage() {
                   __raw_plan: plan?.raw || {},
                   __plan_index: idx,
                   symbol: normalizeSignalSymbol(
-                    plan?.raw?.symbol || plan.symbol || "",
+                    plan?.raw?.symbol ||
+                      plan.symbol ||
+                      selectedSymbol ||
+                      cfg.symbol ||
+                      tvSymbol ||
+                      "",
                   ),
                   direction: plan?.raw?.direction || plan.direction,
                   entry: getPlanPositionOverride(plan, idx).entry || plan?.raw?.entry_price || plan?.raw?.entry,

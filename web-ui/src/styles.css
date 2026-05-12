@@ -1416,7 +1416,7 @@ button:disabled {
 }
 .snapshot-tabs-v2 {
     display: flex;
-    gap: 1px;
+    gap: 10px;
     align-items: center;
     flex-wrap: wrap;
 }
