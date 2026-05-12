@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.12 20:12 - e7b1a9d4"); // recover trade_plan from raw malformed JSON before coverage fallback
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.12 20:12 - e7b1a9d4",
+); // recover trade_plan from raw malformed JSON before coverage fallback
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -4765,7 +4768,8 @@ function extractJsonFromAiText(rawText) {
     parsed = reparsed;
   }
   if (parsed == null) {
-    const balanced = extractBalancedJsonObject(clean) || extractBalancedJsonObject(raw);
+    const balanced =
+      extractBalancedJsonObject(clean) || extractBalancedJsonObject(raw);
     if (balanced) {
       parsed = tryParse(balanced);
       for (let i = 0; i < 2; i += 1) {
@@ -4809,6 +4813,17 @@ function recoverTradePlansFromRawAiText(rawText) {
     .replace(/^```json/, "")
     .replace(/```$/, "")
     .trim();
+  // Unescape JSON-string-wrapped responses (AI sometimes returns JSON as a quoted string)
+  if (clean.startsWith('"') && clean.endsWith('"') && clean.length > 2) {
+    const inner = clean.slice(1, -1);
+    const unescaped = inner
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\\\/g, '\\');
+    clean = unescaped.trim();
+  }
   if (!clean) return [];
 
   const extractBalancedArray = (text, startIndex) => {
@@ -4850,9 +4865,14 @@ function recoverTradePlansFromRawAiText(rawText) {
   const seen = new Set();
   const symbolRe = /"symbol"\s*:\s*"([^"]+)"/g;
   for (let m = symbolRe.exec(clean); m; m = symbolRe.exec(clean)) {
-    const sym = String(m[1] || "").trim().toUpperCase();
+    const sym = String(m[1] || "")
+      .trim()
+      .toUpperCase();
     if (!sym) continue;
-    const lookahead = clean.slice(m.index, Math.min(clean.length, m.index + 20000));
+    const lookahead = clean.slice(
+      m.index,
+      Math.min(clean.length, m.index + 20000),
+    );
     const tpIdx = lookahead.search(/"trade_plan"\s*:/);
     if (tpIdx < 0) continue;
     const absTpIdx = m.index + tpIdx;
@@ -10239,7 +10259,10 @@ const DEFAULT_TRADE_PLAN_PATHS = [
 function extractByRulePath(root, rulePath) {
   const pathText = String(rulePath || "").trim();
   if (!pathText) return [];
-  const steps = pathText.split(".").map((s) => s.trim()).filter(Boolean);
+  const steps = pathText
+    .split(".")
+    .map((s) => s.trim())
+    .filter(Boolean);
   let current = [root];
   for (const step of steps) {
     const isArrayStep = step.endsWith("[]");
@@ -10285,19 +10308,23 @@ function dedupeTradePlans(plans = []) {
   for (const p of list) {
     if (!p || typeof p !== "object") continue;
     const key = [
-      String(p.symbol || "").trim().toUpperCase(),
-      String(p.direction || p.dir || "").trim().toUpperCase(),
+      String(p.symbol || "")
+        .trim()
+        .toUpperCase(),
+      String(p.direction || p.dir || "")
+        .trim()
+        .toUpperCase(),
       Number(p.entry ?? p.entry_price ?? NaN),
       Number(p.sl ?? p.stop_loss ?? NaN),
       Number(
-        p.tp ??
-          p.take_profit ??
-          p.tp3 ??
-          p.multiple_exits?.tp3?.price ??
-          NaN,
+        p.tp ?? p.take_profit ?? p.tp3 ?? p.multiple_exits?.tp3?.price ?? NaN,
       ),
-      String(p.entry_model || "").trim().toUpperCase(),
-      String(p.strategy || "").trim().toUpperCase(),
+      String(p.entry_model || "")
+        .trim()
+        .toUpperCase(),
+      String(p.strategy || "")
+        .trim()
+        .toUpperCase(),
     ].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
@@ -10353,7 +10380,9 @@ function enforceActionableTradePlans(payload = {}) {
     const reasons = Array.isArray(plan?.reasons_to_skip)
       ? [...plan.reasons_to_skip]
       : [];
-    if (!reasons.some((r) => String(r?.reason || "").includes("Missing entry"))) {
+    if (
+      !reasons.some((r) => String(r?.reason || "").includes("Missing entry"))
+    ) {
       reasons.push({ reason: reasonText, severity: "warning" });
     }
     return {
@@ -10366,9 +10395,7 @@ function enforceActionableTradePlans(payload = {}) {
           ? {
               ...plan.risk_management,
               skip_decision: "Skip",
-              skip_reasons:
-                plan.risk_management.skip_reasons ||
-                reasonText,
+              skip_reasons: plan.risk_management.skip_reasons || reasonText,
             }
           : {
               skip_decision: "Skip",
@@ -10383,7 +10410,9 @@ function enforceActionableTradePlans(payload = {}) {
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
-  const mappedPlans = collectTradePlansByRules(out).map((p) => ({ ...(p || {}) }));
+  const mappedPlans = collectTradePlansByRules(out).map((p) => ({
+    ...(p || {}),
+  }));
   if (
     mappedPlans.length &&
     (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
@@ -10414,7 +10443,9 @@ function normalizeAiAnalysisContract(input = {}) {
       out.symbol = String(first?.symbol || out?.symbol || "").trim();
       out.ai_full_analysis = {
         htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
-        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis)
+          ? first.ltf_analysis
+          : [],
         confluence_checklist:
           first?.confluence_checklist &&
           typeof first.confluence_checklist === "object"
@@ -10447,7 +10478,9 @@ function normalizeAiAnalysisContract(input = {}) {
       out.symbol = String(first?.symbol || out?.symbol || "").trim();
       out.ai_full_analysis = {
         htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
-        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis)
+          ? first.ltf_analysis
+          : [],
         confluence_checklist:
           first?.confluence_checklist &&
           typeof first.confluence_checklist === "object"
@@ -17561,7 +17594,7 @@ const appHandler = async (req, res) => {
         if (
           (!Array.isArray(parsedJson?.trade_plan) ||
             parsedJson.trade_plan.length === 0) &&
-          rawResponse.includes("\"trade_plan\"")
+          rawResponse.includes('"trade_plan"')
         ) {
           const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
           if (recoveredPlans.length) {
@@ -18040,7 +18073,7 @@ const appHandler = async (req, res) => {
       if (
         (!Array.isArray(parsedJson?.trade_plan) ||
           parsedJson.trade_plan.length === 0) &&
-        rawResponse.includes("\"trade_plan\"")
+        rawResponse.includes('"trade_plan"')
       ) {
         const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
         if (recoveredPlans.length) {
@@ -19444,7 +19477,11 @@ const appHandler = async (req, res) => {
       rawPatch.trade_plan = {
         direction: side || null,
         order_type:
-          tradeType === "stop" ? "Stop Limit" : tradeType === "market" ? "Market" : "Limit",
+          tradeType === "stop"
+            ? "Stop Limit"
+            : tradeType === "market"
+              ? "Market"
+              : "Limit",
         entry: Number.isFinite(entry) ? entry : null,
         entry_price: Number.isFinite(entry) ? entry : null,
         sl: Number.isFinite(sl) ? sl : null,
