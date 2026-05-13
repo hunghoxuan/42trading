@@ -1,5 +1,5 @@
 {
-  "version": "2.6",
+  "version": "2.7",
   "analysis_sid": "",
   "analysis_timestamp": null,
   "analysis_data": [
@@ -12,32 +12,13 @@
             "trend": "Bullish|Bearish|Ranging",
             "bias": "Long|Short|Neutral",
             "phase": "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
-            "what_price_just_did": "",
-            "what_price_likely_does_next": "",
-            "draw_on_liquidity": {
-              "narrative": "",
-              "target_price": null,
-              "target_type": "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL|WeeklyOpen"
-            },
-            "reference_zones": [
+            "market_structure": [
               {
-                "id": "",
-                "type": "OB|FVG|Breaker|Void|BSL|SSL|PDH|PDL|EQH|EQL|WeeklyOpen|DailyOpen|MidnightOpen",
-                "direction": "Bullish|Bearish",
-                "zone_top": null,
-                "zone_bottom": null,
-                "status": "Fresh|Tested|Mitigated|Broken",
-                "relevance": "TP_Target|Entry_Boundary|DOL|Invalidation"
-              }
-            ],
-            "detected_patterns": [
-              {
-                "pattern": "",
-                "timeframe": "1m|5m|15m|1H|4H|D",
-                "direction": "Bullish|Bearish|Neutral",
-                "confidence": "Low|Medium|High",
-                "price_context": null,
-                "note": ""
+                "step": 1,
+                "action": "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
+                "price": null,
+                "price_target": null,
+                "required_condition": ""
               }
             ]
           }
@@ -49,54 +30,43 @@
             "structure": "BOS|CHoCH|MSB|Continuation|Ranging",
             "phase": "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
             "bias": "Long|Short|Neutral",
-            "what_price_just_did": "",
-            "what_price_likely_does_next": "",
-            "key_events": [
-              {
-                "event": "BOS|CHoCH|MSB|Sweep|Breakout|Rejection|Engulfing|PinBar|Doji|EQH|EQL|BSL|SSL",
-                "price": null,
-                "time": null,
-                "direction": "Bullish|Bearish"
-              }
-            ],
-            "expected_path": [
+            "market_structure": [
               {
                 "step": 1,
                 "action": "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
-                "target_price": null,
+                "price": null,
+                "price_target": null,
                 "required_condition": ""
               }
-            ],
-            "pd_arrays": [
-              {
-                "id": "",
-                "type": "OB|FVG|Breaker|Mitigation|Void|Rejection|Propulsion",
-                "direction": "Bullish|Bearish",
-                "strength": "Strong|Weak",
-                "zone_top": null,
-                "zone_bottom": null,
-                "status": "Fresh|Tested|Mitigated|Broken",
-                "times_touched": 0,
-                "note": ""
-              }
-            ],
-            "key_levels": [
-              {
-                "name": "PDH|PDL|WeeklyOpen|DailyOpen|MidnightOpen|NYOpen|EQH|EQL|BSL|SSL",
-                "price": null,
-                "already_swept": false
-              }
-            ],
-            "detected_patterns": [
-              {
-                "pattern": "",
-                "timeframe": "1m|5m|15m|1H|4H|D",
-                "direction": "Bullish|Bearish|Neutral",
-                "confidence": "Low|Medium|High",
-                "price_context": null,
-                "note": ""
-              }
             ]
+          }
+        ],
+
+        "draw_on_liquidity": {
+          "narrative": "",
+          "timeframe": "1m|5m|15m|1H|4H|D",
+          "target_price": null,
+          "target_type": "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL|WeeklyOpen"
+        },
+        "events_patterns": [
+          {
+            "event": "BOS|CHoCH|MSB|Sweep|Breakout|Rejection|Engulfing|PinBar|Doji|EQH|EQL|BSL|SSL",
+            "price": null,
+            "time": null,
+            "timeframe": "1m|5m|15m|1H|4H|D",
+            "direction": "Bullish|Bearish|Neutral",
+            "volumne": "Low|Medium|High"
+          }
+        ],
+        "pd_arrays_key_levels": [
+          {
+            "timeframe": "1m|5m|15m|1H|4H|D",
+            "type": "OB|FVG|Breaker|Void|BSL|SSL|PDH|PDL|EQH|EQL|WeeklyOpen|DailyOpen|MidnightOpen|Support|Resistance|Fibonacci",
+            "direction": "Bullish|Bearish",
+            "price": null,
+            "time": null,
+            "status": "Fresh|Tested|Mitigated|Broken",
+            "relevance": "TP_Target|Entry_Boundary|DOL|Invalidation"
           }
         ],
         "confluence_checklist": {
