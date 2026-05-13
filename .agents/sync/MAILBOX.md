@@ -130,3 +130,65 @@ Copy and fill:
 - [ ] Tauri DMG bundling fails (`.app` works, need `create-dmg` or similar)
 - [ ] Windows/Linux Tauri cross-compile
 - [ ] V3 Phase 2: Hono + Drizzle backend migration (only if needed)
+
+# Handoff — 2026-05-13
+
+> From: DeepSeek
+> To: Next agent
+
+## What Was Done
+
+### AI Response Parsing Fixes (multi-symbol XAGUSD+US30)
+- **Root cause**: AI returns JSON-escaped string (`"{\"version\":...}"`) with malformed/truncated JSON. `extractJsonFromAiText` + `normalizeAiAnalysisContract` loses trade plans → "No valid setup" fallback.
+- **Server fix**: `recoverTradePlansFromRawAiText` unescapes JSON-string wrappers, extracts plans via balanced bracket parsing, falls back to regex when truncated.
+- **Client fix**: `recoverTradePlansFromRaw` in ChartSnapshotsPage.jsx — same logic client-side, always preferred over bad `tryParseJsonLoose` results.
+- **`max_tokens`**: bumped 4500 → 32000 (Claude requires it, model stops when done).
+- **TP resolution**: `planPrimaryTpNumber` now checks `tp1.price` (was skipping `tp1` entirely).
+
+### Schema v2.7 + Response Mapping
+- `config/ai_response_schema.json` → v2.7 deployed.
+- `config/response_mapping.json` → version-aware (`versions.2.7.ui_fields`) with paths per UI section:
+  - `trade_header`: confidence_pct, risk_percent, skip_decision, grade
+  - `plan_basic`: symbol, direction, order_type, profile, timeframe, session, strategy, entry_model
+  - `plan_prices`: entry, sl, tp (tp1.price > tp > take_profit), tp2, tp3, rr, be_trigger
+  - `plan_meta`: entry_checklists, entry_trigger, invalidation, mid_invalidation, skip_reasons, note
+  - `htf_context`, `ltf_analysis`: per-TF trend/bias/phase/narrative
+  - `confluence`: sell/buy scores + passed/failed items
+  - `events_patterns`, `pd_arrays`: full raw pass-through
+
+### SymbolChart Buttons Refactor
+- Unified `[Live] [C] [S]` buttons, removed TradePlan + Refresh.
+- `C` = fetch bars via `api.chartTwelveCandles` per TF (bypassed Claude-dependent `/chart/refresh`).
+- `S` = list existing VPS snapshots via `api.chartSnapshots`.
+- Per-TF status badges in TfHeader (MEM/DB/API, snapshot ✅/📷).
+- Snapshot mode shows `<img>` tiles.
+
+### Trade File Attachments
+- Drag-drop upload below Note textarea, stored in `trade_files/trade-{sid}/`.
+- Image preview, download button, delete.
+
+### NotificationHub
+- `no_data` status → ⚠️ yellow warning (was green ✅).
+- Single icon per notification (removed duplicate type icon).
+- Per-action messages ("- 1 added", "- no data").
+
+## Deploy Status
+- commit: `ade8c6e9`
+- server_version: `v2026.05.12 21:30 - max-tokens-8k`
+- UI: 200 ✅
+- config: `response_mapping.json` + `ai_response_schema.json` synced to VPS
+
+## Key Files
+| File | Purpose |
+|------|---------|
+| `config/response_mapping.json` | Schema→UI field paths per version |
+| `config/ai_response_schema.json` | AI prompt schema v2.7 |
+| `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | `recoverTradePlansFromRaw`, `planPrimaryTpNumber` |
+| `webhook/server.js` | `recoverTradePlansFromRawAiText`, `planPrimaryTpNumber` |
+| `web-ui/src/components/charts/SymbolChart.jsx` | [Live][C][S] buttons, TfHeader badges |
+| `web-ui/src/hooks/useChartTileData.js` | Direct Twelve Data + snapshot list calls |
+
+## TODO / Known Issues
+- `events_patterns` and `pd_arrays` in UI not yet rendered — mapping paths exist, need UI components.
+- `entry_checklists` (boolean object) needs check/uncheck UI widget.
+- Twelve Data daily limit exhausted (800 credits/day).
