@@ -269,6 +269,8 @@ export default function TradeSignalChart({
   syncedCrosshair = null,
   onCrosshairSync = null,
   onBarsLoaded = null,
+  sharedLines = [],
+  onContextRequest = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -363,6 +365,7 @@ export default function TradeSignalChart({
       const chartElement = chart.chartElement();
       const dragState = { activeKey: null };
       let removeDragListeners = () => {};
+      let removeContextMenuListener = () => {};
 
       // 3. Fetch History + Start Live
       async function initData() {
@@ -630,6 +633,22 @@ export default function TradeSignalChart({
 
             allPlans.forEach((p, idx) => drawPlan(p, idx));
 
+            // Shared horizontal lines (added from context menu, replicated per TF)
+            if (Array.isArray(sharedLines) && sharedLines.length > 0) {
+              sharedLines.forEach((ln, idx) => {
+                const p = Number(ln?.price);
+                if (!Number.isFinite(p)) return;
+                candleSeries.createPriceLine({
+                  price: p,
+                  color: String(ln?.color || "#60a5fa"),
+                  lineWidth: 1,
+                  lineStyle: 2,
+                  axisLabelVisible: true,
+                  title: ln?.label || `L${idx + 1}`,
+                });
+              });
+            }
+
             const enableLevelDrag =
               typeof onPlanLevelChange === "function" &&
               Number.isFinite(levelPriceMap.entry) &&
@@ -689,6 +708,30 @@ export default function TradeSignalChart({
             removeDragListeners = () => {
               onMouseUp();
               chartElement.removeEventListener("mousedown", onMouseDown);
+            };
+
+            const onContextMenu = (evt) => {
+              if (typeof onContextRequest !== "function") return;
+              const rect = chartElement.getBoundingClientRect();
+              const x = evt.clientX - rect.left;
+              const y = evt.clientY - rect.top;
+              const price = candleSeries.coordinateToPrice(y);
+              const time = chart.timeScale().coordinateToTime(x);
+              if (!Number.isFinite(Number(price))) return;
+              evt.preventDefault();
+              onContextRequest({
+                chartId,
+                symbol,
+                interval,
+                price: Number(price),
+                time: time || null,
+                clientX: evt.clientX,
+                clientY: evt.clientY,
+              });
+            };
+            chartElement.addEventListener("contextmenu", onContextMenu);
+            removeContextMenuListener = () => {
+              chartElement.removeEventListener("contextmenu", onContextMenu);
             };
 
             // --- PD ARRAYS as boxes ---
@@ -871,6 +914,7 @@ export default function TradeSignalChart({
           chart.unsubscribeCrosshairMove(handleCrosshairMove);
         } catch {}
         removeDragListeners();
+        removeContextMenuListener();
         chartRef.current = null;
         seriesRef.current = null;
         try {
@@ -901,9 +945,12 @@ export default function TradeSignalChart({
     showPdArrays,
     showKeyLevels,
     onPlanLevelChange,
+    JSON.stringify(sharedLines || []),
     JSON.stringify(analysisSnapshot),
     JSON.stringify(historicalData),
     live,
+    onContextRequest,
+    chartId,
   ]);
 
   useEffect(() => {

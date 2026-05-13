@@ -1545,6 +1545,16 @@ export default function SignalDetailCard({
                     ? response.metadata.snapshot_files
                     : []
             }
+            onQuickTradeIntent={(intent) => {
+              const side = String(intent?.side || "BUY").toUpperCase();
+              const price = Number(intent?.price);
+              if (tradePlan?.onChange) {
+                tradePlan.onChange("direction", side);
+                if (Number.isFinite(price)) {
+                  tradePlan.onChange("entry", String(price));
+                }
+              }
+            }}
             skipFetch={false}
           />
         </Suspense>

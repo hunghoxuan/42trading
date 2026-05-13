@@ -227,6 +227,7 @@ export default function SymbolChart({
   provider = "ICMARKETS",
   sessionPrefix = "",
   attachedSnapshotFiles = [],
+  onQuickTradeIntent = null,
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -252,6 +253,8 @@ export default function SymbolChart({
     keyLevels: false,
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
+  const [sharedLines, setSharedLines] = useState([]);
+  const [ctxMenu, setCtxMenu] = useState(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
@@ -413,6 +416,49 @@ export default function SymbolChart({
     { key: "pdArrays", label: "PD" },
     { key: "keyLevels", label: "KL" },
   ];
+
+  useEffect(() => {
+    const onDocClick = () => setCtxMenu(null);
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
+  }, []);
+
+  const handleContextRequest = useCallback((payload) => {
+    setCtxMenu(payload || null);
+  }, []);
+
+  const handleDrawLine = useCallback(() => {
+    if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setSharedLines((prev) => [
+      ...prev,
+      { id, price: Number(ctxMenu.price), color: "#60a5fa", label: "LINE" },
+    ]);
+    setCtxMenu(null);
+  }, [ctxMenu]);
+
+  const handleQuickTrade = useCallback(
+    (side) => {
+      if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+      const payload = {
+        symbol: cleanSym,
+        side: String(side || "BUY").toUpperCase(),
+        price: Number(ctxMenu.price),
+        time: ctxMenu.time || null,
+        interval: ctxMenu.interval || null,
+      };
+      if (typeof onQuickTradeIntent === "function") {
+        onQuickTradeIntent(payload);
+      }
+      try {
+        window.dispatchEvent(
+          new CustomEvent("tvbridge:advanced-trade", { detail: payload }),
+        );
+      } catch {}
+      setCtxMenu(null);
+    },
+    [ctxMenu, cleanSym, onQuickTradeIntent],
+  );
 
   return (
     <div
@@ -639,9 +685,15 @@ export default function SymbolChart({
                   showPdArrays={overlays.pdArrays}
                   showKeyLevels={overlays.keyLevels}
                   onPlanLevelChange={onPlanLevelChange}
-                  syncedCrosshair={null}
-                  onCrosshairSync={undefined}
+                  syncedCrosshair={mode === "cache" ? syncedCrosshair : null}
+                  onCrosshairSync={
+                    mode === "cache" ? setSyncedCrosshair : undefined
+                  }
                   onBarsLoaded={handleBarsLoaded}
+                  sharedLines={mode === "cache" ? sharedLines : []}
+                  onContextRequest={
+                    mode === "cache" ? handleContextRequest : undefined
+                  }
                 />
               ) : (
                 <div
@@ -665,6 +717,47 @@ export default function SymbolChart({
       {(lastError || error) && (
         <div style={{ marginTop: 4, fontSize: 9, color: "#ef4444" }}>
           {lastError || error}
+        </div>
+      )}
+      {mode === "cache" && ctxMenu && (
+        <div
+          style={{
+            position: "fixed",
+            left: Math.max(8, Number(ctxMenu.clientX || 0)),
+            top: Math.max(8, Number(ctxMenu.clientY || 0)),
+            background: "#0f1729",
+            border: "1px solid rgba(148,163,184,0.35)",
+            borderRadius: 8,
+            zIndex: 9999,
+            minWidth: 140,
+            boxShadow: "0 6px 20px rgba(0,0,0,0.35)",
+            overflow: "hidden",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {[
+            { label: "Draw line", fn: handleDrawLine },
+            { label: "Buy", fn: () => handleQuickTrade("BUY") },
+            { label: "Sell", fn: () => handleQuickTrade("SELL") },
+          ].map((it) => (
+            <button
+              key={it.label}
+              type="button"
+              onClick={it.fn}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "transparent",
+                color: "#e2e8f0",
+                border: "none",
+                padding: "8px 10px",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {it.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
