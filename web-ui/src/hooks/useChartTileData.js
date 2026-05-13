@@ -262,7 +262,9 @@ export function useSymbolChartData({
     }
     if (!allCached) {
       setStatus(anyCached ? "STALE" : "LOADING");
-      refresh({ force: !anyCached }).catch(() => null);
+      // IMPORTANT: keep force=false on initial/normal loads so backend checks
+      // memory/redis/db cache before remote APIs.
+      refresh({ force: false }).catch(() => null);
     }
     return () => {
       mountedRef.current = false;
