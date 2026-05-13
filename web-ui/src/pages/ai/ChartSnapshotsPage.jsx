@@ -1951,43 +1951,6 @@ function recoverTradePlansFromRaw(rawText) {
     if (arrText) {
       try { arr = JSON.parse(arrText); } catch (_) { arr = null; }
     }
-    // Fallback: extract plan fields via regex when JSON is truncated
-    if (!arr || !Array.isArray(arr)) {
-      const rawSection = clean.slice(bracketIdx, Math.min(clean.length, bracketIdx + 5000));
-      const planRe = /"symbol"\s*:\s*"([^"]+)"[^}]*"entry_price"\s*:\s*(-?\d+\.?\d+)[^}]*"stop_loss"\s*:\s*(-?\d+\.?\d+)/gs;
-      let pm;
-      const regexPlans = [];
-      while ((pm = planRe.exec(rawSection)) !== null) {
-        const sym = String(pm[1] || "").trim().toUpperCase();
-        const entry = Number(pm[2]);
-        const sl = Number(pm[3]);
-        if (!sym || !Number.isFinite(entry) || !Number.isFinite(sl)) continue;
-        // Try to get tp from tp1.price
-        const tpMatch = rawSection.slice(pm.index, pm.index + 3000).match(/"tp1"\s*:\s*\{[^}]*"price"\s*:\s*(-?\d+\.?\d+)/);
-        const tp = tpMatch ? Number(tpMatch[1]) : NaN;
-        const dirMatch = rawSection.slice(pm.index, pm.index + 3000).match(/"direction"\s*:\s*"([^"]+)"/);
-        const modelMatch = rawSection.slice(pm.index, pm.index + 3000).match(/"entry_model"\s*:\s*"([^"]+)"/);
-        const plan = {
-          symbol: sym,
-          entry_price: entry,
-          stop_loss: sl,
-          direction: dirMatch ? String(dirMatch[1]) : "",
-          entry_model: modelMatch ? String(modelMatch[1]) : "",
-          _recovered_from_truncated: true,
-        };
-        if (Number.isFinite(tp)) plan.take_profit = tp;
-        // Dedup
-        const key = JSON.stringify([sym, "", entry, sl, tp]);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        regexPlans.push(plan);
-      }
-      if (regexPlans.length) {
-        out.push(...regexPlans);
-        continue;
-      }
-      continue;
-    }
     if (!Array.isArray(arr)) continue;
     for (const p of arr) {
       if (!p || typeof p !== "object") continue;
