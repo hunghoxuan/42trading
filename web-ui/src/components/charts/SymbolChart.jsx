@@ -259,6 +259,7 @@ export default function SymbolChart({
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
   const [annotations, setAnnotations] = useState([]);
+  const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
@@ -359,6 +360,11 @@ export default function SymbolChart({
     const fromReports = Object.values(loadedTfs).some((c) => c > 0);
     return fromMaster || fromReports;
   }, [master, loadedTfs]);
+
+  const selectedObject = useMemo(
+    () => (annotations || []).find((a) => a.id === selectedObjectId) || null,
+    [annotations, selectedObjectId],
+  );
 
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {
@@ -477,6 +483,7 @@ export default function SymbolChart({
         ctxMenu,
       }),
     ]);
+    setSelectedObjectId(id);
     setCtxMenu(null);
   }, [ctxMenu]);
 
@@ -496,6 +503,7 @@ export default function SymbolChart({
             ctxMenu,
           }),
         ]);
+        setSelectedObjectId(id);
       } else if (kind === "zone") {
         setDrawMode("zone");
       } else {
@@ -509,6 +517,7 @@ export default function SymbolChart({
             ctxMenu,
           }),
         ]);
+        setSelectedObjectId(id);
       }
       setCtxMenu(null);
     },
@@ -809,6 +818,7 @@ export default function SymbolChart({
                               y2Ratio: yr2,
                             },
                           ]);
+                          setSelectedObjectId(id);
                           setDrawMode(null);
                           window.removeEventListener("mouseup", onUp);
                         };
@@ -843,12 +853,14 @@ export default function SymbolChart({
                         .sort((p, q) => p.d - q.d)[0];
                       if (hit && hit.d <= 10) {
                         dragRef.current = { id: hit.a.id, edge: hit.edge, rect };
+                        setSelectedObjectId(hit.a.id);
                         evt.preventDefault();
                       }
                     }}
                   >
                     {(annotations || []).map((a) => {
                       if (a.kind === "line") {
+                        const isSelected = selectedObjectId === a.id;
                         return (
                           <div
                             key={a.id}
@@ -857,7 +869,10 @@ export default function SymbolChart({
                               left: 0,
                               right: 0,
                               top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
-                              borderTop: `1px dashed ${a.color || "#60a5fa"}`,
+                              borderTop: `${isSelected ? 2 : 1}px dashed ${a.color || "#60a5fa"}`,
+                              boxShadow: isSelected
+                                ? `0 0 0 1px ${a.color || "#60a5fa"}55`
+                                : "none",
                               pointerEvents: "none",
                               zIndex: 26,
                             }}
@@ -865,6 +880,7 @@ export default function SymbolChart({
                         );
                       }
                       if (a.kind === "point") {
+                        const isSelected = selectedObjectId === a.id;
                         return (
                           <div
                             key={a.id}
@@ -872,10 +888,14 @@ export default function SymbolChart({
                               position: "absolute",
                               left: `${clamp01(Number(a.xRatio || 0.5)) * 100}%`,
                               top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
-                              width: 8,
-                              height: 8,
+                              width: isSelected ? 10 : 8,
+                              height: isSelected ? 10 : 8,
                               borderRadius: "50%",
                               background: a.color || "#eab308",
+                              outline: isSelected ? "1px solid #fff" : "none",
+                              boxShadow: isSelected
+                                ? `0 0 0 2px ${a.color || "#eab308"}55`
+                                : "none",
                               transform: "translate(-50%, -50%)",
                               pointerEvents: "none",
                               zIndex: 26,
@@ -884,6 +904,7 @@ export default function SymbolChart({
                         );
                       }
                       if (a.kind === "zone") {
+                        const isSelected = selectedObjectId === a.id;
                         const y1 = Number(a.y1Ratio || 0.4);
                         const y2 = Number(a.y2Ratio || 0.6);
                         const x1 = Number(a.x1Ratio || 0.2);
@@ -897,8 +918,11 @@ export default function SymbolChart({
                               top: `${Math.min(y1, y2) * 100}%`,
                               width: `${Math.abs(x2 - x1) * 100}%`,
                               height: `${Math.abs(y2 - y1) * 100}%`,
-                              border: `1px solid ${a.color || "#22c55e"}`,
+                              border: `${isSelected ? 2 : 1}px solid ${a.color || "#22c55e"}`,
                               background: `${a.color || "#22c55e"}22`,
+                              boxShadow: isSelected
+                                ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
+                                : "none",
                               pointerEvents: "none",
                               zIndex: 26,
                             }}
@@ -1000,7 +1024,10 @@ export default function SymbolChart({
           <button
             className="secondary-button"
             type="button"
-            onClick={() => setAnnotations([])}
+            onClick={() => {
+              setAnnotations([]);
+              setSelectedObjectId(null);
+            }}
             style={{ fontSize: 10, padding: "2px 6px" }}
           >
             Remove All
@@ -1008,6 +1035,7 @@ export default function SymbolChart({
           {annotations.map((a) => (
             <span
               key={a.id}
+              onClick={() => setSelectedObjectId(a.id)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -1017,14 +1045,22 @@ export default function SymbolChart({
                 borderRadius: 12,
                 padding: "2px 8px",
                 fontSize: 10,
+                cursor: "pointer",
+                background:
+                  selectedObjectId === a.id
+                    ? `${a.color || "#60a5fa"}22`
+                    : "transparent",
               }}
+              title={a.id}
             >
               {a.type}
               <button
                 type="button"
-                onClick={() =>
-                  setAnnotations((prev) => prev.filter((x) => x.id !== a.id))
-                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+                  setSelectedObjectId((prev) => (prev === a.id ? null : prev));
+                }}
                 style={{
                   border: "none",
                   background: "transparent",
@@ -1039,6 +1075,11 @@ export default function SymbolChart({
               </button>
             </span>
           ))}
+          <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
+            {selectedObject
+              ? `${selectedObject.type || selectedObject.kind} | kind=${selectedObject.kind} | xRatio=${Number(selectedObject.xRatio ?? 0).toFixed(4)} | yRatio=${Number(selectedObject.yRatio ?? 0).toFixed(4)} | y1=${Number(selectedObject.y1Ratio ?? 0).toFixed(4)} | y2=${Number(selectedObject.y2Ratio ?? 0).toFixed(4)} | t=${selectedObject.anchorTimeMs ?? "n/a"} | p=${selectedObject.anchorPrice ?? "n/a"}`
+              : "Select object to inspect live properties"}
+          </span>
         </div>
       )}
     </div>
