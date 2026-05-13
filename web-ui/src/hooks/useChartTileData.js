@@ -30,6 +30,7 @@ export function useSymbolChartData({
   skipFetch = false,
   provider = "ICMARKETS",
   sessionPrefix = "",
+  attachedSnapshotFiles = [],
 }) {
   const [status, setStatus] = useState("IDLE");
   const [data, setData] = useState({}); // { "4h": { bars, snapshot, created_at }, ... }
@@ -51,14 +52,36 @@ export function useSymbolChartData({
       console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
 
       if (mode === "snapshots") {
-        // Snapshot mode: list existing snapshots from VPS
+        // Snapshot mode: backend decides cache-validity vs capture
+        const refreshPayload = {
+          symbol: sym,
+          timeframes: tfs,
+          types: ["snapshots"],
+          provider,
+          session_prefix: sessionPrefix,
+          snapshot_max_age_ms: 15 * 60 * 1000,
+          bars: 300,
+          force,
+        };
         const batch = await Promise.race([
-          api.chartSnapshots(100),
+          api.chartRefresh(refreshPayload),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Snapshot list timeout")), 15000)),
         ]);
-        console.log("[ChartData] snapshots list ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
-        const items = Array.isArray(batch?.items) ? batch.items : [];
-        // Filter by symbol (case-insensitive match in file_name)
+        const apiItems = Array.isArray(batch?.snapshots?.items)
+          ? batch.snapshots.items
+          : [];
+        console.log("[ChartData] snapshots refresh ok=" + batch?.ok + " items=" + apiItems.length);
+        // Keep sid-attached snapshot files visible too (signal/trade context)
+        const attachedItems = (Array.isArray(attachedSnapshotFiles) ? attachedSnapshotFiles : [])
+          .map((file) => String(file || "").trim())
+          .filter(Boolean)
+          .map((file) => ({
+            file_name: file,
+            url: `/v2/chart/snapshots/${encodeURIComponent(file)}`,
+            attached: true,
+          }));
+        const items = [...apiItems, ...attachedItems];
+        // Filter by symbol
         const symUpper = sym.toUpperCase();
         const matchingItems = items.filter((x) => {
           const f = String(x?.file_name || "").toUpperCase();
@@ -90,16 +113,17 @@ export function useSymbolChartData({
                   return {
                     key,
                     data: {
-                      bars: Array.isArray(local.bars) ? local.bars : [],
+                bars: Array.isArray(local.bars) ? local.bars : [],
                       bar_start: local?.bar_start || local?.bars?.[0]?.time,
                       bar_end:
                         local?.bar_end ||
                         local?.bars?.[local?.bars?.length - 1]?.time,
                       last_price: local?.last_price ?? null,
-                      cache_source: local?.cache_source || "memory",
-                    },
-                  };
-                }
+                cache_source: local?.cache_source || "memory",
+                reason: local?.reason || "",
+              },
+            };
+          }
               }
               console.log("[ChartData] fetch tf=" + tf);
               const out = await api.chartTwelveCandles(sym, tf, 300, force);
@@ -111,6 +135,10 @@ export function useSymbolChartData({
                 bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
                 last_price: snap?.last_price ?? null,
                 cache_source: out?.source || "remote_api",
+                reason:
+                  out?.cache_debug && typeof out.cache_debug === "object"
+                    ? `redis=${out.cache_debug.redis_key || "-"} ttl=${out.cache_debug.ttl_sec || "-"}s tf=${out.cache_debug.timeframe_normalized || "-"} api=${out.cache_debug.binance_interval || "-"}`
+                    : "",
               };
               if (tfData.bars.length > 0) {
                 chartFetchManager.set(sym, tf, tfData);
@@ -143,7 +171,7 @@ export function useSymbolChartData({
       if (!hasAny) throw new Error("No data from provider");
       return { symbol: sym, entries };
     },
-    [sym, tfs, mode],
+    [sym, tfs, mode, provider, sessionPrefix, attachedSnapshotFiles],
   );
 
   const refresh = useCallback(

@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.13 15:40 - snapshot-tf-map-and-red-bar-top55",
+  "v2026.05.13 16:20 - chart-cache-debug-and-snapshot-refresh-fix",
 ); // TP resolver prefers first positive value in strict fallback order
 
 const SERVER_LOG_DIR = envStr(
@@ -11118,9 +11118,28 @@ function isCryptoPair(symbol) {
 }
 
 function timeframeToBinance(tf) {
-  const map = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
-    "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1M": "1M" };
-  return map[String(tf || "").toLowerCase()] || "15m";
+  const t = String(tf || "")
+    .trim()
+    .toLowerCase();
+  const map = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+    "1w": "1w",
+    "1month": "1M",
+    "1mo": "1M",
+    "1min": "1m",
+    "5min": "5m",
+    "15min": "15m",
+    "30min": "30m",
+    "1day": "1d",
+    "1week": "1w",
+  };
+  return map[t] || "15m";
 }
 
 function binanceKlineToBar(k) {
@@ -11164,6 +11183,8 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
       bar_end: bars[bars.length - 1]?.time || null,
       last_price: bars[bars.length - 1]?.close || null,
       cache_source: "binance",
+      api_url: url,
+      api_interval: interval,
     };
   } catch (e) {
     console.warn(`[binance] FAIL sym=${binanceSymbol}: ${e.message}`);
@@ -16863,12 +16884,24 @@ const appHandler = async (req, res) => {
 
       // Normalize source label for UI
       const displaySource = snapshot.cache_source || source || "twelvedata";
+      const tfNorm = normalizeMarketDataTf(timeframe);
+      const redisKey = `tf:${tfCacheKey(normalizeMarketDataSymbol(symbol), tfNorm)}`;
+      const ttlSec = Math.ceil(tfToMs(tfNorm) / 1000);
       return json(res, 200, {
         ok: true,
         snapshot,
         source: displaySource,
         updated_time,
         auto_refresh,
+        cache_debug: {
+          redis_key: redisKey,
+          ttl_sec: ttlSec,
+          timeframe_input: timeframe,
+          timeframe_normalized: tfNorm,
+          cache_source: displaySource,
+          binance_api_url: snapshot?.api_url || null,
+          binance_interval: snapshot?.api_interval || null,
+        },
       });
     } catch (error) {
       return json(res, 500, {

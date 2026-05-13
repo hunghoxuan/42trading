@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.13 15:40 - snapshot-tf-map-and-red-bar-top55";
+string EA_BUILD_VERSION = "v2026.05.13 16:20 - chart-cache-debug-and-snapshot-refresh-fix";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL

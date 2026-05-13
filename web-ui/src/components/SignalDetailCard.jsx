@@ -1515,7 +1515,7 @@ export default function SignalDetailCard({
         <Suspense
           fallback={<div className="loading-container">Loading chart...</div>}
         >
-                    <SymbolChart
+          <SymbolChart
             symbol={selectedPlanSymbol || chart?.symbol}
             timeframes={selectedTfs}
             defaultMode={chart?.mode || "live"}
@@ -1536,6 +1536,15 @@ export default function SignalDetailCard({
             hasAnalysis={Boolean(
               selectedRawData && Object.keys(selectedRawData).length > 0,
             )}
+            attachedSnapshotFiles={
+              Array.isArray(selectedRawData?.snapshot_files)
+                ? selectedRawData.snapshot_files
+                : Array.isArray(response?.snapshot_files)
+                  ? response.snapshot_files
+                  : Array.isArray(response?.metadata?.snapshot_files)
+                    ? response.metadata.snapshot_files
+                    : []
+            }
             skipFetch={false}
           />
         </Suspense>

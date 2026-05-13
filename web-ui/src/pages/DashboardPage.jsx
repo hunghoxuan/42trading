@@ -1029,7 +1029,7 @@ export default function DashboardPage() {
                                 position: "absolute",
                                 width: "72%",
                                 height: `${hPct}%`,
-                                top: isPos ? "45%" : "55%",
+                                top: isPos ? "53%" : "55%",
                                 borderRadius: isPos ? "2px 2px 0 0" : "0 0 2px 2px",
                                 background: isPos
                                   ? "rgba(16,185,129,0.9)"

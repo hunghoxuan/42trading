@@ -215,6 +215,7 @@ export default function SymbolChart({
   skipFetch = false,
   provider = "ICMARKETS",
   sessionPrefix = "",
+  attachedSnapshotFiles = [],
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -278,6 +279,7 @@ export default function SymbolChart({
       skipFetch,
       provider,
       sessionPrefix,
+      attachedSnapshotFiles,
     });
 
   const sortedTfs = useMemo(
