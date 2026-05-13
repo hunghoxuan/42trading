@@ -328,6 +328,7 @@ export default function SymbolChart({
   showAnalyzeButton = true,
   showTradeButton = true,
   showEditButton = true,
+  analyzeLabel = "Analyze",
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -1034,9 +1035,9 @@ export default function SymbolChart({
               display: showControls && showAnalyzeButton ? "block" : "none",
             }}
             onClick={() => onAnalyze?.(symbol, timeframes)}
-            title="Analyze"
+            title={analyzeLabel === ">" ? "Open symbol" : "Analyze"}
           >
-            Analyze
+            {analyzeLabel}
           </button>
         </div>
       </div>

@@ -5326,7 +5326,7 @@ export default function ChartSnapshotsPage() {
         className="panel snapshot-col-v3 snapshot-col-settings-v3"
         style={isSymbolPanelOpen ? {} : { gridColumn: "1 / -1" }}
       >
-        {!hasAnalyzeResponse && (
+        {!hasAnalyzeResponse && !isTradeRoute && (
           <div className="fadeIn">
             <div
               className=""
@@ -5914,6 +5914,11 @@ export default function ChartSnapshotsPage() {
                                     timeframes={browserTfs}
                                     defaultMode="live"
                                     initialGridCols={masterGridCols}
+                                    analyzeLabel={
+                                      normalizeWatchSymbol(sym) === normalizeWatchSymbol(cfg.symbol)
+                                        ? "Analyze"
+                                        : ">"
+                                    }
                                     onAnalyze={(s) =>
                                       setCfg((prev) => ({
                                         ...prev,
@@ -5951,6 +5956,11 @@ export default function ChartSnapshotsPage() {
                             timeframes={browserTfs}
                             defaultMode="live"
                             initialGridCols={masterGridCols}
+                            analyzeLabel={
+                              normalizeWatchSymbol(sym) === normalizeWatchSymbol(cfg.symbol)
+                                ? "Analyze"
+                                : ">"
+                            }
                             onAnalyze={(s) =>
                               setCfg((prev) => ({
                                 ...prev,
@@ -6027,7 +6037,7 @@ export default function ChartSnapshotsPage() {
           >
             <SignalDetailCard
               mode="ai"
-              hideTabsBeforeResponse={true}
+              hideTabsBeforeResponse={!isTradeRoute}
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
