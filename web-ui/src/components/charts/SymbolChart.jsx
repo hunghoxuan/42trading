@@ -733,7 +733,8 @@ export default function SymbolChart({
                   />
                 </div>
               ) : hasBars ? (
-                <TradeSignalChart
+                <>
+                  <TradeSignalChart
                   key={`tsc-${symbol}-${tf}`}
                   chartId={chartId}
                   symbol={cleanSym}
@@ -761,9 +762,9 @@ export default function SymbolChart({
                   onContextRequest={
                     mode === "cache" ? handleContextRequest : undefined
                   }
-                />
-                {mode === "cache" && (
-                  <div
+                  />
+                  {mode === "cache" && (
+                    <div
                     style={{ position: "absolute", inset: 0 }}
                     onMouseDown={(evt) => {
                       const rect = evt.currentTarget.getBoundingClientRect();
@@ -887,8 +888,9 @@ export default function SymbolChart({
                       }
                       return null;
                     })}
-                  </div>
-                )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div
                   style={{
