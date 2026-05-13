@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.13 18:35 - chart-edit-mode-viewport-anchor-projection",
+  "v2026.05.13 19:05 - tf-force-refresh-and-higher-tf-synthetic-hl",
 ); // TP resolver prefers first positive value in strict fallback order
 
 const SERVER_LOG_DIR = envStr(
@@ -973,6 +973,63 @@ function tfToMs(tf) {
     return 3600000;
   })();
 }
+function tfToMinutesForHierarchy(tf) {
+  const t = String(tf || "").toUpperCase();
+  if (t === "1M") return 1;
+  if (t === "5M" || t === "5MIN") return 5;
+  if (t === "15M" || t === "15MIN") return 15;
+  if (t === "1H" || t === "60") return 60;
+  if (t === "4H" || t === "240") return 240;
+  if (t === "D" || t === "1D" || t === "DAY") return 1440;
+  if (t === "W" || t === "1W" || t === "WEEK") return 10080;
+  if (t === "MN" || t === "1MN" || t === "1MONTH") return 43200;
+  return null;
+}
+async function propagateLowerTfToHigherTfCache(symbol, srcTf, snapshot) {
+  try {
+    const bars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
+    if (!bars.length) return;
+    const last = bars[bars.length - 1] || {};
+    const srcMin = tfToMinutesForHierarchy(srcTf);
+    const hi = Number(last.high);
+    const lo = Number(last.low);
+    const cl = Number(last.close);
+    const tm = Number(last.time);
+    if (!Number.isFinite(srcMin) || !Number.isFinite(hi) || !Number.isFinite(lo))
+      return;
+    const targets = ["15M", "1H", "4H", "D", "W", "MN"];
+    for (const tgt of targets) {
+      const tgtMin = tfToMinutesForHierarchy(tgt);
+      if (!Number.isFinite(tgtMin) || tgtMin <= srcMin) continue;
+      const existing = await tfCacheGet(symbol, tgt);
+      if (!existing || !Array.isArray(existing.bars) || !existing.bars.length)
+        continue;
+      const next = { ...existing, bars: [...existing.bars] };
+      const idx = next.bars.length - 1;
+      const b = { ...(next.bars[idx] || {}) };
+      const bHigh = Number(b.high);
+      const bLow = Number(b.low);
+      b.high = Number.isFinite(bHigh) ? Math.max(bHigh, hi) : hi;
+      b.low = Number.isFinite(bLow) ? Math.min(bLow, lo) : lo;
+      if (Number.isFinite(cl)) b.close = cl;
+      b.synthetic_recent = true;
+      b.synthetic_source_tf = String(srcTf || "").toUpperCase();
+      if (Number.isFinite(tm)) b.synthetic_source_time = tm;
+      next.bars[idx] = b;
+      next.bar_end = b.time || next.bar_end;
+      next.last_price = Number.isFinite(cl) ? cl : next.last_price;
+      next.cache_source = next.cache_source || "memory";
+      next.synthetic_recent = {
+        source_tf: String(srcTf || "").toUpperCase(),
+        high: hi,
+        low: lo,
+        close: Number.isFinite(cl) ? cl : null,
+        time: Number.isFinite(tm) ? tm : null,
+      };
+      await tfCacheSet(symbol, tgt, { ...next, _skip_propagate: true });
+    }
+  } catch (_) {}
+}
 async function tfCacheGet(symbol, tf) {
   const key = tfCacheKey(symbol, tf);
   const e = MARKET_DATA_TF_CACHE.get(key);
@@ -1016,6 +1073,13 @@ async function tfCacheSet(symbol, tf, data) {
       }
     }
   } catch (_) {}
+  if (!data?._skip_propagate) {
+    await propagateLowerTfToHigherTfCache(
+      String(symbol || "").toUpperCase(),
+      String(tf || "").toUpperCase(),
+      { bars: Array.isArray(data?.bars) ? data.bars : [] },
+    );
+  }
 }
 
 /**

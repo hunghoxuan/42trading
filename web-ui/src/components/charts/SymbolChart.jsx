@@ -128,6 +128,8 @@ function TfHeader({
   analysisSnapshot,
   barsStatus,
   snapshotStatus,
+  onRefreshTf,
+  forceRefresh,
 }) {
   const snapInfo = master?.snapshots?.[tf.toLowerCase()] || null;
   const showSnapshotBadge = mode === "snapshots" && !!snapInfo?.file_name;
@@ -160,6 +162,25 @@ function TfHeader({
       style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}
     >
       <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
+      {typeof onRefreshTf === "function" && (
+        <button
+          type="button"
+          onClick={() => onRefreshTf(tf)}
+          className="secondary-button"
+          style={{
+            fontSize: 9,
+            padding: "0 4px",
+            lineHeight: 1.2,
+            minHeight: 16,
+            borderRadius: 3,
+            color: forceRefresh ? "#60a5fa" : "var(--muted)",
+            borderColor: forceRefresh ? "#60a5fa66" : "var(--border)",
+          }}
+          title={`Refresh ${tf} (${forceRefresh ? "force=true" : "force=false"})`}
+        >
+          ⟳
+        </button>
+      )}
       {htfBias && (
         <span
           style={{
@@ -196,8 +217,10 @@ function TfHeader({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            cursor: typeof onRefreshTf === "function" ? "pointer" : "default",
           }}
           title={`cached: ${showDateTime(context?.cached_at)} | source: ${cacheSourceLabel}`}
+          onClick={() => onRefreshTf?.(tf)}
         >
           {cacheSourceLabel}
           {cacheTimeText ? ` ${cacheTimeText}` : ""}
@@ -318,6 +341,7 @@ export default function SymbolChart({
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
+  const [forceRefresh, setForceRefresh] = useState(false);
   const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
@@ -352,7 +376,7 @@ export default function SymbolChart({
     return () => window.removeEventListener("resize", updateWidth);
   }, []);
 
-  const { status, master, error, cachedAt, refresh, liveKey, snapshotState } =
+  const { status, master, error, cachedAt, refresh, refreshTf, liveKey, snapshotState } =
     useSymbolChartData({
       symbol: cleanSym,
       timeframes,
@@ -428,6 +452,51 @@ export default function SymbolChart({
     () => (annotations || []).find((a) => a.id === selectedObjectId) || null,
     [annotations, selectedObjectId],
   );
+  const selectedObjectTfPropsText = useMemo(() => {
+    if (!selectedObject) return "";
+    const parts = [];
+    for (const tf of sortedTfs || []) {
+      const tfKey = String(tf || "").toLowerCase();
+      const chartId = `${cleanSym}-${tfKey}`;
+      const vp = viewports?.[chartId] || null;
+      const range =
+        vp &&
+        Number.isFinite(Number(vp.timeStartMs)) &&
+        Number.isFinite(Number(vp.timeEndMs)) &&
+        Number.isFinite(Number(vp.priceTop)) &&
+        Number.isFinite(Number(vp.priceBottom))
+          ? {
+              t0: Math.min(Number(vp.timeStartMs), Number(vp.timeEndMs)),
+              t1: Math.max(Number(vp.timeStartMs), Number(vp.timeEndMs)),
+              pMin: Math.min(Number(vp.priceTop), Number(vp.priceBottom)),
+              pMax: Math.max(Number(vp.priceTop), Number(vp.priceBottom)),
+            }
+          : barsRange(master?.bars?.[tfKey] || []);
+      const t1 = toEpochMs(selectedObject.anchorTimeMs);
+      const t2 = toEpochMs(selectedObject.anchorTimeMs2);
+      const p1 = Number(selectedObject.anchorPrice);
+      const p2 = Number(selectedObject.anchorPrice2);
+      const rT1 = Number.isFinite(t1)
+        ? t1
+        : anchorTimeFromRatio(Number(selectedObject.xRatio ?? 0.5), range);
+      const rT2 = Number.isFinite(t2)
+        ? t2
+        : anchorTimeFromRatio(Number(selectedObject.x2Ratio ?? 0.8), range);
+      const rP1 = Number.isFinite(p1)
+        ? p1
+        : anchorPriceFromRatio(
+            Number(selectedObject.yRatio ?? selectedObject.y1Ratio ?? 0.5),
+            range,
+          );
+      const rP2 = Number.isFinite(p2)
+        ? p2
+        : anchorPriceFromRatio(Number(selectedObject.y2Ratio ?? 0.6), range);
+      parts.push(
+        `time1_${tfKey}=${rT1 ?? "n/a"} time2_${tfKey}=${rT2 ?? "n/a"} price1_${tfKey}=${Number.isFinite(rP1) ? rP1.toFixed(2) : "n/a"} price2_${tfKey}=${Number.isFinite(rP2) ? rP2.toFixed(2) : "n/a"}`,
+      );
+    }
+    return parts.join(" | ");
+  }, [selectedObject, sortedTfs, cleanSym, viewports, master]);
 
   const handleModeClick = useCallback((newMode) => {
     if (newMode === "live") {
@@ -572,6 +641,14 @@ export default function SymbolChart({
     if (!payload?.chartId) return;
     setViewports((prev) => ({ ...prev, [payload.chartId]: payload }));
   }, []);
+
+  const handleRefreshTf = useCallback(
+    (tf) => {
+      if (!tf) return;
+      refreshTf?.(tf, { force: forceRefresh });
+    },
+    [refreshTf, forceRefresh],
+  );
 
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
@@ -734,6 +811,25 @@ export default function SymbolChart({
               {(pendingMode || mode) === m && status === "LOADING" && " \u23F3"}
             </button>
           ))}
+          {mode === "cache" && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setForceRefresh((v) => !v)}
+              title={`TF refresh force=${forceRefresh ? "true" : "false"}`}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "3px 7px",
+                borderRadius: 4,
+                color: forceRefresh ? "#60a5fa" : "var(--muted)",
+                borderColor: forceRefresh ? "#60a5fa66" : "var(--border)",
+                background: forceRefresh ? "#60a5fa22" : "transparent",
+              }}
+            >
+              ⟳
+            </button>
+          )}
           {mode === "cache" && (
             <button
               className={editObjects ? "primary-button" : "secondary-button"}
@@ -910,6 +1006,8 @@ export default function SymbolChart({
                 analysisSnapshot={analysisSnapshot}
                 barsStatus={barsStatus}
                 snapshotStatus={snapshotStatus}
+                onRefreshTf={mode === "cache" ? handleRefreshTf : null}
+                forceRefresh={forceRefresh}
               />
               {isLive ? (
                 <iframe
@@ -1267,7 +1365,7 @@ export default function SymbolChart({
           ))}
           <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
             {selectedObject
-              ? `${selectedObject.type || selectedObject.kind} | kind=${selectedObject.kind} | xRatio=${Number(selectedObject.xRatio ?? 0).toFixed(4)} | yRatio=${Number(selectedObject.yRatio ?? 0).toFixed(4)} | y1=${Number(selectedObject.y1Ratio ?? 0).toFixed(4)} | y2=${Number(selectedObject.y2Ratio ?? 0).toFixed(4)} | t=${selectedObject.anchorTimeMs ?? "n/a"} | p=${selectedObject.anchorPrice ?? "n/a"}`
+              ? `${selectedObject.type || selectedObject.kind} | kind=${selectedObject.kind} | ${selectedObjectTfPropsText}`
               : "Select object to inspect live properties"}
           </span>
         </div>

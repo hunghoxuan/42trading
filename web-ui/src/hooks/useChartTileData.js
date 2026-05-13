@@ -342,6 +342,52 @@ export function useSymbolChartData({
     [sym, tfs, mode, fetchAll],
   );
 
+  const refreshTf = useCallback(
+    async (tf, opts = {}) => {
+      if (!sym) return null;
+      if (mode === "live") return null;
+      if (skipFetch) return null;
+      const tfKey = tfNorm(tf);
+      if (!tfKey) return null;
+      const force = opts.force === true;
+      try {
+        if (mode === "cache") {
+          const out = await api.chartTwelveCandles(sym, tfKey, 300, force);
+          const snap =
+            out?.snapshot && typeof out.snapshot === "object"
+              ? out.snapshot
+              : null;
+          const tfData = {
+            bars: Array.isArray(snap?.bars) ? snap.bars : [],
+            bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
+            bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
+            last_price: snap?.last_price ?? null,
+            cache_source: out?.source || "remote_api",
+            reason:
+              out?.cache_debug && typeof out.cache_debug === "object"
+                ? `redis=${out.cache_debug.redis_key || "-"} ttl=${out.cache_debug.ttl_sec || "-"}s tf=${out.cache_debug.timeframe_normalized || "-"} api=${out.cache_debug.binance_interval || "-"}`
+                : "",
+          };
+          if (tfData.bars.length > 0) {
+            chartFetchManager.set(sym, tfKey, tfData);
+            setData((prev) => ({
+              ...(prev || {}),
+              [tfKey]: { ...tfData, created_at: Date.now() },
+            }));
+            setStatus("READY");
+          }
+          return tfData;
+        }
+        // snapshot mode: fallback to full refresh currently
+        return refresh({ force });
+      } catch (err) {
+        console.warn("[ChartData] refreshTf error:", err?.message || err);
+        return null;
+      }
+    },
+    [sym, mode, skipFetch, refresh],
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     if (!sym) {
@@ -418,6 +464,7 @@ export function useSymbolChartData({
     error,
     cachedAt: master?.cached_at || null,
     refresh,
+    refreshTf,
     liveKey,
     snapMsg,
     snapshotState: {
