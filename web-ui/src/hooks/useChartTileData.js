@@ -66,10 +66,28 @@ function tfRankMinutes(tf) {
   return Number.MAX_SAFE_INTEGER;
 }
 
-function barsForTf(_tf, barsCount) {
+const BARS_BY_PROFILE = {
+  position: { d: 300, "4h": 500, "1h": 800, "15m": 0, "5m": 0, "1m": 0 },
+  swing:    { d: 250, "4h": 400, "1h": 640, "15m": 720, "5m": 0, "1m": 0 },
+  day:      { d: 200, "4h": 360, "1h": 600, "15m": 720, "5m": 900, "1m": 0 },
+  scalp:    { d: 60,  "4h": 240, "1h": 480, "15m": 600, "5m": 720, "1m": 900 },
+};
+
+function barsForTf(tf, barsCount, profile = "day") {
   const n = Number(barsCount);
-  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BARS_COUNT;
-  return Math.max(50, Math.min(5000, Math.round(n)));
+  // Explicit bars count (non-zero, non-default) → use directly
+  if (Number.isFinite(n) && n > 0) return Math.max(50, Math.min(5000, Math.round(n)));
+  // Default (0 or invalid) → use profile-based counts
+  const t = String(tf || "").toLowerCase();
+  let key = t;
+  if (t === "1d" || t === "day") key = "d";
+  else if (t === "240" || t === "4hour") key = "4h";
+  else if (t === "60" || t === "1hour") key = "1h";
+  else if (t === "15" || t === "15min") key = "15m";
+  else if (t === "5" || t === "5min") key = "5m";
+  else if (t === "1" || t === "1min") key = "1m";
+  const p = BARS_BY_PROFILE[profile] || BARS_BY_PROFILE.day;
+  return p[key] || 300;
 }
 
 function alignLatestPriceAcrossTf(entries = {}, tfs = []) {
