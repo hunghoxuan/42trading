@@ -253,8 +253,10 @@ export default function SymbolChart({
     keyLevels: false,
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
-  const [sharedLines, setSharedLines] = useState([]);
+  const [annotations, setAnnotations] = useState([]);
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [drawMode, setDrawMode] = useState(null);
+  const dragRef = useRef(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
@@ -419,8 +421,38 @@ export default function SymbolChart({
 
   useEffect(() => {
     const onDocClick = () => setCtxMenu(null);
+    const onMove = (evt) => {
+      if (!dragRef.current) return;
+      const d = dragRef.current;
+      const rect = d.rect;
+      const x = evt.clientX - rect.left;
+      const y = evt.clientY - rect.top;
+      const xr = Math.max(0, Math.min(1, x / Math.max(rect.width, 1)));
+      const yr = Math.max(0, Math.min(1, y / Math.max(rect.height, 1)));
+      setAnnotations((prev) =>
+        prev.map((a) => {
+          if (a.id !== d.id) return a;
+          if (a.kind === "line") return { ...a, yRatio: yr };
+          if (a.kind === "point") return { ...a, xRatio: xr, yRatio: yr };
+          if (a.kind === "zone") {
+            if (d.edge === "top") return { ...a, y1Ratio: yr };
+            if (d.edge === "bottom") return { ...a, y2Ratio: yr };
+          }
+          return a;
+        }),
+      );
+    };
+    const onUp = () => {
+      dragRef.current = null;
+    };
     document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("click", onDocClick);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
   }, []);
 
   const handleContextRequest = useCallback((payload) => {
@@ -428,14 +460,49 @@ export default function SymbolChart({
   }, []);
 
   const handleDrawLine = useCallback(() => {
-    if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+    if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    setSharedLines((prev) => [
+    setAnnotations((prev) => [
       ...prev,
-      { id, price: Number(ctxMenu.price), color: "#60a5fa", label: "LINE" },
+      { id, kind: "line", type: "LINE", color: "#60a5fa", yRatio: Number(ctxMenu.yRatio) },
     ]);
     setCtxMenu(null);
   }, [ctxMenu]);
+
+  const addObject = useCallback(
+    (type, color, kind = "line") => {
+      if (!ctxMenu) return;
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      if (kind === "point") {
+        setAnnotations((prev) => [
+          ...prev,
+          {
+            id,
+            kind: "point",
+            type,
+            color,
+            xRatio: Number(ctxMenu.xRatio || 0.5),
+            yRatio: Number(ctxMenu.yRatio || 0.5),
+          },
+        ]);
+      } else if (kind === "zone") {
+        setDrawMode("zone");
+      } else {
+        setAnnotations((prev) => [
+          ...prev,
+          {
+            id,
+            kind: "line",
+            type,
+            color,
+            yRatio: Number(ctxMenu.yRatio || 0.5),
+          },
+        ]);
+      }
+      setCtxMenu(null);
+    },
+    [ctxMenu],
+  );
 
   const handleQuickTrade = useCallback(
     (side) => {
@@ -637,7 +704,7 @@ export default function SymbolChart({
           const noData = !isLive && !hasBars && status !== "LOADING";
 
           return (
-            <div key={`${mode}-${tf}`} style={{ minWidth: 0 }}>
+            <div key={`${mode}-${tf}`} style={{ minWidth: 0, position: "relative" }}>
               <TfHeader
                 tf={tf}
                 context={context}
@@ -690,11 +757,138 @@ export default function SymbolChart({
                     mode === "cache" ? setSyncedCrosshair : undefined
                   }
                   onBarsLoaded={handleBarsLoaded}
-                  sharedLines={mode === "cache" ? sharedLines : []}
+                  sharedLines={mode === "cache" ? [] : []}
                   onContextRequest={
                     mode === "cache" ? handleContextRequest : undefined
                   }
                 />
+                {mode === "cache" && (
+                  <div
+                    style={{ position: "absolute", inset: 0 }}
+                    onMouseDown={(evt) => {
+                      const rect = evt.currentTarget.getBoundingClientRect();
+                      const x = evt.clientX - rect.left;
+                      const y = evt.clientY - rect.top;
+                      const xr = Math.max(0, Math.min(1, x / Math.max(rect.width, 1)));
+                      const yr = Math.max(0, Math.min(1, y / Math.max(rect.height, 1)));
+                      if (drawMode === "zone") {
+                        const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                        const start = { x: xr, y: yr };
+                        const onUp = (upEvt) => {
+                          const ux = upEvt.clientX - rect.left;
+                          const uy = upEvt.clientY - rect.top;
+                          const xr2 = Math.max(0, Math.min(1, ux / Math.max(rect.width, 1)));
+                          const yr2 = Math.max(0, Math.min(1, uy / Math.max(rect.height, 1)));
+                          setAnnotations((prev) => [
+                            ...prev,
+                            {
+                              id,
+                              kind: "zone",
+                              type: "ZONE",
+                              color: "#22c55e",
+                              x1Ratio: Math.min(start.x, xr2),
+                              x2Ratio: Math.max(start.x, xr2),
+                              y1Ratio: start.y,
+                              y2Ratio: yr2,
+                            },
+                          ]);
+                          setDrawMode(null);
+                          window.removeEventListener("mouseup", onUp);
+                        };
+                        window.addEventListener("mouseup", onUp);
+                        evt.preventDefault();
+                        return;
+                      }
+                      const hit = (annotations || [])
+                        .map((a) => {
+                          if (a.kind === "line") {
+                            const ay = Number(a.yRatio) * rect.height;
+                            return { a, d: Math.abs(ay - y), edge: null };
+                          }
+                          if (a.kind === "point") {
+                            const ax = Number(a.xRatio) * rect.width;
+                            const ay = Number(a.yRatio) * rect.height;
+                            return { a, d: Math.hypot(ax - x, ay - y), edge: null };
+                          }
+                          if (a.kind === "zone") {
+                            const y1 = Number(a.y1Ratio) * rect.height;
+                            const y2 = Number(a.y2Ratio) * rect.height;
+                            const lo = Math.min(y1, y2);
+                            const hi = Math.max(y1, y2);
+                            if (y < lo - 6 || y > hi + 6) return null;
+                            const dTop = Math.abs(y - lo);
+                            const dBot = Math.abs(y - hi);
+                            return { a, d: Math.min(dTop, dBot), edge: dTop < dBot ? "top" : "bottom" };
+                          }
+                          return null;
+                        })
+                        .filter(Boolean)
+                        .sort((p, q) => p.d - q.d)[0];
+                      if (hit && hit.d <= 10) {
+                        dragRef.current = { id: hit.a.id, edge: hit.edge, rect };
+                        evt.preventDefault();
+                      }
+                    }}
+                  >
+                    {(annotations || []).map((a) => {
+                      if (a.kind === "line") {
+                        return (
+                          <div
+                            key={a.id}
+                            style={{
+                              position: "absolute",
+                              left: 0,
+                              right: 0,
+                              top: `${Number(a.yRatio || 0.5) * 100}%`,
+                              borderTop: `1px dashed ${a.color || "#60a5fa"}`,
+                              pointerEvents: "none",
+                            }}
+                          />
+                        );
+                      }
+                      if (a.kind === "point") {
+                        return (
+                          <div
+                            key={a.id}
+                            style={{
+                              position: "absolute",
+                              left: `${Number(a.xRatio || 0.5) * 100}%`,
+                              top: `${Number(a.yRatio || 0.5) * 100}%`,
+                              width: 8,
+                              height: 8,
+                              borderRadius: "50%",
+                              background: a.color || "#eab308",
+                              transform: "translate(-50%, -50%)",
+                              pointerEvents: "none",
+                            }}
+                          />
+                        );
+                      }
+                      if (a.kind === "zone") {
+                        const y1 = Number(a.y1Ratio || 0.4);
+                        const y2 = Number(a.y2Ratio || 0.6);
+                        const x1 = Number(a.x1Ratio || 0.2);
+                        const x2 = Number(a.x2Ratio || 0.8);
+                        return (
+                          <div
+                            key={a.id}
+                            style={{
+                              position: "absolute",
+                              left: `${Math.min(x1, x2) * 100}%`,
+                              top: `${Math.min(y1, y2) * 100}%`,
+                              width: `${Math.abs(x2 - x1) * 100}%`,
+                              height: `${Math.abs(y2 - y1) * 100}%`,
+                              border: `1px solid ${a.color || "#22c55e"}`,
+                              background: `${a.color || "#22c55e"}22`,
+                              pointerEvents: "none",
+                            }}
+                          />
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+                )}
               ) : (
                 <div
                   style={{
@@ -737,6 +931,12 @@ export default function SymbolChart({
         >
           {[
             { label: "Draw line", fn: handleDrawLine },
+            { label: "OB", fn: () => addObject("OB", "#f59e0b") },
+            { label: "FVG", fn: () => addObject("FVG", "#a855f7") },
+            { label: "S/R", fn: () => addObject("S/R", "#22c55e") },
+            { label: "Swept", fn: () => addObject("Swept", "#ef4444") },
+            { label: "Point", fn: () => addObject("Point", "#eab308", "point") },
+            { label: "Rectangle Zone", fn: () => addObject("ZONE", "#22c55e", "zone") },
             { label: "Buy", fn: () => handleQuickTrade("BUY") },
             { label: "Sell", fn: () => handleQuickTrade("SELL") },
           ].map((it) => (
@@ -757,6 +957,66 @@ export default function SymbolChart({
             >
               {it.label}
             </button>
+          ))}
+        </div>
+      )}
+      {mode === "cache" && (
+        <div
+          style={{
+            marginTop: 8,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: "6px 8px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span className="minor-text" style={{ fontSize: 10 }}>
+            Objects ({annotations.length})
+          </span>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setAnnotations([])}
+            style={{ fontSize: 10, padding: "2px 6px" }}
+          >
+            Remove All
+          </button>
+          {annotations.map((a) => (
+            <span
+              key={a.id}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                border: `1px solid ${a.color || "var(--border)"}`,
+                color: a.color || "var(--foreground)",
+                borderRadius: 12,
+                padding: "2px 8px",
+                fontSize: 10,
+              }}
+            >
+              {a.type}
+              <button
+                type="button"
+                onClick={() =>
+                  setAnnotations((prev) => prev.filter((x) => x.id !== a.id))
+                }
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "inherit",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  lineHeight: 1,
+                }}
+                title="Remove"
+              >
+                x
+              </button>
+            </span>
           ))}
         </div>
       )}

@@ -715,6 +715,14 @@ export default function TradeSignalChart({
               const rect = chartElement.getBoundingClientRect();
               const x = evt.clientX - rect.left;
               const y = evt.clientY - rect.top;
+              const xRatio = Math.max(
+                0,
+                Math.min(1, x / Math.max(rect.width, 1)),
+              );
+              const yRatio = Math.max(
+                0,
+                Math.min(1, y / Math.max(rect.height, 1)),
+              );
               const price = candleSeries.coordinateToPrice(y);
               const time = chart.timeScale().coordinateToTime(x);
               if (!Number.isFinite(Number(price))) return;
@@ -725,6 +733,8 @@ export default function TradeSignalChart({
                 interval,
                 price: Number(price),
                 time: time || null,
+                xRatio,
+                yRatio,
                 clientX: evt.clientX,
                 clientY: evt.clientY,
               });
