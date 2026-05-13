@@ -70,6 +70,73 @@ function formatTimeframe(min) {
   return `${n / 43200}M`;
 }
 
+const DASHBOARD_CALENDAR_CACHE_KEY = "tvbridge_dashboard_calendar_master_v1";
+
+function normalizeDateKey(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.slice(0, 10);
+}
+
+function buildDailyPnlMap(points = []) {
+  const map = {};
+  for (const item of Array.isArray(points) ? points : []) {
+    const d = normalizeDateKey(item?.x || item?.date || item?.day);
+    if (!d) continue;
+    const pnl = Number(item?.y ?? item?.pnl ?? item?.pnl_money ?? 0);
+    if (!Number.isFinite(pnl)) continue;
+    map[d] = { date: d, pnl };
+  }
+  return map;
+}
+
+function mergeDailyPnlMap(base = {}, incoming = {}) {
+  const out = { ...(base || {}) };
+  for (const [k, v] of Object.entries(incoming || {})) {
+    const d = normalizeDateKey(k);
+    if (!d) continue;
+    const pnl = Number(v?.pnl ?? v?.pnl_money ?? 0);
+    if (!Number.isFinite(pnl)) continue;
+    out[d] = { date: d, pnl };
+  }
+  return out;
+}
+
+function loadCalendarCache() {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_CALENDAR_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCalendarCache(cache = {}) {
+  try {
+    sessionStorage.setItem(
+      DASHBOARD_CALENDAR_CACHE_KEY,
+      JSON.stringify(cache || {}),
+    );
+  } catch {
+    // ignore storage quota/runtime issues
+  }
+}
+
+function calendarScopeKey(filters = {}, userId = "") {
+  return JSON.stringify({
+    user_id: String(userId || ""),
+    account_id: String(filters?.account_id || ""),
+    symbol: String(filters?.symbol || "").toUpperCase(),
+    source: String(filters?.source || ""),
+    entry_model: String(filters?.entry_model || ""),
+    direction: String(filters?.direction || "").toUpperCase(),
+    chart_tf: String(filters?.chart_tf || ""),
+    signal_tf: String(filters?.signal_tf || ""),
+  });
+}
+
 function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
   const [sortKey, setSortKey] = useState("WR");
   const [sortDir, setSortDir] = useState("DESC");
@@ -275,6 +342,7 @@ export default function DashboardPage() {
     range: "all",
   });
   const inFlightRef = useRef(false);
+  const calendarMasterRef = useRef(loadCalendarCache());
 
   async function load() {
     if (inFlightRef.current) return;
@@ -285,6 +353,18 @@ export default function DashboardPage() {
         api.v2Accounts(),
       ]);
       setData(resp);
+      const userKey = calendarScopeKey(filters, resp?.filters?.user_id || "");
+      const dailyMap = buildDailyPnlMap(resp?.pnl_series || []);
+      const merged = mergeDailyPnlMap(
+        calendarMasterRef.current?.[userKey] || {},
+        dailyMap,
+      );
+      calendarMasterRef.current = {
+        ...(calendarMasterRef.current || {}),
+        [userKey]: merged,
+      };
+      saveCalendarCache(calendarMasterRef.current);
+      setCalendarData(merged);
       setAccounts(Array.isArray(accs?.items) ? accs.items : []);
       setError("");
       setLastRefreshAt(new Date());
@@ -328,24 +408,6 @@ export default function DashboardPage() {
     filters.signal_tf,
     filters.range,
   ]);
-
-  useEffect(() => {
-    api
-      .dashboardSeries("month")
-      .then((res) => {
-        const map = {};
-        const series = res?.points || res?.series || [];
-        if (res?.ok && Array.isArray(series)) {
-          series.forEach((item) => {
-            const d = String(item.x || item.date || item.day || "").slice(0, 10);
-            const pnl = Number(item.y ?? item.pnl ?? item.pnl_money ?? 0);
-            if (d) map[d] = { pnl, date: d };
-          });
-        }
-        setCalendarData(map);
-      })
-      .catch(() => setCalendarData({}));
-  }, []);
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <div className="loading">Loading dashboard...</div>;
@@ -613,15 +675,27 @@ export default function DashboardPage() {
                       opacity: 0.9,
                     }}
                   >
-                    T: {v.total_trades || 0} | W: {v.total_wins}{" "}
+                    T: {v.total_trades || 0} | W: {v.total_wins || 0} | L:{" "}
+                    {v.total_losses || 0}
+                  </div>
+                  <div
+                    className="minor-text"
+                    style={{
+                      marginTop: "2px",
+                      fontSize: "10px",
+                      whiteSpace: "nowrap",
+                      opacity: 0.78,
+                      fontWeight: 400,
+                    }}
+                  >
+                    WR: {asPct(winrate)} | RR: {asRR(v.total_rr || 0)} | W$:{" "}
                     <span className="money-pos">
                       {asMoneySigned(v.win_sum_pnl || 0)}
                     </span>{" "}
-                    | L: {v.total_losses}{" "}
+                    | L$:{" "}
                     <span className="money-neg">
                       {asMoneySigned(v.lose_sum_pnl || 0)}
-                    </span>{" "}
-                    | WR: {asPct(winrate)} | RR: {asRR(v.total_rr || 0)}
+                    </span>
                   </div>
                 </article>
               );
@@ -799,19 +873,30 @@ export default function DashboardPage() {
                       <div
                         key={d}
                         style={{
-                          padding: "4px 2px",
-                          borderRadius: 4,
+                          padding: "8px 4px 10px",
+                          borderRadius: 8,
                           fontSize: 11,
                           border:
                             pnl != null
                               ? pnl > 0
-                                ? "1.5px solid rgba(38,166,154,0.5)"
+                                ? "1px solid rgba(16,185,129,0.35)"
                                 : pnl < 0
-                                  ? "1.5px solid rgba(239,83,80,0.5)"
-                                  : "1px solid var(--border)"
+                                  ? "1px solid rgba(239,68,68,0.35)"
+                                  : "1px solid rgba(148,163,184,0.25)"
                               : "1px solid transparent",
-                          background: "transparent",
+                          background:
+                            pnl != null
+                              ? pnl > 0
+                                ? "linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.09))"
+                                : pnl < 0
+                                  ? "linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.09))"
+                                  : "rgba(148,163,184,0.10)"
+                              : "transparent",
+                          minHeight: 52,
                           cursor: pnl != null ? "pointer" : "default",
+                          display: "flex",
+                          flexDirection: "column",
+                          justifyContent: "space-between",
                         }}
                         title={
                           pnl != null
@@ -819,18 +904,28 @@ export default function DashboardPage() {
                             : dateStr
                         }
                       >
-                        <div style={{ fontWeight: 600 }}>{d}</div>
+                        <div
+                          style={{
+                            fontWeight: 700,
+                            fontSize: 12,
+                            color:
+                              pnl != null ? "var(--text)" : "var(--muted)",
+                          }}
+                        >
+                          {d}
+                        </div>
                         {pnl != null && (
                           <div
                             style={{
                               color:
                                 pnl > 0 ? "var(--success)" : "var(--error)",
-                              fontSize: 9,
-                              fontWeight: 700,
+                              fontSize: 12,
+                              fontWeight: 800,
+                              letterSpacing: "0.1px",
                             }}
                           >
                             {pnl > 0 ? "+" : ""}
-                            {pnl.toFixed(0)}
+                            {pnl.toFixed(2)}
                           </div>
                         )}
                       </div>,
