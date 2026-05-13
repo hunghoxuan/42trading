@@ -43,7 +43,10 @@ export function useSymbolChartData({
 
       if (mode === "snapshots") {
         // Snapshot mode: list existing snapshots from VPS
-        const batch = await api.chartSnapshots(100);
+        const batch = await Promise.race([
+          api.chartSnapshots(100),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Snapshot list timeout")), 15000)),
+        ]);
         console.log("[ChartData] snapshots list ok=" + batch?.ok + " items=" + (batch?.items?.length || 0));
         const items = Array.isArray(batch?.items) ? batch.items : [];
         // Filter by symbol (case-insensitive match in file_name)
