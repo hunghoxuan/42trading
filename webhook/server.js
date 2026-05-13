@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.12 21:30 - max-tokens-8k",
-); // recover trade_plan from raw malformed JSON before coverage fallback
+  "v2026.05.13 07:28 - tp-fallback-order-positive",
+); // TP resolver prefers first positive value in strict fallback order
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10333,19 +10333,26 @@ function dedupeTradePlans(plans = []) {
   return out;
 }
 
+function resolvePlanTakeProfit(plan = {}) {
+  const candidates = [
+    plan?.tp,
+    plan?.take_profit,
+    plan?.tp3,
+    plan?.tp2,
+    plan?.tp1,
+    plan?.multiple_exits?.tp3?.price,
+    plan?.multiple_exits?.tp2?.price,
+    plan?.multiple_exits?.tp1?.price,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
 function planPrimaryTpNumber(plan = {}) {
-  return Number(
-    plan?.tp ??
-      plan?.take_profit ??
-      plan?.tp3 ??
-      plan?.tp2 ??
-      plan?.tp1 ??
-      plan?.multiple_exits?.full_tp?.price ??
-      plan?.multiple_exits?.tp3?.price ??
-      plan?.multiple_exits?.tp2?.price ??
-      plan?.multiple_exits?.tp1?.price ??
-      NaN,
-  );
+  return Number(resolvePlanTakeProfit(plan) ?? NaN);
 }
 
 function hasNumericEntrySlTp(plan = {}) {
@@ -10537,17 +10544,7 @@ function normalizeAiAnalysisContract(input = {}) {
       entry: x?.entry_price ?? x?.entry ?? null,
       sl: x?.stop_loss ?? x?.sl ?? null,
       be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-      tp:
-        planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-        planTakeProfitValue(
-          planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
-        ) ??
-        x?.take_profit ??
-        x?.multiple_exits?.full_tp?.price ??
-        x?.tp3 ??
-        x?.tp1 ??
-        x?.tp ??
-        null,
+      tp: resolvePlanTakeProfit(x),
       tp2:
         planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
         x?.multiple_exits?.tp2?.price ??
@@ -10735,16 +10732,7 @@ function normalizeAiAnalysisContract(input = {}) {
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
         be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-        tp:
-          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-          planTakeProfitValue(
-            planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
-          ) ??
-          x?.take_profit ??
-          x?.multiple_exits?.full_tp?.price ??
-          x?.tp3 ??
-          x?.tp ??
-          null,
+        tp: resolvePlanTakeProfit(x),
         tp2:
           planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
           x?.multiple_exits?.tp2?.price ??
@@ -10939,16 +10927,7 @@ function normalizeAiAnalysisContract(input = {}) {
         entry_model: x?.entry_model || "",
         entry: x?.entry_price ?? x?.entry ?? null,
         sl: x?.stop_loss ?? x?.sl ?? null,
-        tp:
-          planTakeProfitValue(
-            planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
-          ) ??
-          x?.take_profit ??
-          x?.multiple_exits?.full_tp?.price ??
-          x?.tp3 ??
-          x?.tp1 ??
-          x?.tp ??
-          null,
+        tp: resolvePlanTakeProfit(x),
         tp2:
           planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
           x?.multiple_exits?.tp2?.price ??
@@ -11002,12 +10981,12 @@ function normalizeAiAnalysisContract(input = {}) {
       sl: x?.sl ?? null,
       be_trigger: x?.be ?? null,
       tp:
-        x?.tp3 ??
+        resolvePlanTakeProfit(x) ??
         (Array.isArray(x?.tps) && x.tps[2]
           ? (x.tps[2].price ?? null)
           : Array.isArray(x?.tps) && x.tps.length
             ? (x.tps[x.tps.length - 1]?.price ?? null)
-            : (x?.tp ?? null)),
+            : null),
       tp2:
         x?.tp2 ??
         (Array.isArray(x?.tps) && x.tps[1] ? (x.tps[1].price ?? null) : null),
@@ -17024,23 +17003,12 @@ const appHandler = async (req, res) => {
         if (!requested.length) return out;
         const parseTradePlanItem = (plan, fallbackSymbol = "") => {
           if (!plan || typeof plan !== "object") return null;
-          const tpFromMultiple =
-            plan?.multiple_exits?.full_tp?.price ??
-            plan?.multiple_exits?.tp3?.price ??
-            plan?.multiple_exits?.tp2?.price ??
-            null;
           const parsedPlan = {
             ...(plan || {}),
             symbol: String(plan?.symbol || fallbackSymbol || "").trim(),
             entry: plan?.entry ?? plan?.entry_price ?? null,
             sl: plan?.sl ?? plan?.stop_loss ?? null,
-            tp:
-              plan?.tp3 ??
-              plan?.tp2 ??
-              plan?.tp ??
-              plan?.take_profit ??
-              tpFromMultiple ??
-              null,
+            tp: resolvePlanTakeProfit(plan),
           };
           return parsedPlan;
         };
@@ -17169,7 +17137,7 @@ const appHandler = async (req, res) => {
         for (const plan of plans) {
           const entry = Number(plan?.entry);
           const sl = Number(plan?.sl);
-          const tp = Number(plan?.tp3 ?? plan?.tp2 ?? plan?.tp);
+          const tp = Number(resolvePlanTakeProfit(plan));
           if (
             Number.isFinite(entry) &&
             Number.isFinite(sl) &&
