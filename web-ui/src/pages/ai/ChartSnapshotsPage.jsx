@@ -5986,7 +5986,7 @@ export default function ChartSnapshotsPage() {
           </div>
         ) : null}
 
-        {!hasAnalyzeResponse && selectedSymbol && (
+        {!hasAnalyzeResponse && !isTradeRoute && selectedSymbol && (
           <div
             className="browser-grid-v1"
             style={{
@@ -6011,6 +6011,7 @@ export default function ChartSnapshotsPage() {
                     onTrade={handleChartTrade}
                     showAnalyzeButton={isAnalyzeRoute}
                     showTradeButton={isAnalyzeRoute}
+                    showEditButton={!isTradeRoute}
                     onRemove={null}
                   />
                 </Suspense>
@@ -6106,9 +6107,9 @@ export default function ChartSnapshotsPage() {
               }}
               response={{
                 enabled: true,
-                hasData: hasAnalyzeResponse,
+                hasData: hasAnalyzeResponse || isTradeRoute,
                 pending: analyzing,
-                pendingText: hasAnalyzeResponse
+                pendingText: hasAnalyzeResponse || isTradeRoute
                   ? "Refreshing analysis result..."
                   : "Analyzing screenshots...",
                 label: "Response",

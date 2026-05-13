@@ -327,6 +327,7 @@ export default function SymbolChart({
   onTrade = null,
   showAnalyzeButton = true,
   showTradeButton = true,
+  showEditButton = true,
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -893,7 +894,7 @@ export default function SymbolChart({
               ⟳
             </button>
           )}
-          {mode === "cache" && showControls && (
+          {mode === "cache" && showControls && showEditButton && (
             <button
               className={editObjects ? "primary-button" : "secondary-button"}
               type="button"
