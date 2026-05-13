@@ -16,6 +16,27 @@ function tfSnapshotTokens(tf) {
   if (t === "5m" || t === "5") return ["5m", "5"];
   return [t];
 }
+function normalizeSnapshotTf(raw) {
+  const t = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!t) return "";
+  if (["d", "1d", "1day", "day"].includes(t)) return "d";
+  if (["4h", "240"].includes(t)) return "4h";
+  if (["1h", "60"].includes(t)) return "1h";
+  if (["15m", "15", "15min"].includes(t)) return "15m";
+  if (["5m", "5", "5min"].includes(t)) return "5m";
+  return t;
+}
+function inferTfFromFileName(fileName = "") {
+  const f = String(fileName || "").toLowerCase();
+  if (/(^|[_-])(d|1d|day)([_-]|$)/.test(f)) return "d";
+  if (/(^|[_-])(4h|240)([_-]|$)/.test(f)) return "4h";
+  if (/(^|[_-])(1h|60)([_-]|$)/.test(f)) return "1h";
+  if (/(^|[_-])(15m|15)([_-]|$)/.test(f)) return "15m";
+  if (/(^|[_-])(5m|5)([_-]|$)/.test(f)) return "5m";
+  return "";
+}
 function normSym(s) {
   const r = String(s || "")
     .trim()
@@ -122,13 +143,26 @@ export function useSymbolChartData({
             " count=" +
             matchingItems.length,
         );
+        const usedFiles = new Set();
         for (const tf of tfs) {
           const key = tfNorm(tf);
-          const tfTokens = tfSnapshotTokens(tf);
-          const found = matchingItems.find((x) => {
-            const f = String(x?.file_name || "").toLowerCase();
-            return tfTokens.some((token) => f.includes(`_${token.toLowerCase()}_`));
+          const tfWanted = normalizeSnapshotTf(tf);
+          let found = matchingItems.find((x) => {
+            if (usedFiles.has(String(x?.file_name || ""))) return false;
+            const tfApi = normalizeSnapshotTf(x?.timeframe || x?.tf);
+            const tfFile = inferTfFromFileName(x?.file_name || "");
+            return tfApi === tfWanted || tfFile === tfWanted;
           });
+          if (!found) {
+            const tfTokens = tfSnapshotTokens(tf);
+            found = matchingItems.find((x) => {
+              if (usedFiles.has(String(x?.file_name || ""))) return false;
+              const f = String(x?.file_name || "").toLowerCase();
+              return tfTokens.some((token) =>
+                f.includes(`_${token.toLowerCase()}_`),
+              );
+            });
+          }
           entries[key] = {
             bars: [],
             snapshot: found
@@ -141,7 +175,12 @@ export function useSymbolChartData({
                 }
               : null,
           };
-          if (found) console.log("[ChartData] snapshot match tf=" + tf + " file=" + found.file_name);
+          if (found) {
+            usedFiles.add(String(found.file_name || ""));
+            console.log(
+              "[ChartData] snapshot match tf=" + tf + " file=" + found.file_name,
+            );
+          }
         }
       } else {
         // Cache mode: fetch bars per TF via Twelve Data (parallel)
@@ -261,7 +300,9 @@ export function useSymbolChartData({
       } catch (err) {
         if (!mountedRef.current) return null;
         setStatus("ERROR");
-        setError(String(err?.message || err || "Failed"));
+        const msg = String(err?.message || err || "Failed");
+        setError(msg);
+        if (mode === "snapshots") setSnapMsg(msg);
         console.warn("[ChartData] refresh error:", err?.message || err);
         return null;
       }
