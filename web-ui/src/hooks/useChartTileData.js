@@ -7,6 +7,15 @@ function tfNorm(tf) {
     .toLowerCase()
     .trim();
 }
+function tfSnapshotTokens(tf) {
+  const t = tfNorm(tf);
+  if (t === "d" || t === "1d" || t === "1day") return ["d", "1d", "day"];
+  if (t === "4h" || t === "240") return ["4h", "240"];
+  if (t === "1h" || t === "60") return ["1h", "60"];
+  if (t === "15m" || t === "15") return ["15m", "15"];
+  if (t === "5m" || t === "5") return ["5m", "5"];
+  return [t];
+}
 function normSym(s) {
   const r = String(s || "")
     .trim()
@@ -58,9 +67,10 @@ export function useSymbolChartData({
         console.log("[ChartData] snapshots matching symbol=" + sym + " count=" + matchingItems.length);
         for (const tf of tfs) {
           const key = tfNorm(tf);
+          const tfTokens = tfSnapshotTokens(tf);
           const found = matchingItems.find((x) => {
-            const f = String(x?.file_name || "");
-            return f.includes("_" + tf + "_") || f.includes("_" + tf.toUpperCase() + "_");
+            const f = String(x?.file_name || "").toLowerCase();
+            return tfTokens.some((token) => f.includes(`_${token.toLowerCase()}_`));
           });
           entries[key] = {
             bars: [],
