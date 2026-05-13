@@ -14,6 +14,11 @@ function formatNum3(v) {
   if (!Number.isFinite(v)) return "";
   return String(Number(v.toFixed(3)));
 }
+function cleanFieldValue(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s || s === "null" || s === "undefined" || s === "nan") return "";
+  return String(v);
+}
 
 function calcSliderMeta(rawValue) {
   const n = parseNum(rawValue);
@@ -24,7 +29,7 @@ function calcSliderMeta(rawValue) {
   const span = magnitude * 0.25;
   const min = n - span;
   const max = n + span;
-  const step = Math.max(0.001, magnitude * 0.0005);
+  const step = Math.max(0.001, (max - min) / 100); // 1% of total range
   return { min, max, step, value: n, enabled: true };
 }
 
@@ -115,6 +120,17 @@ export function TradePlanEditor({
   }) => {
     const sliderMeta = sliderOverride || calcSliderMeta(value[k]);
     const isDisabled = fieldDisabled || controlsDisabled;
+    const adjustByStep = (dir) => {
+      if (isDisabled) return;
+      if (!sliderMeta.enabled) return;
+      const base = parseNum(value[k]) ?? sliderMeta.value ?? 0;
+      const nextRaw = base + dir * Number(sliderMeta.step || 0);
+      const next = Math.max(
+        Number(sliderMeta.min),
+        Math.min(Number(sliderMeta.max), nextRaw),
+      );
+      update(k, formatNum3(next));
+    };
     return (
       <div
         style={{
@@ -148,27 +164,73 @@ export function TradePlanEditor({
           inputMode="decimal"
           min={min}
           max={max}
-          value={value[k] || ""}
+          value={cleanFieldValue(value[k])}
           onChange={(e) => update(k, e.target.value)}
           disabled={isDisabled}
         />
-        <input
-          className="snapshot-number-slider-v4"
-          type="range"
-          min={sliderMeta.min}
-          max={sliderMeta.max}
-          step={sliderMeta.step}
-          value={sliderOverride ? Number(value[k]) || 2 : sliderMeta.value}
-          style={{ accentColor: "var(--muted)", height: "8px", margin: 0 }}
-          disabled={
-            fieldDisabled
-              ? true
-              : sliderOverride
-                ? controlsDisabled
-                : !sliderMeta.enabled || controlsDisabled
-          }
-          onChange={(e) => update(k, formatNum3(Number(e.target.value)))}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => adjustByStep(-1)}
+            disabled={
+              fieldDisabled
+                ? true
+                : sliderOverride
+                  ? controlsDisabled
+                  : !sliderMeta.enabled || controlsDisabled
+            }
+            style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1 }}
+            title="-1 step"
+          >
+            -
+          </button>
+          <input
+            className="snapshot-number-slider-v4"
+            type="range"
+            min={sliderMeta.min}
+            max={sliderMeta.max}
+            step={sliderMeta.step}
+            value={sliderOverride ? Number(value[k]) || 2 : sliderMeta.value}
+            style={{ accentColor: "var(--muted)", height: "8px", margin: 0, flex: 1 }}
+            disabled={
+              fieldDisabled
+                ? true
+                : sliderOverride
+                  ? controlsDisabled
+                  : !sliderMeta.enabled || controlsDisabled
+            }
+            onChange={(e) => update(k, formatNum3(Number(e.target.value)))}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => adjustByStep(1)}
+            disabled={
+              fieldDisabled
+                ? true
+                : sliderOverride
+                  ? controlsDisabled
+                  : !sliderMeta.enabled || controlsDisabled
+            }
+            style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1 }}
+            title="+1 step"
+          >
+            +
+          </button>
+          {["entry", "tp", "sl"].includes(String(k)) && (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => update(k, "")}
+              disabled={isDisabled}
+              style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1, color: "#ef4444", borderColor: "#ef444466" }}
+              title={`Clear ${label}`}
+            >
+              x
+            </button>
+          )}
+        </div>
       </div>
     );
   };
@@ -452,7 +514,7 @@ export function TradePlanEditor({
               step="0.1"
               min="0.3"
               max="10"
-              sliderOverride={{ min: 0.5, max: 8, step: 0.1 }}
+              sliderOverride={{ min: 0.5, max: 8, step: (8 - 0.5) / 100 }}
               disabled={tradeFieldsDisabled}
             />
 

@@ -1564,6 +1564,12 @@ export default function SignalDetailCard({
                   if (Number.isFinite(price)) tradePlan.onChange("tp", String(price));
                 } else if (action === "SL") {
                   if (Number.isFinite(price)) tradePlan.onChange("sl", String(price));
+                } else if (action === "CLEAR_TP") {
+                  tradePlan.onChange("tp", "");
+                } else if (action === "CLEAR_SL") {
+                  tradePlan.onChange("sl", "");
+                } else if (action === "CLEAR_ENTRY") {
+                  tradePlan.onChange("entry", "");
                 } else {
                   tradePlan.onChange("direction", side);
                   if (Number.isFinite(price)) {

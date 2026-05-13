@@ -566,10 +566,19 @@ export default function TradeSignalChart({
               if (!ep) return;
 
               const isPrimary = index === 0;
+              const dir = String(p.direction || "").toUpperCase();
+              const inferredBuy =
+                Number.isFinite(ep) &&
+                Number.isFinite(tp) &&
+                Number.isFinite(sp)
+                  ? tp > ep && sp < ep
+                  : Number.isFinite(ep) && Number.isFinite(tp)
+                    ? tp > ep
+                    : Number.isFinite(ep) && Number.isFinite(sp)
+                      ? sp < ep
+                      : true;
               const isBuy =
-                String(p.direction || "").toUpperCase() === "SELL"
-                  ? false
-                  : true;
+                dir === "BUY" ? true : dir === "SELL" ? false : inferredBuy;
               const actionLabel = isBuy ? "Buy" : "Sell";
               const pNum = index + 1;
 

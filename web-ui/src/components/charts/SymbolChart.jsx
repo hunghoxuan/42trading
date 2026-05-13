@@ -773,6 +773,21 @@ export default function SymbolChart({
     [ctxMenu, cleanSym, onQuickTradeIntent],
   );
 
+  const handleClearLevel = useCallback(
+    (kind) => {
+      const payload = {
+        symbol: cleanSym,
+        side: String(kind || "").toUpperCase(),
+        action: `CLEAR_${String(kind || "").toUpperCase()}`,
+        price: null,
+        time: null,
+        interval: null,
+      };
+      if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
+    },
+    [cleanSym, onQuickTradeIntent],
+  );
+
   return (
     <div
       ref={rootRef}
@@ -939,6 +954,36 @@ export default function SymbolChart({
                   {label}
                 </button>
               ))}
+              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
+                |
+              </span>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleClearLevel("ENTRY")}
+                style={{ fontSize: 10, padding: "2px 6px" }}
+                title="Clear Entry"
+              >
+                Entry x
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleClearLevel("TP")}
+                style={{ fontSize: 10, padding: "2px 6px", color: "#10b981", borderColor: "#10b98166" }}
+                title="Clear TP"
+              >
+                TP x
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => handleClearLevel("SL")}
+                style={{ fontSize: 10, padding: "2px 6px", color: "#ef4444", borderColor: "#ef444466" }}
+                title="Clear SL"
+              >
+                SL x
+              </button>
             </>
           )}
           <button
