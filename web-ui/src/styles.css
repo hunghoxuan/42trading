@@ -85,7 +85,7 @@ body { margin: 0;
 }
 
 /* Navigation */
-.topbar {
+.topbar { position: sticky; top: 0; z-index: 100; background: var(--bg);
     display: flex;
     justify-content: space-between;
     align-items: center;
