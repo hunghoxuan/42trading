@@ -402,6 +402,7 @@ export default function SymbolChart({
     keyLevels: false,
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
+  const [localBarsCount, setLocalBarsCount] = useState(barsCount);
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
@@ -423,6 +424,13 @@ export default function SymbolChart({
       setGridCols(Math.max(1, timeframes?.length || 1));
     }
   }, [initialGridCols, timeframes?.length]);
+
+  // Re-fetch when bars count changes (skip initial)
+  const barsInitRef = useRef(true);
+  useEffect(() => {
+    if (barsInitRef.current) { barsInitRef.current = false; return; }
+    if (mode !== "live") refresh({ force: true });
+  }, [localBarsCount]);
 
   useEffect(() => {
     if (!rootRef.current) return;
@@ -993,6 +1001,21 @@ export default function SymbolChart({
             )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* Bars combo */}
+          <select
+            className="secondary-button"
+            value={localBarsCount}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              setLocalBarsCount(n);
+            }}
+            style={{ fontSize: 10, padding: "2px 4px", height: 22 }}
+            title="Bars per TF (auto-scaled)"
+          >
+            {[50, 100, 200, 300, 500, 700, 1000].map((v) => (
+              <option key={v} value={v}>{v}b</option>
+            ))}
+          </select>
           {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
           {MODES.map((m) => (
             <button

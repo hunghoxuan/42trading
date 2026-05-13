@@ -142,7 +142,7 @@ export function useSymbolChartData({
           provider,
           session_prefix: sessionPrefix,
           snapshot_max_age_ms: 15 * 60 * 1000,
-          bars: 300,
+          bars: barsCount,
           force,
         };
         const snapshotMaxAgeMs = 15 * 60 * 1000;
@@ -293,7 +293,7 @@ export function useSymbolChartData({
           }
               }
               console.log("[ChartData] fetch tf=" + tf);
-              const out = await api.chartTwelveCandles(sym, tf, 300, force);
+              const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount), force);
               console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
               const tfData = {
