@@ -351,7 +351,9 @@ export default function SymbolChart({
       refresh({ force: false });
       return;
     }
-    setPendingMode(newMode);
+    // Switch immediately so user sees mode change right away, then fetch.
+    setMode(newMode);
+    setPendingMode(null);
     setLastError(null);
   }, [mode, pendingMode, status, refresh]);
 
