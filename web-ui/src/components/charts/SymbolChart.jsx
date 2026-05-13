@@ -63,6 +63,63 @@ function timeAgo(ts) {
   return Math.floor(hrs / 24) + "d ago";
 }
 
+function toEpochMs(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  if (n > 1e12) return n;
+  if (n > 1e9) return Math.round(n * 1000);
+  return null;
+}
+
+function barsRange(bars) {
+  const arr = Array.isArray(bars) ? bars : [];
+  if (!arr.length) return null;
+  let minP = Infinity;
+  let maxP = -Infinity;
+  const times = [];
+  for (const b of arr) {
+    const t = toEpochMs(b?.time);
+    if (t != null) times.push(t);
+    const lo = Number(b?.low);
+    const hi = Number(b?.high);
+    if (Number.isFinite(lo)) minP = Math.min(minP, lo);
+    if (Number.isFinite(hi)) maxP = Math.max(maxP, hi);
+  }
+  if (!times.length || !Number.isFinite(minP) || !Number.isFinite(maxP))
+    return null;
+  times.sort((a, b) => a - b);
+  return {
+    t0: times[0],
+    t1: times[times.length - 1],
+    pMin: minP,
+    pMax: maxP,
+  };
+}
+
+function ratioFromAnchorTime(anchorTimeMs, range) {
+  if (!range || !Number.isFinite(anchorTimeMs)) return null;
+  const span = Math.max(1, range.t1 - range.t0);
+  return clamp01((anchorTimeMs - range.t0) / span);
+}
+
+function ratioFromAnchorPrice(anchorPrice, range) {
+  if (!range || !Number.isFinite(anchorPrice)) return null;
+  const span = Math.max(1e-9, range.pMax - range.pMin);
+  return clamp01((range.pMax - anchorPrice) / span);
+}
+
+function anchorTimeFromRatio(r, range) {
+  if (!range) return null;
+  const rr = clamp01(r);
+  return Math.round(range.t0 + rr * Math.max(1, range.t1 - range.t0));
+}
+
+function anchorPriceFromRatio(r, range) {
+  if (!range) return null;
+  const rr = clamp01(r);
+  return range.pMax - rr * Math.max(1e-9, range.pMax - range.pMin);
+}
+
 function TfHeader({
   tf,
   context,
@@ -260,6 +317,8 @@ export default function SymbolChart({
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
+  const [editObjects, setEditObjects] = useState(false);
+  const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
@@ -347,6 +406,10 @@ export default function SymbolChart({
     }
     prevStatus.current = status;
   }, [status, error, pendingMode]);
+
+  useEffect(() => {
+    if (mode !== "cache") setEditObjects(false);
+  }, [mode]);
 
   const [loadedTfs, setLoadedTfs] = useState({}); // { tf: count }
   const handleBarsLoaded = useCallback((tf, count) => {
@@ -440,14 +503,49 @@ export default function SymbolChart({
       const y = evt.clientY - rect.top;
       const xr = Math.max(0, Math.min(1, x / Math.max(rect.width, 1)));
       const yr = Math.max(0, Math.min(1, y / Math.max(rect.height, 1)));
+      const range = d.range || null;
+      const nextAnchorTime = anchorTimeFromRatio(xr, range);
+      const nextAnchorPrice = anchorPriceFromRatio(yr, range);
       setAnnotations((prev) =>
         prev.map((a) => {
           if (a.id !== d.id) return a;
-          if (a.kind === "line") return { ...a, yRatio: yr };
-          if (a.kind === "point") return { ...a, xRatio: xr, yRatio: yr };
+          if (a.kind === "line")
+            return {
+              ...a,
+              yRatio: yr,
+              anchorPrice: Number.isFinite(nextAnchorPrice)
+                ? Number(nextAnchorPrice)
+                : a.anchorPrice,
+            };
+          if (a.kind === "point")
+            return {
+              ...a,
+              xRatio: xr,
+              yRatio: yr,
+              anchorTimeMs: Number.isFinite(nextAnchorTime)
+                ? Number(nextAnchorTime)
+                : a.anchorTimeMs,
+              anchorPrice: Number.isFinite(nextAnchorPrice)
+                ? Number(nextAnchorPrice)
+                : a.anchorPrice,
+            };
           if (a.kind === "zone") {
-            if (d.edge === "top") return { ...a, y1Ratio: yr };
-            if (d.edge === "bottom") return { ...a, y2Ratio: yr };
+            if (d.edge === "top")
+              return {
+                ...a,
+                y1Ratio: yr,
+                anchorPrice: Number.isFinite(nextAnchorPrice)
+                  ? Number(nextAnchorPrice)
+                  : a.anchorPrice,
+              };
+            if (d.edge === "bottom")
+              return {
+                ...a,
+                y2Ratio: yr,
+                anchorPrice2: Number.isFinite(nextAnchorPrice)
+                  ? Number(nextAnchorPrice)
+                  : a.anchorPrice2,
+              };
           }
           return a;
         }),
@@ -468,6 +566,11 @@ export default function SymbolChart({
 
   const handleContextRequest = useCallback((payload) => {
     setCtxMenu(payload || null);
+  }, []);
+
+  const handleViewportChange = useCallback((payload) => {
+    if (!payload?.chartId) return;
+    setViewports((prev) => ({ ...prev, [payload.chartId]: payload }));
   }, []);
 
   const handleDrawLine = useCallback(() => {
@@ -631,6 +734,23 @@ export default function SymbolChart({
               {(pendingMode || mode) === m && status === "LOADING" && " \u23F3"}
             </button>
           ))}
+          {mode === "cache" && (
+            <button
+              className={editObjects ? "primary-button" : "secondary-button"}
+              type="button"
+              onClick={() => setEditObjects((v) => !v)}
+              title={editObjects ? "Editing objects (drag/resize)" : "Navigate chart (pan/zoom)"}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "3px 7px",
+                borderRadius: 4,
+                minWidth: 34,
+              }}
+            >
+              Edit
+            </button>
+          )}
           {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
           {hasTradePlan && mode === "cache" && hasAnyBars && (
             <>
@@ -720,8 +840,65 @@ export default function SymbolChart({
           const isLive = mode === "live";
           const context = master?.context?.[tf.toLowerCase()];
           const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
-          const hasBars = status !== "LOADING" && (master?.bars?.[tf.toLowerCase()] || []).length > 0;
+          const barsForTf = master?.bars?.[tf.toLowerCase()] || [];
+          const hasBars = status !== "LOADING" && barsForTf.length > 0;
           const noData = !isLive && !hasBars && status !== "LOADING";
+          const tfViewport = viewports[chartId] || null;
+          const tfRangeFromViewport =
+            tfViewport &&
+            Number.isFinite(Number(tfViewport.timeStartMs)) &&
+            Number.isFinite(Number(tfViewport.timeEndMs)) &&
+            Number.isFinite(Number(tfViewport.priceTop)) &&
+            Number.isFinite(Number(tfViewport.priceBottom))
+              ? {
+                  t0: Math.min(
+                    Number(tfViewport.timeStartMs),
+                    Number(tfViewport.timeEndMs),
+                  ),
+                  t1: Math.max(
+                    Number(tfViewport.timeStartMs),
+                    Number(tfViewport.timeEndMs),
+                  ),
+                  pMin: Math.min(
+                    Number(tfViewport.priceTop),
+                    Number(tfViewport.priceBottom),
+                  ),
+                  pMax: Math.max(
+                    Number(tfViewport.priceTop),
+                    Number(tfViewport.priceBottom),
+                  ),
+                }
+              : null;
+          const tfRange = tfRangeFromViewport || barsRange(barsForTf);
+
+          const projectedAnnotations = (annotations || []).map((a) => {
+            const timeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs), tfRange);
+            const priceRatio = ratioFromAnchorPrice(Number(a.anchorPrice), tfRange);
+            const priceRatio2 = ratioFromAnchorPrice(Number(a.anchorPrice2), tfRange);
+            const x1TimeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs), tfRange);
+            const x2TimeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs2), tfRange);
+            return {
+              ...a,
+              _xRatio:
+                Number.isFinite(timeRatio) ? timeRatio : clamp01(Number(a.xRatio ?? 0.5)),
+              _yRatio:
+                Number.isFinite(priceRatio) ? priceRatio : clamp01(Number(a.yRatio ?? 0.5)),
+              _y1Ratio:
+                Number.isFinite(priceRatio) ? priceRatio : clamp01(Number(a.y1Ratio ?? 0.4)),
+              _y2Ratio:
+                Number.isFinite(priceRatio2)
+                  ? priceRatio2
+                  : clamp01(Number(a.y2Ratio ?? 0.6)),
+              _x1Ratio:
+                Number.isFinite(x1TimeRatio)
+                  ? x1TimeRatio
+                  : clamp01(Number(a.x1Ratio ?? 0.2)),
+              _x2Ratio:
+                Number.isFinite(x2TimeRatio)
+                  ? x2TimeRatio
+                  : clamp01(Number(a.x2Ratio ?? 0.8)),
+            };
+          });
 
           return (
             <div key={`${mode}-${tf}`} style={{ minWidth: 0, position: "relative" }}>
@@ -759,7 +936,7 @@ export default function SymbolChart({
                   chartId={chartId}
                   symbol={cleanSym}
                   interval={tf}
-                  historicalData={master?.bars?.[tf.toLowerCase()] || []}
+                  historicalData={barsForTf}
                   height={chartHeight}
                   analysisSnapshot={analysisSnapshot || null}
                   entryPrice={overlays.plan1 ? entryPrice : null}
@@ -782,6 +959,9 @@ export default function SymbolChart({
                   onContextRequest={
                     mode === "cache" ? handleContextRequest : undefined
                   }
+                  onViewportChange={
+                    mode === "cache" ? handleViewportChange : undefined
+                  }
                   />
                 {mode === "cache" && (
                   <div
@@ -789,7 +969,7 @@ export default function SymbolChart({
                       position: "absolute",
                       inset: 0,
                       zIndex: 25,
-                      pointerEvents: drawMode === "zone" ? "auto" : "none",
+                      pointerEvents: drawMode === "zone" || editObjects ? "auto" : "none",
                     }}
                     onMouseDown={(evt) => {
                       const rect = evt.currentTarget.getBoundingClientRect();
@@ -816,6 +996,16 @@ export default function SymbolChart({
                               x2Ratio: Math.max(start.x, xr2),
                               y1Ratio: start.y,
                               y2Ratio: yr2,
+                              anchorTimeMs: anchorTimeFromRatio(
+                                Math.min(start.x, xr2),
+                                tfRange,
+                              ),
+                              anchorTimeMs2: anchorTimeFromRatio(
+                                Math.max(start.x, xr2),
+                                tfRange,
+                              ),
+                              anchorPrice: anchorPriceFromRatio(start.y, tfRange),
+                              anchorPrice2: anchorPriceFromRatio(yr2, tfRange),
                             },
                           ]);
                           setSelectedObjectId(id);
@@ -826,20 +1016,20 @@ export default function SymbolChart({
                         evt.preventDefault();
                         return;
                       }
-                      const hit = (annotations || [])
+                      const hit = (projectedAnnotations || [])
                         .map((a) => {
                           if (a.kind === "line") {
-                            const ay = Number(a.yRatio) * rect.height;
+                            const ay = Number(a._yRatio) * rect.height;
                             return { a, d: Math.abs(ay - y), edge: null };
                           }
                           if (a.kind === "point") {
-                            const ax = Number(a.xRatio) * rect.width;
-                            const ay = Number(a.yRatio) * rect.height;
+                            const ax = Number(a._xRatio) * rect.width;
+                            const ay = Number(a._yRatio) * rect.height;
                             return { a, d: Math.hypot(ax - x, ay - y), edge: null };
                           }
                           if (a.kind === "zone") {
-                            const y1 = Number(a.y1Ratio) * rect.height;
-                            const y2 = Number(a.y2Ratio) * rect.height;
+                            const y1 = Number(a._y1Ratio) * rect.height;
+                            const y2 = Number(a._y2Ratio) * rect.height;
                             const lo = Math.min(y1, y2);
                             const hi = Math.max(y1, y2);
                             if (y < lo - 6 || y > hi + 6) return null;
@@ -852,13 +1042,13 @@ export default function SymbolChart({
                         .filter(Boolean)
                         .sort((p, q) => p.d - q.d)[0];
                       if (hit && hit.d <= 10) {
-                        dragRef.current = { id: hit.a.id, edge: hit.edge, rect };
+                        dragRef.current = { id: hit.a.id, edge: hit.edge, rect, range: tfRange };
                         setSelectedObjectId(hit.a.id);
                         evt.preventDefault();
                       }
                     }}
                   >
-                    {(annotations || []).map((a) => {
+                    {(projectedAnnotations || []).map((a) => {
                       if (a.kind === "line") {
                         const isSelected = selectedObjectId === a.id;
                         return (
@@ -868,7 +1058,7 @@ export default function SymbolChart({
                               position: "absolute",
                               left: 0,
                               right: 0,
-                              top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
+                              top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
                               borderTop: `${isSelected ? 2 : 1}px dashed ${a.color || "#60a5fa"}`,
                               boxShadow: isSelected
                                 ? `0 0 0 1px ${a.color || "#60a5fa"}55`
@@ -886,8 +1076,8 @@ export default function SymbolChart({
                             key={a.id}
                             style={{
                               position: "absolute",
-                              left: `${clamp01(Number(a.xRatio || 0.5)) * 100}%`,
-                              top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
+                              left: `${clamp01(Number(a._xRatio || 0.5)) * 100}%`,
+                              top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
                               width: isSelected ? 10 : 8,
                               height: isSelected ? 10 : 8,
                               borderRadius: "50%",
@@ -905,10 +1095,10 @@ export default function SymbolChart({
                       }
                       if (a.kind === "zone") {
                         const isSelected = selectedObjectId === a.id;
-                        const y1 = Number(a.y1Ratio || 0.4);
-                        const y2 = Number(a.y2Ratio || 0.6);
-                        const x1 = Number(a.x1Ratio || 0.2);
-                        const x2 = Number(a.x2Ratio || 0.8);
+                        const y1 = Number(a._y1Ratio || 0.4);
+                        const y2 = Number(a._y2Ratio || 0.6);
+                        const x1 = Number(a._x1Ratio || 0.2);
+                        const x2 = Number(a._x2Ratio || 0.8);
                         return (
                           <div
                             key={a.id}

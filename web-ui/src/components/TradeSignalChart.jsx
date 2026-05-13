@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 import { asNumValue, showDateTime } from "../utils/format";
 import { chartFetchManager } from "../services/chartFetchManager";
@@ -271,6 +271,7 @@ export default function TradeSignalChart({
   onBarsLoaded = null,
   sharedLines = [],
   onContextRequest = null,
+  onViewportChange = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -278,6 +279,23 @@ export default function TradeSignalChart({
   const suppressCrosshairSyncRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState("");
+  const lwTimeToMs = useCallback((v) => {
+    if (typeof v === "number" && Number.isFinite(v)) return Math.round(v * 1000);
+    if (v && typeof v === "object") {
+      if (
+        Number.isFinite(Number(v.year)) &&
+        Number.isFinite(Number(v.month)) &&
+        Number.isFinite(Number(v.day))
+      ) {
+        const d = new Date(
+          Date.UTC(Number(v.year), Number(v.month) - 1, Number(v.day)),
+        );
+        const ms = d.getTime();
+        return Number.isFinite(ms) ? ms : null;
+      }
+    }
+    return null;
+  }, []);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -315,13 +333,21 @@ export default function TradeSignalChart({
           chartContainerRef.current.clientHeight || height,
         );
       };
+      let emitViewport = () => {};
 
       let resizeObserver = null;
       if (typeof ResizeObserver !== "undefined") {
-        resizeObserver = new ResizeObserver(handleResize);
+        resizeObserver = new ResizeObserver(() => {
+          handleResize();
+          emitViewport();
+        });
         resizeObserver.observe(chartContainerRef.current);
       }
-      window.addEventListener("resize", handleResize);
+      const onWindowResize = () => {
+        handleResize();
+        emitViewport();
+      };
+      window.addEventListener("resize", onWindowResize);
 
       const candleSeries = chart.addCandlestickSeries({
         upColor: "#26a69a",
@@ -333,6 +359,28 @@ export default function TradeSignalChart({
 
       chartRef.current = chart;
       seriesRef.current = candleSeries;
+
+      emitViewport = () => {
+        if (typeof onViewportChange !== "function") return;
+        if (!chartContainerRef.current || !chart || !candleSeries) return;
+        const w = chartContainerRef.current.clientWidth || 0;
+        const h = chartContainerRef.current.clientHeight || height || 0;
+        if (!w || !h) return;
+        const t0 = lwTimeToMs(chart.timeScale().coordinateToTime(0));
+        const t1 = lwTimeToMs(chart.timeScale().coordinateToTime(w));
+        const pTop = candleSeries.coordinateToPrice(0);
+        const pBottom = candleSeries.coordinateToPrice(h);
+        onViewportChange({
+          chartId,
+          interval,
+          width: w,
+          height: h,
+          timeStartMs: Number.isFinite(t0) ? t0 : null,
+          timeEndMs: Number.isFinite(t1) ? t1 : null,
+          priceTop: Number.isFinite(Number(pTop)) ? Number(pTop) : null,
+          priceBottom: Number.isFinite(Number(pBottom)) ? Number(pBottom) : null,
+        });
+      };
 
       const handleCrosshairMove = (param) => {
         if (suppressCrosshairSyncRef.current) {
@@ -492,6 +540,7 @@ export default function TradeSignalChart({
               });
             }
             if (markers.length > 0) candleSeries.setMarkers(markers);
+            emitViewport();
 
             // --- ENTRY / TP / SL for all plans ---
             const boxAnchorTs = openedAt
@@ -743,6 +792,11 @@ export default function TradeSignalChart({
             removeContextMenuListener = () => {
               chartElement.removeEventListener("contextmenu", onContextMenu);
             };
+            try {
+              chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+                emitViewport();
+              });
+            } catch {}
 
             // --- PD ARRAYS as boxes ---
             // Support both old signal format (nested under market_analysis) and new (top-level)
@@ -918,7 +972,7 @@ export default function TradeSignalChart({
 
       return () => {
         isMounted = false;
-        window.removeEventListener("resize", handleResize);
+        window.removeEventListener("resize", onWindowResize);
         if (resizeObserver) resizeObserver.disconnect();
         try {
           chart.unsubscribeCrosshairMove(handleCrosshairMove);
@@ -960,7 +1014,9 @@ export default function TradeSignalChart({
     JSON.stringify(historicalData),
     live,
     onContextRequest,
+    onViewportChange,
     chartId,
+    lwTimeToMs,
   ]);
 
   useEffect(() => {
