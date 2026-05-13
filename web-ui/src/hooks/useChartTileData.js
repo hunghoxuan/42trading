@@ -55,6 +55,7 @@ export function useSymbolChartData({
   symbol,
   timeframes = ["D", "4H", "15M", "5M"],
   mode = "fixed",
+  forceRefresh = false,
   skipFetch = false,
   provider = "ICMARKETS",
   sessionPrefix = "",
@@ -423,9 +424,7 @@ export function useSymbolChartData({
     }
     if (!allCached) {
       setStatus(anyCached ? "STALE" : "LOADING");
-      // IMPORTANT: keep force=false on initial/normal loads so backend checks
-      // memory/redis/db cache before remote APIs.
-      refresh({ force: false }).catch(() => null);
+      refresh({ force: forceRefresh === true }).catch(() => null);
     }
     return () => {
       mountedRef.current = false;

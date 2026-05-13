@@ -381,6 +381,7 @@ export default function SymbolChart({
       symbol: cleanSym,
       timeframes,
       mode: pendingMode || mode,
+      forceRefresh,
       skipFetch,
       provider,
       sessionPrefix,
@@ -507,14 +508,14 @@ export default function SymbolChart({
     }
     // Re-click same mode: force refresh
     if (mode === newMode && !pendingMode && status !== "LOADING") {
-      refresh({ force: false });
+      refresh({ force: forceRefresh === true });
       return;
     }
     // Switch immediately so user sees mode change right away, then fetch.
     setMode(newMode);
     setPendingMode(null);
     setLastError(null);
-  }, [mode, pendingMode, status, refresh]);
+  }, [mode, pendingMode, status, refresh, forceRefresh]);
 
   const btnColor = (m) => {
     const active = pendingMode || mode;
@@ -789,7 +790,6 @@ export default function SymbolChart({
               key={m}
               className="secondary-button"
               onClick={() => handleModeClick(m)}
-              disabled={status === "LOADING"}
               title={btnTitle(m)}
               style={{
                 fontSize: 10,
@@ -811,12 +811,12 @@ export default function SymbolChart({
               {(pendingMode || mode) === m && status === "LOADING" && " \u23F3"}
             </button>
           ))}
-          {mode === "cache" && (
+          {mode !== "live" && (
             <button
               className="secondary-button"
               type="button"
               onClick={() => setForceRefresh((v) => !v)}
-              title={`TF refresh force=${forceRefresh ? "true" : "false"}`}
+              title={`Force refresh flag for API calls: force=${forceRefresh ? "1" : "0"}`}
               style={{
                 fontSize: 10,
                 fontWeight: 700,
