@@ -392,7 +392,7 @@ export default function DashboardPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 20%",
+          gridTemplateColumns: "1fr",
           gap: 18,
           alignItems: "start",
         }}
@@ -548,29 +548,8 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <select
-                value={filters.direction}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, direction: e.target.value }))
-                }
-              >
-                <option value="">All Direction</option>
-                <option value="BUY">Buy</option>
-                <option value="SELL">Sell</option>
-              </select>
-              <select
-                value={filters.chart_tf}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, chart_tf: e.target.value }))
-                }
-              >
-                <option value="">Chart TF</option>
-                {sortTimeframes(f.chart_tfs || [], "desc").map((v) => (
-                  <option key={v} value={v}>
-                    {formatTimeframe(v)}
-                  </option>
-                ))}
-              </select>
+
+              
               <select
                 value={filters.signal_tf}
                 onChange={(e) =>
