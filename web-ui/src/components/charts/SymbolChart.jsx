@@ -131,6 +131,54 @@ function tfRankForLatest(tf) {
   return Number.MAX_SAFE_INTEGER;
 }
 
+function NumberAdjuster({
+  value,
+  onChange,
+  min = -1000000000,
+  max = 1000000000,
+  step = 1,
+  placeholder = "",
+}) {
+  const numVal = Number(value);
+  const safeVal = Number.isFinite(numVal) ? numVal : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <input
+        type="number"
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ width: 120 }}
+      />
+      <button
+        type="button"
+        className="secondary-button"
+        style={{ fontSize: 10, width: 22, height: 22, padding: 0, minWidth: 22 }}
+        onClick={() => onChange(String(Math.max(min, safeVal - step)))}
+      >
+        -
+      </button>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={Math.max(min, Math.min(max, safeVal))}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ flex: 1, minWidth: 84 }}
+      />
+      <button
+        type="button"
+        className="secondary-button"
+        style={{ fontSize: 10, width: 22, height: 22, padding: 0, minWidth: 22 }}
+        onClick={() => onChange(String(Math.min(max, safeVal + step)))}
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 function TfHeader({
   tf,
   context,
@@ -710,7 +758,7 @@ export default function SymbolChart({
         price_bottom: Number.isFinite(price) ? price : null,
         time: Number.isFinite(time) ? time : null,
         line_style: "dash",
-        line_width: 1,
+        line_width: 0.1,
         bg_color: "rgba(96,165,250,0.14)",
         label: "Line",
       },
@@ -756,7 +804,7 @@ export default function SymbolChart({
             price_bottom: Number.isFinite(price) ? price : null,
             time: Number.isFinite(time) ? time : null,
             line_style: "solid",
-            line_width: 1,
+            line_width: 0.1,
             bg_color: "rgba(255,255,255,0.14)",
             label: type,
           },
@@ -786,6 +834,30 @@ export default function SymbolChart({
       if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
       }
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const isBuy = String(side || "").toUpperCase() === "BUY";
+      setAnnotations((prev) => [
+        ...prev,
+        {
+          ...createLineObject({
+            id,
+            type: isBuy ? "BUY" : "SELL",
+            color: isBuy ? "#10b981" : "#ef4444",
+            yRatio: Number(ctxMenu?.yRatio || 0.5),
+            ctxMenu,
+          }),
+          kind: "line",
+          tf: null,
+          price_top: usePrice,
+          price_bottom: usePrice,
+          time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+          line_style: "solid",
+          line_width: 0.1,
+          label: isBuy ? "Buy" : "Sell",
+          bg_color: "transparent",
+        },
+      ]);
+      setSelectedObjectId(id);
       try {
         window.dispatchEvent(
           new CustomEvent("tvbridge:advanced-trade", { detail: payload }),
@@ -820,6 +892,31 @@ export default function SymbolChart({
         interval: ctxMenu.interval || null,
       };
       if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
+      const isTp = String(kind || "").toUpperCase() === "TP";
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const levelPrice = Number(ctxMenu.price);
+      setAnnotations((prev) => [
+        ...prev,
+        {
+          ...createLineObject({
+            id,
+            type: isTp ? "TP" : "SL",
+            color: isTp ? "#10b981" : "#ef4444",
+            yRatio: Number(ctxMenu?.yRatio || 0.5),
+            ctxMenu,
+          }),
+          kind: "line",
+          tf: null,
+          price_top: levelPrice,
+          price_bottom: levelPrice,
+          time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+          line_style: "dot",
+          line_width: 0.1,
+          label: isTp ? "TP" : "SL",
+          bg_color: "transparent",
+        },
+      ]);
+      setSelectedObjectId(id);
       setCtxMenu(null);
     },
     [ctxMenu, cleanSym, onQuickTradeIntent],
@@ -1346,23 +1443,36 @@ export default function SymbolChart({
                         const isSelected = selectedObjectId === a.id;
                         const styleMap = { solid: "solid", dot: "dotted", dash: "dashed" };
                         const lineStyle = styleMap[String(a.line_style || "dash").toLowerCase()] || "dashed";
-                        const lineWidth = Math.max(1, Math.min(3, Number(a.line_width || 1)));
+                        const lineWidth = Math.max(0.1, Math.min(3, Number(a.line_width || 0.1)));
+                        const lineLabel = String(a.label || a.type || "Line");
                         return (
-                          <div
-                            key={a.id}
-                            style={{
-                              position: "absolute",
-                              left: 0,
-                              right: 0,
-                              top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                              borderTop: `${isSelected ? Math.max(2, lineWidth) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
-                              boxShadow: isSelected
-                                ? `0 0 0 1px ${a.color || "#60a5fa"}55`
-                                : "none",
-                              pointerEvents: "none",
-                              zIndex: 26,
-                            }}
-                          />
+                          <div key={a.id} style={{ position: "absolute", left: 0, right: 0, top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`, pointerEvents: "none", zIndex: 26 }}>
+                            <div
+                              style={{
+                                borderTop: `${isSelected ? Math.max(1, lineWidth + 0.8) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
+                                boxShadow: isSelected
+                                  ? `0 0 0 1px ${a.color || "#60a5fa"}55`
+                                  : "none",
+                              }}
+                            />
+                            <span
+                              style={{
+                                position: "absolute",
+                                right: 2,
+                                top: -10,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: a.color || "#60a5fa",
+                                background: "#0b1220",
+                                border: `1px solid ${(a.color || "#60a5fa")}55`,
+                                borderRadius: 4,
+                                padding: "0 4px",
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              {lineLabel}
+                            </span>
+                          </div>
                         );
                       }
                       if (a.kind === "point") {
@@ -1404,7 +1514,7 @@ export default function SymbolChart({
                               top: `${Math.min(y1, y2) * 100}%`,
                               width: `${Math.abs(x2 - x1) * 100}%`,
                               height: `${Math.abs(y2 - y1) * 100}%`,
-                              border: `${isSelected ? 2 : Math.max(1, Math.min(3, Number(a.line_width || 1)))}px solid ${a.color || "#22c55e"}`,
+                              border: `${isSelected ? 2 : Math.max(0.1, Math.min(3, Number(a.line_width || 0.1)))}px solid ${a.color || "#22c55e"}`,
                               background: a.bg_color || `${a.color || "#22c55e"}22`,
                               boxShadow: isSelected
                                 ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
@@ -1574,27 +1684,49 @@ export default function SymbolChart({
             </span>
           ))}
           {selectedObject ? (
-            <div style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", gap: 6 }}>
-              <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="label" />
+            <div style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Label
+                <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="label" />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Type
               <select value={selectedObject.type || "line"} onChange={(e)=>updateSelectedField("type", e.target.value)}>
                 {["buy","sell","tp","sl","line","zone","s/r","ob","fvg"].map((x)=><option key={x} value={x}>{x}</option>)}
               </select>
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>TF
               <select value={selectedObject.tf || ""} onChange={(e)=>updateSelectedField("tf", e.target.value || null)}>
                 <option value="">all TFs</option>
                 {(sortedTfs||[]).map((tf)=><option key={tf} value={String(tf).toLowerCase()}>{String(tf).toLowerCase()}</option>)}
               </select>
-              <input type="number" placeholder="price_top" value={selectedObject.price_top ?? ""} onChange={(e)=>updateSelectedField("price_top", e.target.value)} />
-              <input type="number" placeholder="price_bottom" value={selectedObject.price_bottom ?? ""} onChange={(e)=>updateSelectedField("price_bottom", e.target.value)} />
-              <input type="number" placeholder="time (epoch ms)" value={selectedObject.time ?? ""} onChange={(e)=>updateSelectedField("time", e.target.value)} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Price Top
+                <NumberAdjuster value={selectedObject.price_top ?? ""} onChange={(v)=>updateSelectedField("price_top", v)} min={0} max={200000} step={1} placeholder="price_top" />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Price Bottom
+                <NumberAdjuster value={selectedObject.price_bottom ?? ""} onChange={(v)=>updateSelectedField("price_bottom", v)} min={0} max={200000} step={1} placeholder="price_bottom" />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Time (epoch ms)
+                <NumberAdjuster value={selectedObject.time ?? ""} onChange={(v)=>updateSelectedField("time", v)} min={0} max={4102444800000} step={60000} placeholder="time" />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Line Style
               <select value={selectedObject.line_style || "solid"} onChange={(e)=>updateSelectedField("line_style", e.target.value)}>
                 {["solid","dot","dash"].map((x)=><option key={x} value={x}>{x}</option>)}
               </select>
-              <select value={selectedObject.line_width || 1} onChange={(e)=>updateSelectedField("line_width", e.target.value)}>
-                {[1,2,3].map((x)=><option key={x} value={x}>{x}</option>)}
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Line Width
+              <select value={selectedObject.line_width || 0.1} onChange={(e)=>updateSelectedField("line_width", e.target.value)}>
+                {[0.1,0.2,0.5,1,2,3].map((x)=><option key={x} value={x}>{x}</option>)}
               </select>
-              <input type="color" value={selectedObject.color || "#60a5fa"} onChange={(e)=>updateSelectedField("color", e.target.value)} />
-              <input type="text" placeholder="bg_color" value={selectedObject.bg_color || ""} onChange={(e)=>updateSelectedField("bg_color", e.target.value)} />
-              <input readOnly value={selectedObjectTfPropsText} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Color
+                <input type="color" value={selectedObject.color || "#60a5fa"} onChange={(e)=>updateSelectedField("color", e.target.value)} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Background Color
+                <input type="text" placeholder="bg_color" value={selectedObject.bg_color || ""} onChange={(e)=>updateSelectedField("bg_color", e.target.value)} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 10, gridColumn: "1 / -1" }}>Mapped TF Properties (read-only)
+                <input readOnly value={selectedObjectTfPropsText} />
+              </label>
             </div>
           ) : (
             <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
