@@ -2901,9 +2901,13 @@ function sanitizeSnapshotToken(value, fallback = "chart") {
 }
 
 function sanitizeSnapshotFileToken(value, fallback = "chart") {
-  const raw = String(value || fallback)
+  let raw = String(value || fallback)
     .trim()
     .toUpperCase();
+  // Strip provider prefix: "ICMARKETS:BTCUSD" → "BTCUSD"
+  if (raw.includes(":")) {
+    raw = raw.split(":").pop().trim();
+  }
   const token = raw
     .replace(/[^A-Z0-9_-]+/g, "_")
     .replace(/_+/g, "_")
@@ -11145,7 +11149,7 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
       bar_start: bars[0]?.time || null,
       bar_end: bars[bars.length - 1]?.time || null,
       last_price: bars[bars.length - 1]?.close || null,
-      cache_source: "remote_api",
+      cache_source: "binance",
     };
   } catch (e) {
     console.warn(`[binance] FAIL sym=${binanceSymbol}: ${e.message}`);
@@ -16843,10 +16847,12 @@ const appHandler = async (req, res) => {
       const source = snapshot.cache_source || "remote_api";
       const auto_refresh = parseTfTokenToSeconds(timeframe) || 60; // Refresh based on timeframe
 
+      // Normalize source label for UI
+      const displaySource = snapshot.cache_source || source || "twelvedata";
       return json(res, 200, {
         ok: true,
         snapshot,
-        source,
+        source: displaySource,
         updated_time,
         auto_refresh,
       });

@@ -98,7 +98,7 @@ function TfHeader({
             fontSize: 8,
             fontWeight: 600,
             color:
-              context.cache_source === "memory" || context.cache_source === "db"
+              context.cache_source !== "remote_api" && context.cache_source !== "twelvedata"
                 ? "#10b981"
                 : "#f59e0b",
             background: "rgba(0,0,0,0.2)",
@@ -106,15 +106,17 @@ function TfHeader({
             borderRadius: 2,
             marginLeft: 4,
             textTransform: "uppercase",
-            border: `1px solid ${context.cache_source === "memory" || context.cache_source === "db" ? "#10b98140" : "#f59e0b40"}`,
+            border: `1px solid ${context.cache_source !== "remote_api" && context.cache_source !== "twelvedata" ? "#10b98140" : "#f59e0b40"}`,
           }}
           title={context.reason || ""}
         >
-          {context.cache_source === "memory"
-            ? "MEM"
+          {context.cache_source === "memory" || context.cache_source === "redis"
+            ? "Redis"
             : context.cache_source === "db"
               ? "DB"
-              : "API"}
+              : context.cache_source === "binance"
+                ? "Binance"
+                : context.cache_source || "API"}
         </span>
       )}
       {htfBias && (
