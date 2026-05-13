@@ -1565,21 +1565,36 @@ export default function SignalDetailCard({
               const side = String(intent?.side || "BUY").toUpperCase();
               const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
-              if (tradePlan?.onChange) {
+              const planId =
+                String(intent?.plan_id || "P1").toUpperCase() === "P2" &&
+                plans?.length > 1
+                  ? "suggested_1"
+                  : "main";
+              const applyToPlan = (field, value) => {
+                if (planId === "main") {
+                  tradePlan?.onChange?.(field, value);
+                  return;
+                }
+                setPlanDrafts((prev) => ({
+                  ...prev,
+                  [planId]: applyLinkedPlanChange(prev?.[planId] || plans[1], field, value),
+                }));
+              };
+              if (tradePlan?.onChange || planId !== "main") {
                 if (action === "TP") {
-                  if (Number.isFinite(price)) tradePlan.onChange("tp", String(price));
+                  if (Number.isFinite(price)) applyToPlan("tp", String(price));
                 } else if (action === "SL") {
-                  if (Number.isFinite(price)) tradePlan.onChange("sl", String(price));
+                  if (Number.isFinite(price)) applyToPlan("sl", String(price));
                 } else if (action === "CLEAR_TP") {
-                  tradePlan.onChange("tp", "");
+                  applyToPlan("tp", "");
                 } else if (action === "CLEAR_SL") {
-                  tradePlan.onChange("sl", "");
+                  applyToPlan("sl", "");
                 } else if (action === "CLEAR_ENTRY") {
-                  tradePlan.onChange("entry", "");
+                  applyToPlan("entry", "");
                 } else {
-                  tradePlan.onChange("direction", side);
+                  applyToPlan("direction", side);
                   if (Number.isFinite(price)) {
-                    tradePlan.onChange("entry", String(price));
+                    applyToPlan("entry", String(price));
                   }
                 }
               }

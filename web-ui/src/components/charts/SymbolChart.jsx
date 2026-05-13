@@ -411,6 +411,7 @@ export default function SymbolChart({
   const [ctxMenu, setCtxMenu] = useState(null);
   const [activeChartId, setActiveChartId] = useState(null);
   const [hoverInfo, setHoverInfo] = useState(null);
+  const [activePlanGroup, setActivePlanGroup] = useState("P1");
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
 
@@ -537,6 +538,7 @@ export default function SymbolChart({
   const updateSelectedField = useCallback((field, value) => {
     if (!selectedObjectId) return;
     const numericKeys = new Set([
+      "price",
       "price_top",
       "price_bottom",
       "time",
@@ -753,13 +755,15 @@ export default function SymbolChart({
   const handleCrosshairSync = useCallback((payload) => {
     setSyncedCrosshair(payload);
     if (!payload?.active) return;
-    if (payload?.sourceId) setActiveChartId(payload.sourceId);
+    if (activeChartId && payload?.sourceId && payload.sourceId !== activeChartId) {
+      return;
+    }
     setHoverInfo({
       chartId: payload.sourceId || null,
       time: payload.time || null,
       price: Number.isFinite(Number(payload.price)) ? Number(payload.price) : null,
     });
-  }, []);
+  }, [activeChartId]);
 
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
@@ -779,6 +783,7 @@ export default function SymbolChart({
         tf: null,
         price_top: Number.isFinite(price) ? price : null,
         price_bottom: Number.isFinite(price) ? price : null,
+        price: Number.isFinite(price) ? price : null,
         time: Number.isFinite(time) ? time : null,
         line_style: "dash",
         line_width: 0.1,
@@ -825,6 +830,7 @@ export default function SymbolChart({
             tf: null,
             price_top: Number.isFinite(price) ? price : null,
             price_bottom: Number.isFinite(price) ? price : null,
+            price: Number.isFinite(price) ? price : null,
             time: Number.isFinite(time) ? time : null,
             line_style: "solid",
             line_width: 0.1,
@@ -853,7 +859,8 @@ export default function SymbolChart({
 
   const handleQuickTrade = useCallback(
     (side, explicitPrice = null) => {
-      const activeTf = String(activeChartId || "").split("-").slice(-1)[0];
+      const sourceChartId = String(ctxMenu?.chartId || activeChartId || "");
+      const activeTf = sourceChartId.split("-").slice(-1)[0];
       const activeBars = master?.bars?.[activeTf] || [];
       const activeLastClose = Number(activeBars[activeBars.length - 1]?.close);
       const usePrice =
@@ -871,6 +878,7 @@ export default function SymbolChart({
         symbol: cleanSym,
         side: String(side || "BUY").toUpperCase(),
         action: "ENTRY",
+        plan_id: activePlanGroup,
         price: usePrice,
         time: ctxMenu?.time || null,
         interval: ctxMenu?.interval || null,
@@ -894,6 +902,7 @@ export default function SymbolChart({
           tf: null,
           price_top: usePrice,
           price_bottom: usePrice,
+          price: usePrice,
           time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
           line_style: "solid",
           line_width: 0.1,
@@ -909,12 +918,13 @@ export default function SymbolChart({
       } catch {}
       setCtxMenu(null);
     },
-    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master],
+    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master, activePlanGroup],
   );
 
   const handleQuickLevel = useCallback(
     (kind) => {
-      const activeTf = String(activeChartId || "").split("-").slice(-1)[0];
+      const sourceChartId = String(ctxMenu?.chartId || activeChartId || "");
+      const activeTf = sourceChartId.split("-").slice(-1)[0];
       const activeBars = master?.bars?.[activeTf] || [];
       const activeLastClose = Number(activeBars[activeBars.length - 1]?.close);
       const levelPrice = Number.isFinite(Number(ctxMenu?.price))
@@ -929,6 +939,7 @@ export default function SymbolChart({
         symbol: cleanSym,
         side: String(kind || "").toUpperCase() === "SL" ? "SL" : "TP",
         action: String(kind || "").toUpperCase(),
+        plan_id: activePlanGroup,
         price: levelPrice,
         time: ctxMenu.time || null,
         interval: ctxMenu.interval || null,
@@ -950,6 +961,7 @@ export default function SymbolChart({
           tf: null,
           price_top: levelPrice,
           price_bottom: levelPrice,
+          price: levelPrice,
           time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
           line_style: "dot",
           line_width: 0.1,
@@ -960,7 +972,7 @@ export default function SymbolChart({
       setSelectedObjectId(id);
       setCtxMenu(null);
     },
-    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master],
+    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master, activePlanGroup],
   );
 
   const handleClearLevel = useCallback(
@@ -969,13 +981,14 @@ export default function SymbolChart({
         symbol: cleanSym,
         side: String(kind || "").toUpperCase(),
         action: `CLEAR_${String(kind || "").toUpperCase()}`,
+        plan_id: activePlanGroup,
         price: null,
         time: null,
         interval: null,
       };
       if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
     },
-    [cleanSym, onQuickTradeIntent],
+    [cleanSym, onQuickTradeIntent, activePlanGroup],
   );
 
   return (
@@ -1122,9 +1135,12 @@ export default function SymbolChart({
                 <button
                   key={key}
                   className={
-                    overlays[key] ? "primary-button" : "secondary-button"
+                    (overlays[key] || activePlanGroup === label) ? "primary-button" : "secondary-button"
                   }
-                  onClick={() => toggleOverlay(key)}
+                  onClick={() => {
+                    toggleOverlay(key);
+                    if (label === "P1" || label === "P2") setActivePlanGroup(label);
+                  }}
                   type="button"
                   style={{
                     fontSize: 10,
@@ -1292,8 +1308,8 @@ export default function SymbolChart({
             .map((a) => {
             const baseTime = Number(a.time);
             const lineTime = Number.isFinite(baseTime) && baseTime > 0 ? baseTime : toEpochMs(a.anchorTimeMs);
-            const lineTop = Number(a.price_top);
-            const lineBottom = Number(a.price_bottom);
+            const lineTop = Number(a.price ?? a.price_top);
+            const lineBottom = Number(a.price ?? a.price_bottom ?? a.price_top);
             const p1 = Number.isFinite(lineTop) ? lineTop : Number(a.anchorPrice);
             const p2 = Number.isFinite(lineBottom) ? lineBottom : Number(a.anchorPrice2);
             const timeRatio = ratioFromAnchorTime(lineTime, tfRange);
@@ -1352,9 +1368,10 @@ export default function SymbolChart({
               style={{
                 minWidth: 0,
                 position: "relative",
-                border: isActiveTf ? "2px solid #22d3ee" : "1px solid transparent",
+                border: "1px solid",
+                borderColor: isActiveTf ? "#22d3ee" : "transparent",
                 borderRadius: 8,
-                padding: isActiveTf ? 2 : 0,
+                padding: 0,
               }}
               onMouseEnter={() => setActiveChartId(chartId)}
               onMouseDown={() => setActiveChartId(chartId)}
@@ -1465,6 +1482,10 @@ export default function SymbolChart({
                               price_bottom:
                                 Number.isFinite(Number(p1)) && Number.isFinite(Number(p2))
                                   ? Math.min(Number(p1), Number(p2))
+                                  : null,
+                              price:
+                                Number.isFinite(Number(p1)) && Number.isFinite(Number(p2))
+                                  ? Number(p1)
                                   : null,
                               time: Number.isFinite(Number(t1)) ? Number(t1) : null,
                               line_style: "solid",
@@ -1728,7 +1749,7 @@ export default function SymbolChart({
             Objects ({annotations.length})
           </span>
           <span className="minor-text" style={{ fontSize: 10, opacity: 0.9 }}>
-            Active TF: {activeChartId ? String(activeChartId).split("-").slice(-1)[0] : "-"} | Price: {Number.isFinite(Number(hoverInfo?.price)) ? Number(hoverInfo.price).toFixed(2) : "-"} | Time: {hoverInfo?.time ? String(hoverInfo.time) : "-"}
+            Plan: {activePlanGroup} | Active TF: {activeChartId ? String(activeChartId).split("-").slice(-1)[0] : "-"} | Price: {Number.isFinite(Number(hoverInfo?.price)) ? Number(hoverInfo.price).toFixed(2) : "-"} | Time: {hoverInfo?.time ? String(hoverInfo.time) : "-"}
           </span>
           <button
             className="secondary-button"
@@ -1800,11 +1821,8 @@ export default function SymbolChart({
                 {(sortedTfs||[]).map((tf)=><option key={tf} value={String(tf).toLowerCase()}>{String(tf).toLowerCase()}</option>)}
               </select>
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Price Top
-                <NumberAdjuster value={selectedObject.price_top ?? ""} onChange={(v)=>updateSelectedField("price_top", v)} min={0} max={200000} step={1} placeholder="price_top" />
-              </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Price Bottom
-                <NumberAdjuster value={selectedObject.price_bottom ?? ""} onChange={(v)=>updateSelectedField("price_bottom", v)} min={0} max={200000} step={1} placeholder="price_bottom" />
+              <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Price
+                <NumberAdjuster value={selectedObject.price ?? selectedObject.price_top ?? ""} onChange={(v)=>{ updateSelectedField("price", v); updateSelectedField("price_top", v); updateSelectedField("price_bottom", v); }} min={0} max={200000} step={1} placeholder="price" />
               </label>
               <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Time (epoch ms)
                 <NumberAdjuster value={selectedObject.time ?? ""} onChange={(v)=>updateSelectedField("time", v)} min={0} max={4102444800000} step={60000} placeholder="time" />
