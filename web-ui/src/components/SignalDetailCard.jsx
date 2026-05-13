@@ -1552,6 +1552,7 @@ export default function SignalDetailCard({
             hasAnalysis={Boolean(
               selectedRawData && Object.keys(selectedRawData).length > 0,
             )}
+            profile={chart?.profile || tradePlan?.value?.profile || "day"}
             attachedSnapshotFiles={
               Array.isArray(selectedRawData?.snapshot_files)
                 ? selectedRawData.snapshot_files

@@ -302,7 +302,7 @@ export function useSymbolChartData({
           }
               }
               console.log("[ChartData] fetch tf=" + tf);
-              const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount), force);
+              const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount, profile), force);
               console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
               const tfData = {

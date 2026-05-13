@@ -1058,9 +1058,10 @@ export default function SymbolChart({
             style={{ fontSize: 10, padding: "2px 4px", height: 22 }}
             title="Bars per TF (auto-scaled)"
           >
-            {[50, 100, 200, 300, 500, 700, 1000].map((v) => (
-              <option key={v} value={v}>{v}b</option>
-            ))}
+            <option value={0}>Default</option>
+              {[50, 100, 200, 300, 500, 700, 1000].map((v) => (
+                <option key={v} value={v}>{v}b</option>
+              ))}
           </select>
           {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
           {MODES.map((m) => (
