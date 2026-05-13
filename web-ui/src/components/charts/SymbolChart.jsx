@@ -324,6 +324,9 @@ export default function SymbolChart({
   sessionPrefix = "",
   attachedSnapshotFiles = [],
   onQuickTradeIntent = null,
+  onTrade = null,
+  showAnalyzeButton = true,
+  showTradeButton = true,
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -890,7 +893,7 @@ export default function SymbolChart({
               ⟳
             </button>
           )}
-          {mode === "cache" && (
+          {mode === "cache" && showControls && (
             <button
               className={editObjects ? "primary-button" : "secondary-button"}
               type="button"
@@ -906,28 +909,6 @@ export default function SymbolChart({
             >
               Edit
             </button>
-          )}
-          {mode === "cache" && (
-            <>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => handleQuickTrade("BUY", latestCachedPrice)}
-                title="Quick Buy from latest cached lowest-TF price"
-                style={{ fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 4, color: "#10b981", borderColor: "#10b98166" }}
-              >
-                Buy
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => handleQuickTrade("SELL", latestCachedPrice)}
-                title="Quick Sell from latest cached lowest-TF price"
-                style={{ fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 4, color: "#ef4444", borderColor: "#ef444466" }}
-              >
-                Sell
-              </button>
-            </>
           )}
           {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
           {hasTradePlan && mode === "cache" && hasAnyBars && (
@@ -1021,18 +1002,40 @@ export default function SymbolChart({
           <button
             className="secondary-button"
             style={{
-              width: 22,
               height: 22,
-              padding: 0,
-              fontSize: 11,
+              padding: "0 8px",
+              fontSize: 10,
               lineHeight: 1,
-              minWidth: 22,
-              display: showControls ? "block" : "none",
+              fontWeight: 700,
+              display: mode === "cache" && showControls && showTradeButton ? "block" : "none",
+            }}
+            onClick={() =>
+              onTrade?.({
+                symbol,
+                timeframes,
+                latestPrice: latestCachedPrice,
+                mode,
+              })
+            }
+            title="Open Trade plan with latest cached price"
+          >
+            Trade
+          </button>
+          <button
+            className="secondary-button"
+            style={{
+              minWidth: 58,
+              height: 22,
+              padding: "0 8px",
+              fontSize: 10,
+              lineHeight: 1,
+              fontWeight: 700,
+              display: showControls && showAnalyzeButton ? "block" : "none",
             }}
             onClick={() => onAnalyze?.(symbol, timeframes)}
             title="Analyze"
           >
-            &gt;
+            Analyze
           </button>
         </div>
       </div>

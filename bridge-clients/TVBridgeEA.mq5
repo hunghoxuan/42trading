@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.13 20:30 - tradeplan-rr-slider-and-level-controls-fix";
+string EA_BUILD_VERSION = "v2026.05.13 20:45 - ai-analyze-trade-route-and-chart-actions";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL

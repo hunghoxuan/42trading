@@ -2389,6 +2389,14 @@ export default function ChartSnapshotsPage() {
     const slug = list.join("-");
     return `/ai/analyze/${encodeURIComponent(slug)}`;
   };
+  const buildAiTradeRoute = (symbols = []) => {
+    const list = (Array.isArray(symbols) ? symbols : [])
+      .map((x) => normalizeWatchSymbol(x))
+      .filter(Boolean);
+    if (!list.length) return "/ai/trade";
+    const slug = list.join("-");
+    return `/ai/trade/${encodeURIComponent(slug)}`;
+  };
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [watchlist, setWatchlist] = useState([]);
@@ -2427,6 +2435,10 @@ export default function ChartSnapshotsPage() {
     updated_time: null,
     auto_refresh: 0,
   });
+  const isResultRoute =
+    location.pathname.startsWith("/ai/result") ||
+    location.pathname.startsWith("/ai/trade");
+  const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
     buildPrompt(DEFAULT_CONFIG, "", "{}"),
@@ -4145,7 +4157,7 @@ export default function ChartSnapshotsPage() {
   }, [location.search, hydrateFromResultEntry]);
 
   useEffect(() => {
-    if (location.pathname.startsWith("/ai/result")) return;
+    if (isResultRoute) return;
     const symbols = Array.isArray(cfg?.symbols)
       ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
       : [];
@@ -4154,7 +4166,7 @@ export default function ChartSnapshotsPage() {
     if (`${location.pathname}${location.search}` !== next) {
       navigate(next, { replace: true });
     }
-  }, [cfg.symbols]);
+  }, [cfg.symbols, isResultRoute, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     loadWatchlist();
@@ -4635,6 +4647,23 @@ export default function ChartSnapshotsPage() {
     resetAnalyzeSession();
     setCfgField("symbol", "");
   };
+
+  const handleChartTrade = useCallback(
+    ({ symbol, latestPrice }) => {
+      const sym = normalizeWatchSymbol(
+        symbol || selectedSymbol || cfg.symbol || tvSymbol || "",
+      );
+      if (!sym) return;
+      const entry = Number(latestPrice);
+      if (Number.isFinite(entry)) {
+        setPosition((prev) => ({ ...prev, entry: String(entry) }));
+      }
+      setSelectedSymbols([sym]);
+      setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
+      navigate(buildAiTradeRoute([sym]), { replace: false });
+    },
+    [selectedSymbol, cfg.symbol, tvSymbol, navigate],
+  );
 
   const chartPdArrays = useMemo(() => {
     const arr = Array.isArray(effectiveParsed?.market_analysis?.pd_arrays)
@@ -6016,6 +6045,9 @@ export default function ChartSnapshotsPage() {
                     timeframes={widgetTfs}
                     defaultMode="live"
                     onAnalyze={() => analyzeSelected()}
+                    onTrade={handleChartTrade}
+                    showAnalyzeButton={isAnalyzeRoute}
+                    showTradeButton={isAnalyzeRoute}
                     onRemove={null}
                   />
                 </Suspense>
