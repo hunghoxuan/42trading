@@ -51,6 +51,59 @@ function symAliases(sym) {
   return [...out];
 }
 
+function tfRankMinutes(tf) {
+  const t = tfNorm(tf);
+  if (t === "1m" || t === "1min") return 1;
+  if (t === "5m" || t === "5min") return 5;
+  if (t === "15m" || t === "15min") return 15;
+  if (t === "1h" || t === "60") return 60;
+  if (t === "4h" || t === "240") return 240;
+  if (t === "d" || t === "1d" || t === "day") return 1440;
+  if (t === "w" || t === "1w" || t === "week") return 10080;
+  if (t === "mn" || t === "1mn" || t === "1month") return 43200;
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function alignLatestPriceAcrossTf(entries = {}, tfs = []) {
+  const keys = [...new Set((tfs || []).map(tfNorm).filter(Boolean))];
+  const sorted = keys.sort((a, b) => tfRankMinutes(a) - tfRankMinutes(b));
+  let latest = null;
+  for (const tf of sorted) {
+    const bars = Array.isArray(entries?.[tf]?.bars) ? entries[tf].bars : [];
+    if (!bars.length) continue;
+    const last = bars[bars.length - 1] || {};
+    const close = Number(last.close);
+    if (Number.isFinite(close)) {
+      latest = { price: close, tf };
+      break;
+    }
+  }
+  if (!latest) return entries;
+  const out = { ...entries };
+  for (const tf of sorted) {
+    if (tfRankMinutes(tf) <= tfRankMinutes(latest.tf)) continue;
+    const cur = out[tf];
+    const bars = Array.isArray(cur?.bars) ? [...cur.bars] : [];
+    if (!bars.length) continue;
+    const i = bars.length - 1;
+    const b = { ...(bars[i] || {}) };
+    const h = Number(b.high);
+    const l = Number(b.low);
+    b.close = latest.price;
+    if (Number.isFinite(h)) b.high = Math.max(h, latest.price);
+    if (Number.isFinite(l)) b.low = Math.min(l, latest.price);
+    bars[i] = b;
+    out[tf] = {
+      ...cur,
+      bars,
+      last_price: latest.price,
+      cache_source: cur?.cache_source || "memory",
+      synthetic_recent: { source_tf: latest.tf, close: latest.price },
+    };
+  }
+  return out;
+}
+
 export function useSymbolChartData({
   symbol,
   timeframes = ["D", "4H", "15M", "5M"],
@@ -277,6 +330,14 @@ export function useSymbolChartData({
           const key = tfNorm(tf);
           if (!entries[key]) entries[key] = { bars: [] };
         }
+        const aligned = alignLatestPriceAcrossTf(entries, tfs);
+        for (const tf of tfs) {
+          const key = tfNorm(tf);
+          if (Array.isArray(aligned?.[key]?.bars) && aligned[key].bars.length) {
+            chartFetchManager.set(sym, key, aligned[key]);
+          }
+        }
+        Object.assign(entries, aligned);
       }
 
       const hasAny = Object.values(entries).some(
