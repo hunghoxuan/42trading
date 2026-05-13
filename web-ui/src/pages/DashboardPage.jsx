@@ -677,19 +677,35 @@ export default function DashboardPage() {
 
               return (
                 <article className="kpi-card" key={conf.key}>
-                  <div className="panel-label">{conf.lab.toUpperCase()}</div>
                   <div
-                    className="minor-text"
                     style={{
-                      marginTop: "4px",
-                      fontSize: "10px",
-                      whiteSpace: "nowrap",
-                      opacity: 0.9,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "baseline",
+                      gap: 8,
                     }}
                   >
-                    t: {v.total_trades || 0} | w: {v.total_wins || 0} | l:{" "}
-                    {v.total_losses || 0}
+                    <div className="panel-label" style={{ marginBottom: 0 }}>
+                      {conf.lab.toUpperCase()}
+                    </div>
+                    <div
+                      className="minor-text"
+                      style={{
+                        fontSize: "10px",
+                        whiteSpace: "nowrap",
+                        opacity: 0.9,
+                      }}
+                    >
+                      t: {v.total_trades || 0} | w: {v.total_wins || 0} | l:{" "}
+                      {v.total_losses || 0}
+                    </div>
                   </div>
+                  <div
+                    style={{
+                      marginTop: "4px",
+                      height: 1,
+                    }}
+                  />
                   <div className="period-big-line">
                     <span
                       className={`kpi-value ${moneyClass(v.total_pnl)}`}
@@ -708,11 +724,10 @@ export default function DashboardPage() {
                       fontWeight: 400,
                     }}
                   >
-                    pnl+:{" "}
                     <span className="money-pos">
                       {asMoneySigned(v.win_sum_pnl || 0)}
                     </span>{" "}
-                    | pnl-:{" "}
+                    |{" "}
                     <span className="money-neg">
                       {asMoneySigned(v.lose_sum_pnl || 0)}
                     </span>{" "}
