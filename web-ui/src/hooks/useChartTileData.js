@@ -112,6 +112,12 @@ export function useSymbolChartData({
         (e) => e.bars?.length > 0 || e.snapshot,
       );
       if (!hasAny) throw new Error("No data from provider");
+      // Save to chartFetchManager cache for subsequent re-clicks
+      for (const [tf, entry] of Object.entries(entries)) {
+        if (entry.bars?.length > 0 || entry.snapshot) {
+          chartFetchManager.set(sym, tf, entry);
+        }
+      }
       return { symbol: sym, entries };
     },
     [sym, tfs, mode],

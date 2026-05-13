@@ -114,6 +114,12 @@ function enqueue(symbol, tf, fetcher) {
   return startFetch(fkey, fetcher);
 }
 
+/** Save an entry to cache. */
+function set(symbol, tf, entry) {
+  const key = cacheKey(symbol, tf);
+  tfCache.set(key, { ...entry, created_at: Date.now() });
+}
+
 /** Get cached entry for a symbol+TF. Returns null if missing or expired. */
 function get(symbol, tf) {
   const key = cacheKey(symbol, tf);
@@ -164,6 +170,7 @@ function reset() {
 
 export const chartFetchManager = {
   get,
+  set,
   getBars,
   getSnapshot,
   isFresh,

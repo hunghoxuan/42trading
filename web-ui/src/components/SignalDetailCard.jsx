@@ -1518,7 +1518,7 @@ export default function SignalDetailCard({
                     <SymbolChart
             symbol={selectedPlanSymbol || chart?.symbol}
             timeframes={selectedTfs}
-            defaultMode={chart?.mode || "cache"}
+            defaultMode={chart?.mode || "live"}
             initialGridCols={Math.min(2, selectedTfs.length || 1)}
             entryPrice={selectedPlanRaw?.entry || chart?.entryPrice}
             slPrice={selectedPlanRaw?.sl || chart?.slPrice}
