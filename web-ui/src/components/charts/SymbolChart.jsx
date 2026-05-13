@@ -119,6 +119,17 @@ function anchorPriceFromRatio(r, range) {
   const rr = clamp01(r);
   return range.pMax - rr * Math.max(1e-9, range.pMax - range.pMin);
 }
+function tfRankForLatest(tf) {
+  const t = String(tf || "").toLowerCase();
+  if (t === "1m") return 1;
+  if (t === "5m") return 5;
+  if (t === "15m") return 15;
+  if (t === "1h") return 60;
+  if (t === "4h") return 240;
+  if (t === "d") return 1440;
+  if (t === "w") return 10080;
+  return Number.MAX_SAFE_INTEGER;
+}
 
 function TfHeader({
   tf,
@@ -706,14 +717,19 @@ export default function SymbolChart({
   );
 
   const handleQuickTrade = useCallback(
-    (side) => {
-      if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+    (side, explicitPrice = null) => {
+      const usePrice =
+        Number.isFinite(Number(explicitPrice))
+          ? Number(explicitPrice)
+          : Number(ctxMenu?.price);
+      if (!Number.isFinite(usePrice)) return;
       const payload = {
         symbol: cleanSym,
         side: String(side || "BUY").toUpperCase(),
-        price: Number(ctxMenu.price),
-        time: ctxMenu.time || null,
-        interval: ctxMenu.interval || null,
+        action: "ENTRY",
+        price: usePrice,
+        time: ctxMenu?.time || null,
+        interval: ctxMenu?.interval || null,
       };
       if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
@@ -723,6 +739,35 @@ export default function SymbolChart({
           new CustomEvent("tvbridge:advanced-trade", { detail: payload }),
         );
       } catch {}
+      setCtxMenu(null);
+    },
+    [ctxMenu, cleanSym, onQuickTradeIntent],
+  );
+
+  const latestCachedPrice = useMemo(() => {
+    const keys = Object.keys(master?.bars || {});
+    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
+    for (const k of sorted) {
+      const bars = master?.bars?.[k] || [];
+      if (!bars.length) continue;
+      const close = Number(bars[bars.length - 1]?.close);
+      if (Number.isFinite(close)) return close;
+    }
+    return null;
+  }, [master]);
+
+  const handleQuickLevel = useCallback(
+    (kind) => {
+      if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+      const payload = {
+        symbol: cleanSym,
+        side: String(kind || "").toUpperCase() === "SL" ? "SL" : "TP",
+        action: String(kind || "").toUpperCase(),
+        price: Number(ctxMenu.price),
+        time: ctxMenu.time || null,
+        interval: ctxMenu.interval || null,
+      };
+      if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
       setCtxMenu(null);
     },
     [ctxMenu, cleanSym, onQuickTradeIntent],
@@ -846,6 +891,28 @@ export default function SymbolChart({
             >
               Edit
             </button>
+          )}
+          {mode === "cache" && (
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleQuickTrade("BUY", latestCachedPrice)}
+                title="Quick Buy from latest cached lowest-TF price"
+                style={{ fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 4, color: "#10b981", borderColor: "#10b98166" }}
+              >
+                Buy
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => handleQuickTrade("SELL", latestCachedPrice)}
+                title="Quick Sell from latest cached lowest-TF price"
+                style={{ fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 4, color: "#ef4444", borderColor: "#ef444466" }}
+              >
+                Sell
+              </button>
+            </>
           )}
           {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
           {hasTradePlan && mode === "cache" && hasAnyBars && (
@@ -1270,6 +1337,8 @@ export default function SymbolChart({
             { label: "Swept", fn: () => addObject("Swept", "#ef4444") },
             { label: "Point", fn: () => addObject("Point", "#eab308", "point") },
             { label: "Rectangle Zone", fn: () => addObject("ZONE", "#22c55e", "zone") },
+            { label: "TP", fn: () => handleQuickLevel("TP") },
+            { label: "SL", fn: () => handleQuickLevel("SL") },
             { label: "Buy", fn: () => handleQuickTrade("BUY") },
             { label: "Sell", fn: () => handleQuickTrade("SELL") },
           ].map((it) => (

@@ -92,11 +92,21 @@ function PlanHeader({
 }) {
   const entry = parseNumLoose(plan.entry);
   const sl = parseNumLoose(plan.sl);
-  const tp = parseNumLoose(plan.tp);
+  const fallbackTp =
+    plan?.multiple_exits?.full_tp?.price ??
+    plan?.multiple_exits?.tp2?.price ??
+    plan?.multiple_exits?.tp1?.price ??
+    null;
+  const tp = parseNumLoose(plan.tp ?? fallbackTp);
   const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
   const resolvedSymbol = plan.symbol || symbol;
 
-  const rrNum = Number(String(plan.rr ?? "").replace(",", "."));
+  const rrCandidate =
+    plan.rr ??
+    (entry != null && sl != null && tp != null && Math.abs(entry - sl) > 0
+      ? Math.abs(tp - entry) / Math.abs(entry - sl)
+      : null);
+  const rrNum = Number(String(rrCandidate ?? "").replace(",", "."));
   const rrText = Number.isFinite(rrNum) ? `${rrNum.toFixed(1)}r` : "0.0r";
   const directionColor = isBuy ? "#26a69a" : "#ef5350";
   const sideBg = isBuy ? "rgba(38,166,154,0.1)" : "rgba(239,83,80,0.1)";
@@ -190,7 +200,7 @@ function PlanHeader({
             }}
           >
             {plan.entry || "-"} →{" "}
-            <span style={{ color: "var(--accent)" }}>{plan.tp || "-"}</span> /{" "}
+            <span style={{ color: "var(--accent)" }}>{plan.tp || fallbackTp || "-"}</span> /{" "}
             <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
             <span
               title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
@@ -1547,11 +1557,18 @@ export default function SignalDetailCard({
             }
             onQuickTradeIntent={(intent) => {
               const side = String(intent?.side || "BUY").toUpperCase();
+              const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
               if (tradePlan?.onChange) {
-                tradePlan.onChange("direction", side);
-                if (Number.isFinite(price)) {
-                  tradePlan.onChange("entry", String(price));
+                if (action === "TP") {
+                  if (Number.isFinite(price)) tradePlan.onChange("tp", String(price));
+                } else if (action === "SL") {
+                  if (Number.isFinite(price)) tradePlan.onChange("sl", String(price));
+                } else {
+                  tradePlan.onChange("direction", side);
+                  if (Number.isFinite(price)) {
+                    tradePlan.onChange("entry", String(price));
+                  }
                 }
               }
             }}

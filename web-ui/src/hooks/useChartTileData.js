@@ -432,10 +432,20 @@ export function useSymbolChartData({
           };
           if (tfData.bars.length > 0) {
             chartFetchManager.set(sym, tfKey, tfData);
-            setData((prev) => ({
-              ...(prev || {}),
-              [tfKey]: { ...tfData, created_at: Date.now() },
-            }));
+            setData((prev) => {
+              const next = {
+                ...(prev || {}),
+                [tfKey]: { ...tfData, created_at: Date.now() },
+              };
+              const aligned = alignLatestPriceAcrossTf(next, tfs);
+              for (const tf of tfs) {
+                const key = tfNorm(tf);
+                if (Array.isArray(aligned?.[key]?.bars) && aligned[key].bars.length) {
+                  chartFetchManager.set(sym, key, aligned[key]);
+                }
+              }
+              return aligned;
+            });
             setStatus("READY");
           }
           return tfData;

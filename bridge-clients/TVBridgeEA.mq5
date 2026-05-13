@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.13 19:35 - cache-crosstf-last-price-sync-fix";
+string EA_BUILD_VERSION = "v2026.05.13 20:05 - quick-trade-tp-sl-and-crosstf-refresh-fix";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
