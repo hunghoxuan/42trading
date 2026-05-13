@@ -2401,6 +2401,7 @@ export default function ChartSnapshotsPage() {
   const isResultRoute =
     location.pathname.startsWith("/ai/result") ||
     location.pathname.startsWith("/ai/trade");
+  const isTradeRoute = location.pathname.startsWith("/ai/trade");
   const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
