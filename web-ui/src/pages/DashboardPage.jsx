@@ -444,9 +444,8 @@ export default function DashboardPage() {
     ...monthPoints.map((x) => Math.abs(Number(x.pnl || 0))),
   );
   const yAxisMax = Math.max(1000, Math.ceil(monthMaxAbsPnl / 100) * 100);
-  const yAxisSteps = Array.from(
-    { length: Math.floor(yAxisMax / 100) },
-    (_, i) => (i + 1) * 100,
+  const yAxisSteps = [200, 400, 600, 800, 1000].filter(
+    (v) => v <= yAxisMax,
   );
 
   return (
@@ -947,8 +946,8 @@ export default function DashboardPage() {
                         top: `${50 - (v / yAxisMax) * 50}%`,
                         transform: "translateY(-50%)",
                         fontSize: 10,
-                        color: "var(--muted)",
-                        opacity: 0.85,
+                        color: "rgba(16,185,129,0.85)",
+                        opacity: 0.45,
                       }}
                     >
                       {v}
@@ -976,8 +975,8 @@ export default function DashboardPage() {
                         top: `${50 + (v / yAxisMax) * 50}%`,
                         transform: "translateY(-50%)",
                         fontSize: 10,
-                        color: "var(--muted)",
-                        opacity: 0.85,
+                        color: "rgba(239,68,68,0.85)",
+                        opacity: 0.45,
                       }}
                     >
                       -{v}
@@ -1030,8 +1029,7 @@ export default function DashboardPage() {
                                 position: "absolute",
                                 width: "72%",
                                 height: `${hPct}%`,
-                                bottom: isPos ? "50%" : "auto",
-                                top: isPos ? "auto" : "50%",
+                                top: isPos ? "45%" : "55%",
                                 borderRadius: isPos ? "2px 2px 0 0" : "0 0 2px 2px",
                                 background: isPos
                                   ? "rgba(16,185,129,0.9)"
