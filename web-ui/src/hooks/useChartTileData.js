@@ -399,6 +399,7 @@ export function useSymbolChartData({
         freshness: entry.freshness,
         cache_source: entry.cache_source,
         reason: entry.reason,
+        cached_at: entry.created_at || null,
       };
       if (entry.snapshot) snapshots[tf] = entry.snapshot;
     }

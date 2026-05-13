@@ -83,51 +83,21 @@ function TfHeader({
 
   const barStat = barsStatus?.[tf] || barsStatus?.[tf.toLowerCase()];
   const snapStat = snapshotStatus?.[tf] || snapshotStatus?.[tf.toLowerCase()];
+  const cacheTimeText = context?.cached_at ? timeAgo(context.cached_at) : "";
+  const cacheSourceLabel =
+    context?.cache_source === "memory" || context?.cache_source === "redis"
+      ? "Redis"
+      : context?.cache_source === "db"
+        ? "DB"
+        : context?.cache_source === "binance"
+          ? "Binance"
+          : context?.cache_source || "API";
 
   return (
     <div
       style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}
     >
       <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
-      {context?.cache_source && (
-        <span
-          style={{
-            fontSize: 8,
-            fontWeight: 600,
-            color:
-              context.cache_source === "memory" ||
-              context.cache_source === "redis" ||
-              context.cache_source === "db"
-                ? "var(--muted)"
-                : context.cache_source === "binance"
-                  ? "#10b981"
-                  : "#f59e0b",
-            background: "rgba(0,0,0,0.2)",
-            padding: "0 3px",
-            borderRadius: 2,
-            marginLeft: 4,
-            textTransform: "uppercase",
-            border: `1px solid ${
-              context.cache_source === "memory" ||
-              context.cache_source === "redis" ||
-              context.cache_source === "db"
-                ? "rgba(148,163,184,0.25)"
-                : context.cache_source === "binance"
-                  ? "#10b98140"
-                  : "#f59e0b40"
-            }`,
-          }}
-          title={context.reason || ""}
-        >
-          {context.cache_source === "memory" || context.cache_source === "redis"
-            ? "Redis"
-            : context.cache_source === "db"
-              ? "DB"
-              : context.cache_source === "binance"
-                ? "Binance"
-                : context.cache_source || "API"}
-        </span>
-      )}
       {htfBias && (
         <span
           style={{
@@ -143,7 +113,35 @@ function TfHeader({
           {htfBias.label}
         </span>
       )}
-      {barStat && barStat.status !== "none" && (
+      {mode === "cache" && context?.cache_source && (
+        <span
+          style={{
+            marginLeft: "auto",
+            fontSize: 9,
+            color:
+              context.cache_source === "binance"
+                ? "#10b981"
+                : "var(--muted)",
+            background: "rgba(0,0,0,0.2)",
+            border: `1px solid ${
+              context.cache_source === "binance"
+                ? "#10b98140"
+                : "rgba(148,163,184,0.25)"
+            }`,
+            padding: "0 4px",
+            borderRadius: 3,
+            maxWidth: 130,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={`cached: ${showDateTime(context?.cached_at)} | source: ${cacheSourceLabel}`}
+        >
+          {cacheSourceLabel}
+          {cacheTimeText ? ` ${cacheTimeText}` : ""}
+        </span>
+      )}
+      {mode !== "cache" && barStat && barStat.status !== "none" && (
         <span
           style={{
             fontSize: 8,
@@ -152,6 +150,7 @@ function TfHeader({
             background: "rgba(0,0,0,0.2)",
             padding: "0 3px",
             borderRadius: 2,
+            marginLeft: mode === "cache" ? 0 : undefined,
           }}
           title={
             barStat.status === "cached"
