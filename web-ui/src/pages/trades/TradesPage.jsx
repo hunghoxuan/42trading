@@ -299,15 +299,16 @@ export default function TradesPage() {
     pageSize: 50,
   });
 
-  // Sync filter when sub-menu (URL param) changes
+  // Sync filter when sub-menu (URL param) changes (skip when trade detail open)
   useEffect(() => {
+    if (tradeId) return; // keep current filter when viewing a trade
     const status = searchParams.get("status") || "FILLED";
     setFilter((f) =>
       f.execution_status !== status
         ? { ...f, execution_status: status, page: 1 }
         : f,
     );
-  }, [searchParams]);
+  }, [searchParams, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
   const [sortKey, setSortKey] = useState("audit");
