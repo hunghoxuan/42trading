@@ -636,6 +636,12 @@ export default function SignalDetailCard({
   }, [availableTabs, mainTab]);
 
   useEffect(() => {
+    if (tradePlan?.enabled) {
+      setSelectedPlanId("main");
+    }
+  }, [tradePlan?.enabled]);
+
+  useEffect(() => {
     const next = {};
     plans.forEach((p, i) => {
       const planId = i === 0 ? "main" : `suggested_${i}`;

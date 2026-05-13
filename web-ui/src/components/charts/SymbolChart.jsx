@@ -409,6 +409,8 @@ export default function SymbolChart({
   const [forceRefresh, setForceRefresh] = useState(false);
   const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [activeChartId, setActiveChartId] = useState(null);
+  const [hoverInfo, setHoverInfo] = useState(null);
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
 
@@ -730,6 +732,7 @@ export default function SymbolChart({
   }, []);
 
   const handleContextRequest = useCallback((payload) => {
+    if (payload?.chartId) setActiveChartId(payload.chartId);
     setCtxMenu(payload || null);
   }, []);
 
@@ -745,6 +748,17 @@ export default function SymbolChart({
     },
     [refreshTf, forceRefresh],
   );
+
+  const handleCrosshairSync = useCallback((payload) => {
+    setSyncedCrosshair(payload);
+    if (!payload?.active) return;
+    if (payload?.sourceId) setActiveChartId(payload.sourceId);
+    setHoverInfo({
+      chartId: payload.sourceId || null,
+      time: payload.time || null,
+      price: Number.isFinite(Number(payload.price)) ? Number(payload.price) : null,
+    });
+  }, []);
 
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
@@ -826,10 +840,19 @@ export default function SymbolChart({
 
   const handleQuickTrade = useCallback(
     (side, explicitPrice = null) => {
+      const activeTf = String(activeChartId || "").split("-").slice(-1)[0];
+      const activeBars = master?.bars?.[activeTf] || [];
+      const activeLastClose = Number(activeBars[activeBars.length - 1]?.close);
       const usePrice =
         Number.isFinite(Number(explicitPrice))
           ? Number(explicitPrice)
-          : Number(ctxMenu?.price);
+          : Number.isFinite(Number(ctxMenu?.price))
+            ? Number(ctxMenu?.price)
+            : Number.isFinite(Number(hoverInfo?.price))
+              ? Number(hoverInfo.price)
+              : Number.isFinite(activeLastClose)
+                ? activeLastClose
+                : Number(latestCachedPrice);
       if (!Number.isFinite(usePrice)) return;
       const payload = {
         symbol: cleanSym,
@@ -873,7 +896,7 @@ export default function SymbolChart({
       } catch {}
       setCtxMenu(null);
     },
-    [ctxMenu, cleanSym, onQuickTradeIntent],
+    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master],
   );
 
   const latestCachedPrice = useMemo(() => {
@@ -890,19 +913,28 @@ export default function SymbolChart({
 
   const handleQuickLevel = useCallback(
     (kind) => {
-      if (!ctxMenu || !Number.isFinite(Number(ctxMenu.price))) return;
+      const activeTf = String(activeChartId || "").split("-").slice(-1)[0];
+      const activeBars = master?.bars?.[activeTf] || [];
+      const activeLastClose = Number(activeBars[activeBars.length - 1]?.close);
+      const levelPrice = Number.isFinite(Number(ctxMenu?.price))
+        ? Number(ctxMenu.price)
+        : Number.isFinite(Number(hoverInfo?.price))
+          ? Number(hoverInfo.price)
+          : Number.isFinite(activeLastClose)
+            ? activeLastClose
+            : Number(latestCachedPrice);
+      if (!Number.isFinite(levelPrice)) return;
       const payload = {
         symbol: cleanSym,
         side: String(kind || "").toUpperCase() === "SL" ? "SL" : "TP",
         action: String(kind || "").toUpperCase(),
-        price: Number(ctxMenu.price),
+        price: levelPrice,
         time: ctxMenu.time || null,
         interval: ctxMenu.interval || null,
       };
       if (typeof onQuickTradeIntent === "function") onQuickTradeIntent(payload);
       const isTp = String(kind || "").toUpperCase() === "TP";
       const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      const levelPrice = Number(ctxMenu.price);
       setAnnotations((prev) => [
         ...prev,
         {
@@ -927,7 +959,7 @@ export default function SymbolChart({
       setSelectedObjectId(id);
       setCtxMenu(null);
     },
-    [ctxMenu, cleanSym, onQuickTradeIntent],
+    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master],
   );
 
   const handleClearLevel = useCallback(
@@ -1289,10 +1321,43 @@ export default function SymbolChart({
                   ? x2TimeRatio
                   : clamp01(Number(a.x2Ratio ?? 0.8)),
             };
+          })
+          .filter((a) => {
+            if (a.kind === "line") {
+              return Number.isFinite(Number(a._yRatio)) && Number(a._yRatio) >= 0 && Number(a._yRatio) <= 1;
+            }
+            if (a.kind === "point") {
+              return Number.isFinite(Number(a._xRatio)) && Number.isFinite(Number(a._yRatio)) &&
+                Number(a._xRatio) >= 0 && Number(a._xRatio) <= 1 &&
+                Number(a._yRatio) >= 0 && Number(a._yRatio) <= 1;
+            }
+            if (a.kind === "zone") {
+              const y1 = Number(a._y1Ratio);
+              const y2 = Number(a._y2Ratio);
+              const x1 = Number(a._x1Ratio);
+              const x2 = Number(a._x2Ratio);
+              const yIn = Number.isFinite(y1) && Number.isFinite(y2) && !(Math.max(y1, y2) < 0 || Math.min(y1, y2) > 1);
+              const xIn = Number.isFinite(x1) && Number.isFinite(x2) && !(Math.max(x1, x2) < 0 || Math.min(x1, x2) > 1);
+              return yIn && xIn;
+            }
+            return true;
           });
 
+          const isActiveTf = activeChartId === chartId;
+
           return (
-            <div key={`${mode}-${tf}`} style={{ minWidth: 0, position: "relative" }}>
+            <div
+              key={`${mode}-${tf}`}
+              style={{
+                minWidth: 0,
+                position: "relative",
+                border: isActiveTf ? "2px solid #22d3ee" : "1px solid transparent",
+                borderRadius: 8,
+                padding: isActiveTf ? 2 : 0,
+              }}
+              onMouseEnter={() => setActiveChartId(chartId)}
+              onMouseDown={() => setActiveChartId(chartId)}
+            >
               <TfHeader
                 tf={tf}
                 context={context}
@@ -1345,7 +1410,7 @@ export default function SymbolChart({
                   onPlanLevelChange={onPlanLevelChange}
                   syncedCrosshair={mode === "cache" ? syncedCrosshair : null}
                   onCrosshairSync={
-                    mode === "cache" ? setSyncedCrosshair : undefined
+                    mode === "cache" ? handleCrosshairSync : undefined
                   }
                   onBarsLoaded={handleBarsLoaded}
                   sharedLines={mode === "cache" ? [] : []}
@@ -1632,6 +1697,15 @@ export default function SymbolChart({
                 />
               ) : null}
               {it.label}
+              {it.label === "Buy" || it.label === "Sell" || it.label === "TP" || it.label === "SL" ? (
+                <span style={{ marginLeft: "auto", opacity: 0.8, fontSize: 10 }}>
+                  {Number.isFinite(Number(ctxMenu?.price))
+                    ? Number(ctxMenu.price).toFixed(2)
+                    : Number.isFinite(Number(hoverInfo?.price))
+                      ? Number(hoverInfo.price).toFixed(2)
+                      : "-"}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -1651,6 +1725,9 @@ export default function SymbolChart({
         >
           <span className="minor-text" style={{ fontSize: 10 }}>
             Objects ({annotations.length})
+          </span>
+          <span className="minor-text" style={{ fontSize: 10, opacity: 0.9 }}>
+            Active TF: {activeChartId ? String(activeChartId).split("-").slice(-1)[0] : "-"} | Price: {Number.isFinite(Number(hoverInfo?.price)) ? Number(hoverInfo.price).toFixed(2) : "-"} | Time: {hoverInfo?.time ? String(hoverInfo.time) : "-"}
           </span>
           <button
             className="secondary-button"
