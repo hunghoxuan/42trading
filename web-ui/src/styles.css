@@ -27,8 +27,7 @@
 * {
     box-sizing: border-box;
 }
-body {
-    margin: 30px;
+body { margin: 0; 
     background: var(--bg);
     color: var(--text);
     overflow-x: hidden;
@@ -1282,7 +1281,11 @@ button:disabled {
 .snapshot-activity-card-v4.compact {
     border-color: rgba(33, 206, 255, 0.35);
     border-radius: 9px;
-    background: linear-gradient(180deg, rgba(13, 22, 36, 0.96) 0%, rgba(9, 16, 28, 0.96) 100%);
+    background: linear-gradient(
+        180deg,
+        rgba(13, 22, 36, 0.96) 0%,
+        rgba(9, 16, 28, 0.96) 100%
+    );
     padding: 7px 9px;
     gap: 3px;
 }
@@ -1878,10 +1881,10 @@ button:disabled {
 /* Compact trade/signal list */
 .compact-list th:not(.col-position):not(.col-pnl),
 .compact-list td:not(.col-position):not(.col-pnl) {
-  display: none;
+    display: none;
 }
 .compact-list .col-position,
 .compact-list .col-pnl {
-  font-size: 10px;
-  padding: 2px 4px;
+    font-size: 10px;
+    padding: 2px 4px;
 }
