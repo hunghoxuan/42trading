@@ -4157,6 +4157,11 @@ export default function ChartSnapshotsPage() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
+  useEffect(() => {
+    if (!isTradeRoute) return;
+    setResponseTab("response");
+  }, [isTradeRoute]);
+
   // Infinite scroll: load more on scroll near bottom
   useEffect(() => {
     const handler = () => {
@@ -6053,6 +6058,9 @@ export default function ChartSnapshotsPage() {
                 slPrice: position.sl,
                 tpPrice: position.tp,
                 detailTfTab: timeframe,
+                showEditButton: !isTradeRoute,
+                showTradeButton: !isTradeRoute,
+                showAnalyzeButton: !isTradeRoute,
                 profileTfs: [
                   ...(PROFILE_PRESETS[cfg.profile]?.htf_tfs || []),
                   ...(PROFILE_PRESETS[cfg.profile]?.exec_tfs || []),
@@ -6134,7 +6142,9 @@ export default function ChartSnapshotsPage() {
                   null,
                   2,
                 ),
-                tradePlans: analysisTradePlans.map((plan, idx) => ({
+                tradePlans: (
+                  analysisTradePlans.length
+                    ? analysisTradePlans.map((plan, idx) => ({
                   ...(plan?.raw || {}),
                   __raw_plan: plan?.raw || {},
                   __plan_index: idx,
@@ -6176,7 +6186,23 @@ export default function ChartSnapshotsPage() {
                     (plan?.raw?.position_management?.skips_reasons
                       ? [{ reason: plan.raw.position_management.skips_reasons, severity: "" }]
                       : plan.reasons_to_skip || []),
-                })),
+                }))
+                    : [
+                        {
+                          __plan_index: 0,
+                          symbol: normalizeSignalSymbol(
+                            selectedSymbol || cfg.symbol || tvSymbol || "",
+                          ),
+                          direction: position.direction || "BUY",
+                          entry: position.entry || "",
+                          tp: position.tp || "",
+                          sl: position.sl || "",
+                          rr: position.rr || "",
+                          trade_type: position.trade_type || "limit",
+                          note: position.note || "",
+                        },
+                      ]
+                ),
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{

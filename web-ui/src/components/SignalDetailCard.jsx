@@ -1578,6 +1578,9 @@ export default function SignalDetailCard({
                 }
               }
             }}
+            showEditButton={chart?.showEditButton !== false}
+            showTradeButton={chart?.showTradeButton !== false}
+            showAnalyzeButton={chart?.showAnalyzeButton !== false}
             skipFetch={false}
           />
         </Suspense>
