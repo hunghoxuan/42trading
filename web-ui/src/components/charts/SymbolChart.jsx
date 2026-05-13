@@ -839,6 +839,18 @@ export default function SymbolChart({
     [ctxMenu],
   );
 
+  const latestCachedPrice = useMemo(() => {
+    const keys = Object.keys(master?.bars || {});
+    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
+    for (const k of sorted) {
+      const bars = master?.bars?.[k] || [];
+      if (!bars.length) continue;
+      const close = Number(bars[bars.length - 1]?.close);
+      if (Number.isFinite(close)) return close;
+    }
+    return null;
+  }, [master]);
+
   const handleQuickTrade = useCallback(
     (side, explicitPrice = null) => {
       const activeTf = String(activeChartId || "").split("-").slice(-1)[0];
@@ -899,18 +911,6 @@ export default function SymbolChart({
     },
     [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master],
   );
-
-  const latestCachedPrice = useMemo(() => {
-    const keys = Object.keys(master?.bars || {});
-    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
-    for (const k of sorted) {
-      const bars = master?.bars?.[k] || [];
-      if (!bars.length) continue;
-      const close = Number(bars[bars.length - 1]?.close);
-      if (Number.isFinite(close)) return close;
-    }
-    return null;
-  }, [master]);
 
   const handleQuickLevel = useCallback(
     (kind) => {
