@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.13 16:20 - chart-cache-debug-and-snapshot-refresh-fix",
+  "v2026.05.13 17:00 - chart-object-overlay-zindex-fix",
 ); // TP resolver prefers first positive value in strict fallback order
 
 const SERVER_LOG_DIR = envStr(

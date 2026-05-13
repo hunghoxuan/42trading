@@ -763,9 +763,14 @@ export default function SymbolChart({
                     mode === "cache" ? handleContextRequest : undefined
                   }
                   />
-                  {mode === "cache" && (
-                    <div
-                    style={{ position: "absolute", inset: 0 }}
+                {mode === "cache" && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      zIndex: 25,
+                      pointerEvents: "auto",
+                    }}
                     onMouseDown={(evt) => {
                       const rect = evt.currentTarget.getBoundingClientRect();
                       const x = evt.clientX - rect.left;
@@ -843,6 +848,7 @@ export default function SymbolChart({
                               top: `${Number(a.yRatio || 0.5) * 100}%`,
                               borderTop: `1px dashed ${a.color || "#60a5fa"}`,
                               pointerEvents: "none",
+                              zIndex: 26,
                             }}
                           />
                         );
@@ -861,6 +867,7 @@ export default function SymbolChart({
                               background: a.color || "#eab308",
                               transform: "translate(-50%, -50%)",
                               pointerEvents: "none",
+                              zIndex: 26,
                             }}
                           />
                         );
@@ -882,6 +889,7 @@ export default function SymbolChart({
                               border: `1px solid ${a.color || "#22c55e"}`,
                               background: `${a.color || "#22c55e"}22`,
                               pointerEvents: "none",
+                              zIndex: 26,
                             }}
                           />
                         );
