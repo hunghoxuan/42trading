@@ -192,3 +192,75 @@ Copy and fill:
 - `events_patterns` and `pd_arrays` in UI not yet rendered — mapping paths exist, need UI components.
 - `entry_checklists` (boolean object) needs check/uncheck UI widget.
 - Twelve Data daily limit exhausted (800 credits/day).
+
+# Handoff — 2026-05-13 (session end)
+
+> From: DeepSeek
+> To: Codex
+
+## Deployed & Verified on VPS
+- commit: `cdc97b9e`
+- version: `v2026.05.13 13:30 - binance-redis-cache-colors`
+- All code pushed to `origin/main`, VPS in sync
+
+## What Was Done
+
+### 1. SymbolChart Button Refactor
+- Unified `[Live] [C] [S]` buttons for ALL contexts
+- Removed separate TradePlan button, Refresh ↻ button
+- Overlay toggles (P1/P2/PD/KL) appear when `hasTradePlan && mode==="cache" && hasBars`
+- Short labels: "C", "S"
+
+### 2. Cache/Data Pipeline
+- `useChartTileData.js` → `fetchAll()` calls `api.chartTwelveCandles` per TF (parallel via Promise.allSettled)
+- Server: `buildAnalysisSnapshotFromTwelve()` → Redis → DB → Twelve Data
+- **Binance free API** for crypto: BTC,ETH,SOL,DOGE... → `api.binance.com/v3/klines`
+- Snapshot file naming: stripped provider prefix (`ICMARKETS_BTCUSD` → `BTCUSD`)
+
+### 3. Schema v2.7 + Response Mapping
+- `config/ai_response_schema.json` v2.7 deployed
+- `config/response_mapping.json` with version-aware paths (`versions.2.7.ui_fields`)
+- Client-side `recoverTradePlansFromRaw()` extracts plans from raw AI text when JSON parse fails
+- `max_tokens` bumped to 32000
+
+### 4. Bug Fixes
+- `planPrimaryTpNumber`: added `tp1.price` priority (was missing)
+- `tfToMs`: handles `1DAY`, `1WEEK`, `1MIN` formats (was only `D`, `W`, etc.)
+- Crosshair sync disabled (`syncedCrosshair={null}`) to prevent TradeSignalChart null crash
+- [S] snapshot list: 15s timeout to prevent forever loading
+- [S] stays on snapshot mode on ERROR instead of auto-switching to Live
+- Body margin: `0` for fullscreen dashboard
+
+## What Still Needs Fixing
+
+### [C] TradeSignalChart "Value is null" crash
+- `SymbolChart.jsx` line ~568: `hasBars` check prevents TradeSignalChart during LOADING
+- But AFTER loading (status=READY), TradeSignalChart renders and crashes
+- crash is in `setCrosshairPosition` → syncedCrosshair already set to null
+- **Need to find the actual null value inside TradeSignalChart** — file `web-ui/src/components/TradeSignalChart.jsx`, function `v` at line ~2204 (minified)
+
+### [S] still not showing snapshot images
+- `useChartTileData.js` `fetchAll()` snapshot mode calls `api.chartSnapshots(100)` 
+- Filters by symbol, matches TF by file_name pattern `_15m_` / `_15M_`
+- If found: sets `entry.snapshot = { file_name, url }` → `master.snapshots[tf]` → `<img>` in SymbolChart
+- **Check if snapshot files actually exist on VPS** at `/opt/trading/webhook/snapshots/`
+- **Check if `/v2/chart/snapshots/` GET endpoint returns files**
+- **Check if SymbolChart snapshot `<img>` URL is correct** — uses `/v2/chart/snapshots/{file_name}`
+
+### Cache source labels not updating in UI
+- `SymbolChart.jsx` TfHeader badge shows: "Redis" / "DB" / "Binance" / "Twelve"
+- Color: green for remote API, grey for cached
+- **Check if `context.cache_source` is being passed correctly from `useSymbolChartData` → `master.context[tf].cache_source`**
+
+### All TFs show same chart data
+- Each TradeSignalChart tile has `chartId = ${symbol}-${tf}`
+- TradeSignalChart has its own `chartFetchManager.get(symbol, interval)` call
+- **Since `chartFetchManager.set()` was removed from the hook, TradeSignalChart fetches its own data**
+- **Need to either: restore `chartFetchManager.set()` in fetchAll, or make TradeSignalChart use passed bars data**
+
+### Dashboard
+- Body margin set to 0 in CSS
+- Dashboard grid: removed 20% sidebar column
+- Removed Direction and Chart TF filters
+- **User reports not seeing changes** — verify `body{margin:0}` in `/opt/trading/web-ui/dist/assets/index-*.css`
+
