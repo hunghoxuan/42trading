@@ -11082,6 +11082,77 @@ async function loadUserApiKeysMap(userId) {
   return out;
 }
 
+
+function isCryptoPair(symbol) {
+  const s = String(symbol || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  // Common crypto base assets
+  const cryptoBases = [
+    "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "DOT", "MATIC",
+    "LTC", "LINK", "UNI", "AVAX", "ATOM", "ETC", "FIL", "APT", "ARB",
+    "OP", "NEAR", "PEPE", "SUI", "SEI", "TIA", "WIF", "BONK",
+  ];
+  for (const base of cryptoBases) {
+    if (s.startsWith(base) && (s.endsWith("USD") || s.endsWith("USDT"))) {
+      return { base: base, quote: s.slice(base.length) };
+    }
+  }
+  return null;
+}
+
+function timeframeToBinance(tf) {
+  const map = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w", "1M": "1M" };
+  return map[String(tf || "").toLowerCase()] || "15m";
+}
+
+function binanceKlineToBar(k) {
+  return {
+    time: Math.floor(Number(k[0]) / 1000),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  };
+}
+
+async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
+  const pair = isCryptoPair(symbolNorm);
+  if (!pair) return null;
+  const binanceSymbol = pair.base + (pair.quote === "USD" ? "USDT" : pair.quote);
+  const interval = timeframeToBinance(tfNorm);
+  const limit = Math.max(50, Math.min(bars || 300, 1000));
+  const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
+  console.log(`[binance] FETCH sym=${binanceSymbol} interval=${interval} limit=${limit}`);
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Binance HTTP ${res.status}`);
+    const raw = await res.json();
+    if (!Array.isArray(raw) || !raw.length) throw new Error("Binance empty response");
+    const bars = raw.map(binanceKlineToBar).filter((b) => Number.isFinite(b.time));
+    console.log(`[binance] OK sym=${binanceSymbol} bars=${bars.length}`);
+    return {
+      provider: "binance",
+      status: "ok",
+      symbol: symbolNorm,
+      symbol_norm: symbolNorm,
+      timeframe: tfNorm,
+      tf_norm: tfNorm,
+      bars,
+      bar_start: bars[0]?.time || null,
+      bar_end: bars[bars.length - 1]?.time || null,
+      last_price: bars[bars.length - 1]?.close || null,
+      cache_source: "remote_api",
+    };
+  } catch (e) {
+    console.warn(`[binance] FAIL sym=${binanceSymbol}: ${e.message}`);
+    return null;
+  }
+}
+
 async function buildAnalysisSnapshotFromTwelve({
   userId,
   payload = {},
@@ -11152,6 +11223,23 @@ async function buildAnalysisSnapshotFromTwelve({
         tf_norm: tfNorm,
       };
     }
+  }
+
+  // Crypto symbols: use Binance free API instead of Twelve Data
+  const binanceResult = await fetchBinanceBars(symbolNorm, tfNorm, outputsize);
+  if (binanceResult) {
+    if (notificationManager) {
+      notificationManager.handle("REMOTE_API_CALL", "binance_success", {
+        message: `Binance OK ${symbolNorm} ${tfNorm} ${binanceResult.bars.length} bars`,
+        api: "Binance",
+        symbol: symbolNorm,
+        tf: tfNorm,
+        bars_count: binanceResult.bars.length,
+      });
+    }
+    tfCacheSet(symbolNorm, tfNorm, binanceResult);
+    await marketDataDbUpsert(symbolNorm, tfNorm, binanceResult).catch(() => {});
+    return binanceResult;
   }
 
   const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
