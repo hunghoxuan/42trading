@@ -74,19 +74,40 @@ export function useSymbolChartData({
           tfs.map(async (tf) => {
             const key = tfNorm(tf);
             try {
+              if (!force) {
+                const local = chartFetchManager.get(sym, tf);
+                if (local?.bars?.length) {
+                  return {
+                    key,
+                    data: {
+                      bars: Array.isArray(local.bars) ? local.bars : [],
+                      bar_start: local?.bar_start || local?.bars?.[0]?.time,
+                      bar_end:
+                        local?.bar_end ||
+                        local?.bars?.[local?.bars?.length - 1]?.time,
+                      last_price: local?.last_price ?? null,
+                      cache_source: local?.cache_source || "memory",
+                    },
+                  };
+                }
+              }
               console.log("[ChartData] fetch tf=" + tf);
               const out = await api.chartTwelveCandles(sym, tf, 300, force);
               console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
+              const tfData = {
+                bars: Array.isArray(snap?.bars) ? snap.bars : [],
+                bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
+                bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
+                last_price: snap?.last_price ?? null,
+                cache_source: out?.source || "remote_api",
+              };
+              if (tfData.bars.length > 0) {
+                chartFetchManager.set(sym, tf, tfData);
+              }
               return {
                 key,
-                data: {
-                  bars: Array.isArray(snap?.bars) ? snap.bars : [],
-                  bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
-                  bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
-                  last_price: snap?.last_price ?? null,
-                  cache_source: out?.source || "remote_api",
-                },
+                data: tfData,
               };
             } catch (e) {
               console.warn("[ChartData] twelve tf=" + tf + " error=" + (e?.message || String(e)));

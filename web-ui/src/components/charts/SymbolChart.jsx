@@ -98,15 +98,27 @@ function TfHeader({
             fontSize: 8,
             fontWeight: 600,
             color:
-              context.cache_source !== "remote_api" && context.cache_source !== "twelvedata"
-                ? "#10b981"
-                : "#f59e0b",
+              context.cache_source === "memory" ||
+              context.cache_source === "redis" ||
+              context.cache_source === "db"
+                ? "var(--muted)"
+                : context.cache_source === "binance"
+                  ? "#10b981"
+                  : "#f59e0b",
             background: "rgba(0,0,0,0.2)",
             padding: "0 3px",
             borderRadius: 2,
             marginLeft: 4,
             textTransform: "uppercase",
-            border: `1px solid ${context.cache_source !== "remote_api" && context.cache_source !== "twelvedata" ? "#10b98140" : "#f59e0b40"}`,
+            border: `1px solid ${
+              context.cache_source === "memory" ||
+              context.cache_source === "redis" ||
+              context.cache_source === "db"
+                ? "rgba(148,163,184,0.25)"
+                : context.cache_source === "binance"
+                  ? "#10b98140"
+                  : "#f59e0b40"
+            }`,
           }}
           title={context.reason || ""}
         >
@@ -599,6 +611,7 @@ export default function SymbolChart({
                   chartId={chartId}
                   symbol={cleanSym}
                   interval={tf}
+                  historicalData={master?.bars?.[tf.toLowerCase()] || []}
                   height={chartHeight}
                   analysisSnapshot={analysisSnapshot || null}
                   entryPrice={overlays.plan1 ? entryPrice : null}
