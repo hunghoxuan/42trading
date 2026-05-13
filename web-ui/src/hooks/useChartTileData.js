@@ -91,10 +91,19 @@ export function useSymbolChartData({
           bars: 300,
           force,
         };
+        const snapshotMaxAgeMs = 15 * 60 * 1000;
         let apiItems = [];
+        let apiCachedItems = [];
+        let apiCreatedItems = [];
         const batch = await api.chartRefresh(refreshPayload);
         apiItems = Array.isArray(batch?.snapshots?.items)
           ? batch.snapshots.items
+          : [];
+        apiCachedItems = Array.isArray(batch?.snapshots?.cached)
+          ? batch.snapshots.cached
+          : [];
+        apiCreatedItems = Array.isArray(batch?.snapshots?.created)
+          ? batch.snapshots.created
           : [];
         console.log(
           "[ChartData] snapshots refresh ok=" +
@@ -114,6 +123,7 @@ export function useSymbolChartData({
           });
           const createdItems = Array.isArray(created?.items) ? created.items : [];
           apiItems = [...apiItems, ...createdItems];
+          apiCreatedItems = [...apiCreatedItems, ...createdItems];
         }
         if (!apiItems.length) {
           const listed = await api.chartSnapshots(200);
@@ -131,6 +141,16 @@ export function useSymbolChartData({
             attached: true,
           }));
         const items = [...apiItems, ...attachedItems];
+        const createdByName = new Set(
+          apiCreatedItems
+            .map((x) => String(x?.file_name || ""))
+            .filter(Boolean),
+        );
+        const cachedByName = new Set(
+          apiCachedItems
+            .map((x) => String(x?.file_name || ""))
+            .filter(Boolean),
+        );
         // Filter by symbol
         const symbolTokens = symAliases(sym);
         const matchingItems = items.filter((x) => {
@@ -172,6 +192,18 @@ export function useSymbolChartData({
                   url:
                     found.url ||
                     `/v2/chart/snapshots/${encodeURIComponent(found.file_name || "")}`,
+                  reused:
+                    cachedByName.has(String(found.file_name || "")) ||
+                    found.reused === true,
+                  is_new:
+                    createdByName.has(String(found.file_name || "")) &&
+                    found.reused !== true,
+                  mtime_ms: found.created_at
+                    ? new Date(found.created_at).getTime()
+                    : Date.now(),
+                  expires_at_ms: found.created_at
+                    ? new Date(found.created_at).getTime() + snapshotMaxAgeMs
+                    : Date.now() + snapshotMaxAgeMs,
                 }
               : null,
           };
@@ -285,7 +317,7 @@ export function useSymbolChartData({
             return null;
           }
           setStatus("READY");
-          setSnapMsg("Snapshots ready");
+          setSnapMsg("");
           return { data: { entries } };
         }
         if (!hasBars) {
@@ -387,6 +419,9 @@ export function useSymbolChartData({
     refresh,
     liveKey,
     snapMsg,
-    snapshotState: { stage: snapMsg ? "ready" : "idle", message: snapMsg },
+    snapshotState: {
+      stage: error ? "error" : snapMsg ? "loading" : "idle",
+      message: snapMsg || error || "",
+    },
   };
 }

@@ -67,11 +67,8 @@ function TfHeader({
   barsStatus,
   snapshotStatus,
 }) {
-  const showSnapshotBadge = useMemo(() => {
-    if (mode !== "snapshots") return false;
-    const snap = master?.snapshots?.[tf.toLowerCase()];
-    return !!snap?.file_name;
-  }, [master, tf, mode]);
+  const snapInfo = master?.snapshots?.[tf.toLowerCase()] || null;
+  const showSnapshotBadge = mode === "snapshots" && !!snapInfo?.file_name;
 
   const htfBias = useMemo(() => {
     const rawBias = context?.bias || analysisSnapshot?.htf_context?.bias;
@@ -181,12 +178,27 @@ function TfHeader({
               : "Loading..."
           }
         >
-          {snapStat.status === "snapshot" ? `📷 ${snapStat.time || ""}` : "⏳"}
+          {snapStat.status === "snapshot" ? `${snapStat.time || ""}` : "⏳"}
         </span>
       )}
       {showSnapshotBadge && (
-        <span style={{ marginLeft: "auto", color: "#10b981", fontSize: 9 }}>
-          📷 {master.snapshots[tf.toLowerCase()].file_name || "snap"}
+        <span
+          style={{
+            marginLeft: "auto",
+            color: snapInfo.is_new ? "#10b981" : "var(--muted)",
+            fontSize: 9,
+            background: "rgba(0,0,0,0.2)",
+            border: `1px solid ${snapInfo.is_new ? "#10b98140" : "rgba(148,163,184,0.25)"}`,
+            padding: "0 4px",
+            borderRadius: 3,
+            maxWidth: 130,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={`mtime: ${showDateTime(snapInfo.mtime_ms)} | revalidate: ${showDateTime(snapInfo.expires_at_ms)} | ${snapInfo.is_new ? "new" : "cached"}`}
+        >
+          {snapInfo.file_name || "snapshot"}
         </span>
       )}
     </div>
@@ -446,13 +458,12 @@ export default function SymbolChart({
           )}
           {(pendingMode || mode) === "snapshots" &&
             snapshotState?.message &&
-            snapshotState.stage !== "idle" && (
+            snapshotState.stage === "error" && (
               <span
                 className="minor-text"
                 style={{
                   fontSize: 9,
-                  color:
-                    snapshotState.stage === "error" ? "#ef4444" : "#f59e0b",
+                  color: "#ef4444",
                 }}
               >
                 {snapshotState.message}
