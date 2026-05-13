@@ -5357,7 +5357,11 @@ export default function ChartSnapshotsPage() {
                       <button
                         className="secondary-button"
                         type="button"
-                        onClick={() => setCfgField("symbol", "")}
+                        onClick={() => {
+                          setCfgField("symbol", "");
+                          setSelectedSymbols([]);
+                          navigate("/ai/analyze", { replace: false });
+                        }}
                         style={{ fontSize: 12, padding: "4px 8px" }}
                       >
                         {"<"}
@@ -5931,6 +5935,9 @@ export default function ChartSnapshotsPage() {
                                         symbols: [s],
                                       }))
                                     }
+                                    onTrade={handleChartTrade}
+                                    showTradeButton={true}
+                                    showAnalyzeButton={true}
                                     onRemove={null}
                                   />
                                 </Suspense>
@@ -5973,6 +5980,9 @@ export default function ChartSnapshotsPage() {
                                 symbols: [s],
                               }))
                             }
+                            onTrade={handleChartTrade}
+                            showTradeButton={true}
+                            showAnalyzeButton={true}
                             onRemove={(s) => removeFromWatchlist(s)}
                           />
                         </Suspense>
@@ -6040,6 +6050,22 @@ export default function ChartSnapshotsPage() {
           <Suspense
             fallback={<div className="loading-card">Loading Details...</div>}
           >
+            {isTradeRoute ? (
+              <div style={{ marginBottom: 10 }}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() =>
+                    navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                      replace: false,
+                    })
+                  }
+                  style={{ fontSize: 12, padding: "4px 10px" }}
+                >
+                  {"< Back"}
+                </button>
+              </div>
+            ) : null}
             <SignalDetailCard
               mode="ai"
               hideTabsBeforeResponse={!isTradeRoute}
@@ -6206,7 +6232,7 @@ export default function ChartSnapshotsPage() {
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{
-                enabled: true,
+                enabled: isTradeRoute,
                 signalId: null,
                 tradeId: null,
                 value: position,
@@ -6219,7 +6245,12 @@ export default function ChartSnapshotsPage() {
                   !manuallyAddedSignal,
                 showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
                 showResetButton: true,
-                onReset: resetToDefaultBrowser,
+                onReset: isTradeRoute
+                  ? () =>
+                      navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                        replace: false,
+                      })
+                  : resetToDefaultBrowser,
                 resetLabel: "Back",
                 addSignalLabel: "+ Signal",
                 addTradeLabel: "+ Trade",

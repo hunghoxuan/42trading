@@ -135,7 +135,7 @@ export function TradePlanEditor({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "84px 1fr 110px",
+          gridTemplateColumns: "84px minmax(140px, 1fr) 98px",
           alignItems: "center",
           gap: 8,
         }}
@@ -218,18 +218,6 @@ export function TradePlanEditor({
           >
             +
           </button>
-          {["entry", "tp", "sl"].includes(String(k)) && (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => update(k, "")}
-              disabled={isDisabled}
-              style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1, color: "#ef4444", borderColor: "#ef444466" }}
-              title={`Clear ${label}`}
-            >
-              x
-            </button>
-          )}
         </div>
       </div>
     );

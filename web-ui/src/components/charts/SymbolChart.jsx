@@ -1009,7 +1009,10 @@ export default function SymbolChart({
               fontSize: 10,
               lineHeight: 1,
               fontWeight: 700,
-              display: mode === "cache" && showControls && showTradeButton ? "block" : "none",
+              display:
+                showControls && showTradeButton && typeof onTrade === "function"
+                  ? "block"
+                  : "none",
             }}
             onClick={() =>
               onTrade?.({
@@ -1019,7 +1022,7 @@ export default function SymbolChart({
                 mode,
               })
             }
-            title="Open Trade plan with latest cached price"
+            title="Open Trade page"
           >
             Trade
           </button>
