@@ -2344,22 +2344,22 @@ export default function ChartSnapshotsPage() {
 
   const [usedFiles, setUsedFiles] = useState([]);
   const [sessionPrefix, setSessionPrefix] = useState("");
-  const buildAiAnalyzeRoute = (symbols = []) => {
+  function buildAiAnalyzeRoute(symbols = []) {
     const list = (Array.isArray(symbols) ? symbols : [])
       .map((x) => normalizeWatchSymbol(x))
       .filter(Boolean);
     if (!list.length) return "/ai/analyze";
     const slug = list.join("-");
     return `/ai/analyze/${encodeURIComponent(slug)}`;
-  };
-  const buildAiTradeRoute = (symbols = []) => {
+  }
+  function buildAiTradeRoute(symbols = []) {
     const list = (Array.isArray(symbols) ? symbols : [])
       .map((x) => normalizeWatchSymbol(x))
       .filter(Boolean);
     if (!list.length) return "/ai/trade";
     const slug = list.join("-");
     return `/ai/trade/${encodeURIComponent(slug)}`;
-  };
+  }
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
   const [watchlist, setWatchlist] = useState([]);
