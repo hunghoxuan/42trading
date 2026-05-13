@@ -22,6 +22,13 @@ function normSym(s) {
     .toUpperCase();
   return r.includes(":") ? r.split(":").pop().trim().toUpperCase() : r;
 }
+function symAliases(sym) {
+  const s = normSym(sym);
+  const out = new Set([s]);
+  if (s.endsWith("USD")) out.add(`${s.slice(0, -3)}USDT`);
+  if (s.endsWith("USDT")) out.add(`${s.slice(0, -4)}USD`);
+  return [...out];
+}
 
 export function useSymbolChartData({
   symbol,
@@ -52,7 +59,7 @@ export function useSymbolChartData({
       console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
 
       if (mode === "snapshots") {
-        // Snapshot mode: backend decides cache-validity vs capture
+        // Snapshot mode: 1) reuse valid VPS snapshots 2) capture missing 3) fallback list
         const refreshPayload = {
           symbol: sym,
           timeframes: tfs,
@@ -63,16 +70,38 @@ export function useSymbolChartData({
           bars: 300,
           force,
         };
-        const batch = await Promise.race([
-          api.chartRefresh(refreshPayload),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Snapshot list timeout")), 15000)),
-        ]);
-        const apiItems = Array.isArray(batch?.snapshots?.items)
+        let apiItems = [];
+        const batch = await api.chartRefresh(refreshPayload);
+        apiItems = Array.isArray(batch?.snapshots?.items)
           ? batch.snapshots.items
           : [];
-        console.log("[ChartData] snapshots refresh ok=" + batch?.ok + " items=" + apiItems.length);
+        console.log(
+          "[ChartData] snapshots refresh ok=" +
+            batch?.ok +
+            " items=" +
+            apiItems.length,
+        );
+        if (!apiItems.length) {
+          const created = await api.chartSnapshotCreateBatch({
+            symbol: sym,
+            timeframes: tfs,
+            provider,
+            session_prefix: sessionPrefix,
+            lookbackBars: 300,
+            format: "jpg",
+            quality: 55,
+          });
+          const createdItems = Array.isArray(created?.items) ? created.items : [];
+          apiItems = [...apiItems, ...createdItems];
+        }
+        if (!apiItems.length) {
+          const listed = await api.chartSnapshots(200);
+          apiItems = Array.isArray(listed?.items) ? listed.items : [];
+        }
         // Keep sid-attached snapshot files visible too (signal/trade context)
-        const attachedItems = (Array.isArray(attachedSnapshotFiles) ? attachedSnapshotFiles : [])
+        const attachedItems = (
+          Array.isArray(attachedSnapshotFiles) ? attachedSnapshotFiles : []
+        )
           .map((file) => String(file || "").trim())
           .filter(Boolean)
           .map((file) => ({
@@ -82,12 +111,17 @@ export function useSymbolChartData({
           }));
         const items = [...apiItems, ...attachedItems];
         // Filter by symbol
-        const symUpper = sym.toUpperCase();
+        const symbolTokens = symAliases(sym);
         const matchingItems = items.filter((x) => {
           const f = String(x?.file_name || "").toUpperCase();
-          return f.includes(symUpper);
+          return symbolTokens.some((tok) => f.includes(tok));
         });
-        console.log("[ChartData] snapshots matching symbol=" + sym + " count=" + matchingItems.length);
+        console.log(
+          "[ChartData] snapshots matching symbol=" +
+            sym +
+            " count=" +
+            matchingItems.length,
+        );
         for (const tf of tfs) {
           const key = tfNorm(tf);
           const tfTokens = tfSnapshotTokens(tf);
@@ -97,7 +131,15 @@ export function useSymbolChartData({
           });
           entries[key] = {
             bars: [],
-            snapshot: found ? { file_name: found.file_name, file_path: found.url || found.file_path } : null,
+            snapshot: found
+              ? {
+                  file_name: found.file_name,
+                  file_path: found.url || found.file_path,
+                  url:
+                    found.url ||
+                    `/v2/chart/snapshots/${encodeURIComponent(found.file_name || "")}`,
+                }
+              : null,
           };
           if (found) console.log("[ChartData] snapshot match tf=" + tf + " file=" + found.file_name);
         }
