@@ -769,7 +769,7 @@ export default function SymbolChart({
                       position: "absolute",
                       inset: 0,
                       zIndex: 25,
-                      pointerEvents: "auto",
+                      pointerEvents: drawMode === "zone" ? "auto" : "none",
                     }}
                     onMouseDown={(evt) => {
                       const rect = evt.currentTarget.getBoundingClientRect();
