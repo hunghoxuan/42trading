@@ -303,7 +303,10 @@ export default function SymbolChart({
         setLastError(null);
       } else if (status === "ERROR") {
         setLastError(error || "Fetch failed");
-        setPendingMode(null);
+        if (pendingMode) {
+          setMode(pendingMode);
+          setPendingMode(null);
+        }
       }
     }
     prevStatus.current = status;
@@ -558,7 +561,7 @@ export default function SymbolChart({
           const isLive = mode === "live";
           const context = master?.context?.[tf.toLowerCase()];
           const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
-          const hasBars = (master?.bars?.[tf.toLowerCase()] || []).length > 0;
+          const hasBars = status !== "LOADING" && (master?.bars?.[tf.toLowerCase()] || []).length > 0;
           const noData = !isLive && !hasBars && status !== "LOADING";
 
           return (
