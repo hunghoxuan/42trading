@@ -4614,7 +4614,7 @@ export default function ChartSnapshotsPage() {
   const handleChartTrade = useCallback(
     ({ symbol, latestPrice }) => {
       const sym = normalizeWatchSymbol(
-        symbol || selectedSymbol || cfg.symbol || tvSymbol || "",
+        symbol || cfg.symbol || paramSymbol || tvSymbol || "",
       );
       if (!sym) return;
       const entry = Number(latestPrice);
@@ -4625,7 +4625,7 @@ export default function ChartSnapshotsPage() {
       setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
       navigate(buildAiTradeRoute([sym]), { replace: false });
     },
-    [selectedSymbol, cfg.symbol, tvSymbol, navigate],
+    [cfg.symbol, paramSymbol, tvSymbol, navigate],
   );
 
   const chartPdArrays = useMemo(() => {
