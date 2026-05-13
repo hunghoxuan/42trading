@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { chartFetchManager } from "../services/chartFetchManager";
 import { api } from "../api";
 
+const DEFAULT_BARS_COUNT = 300;
+
 function tfNorm(tf) {
   return String(tf || "")
     .toLowerCase()
@@ -64,6 +66,12 @@ function tfRankMinutes(tf) {
   return Number.MAX_SAFE_INTEGER;
 }
 
+function barsForTf(_tf, barsCount) {
+  const n = Number(barsCount);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BARS_COUNT;
+  return Math.max(50, Math.min(5000, Math.round(n)));
+}
+
 function alignLatestPriceAcrossTf(entries = {}, tfs = []) {
   const keys = [...new Set((tfs || []).map(tfNorm).filter(Boolean))];
   const sorted = keys.sort((a, b) => tfRankMinutes(a) - tfRankMinutes(b));
@@ -108,6 +116,7 @@ export function useSymbolChartData({
   symbol,
   timeframes = ["D", "4H", "15M", "5M"],
   mode = "fixed",
+  barsCount = DEFAULT_BARS_COUNT,
   forceRefresh = false,
   skipFetch = false,
   provider = "ICMARKETS",

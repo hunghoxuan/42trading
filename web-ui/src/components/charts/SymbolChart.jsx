@@ -402,7 +402,7 @@ export default function SymbolChart({
     keyLevels: false,
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
-  const [localBarsCount, setLocalBarsCount] = useState(barsCount);
+  const [localBarsCount, setLocalBarsCount] = useState(300);
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
@@ -455,6 +455,7 @@ export default function SymbolChart({
       symbol: cleanSym,
       timeframes,
       mode: pendingMode || mode,
+      barsCount: localBarsCount,
       forceRefresh,
       skipFetch,
       provider,

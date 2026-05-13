@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.13 20:51 - 8f311600"); // TP resolver prefers first positive value in strict fallback order
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.13 20:57 - 19c0de22"); // TP resolver prefers first positive value in strict fallback order
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
