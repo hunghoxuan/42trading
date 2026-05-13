@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.13 17:15 - chart-mouse-pass-through-fix";
+string EA_BUILD_VERSION = "v2026.05.13 17:40 - chart-overlay-phase1-anchor-model";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL

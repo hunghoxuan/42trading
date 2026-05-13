@@ -40,6 +40,12 @@ This file tracks the status of user-facing features and links them to technical 
 - **Ticket**: [./2-backlog/2026-05-02-chart-snapshots-componentized-async-chart-tiles.md]
 - **Summary**: Re-promoted to backlog with locked Chart Sync process and `MARKET_DATA:SYMBOL` cache contract.
 
+## [ ] Chart Interactive Overlay Engine
+- **Status**: Planned (Phase 1 in progress)
+- **Feature Doc**: [../features/1-plan/chart_interactive_overlay_engine.md]
+- **Ticket**: [./1-backlog/2026-05-13-chart-interactive-overlay-engine.md]
+- **Summary**: TradingView-style interactive object layer for PD arrays/key levels/positions using canonical time+price anchors and cross-TF projection.
+
 ## [x] AI Signal Engine
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/ai_signal_engine.md]

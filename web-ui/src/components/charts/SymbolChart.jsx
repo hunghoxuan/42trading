@@ -3,6 +3,11 @@ import { useSymbolChartData } from "../../hooks/useChartTileData";
 import TradeSignalChart from "../TradeSignalChart";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
+  createLineObject,
+  createPointObject,
+  clamp01,
+} from "./chartObjectModel";
+import {
   getEffectiveDisplayTimezone,
   showDateTime,
   sortTimeframes,
@@ -464,7 +469,13 @@ export default function SymbolChart({
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     setAnnotations((prev) => [
       ...prev,
-      { id, kind: "line", type: "LINE", color: "#60a5fa", yRatio: Number(ctxMenu.yRatio) },
+      createLineObject({
+        id,
+        type: "LINE",
+        color: "#60a5fa",
+        yRatio: Number(ctxMenu.yRatio),
+        ctxMenu,
+      }),
     ]);
     setCtxMenu(null);
   }, [ctxMenu]);
@@ -476,27 +487,27 @@ export default function SymbolChart({
       if (kind === "point") {
         setAnnotations((prev) => [
           ...prev,
-          {
+          createPointObject({
             id,
-            kind: "point",
             type,
             color,
             xRatio: Number(ctxMenu.xRatio || 0.5),
             yRatio: Number(ctxMenu.yRatio || 0.5),
-          },
+            ctxMenu,
+          }),
         ]);
       } else if (kind === "zone") {
         setDrawMode("zone");
       } else {
         setAnnotations((prev) => [
           ...prev,
-          {
+          createLineObject({
             id,
-            kind: "line",
             type,
             color,
             yRatio: Number(ctxMenu.yRatio || 0.5),
-          },
+            ctxMenu,
+          }),
         ]);
       }
       setCtxMenu(null);
@@ -845,7 +856,7 @@ export default function SymbolChart({
                               position: "absolute",
                               left: 0,
                               right: 0,
-                              top: `${Number(a.yRatio || 0.5) * 100}%`,
+                              top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
                               borderTop: `1px dashed ${a.color || "#60a5fa"}`,
                               pointerEvents: "none",
                               zIndex: 26,
@@ -859,8 +870,8 @@ export default function SymbolChart({
                             key={a.id}
                             style={{
                               position: "absolute",
-                              left: `${Number(a.xRatio || 0.5) * 100}%`,
-                              top: `${Number(a.yRatio || 0.5) * 100}%`,
+                              left: `${clamp01(Number(a.xRatio || 0.5)) * 100}%`,
+                              top: `${clamp01(Number(a.yRatio || 0.5)) * 100}%`,
                               width: 8,
                               height: 8,
                               borderRadius: "50%",
