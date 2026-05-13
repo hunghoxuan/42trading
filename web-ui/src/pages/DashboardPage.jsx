@@ -207,7 +207,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
               style={{
                 flex: "2.5",
                 fontSize: "10px",
-                fontWeight: 800,
                 color: "var(--muted)",
                 cursor: "pointer",
               }}
@@ -220,7 +219,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                 flex: "1.8",
                 textAlign: "right",
                 fontSize: "10px",
-                fontWeight: 800,
                 color: "var(--muted)",
                 cursor: "pointer",
               }}
@@ -233,7 +231,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                 flex: "1.5",
                 textAlign: "right",
                 fontSize: "10px",
-                fontWeight: 800,
                 color: "var(--muted)",
                 cursor: "pointer",
               }}
@@ -246,7 +243,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                 flex: "1",
                 textAlign: "right",
                 fontSize: "10px",
-                fontWeight: 800,
                 color: "var(--muted)",
                 cursor: "pointer",
               }}
@@ -270,7 +266,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                 className="mini-name"
                 style={{
                   flex: "2.5",
-                  fontWeight: 700,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
@@ -286,7 +281,7 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                   whiteSpace: "nowrap",
                 }}
               >
-                <span style={{ fontWeight: 700 }}>{asPct(r.win_rate)}</span>
+                <span style={{}}>{asPct(r.win_rate)}</span>
                 <span
                   className="minor-text"
                   style={{ fontSize: "10px", marginLeft: "4px" }}
@@ -305,7 +300,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                   flex: "1",
                   textAlign: "right",
                   fontSize: "10px",
-                  fontWeight: 700,
                 }}
                 className={moneyClass(r.rr_total)}
               >
@@ -449,6 +443,11 @@ export default function DashboardPage() {
     1,
     ...monthPoints.map((x) => Math.abs(Number(x.pnl || 0))),
   );
+  const yAxisMax = Math.max(1000, Math.ceil(monthMaxAbsPnl / 100) * 100);
+  const yAxisSteps = Array.from(
+    { length: Math.floor(yAxisMax / 100) },
+    (_, i) => (i + 1) * 100,
+  );
 
   return (
     <section className="stack-layout fadeIn">
@@ -500,7 +499,7 @@ export default function DashboardPage() {
                 <span className="minor-text" style={{ fontSize: "10px" }}>
                   TOTAL
                 </span>
-                <div style={{ fontWeight: 800, fontSize: "16px" }}>
+                <div style={{ fontSize: "16px" }}>
                   {m.total_trades || 0}
                 </div>
               </div>
@@ -510,7 +509,6 @@ export default function DashboardPage() {
                 </span>
                 <div
                   style={{
-                    fontWeight: 800,
                     fontSize: "16px",
                     color: "var(--accent)",
                   }}
@@ -524,7 +522,6 @@ export default function DashboardPage() {
                 </span>
                 <div
                   style={{
-                    fontWeight: 800,
                     fontSize: "16px",
                     color: "var(--success)",
                   }}
@@ -538,7 +535,6 @@ export default function DashboardPage() {
                 </span>
                 <div
                   style={{
-                    fontWeight: 800,
                     fontSize: "16px",
                     color: "var(--success)",
                   }}
@@ -552,7 +548,6 @@ export default function DashboardPage() {
                 </span>
                 <div
                   style={{
-                    fontWeight: 800,
                     fontSize: "16px",
                     color: "var(--error)",
                   }}
@@ -721,17 +716,21 @@ export default function DashboardPage() {
                       fontSize: "10px",
                       whiteSpace: "nowrap",
                       opacity: 0.78,
-                      fontWeight: 400,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
                     }}
                   >
                     <span className="money-pos">
                       {asMoneySigned(v.win_sum_pnl || 0)}
-                    </span>{" "}
-                    |{" "}
+                    </span>
+                    <span>|</span>
                     <span className="money-neg">
                       {asMoneySigned(v.lose_sum_pnl || 0)}
-                    </span>{" "}
-                    | wr: {asPct(winrate)} | rr: {asRR(v.total_rr || 0)}
+                    </span>
+                    <span style={{ marginLeft: "auto" }}>
+                      wr: {asPct(winrate)} | rr: {asRR(v.total_rr || 0)}
+                    </span>
                   </div>
                 </article>
               );
@@ -772,7 +771,7 @@ export default function DashboardPage() {
                 >
                   ◀
                 </button>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>
+                <span style={{ fontSize: 12,}}>
                   {new Date(calendarYear, calendarMonth).toLocaleString(
                     "default",
                     { month: "long", year: "numeric" },
@@ -804,7 +803,6 @@ export default function DashboardPage() {
                   <span
                     key={d}
                     style={{
-                      fontWeight: 700,
                       color: "var(--muted)",
                       padding: "2px 0",
                     }}
@@ -869,7 +867,6 @@ export default function DashboardPage() {
                       >
                         <div
                           style={{
-                            fontWeight: 700,
                             fontSize: 12,
                             color:
                               pnl != null ? "var(--text)" : "var(--muted)",
@@ -883,7 +880,6 @@ export default function DashboardPage() {
                               color:
                                 pnl > 0 ? "var(--success)" : "var(--error)",
                               fontSize: 12,
-                              fontWeight: 800,
                               letterSpacing: "0.1px",
                             }}
                           >
@@ -914,7 +910,7 @@ export default function DashboardPage() {
                 </div>
                 <div
                   className={moneyClass(dailyPnlTotal)}
-                  style={{ fontWeight: 700, fontSize: 18 }}
+                  style={{ fontSize: 18 }}
                 >
                   {dailyPnlTotal > 0 ? "+" : ""}
                   {asMoney(dailyPnlTotal)}
@@ -929,7 +925,7 @@ export default function DashboardPage() {
                   background:
                     "linear-gradient(180deg, rgba(148,163,184,0.05), rgba(15,23,42,0.08))",
                   overflow: "hidden",
-                  padding: "10px 8px 22px 44px",
+                  padding: "10px 8px 22px 48px",
                 }}
               >
                 <div
@@ -938,37 +934,64 @@ export default function DashboardPage() {
                     left: 8,
                     top: 8,
                     bottom: 22,
-                    width: 34,
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "space-between",
-                    alignItems: "flex-end",
+                    width: 40,
                     pointerEvents: "none",
                   }}
                 >
+                  {yAxisSteps.map((v) => (
+                    <span
+                      key={`pos_${v}`}
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: `${50 - (v / yAxisMax) * 50}%`,
+                        transform: "translateY(-50%)",
+                        fontSize: 10,
+                        color: "var(--muted)",
+                        opacity: 0.85,
+                      }}
+                    >
+                      {v}
+                    </span>
+                  ))}
                   <span
-                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
-                  >
-                    +{asMoney(monthMaxAbsPnl)}
-                  </span>
-                  <span
-                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      fontSize: 10,
+                      color: "var(--muted)",
+                      opacity: 0.9,
+                    }}
                   >
                     0
                   </span>
-                  <span
-                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
-                  >
-                    -{asMoney(monthMaxAbsPnl)}
-                  </span>
+                  {yAxisSteps.map((v) => (
+                    <span
+                      key={`neg_${v}`}
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: `${50 + (v / yAxisMax) * 50}%`,
+                        transform: "translateY(-50%)",
+                        fontSize: 10,
+                        color: "var(--muted)",
+                        opacity: 0.85,
+                      }}
+                    >
+                      -{v}
+                    </span>
+                  ))}
                 </div>
                 <div
                   style={{
                     position: "absolute",
-                    left: 44,
+                    left: 48,
                     right: 8,
                     top: "50%",
                     borderTop: "1px solid rgba(148,163,184,0.45)",
+                    zIndex: 3,
                   }}
                 />
                 <div
@@ -983,8 +1006,8 @@ export default function DashboardPage() {
                   {(monthPoints.length ? monthPoints : [{ day: "", pnl: 0 }]).map(
                     (p, idx) => {
                       const hPct = Math.min(
-                        46,
-                        (Math.abs(Number(p.pnl || 0)) / monthMaxAbsPnl) * 46,
+                        49,
+                        (Math.abs(Number(p.pnl || 0)) / yAxisMax) * 49,
                       );
                       const isPos = Number(p.pnl || 0) >= 0;
                       return (
@@ -1009,10 +1032,11 @@ export default function DashboardPage() {
                                 height: `${hPct}%`,
                                 bottom: isPos ? "50%" : "auto",
                                 top: isPos ? "auto" : "50%",
-                                borderRadius: 3,
+                                borderRadius: isPos ? "2px 2px 0 0" : "0 0 2px 2px",
                                 background: isPos
                                   ? "rgba(16,185,129,0.9)"
                                   : "rgba(239,68,68,0.9)",
+                                zIndex: 2,
                               }}
                             />
                           ) : null}
@@ -1103,7 +1127,6 @@ export default function DashboardPage() {
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
-                        fontWeight: 600,
                       }}
                     >
                       {acc.name || id}
