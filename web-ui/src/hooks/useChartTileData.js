@@ -71,12 +71,7 @@ export function useSymbolChartData({
           tfs.map(async (tf) => {
             const key = tfNorm(tf);
             try {
-              const cached = chartFetchManager.get(sym, key);
-              if (cached && !force) {
-                console.log("[ChartData] cache hit tf=" + tf);
-                return { key, data: cached };
-              }
-              console.log("[ChartData] twelve fetch tf=" + tf);
+              console.log("[ChartData] fetch tf=" + tf);
               const out = await api.chartTwelveCandles(sym, tf, 300, force);
               console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
@@ -112,12 +107,6 @@ export function useSymbolChartData({
         (e) => e.bars?.length > 0 || e.snapshot,
       );
       if (!hasAny) throw new Error("No data from provider");
-      // Save to chartFetchManager cache for subsequent re-clicks
-      for (const [tf, entry] of Object.entries(entries)) {
-        if (entry.bars?.length > 0 || entry.snapshot) {
-          chartFetchManager.set(sym, tf, entry);
-        }
-      }
       return { symbol: sym, entries };
     },
     [sym, tfs, mode],
