@@ -38,11 +38,11 @@ body { margin: 0;
     line-height: 1.5;
 }
 
-.app-container {
+.app-container { padding: 20px;
     width: 100%;
     margin: 0 auto;
 }
-.app-shell {
+.app-shell { padding: 20px;
     width: 100%;
     margin: 0 auto;
 }
