@@ -675,7 +675,7 @@ export default function DashboardPage() {
                       opacity: 0.9,
                     }}
                   >
-                    T: {v.total_trades || 0} | W: {v.total_wins || 0} | L:{" "}
+                    t: {v.total_trades || 0} | w: {v.total_wins || 0} | l:{" "}
                     {v.total_losses || 0}
                   </div>
                   <div
@@ -688,14 +688,15 @@ export default function DashboardPage() {
                       fontWeight: 400,
                     }}
                   >
-                    WR: {asPct(winrate)} | RR: {asRR(v.total_rr || 0)} | W$:{" "}
+                    pnl+:{" "}
                     <span className="money-pos">
                       {asMoneySigned(v.win_sum_pnl || 0)}
                     </span>{" "}
-                    | L$:{" "}
+                    | pnl-:{" "}
                     <span className="money-neg">
                       {asMoneySigned(v.lose_sum_pnl || 0)}
-                    </span>
+                    </span>{" "}
+                    | wr: {asPct(winrate)} | rr: {asRR(v.total_rr || 0)}
                   </div>
                 </article>
               );
