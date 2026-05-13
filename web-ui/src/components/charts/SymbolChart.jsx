@@ -469,6 +469,27 @@ export default function SymbolChart({
     () => (annotations || []).find((a) => a.id === selectedObjectId) || null,
     [annotations, selectedObjectId],
   );
+  const updateSelectedObject = useCallback((patch) => {
+    if (!selectedObjectId) return;
+    setAnnotations((prev) =>
+      prev.map((a) => (a.id === selectedObjectId ? { ...a, ...patch } : a)),
+    );
+  }, [selectedObjectId]);
+  const updateSelectedField = useCallback((field, value) => {
+    if (!selectedObjectId) return;
+    const numericKeys = new Set([
+      "price_top",
+      "price_bottom",
+      "time",
+      "line_width",
+    ]);
+    const next = numericKeys.has(field)
+      ? value === "" || value == null
+        ? null
+        : Number(value)
+      : value;
+    updateSelectedObject({ [field]: next });
+  }, [selectedObjectId, updateSelectedObject]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
@@ -508,8 +529,10 @@ export default function SymbolChart({
       const rP2 = Number.isFinite(p2)
         ? p2
         : anchorPriceFromRatio(Number(selectedObject.y2Ratio ?? 0.6), range);
+      const xVal = Number.isFinite(rT1) ? rT1 : "n/a";
+      const yVal = Number.isFinite(rP1) ? Number(rP1).toFixed(2) : "n/a";
       parts.push(
-        `time1_${tfKey}=${rT1 ?? "n/a"} time2_${tfKey}=${rT2 ?? "n/a"} price1_${tfKey}=${Number.isFinite(rP1) ? rP1.toFixed(2) : "n/a"} price2_${tfKey}=${Number.isFinite(rP2) ? rP2.toFixed(2) : "n/a"}`,
+        `time_${tfKey}=${rT1 ?? "n/a"} | price_${tfKey}=${yVal} | x_${tfKey}=${xVal} | y_${tfKey}=${yVal} | time2_${tfKey}=${rT2 ?? "n/a"} | price2_${tfKey}=${Number.isFinite(rP2) ? rP2.toFixed(2) : "n/a"}`,
       );
     }
     return parts.join(" | ");
@@ -670,15 +693,27 @@ export default function SymbolChart({
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const price = Number(ctxMenu?.price);
+    const time = Number(ctxMenu?.time);
     setAnnotations((prev) => [
       ...prev,
-      createLineObject({
-        id,
-        type: "LINE",
-        color: "#60a5fa",
-        yRatio: Number(ctxMenu.yRatio),
-        ctxMenu,
-      }),
+      {
+        ...createLineObject({
+          id,
+          type: "LINE",
+          color: "#60a5fa",
+          yRatio: Number(ctxMenu.yRatio),
+          ctxMenu,
+        }),
+        tf: null,
+        price_top: Number.isFinite(price) ? price : null,
+        price_bottom: Number.isFinite(price) ? price : null,
+        time: Number.isFinite(time) ? time : null,
+        line_style: "dash",
+        line_width: 1,
+        bg_color: "rgba(96,165,250,0.14)",
+        label: "Line",
+      },
     ]);
     setSelectedObjectId(id);
     setCtxMenu(null);
@@ -688,6 +723,8 @@ export default function SymbolChart({
     (type, color, kind = "line") => {
       if (!ctxMenu) return;
       const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const price = Number(ctxMenu?.price);
+      const time = Number(ctxMenu?.time);
       if (kind === "point") {
         setAnnotations((prev) => [
           ...prev,
@@ -706,13 +743,23 @@ export default function SymbolChart({
       } else {
         setAnnotations((prev) => [
           ...prev,
-          createLineObject({
-            id,
-            type,
-            color,
-            yRatio: Number(ctxMenu.yRatio || 0.5),
-            ctxMenu,
-          }),
+          {
+            ...createLineObject({
+              id,
+              type,
+              color,
+              yRatio: Number(ctxMenu.yRatio || 0.5),
+              ctxMenu,
+            }),
+            tf: null,
+            price_top: Number.isFinite(price) ? price : null,
+            price_bottom: Number.isFinite(price) ? price : null,
+            time: Number.isFinite(time) ? time : null,
+            line_style: "solid",
+            line_width: 1,
+            bg_color: "rgba(255,255,255,0.14)",
+            label: type,
+          },
         ]);
         setSelectedObjectId(id);
       }
@@ -1087,10 +1134,18 @@ export default function SymbolChart({
               : null;
           const tfRange = tfRangeFromViewport || barsRange(barsForTf);
 
-          const projectedAnnotations = (annotations || []).map((a) => {
-            const timeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs), tfRange);
-            const priceRatio = ratioFromAnchorPrice(Number(a.anchorPrice), tfRange);
-            const priceRatio2 = ratioFromAnchorPrice(Number(a.anchorPrice2), tfRange);
+          const projectedAnnotations = (annotations || [])
+            .filter((a) => !a.tf || String(a.tf).toLowerCase() === String(tf).toLowerCase())
+            .map((a) => {
+            const baseTime = Number(a.time);
+            const lineTime = Number.isFinite(baseTime) && baseTime > 0 ? baseTime : toEpochMs(a.anchorTimeMs);
+            const lineTop = Number(a.price_top);
+            const lineBottom = Number(a.price_bottom);
+            const p1 = Number.isFinite(lineTop) ? lineTop : Number(a.anchorPrice);
+            const p2 = Number.isFinite(lineBottom) ? lineBottom : Number(a.anchorPrice2);
+            const timeRatio = ratioFromAnchorTime(lineTime, tfRange);
+            const priceRatio = ratioFromAnchorPrice(p1, tfRange);
+            const priceRatio2 = ratioFromAnchorPrice(p2, tfRange);
             const x1TimeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs), tfRange);
             const x2TimeRatio = ratioFromAnchorTime(toEpochMs(a.anchorTimeMs2), tfRange);
             return {
@@ -1203,6 +1258,12 @@ export default function SymbolChart({
                           const uy = upEvt.clientY - rect.top;
                           const xr2 = Math.max(0, Math.min(1, ux / Math.max(rect.width, 1)));
                           const yr2 = Math.max(0, Math.min(1, uy / Math.max(rect.height, 1)));
+                          const p1 = anchorPriceFromRatio(start.y, tfRange);
+                          const p2 = anchorPriceFromRatio(yr2, tfRange);
+                          const t1 = anchorTimeFromRatio(
+                            Math.min(start.x, xr2),
+                            tfRange,
+                          );
                           setAnnotations((prev) => [
                             ...prev,
                             {
@@ -1210,6 +1271,20 @@ export default function SymbolChart({
                               kind: "zone",
                               type: "ZONE",
                               color: "#22c55e",
+                              tf: null,
+                              price_top:
+                                Number.isFinite(Number(p1)) && Number.isFinite(Number(p2))
+                                  ? Math.max(Number(p1), Number(p2))
+                                  : null,
+                              price_bottom:
+                                Number.isFinite(Number(p1)) && Number.isFinite(Number(p2))
+                                  ? Math.min(Number(p1), Number(p2))
+                                  : null,
+                              time: Number.isFinite(Number(t1)) ? Number(t1) : null,
+                              line_style: "solid",
+                              line_width: 1,
+                              bg_color: "rgba(34,197,94,0.18)",
+                              label: "Zone",
                               x1Ratio: Math.min(start.x, xr2),
                               x2Ratio: Math.max(start.x, xr2),
                               y1Ratio: start.y,
@@ -1269,6 +1344,9 @@ export default function SymbolChart({
                     {(projectedAnnotations || []).map((a) => {
                       if (a.kind === "line") {
                         const isSelected = selectedObjectId === a.id;
+                        const styleMap = { solid: "solid", dot: "dotted", dash: "dashed" };
+                        const lineStyle = styleMap[String(a.line_style || "dash").toLowerCase()] || "dashed";
+                        const lineWidth = Math.max(1, Math.min(3, Number(a.line_width || 1)));
                         return (
                           <div
                             key={a.id}
@@ -1277,7 +1355,7 @@ export default function SymbolChart({
                               left: 0,
                               right: 0,
                               top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                              borderTop: `${isSelected ? 2 : 1}px dashed ${a.color || "#60a5fa"}`,
+                              borderTop: `${isSelected ? Math.max(2, lineWidth) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
                               boxShadow: isSelected
                                 ? `0 0 0 1px ${a.color || "#60a5fa"}55`
                                 : "none",
@@ -1326,8 +1404,8 @@ export default function SymbolChart({
                               top: `${Math.min(y1, y2) * 100}%`,
                               width: `${Math.abs(x2 - x1) * 100}%`,
                               height: `${Math.abs(y2 - y1) * 100}%`,
-                              border: `${isSelected ? 2 : 1}px solid ${a.color || "#22c55e"}`,
-                              background: `${a.color || "#22c55e"}22`,
+                              border: `${isSelected ? 2 : Math.max(1, Math.min(3, Number(a.line_width || 1)))}px solid ${a.color || "#22c55e"}`,
+                              background: a.bg_color || `${a.color || "#22c55e"}22`,
                               boxShadow: isSelected
                                 ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
                                 : "none",
@@ -1383,13 +1461,8 @@ export default function SymbolChart({
           onClick={(e) => e.stopPropagation()}
         >
           {[
-            { label: "Draw line", fn: handleDrawLine },
-            { label: "OB", fn: () => addObject("OB", "#f59e0b") },
-            { label: "FVG", fn: () => addObject("FVG", "#a855f7") },
-            { label: "S/R", fn: () => addObject("S/R", "#22c55e") },
-            { label: "Swept", fn: () => addObject("Swept", "#ef4444") },
-            { label: "Point", fn: () => addObject("Point", "#eab308", "point") },
-            { label: "Rectangle Zone", fn: () => addObject("ZONE", "#22c55e", "zone") },
+            { label: "Line", color: "#60a5fa", fn: handleDrawLine },
+            { label: "Zone", color: "#22c55e", fn: () => addObject("ZONE", "#22c55e", "zone") },
             { label: "TP", fn: () => handleQuickLevel("TP") },
             { label: "SL", fn: () => handleQuickLevel("SL") },
             { label: "Buy", fn: () => handleQuickTrade("BUY") },
@@ -1405,11 +1478,26 @@ export default function SymbolChart({
                 background: "transparent",
                 color: "#e2e8f0",
                 border: "none",
-                padding: "8px 10px",
-                fontSize: 12,
+                padding: "6px 8px",
+                fontSize: 11,
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
             >
+              {it.color ? (
+                <span
+                  style={{
+                    width: 16,
+                    height: it.label === "Zone" ? 10 : 2,
+                    borderRadius: 2,
+                    border: `1px solid ${it.color}`,
+                    background: it.label === "Zone" ? `${it.color}33` : it.color,
+                    display: "inline-block",
+                  }}
+                />
+              ) : null}
               {it.label}
             </button>
           ))}
@@ -1485,11 +1573,34 @@ export default function SymbolChart({
               </button>
             </span>
           ))}
-          <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
-            {selectedObject
-              ? `${selectedObject.type || selectedObject.kind} | kind=${selectedObject.kind} | ${selectedObjectTfPropsText}`
-              : "Select object to inspect live properties"}
-          </span>
+          {selectedObject ? (
+            <div style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(3, minmax(120px, 1fr))", gap: 6 }}>
+              <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="label" />
+              <select value={selectedObject.type || "line"} onChange={(e)=>updateSelectedField("type", e.target.value)}>
+                {["buy","sell","tp","sl","line","zone","s/r","ob","fvg"].map((x)=><option key={x} value={x}>{x}</option>)}
+              </select>
+              <select value={selectedObject.tf || ""} onChange={(e)=>updateSelectedField("tf", e.target.value || null)}>
+                <option value="">all TFs</option>
+                {(sortedTfs||[]).map((tf)=><option key={tf} value={String(tf).toLowerCase()}>{String(tf).toLowerCase()}</option>)}
+              </select>
+              <input type="number" placeholder="price_top" value={selectedObject.price_top ?? ""} onChange={(e)=>updateSelectedField("price_top", e.target.value)} />
+              <input type="number" placeholder="price_bottom" value={selectedObject.price_bottom ?? ""} onChange={(e)=>updateSelectedField("price_bottom", e.target.value)} />
+              <input type="number" placeholder="time (epoch ms)" value={selectedObject.time ?? ""} onChange={(e)=>updateSelectedField("time", e.target.value)} />
+              <select value={selectedObject.line_style || "solid"} onChange={(e)=>updateSelectedField("line_style", e.target.value)}>
+                {["solid","dot","dash"].map((x)=><option key={x} value={x}>{x}</option>)}
+              </select>
+              <select value={selectedObject.line_width || 1} onChange={(e)=>updateSelectedField("line_width", e.target.value)}>
+                {[1,2,3].map((x)=><option key={x} value={x}>{x}</option>)}
+              </select>
+              <input type="color" value={selectedObject.color || "#60a5fa"} onChange={(e)=>updateSelectedField("color", e.target.value)} />
+              <input type="text" placeholder="bg_color" value={selectedObject.bg_color || ""} onChange={(e)=>updateSelectedField("bg_color", e.target.value)} />
+              <input readOnly value={selectedObjectTfPropsText} />
+            </div>
+          ) : (
+            <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
+              Select object to inspect live properties
+            </span>
+          )}
         </div>
       )}
     </div>
