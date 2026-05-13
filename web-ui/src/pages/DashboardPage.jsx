@@ -914,16 +914,46 @@ export default function DashboardPage() {
                   background:
                     "linear-gradient(180deg, rgba(148,163,184,0.05), rgba(15,23,42,0.08))",
                   overflow: "hidden",
-                  padding: "10px 8px 22px",
+                  padding: "10px 8px 22px 44px",
                 }}
               >
                 <div
                   style={{
                     position: "absolute",
-                    left: 0,
-                    right: 0,
+                    left: 8,
+                    top: 8,
+                    bottom: 22,
+                    width: 34,
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "space-between",
+                    alignItems: "flex-end",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <span
+                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
+                  >
+                    +{asMoney(monthMaxAbsPnl)}
+                  </span>
+                  <span
+                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
+                  >
+                    0
+                  </span>
+                  <span
+                    style={{ fontSize: 10, color: "var(--muted)", opacity: 0.9 }}
+                  >
+                    -{asMoney(monthMaxAbsPnl)}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 44,
+                    right: 8,
                     top: "50%",
-                    borderTop: "1px dashed rgba(148,163,184,0.35)",
+                    borderTop: "1px solid rgba(148,163,184,0.45)",
                   }}
                 />
                 <div
@@ -931,15 +961,15 @@ export default function DashboardPage() {
                     height: "100%",
                     display: "grid",
                     gridTemplateColumns: `repeat(${Math.max(monthPoints.length, 1)}, 1fr)`,
-                    gap: 4,
+                    gap: 5,
                     alignItems: "stretch",
                   }}
                 >
                   {(monthPoints.length ? monthPoints : [{ day: "", pnl: 0 }]).map(
                     (p, idx) => {
                       const hPct = Math.min(
-                        48,
-                        (Math.abs(Number(p.pnl || 0)) / monthMaxAbsPnl) * 48,
+                        46,
+                        (Math.abs(Number(p.pnl || 0)) / monthMaxAbsPnl) * 46,
                       );
                       const isPos = Number(p.pnl || 0) >= 0;
                       return (
@@ -948,7 +978,6 @@ export default function DashboardPage() {
                           style={{
                             position: "relative",
                             display: "flex",
-                            alignItems: isPos ? "flex-start" : "flex-end",
                             justifyContent: "center",
                           }}
                           title={
@@ -960,10 +989,11 @@ export default function DashboardPage() {
                           {p.day ? (
                             <div
                               style={{
-                                width: "80%",
+                                position: "absolute",
+                                width: "72%",
                                 height: `${hPct}%`,
-                                marginTop: isPos ? "2%" : "50%",
-                                marginBottom: isPos ? "50%" : "2%",
+                                bottom: isPos ? "50%" : "auto",
+                                top: isPos ? "auto" : "50%",
                                 borderRadius: 3,
                                 background: isPos
                                   ? "rgba(16,185,129,0.9)"
