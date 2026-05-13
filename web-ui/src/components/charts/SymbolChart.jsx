@@ -1376,6 +1376,9 @@ export default function SymbolChart({
               }}
               onMouseEnter={() => setActiveChartId(chartId)}
               onMouseDown={() => setActiveChartId(chartId)}
+              onMouseMove={() => {
+                if (activeChartId !== chartId) setActiveChartId(chartId);
+              }}
             >
               <TfHeader
                 tf={tf}

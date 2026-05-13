@@ -732,6 +732,13 @@ export default function SignalDetailCard({
       prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m],
     );
 
+  const effectiveTfs = useMemo(() => {
+    const required = ["d", "4h", "15m", "5m"];
+    const base = Array.isArray(selectedTfs) ? selectedTfs.map((t) => String(t || "").toLowerCase()) : [];
+    const merged = [...new Set([...base, ...required])].filter(Boolean);
+    return sortTimeframes(merged, "desc");
+  }, [selectedTfs]);
+
   // Use raw data from multiple possible fields
   const rawData =
     response?.raw || response?.raw_json || response?.metadata || {};
@@ -1533,9 +1540,9 @@ export default function SignalDetailCard({
         >
           <SymbolChart
             symbol={selectedPlanSymbol || chart?.symbol}
-            timeframes={selectedTfs}
+            timeframes={effectiveTfs}
             defaultMode={chart?.mode || "live"}
-            initialGridCols={Math.min(2, selectedTfs.length || 1)}
+            initialGridCols={2}
             entryPrice={selectedPlanRaw?.entry || chart?.entryPrice}
             slPrice={selectedPlanRaw?.sl || chart?.slPrice}
             tpPrice={selectedPlanRaw?.tp || chart?.tpPrice}
