@@ -795,6 +795,14 @@ export default function SignalDetailCard({
     const idx = Number(String(selectedPlanId).replace("suggested_", ""));
     return Number.isFinite(idx) && idx >= 1 ? `P${idx + 1}` : "P1";
   }, [selectedPlanId]);
+  const liveTradePlansForChart = useMemo(
+    () => plans.map((p, i) => {
+      const planId = i === 0 ? "main" : `suggested_${i}`;
+      const draft = planDrafts?.[planId] || {};
+      return { ...p, ...draft };
+    }),
+    [plans, planDrafts],
+  );
   const selectedPlanSymbol = String(
     selectedPlanRaw?.symbol ||
       selectedPlanFromList?.symbol ||
@@ -1603,9 +1611,8 @@ export default function SignalDetailCard({
             onPlanLevelChange={chart?.onPlanLevelChange}
             analysisSnapshot={{
               ...(rawData && typeof rawData === "object" ? rawData : {}),
-              trade_plan:
-                Array.isArray(response?.tradePlans) && response.tradePlans.length
-                  ? response.tradePlans
+              trade_plan: liveTradePlansForChart.length
+                  ? liveTradePlansForChart
                   : Array.isArray(rawData?.trade_plan)
                     ? rawData.trade_plan
                     : rawData?.trade_plan && typeof rawData.trade_plan === "object"

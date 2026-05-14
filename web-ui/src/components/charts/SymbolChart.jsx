@@ -432,6 +432,7 @@ export default function SymbolChart({
   const [activePlanGroup, setActivePlanGroup] = useState("P1");
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
+  const parentDrivenSelectionRef = useRef(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
@@ -550,6 +551,10 @@ export default function SymbolChart({
   );
   useEffect(() => {
     if (!selectedObject || selectedObject.kind !== "tradeplan") return;
+    if (parentDrivenSelectionRef.current === selectedObject.id) {
+      parentDrivenSelectionRef.current = null;
+      return;
+    }
     const planId = String(selectedObject.plan_id || "P1").toUpperCase();
     if (activePlanGroup !== planId) setActivePlanGroup(planId);
     if (typeof onTradePlanGroupChange === "function") {
@@ -566,6 +571,7 @@ export default function SymbolChart({
       (a) => a.kind === "tradeplan" && String(a.plan_id || "P1").toUpperCase() === incoming,
     );
     if (target?.id && target.id !== selectedObjectId) {
+      parentDrivenSelectionRef.current = target.id;
       setSelectedObjectId(target.id);
     }
   }, [
@@ -684,33 +690,45 @@ export default function SymbolChart({
       }
     }
     setAnnotations((prev) => {
-      let next = [...prev];
+      const next = [...prev];
       rawPlans.slice(0, 2).forEach((p, idx) => {
         const planId = idx === 0 ? "P1" : "P2";
         const id = `tradeplan_${planId}`;
-        if (next.some((x) => x.id === id && x.kind === "tradeplan")) return;
+        const existing = next.find((x) => x.id === id && x.kind === "tradeplan") || null;
         const direction = String(p?.direction || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
         const entry = Number(p?.entry ?? p?.entry_price);
-        const effectiveEntry = Number.isFinite(entry) ? entry : fallbackEntry;
+        const tp = Number(p?.tp ?? p?.tp_price);
+        const sl = Number(p?.sl ?? p?.sl_price);
+        const effectiveEntry = Number.isFinite(entry)
+          ? entry
+          : Number.isFinite(existing?.entryPrice)
+            ? Number(existing.entryPrice)
+            : fallbackEntry;
         const defaults = defaultTpSlFromEntry(effectiveEntry, direction);
-        next.push({
+        const nextPlan = {
           id,
           kind: "tradeplan",
           type: "TRADEPLAN",
-          label: `TradePlan ${planId}`,
+          label: String(p?.label || existing?.label || `TradePlan ${planId}`),
           plan_id: planId,
           direction,
           entryPrice: Number.isFinite(effectiveEntry) ? effectiveEntry : null,
-          tpPrice: Number.isFinite(defaults.tp) ? defaults.tp : null,
-          slPrice: Number.isFinite(defaults.sl) ? defaults.sl : null,
-          visible: true,
+          tpPrice: Number.isFinite(tp) ? tp : Number.isFinite(defaults.tp) ? defaults.tp : null,
+          slPrice: Number.isFinite(sl) ? sl : Number.isFinite(defaults.sl) ? defaults.sl : null,
+          visible: existing?.visible !== false,
           color: direction === "SELL" ? "#ef4444" : "#10b981",
           line_width: 0.1,
           line_style: "solid",
           bg_color: "transparent",
           tf: null,
           time: null,
-        });
+        };
+        if (existing) {
+          const pos = next.findIndex((x) => x.id === id && x.kind === "tradeplan");
+          next[pos] = { ...existing, ...nextPlan };
+        } else {
+          next.push(nextPlan);
+        }
       });
       return next;
     });
