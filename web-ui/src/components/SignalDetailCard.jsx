@@ -81,6 +81,45 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function formatCompactText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((x) => formatCompactText(x))
+      .filter(Boolean)
+      .join(" | ");
+  }
+  if (typeof value === "object") {
+    const preferred = [
+      value.label,
+      value.name,
+      value.value,
+      value.text,
+      value.summary,
+      value.narrative,
+      value.recent_move,
+      value.direction,
+      value.structure,
+      value.trend,
+      value.bias,
+      value.prediction,
+    ]
+      .map((x) => formatCompactText(x))
+      .filter(Boolean);
+    if (preferred.length) return preferred.join(" · ");
+    return Object.entries(value)
+      .map(([k, v]) => {
+        const vv = formatCompactText(v);
+        return vv ? `${k}: ${vv}` : "";
+      })
+      .filter(Boolean)
+      .join(" | ");
+  }
+  return String(value);
+}
+
 function PlanHeader({
   plan,
   symbol,
@@ -1209,9 +1248,18 @@ export default function SignalDetailCard({
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     {compactTfs.map((tf) => {
-                      const b = tf.bias || "";
-                      const isLong = b.toLowerCase().includes("long");
-                      const isShort = b.toLowerCase().includes("short");
+                      const b = formatCompactText(tf.bias || "");
+                      const trendText = formatCompactText(tf.trend || "");
+                      const structureText = formatCompactText(tf.structure || "");
+                      const paSummaryText = formatCompactText(
+                        tf.price_action_summary?.recent_move || tf.price_action_summary || "",
+                      );
+                      const predictionText = formatCompactText(
+                        tf.price_prediction?.narrative || tf.price_prediction || "",
+                      );
+                      const lowerBias = b.toLowerCase();
+                      const isLong = lowerBias.includes("long") || lowerBias.includes("bull");
+                      const isShort = lowerBias.includes("short") || lowerBias.includes("bear");
                       const biasColor = isLong
                         ? "#26a69a"
                         : isShort
@@ -1256,9 +1304,9 @@ export default function SignalDetailCard({
                             className="minor-text"
                             style={{ fontSize: "9px" }}
                           >
-                            {tf.trend || ""} · {tf.structure || ""}
+                            {[trendText, structureText].filter(Boolean).join(" · ")}
                           </div>
-                          {tf.price_action_summary && (
+                          {paSummaryText && (
                             <div
                               className="minor-text"
                               style={{
@@ -1269,14 +1317,10 @@ export default function SignalDetailCard({
                                 paddingTop: 4,
                               }}
                             >
-                              {String(
-                                tf.price_action_summary?.recent_move ||
-                                  tf.price_action_summary ||
-                                  "",
-                              )}
+                              {paSummaryText}
                             </div>
                           )}
-                          {tf.price_prediction && (
+                          {predictionText && (
                             <div
                               style={{
                                 fontSize: "9px",
@@ -1285,12 +1329,7 @@ export default function SignalDetailCard({
                                 marginTop: 2,
                               }}
                             >
-                              Pred:{" "}
-                              {String(
-                                tf.price_prediction?.narrative ||
-                                  tf.price_prediction ||
-                                  "",
-                              )}
+                              Pred: {predictionText}
                             </div>
                           )}
                         </div>

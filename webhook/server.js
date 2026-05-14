@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 08:48 - 5d9ef1c0"); // TradePlan UX unification + post-analyze trade route restore
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 09:05 - 0c7d1a2b"); // Fix Info tab object rendering in Bias/Trend cards
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
