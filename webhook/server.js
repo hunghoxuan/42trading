@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 15:45 - fix-cancel-position-close",
-); // Fix: EA CANCEL handler now does PositionClose for open positions, OrderDelete for pending orders
+  "v2026.05.14 16:00 - fix-cancel-modify-close",
+); // cTrader: CANCEL/MODIFY/CLOSE task handling; /v2/broker/pull includes type+ticket; pullLeasedTradesV2 picks PENDING_*
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7165,8 +7165,16 @@ async function _mt5InitBackendInternal() {
         const sel = await client.query(
           `
           SELECT * FROM trades
-          WHERE account_id = $1 AND (dispatch_status = 'NEW' OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW()))
-          ORDER BY created_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED
+          WHERE account_id = $1
+            AND (
+              execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL')
+              OR dispatch_status = 'NEW'
+              OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW())
+            )
+          ORDER BY
+            CASE WHEN execution_status IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL') THEN 0 ELSE 1 END ASC,
+            created_at ASC
+          LIMIT $2 FOR UPDATE SKIP LOCKED
         `,
           [aid, Math.max(1, Math.min(100, Number(maxItems) || 1))],
         );
@@ -20630,24 +20638,34 @@ const appHandler = async (req, res) => {
       );
       const resp = {
         ok: true,
-        items: (items || []).map((t) => ({
-          sid: t.sid,
-          lease_token: t.lease_token,
-          lease_expires_at: t.lease_expires_at,
-          account_id: t.account_id,
-          signal_id: t.sid ?? null,
-          source_id: t.source_id ?? null,
-          symbol: t.symbol,
-          action: t.action ?? t.side ?? null,
-          entry: t.entry ?? t.intent_entry ?? null,
-          order_type: String(t.order_type || t.metadata?.order_type || "limit"),
-          sl: t.sl ?? t.intent_sl ?? null,
-          tp: t.tp ?? t.intent_tp ?? null,
-          volume: t.volume ?? t.intent_volume ?? null,
-          note: t.note ?? t.intent_note ?? null,
-          metadata:
-            t.metadata && typeof t.metadata === "object" ? t.metadata : {},
-        })),
+        items: (items || []).map((t) => {
+          let type = "OPEN";
+          if (t.execution_status === "PENDING_MOD") type = "MODIFY";
+          else if (t.execution_status === "PENDING_CLOSE") type = "CLOSE";
+          else if (t.execution_status === "PENDING_CANCEL") type = "CANCEL";
+          return {
+            sid: t.sid,
+            type,
+            ticket: t.broker_trade_id ?? null,
+            lease_token: t.lease_token,
+            lease_expires_at: t.lease_expires_at,
+            account_id: t.account_id,
+            signal_id: t.sid ?? null,
+            source_id: t.source_id ?? null,
+            symbol: t.symbol,
+            action: t.action ?? t.side ?? null,
+            entry: t.entry ?? t.intent_entry ?? null,
+            order_type: String(
+              t.order_type || t.metadata?.order_type || "limit",
+            ),
+            sl: t.sl ?? t.intent_sl ?? null,
+            tp: t.tp ?? t.intent_tp ?? null,
+            volume: t.volume ?? t.intent_volume ?? null,
+            note: t.note ?? t.intent_note ?? null,
+            metadata:
+              t.metadata && typeof t.metadata === "object" ? t.metadata : {},
+          };
+        }),
       };
       console.log(
         `[v2/broker/pull] aid=${account.account_id} items=${resp.items.length}`,

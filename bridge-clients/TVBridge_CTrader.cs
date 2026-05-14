@@ -59,19 +59,19 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.12 15:49 - enhanced-stability";
-        
+        private const string BuildVersion = "v2026.05.14 16:00 - fix-cancel-modify-close";
+
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
         private string _pollStatus = "IDLE";
         private string _syncStatus = "IDLE";
-        
+
         private string _lastPollErr = "None";
         private string _lastSyncErr = "None";
-        
+
         private DateTime _lastPollTime = DateTime.MinValue;
         private DateTime _lastSyncTime = DateTime.MinValue;
-        
+
         private int _pollCount = 0;
         private int _successPolls = 0;
         private int _syncCount = 0;
@@ -134,8 +134,8 @@ namespace cAlgo.Robots
                 if (symbol == null) continue;
 
                 double currentPrice = (pos.TradeType == TradeType.Buy) ? symbol.Bid : symbol.Ask;
-                double pips = (pos.TradeType == TradeType.Buy) 
-                    ? (currentPrice - pos.EntryPrice) / symbol.PipSize 
+                double pips = (pos.TradeType == TradeType.Buy)
+                    ? (currentPrice - pos.EntryPrice) / symbol.PipSize
                     : (pos.EntryPrice - currentPrice) / symbol.PipSize;
 
                 // 1. Break Even
@@ -143,7 +143,7 @@ namespace cAlgo.Robots
                 {
                     if (pips >= BE_Trigger)
                     {
-                        double targetSL = (pos.TradeType == TradeType.Buy) 
+                        double targetSL = (pos.TradeType == TradeType.Buy)
                             ? pos.EntryPrice + (BE_Offset * symbol.PipSize)
                             : pos.EntryPrice - (BE_Offset * symbol.PipSize);
 
@@ -179,7 +179,7 @@ namespace cAlgo.Robots
                             double currentDiff = (pos.TradeType == TradeType.Buy)
                                 ? (targetSL - pos.StopLoss.Value) / symbol.PipSize
                                 : (pos.StopLoss.Value - targetSL) / symbol.PipSize;
-                            
+
                             if (currentDiff >= Trail_Step) shouldMove = true;
                         }
 
@@ -208,7 +208,7 @@ namespace cAlgo.Robots
                         {
                             double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
                             volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
-                            
+
                             // Check if we can close at least the minimum volume
                             if (volToClose >= symbol.VolumeInUnitsMin)
                             {
@@ -292,37 +292,41 @@ namespace cAlgo.Robots
                 var margin = Account.Margin;
                 var posList = new List<string>();
                 var activeTicketIds = new HashSet<string>(Positions.Select(p => p.Id.ToString()));
-                
+
                 // Sync ALL positions for Manual Discovery / Auto-Adopt
-                foreach (var pos in Positions) {
+                foreach (var pos in Positions)
+                {
                     var sid = ResolveSid(pos.Id.ToString(), pos.Comment).Replace("\"", "'");
                     var s = Symbols.GetSymbol(pos.SymbolName);
                     double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
-                    
+
                     double tpPnl = 0;
                     double slPnl = 0;
-                    if (s != null) {
-                        if (pos.TakeProfit.HasValue) {
+                    if (s != null)
+                    {
+                        if (pos.TakeProfit.HasValue)
+                        {
                             double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize;
                             if (pos.TradeType == TradeType.Sell) pips = -pips;
                             tpPnl = pips * s.PipValue * pos.VolumeInUnits;
                         }
-                        if (pos.StopLoss.HasValue) {
+                        if (pos.StopLoss.HasValue)
+                        {
                             double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize;
                             if (pos.TradeType == TradeType.Sell) pips = -pips;
                             slPnl = pips * s.PipValue * pos.VolumeInUnits;
                         }
                     }
 
-                    posList.Add(string.Format(CultureInfo.InvariantCulture, 
+                    posList.Add(string.Format(CultureInfo.InvariantCulture,
                         "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"MARKET\",\"entry\":{5:F5},\"sl\":{6:F5},\"tp\":{7:F5},\"volume\":{8:F2},\"lots\":{9:F2},\"pnl\":{10:F2},\"pips\":{11:F2},\"commission\":{12:F2},\"swap\":{13:F2},\"margin\":{14:F2},\"tp_pnl\":{15:F2},\"sl_pnl\":{16:F2},\"label\":\"{17}\",\"status\":\"OPEN\"}}",
-                        sid, sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(), 
+                        sid, sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(),
                         double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice,
                         pos.StopLoss ?? 0,
                         pos.TakeProfit ?? 0,
-                        double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits, 
+                        double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits,
                         double.IsNaN(lotsVal) ? 0 : lotsVal,
-                        double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit, 
+                        double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit,
                         double.IsNaN(pos.Pips) ? 0 : pos.Pips,
                         double.IsNaN(pos.Commissions) ? 0 : pos.Commissions,
                         double.IsNaN(pos.Swap) ? 0 : pos.Swap,
@@ -334,19 +338,20 @@ namespace cAlgo.Robots
 
                 var closedList = new List<string>();
                 var historicalDeals = History.OrderByDescending(d => d.ClosingTime).ToList();
-                
+
                 var limit = DateTime.UtcNow.AddDays(-2);
-                foreach (var deal in historicalDeals) {
+                foreach (var deal in historicalDeals)
+                {
                     if (deal.ClosingTime < limit) continue;
                     if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
                     if (closedList.Count >= 20) break;
 
                     var sid = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
-                    closedList.Add(string.Format(CultureInfo.InvariantCulture, 
+                    closedList.Add(string.Format(CultureInfo.InvariantCulture,
                         "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"symbol_code\":\"{4}\",\"side\":\"{5}\",\"volume\":{6:F2},\"pnl\":{7:F2},\"pips\":{8:F2},\"commission\":{9:F2},\"swap\":{10:F2},\"status\":\"CLOSED\",\"closed_at\":\"{11:O}\",\"label\":\"{12}\"}}",
-                        sid, sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(), 
-                        double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits, 
-                        double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit, 
+                        sid, sid, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(),
+                        double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits,
+                        double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit,
                         0.0,
                         double.IsNaN(deal.Commissions) ? 0 : deal.Commissions,
                         double.IsNaN(deal.Swap) ? 0 : deal.Swap,
@@ -354,32 +359,36 @@ namespace cAlgo.Robots
                 }
 
                 var ordersList = new List<string>();
-                foreach (var order in PendingOrders) {
+                foreach (var order in PendingOrders)
+                {
                     var sid = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
                     var s = Symbols.GetSymbol(order.SymbolName);
                     double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
-                    
+
                     double pnlTp = 0;
                     double pnlSl = 0;
-                    if (s != null) {
-                        if (order.TakeProfit.HasValue) {
+                    if (s != null)
+                    {
+                        if (order.TakeProfit.HasValue)
+                        {
                             double pips = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s.PipSize;
                             pnlTp = pips * s.PipValue * order.VolumeInUnits;
                         }
-                        if (order.StopLoss.HasValue) {
+                        if (order.StopLoss.HasValue)
+                        {
                             double pips = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s.PipSize;
                             pnlSl = -pips * s.PipValue * order.VolumeInUnits;
                         }
                     }
 
-                    ordersList.Add(string.Format(CultureInfo.InvariantCulture, 
+                    ordersList.Add(string.Format(CultureInfo.InvariantCulture,
                         "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"{5}\",\"target_price\":{6:F5},\"entry\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"volume\":{10:F2},\"lots\":{11:F2},\"label\":\"{12}\",\"status\":\"PENDING\",\"margin\":{13:F2},\"pnl_tp\":{14:F2},\"pnl_sl\":{15:F2}}}",
                         sid, sid, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
                         order.TargetPrice,
                         order.TargetPrice,
                         order.StopLoss ?? 0,
                         order.TakeProfit ?? 0,
-                        double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits, 
+                        double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits,
                         double.IsNaN(lotsVal) ? 0 : lotsVal,
                         order.Label,
                         0.0,
@@ -387,38 +396,39 @@ namespace cAlgo.Robots
                         pnlSl));
                 }
 
-            var symbolsToSync = new HashSet<string>();
-            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name))
-                symbolsToSync.Add(Symbol.Name);
-            foreach (var pos in Positions)
-                if (!string.IsNullOrWhiteSpace(pos.SymbolName))
-                    symbolsToSync.Add(pos.SymbolName);
-            foreach (var order in PendingOrders)
-                if (!string.IsNullOrWhiteSpace(order.SymbolName))
-                    symbolsToSync.Add(order.SymbolName);
-            
-            var metricsList = new List<string>();
-            foreach (var symbolName in symbolsToSync.Take(100)) {
-                Symbol s = null;
-                try
+                var symbolsToSync = new HashSet<string>();
+                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name))
+                    symbolsToSync.Add(Symbol.Name);
+                foreach (var pos in Positions)
+                    if (!string.IsNullOrWhiteSpace(pos.SymbolName))
+                        symbolsToSync.Add(pos.SymbolName);
+                foreach (var order in PendingOrders)
+                    if (!string.IsNullOrWhiteSpace(order.SymbolName))
+                        symbolsToSync.Add(order.SymbolName);
+
+                var metricsList = new List<string>();
+                foreach (var symbolName in symbolsToSync.Take(100))
                 {
-                    s = Symbols.GetSymbol(symbolName);
-                }
-                catch
-                {
-                    continue;
-                }
-                if (s == null) continue;
-                
-                metricsList.Add(string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"symbol\":\"{0}\",\"pip_value\":{1:F5},\"spread\":{2:F2},\"min_vol\":{3:F2},\"step_vol\":{4:F2},\"pip_size\":{5:F8},\"digits\":{6}}}",
-                        s.Name, 
-                        double.IsNaN(s.PipValue) ? 0 : s.PipValue, 
-                        double.IsNaN(s.Spread) ? 0 : s.Spread, 
-                        double.IsNaN(s.VolumeInUnitsMin) ? 0 : s.VolumeInUnitsMin, 
-                        double.IsNaN(s.VolumeInUnitsStep) ? 0 : s.VolumeInUnitsStep, 
-                        double.IsNaN(s.PipSize) ? 0 : s.PipSize, 
-                        s.Digits));
+                    Symbol s = null;
+                    try
+                    {
+                        s = Symbols.GetSymbol(symbolName);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                    if (s == null) continue;
+
+                    metricsList.Add(string.Format(CultureInfo.InvariantCulture,
+                        "{{\"symbol\":\"{0}\",\"pip_value\":{1:F5},\"spread\":{2:F2},\"min_vol\":{3:F2},\"step_vol\":{4:F2},\"pip_size\":{5:F8},\"digits\":{6}}}",
+                            s.Name,
+                            double.IsNaN(s.PipValue) ? 0 : s.PipValue,
+                            double.IsNaN(s.Spread) ? 0 : s.Spread,
+                            double.IsNaN(s.VolumeInUnitsMin) ? 0 : s.VolumeInUnitsMin,
+                            double.IsNaN(s.VolumeInUnitsStep) ? 0 : s.VolumeInUnitsStep,
+                            double.IsNaN(s.PipSize) ? 0 : s.PipSize,
+                            s.Digits));
                 }
 
                 var brokerName = Account.BrokerName;
@@ -426,14 +436,20 @@ namespace cAlgo.Robots
                 _syncStatus = "SYNCING";
                 RefreshDebugPanel();
 
-                Task.Run(async () => {
-                    try {
+                Task.Run(async () =>
+                {
+                    try
+                    {
                         await PollSignalsAsync(accId);
                         await SyncWithVpsAsync(accId, balance, equity, margin, brokerName, posList, ordersList, closedList, activeTicketIds, metricsList);
-                    } catch (Exception ex) {
+                    }
+                    catch (Exception ex)
+                    {
                         _lastSyncErr = FormatServerErrorForPanel(ex.Message);
                         _syncStatus = "ERROR";
-                    } finally {
+                    }
+                    finally
+                    {
                         _isBusy = false;
                         RefreshDebugPanel();
                     }
@@ -463,9 +479,9 @@ namespace cAlgo.Robots
                 {
                     request.Headers.Add("x-api-key", EaApiKey);
                     var response = await _httpClient.SendAsync(request);
-                    
+
                     _serverStatus = (int)response.StatusCode < 500 ? "OK" : "SERVER_ERR";
-                    
+
                     if (response.IsSuccessStatusCode)
                     {
                         _apiStatus = "OK";
@@ -473,7 +489,7 @@ namespace cAlgo.Robots
                         _lastPollTime = DateTime.Now;
                         _pollStatus = "OK";
                         _lastPollErr = "None";
-                        
+
                         // Reset error counter on successful poll
                         if (_consecutiveErrors > 0)
                         {
@@ -481,7 +497,7 @@ namespace cAlgo.Robots
                             _lastErrorClearTime = DateTime.Now;
                             Print("[Recovery] Error counter reset after successful poll");
                         }
-                        
+
                         var json = await response.Content.ReadAsStringAsync();
                         BeginInvokeOnMainThread(() => ProcessResponse(json));
                     }
@@ -491,19 +507,20 @@ namespace cAlgo.Robots
                         _pollStatus = "FAIL";
                         _lastPollErr = await response.Content.ReadAsStringAsync();
                         if (string.IsNullOrEmpty(_lastPollErr)) _lastPollErr = "HTTP " + (int)response.StatusCode;
-                        
+
                         // Increment error counter for non-successful responses
                         _consecutiveErrors++;
                         Print("[Error] Poll failed: {0} (consecutive errors: {1})", _lastPollErr, _consecutiveErrors);
                     }
                 }
             }
-            catch (Exception ex) { 
+            catch (Exception ex)
+            {
                 _serverStatus = "OFFLINE";
                 _apiStatus = "???";
-                _pollStatus = "ERROR"; 
-                _lastPollErr = ex.Message; 
-                
+                _pollStatus = "ERROR";
+                _lastPollErr = ex.Message;
+
                 // Increment error counter for exceptions
                 _consecutiveErrors++;
                 Print("[Error] Poll exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
@@ -524,47 +541,186 @@ namespace cAlgo.Robots
             var id = GetJsonValue(json, "sid");
             if (string.IsNullOrEmpty(id)) id = GetJsonValue(json, "signal_id");
             var leaseToken = GetJsonValue(json, "lease_token");
+            var taskType = GetJsonValue(json, "type").ToUpper();
+            if (string.IsNullOrEmpty(taskType)) taskType = "OPEN";
             var action = GetJsonValue(json, "action").ToUpper();
             var symbolCode = GetJsonValue(json, "symbol").ToUpper();
-            var lots = ParseDouble(GetJsonValue(json, "volume"));
+            var ticketStr = GetJsonValue(json, "ticket");
+            long ticketNum = 0;
+            if (!string.IsNullOrEmpty(ticketStr)) long.TryParse(ticketStr, out ticketNum);
 
             if (string.IsNullOrEmpty(id)) return;
             if (_processedSignalIds.Contains(id)) return;
-            
-            Print("[Debug] Signal Received: {0} {1} (ID: {2})", action, symbolCode, id);
-            
-            _processedSignalIds.Add(id);
-            UpdateSignalHistory(id, action + " " + symbolCode + " (PENDING)");
 
-            BeginInvokeOnMainThread(() => {
+            Print("[Debug] Task Received: type={0} action={1} symbol={2} ticket={3} (ID: {4})", taskType, action, symbolCode, ticketNum, id);
+
+            _processedSignalIds.Add(id);
+            UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (PENDING)");
+
+            BeginInvokeOnMainThread(() =>
+            {
                 var symbol = Symbols.GetSymbol(symbolCode);
-                
-                if (symbol == null && symbolCode.Length == 6) {
+
+                if (symbol == null && symbolCode.Length == 6)
+                {
                     var slashName = symbolCode.Substring(0, 3) + "/" + symbolCode.Substring(3, 3);
                     symbol = Symbols.GetSymbol(slashName);
                 }
 
-                if (symbol == null) {
+                if (symbol == null)
+                {
                     var msg = "Symbol not found: " + symbolCode;
-                    UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
+                    UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
                     Print("[Error] Symbol '{0}' not found in your platform.", symbolCode);
                     return;
                 }
-                
-                symbolCode = symbol.Name; 
-                
-                if (action == "CLOSE") {
+
+                symbolCode = symbol.Name;
+
+                // --- CANCEL: close position or delete order ---
+                if (taskType == "CANCEL")
+                {
+                    if (ticketNum > 0)
+                    {
+                        // Try position close first (open positions)
+                        var pos = Positions.FirstOrDefault(p => p.Id == ticketNum);
+                        if (pos != null)
+                        {
+                            var cRes = ClosePosition(pos);
+                            if (cRes.IsSuccessful)
+                            {
+                                UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCELLED)");
+                                _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, "cancel_close_ok");
+                            }
+                            else
+                            {
+                                UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCEL_FAIL: " + cRes.Error + ")");
+                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "cancel_close_fail: " + cRes.Error);
+                            }
+                        }
+                        else
+                        {
+                            // Try order cancel (pending orders)
+                            var ord = PendingOrders.FirstOrDefault(o => o.Id == ticketNum);
+                            if (ord != null)
+                            {
+                                var oRes = CancelPendingOrder(ord);
+                                if (oRes.IsSuccessful)
+                                {
+                                    UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCELLED)");
+                                    _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, "cancel_order_ok");
+                                }
+                                else
+                                {
+                                    UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCEL_FAIL: " + oRes.Error + ")");
+                                    _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "cancel_order_fail: " + oRes.Error);
+                                }
+                            }
+                            else
+                            {
+                                // Ticket not found as position or order — close by comment/label fallback
+                                var targets = Positions.Where(p => p.SymbolName == symbolCode && (p.Comment == id || p.Label == MagicNumber.ToString())).ToList();
+                                foreach (var p in targets)
+                                {
+                                    var pRes = ClosePosition(p);
+                                    if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
+                                }
+                                _ = AckAsync(id, leaseToken, "CANCELLED", "MANUAL", targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // No ticket — close by comment/label fallback
+                        var targets = Positions.Where(p => p.SymbolName == symbolCode && (p.Comment == id || p.Label == MagicNumber.ToString())).ToList();
+                        foreach (var p in targets)
+                        {
+                            var pRes = ClosePosition(p);
+                            if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
+                        }
+                        _ = AckAsync(id, leaseToken, "CANCELLED", "MANUAL", targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
+                    }
+                    return;
+                }
+
+                // --- CLOSE: close positions by comment/label ---
+                if (taskType == "CLOSE")
+                {
+                    if (ticketNum > 0)
+                    {
+                        var pos = Positions.FirstOrDefault(p => p.Id == ticketNum);
+                        if (pos != null)
+                        {
+                            var cRes = ClosePosition(pos);
+                            if (cRes.IsSuccessful)
+                            {
+                                _ = AckAsync(id, leaseToken, "CLOSED", ticketStr, "close_ok");
+                            }
+                            else
+                            {
+                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "close_fail: " + cRes.Error);
+                            }
+                            return;
+                        }
+                    }
                     var targets = Positions.Where(p => p.SymbolName == symbolCode && (p.Comment == id || p.Label == MagicNumber.ToString())).ToList();
-                    foreach (var p in targets) {
-                         var cRes = ClosePosition(p);
-                         if (!cRes.IsSuccessful) Print("[Error] Close failed: {0}", cRes.Error);
+                    foreach (var p in targets)
+                    {
+                        var cRes = ClosePosition(p);
+                        if (!cRes.IsSuccessful) Print("[Error] Close failed: {0}", cRes.Error);
                     }
                     _ = AckAsync(id, leaseToken, "CLOSED", "MANUAL", "");
                     return;
                 }
 
-                if (Positions.Any(p => p.Comment == id)) {
+                // --- MODIFY: update SL/TP on position or order ---
+                if (taskType == "MODIFY")
+                {
+                    var sl = ParseDouble(GetJsonValue(json, "sl"));
+                    var tp = ParseDouble(GetJsonValue(json, "tp"));
+                    if (ticketNum > 0)
+                    {
+                        var pos = Positions.FirstOrDefault(p => p.Id == ticketNum);
+                        if (pos != null)
+                        {
+                            var mRes = ModifyPosition(pos, (sl > 0 ? sl : (double?)null), (tp > 0 ? tp : (double?)null));
+                            if (mRes.IsSuccessful)
+                            {
+                                _ = AckAsync(id, leaseToken, "OPEN", ticketStr, "modify_ok");
+                            }
+                            else
+                            {
+                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
+                            }
+                            return;
+                        }
+                        var ord = PendingOrders.FirstOrDefault(o => o.Id == ticketNum);
+                        if (ord != null)
+                        {
+                            double? slPips = null;
+                            double? tpPips = null;
+                            if (sl > 0) slPips = Math.Round((action == "BUY" ? (ord.TargetPrice - sl) : (sl - ord.TargetPrice)) / symbol.PipSize, 2);
+                            if (tp > 0) tpPips = Math.Round((action == "BUY" ? (tp - ord.TargetPrice) : (ord.TargetPrice - tp)) / symbol.PipSize, 2);
+                            var mRes = ModifyPendingOrder(ord, ord.TargetPrice, slPips, tpPips, ord.ExpirationTime);
+                            if (mRes.IsSuccessful)
+                            {
+                                _ = AckAsync(id, leaseToken, "PENDING", ticketStr, "modify_ok");
+                            }
+                            else
+                            {
+                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
+                            }
+                            return;
+                        }
+                    }
+                    _ = AckAsync(id, leaseToken, "ERROR", "", "modify_no_ticket");
+                    return;
+                }
+
+                // --- OPEN (default): create new position/order ---
+                if (Positions.Any(p => p.Comment == id))
+                {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_OPEN)");
                     _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
                     return;
@@ -575,7 +731,7 @@ namespace cAlgo.Robots
                 var entry = ParseDouble(GetJsonValue(json, "entry"));
                 var orderTypeStr = GetJsonValue(json, "order_type").ToLower();
                 if (string.IsNullOrEmpty(orderTypeStr)) orderTypeStr = "market";
-                
+
                 var currentPrice = (action == "BUY") ? symbol.Ask : symbol.Bid;
                 var executionPrice = (orderTypeStr == "market" || entry <= 0) ? currentPrice : entry;
 
@@ -586,11 +742,16 @@ namespace cAlgo.Robots
                 double riskMoneyRaw = ParseDouble(GetJsonValue(json, "risk_money"));
                 double requestedRiskMoney = 0;
 
-                if (riskMoneyRaw > 0) {
+                if (riskMoneyRaw > 0)
+                {
                     requestedRiskMoney = riskMoneyRaw;
-                } else if (signalRiskPct > 0) {
+                }
+                else if (signalRiskPct > 0)
+                {
                     requestedRiskMoney = Account.Balance * (signalRiskPct / 100.0);
-                } else {
+                }
+                else
+                {
                     requestedRiskMoney = Account.Balance * (MaxRiskPercent / 100.0);
                 }
 
@@ -600,31 +761,39 @@ namespace cAlgo.Robots
 
                 double volumeUnits = symbol.VolumeInUnitsMin;
 
-                if (sl > 0) {
+                if (sl > 0)
+                {
                     double slPips = Math.Abs(executionPrice - sl) / symbol.PipSize;
-                    if (slPips > 0) {
-                        try {
+                    if (slPips > 0)
+                    {
+                        try
+                        {
                             // Use cTrader native risk model per symbol to keep sizing consistent across FX/indices/metals.
                             volumeUnits = symbol.VolumeForFixedRisk(finalRiskMoney, slPips);
                             volumeUnits = symbol.NormalizeVolumeInUnits(volumeUnits, RoundingMode.Down);
-                        } catch {
+                        }
+                        catch
+                        {
                             // Fallback: legacy formula
                             double slTicks = Math.Abs(executionPrice - sl) / symbol.TickSize;
                             double riskPerUnit = slTicks * symbol.TickValue;
-                            if (riskPerUnit > 0) {
+                            if (riskPerUnit > 0)
+                            {
                                 volumeUnits = finalRiskMoney / riskPerUnit;
                                 volumeUnits = symbol.NormalizeVolumeInUnits(volumeUnits, RoundingMode.Down);
                             }
                         }
                     }
                 }
-                else {
+                else
+                {
                     double explicitLots = ParseDouble(GetJsonValue(json, "lots"));
                     if (explicitLots > 0) volumeUnits = symbol.QuantityToVolumeInUnits(explicitLots);
                     else volumeUnits = symbol.VolumeInUnitsMin;
                 }
 
-                if (volumeUnits < symbol.VolumeInUnitsMin) {
+                if (volumeUnits < symbol.VolumeInUnitsMin)
+                {
                     var msg = "Volume too small: " + volumeUnits;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
@@ -633,12 +802,15 @@ namespace cAlgo.Robots
 
                 // EXTRACT PARTIAL TPs
                 var rawJson = GetJsonValue(json, "raw_json");
-                if (!string.IsNullOrEmpty(rawJson)) {
+                if (!string.IsNullOrEmpty(rawJson))
+                {
                     var partials = new List<PartialTP>();
                     var pMatch = Regex.Match(rawJson, "\"partial_tps\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
-                    if (pMatch.Success) {
+                    if (pMatch.Success)
+                    {
                         var items = Regex.Matches(pMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
-                        foreach (Match m in items) {
+                        foreach (Match m in items)
+                        {
                             var it = "{" + m.Groups[1].Value + "}";
                             var pPrice = ParseDouble(GetJsonValue(it, "price"));
                             var pPct = ParseDouble(GetJsonValue(it, "size_pct"));
@@ -652,7 +824,8 @@ namespace cAlgo.Robots
                 var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
                 TradeResult res = null;
 
-                if (executionPrice <= 0) {
+                if (executionPrice <= 0)
+                {
                     var msg = "Invalid execution price: " + executionPrice;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
@@ -662,31 +835,43 @@ namespace cAlgo.Robots
 
                 Print("[Debug] Executing {0} {1} at {2}. SL: {3}, TP: {4}, Vol: {5}", action, symbolCode, executionPrice, sl, tp, volumeUnits);
 
-                // We place the order without SL/TP pips first to avoid "price as pips" bugs, 
+                // We place the order without SL/TP pips first to avoid "price as pips" bugs,
                 // then modify it with absolute prices immediately after success.
-                if (orderTypeStr == "limit") {
+                if (orderTypeStr == "limit")
+                {
                     res = PlaceLimitOrder(tradeType, symbol.Name, volumeUnits, entry, label, null, null, null, id);
-                } else if (orderTypeStr == "stop") {
+                }
+                else if (orderTypeStr == "stop")
+                {
                     res = PlaceStopOrder(tradeType, symbol.Name, volumeUnits, entry, label, null, null, null, id);
-                } else {
+                }
+                else
+                {
                     res = ExecuteMarketOrder(tradeType, symbol.Name, volumeUnits, label, null, null, id);
                 }
 
-                if (res.IsSuccessful) {
+                if (res.IsSuccessful)
+                {
                     var ticket = (res.Position != null) ? res.Position.Id.ToString() : (res.PendingOrder != null ? res.PendingOrder.Id.ToString() : "OK");
-                    
+
                     // Apply absolute SL/TP immediately after success to ensure 100% price accuracy
-                    if (sl > 0 || tp > 0) {
-                        if (res.Position != null) {
+                    if (sl > 0 || tp > 0)
+                    {
+                        if (res.Position != null)
+                        {
                             var mRes = ModifyPosition(res.Position, (sl > 0 ? sl : (double?)null), (tp > 0 ? tp : (double?)null));
                             if (!mRes.IsSuccessful) Print("[Error] SL/TP Modification failed for Position {0}: {1}", ticket, mRes.Error);
-                        } else if (res.PendingOrder != null) {
+                        }
+                        else if (res.PendingOrder != null)
+                        {
                             double? slPips = null;
                             double? tpPips = null;
-                            if (sl > 0) {
+                            if (sl > 0)
+                            {
                                 slPips = Math.Round((action == "BUY" ? (res.PendingOrder.TargetPrice - sl) : (sl - res.PendingOrder.TargetPrice)) / symbol.PipSize, 2);
                             }
-                            if (tp > 0) {
+                            if (tp > 0)
+                            {
                                 tpPips = Math.Round((action == "BUY" ? (tp - res.PendingOrder.TargetPrice) : (res.PendingOrder.TargetPrice - tp)) / symbol.PipSize, 2);
                             }
                             var mRes = ModifyPendingOrder(res.PendingOrder, res.PendingOrder.TargetPrice, slPips, tpPips, res.PendingOrder.ExpirationTime);
@@ -696,7 +881,9 @@ namespace cAlgo.Robots
 
                     UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
                     _ = AckAsync(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)));
-                } else {
+                }
+                else
+                {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (EXEC_FAIL: " + res.Error + ")");
                     _ = AckAsync(id, leaseToken, "REJECTED", "", res.Error.ToString());
                 }
@@ -760,19 +947,20 @@ namespace cAlgo.Robots
             _syncStatus = "SYNCING";
             try
             {
-                var payload = string.Format(CultureInfo.InvariantCulture, 
+                var payload = string.Format(CultureInfo.InvariantCulture,
                     "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[{6}],\"closed\":[{7}],\"symbol_metrics\":[{8}]}}",
                     accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", ordersList), string.Join(",", closedList), string.Join(",", metricsList));
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/sync", content);
-                
+
                 _serverStatus = (int)response.StatusCode < 500 ? "OK" : "SERVER_ERR";
-                
-                if (response.IsSuccessStatusCode) {
+
+                if (response.IsSuccessStatusCode)
+                {
                     _apiStatus = "OK";
                     _syncCount++; _syncStatus = "OK"; _lastSyncTime = DateTime.Now; _lastSyncErr = "None";
-                    
+
                     // Reset error counter on successful sync
                     if (_consecutiveErrors > 0)
                     {
@@ -780,26 +968,29 @@ namespace cAlgo.Robots
                         _lastErrorClearTime = DateTime.Now;
                         Print("[Recovery] Error counter reset after successful sync");
                     }
-                    
+
                     var json = await response.Content.ReadAsStringAsync();
                     ParseSyncResults(json, activeTicketIds);
-                } else { 
+                }
+                else
+                {
                     _apiStatus = (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden) ? "KEY_INVALID" : "ERR_" + (int)response.StatusCode;
-                    _syncStatus = "FAIL (" + (int)response.StatusCode + ")"; 
+                    _syncStatus = "FAIL (" + (int)response.StatusCode + ")";
                     _lastSyncErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
                     if (string.IsNullOrEmpty(_lastSyncErr)) _lastSyncErr = "Server Rejected Payload";
-                    
+
                     // Increment error counter for failed sync
                     _consecutiveErrors++;
                     Print("[Error] Sync failed: {0} (consecutive errors: {1})", _lastSyncErr, _consecutiveErrors);
                 }
             }
-            catch (Exception ex) { 
+            catch (Exception ex)
+            {
                 _serverStatus = "OFFLINE";
                 _apiStatus = "???";
-                _syncStatus = "ERROR"; 
-                _lastSyncErr = FormatServerErrorForPanel(ex.Message); 
-                
+                _syncStatus = "ERROR";
+                _lastSyncErr = FormatServerErrorForPanel(ex.Message);
+
                 // Increment error counter for sync exceptions
                 _consecutiveErrors++;
                 Print("[Error] Sync exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
@@ -869,12 +1060,14 @@ namespace cAlgo.Robots
                     var act = GetJsonValue(obj, "action");
                     var err = GetJsonValue(obj, "error");
                     var reason = GetJsonValue(obj, "reason");
-                    
-                    if (status == "Ok" || status == "Skip") {
+
+                    if (status == "Ok" || status == "Skip")
+                    {
                         if (status == "Ok" && !activeTicketIds.Contains(ticket)) _syncedClosedTickets.Add(ticket);
                         continue;
                     }
-                    if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase)) {
+                    if (string.Equals(status, "Error", StringComparison.OrdinalIgnoreCase))
+                    {
                         hasErrors = true;
                         if (string.IsNullOrEmpty(firstError)) firstError = !string.IsNullOrEmpty(err) ? err : reason;
                     }
@@ -885,9 +1078,12 @@ namespace cAlgo.Robots
                     {
                         _ticketSidMap[ticket] = sid;
                     }
-                    if (!string.IsNullOrEmpty(detail)) {
+                    if (!string.IsNullOrEmpty(detail))
+                    {
                         resList.Add(string.Format("{0} | {1} {2} {3} [{4}: {5}]", displayTicket, displaySid, act, sym, status, detail));
-                    } else {
+                    }
+                    else
+                    {
                         resList.Add(string.Format("{0} | {1} {2} {3} [{4}]", displayTicket, displaySid, act, sym, status));
                     }
                 }
@@ -902,14 +1098,16 @@ namespace cAlgo.Robots
 
         private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0)
         {
-            try {
-                var payload = string.Format(CultureInfo.InvariantCulture, 
-                    "{{\"trade_id\":\"{0}\", \"lease_token\":\"{1}\", \"execution_status\":\"{2}\", \"broker_trade_id\":\"{3}\", \"error\":\"{4}\", \"entry_exec\":{5:F5}}}", 
+            try
+            {
+                var payload = string.Format(CultureInfo.InvariantCulture,
+                    "{{\"trade_id\":\"{0}\", \"lease_token\":\"{1}\", \"execution_status\":\"{2}\", \"broker_trade_id\":\"{3}\", \"error\":\"{4}\", \"entry_exec\":{5:F5}}}",
                     sid, token, status, ticket, err, entryExec);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/ack", content);
-            } catch {}
+            }
+            catch { }
         }
 
         private void RefreshDebugPanel()
@@ -928,9 +1126,9 @@ namespace cAlgo.Robots
                 if (_consecutiveErrors > 0) bl.AppendLine(string.Format("ERR CNT: {0}", _consecutiveErrors));
                 foreach (var sig in _signalHistory) bl.AppendLine("  " + sig);
                 if (_lastPollErr != "None") bl.AppendLine("ERR: " + (_lastPollErr.Length > 50 ? _lastPollErr.Substring(0, 50) : _lastPollErr));
-                
-                Color pollColor = _pollStatus == "OK" ? Color.White : 
-                                 (_pollStatus == "IDLE" || _pollStatus == "WAITING" ? Color.Gray : 
+
+                Color pollColor = _pollStatus == "OK" ? Color.White :
+                                 (_pollStatus == "IDLE" || _pollStatus == "WAITING" ? Color.Gray :
                                  (_pollStatus == "POLLING" ? Color.Yellow : Color.Red));
                 Chart.DrawStaticText("Panel_BL", bl.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Left, pollColor);
 
@@ -940,16 +1138,17 @@ namespace cAlgo.Robots
                 foreach (var line in _lastSyncResults.Take(12)) br.AppendLine("  " + line);
                 if (_lastSyncResults.Count > 12) br.AppendLine(string.Format("  ... +{0} more", _lastSyncResults.Count - 12));
                 if (_lastSyncErr != "None") AppendWrappedPanelLine(br, "ERR: ", _lastSyncErr, 44, 3);
-                
-                Color syncColor = _syncStatus == "OK" ? Color.Lime : 
-                                 (_syncStatus == "IDLE" || _syncStatus == "WAITING" ? Color.Gray : 
+
+                Color syncColor = _syncStatus == "OK" ? Color.Lime :
+                                 (_syncStatus == "IDLE" || _syncStatus == "WAITING" ? Color.Gray :
                                  (_syncStatus == "SYNCING" ? Color.Yellow :
                                  (_syncStatus == "PARTIAL" ? Color.Orange : Color.Red)));
                 Chart.DrawStaticText("Panel_BR", br.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Right, syncColor);
             });
         }
 
-        private string GetJsonValue(string json, string key) {
+        private string GetJsonValue(string json, string key)
+        {
             var m = Regex.Match(json, string.Format("\"{0}\"\\s*:\\s*\"?([^,\"]*)\"?", key));
             return m.Success ? m.Groups[1].Value.Trim() : "";
         }
