@@ -9060,7 +9060,8 @@ async function _mt5InitBackendInternal() {
       const params = [limit, offset];
       if (query && validCols.length) {
         params.push(`%${query}%`);
-        where = `WHERE ${validCols.map((col) => `"${col}"::text ILIKE $3`).join(" OR ")}`;
+        const pIdx = params.length;
+        where = `WHERE ${validCols.map((col) => `"${col}"::text ILIKE $${pIdx}`).join(" OR ")}`;
       }
       // Validate sort column against schema to prevent SQL injection
       let orderClause = "ORDER BY 1 DESC";
@@ -9074,8 +9075,11 @@ async function _mt5InitBackendInternal() {
         `SELECT * FROM ${table} ${where} ${orderClause} LIMIT $1 OFFSET $2`,
         params,
       );
+      const countWhere = query && validCols.length
+        ? `WHERE ${validCols.map((col) => `"${col}"::text ILIKE $1`).join(" OR ")}`
+        : "";
       const totalRes = await pool.query(
-        `SELECT COUNT(*) FROM ${table} ${where}`,
+        `SELECT COUNT(*) FROM ${table} ${countWhere}`,
         query ? [params[2]] : [],
       );
       return { rows: res.rows, total: parseInt(totalRes.rows[0].count) };
