@@ -655,6 +655,19 @@ export default function SignalDetailCard({
       ? 0
       : Math.max(0, Number(String(selectedPlanId).replace("suggested_", "")));
   const selectedPlanFromList = plans[selectedPlanIndex] || plans[0] || {};
+  const displayPlanIds = useMemo(() => {
+    const fromPlans = plans.map((_, i) => (i === 0 ? "main" : `suggested_${i}`));
+    const fromDrafts = Object.keys(planDrafts || {});
+    const all = Array.from(new Set([...fromPlans, ...fromDrafts])).filter(Boolean);
+    const normalized = all.sort((a, b) => {
+      if (a === "main") return -1;
+      if (b === "main") return 1;
+      const ai = Number(String(a).replace("suggested_", ""));
+      const bi = Number(String(b).replace("suggested_", ""));
+      return (Number.isFinite(ai) ? ai : 999) - (Number.isFinite(bi) ? bi : 999);
+    });
+    return normalized.length ? normalized : ["main"];
+  }, [plans, planDrafts]);
 
   const hasTradePlanData = useMemo(() => {
     const p = plans[0] || {};
@@ -681,32 +694,47 @@ export default function SignalDetailCard({
   }, [tradePlan?.enabled]);
 
   useEffect(() => {
-    const next = {};
-    plans.forEach((p, i) => {
-      const planId = i === 0 ? "main" : `suggested_${i}`;
-      next[planId] = {
-        ...p,
-        entry_model: p.entry_model || p.entryModel || "",
-        confidence_pct: p.confidence_pct ?? p.confidence ?? null,
-        estimated_bars: p.estimated_bars ?? null,
-        be_trigger: p.be_trigger ?? p.be ?? null,
-        invalidation: p.invalidation || "",
-        risk_management: p.risk_management || "",
-        entry_condition: p.entry_condition || "",
-        exit_condition: p.exit_condition || "",
-        confluence_checklist: Array.isArray(p.confluence_checklist)
-          ? p.confluence_checklist
-          : [],
-        reasons_to_skip: Array.isArray(p.reasons_to_skip)
-          ? p.reasons_to_skip
-          : Array.isArray(p.skipReasons)
-            ? p.skipReasons
+    setPlanDrafts((prev) => {
+      const next = { ...(prev || {}) };
+      plans.forEach((p, i) => {
+        const planId = i === 0 ? "main" : `suggested_${i}`;
+        const normalized = {
+          ...p,
+          entry_model: p.entry_model || p.entryModel || "",
+          confidence_pct: p.confidence_pct ?? p.confidence ?? null,
+          estimated_bars: p.estimated_bars ?? null,
+          be_trigger: p.be_trigger ?? p.be ?? null,
+          invalidation: p.invalidation || "",
+          risk_management: p.risk_management || "",
+          entry_condition: p.entry_condition || "",
+          exit_condition: p.exit_condition || "",
+          confluence_checklist: Array.isArray(p.confluence_checklist)
+            ? p.confluence_checklist
             : [],
-        skip_recommendation: p.skip_recommendation || p.skip || "",
-      };
+          reasons_to_skip: Array.isArray(p.reasons_to_skip)
+            ? p.reasons_to_skip
+            : Array.isArray(p.skipReasons)
+              ? p.skipReasons
+              : [],
+          skip_recommendation: p.skip_recommendation || p.skip || "",
+        };
+        if (!next[planId]) next[planId] = normalized;
+      });
+      if (!next.main) {
+        next.main = {
+          ...(tradePlan?.value || {}),
+          direction: tradePlan?.value?.direction || "BUY",
+        };
+      }
+      return next;
     });
-    setPlanDrafts(next);
-  }, [response?.tradePlans, tradePlan?.value]);
+  }, [response?.tradePlans]);
+
+  useEffect(() => {
+    if (!displayPlanIds.includes(selectedPlanId)) {
+      setSelectedPlanId("main");
+    }
+  }, [displayPlanIds, selectedPlanId]);
 
   useEffect(() => {
     if (chart?.enabled) {
@@ -785,23 +813,19 @@ export default function SignalDetailCard({
     response?.schemaVersion || rawData?.schema_version || "",
   ).trim();
   const isSchema24 = schemaVersion.startsWith("2.4");
-  const selectedPlanRaw =
-    planDrafts[selectedPlanId] ||
-    selectedPlanFromList?.__raw_plan ||
-    selectedPlanFromList ||
-    {};
+  const selectedPlanRaw = planDrafts[selectedPlanId] || selectedPlanFromList?.__raw_plan || selectedPlanFromList || {};
   const selectedTradePlanGroup = useMemo(() => {
     if (selectedPlanId === "main") return "P1";
     const idx = Number(String(selectedPlanId).replace("suggested_", ""));
     return Number.isFinite(idx) && idx >= 1 ? `P${idx + 1}` : "P1";
   }, [selectedPlanId]);
   const liveTradePlansForChart = useMemo(
-    () => plans.map((p, i) => {
-      const planId = i === 0 ? "main" : `suggested_${i}`;
+    () => displayPlanIds.map((planId, i) => {
+      const base = plans[i] || {};
       const draft = planDrafts?.[planId] || {};
-      return { ...p, ...draft };
+      return { ...base, ...draft };
     }),
-    [plans, planDrafts],
+    [displayPlanIds, plans, planDrafts],
   );
   const selectedPlanSymbol = String(
     selectedPlanRaw?.symbol ||
@@ -877,15 +901,14 @@ export default function SignalDetailCard({
             marginBottom: 20,
           }}
         >
-          {plans.map((p, i) => {
-            const isMain = i === 0;
-            const planId = isMain ? "main" : `suggested_${i}`;
+          {displayPlanIds.map((planId, i) => {
+            const isMain = planId === "main";
+            const fallbackIdx = isMain ? 0 : Number(String(planId).replace("suggested_", ""));
+            const p = plans[fallbackIdx] || plans[0] || {};
             const isSelected = selectedPlanId === planId;
-            const isBuy = String(p.direction).toUpperCase() === "BUY";
+            const isBuy = String((planDrafts[planId] || p)?.direction).toUpperCase() === "BUY";
             const isSimplified = !isSelected;
-            const planValue = isMain
-              ? { ...p, ...tradePlan.value }
-              : planDrafts[planId] || p;
+            const planValue = planDrafts[planId] || p;
             return (
               <div
                 key={planId}
@@ -909,19 +932,15 @@ export default function SignalDetailCard({
                   plan={{
                     ...planValue,
                     onSelectTP: (price, rrVal) => {
+                      setPlanDrafts((prev) => {
+                        let next = prev[planId] || p;
+                        next = applyLinkedPlanChange(next, "tp", price);
+                        if (rrVal) next = applyLinkedPlanChange(next, "rr", rrVal);
+                        return { ...prev, [planId]: next };
+                      });
                       if (isMain) {
-                        // Call onChange for TP first. The parent's linkage will update RR.
-                        // But we also call for RR to ensure the exact RR value from the partial TP is used.
                         tradePlan.onChange?.("tp", price);
                         if (rrVal) tradePlan.onChange?.("rr", rrVal);
-                      } else {
-                        setPlanDrafts((prev) => {
-                          let next = prev[planId] || p;
-                          next = applyLinkedPlanChange(next, "tp", price);
-                          if (rrVal)
-                            next = applyLinkedPlanChange(next, "rr", rrVal);
-                          return { ...prev, [planId]: next };
-                        });
                       }
                     },
                   }}
@@ -941,17 +960,20 @@ export default function SignalDetailCard({
                     tradeId={tradePlan.tradeId || null}
                     value={planValue}
                     onChange={(k, v) => {
+                      let nextPlan = null;
+                      setPlanDrafts((prev) => {
+                        nextPlan = applyLinkedPlanChange(prev[planId] || p, k, v);
+                        return {
+                          ...prev,
+                          [planId]: nextPlan,
+                        };
+                      });
                       if (isMain) {
                         tradePlan.onChange?.(k, v);
-                      } else {
-                        setPlanDrafts((prev) => ({
-                          ...prev,
-                          [planId]: applyLinkedPlanChange(
-                            prev[planId] || p,
-                            k,
-                            v,
-                          ),
-                        }));
+                        if ((k === "entry" || k === "direction") && nextPlan) {
+                          if (nextPlan.tp !== undefined) tradePlan.onChange?.("tp", nextPlan.tp);
+                          if (nextPlan.sl !== undefined) tradePlan.onChange?.("sl", nextPlan.sl);
+                        }
                       }
                     }}
                     onReset={tradePlan.onReset}
