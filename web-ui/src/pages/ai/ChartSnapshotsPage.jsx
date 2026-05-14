@@ -3379,9 +3379,17 @@ export default function ChartSnapshotsPage() {
           );
         }
         setPosition(extractPositionFromAnalysis(parsed));
+        const parsedSymbol = normalizeWatchSymbol(
+          parsed?.symbol ||
+            parsed?.trade_plan?.[0]?.symbol ||
+            selectedSymbol ||
+            cfg.symbol ||
+            tvSymbol ||
+            "",
+        );
         const nextRouteSymbols = (Array.isArray(activeSymbols) && activeSymbols.length
           ? activeSymbols
-          : [activeSymbol]
+          : [activeSymbol, parsedSymbol]
         )
           .map((x) => normalizeWatchSymbol(x))
           .filter(Boolean);
