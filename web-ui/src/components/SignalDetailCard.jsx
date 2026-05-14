@@ -103,12 +103,30 @@ function choosePrimaryTpAndRr(p = {}, ctx = {}) {
     toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
     toCandidate(p?.breakeven_trigger, p?.risk_reward, "breakeven_trigger"),
     toCandidate(p?.tp1, p?.risk_reward, "tp1"),
-    toCandidate(p?.multiple_exits?.tp1?.price, p?.multiple_exits?.tp1?.risk_reward, "multiple_exits.tp1"),
-    toCandidate(p?.multiple_exits?.tp2?.price, p?.multiple_exits?.tp2?.risk_reward, "multiple_exits.tp2"),
-    toCandidate(p?.multiple_exits?.tp3?.price, p?.multiple_exits?.tp3?.risk_reward, "multiple_exits.tp3"),
-    toCandidate(p?.multiple_exits?.full_tp?.price, p?.multiple_exits?.full_tp?.risk_reward, "multiple_exits.full_tp"),
     toCandidate(
-      Array.isArray(p?.partial_tps) ? (p.partial_tps[0]?.price ?? p.partial_tps[0]) : null,
+      p?.multiple_exits?.tp1?.price,
+      p?.multiple_exits?.tp1?.risk_reward,
+      "multiple_exits.tp1",
+    ),
+    toCandidate(
+      p?.multiple_exits?.tp2?.price,
+      p?.multiple_exits?.tp2?.risk_reward,
+      "multiple_exits.tp2",
+    ),
+    toCandidate(
+      p?.multiple_exits?.tp3?.price,
+      p?.multiple_exits?.tp3?.risk_reward,
+      "multiple_exits.tp3",
+    ),
+    toCandidate(
+      p?.multiple_exits?.full_tp?.price,
+      p?.multiple_exits?.full_tp?.risk_reward,
+      "multiple_exits.full_tp",
+    ),
+    toCandidate(
+      Array.isArray(p?.partial_tps)
+        ? (p.partial_tps[0]?.price ?? p.partial_tps[0])
+        : null,
       Array.isArray(p?.partial_tps)
         ? (p.partial_tps[0]?.risk_reward ?? p.partial_tps[0]?.rr)
         : null,
@@ -132,7 +150,9 @@ function choosePrimaryTpAndRr(p = {}, ctx = {}) {
 }
 
 function normalizeRawPlan(p = {}) {
-  const side = String(p?.direction || p?.action || p?.side || "BUY").toUpperCase();
+  const side = String(
+    p?.direction || p?.action || p?.side || "BUY",
+  ).toUpperCase();
   const direction = side.includes("SELL") ? "SELL" : "BUY";
   const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
   const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
@@ -176,7 +196,11 @@ function planLooksMeaningful(p = {}) {
       p?.multiple_exits?.tp2?.price ??
       p?.multiple_exits?.tp1?.price,
   );
-  return (entry != null && entry !== 0) || (sl != null && sl !== 0) || (tp != null && tp !== 0);
+  return (
+    (entry != null && entry !== 0) ||
+    (sl != null && sl !== 0) ||
+    (tp != null && tp !== 0)
+  );
 }
 
 function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
@@ -186,10 +210,17 @@ function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
     if (v === undefined) return;
     const freshVal = next[k];
     // Keep fresh non-zero numeric-ish values from latest analysis payload.
-    if (typeof freshVal !== "undefined" && freshVal !== null && String(freshVal).trim() !== "") {
+    if (
+      typeof freshVal !== "undefined" &&
+      freshVal !== null &&
+      String(freshVal).trim() !== ""
+    ) {
       const freshNum = parseNumLoose(freshVal);
       const prevNum = parseNumLoose(v);
-      if (freshNum != null && (freshNum !== 0 || prevNum === 0 || prevNum == null)) {
+      if (
+        freshNum != null &&
+        (freshNum !== 0 || prevNum === 0 || prevNum == null)
+      ) {
         return;
       }
     }
@@ -201,7 +232,8 @@ function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
 function formatCompactText(value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   if (Array.isArray(value)) {
     return value
       .map((x) => formatCompactText(x))
@@ -356,8 +388,10 @@ function PlanHeader({
             }}
           >
             {plan.entry || "-"} →{" "}
-            <span style={{ color: "var(--accent)" }}>{plan.tp || fallbackTp || "-"}</span> /{" "}
-            <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
+            <span style={{ color: "var(--accent)" }}>
+              {plan.tp || fallbackTp || "-"}
+            </span>{" "}
+            / <span style={{ color: "var(--bearish)" }}>{plan.sl || "-"}</span>
             <span
               title="Risk-Reward ratio calculated from Plan prices (Entry, TP, SL). Broker-side 'Planned Profits' may diverge due to commissions, spreads, or platform-specific pip calculations."
               style={{
@@ -842,15 +876,21 @@ export default function SignalDetailCard({
       : Math.max(0, Number(String(selectedPlanId).replace("suggested_", "")));
   const selectedPlanFromList = plans[selectedPlanIndex] || plans[0] || {};
   const displayPlanIds = useMemo(() => {
-    const fromPlans = plans.map((_, i) => (i === 0 ? "main" : `suggested_${i}`));
+    const fromPlans = plans.map((_, i) =>
+      i === 0 ? "main" : `suggested_${i}`,
+    );
     const fromDrafts = Object.keys(planDrafts || {});
-    const all = Array.from(new Set([...fromPlans, ...fromDrafts])).filter(Boolean);
+    const all = Array.from(new Set([...fromPlans, ...fromDrafts])).filter(
+      Boolean,
+    );
     const normalized = all.sort((a, b) => {
       if (a === "main") return -1;
       if (b === "main") return 1;
       const ai = Number(String(a).replace("suggested_", ""));
       const bi = Number(String(b).replace("suggested_", ""));
-      return (Number.isFinite(ai) ? ai : 999) - (Number.isFinite(bi) ? bi : 999);
+      return (
+        (Number.isFinite(ai) ? ai : 999) - (Number.isFinite(bi) ? bi : 999)
+      );
     });
     return normalized.length ? normalized : ["main"];
   }, [plans, planDrafts]);
@@ -987,7 +1027,9 @@ export default function SignalDetailCard({
 
   const effectiveTfs = useMemo(() => {
     const required = ["d", "4h", "15m", "5m"];
-    const base = Array.isArray(selectedTfs) ? selectedTfs.map((t) => String(t || "").toLowerCase()) : [];
+    const base = Array.isArray(selectedTfs)
+      ? selectedTfs.map((t) => String(t || "").toLowerCase())
+      : [];
     const merged = [...new Set([...base, ...required])].filter(Boolean);
     return sortTimeframes(merged, "desc");
   }, [selectedTfs]);
@@ -998,18 +1040,23 @@ export default function SignalDetailCard({
     response?.schemaVersion || rawData?.schema_version || "",
   ).trim();
   const isSchema24 = schemaVersion.startsWith("2.4");
-  const selectedPlanRaw = planDrafts[selectedPlanId] || selectedPlanFromList?.__raw_plan || selectedPlanFromList || {};
+  const selectedPlanRaw =
+    planDrafts[selectedPlanId] ||
+    selectedPlanFromList?.__raw_plan ||
+    selectedPlanFromList ||
+    {};
   const selectedTradePlanGroup = useMemo(() => {
     if (selectedPlanId === "main") return "P1";
     const idx = Number(String(selectedPlanId).replace("suggested_", ""));
     return Number.isFinite(idx) && idx >= 1 ? `P${idx + 1}` : "P1";
   }, [selectedPlanId]);
   const liveTradePlansForChart = useMemo(
-    () => displayPlanIds.map((planId, i) => {
-      const base = plans[i] || {};
-      const draft = planDrafts?.[planId] || {};
-      return { ...base, ...draft };
-    }),
+    () =>
+      displayPlanIds.map((planId, i) => {
+        const base = plans[i] || {};
+        const draft = planDrafts?.[planId] || {};
+        return { ...base, ...draft };
+      }),
     [displayPlanIds, plans, planDrafts],
   );
   const selectedPlanSymbol = String(
@@ -1088,10 +1135,14 @@ export default function SignalDetailCard({
         >
           {displayPlanIds.map((planId, i) => {
             const isMain = planId === "main";
-            const fallbackIdx = isMain ? 0 : Number(String(planId).replace("suggested_", ""));
+            const fallbackIdx = isMain
+              ? 0
+              : Number(String(planId).replace("suggested_", ""));
             const p = plans[fallbackIdx] || plans[0] || {};
             const isSelected = selectedPlanId === planId;
-            const isBuy = String((planDrafts[planId] || p)?.direction).toUpperCase() === "BUY";
+            const isBuy =
+              String((planDrafts[planId] || p)?.direction).toUpperCase() ===
+              "BUY";
             const isSimplified = !isSelected;
             const planValue = planDrafts[planId] || p;
             return (
@@ -1120,7 +1171,8 @@ export default function SignalDetailCard({
                       setPlanDrafts((prev) => {
                         let next = prev[planId] || p;
                         next = applyLinkedPlanChange(next, "tp", price);
-                        if (rrVal) next = applyLinkedPlanChange(next, "rr", rrVal);
+                        if (rrVal)
+                          next = applyLinkedPlanChange(next, "rr", rrVal);
                         return { ...prev, [planId]: next };
                       });
                       if (isMain) {
@@ -1147,7 +1199,11 @@ export default function SignalDetailCard({
                     onChange={(k, v) => {
                       let nextPlan = null;
                       setPlanDrafts((prev) => {
-                        nextPlan = applyLinkedPlanChange(prev[planId] || p, k, v);
+                        nextPlan = applyLinkedPlanChange(
+                          prev[planId] || p,
+                          k,
+                          v,
+                        );
                         return {
                           ...prev,
                           [planId]: nextPlan,
@@ -1156,8 +1212,10 @@ export default function SignalDetailCard({
                       if (isMain) {
                         tradePlan.onChange?.(k, v);
                         if ((k === "entry" || k === "direction") && nextPlan) {
-                          if (nextPlan.tp !== undefined) tradePlan.onChange?.("tp", nextPlan.tp);
-                          if (nextPlan.sl !== undefined) tradePlan.onChange?.("sl", nextPlan.sl);
+                          if (nextPlan.tp !== undefined)
+                            tradePlan.onChange?.("tp", nextPlan.tp);
+                          if (nextPlan.sl !== undefined)
+                            tradePlan.onChange?.("sl", nextPlan.sl);
                         }
                       }
                     }}
@@ -1453,69 +1511,75 @@ export default function SignalDetailCard({
 
           return (
             <div style={{ padding: "10px 4px" }}>
-              {mode === "trade" && Array.isArray(metaItems) && metaItems.length > 0 && (
-                <div style={{ marginBottom: 24 }}>
-                  <div
-                    className="minor-text"
-                    style={{
-                      marginBottom: 10,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                    }}
-                  >
-                    Trade Info
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "14px 24px",
-                    }}
-                  >
-                    {metaItems
-                      .filter((item) => {
-                        if (!item || typeof item !== "object") return false;
-                        const label = String(item.label || "");
-                        if (!label) return false;
-                        if (
-                          label === "Metadata" ||
-                          label === "Raw Metadata" ||
-                          label === "Raw JSON"
-                        ) {
-                          return false;
-                        }
-                        const val = item.value;
-                        return val !== null && val !== undefined && String(val) !== "";
-                      })
-                      .map((item, idx) => (
-                        <div
-                          key={`trade-info-${idx}-${String(item.label)}`}
-                          style={{
-                            gridColumn: item.fullWidth ? "1 / -1" : "auto",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          <span className="minor-text">{item.label}</span>
+              {mode === "trade" &&
+                Array.isArray(metaItems) &&
+                metaItems.length > 0 && (
+                  <div style={{ marginBottom: 24 }}>
+                    <div
+                      className="minor-text"
+                      style={{
+                        marginBottom: 10,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                      }}
+                    >
+                      Trade Info
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: "14px 24px",
+                      }}
+                    >
+                      {metaItems
+                        .filter((item) => {
+                          if (!item || typeof item !== "object") return false;
+                          const label = String(item.label || "");
+                          if (!label) return false;
+                          if (
+                            label === "Metadata" ||
+                            label === "Raw Metadata" ||
+                            label === "Raw JSON"
+                          ) {
+                            return false;
+                          }
+                          const val = item.value;
+                          return (
+                            val !== null &&
+                            val !== undefined &&
+                            String(val) !== ""
+                          );
+                        })
+                        .map((item, idx) => (
                           <div
+                            key={`trade-info-${idx}-${String(item.label)}`}
                             style={{
-                              fontSize: "13px",
-                              color: "var(--foreground)",
-                              fontWeight: 500,
-                              lineHeight: 1.5,
-                              ...(item.valueStyle || {}),
+                              gridColumn: item.fullWidth ? "1 / -1" : "auto",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 4,
                             }}
                           >
-                            {typeof item.value === "object"
-                              ? JSON.stringify(item.value)
-                              : String(item.value)}
+                            <span className="minor-text">{item.label}</span>
+                            <div
+                              style={{
+                                fontSize: "13px",
+                                color: "var(--foreground)",
+                                fontWeight: 500,
+                                lineHeight: 1.5,
+                                ...(item.valueStyle || {}),
+                              }}
+                            >
+                              {typeof item.value === "object"
+                                ? JSON.stringify(item.value)
+                                : String(item.value)}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
               {/* Bias & Trend Cards */}
               {compactTfs.length > 0 && (
@@ -1534,16 +1598,26 @@ export default function SignalDetailCard({
                     {compactTfs.map((tf) => {
                       const b = formatCompactText(tf.bias || "");
                       const trendText = formatCompactText(tf.trend || "");
-                      const structureText = formatCompactText(tf.structure || "");
+                      const structureText = formatCompactText(
+                        tf.structure || "",
+                      );
                       const paSummaryText = formatCompactText(
-                        tf.price_action_summary?.recent_move || tf.price_action_summary || "",
+                        tf.price_action_summary?.recent_move ||
+                          tf.price_action_summary ||
+                          "",
                       );
                       const predictionText = formatCompactText(
-                        tf.price_prediction?.narrative || tf.price_prediction || "",
+                        tf.price_prediction?.narrative ||
+                          tf.price_prediction ||
+                          "",
                       );
                       const lowerBias = b.toLowerCase();
-                      const isLong = lowerBias.includes("long") || lowerBias.includes("bull");
-                      const isShort = lowerBias.includes("short") || lowerBias.includes("bear");
+                      const isLong =
+                        lowerBias.includes("long") ||
+                        lowerBias.includes("bull");
+                      const isShort =
+                        lowerBias.includes("short") ||
+                        lowerBias.includes("bear");
                       const biasColor = isLong
                         ? "#26a69a"
                         : isShort
@@ -1588,7 +1662,9 @@ export default function SignalDetailCard({
                             className="minor-text"
                             style={{ fontSize: "9px" }}
                           >
-                            {[trendText, structureText].filter(Boolean).join(" · ")}
+                            {[trendText, structureText]
+                              .filter(Boolean)
+                              .join(" · ")}
                           </div>
                           {paSummaryText && (
                             <div
@@ -1713,18 +1789,38 @@ export default function SignalDetailCard({
                               opacity: 0.9,
                             }}
                           >
-                            {(Array.isArray(f.value) ? f.value : []).map((item, idx) => {
-                              if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
-                                return <li key={idx}>{String(item)}</li>;
-                              }
-                              if (item && typeof item === "object") {
-                                const reason = formatCompactText(item.reason || item.item || item.condition || item.text || "");
-                                const severity = formatCompactText(item.severity || "");
-                                const rendered = [reason, severity].filter(Boolean).join(" | ");
-                                return <li key={idx}>{rendered || formatCompactText(item)}</li>;
-                              }
-                              return <li key={idx}>-</li>;
-                            })}
+                            {(Array.isArray(f.value) ? f.value : []).map(
+                              (item, idx) => {
+                                if (
+                                  typeof item === "string" ||
+                                  typeof item === "number" ||
+                                  typeof item === "boolean"
+                                ) {
+                                  return <li key={idx}>{String(item)}</li>;
+                                }
+                                if (item && typeof item === "object") {
+                                  const reason = formatCompactText(
+                                    item.reason ||
+                                      item.item ||
+                                      item.condition ||
+                                      item.text ||
+                                      "",
+                                  );
+                                  const severity = formatCompactText(
+                                    item.severity || "",
+                                  );
+                                  const rendered = [reason, severity]
+                                    .filter(Boolean)
+                                    .join(" | ");
+                                  return (
+                                    <li key={idx}>
+                                      {rendered || formatCompactText(item)}
+                                    </li>
+                                  );
+                                }
+                                return <li key={idx}>-</li>;
+                              },
+                            )}
                           </ul>
                         ) : (
                           f.value
@@ -1734,6 +1830,422 @@ export default function SignalDetailCard({
                   );
                 })}
               </div>
+
+              {/* ── AI Multi-Timeframe Analysis ── */}
+              {(() => {
+                const mta = rawData?.multi_timeframes_analysis;
+                if (!mta || typeof mta !== "object") return null;
+                const htfCtx = Array.isArray(mta.htf_context)
+                  ? mta.htf_context
+                  : [];
+                const ltfAn = Array.isArray(mta.ltf_analysis)
+                  ? mta.ltf_analysis
+                  : [];
+                const confluence =
+                  mta.confluence_checklist || mta.confluence || {};
+                const events = mta.events_patterns;
+                const pdArrays = mta.pd_arrays_key_levels;
+                const tradePlans = Array.isArray(rawData?.trade_plan)
+                  ? rawData.trade_plan
+                  : [];
+                const sec = { marginBottom: 18 };
+                const head = {
+                  fontSize: 10,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  color: "var(--muted)",
+                  marginBottom: 6,
+                  borderBottom: "1px solid rgba(255,255,255,0.06)",
+                  paddingBottom: 3,
+                };
+                const card = {
+                  padding: "6px 8px",
+                  borderRadius: 5,
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  fontSize: 11,
+                  flex: "1 1 0",
+                  minWidth: 120,
+                };
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    {(htfCtx.length > 0 || ltfAn.length > 0) && (
+                      <div style={sec}>
+                        <div style={head}>Trend / Bias</div>
+                        {htfCtx.length > 0 && (
+                          <>
+                            <span
+                              className="minor-text"
+                              style={{ fontSize: 9 }}
+                            >
+                              HTF
+                            </span>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 4,
+                                flexWrap: "wrap",
+                                marginTop: 2,
+                                marginBottom: 6,
+                              }}
+                            >
+                              {htfCtx.map((tf, i) => {
+                                const b = String(tf?.bias || "").toUpperCase();
+                                const up =
+                                  b.includes("BULL") || b.includes("LONG");
+                                const dn =
+                                  b.includes("BEAR") || b.includes("SHORT");
+                                const c = up
+                                  ? "#26a69a"
+                                  : dn
+                                    ? "#ef5350"
+                                    : "var(--muted)";
+                                return (
+                                  <div
+                                    key={`h-${i}`}
+                                    style={{ ...card, borderColor: `${c}30` }}
+                                  >
+                                    <div
+                                      style={{
+                                        fontWeight: 700,
+                                        color: c,
+                                        marginBottom: 1,
+                                      }}
+                                    >
+                                      {tf?.timeframe || "-"}{" "}
+                                      {up ? "▲" : dn ? "▼" : ""}
+                                    </div>
+                                    <div
+                                      className="minor-text"
+                                      style={{ fontSize: 10 }}
+                                    >
+                                      {[
+                                        tf?.trend,
+                                        tf?.bias,
+                                        tf?.phase,
+                                        tf?.market_structure?.narrative,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ") || "—"}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                        {ltfAn.length > 0 && (
+                          <>
+                            <span
+                              className="minor-text"
+                              style={{ fontSize: 9 }}
+                            >
+                              LTF
+                            </span>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 4,
+                                flexWrap: "wrap",
+                                marginTop: 2,
+                              }}
+                            >
+                              {ltfAn.map((tf, i) => {
+                                const b = String(tf?.bias || "").toUpperCase();
+                                const up =
+                                  b.includes("BULL") || b.includes("LONG");
+                                const dn =
+                                  b.includes("BEAR") || b.includes("SHORT");
+                                const c = up
+                                  ? "#26a69a"
+                                  : dn
+                                    ? "#ef5350"
+                                    : "var(--muted)";
+                                return (
+                                  <div
+                                    key={`l-${i}`}
+                                    style={{ ...card, borderColor: `${c}30` }}
+                                  >
+                                    <div
+                                      style={{
+                                        fontWeight: 700,
+                                        color: c,
+                                        marginBottom: 1,
+                                      }}
+                                    >
+                                      {tf?.timeframe || "-"}{" "}
+                                      {up ? "▲" : dn ? "▼" : ""}
+                                    </div>
+                                    <div
+                                      className="minor-text"
+                                      style={{ fontSize: 10 }}
+                                    >
+                                      {[
+                                        tf?.trend,
+                                        tf?.bias,
+                                        tf?.phase,
+                                        tf?.structure,
+                                        tf?.market_structure?.narrative,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ") || "—"}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {tradePlans.map((plan, pi) => {
+                      const cl = plan?.entry_checklists;
+                      if (!cl || typeof cl !== "object") return null;
+                      const items = Object.entries(cl).filter(
+                        ([, v]) => v != null,
+                      );
+                      if (!items.length) return null;
+                      return (
+                        <div key={`ec-${pi}`} style={sec}>
+                          <div style={head}>
+                            Entry Checklists
+                            {tradePlans.length > 1 ? ` #${pi + 1}` : ""}
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 3,
+                            }}
+                          >
+                            {items.map(([k, v]) => (
+                              <div
+                                key={k}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "flex-start",
+                                  gap: 5,
+                                  fontSize: 11,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    color: v ? "#26a69a" : "var(--muted)",
+                                    fontWeight: 700,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {v ? "☑" : "☐"}
+                                </span>
+                                <span
+                                  style={{
+                                    color: v
+                                      ? "var(--foreground)"
+                                      : "var(--muted)",
+                                  }}
+                                >
+                                  {String(k).replace(/_/g, " ")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {tradePlans.map((plan, pi) => {
+                      const rm = plan?.risk_management;
+                      if (!rm || typeof rm !== "object") return null;
+                      const rows = [
+                        {
+                          l: "Confidence",
+                          v:
+                            rm.confidence_pct != null
+                              ? `${rm.confidence_pct}%`
+                              : null,
+                        },
+                        {
+                          l: "Risk %",
+                          v:
+                            rm.risk_percent != null
+                              ? `${rm.risk_percent}%`
+                              : null,
+                        },
+                        { l: "Grade", v: rm.grade },
+                        {
+                          l: "Skip",
+                          v:
+                            rm.skip_decision !== undefined
+                              ? String(rm.skip_decision)
+                              : null,
+                        },
+                        { l: "Entry Trigger", v: rm.entry_trigger, f: 1 },
+                        {
+                          l: "Invalidation",
+                          v: rm.pre_entry_invalidation,
+                          f: 1,
+                        },
+                        { l: "Mid Inval.", v: rm.mid_trade_invalidation, f: 1 },
+                        {
+                          l: "Skip Reasons",
+                          v: Array.isArray(rm.skip_reasons)
+                            ? rm.skip_reasons.join(", ")
+                            : rm.skip_reasons,
+                          f: 1,
+                        },
+                      ].filter((r) => r.v != null && String(r.v) !== "");
+                      if (!rows.length) return null;
+                      return (
+                        <div key={`rm-${pi}`} style={sec}>
+                          <div style={head}>
+                            Risk Management
+                            {tradePlans.length > 1 ? ` #${pi + 1}` : ""}
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: "4px 12px",
+                            }}
+                          >
+                            {rows.map((r, i) => (
+                              <div
+                                key={i}
+                                style={{ gridColumn: r.f ? "1 / -1" : "auto" }}
+                              >
+                                <span
+                                  className="minor-text"
+                                  style={{ fontSize: 9 }}
+                                >
+                                  {r.l}
+                                </span>
+                                <div style={{ fontSize: 11, marginTop: 1 }}>
+                                  {r.v}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {confluence &&
+                      typeof confluence === "object" &&
+                      Object.keys(confluence).length > 0 && (
+                        <div style={sec}>
+                          <div style={head}>Confluence</div>
+                          {["sell", "buy"].map((side) => {
+                            const s = confluence[side];
+                            if (!s || typeof s !== "object") return null;
+                            const sc = s.weighted_score ?? s.score ?? "-";
+                            const pa = Array.isArray(s.passed_items)
+                              ? s.passed_items
+                              : [];
+                            const fa = Array.isArray(s.failed_critical)
+                              ? s.failed_critical
+                              : [];
+                            return (
+                              <div
+                                key={side}
+                                style={{ fontSize: 10, marginBottom: 2 }}
+                              >
+                                <span
+                                  style={{
+                                    fontWeight: 700,
+                                    textTransform: "uppercase",
+                                    color:
+                                      side === "buy" ? "#26a69a" : "#ef5350",
+                                  }}
+                                >
+                                  {side}
+                                </span>
+                                <span style={{ marginLeft: 6 }}>
+                                  score={sc}
+                                </span>
+                                {pa.length > 0 && (
+                                  <span
+                                    style={{ marginLeft: 6, color: "#26a69a" }}
+                                  >
+                                    ✓{pa.join(",")}
+                                  </span>
+                                )}
+                                {fa.length > 0 && (
+                                  <span
+                                    style={{ marginLeft: 6, color: "#ef5350" }}
+                                  >
+                                    ✗{fa.join(",")}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    {events &&
+                      typeof events === "object" &&
+                      Object.keys(events).length > 0 && (
+                        <div style={sec}>
+                          <div style={head}>Events &amp; Patterns</div>
+                          <pre
+                            style={{
+                              fontSize: 10,
+                              color: "var(--muted)",
+                              margin: 0,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              maxHeight: 180,
+                              overflow: "auto",
+                            }}
+                          >
+                            {JSON.stringify(events, null, 1)}
+                          </pre>
+                        </div>
+                      )}
+                    {pdArrays &&
+                      typeof pdArrays === "object" &&
+                      Object.keys(pdArrays).length > 0 && (
+                        <div style={sec}>
+                          <div style={head}>PD Arrays / Key Levels</div>
+                          <pre
+                            style={{
+                              fontSize: 10,
+                              color: "var(--muted)",
+                              margin: 0,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              maxHeight: 180,
+                              overflow: "auto",
+                            }}
+                          >
+                            {JSON.stringify(pdArrays, null, 1)}
+                          </pre>
+                        </div>
+                      )}
+                    {(() => {
+                      const draws = [
+                        ...htfCtx.filter((t) => t?.draw_on_liquidity),
+                        ...ltfAn.filter((t) => t?.draw_on_liquidity),
+                      ];
+                      if (!draws.length) return null;
+                      return (
+                        <div style={sec}>
+                          <div style={head}>Draw on Liquidity</div>
+                          {draws.map((d, i) => (
+                            <div
+                              key={i}
+                              style={{ fontSize: 10, marginBottom: 1 }}
+                            >
+                              <span style={{ fontWeight: 600 }}>
+                                {d?.timeframe || "TF"}:
+                              </span>{" "}
+                              {typeof d.draw_on_liquidity === "string"
+                                ? d.draw_on_liquidity
+                                : JSON.stringify(d.draw_on_liquidity)}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
@@ -1883,16 +2395,19 @@ export default function SignalDetailCard({
             analysisSnapshot={{
               ...(rawData && typeof rawData === "object" ? rawData : {}),
               trade_plan: liveTradePlansForChart.length
-                  ? liveTradePlansForChart
-                  : Array.isArray(rawData?.trade_plan)
-                    ? rawData.trade_plan
-                    : rawData?.trade_plan && typeof rawData.trade_plan === "object"
-                      ? [rawData.trade_plan]
-                      : [],
+                ? liveTradePlansForChart
+                : Array.isArray(rawData?.trade_plan)
+                  ? rawData.trade_plan
+                  : rawData?.trade_plan &&
+                      typeof rawData.trade_plan === "object"
+                    ? [rawData.trade_plan]
+                    : [],
             }}
             hasTradePlan={Boolean(
-              (Array.isArray(response?.tradePlans) && response.tradePlans.length > 0) ||
-              (Array.isArray(rawData?.trade_plan) && rawData.trade_plan.length > 0) ||
+              (Array.isArray(response?.tradePlans) &&
+                response.tradePlans.length > 0) ||
+              (Array.isArray(rawData?.trade_plan) &&
+                rawData.trade_plan.length > 0) ||
               tradePlan?.value?.entry ||
               tradePlan?.value?.tp ||
               tradePlan?.value?.sl,
@@ -1914,13 +2429,16 @@ export default function SignalDetailCard({
               const side = String(intent?.side || "BUY").toUpperCase();
               const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
-              const requestedPlan = String(intent?.plan_id || "P1").toUpperCase();
+              const requestedPlan = String(
+                intent?.plan_id || "P1",
+              ).toUpperCase();
               const requestedPlanNum = Number(
                 String(requestedPlan).replace(/^P/i, ""),
               );
-              const planIndex = Number.isFinite(requestedPlanNum) && requestedPlanNum > 0
-                ? requestedPlanNum - 1
-                : 0;
+              const planIndex =
+                Number.isFinite(requestedPlanNum) && requestedPlanNum > 0
+                  ? requestedPlanNum - 1
+                  : 0;
               const planId = planIndex <= 0 ? "main" : `suggested_${planIndex}`;
               const applyToPlan = (field, value) => {
                 if (planId === "main") {
@@ -1968,7 +2486,9 @@ export default function SignalDetailCard({
             }}
             selectedTradePlanGroup={selectedTradePlanGroup}
             onTradePlanGroupChange={(planGroup) => {
-              const planNum = Number(String(planGroup || "").replace(/^P/i, ""));
+              const planNum = Number(
+                String(planGroup || "").replace(/^P/i, ""),
+              );
               if (!Number.isFinite(planNum) || planNum <= 1) {
                 setSelectedPlanId("main");
                 return;
