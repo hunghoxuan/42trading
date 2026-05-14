@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 13:36 - tradeplan-object-locale-fallback-fix"); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.14 14:25 - fix-trade-cancel",
+); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -947,28 +950,40 @@ function tfCacheKey(symbol, tf) {
 function tfToMs(tf) {
   const t = String(tf).toUpperCase();
   const s = {
-    D: 86400000, "1D": 86400000, "1DAY": 86400000,
-    W: 604800000, "1W": 604800000, "1WEEK": 604800000,
+    D: 86400000,
+    "1D": 86400000,
+    "1DAY": 86400000,
+    W: 604800000,
+    "1W": 604800000,
+    "1WEEK": 604800000,
     "4H": 14400000,
     "1H": 3600000,
-    "15M": 900000, "15MIN": 900000,
-    "5M": 300000, "5MIN": 300000,
-    "1M": 60000, "1MIN": 60000,
-    MN: 2592000000, "1MN": 2592000000, "1MONTH": 2592000000,
+    "15M": 900000,
+    "15MIN": 900000,
+    "5M": 300000,
+    "5MIN": 300000,
+    "1M": 60000,
+    "1MIN": 60000,
+    MN: 2592000000,
+    "1MN": 2592000000,
+    "1MONTH": 2592000000,
   };
-  return s[t] || (() => {
-    const m = t.match(/^(\d+)(MIN|H|DAY|WEEK|MONTH|M)$/);
-    if (m) {
-      const n = Number(m[1]);
-      const u = m[2];
-      if (u === "MIN" || u === "M") return n * 60000;
-      if (u === "H") return n * 3600000;
-      if (u === "DAY") return n * 86400000;
-      if (u === "WEEK") return n * 604800000;
-      if (u === "MONTH") return n * 2592000000;
-    }
-    return 3600000;
-  })();
+  return (
+    s[t] ||
+    (() => {
+      const m = t.match(/^(\d+)(MIN|H|DAY|WEEK|MONTH|M)$/);
+      if (m) {
+        const n = Number(m[1]);
+        const u = m[2];
+        if (u === "MIN" || u === "M") return n * 60000;
+        if (u === "H") return n * 3600000;
+        if (u === "DAY") return n * 86400000;
+        if (u === "WEEK") return n * 604800000;
+        if (u === "MONTH") return n * 2592000000;
+      }
+      return 3600000;
+    })()
+  );
 }
 function tfToMinutesForHierarchy(tf) {
   const t = String(tf || "").toUpperCase();
@@ -992,7 +1007,11 @@ async function propagateLowerTfToHigherTfCache(symbol, srcTf, snapshot) {
     const lo = Number(last.low);
     const cl = Number(last.close);
     const tm = Number(last.time);
-    if (!Number.isFinite(srcMin) || !Number.isFinite(hi) || !Number.isFinite(lo))
+    if (
+      !Number.isFinite(srcMin) ||
+      !Number.isFinite(hi) ||
+      !Number.isFinite(lo)
+    )
       return;
     const targets = ["15M", "1H", "4H", "D", "W", "MN"];
     for (const tgt of targets) {
@@ -4897,10 +4916,10 @@ function recoverTradePlansFromRawAiText(rawText) {
     const inner = clean.slice(1, -1);
     const unescaped = inner
       .replace(/\\"/g, '"')
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, '\r')
-      .replace(/\\t/g, '\t')
-      .replace(/\\\\/g, '\\');
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\\\/g, "\\");
     clean = unescaped.trim();
   }
   if (!clean) return [];
@@ -11161,14 +11180,39 @@ async function loadUserApiKeysMap(userId) {
   return out;
 }
 
-
 function isCryptoPair(symbol) {
-  const s = String(symbol || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const s = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
   // Common crypto base assets
   const cryptoBases = [
-    "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "DOT", "MATIC",
-    "LTC", "LINK", "UNI", "AVAX", "ATOM", "ETC", "FIL", "APT", "ARB",
-    "OP", "NEAR", "PEPE", "SUI", "SEI", "TIA", "WIF", "BONK",
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "ADA",
+    "DOGE",
+    "DOT",
+    "MATIC",
+    "LTC",
+    "LINK",
+    "UNI",
+    "AVAX",
+    "ATOM",
+    "ETC",
+    "FIL",
+    "APT",
+    "ARB",
+    "OP",
+    "NEAR",
+    "PEPE",
+    "SUI",
+    "SEI",
+    "TIA",
+    "WIF",
+    "BONK",
   ];
   for (const base of cryptoBases) {
     if (s.startsWith(base) && (s.endsWith("USD") || s.endsWith("USDT"))) {
@@ -11217,11 +11261,14 @@ function binanceKlineToBar(k) {
 async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
   const pair = isCryptoPair(symbolNorm);
   if (!pair) return null;
-  const binanceSymbol = pair.base + (pair.quote === "USD" ? "USDT" : pair.quote);
+  const binanceSymbol =
+    pair.base + (pair.quote === "USD" ? "USDT" : pair.quote);
   const interval = timeframeToBinance(tfNorm);
   const limit = Math.max(50, Math.min(bars || 300, 1000));
   const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
-  console.log(`[binance] FETCH sym=${binanceSymbol} interval=${interval} limit=${limit}`);
+  console.log(
+    `[binance] FETCH sym=${binanceSymbol} interval=${interval} limit=${limit}`,
+  );
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10000);
@@ -11229,8 +11276,11 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
     clearTimeout(timer);
     if (!res.ok) throw new Error(`Binance HTTP ${res.status}`);
     const raw = await res.json();
-    if (!Array.isArray(raw) || !raw.length) throw new Error("Binance empty response");
-    const bars = raw.map(binanceKlineToBar).filter((b) => Number.isFinite(b.time));
+    if (!Array.isArray(raw) || !raw.length)
+      throw new Error("Binance empty response");
+    const bars = raw
+      .map(binanceKlineToBar)
+      .filter((b) => Number.isFinite(b.time));
     console.log(`[binance] OK sym=${binanceSymbol} bars=${bars.length}`);
     return {
       provider: "binance",
@@ -14948,6 +14998,14 @@ const appHandler = async (req, res) => {
         50000,
       );
       const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
+      // Update trades table directly
+      if (ids.length) {
+        const backend = await mt5Backend();
+        await backend.pool.query(
+          `UPDATE trades SET execution_status = 'CANCELLED', updated_at = NOW() WHERE sid = ANY($1::text[])`,
+          [ids],
+        );
+      }
       const updated = await mt5CancelSignalsByIds(ids);
       const cleanup = await mt5CleanupSignalTradeArtifacts({
         signalRows: rows,
