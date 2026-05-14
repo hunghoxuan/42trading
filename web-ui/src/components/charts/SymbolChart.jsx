@@ -370,6 +370,7 @@ export default function SymbolChart({
   skipFetch = false,
   provider = "ICMARKETS",
   sessionPrefix = "",
+  profile = "day",
   attachedSnapshotFiles = [],
   onQuickTradeIntent = null,
   onTrade = null,
