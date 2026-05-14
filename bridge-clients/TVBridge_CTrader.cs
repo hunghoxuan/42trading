@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.14 20:33 - tp-resolver-and-autosave-skill";
+        private const string BuildVersion = "v2026.05.14 20:45 - rr-risk-reward-mapping-fix";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";

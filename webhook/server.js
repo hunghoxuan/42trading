@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:33 - tp-resolver-and-autosave-skill"); // unify TP resolver (incl breakeven/tp1..3) and auto-save all valid trade_plans to signals
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:45 - rr-risk-reward-mapping-fix"); // fix Analyze UI RR mapping to honor risk_reward from JSON
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

@@ -1552,7 +1552,7 @@ function extractPositionFromAnalysis(parsed) {
   const tp = Number.isFinite(planTp)
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
-  const rrRaw = parseNum(plan.rr ?? parsed?.rr);
+  const rrRaw = parseNum(plan.rr ?? plan.risk_reward ?? parsed?.rr);
   let rr = Number.isFinite(rrRaw) ? rrRaw : null;
   if (
     !Number.isFinite(rr) &&
@@ -1657,7 +1657,7 @@ function extractPositionFromPlan(plan, parsed = {}) {
   const tp = Number.isFinite(planTp)
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
-  const rrRaw = parseNum(item.rr ?? parsed?.rr);
+  const rrRaw = parseNum(item.rr ?? item.risk_reward ?? parsed?.rr);
   let rr = Number.isFinite(rrRaw) ? rrRaw : null;
   if (
     !Number.isFinite(rr) &&
