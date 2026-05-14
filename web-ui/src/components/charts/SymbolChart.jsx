@@ -440,6 +440,14 @@ export default function SymbolChart({
   const parentDrivenSelectionRef = useRef(null);
   const lastIncomingPlanGroupRef = useRef(null);
 
+  useEffect(() => {
+    setAnnotations([]);
+    setSelectedObjectId(null);
+    setActivePlanGroup("P1");
+    parentDrivenSelectionRef.current = null;
+    lastIncomingPlanGroupRef.current = null;
+  }, [cleanSym]);
+
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
   useEffect(() => {
@@ -707,7 +715,16 @@ export default function SymbolChart({
       }
     }
     setAnnotations((prev) => {
-      const next = [...prev];
+      const allowedPlanIds = new Set(
+        rawPlans
+          .slice(0, 2)
+          .map((_, idx) => (idx === 0 ? "P1" : "P2")),
+      );
+      let next = [...prev].filter((x) => {
+        if (x.kind !== "tradeplan") return true;
+        const pid = String(x.plan_id || "").toUpperCase();
+        return allowedPlanIds.has(pid);
+      });
       rawPlans.slice(0, 2).forEach((p, idx) => {
         const planId = idx === 0 ? "P1" : "P2";
         const id = `tradeplan_${planId}`;

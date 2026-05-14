@@ -695,7 +695,7 @@ export default function SignalDetailCard({
 
   useEffect(() => {
     setPlanDrafts((prev) => {
-      const next = { ...(prev || {}) };
+      const next = {};
       plans.forEach((p, i) => {
         const planId = i === 0 ? "main" : `suggested_${i}`;
         const normalized = {
@@ -718,7 +718,10 @@ export default function SignalDetailCard({
               : [],
           skip_recommendation: p.skip_recommendation || p.skip || "",
         };
-        if (!next[planId]) next[planId] = normalized;
+        next[planId] = {
+          ...normalized,
+          ...(prev?.[planId] || {}),
+        };
       });
       if (!next.main) {
         next.main = {
@@ -1725,20 +1728,9 @@ export default function SignalDetailCard({
                 return;
               }
               const nextPlanId = `suggested_${planNum - 1}`;
-              setPlanDrafts((prev) => {
-                if (prev?.[nextPlanId]) return prev;
-                const seed = prev?.main || plans?.[0] || tradePlan?.value || {};
-                return {
-                  ...(prev || {}),
-                  [nextPlanId]: {
-                    ...seed,
-                    direction:
-                      planNum === 2
-                        ? "SELL"
-                        : String(seed?.direction || "BUY").toUpperCase(),
-                  },
-                };
-              });
+              const existsInResponse = planNum - 1 < plans.length;
+              const existsInDraft = Boolean(planDrafts?.[nextPlanId]);
+              if (!existsInResponse && !existsInDraft) return;
               setSelectedPlanId(nextPlanId);
             }}
             showEditButton={chart?.showEditButton !== false}
