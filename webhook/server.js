@@ -20725,6 +20725,9 @@ const appHandler = async (req, res) => {
       if (!account) return;
       const tradeId = String(payload.trade_id || "").trim();
       const leaseToken = String(payload.lease_token || "").trim();
+      console.log(
+        `[v2/broker/ack] trade=${tradeId} lease=${leaseToken.slice(0, 8)}... exec=${payload.execution_status} release=${payload.release_only || false}`,
+      );
       if (!tradeId || !leaseToken) {
         return json(res, 400, {
           ok: false,
@@ -20732,9 +20735,6 @@ const appHandler = async (req, res) => {
         });
       }
       const result = await mt5AckTradeV2(account.account_id, payload);
-      console.log(
-        `[v2/broker/ack] trade=${tradeId} exec_status=${payload.execution_status} release=${payload.release_only || false} ok=${result?.ok}`,
-      );
       if (!result?.ok)
         return json(res, 409, {
           ok: false,
