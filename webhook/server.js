@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 14:50 - fix-bulk-actions",
+  "v2026.05.14 14:55 - fix-trade-cancel",
 ); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
 
 const SERVER_LOG_DIR = envStr(
