@@ -909,9 +909,36 @@ export default function SymbolChart({
           }
         }
       }
-      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const isBuy = String(side || "").toUpperCase() === "BUY";
+      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       setAnnotations((prev) => {
+        if (hasTradePlan && hasAnalysis) {
+          const tpNum = Number(tpPrice);
+          const slNum = Number(slPrice);
+          const planObjectId = `tradeplan_${String(activePlanGroup || "P1").toUpperCase()}`;
+          const existing = prev.find((x) => x.id === planObjectId && x.kind === "tradeplan");
+          const tradePlanObject = {
+            ...(existing || {}),
+            id: planObjectId,
+            kind: "tradeplan",
+            type: "TRADEPLAN",
+            label: `TradePlan ${String(activePlanGroup || "P1").toUpperCase()}`,
+            plan_id: String(activePlanGroup || "P1").toUpperCase(),
+            direction: isBuy ? "BUY" : "SELL",
+            entryPrice: usePrice,
+            tpPrice: Number.isFinite(tpNum) ? tpNum : null,
+            slPrice: Number.isFinite(slNum) ? slNum : null,
+            visible: existing?.visible !== false,
+            color: isBuy ? "#10b981" : "#ef4444",
+            line_width: 0.1,
+            line_style: "solid",
+            bg_color: "transparent",
+            tf: null,
+            time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+          };
+          const withoutCurrent = prev.filter((x) => x.id !== planObjectId);
+          return [...withoutCurrent, tradePlanObject];
+        }
         const next = [
           ...prev,
           {
@@ -934,55 +961,9 @@ export default function SymbolChart({
             bg_color: "transparent",
           },
         ];
-        if (hasTradePlan && hasAnalysis) {
-          const tpNum = Number(tpPrice);
-          const slNum = Number(slPrice);
-          if (Number.isFinite(tpNum)) {
-            next.push({
-              ...createLineObject({
-                id: `${id}_tp`,
-                type: "TP",
-                color: "#10b981",
-                yRatio: ratioFromAnchorPrice(tpNum, barsRange(activeBars)) ?? Number(ctxMenu?.yRatio || 0.5),
-                ctxMenu,
-              }),
-              kind: "line",
-              tf: null,
-              price_top: tpNum,
-              price_bottom: tpNum,
-              price: tpNum,
-              time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
-              line_style: "dot",
-              line_width: 0.1,
-              label: "TP",
-              bg_color: "transparent",
-            });
-          }
-          if (Number.isFinite(slNum)) {
-            next.push({
-              ...createLineObject({
-                id: `${id}_sl`,
-                type: "SL",
-                color: "#ef4444",
-                yRatio: ratioFromAnchorPrice(slNum, barsRange(activeBars)) ?? Number(ctxMenu?.yRatio || 0.5),
-                ctxMenu,
-              }),
-              kind: "line",
-              tf: null,
-              price_top: slNum,
-              price_bottom: slNum,
-              price: slNum,
-              time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
-              line_style: "dot",
-              line_width: 0.1,
-              label: "SL",
-              bg_color: "transparent",
-            });
-          }
-        }
         return next;
       });
-      setSelectedObjectId(id);
+      setSelectedObjectId(hasTradePlan && hasAnalysis ? `tradeplan_${String(activePlanGroup || "P1").toUpperCase()}` : id);
       try {
         window.dispatchEvent(
           new CustomEvent("tvbridge:advanced-trade", { detail: payload }),
@@ -1625,6 +1606,47 @@ export default function SymbolChart({
                     }}
                   >
                     {(projectedAnnotations || []).map((a) => {
+                      if (a.kind === "tradeplan") {
+                        if (a.visible === false) return null;
+                        const isSelected = selectedObjectId === a.id;
+                        const entry = Number(a.entryPrice);
+                        const tp = Number(a.tpPrice);
+                        const sl = Number(a.slPrice);
+                        const mkLine = (yRatio, color, label, style = "solid") => (
+                          <div key={`${a.id}_${label}`} style={{ position: "absolute", left: 0, right: 0, top: `${clamp01(Number(yRatio || 0.5)) * 100}%`, pointerEvents: "none", zIndex: 26 }}>
+                            <div
+                              style={{
+                                borderTop: `${isSelected ? 1.4 : 0.9}px ${style === "dot" ? "dotted" : "solid"} ${color}`,
+                                boxShadow: isSelected ? `0 0 0 1px ${color}55` : "none",
+                              }}
+                            />
+                            <span
+                              style={{
+                                position: "absolute",
+                                right: 2,
+                                top: -10,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color,
+                                background: "#0b1220",
+                                border: `1px solid ${color}55`,
+                                borderRadius: 4,
+                                padding: "0 4px",
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              {label}
+                            </span>
+                          </div>
+                        );
+                        return (
+                          <>
+                            {Number.isFinite(entry) ? mkLine(ratioFromAnchorPrice(entry, tfRange) ?? 0.5, String(a.color || "#60a5fa"), `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`) : null}
+                            {Number.isFinite(tp) ? mkLine(ratioFromAnchorPrice(tp, tfRange) ?? 0.5, "#10b981", `${a.plan_id || "P1"} TP`, "dot") : null}
+                            {Number.isFinite(sl) ? mkLine(ratioFromAnchorPrice(sl, tfRange) ?? 0.5, "#ef4444", `${a.plan_id || "P1"} SL`, "dot") : null}
+                          </>
+                        );
+                      }
                       if (a.kind === "line") {
                         const isSelected = selectedObjectId === a.id;
                         const styleMap = { solid: "solid", dot: "dotted", dash: "dashed" };
@@ -1866,7 +1888,20 @@ export default function SymbolChart({
               }}
               title={a.id}
             >
-              {a.type}
+              {a.kind === "tradeplan" ? `${a.label || "TradePlan"}` : a.type}
+              {a.kind === "tradeplan" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAnnotations((prev) => prev.map((x) => x.id === a.id ? { ...x, visible: x.visible === false ? true : false } : x));
+                  }}
+                  style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 11, lineHeight: 1 }}
+                  title={a.visible === false ? "Show" : "Hide"}
+                >
+                  {a.visible === false ? "show" : "hide"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={(e) => {
@@ -1890,6 +1925,35 @@ export default function SymbolChart({
           ))}
           {selectedObject ? (
             <div style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
+              {selectedObject.kind === "tradeplan" ? (
+                <>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Label
+                    <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="TradePlan label" />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Direction
+                    <select value={String(selectedObject.direction || "BUY").toUpperCase()} onChange={(e)=>updateSelectedField("direction", e.target.value)}>
+                      <option value="BUY">BUY</option>
+                      <option value="SELL">SELL</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Entry
+                    <NumberAdjuster value={selectedObject.entryPrice ?? ""} onChange={(v)=>updateSelectedField("entryPrice", v)} min={0} max={200000} step={1} placeholder="entry" />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>TP
+                    <NumberAdjuster value={selectedObject.tpPrice ?? ""} onChange={(v)=>updateSelectedField("tpPrice", v)} min={0} max={200000} step={1} placeholder="tp" />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>SL
+                    <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={(v)=>updateSelectedField("slPrice", v)} min={0} max={200000} step={1} placeholder="sl" />
+                  </label>
+                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Visible
+                    <select value={selectedObject.visible === false ? "no" : "yes"} onChange={(e)=>updateSelectedField("visible", e.target.value === "yes") }>
+                      <option value="yes">yes</option>
+                      <option value="no">no</option>
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
               <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Label
                 <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="label" />
               </label>
@@ -1929,6 +1993,8 @@ export default function SymbolChart({
               <label style={{ display: "grid", gap: 4, fontSize: 10, gridColumn: "1 / -1" }}>Mapped TF Properties (read-only)
                 <input readOnly value={selectedObjectTfPropsText} />
               </label>
+                </>
+              )}
             </div>
           ) : (
             <span className="minor-text" style={{ fontSize: 10, opacity: 0.85 }}>
