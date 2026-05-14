@@ -108,6 +108,11 @@ function ratioFromAnchorPrice(anchorPrice, range) {
   const span = Math.max(1e-9, range.pMax - range.pMin);
   return clamp01((range.pMax - anchorPrice) / span);
 }
+function ratioFromAnchorPriceUnclamped(anchorPrice, range) {
+  if (!range || !Number.isFinite(anchorPrice)) return null;
+  const span = Math.max(1e-9, range.pMax - range.pMin);
+  return (range.pMax - anchorPrice) / span;
+}
 
 function anchorTimeFromRatio(r, range) {
   if (!range) return null;
@@ -708,9 +713,9 @@ export default function SymbolChart({
         const id = `tradeplan_${planId}`;
         const existing = next.find((x) => x.id === id && x.kind === "tradeplan") || null;
         const direction = String(p?.direction || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
-        const entry = Number(p?.entry ?? p?.entry_price);
-        const tp = Number(p?.tp ?? p?.tp_price);
-        const sl = Number(p?.sl ?? p?.sl_price);
+        const entry = toNumLoose(p?.entry ?? p?.entry_price);
+        const tp = toNumLoose(p?.tp ?? p?.tp_price);
+        const sl = toNumLoose(p?.sl ?? p?.sl_price);
         const effectiveEntry = Number.isFinite(entry)
           ? entry
           : Number.isFinite(existing?.entryPrice)
@@ -1754,9 +1759,13 @@ export default function SymbolChart({
                       if (a.kind === "tradeplan") {
                         if (a.visible === false) return null;
                         const isSelected = selectedObjectId === a.id;
-                        const entry = Number(a.entryPrice);
-                        const tp = Number(a.tpPrice);
-                        const sl = Number(a.slPrice);
+                        const entry = toNumLoose(a.entryPrice);
+                        const tp = toNumLoose(a.tpPrice);
+                        const sl = toNumLoose(a.slPrice);
+                        const rEntry = ratioFromAnchorPriceUnclamped(entry, tfRange);
+                        const rTp = ratioFromAnchorPriceUnclamped(tp, tfRange);
+                        const rSl = ratioFromAnchorPriceUnclamped(sl, tfRange);
+                        const inView = (r) => Number.isFinite(r) && r >= 0 && r <= 1;
                         const mkLine = (yRatio, color, label, style = "solid") => (
                           <div key={`${a.id}_${label}`} style={{ position: "absolute", left: 0, right: 0, top: `${clamp01(Number(yRatio || 0.5)) * 100}%`, pointerEvents: "none", zIndex: 26 }}>
                             <div
@@ -1786,37 +1795,37 @@ export default function SymbolChart({
                         );
                         return (
                           <>
-                            {Number.isFinite(entry) && Number.isFinite(tp) ? (
+                            {inView(rEntry) && inView(rTp) ? (
                               <div
                                 style={{
                                   position: "absolute",
                                   left: 0,
                                   right: 0,
-                                  top: `${Math.min(clamp01(ratioFromAnchorPrice(entry, tfRange) ?? 0.5), clamp01(ratioFromAnchorPrice(tp, tfRange) ?? 0.5)) * 100}%`,
-                                  height: `${Math.abs(clamp01(ratioFromAnchorPrice(entry, tfRange) ?? 0.5) - clamp01(ratioFromAnchorPrice(tp, tfRange) ?? 0.5)) * 100}%`,
+                                  top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rTp ?? 0.5)) * 100}%`,
+                                  height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rTp ?? 0.5)) * 100}%`,
                                   background: "rgba(16,185,129,0.12)",
                                   pointerEvents: "none",
                                   zIndex: 24,
                                 }}
                               />
                             ) : null}
-                            {Number.isFinite(entry) && Number.isFinite(sl) ? (
+                            {inView(rEntry) && inView(rSl) ? (
                               <div
                                 style={{
                                   position: "absolute",
                                   left: 0,
                                   right: 0,
-                                  top: `${Math.min(clamp01(ratioFromAnchorPrice(entry, tfRange) ?? 0.5), clamp01(ratioFromAnchorPrice(sl, tfRange) ?? 0.5)) * 100}%`,
-                                  height: `${Math.abs(clamp01(ratioFromAnchorPrice(entry, tfRange) ?? 0.5) - clamp01(ratioFromAnchorPrice(sl, tfRange) ?? 0.5)) * 100}%`,
+                                  top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rSl ?? 0.5)) * 100}%`,
+                                  height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rSl ?? 0.5)) * 100}%`,
                                   background: "rgba(239,68,68,0.12)",
                                   pointerEvents: "none",
                                   zIndex: 24,
                                 }}
                               />
                             ) : null}
-                            {Number.isFinite(entry) ? mkLine(ratioFromAnchorPrice(entry, tfRange) ?? 0.5, String(a.color || "#60a5fa"), `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`) : null}
-                            {Number.isFinite(tp) ? mkLine(ratioFromAnchorPrice(tp, tfRange) ?? 0.5, "#10b981", `${a.plan_id || "P1"} TP`, "dot") : null}
-                            {Number.isFinite(sl) ? mkLine(ratioFromAnchorPrice(sl, tfRange) ?? 0.5, "#ef4444", `${a.plan_id || "P1"} SL`, "dot") : null}
+                            {inView(rEntry) ? mkLine(rEntry ?? 0.5, String(a.color || "#60a5fa"), `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`) : null}
+                            {inView(rTp) ? mkLine(rTp ?? 0.5, "#10b981", `${a.plan_id || "P1"} TP`, "dot") : null}
+                            {inView(rSl) ? mkLine(rSl ?? 0.5, "#ef4444", `${a.plan_id || "P1"} SL`, "dot") : null}
                           </>
                         );
                       }
