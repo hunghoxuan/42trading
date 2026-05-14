@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 14:55 - fix-trade-cancel",
-); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
+  "v2026.05.14 15:30 - fix-trade-cancel-v2",
+); // Fix: cancel sets PENDING_CANCEL for opened trades; brokerSyncV2 protects CANCELLED/PENDING_CANCEL; UI refreshes detail after cancel
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7814,7 +7814,7 @@ async function _mt5InitBackendInternal() {
                 OR metadata->>'broker_position_id' = ANY($4::text[])
                 OR metadata->>'position_ticket' = ANY($4::text[])
               )
-            AND execution_status <> 'CANCELLED'
+            AND execution_status NOT IN ('CANCELLED', 'PENDING_CANCEL')
           RETURNING sid, pnl_realized
           `,
               [
@@ -7856,7 +7856,9 @@ async function _mt5InitBackendInternal() {
                   ELSE dispatch_status
                 END,
                 execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN $1::text
+                  WHEN execution_status = 'CLOSED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN $1::text
+                  WHEN execution_status = 'CANCELLED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
+                  WHEN execution_status = 'PENDING_CANCEL' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
                   WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
                   ELSE $1::text
                 END,
@@ -9061,16 +9063,22 @@ async function _mt5InitBackendInternal() {
       const params = [limit, offset];
       if (query && validCols.length) {
         // SID/id columns: prefix match. Other columns: substring match.
-        const idCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const idCols = ["sid", "id", "broker_trade_id"].filter((c) =>
+          validCols.includes(c),
+        );
         const otherCols = validCols.filter((c) => !idCols.includes(c));
         const clauses = [];
         if (idCols.length) {
           params.push(`${query}%`);
-          clauses.push(`(${idCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`);
+          clauses.push(
+            `(${idCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`,
+          );
         }
         if (otherCols.length) {
           params.push(`%${query}%`);
-          clauses.push(`(${otherCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`);
+          clauses.push(
+            `(${otherCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`,
+          );
         }
         where = `WHERE ${clauses.join(" OR ")}`;
       }
@@ -9089,17 +9097,27 @@ async function _mt5InitBackendInternal() {
       // Count query: reuse main query's where but with $1,$2 params
       let countWhere = "";
       if (query && validCols.length) {
-        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) =>
+          validCols.includes(c),
+        );
         const cOtherCols = validCols.filter((c) => !cIdCols.includes(c));
         const cClauses = [];
-        if (cIdCols.length) cClauses.push(`(${cIdCols.map((c) => `"${c}"::text ILIKE $1`).join(" OR ")})`);
-        if (cOtherCols.length) cClauses.push(`(${cOtherCols.map((c) => `"${c}"::text ILIKE $2`).join(" OR ")})`);
+        if (cIdCols.length)
+          cClauses.push(
+            `(${cIdCols.map((c) => `"${c}"::text ILIKE $1`).join(" OR ")})`,
+          );
+        if (cOtherCols.length)
+          cClauses.push(
+            `(${cOtherCols.map((c) => `"${c}"::text ILIKE $2`).join(" OR ")})`,
+          );
         countWhere = `WHERE ${cClauses.join(" OR ")}`;
       }
       // Count query params: $1=query prefix, $2=query substring (if other cols present)
       const countParams = [];
       if (query && validCols.length) {
-        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) =>
+          validCols.includes(c),
+        );
         const cOtherCols = validCols.filter((c) => !cIdCols.includes(c));
         if (cIdCols.length) countParams.push(`${query}%`);
         if (cOtherCols.length) countParams.push(`%${query}%`);
@@ -15036,7 +15054,7 @@ const appHandler = async (req, res) => {
         if (tradeRefs.length) {
           const b = await mt5Backend();
           const tradeRes = await b.pool.query(
-            `UPDATE trades SET execution_status = 'CANCELLED', updated_at = NOW() WHERE sid = ANY($1::text[]) RETURNING sid`,
+            `UPDATE trades SET execution_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'PENDING_CANCEL' ELSE 'CANCELLED' END, updated_at = NOW() WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
             [tradeRefs],
           );
           if (tradeRes.rowCount > 0) {

@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.14 13:36 - tradeplan-object-locale-fallback-fix";
+string EA_BUILD_VERSION = "v2026.05.14 15:30 - fix-trade-cancel-v2";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -126,28 +126,28 @@ SPartialTarget g_partialTargets[];
 void ParsePartialTps(string sid, string rawJson)
 {
    if(sid == "" || rawJson == "") return;
-   
+
    string token = "\"partial_tps\"";
    int p = StringFind(rawJson, token);
    if(p < 0) return;
-   
+
    int b1 = StringFind(rawJson, "[", p);
    int b2 = StringFind(rawJson, "]", b1);
    if(b1 < 0 || b2 < 0) return;
-   
+
    string list = StringSubstr(rawJson, b1 + 1, b2 - b1 - 1);
-   
+
    int start = 0;
    while(true)
    {
       int o1 = StringFind(list, "{", start);
       int o2 = StringFind(list, "}", o1);
       if(o1 < 0 || o2 < 0) break;
-      
+
       string item = StringSubstr(list, o1, o2 - o1 + 1);
       double price = JsonGetNumber(item, "price");
       double pct   = JsonGetNumber(item, "size_pct");
-      
+
       if(price > 0 && pct > 0)
       {
          int n = ArraySize(g_partialTargets);
@@ -1497,7 +1497,7 @@ bool ComputeRiskBasedVolume(const string action,
       noteOut = "[balance_invalid]";
       return false;
    }
-   
+
    double riskMoney = 0.0;
    if(requestedRiskMoney > 0.0) {
       riskMoney = requestedRiskMoney;
@@ -1506,10 +1506,10 @@ bool ComputeRiskBasedVolume(const string action,
    } else {
       riskMoney = balance * (InpMaxRiskPct / 100.0);
    }
-   
+
    double maxRiskFromPct = balance * (InpMaxRiskPct / 100.0);
    riskMoney = MathMin(riskMoney, maxRiskFromPct);
-   
+
    if(InpMaxRiskAmount > 0.0) {
       riskMoney = MathMin(riskMoney, InpMaxRiskAmount);
    }
@@ -2782,7 +2782,7 @@ void OnTimer()
     double tp       = JsonGetNumber(resp, "tp", 0.0);
     string orderType = JsonGetString(resp, "order_type");
     if(orderType == "") orderType = "market";
-    
+
     string rawJson = JsonGetString(resp, "raw_json");
     if(rawJson != "") ParsePartialTps(signalId, rawJson);
 
@@ -2892,7 +2892,7 @@ void OnTick()
 {
    if(InpBacktestMode)
       ProcessBacktestQueue();
-   
+
    if(InpMgtStrategy != STRATEGY_NONE)
       ManageBrokerPositions();
 }
@@ -2916,7 +2916,7 @@ void ManageBrokerPositions()
          double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
          double digits = SymbolInfoInteger(symbol, SYMBOL_DIGITS);
          double pipSize = (digits == 3 || digits == 5) ? point * 10 : point;
-         
+
          if(bid <= 0 || ask <= 0 || pipSize <= 0) continue;
 
          double entry = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -2924,9 +2924,9 @@ void ManageBrokerPositions()
          double currentPrice = (type == POSITION_TYPE_BUY) ? bid : ask;
          double sl = PositionGetDouble(POSITION_SL);
          double tp = PositionGetDouble(POSITION_TP);
-         
-         double pips = (type == POSITION_TYPE_BUY) 
-            ? (currentPrice - entry) / pipSize 
+
+         double pips = (type == POSITION_TYPE_BUY)
+            ? (currentPrice - entry) / pipSize
             : (entry - currentPrice) / pipSize;
 
          bool modified = false;
@@ -2937,7 +2937,7 @@ void ManageBrokerPositions()
          {
             if(pips >= InpMgtBE_Trigger_Pips)
             {
-               double targetSL = (type == POSITION_TYPE_BUY) 
+               double targetSL = (type == POSITION_TYPE_BUY)
                   ? entry + (InpMgtBE_Offset_Pips * pipSize)
                   : entry - (InpMgtBE_Offset_Pips * pipSize);
 
@@ -2972,7 +2972,7 @@ void ManageBrokerPositions()
                   double currentDiff = (type == POSITION_TYPE_BUY)
                      ? (targetSL - sl) / pipSize
                      : (sl - targetSL) / pipSize;
-                  
+
                   if(currentDiff >= InpMgtTrail_Step_Pips) shouldMove = true;
                }
 
@@ -3007,7 +3007,7 @@ void ManageBrokerPositions()
                      double currentVol = PositionGetDouble(POSITION_VOLUME);
                      double closeVol = NormalizeDouble(currentVol * (g_partialTargets[j].pct / 100.0), 2);
                      double minVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-                     
+
                      if(closeVol >= minVol && currentVol - closeVol >= minVol)
                      {
                         if(trade.PositionClosePartial(ticket, closeVol))
@@ -3232,7 +3232,7 @@ void SyncWithVps()
                double tp = PositionGetDouble(POSITION_TP);
                double priceOpen = PositionGetDouble(POSITION_PRICE_OPEN);
                double priceCurrent = PositionGetDouble(POSITION_PRICE_CURRENT);
-               
+
                double pips = 0;
                double point = SymbolInfoDouble(sym, SYMBOL_POINT);
                if(point > 0) {
@@ -3290,7 +3290,7 @@ void SyncWithVps()
                double price = OrderGetDouble(ORDER_PRICE_OPEN);
                double sl = OrderGetDouble(ORDER_SL);
                double tp = OrderGetDouble(ORDER_TP);
-               
+
                double pnl_tp = 0;
                double pnl_sl = 0;
                double margin = 0;
@@ -3408,11 +3408,11 @@ void SyncWithVps()
    int symCount = 0;
    string trackedSymbols[];
    ArrayResize(trackedSymbols, 0);
-   
+
    // Add current chart symbol
    ArrayResize(trackedSymbols, 1);
    trackedSymbols[0] = Symbol();
-   
+
    // Add symbols from positions
    for(int i=0; i<PositionsTotal(); i++) {
       if(PositionSelectByTicket(PositionGetTicket(i))) {
@@ -3426,7 +3426,7 @@ void SyncWithVps()
          }
       }
    }
-   
+
    for(int i=0; i<ArraySize(trackedSymbols); i++) {
       string s = trackedSymbols[i];
       double pipVal = SymbolInfoDouble(s, SYMBOL_TRADE_TICK_VALUE); // approximation
@@ -3436,7 +3436,7 @@ void SyncWithVps()
       double point = SymbolInfoDouble(s, SYMBOL_POINT);
       int digits = (int)SymbolInfoInteger(s, SYMBOL_DIGITS);
       double pipSize = (digits == 3 || digits == 5) ? point * 10 : point;
-      
+
       if(symCount > 0) symMetrics += ",";
       symMetrics += "{";
       symMetrics += "\"symbol\":\"" + JsonEscape(s) + "\",";

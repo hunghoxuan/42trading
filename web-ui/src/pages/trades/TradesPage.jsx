@@ -392,6 +392,12 @@ export default function TradesPage() {
         );
         if (updated) {
           setSelectedTrade(updated);
+        } else if (items.length > 0) {
+          setSelectedTrade(items[0]);
+          selectedTradeIdRef.current = tradeKeyOf(items[0]);
+        } else {
+          setSelectedTrade(null);
+          selectedTradeIdRef.current = "";
         }
       } else if (items.length > 0) {
         setSelectedTrade(items[0]);
