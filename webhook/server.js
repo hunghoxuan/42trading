@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:13 - disable-zero-plan-fallback-temp"); // TEMP: ignore non-meaningful response.tradePlans fallback during TradePlan add debugging
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:33 - tp-resolver-and-autosave-skill"); // unify TP resolver (incl breakeven/tp1..3) and auto-save all valid trade_plans to signals
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -10508,9 +10508,11 @@ function resolvePlanTakeProfit(plan = {}) {
   const candidates = [
     plan?.tp,
     plan?.take_profit,
+    plan?.breakeven_trigger,
     plan?.tp3,
     plan?.tp2,
     plan?.tp1,
+    plan?.multiple_exits?.full_tp?.price,
     plan?.multiple_exits?.tp3?.price,
     plan?.multiple_exits?.tp2?.price,
     plan?.multiple_exits?.tp1?.price,
@@ -17478,23 +17480,34 @@ const appHandler = async (req, res) => {
         out.trade_plan = plans;
         return out;
       };
-      const firstAutoSavableTradePlan = (parsed = {}) => {
+      const collectAutoSavableTradePlans = (parsed = {}, fallbackSymbol = "") => {
         const plans = Array.isArray(parsed?.trade_plan)
           ? parsed.trade_plan
           : [];
+        const out = [];
         for (const plan of plans) {
-          const entry = Number(plan?.entry);
-          const sl = Number(plan?.sl);
+          const entry = Number(plan?.entry ?? plan?.entry_price);
+          const sl = Number(plan?.sl ?? plan?.stop_loss);
           const tp = Number(resolvePlanTakeProfit(plan));
           if (
             Number.isFinite(entry) &&
             Number.isFinite(sl) &&
             Number.isFinite(tp)
           ) {
-            return { plan, entry, sl, tp };
+            out.push({
+              plan,
+              entry,
+              sl,
+              tp,
+              symbol: String(
+                plan?.symbol || parsed?.symbol || fallbackSymbol || "",
+              )
+                .trim()
+                .toUpperCase(),
+            });
           }
         }
-        return null;
+        return out;
       };
       const autoSaveAnalyzeResult = async ({
         mode,
@@ -17504,8 +17517,11 @@ const appHandler = async (req, res) => {
       }) => {
         if (!mode) return { enabled: false, mode: null };
         try {
-          const pick = firstAutoSavableTradePlan(parsedJson);
-          if (!pick) {
+          const picks = collectAutoSavableTradePlans(
+            parsedJson,
+            sourceSymbol || parsedJson?.symbol || body?.symbol || "",
+          );
+          if (!picks.length) {
             return {
               enabled: true,
               mode,
@@ -17513,10 +17529,7 @@ const appHandler = async (req, res) => {
               error: "No valid trade_plan entry with entry/sl/tp",
             };
           }
-          const plan = pick.plan || {};
-          const symbol = String(
-            sourceSymbol || parsedJson?.symbol || body?.symbol || "",
-          )
+          const symbol = String(sourceSymbol || parsedJson?.symbol || body?.symbol || "")
             .trim()
             .toUpperCase();
           if (!symbol) {
@@ -17543,59 +17556,82 @@ const appHandler = async (req, res) => {
             model: String(body?.model || ""),
             ai_provider: providerRaw || "claude",
             analysis_result: parsedJson,
-            trade_plan: plan,
+            trade_plan: picks.map((x) => x.plan),
           };
           if (mode === "signals") {
-            const signalId = mt5GenerateTimeSid();
-            const signalSid = normalizePublicSidBase(`${symbol}_AI`, "SIG");
-            const orderType = mt5NormalizeOrderType({
-              order_type: plan?.type || "limit",
-            });
-            const entryModel = String(plan?.entry_model || "").trim() || null;
-            const note = String(
-              plan?.note || parsedJson?.final_verdict?.note || "",
-            ).trim();
-            await mt5UpsertSignal({
-              signal_id: signalId,
-              sid: signalSid,
-              created_at: mt5NowIso(),
-              user_id: userId,
-              source,
-              source_id: mt5SlugId(source, "tradingview"),
-              symbol,
-              side: mt5MapActionToSide(action),
-              entry: pick.entry,
-              strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
-              entry_model: entryModel,
-              sl: pick.sl,
-              tp: pick.tp,
-              rr_planned: asNum(plan?.rr, null),
-              signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-              chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-              note,
-              order_type: orderType,
-              raw_json: {
-                ...sharedRawJson,
-                only_signal: true,
-              },
-              status: "NEW",
-            });
-            await mt5Log(
-              signalId,
-              "signals",
-              {
-                event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
-                data: sharedRawJson,
-              },
-              userId,
-            ).catch(() => null);
+            const savedSignals = [];
+            for (const pick of picks) {
+              const plan = pick.plan || {};
+              const planSymbol = String(pick.symbol || symbol).trim().toUpperCase();
+              if (!planSymbol) continue;
+              const signalId = mt5GenerateTimeSid();
+              const signalSid = normalizePublicSidBase(`${planSymbol}_AI`, "SIG");
+              const orderType = mt5NormalizeOrderType({
+                order_type: plan?.type || "limit",
+              });
+              const entryModel = String(plan?.entry_model || "").trim() || null;
+              const note = String(
+                plan?.note || parsedJson?.final_verdict?.note || "",
+              ).trim();
+              await mt5UpsertSignal({
+                signal_id: signalId,
+                sid: signalSid,
+                created_at: mt5NowIso(),
+                user_id: userId,
+                source,
+                source_id: mt5SlugId(source, "tradingview"),
+                symbol: planSymbol,
+                side: mt5MapActionToSide(
+                  normalizeDirectionToAction(plan?.direction || action),
+                ),
+                entry: pick.entry,
+                strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
+                entry_model: entryModel,
+                sl: pick.sl,
+                tp: pick.tp,
+                rr_planned: asNum(plan?.rr ?? plan?.risk_reward, null),
+                signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+                chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+                note,
+                order_type: orderType,
+                raw_json: {
+                  ...sharedRawJson,
+                  trade_plan: plan,
+                  symbol: planSymbol,
+                  only_signal: true,
+                },
+                status: "NEW",
+              });
+              await mt5Log(
+                signalId,
+                "signals",
+                {
+                  event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
+                  data: { ...sharedRawJson, trade_plan: plan, symbol: planSymbol },
+                },
+                userId,
+              ).catch(() => null);
+              savedSignals.push({ signal_id: signalId, sid: signalSid, symbol: planSymbol });
+            }
+            if (!savedSignals.length) {
+              return {
+                enabled: true,
+                mode,
+                saved: false,
+                error: "No valid symbol for auto_save signals",
+              };
+            }
             return {
               enabled: true,
               mode,
               saved: true,
-              signal: { signal_id: signalId, sid: signalSid, symbol },
+              created: savedSignals.length,
+              signals: savedSignals,
+              signal: savedSignals[0],
             };
           }
+          const pick = picks[0];
+          const plan = pick.plan || {};
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({
             source_id: sourceId,

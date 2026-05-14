@@ -540,6 +540,7 @@ function getPlanTpCandidates(plan = {}) {
   const targets = Array.isArray(plan?.targets) ? plan.targets : [];
   return [
     plan?.tp,
+    plan?.breakeven_trigger,
     ...partialPrices,
     ...compactTps,
     ...legacyLevels,
@@ -549,11 +550,16 @@ function getPlanTpCandidates(plan = {}) {
     plan?.tp1,
     plan?.tp2,
     plan?.tp3,
+    plan?.multiple_exits?.tp1?.price,
+    plan?.multiple_exits?.tp2?.price,
+    plan?.multiple_exits?.tp3?.price,
+    plan?.multiple_exits?.full_tp?.price,
   ];
 }
 
 function getPlanPrimaryTp(plan = {}) {
   const primaryCandidates = [
+    plan?.breakeven_trigger,
     Array.isArray(plan?.partial_tps) && plan.partial_tps[0]
       ? (plan.partial_tps[0].price ?? plan.partial_tps[0])
       : null,
@@ -563,6 +569,10 @@ function getPlanPrimaryTp(plan = {}) {
     Array.isArray(plan?.tps) && plan.tps[0]
       ? (plan.tps[0].price ?? plan.tps[0])
       : null,
+    plan?.multiple_exits?.tp1?.price,
+    plan?.multiple_exits?.tp2?.price,
+    plan?.multiple_exits?.tp3?.price,
+    plan?.multiple_exits?.full_tp?.price,
     plan?.tp1,
     plan?.tp,
   ];
@@ -6204,7 +6214,14 @@ export default function ChartSnapshotsPage() {
                   ),
                   direction: plan?.raw?.direction || plan.direction,
                   entry: getPlanPositionOverride(plan, idx).entry || plan?.raw?.entry_price || plan?.raw?.entry,
-                  tp: getPlanPositionOverride(plan, idx).tp || plan?.raw?.take_profit || plan?.raw?.tp,
+                  tp:
+                    getPlanPositionOverride(plan, idx).tp ||
+                    (() => {
+                      const resolved = getPlanPrimaryTp(plan?.raw || {});
+                      return Number.isFinite(resolved)
+                        ? formatNum3(resolved)
+                        : (plan?.raw?.take_profit || plan?.raw?.tp || "");
+                    })(),
                   sl: getPlanPositionOverride(plan, idx).sl || plan?.raw?.stop_loss || plan?.raw?.sl,
                   rr: getPlanPositionOverride(plan, idx).rr || plan?.raw?.risk_reward || plan?.raw?.rr,
                   trade_type: getPlanPositionOverride(plan, idx).trade_type || plan?.raw?.order_type || plan?.raw?.type || "limit",
