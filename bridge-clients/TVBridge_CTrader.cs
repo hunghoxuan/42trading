@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.14 19:34 - ce82f1e1";
+        private const string BuildVersion = "v2026.05.14 19:50 - lease-dedup-max50";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -80,6 +80,7 @@ namespace cAlgo.Robots
 
         // REGISTRY: Tracks all processed signals to prevent duplicates
         private HashSet<string> _processedSignalIds = new HashSet<string>();
+        private HashSet<string> _processedLeases = new HashSet<string>(); // sid:lease_token
         private List<string> _signalHistory = new List<string>();
         private List<string> _lastSyncResults = new List<string>();
         private HashSet<string> _syncedClosedTickets = new HashSet<string>();
@@ -474,7 +475,7 @@ namespace cAlgo.Robots
             _pollStatus = "POLLING";
             try
             {
-                var url = ServerBaseUrl.TrimEnd('/') + "/v2/broker/pull?account_id=" + accountId;
+                var url = ServerBaseUrl.TrimEnd('/') + "/v2/broker/pull?account_id=" + accountId + "&max_items=50";
                 using (var request = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, url))
                 {
                     request.Headers.Add("x-api-key", EaApiKey);
@@ -570,6 +571,11 @@ namespace cAlgo.Robots
             if (!string.IsNullOrEmpty(ticketStr)) long.TryParse(ticketStr, out ticketNum);
 
             if (string.IsNullOrEmpty(id)) return;
+
+            // Dedup by lease: skip if this exact (sid, lease_token) already processed
+            var leaseKey = id + ":" + (leaseToken ?? "");
+            if (!string.IsNullOrEmpty(leaseToken) && _processedLeases.Contains(leaseKey)) return;
+            if (!string.IsNullOrEmpty(leaseToken)) _processedLeases.Add(leaseKey);
 
             Print("[Debug] Task Received: type={0} action={1} symbol={2} ticket={3} (ID: {4})", taskType, action, symbolCode, ticketNum, id);
 
@@ -923,11 +929,16 @@ namespace cAlgo.Robots
             if (_processedSignalIds.Count > 1000)
             {
                 var toRemove = _processedSignalIds.Take(_processedSignalIds.Count - 500).ToList();
-                foreach (var id in toRemove)
-                {
-                    _processedSignalIds.Remove(id);
-                }
+                foreach (var id in toRemove) _processedSignalIds.Remove(id);
                 Print("[Cleanup] Removed {0} old signal IDs from memory", toRemove.Count);
+            }
+
+            // Clean up old lease entries
+            if (_processedLeases.Count > 1000)
+            {
+                var toRemove = _processedLeases.Take(_processedLeases.Count - 500).ToList();
+                foreach (var l in toRemove) _processedLeases.Remove(l);
+                Print("[Cleanup] Removed {0} old lease entries from memory", toRemove.Count);
             }
 
             // Clean up old synced closed tickets
