@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.14 19:34 - ce82f1e1";
+string EA_BUILD_VERSION = "v2026.05.14 20:30 - lease-dedup-ea";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -72,6 +72,8 @@ CTrade trade;
 
 string   g_seenIds[];
 datetime g_seenAt[];
+string   g_seenLeaseKeys[];
+datetime g_seenLeaseAt[];
 
 datetime g_btTime[];
 string   g_btSignalId[];
@@ -546,6 +548,8 @@ void PruneSeenSignals()
       return;
 
    datetime cutoff = TimeCurrent() - InpDedupKeepSeconds;
+
+   // Prune SID list
    int n = ArraySize(g_seenIds);
    int w = 0;
    for(int i = 0; i < n; ++i)
@@ -562,6 +566,24 @@ void PruneSeenSignals()
    }
    ArrayResize(g_seenIds, w);
    ArrayResize(g_seenAt, w);
+
+   // Prune lease-key list
+   n = ArraySize(g_seenLeaseKeys);
+   w = 0;
+   for(int i = 0; i < n; ++i)
+   {
+      if(g_seenLeaseAt[i] >= cutoff)
+      {
+         if(w != i)
+         {
+            g_seenLeaseKeys[w] = g_seenLeaseKeys[i];
+            g_seenLeaseAt[w] = g_seenLeaseAt[i];
+         }
+         ++w;
+      }
+   }
+   ArrayResize(g_seenLeaseKeys, w);
+   ArrayResize(g_seenLeaseAt, w);
 }
 
 void RemoveStopRetryAt(const int idx)
@@ -1282,12 +1304,20 @@ void RefreshDebugPanel()
    Comment(text);
 }
 
-bool IsDuplicateSignal(const string signalId)
+bool IsDuplicateSignal(const string signalId, const string leaseToken = "")
 {
    if(!InpEnableDuplicateGate || StringLen(signalId) == 0)
       return false;
 
+   // Lease-token dedup: allow re-offers with new lease
+   string key = signalId + ":" + leaseToken;
    PruneSeenSignals();
+   for(int i = ArraySize(g_seenLeaseKeys) - 1; i >= 0; --i)
+   {
+      if(g_seenLeaseKeys[i] == key)
+         return true;
+   }
+   // Fallback: also check old SID-only list for backward compat
    for(int i = ArraySize(g_seenIds) - 1; i >= 0; --i)
    {
       if(g_seenIds[i] == signalId)
@@ -1296,10 +1326,20 @@ bool IsDuplicateSignal(const string signalId)
    return false;
 }
 
-void RememberSignal(const string signalId)
+void RememberSignal(const string signalId, const string leaseToken = "")
 {
    if(!InpEnableDuplicateGate || StringLen(signalId) == 0)
       return;
+
+   // Lease-key dedup
+   if(StringLen(leaseToken) > 0) {
+      string key = signalId + ":" + leaseToken;
+      int nl = ArraySize(g_seenLeaseKeys);
+      ArrayResize(g_seenLeaseKeys, nl + 1);
+      ArrayResize(g_seenLeaseAt, nl + 1);
+      g_seenLeaseKeys[nl] = key;
+      g_seenLeaseAt[nl] = TimeCurrent();
+   }
 
    int n = ArraySize(g_seenIds);
    ArrayResize(g_seenIds, n + 1);
@@ -2114,7 +2154,8 @@ bool ExecuteSignal(const string signalId,
                    const double tp,
                    const datetime signalTs,
                    string &ticketOut,
-                   string &errOut)
+                   string &errOut,
+                   const string leaseToken = "")
 {
    ticketOut = "";
    errOut = "";
@@ -2193,7 +2234,7 @@ bool ExecuteSignal(const string signalId,
       return false;
    }
 
-   if(IsDuplicateSignal(signalId))
+   if(IsDuplicateSignal(signalId, leaseToken))
    {
       errOut = "Duplicate signal_id ignored: " + signalId;
       Print(errOut);
@@ -2213,7 +2254,7 @@ bool ExecuteSignal(const string signalId,
                " nowUtc=" + TimeToString(nowUtc, TIME_DATE | TIME_SECONDS) +
                " signalTs=" + TimeToString(signalTs, TIME_DATE | TIME_SECONDS);
       Print(errOut);
-      RememberSignal(signalId);
+      RememberSignal(signalId, leaseToken);
       g_dbgLastStatus = "EXPIRED_IGNORED";
       g_dbgLastError = errOut;
       RefreshDebugPanel();
@@ -2228,7 +2269,7 @@ bool ExecuteSignal(const string signalId,
       {
          errOut = "Symbol not found, ignored: " + symbolRaw;
          Print(errOut);
-         RememberSignal(signalId);
+         RememberSignal(signalId, leaseToken);
          g_dbgLastStatus = "SYMBOL_IGNORED";
          g_dbgLastError = errOut;
          RefreshDebugPanel();
@@ -2482,7 +2523,7 @@ bool ExecuteSignal(const string signalId,
    else
    {
       errOut = "Unsupported action: " + action;
-      RememberSignal(signalId);
+      RememberSignal(signalId, leaseToken);
       g_dbgLastStatus = "UNSUPPORTED_ACTION";
       g_dbgLastError = errOut;
       RefreshDebugPanel();
@@ -2593,7 +2634,7 @@ bool ExecuteSignal(const string signalId,
       if(ptk > 0 && PositionSelectByTicket(ptk))
          g_ackEntryExec = PositionGetDouble(POSITION_PRICE_OPEN);
    }
-   RememberSignal(signalId);
+   RememberSignal(signalId, leaseToken);
     g_dbgLastStatus = "EXECUTED_OK";
     g_dbgLastError = "";
     RefreshDebugPanel();
@@ -2793,7 +2834,7 @@ void OnTimer()
     string outTicket = "";
 
     if(taskType == "OPEN") {
-       ok = ExecuteSignal(signalId, action, symbolIn, comment, volume, riskPct, riskMoney, entry, orderType, sl, tp, 0, outTicket, err);
+       ok = ExecuteSignal(signalId, action, symbolIn, comment, volume, riskPct, riskMoney, entry, orderType, sl, tp, 0, outTicket, err, leaseToken);
        if(ok) {
           string initialStatus = (orderType == "market") ? "START" : "PLACED";
           Ack(signalId, initialStatus, outTicket, "exec_ok_" + orderType);
