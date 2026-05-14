@@ -33,6 +33,12 @@ function calcSliderMeta(rawValue) {
   return { min, max, step, value: n, enabled: true };
 }
 
+function priceSliderMeta(rawValue) {
+  const n = parseNum(rawValue);
+  const clamped = Number.isFinite(n) ? Math.max(0, Math.min(200000, n)) : 0;
+  return { min: 0, max: 200000, step: 1, value: clamped, enabled: true };
+}
+
 export function TradePlanEditor({
   signalId = null,
   tradeId = null,
@@ -118,7 +124,10 @@ export function TradePlanEditor({
     sliderOverride = null,
     disabled: fieldDisabled = false,
   }) => {
-    const sliderMeta = sliderOverride || calcSliderMeta(value[k]);
+    const sliderMeta = sliderOverride
+      || (k === "entry" || k === "tp" || k === "sl"
+        ? priceSliderMeta(value[k])
+        : calcSliderMeta(value[k]));
     const isDisabled = fieldDisabled || controlsDisabled;
     const adjustByStep = (dir) => {
       if (isDisabled) return;

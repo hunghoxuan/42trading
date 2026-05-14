@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 13:24 - tradeplan-tdz-hotfix"); // Hotfix runtime TDZ crash in ChartSnapshots default seed initialization
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 13:31 - tradeplan-slider-range-fix"); // TradePlan Entry/TP/SL sliders now use wide practical range to avoid near-zero lock
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
