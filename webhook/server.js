@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:06 - tp-fallback-rr-sync-fix"); // TP fallback: ignore zero TP and resolve from breakeven/tp1/tp2/tp3 with RR sync
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 20:13 - disable-zero-plan-fallback-temp"); // TEMP: ignore non-meaningful response.tradePlans fallback during TradePlan add debugging
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

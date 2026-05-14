@@ -760,9 +760,7 @@ export default function SignalDetailCard({
       ? responsePlans
       : hasMeaningfulDerivedPlans
         ? derivedPlansFromRaw
-        : responsePlans.length
-          ? responsePlans
-          : [
+        : [
     {
       direction: tradePlan?.value?.direction,
       entry: tradePlan?.value?.entry,
