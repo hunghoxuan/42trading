@@ -1429,11 +1429,18 @@ export default function SignalDetailCard({
                               opacity: 0.9,
                             }}
                           >
-                            {(Array.isArray(f.value) ? f.value : []).map(
-                              (item, idx) => (
-                                <li key={idx}>{item}</li>
-                              ),
-                            )}
+                            {(Array.isArray(f.value) ? f.value : []).map((item, idx) => {
+                              if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+                                return <li key={idx}>{String(item)}</li>;
+                              }
+                              if (item && typeof item === "object") {
+                                const reason = formatCompactText(item.reason || item.item || item.condition || item.text || "");
+                                const severity = formatCompactText(item.severity || "");
+                                const rendered = [reason, severity].filter(Boolean).join(" | ");
+                                return <li key={idx}>{rendered || formatCompactText(item)}</li>;
+                              }
+                              return <li key={idx}>-</li>;
+                            })}
                           </ul>
                         ) : (
                           f.value
