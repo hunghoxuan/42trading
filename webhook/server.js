@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 16:34 - a70ac87e"); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 16:37 - 8bb9c947"); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
