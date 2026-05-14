@@ -130,6 +130,25 @@ function planLooksMeaningful(p = {}) {
   return (entry != null && entry !== 0) || (sl != null && sl !== 0) || (tp != null && tp !== 0);
 }
 
+function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
+  const next = { ...basePlan };
+  const prev = previousDraft || {};
+  Object.entries(prev).forEach(([k, v]) => {
+    if (v === undefined) return;
+    const freshVal = next[k];
+    // Keep fresh non-zero numeric-ish values from latest analysis payload.
+    if (typeof freshVal !== "undefined" && freshVal !== null && String(freshVal).trim() !== "") {
+      const freshNum = parseNumLoose(freshVal);
+      const prevNum = parseNumLoose(v);
+      if (freshNum != null && (freshNum !== 0 || prevNum === 0 || prevNum == null)) {
+        return;
+      }
+    }
+    next[k] = v;
+  });
+  return next;
+}
+
 function formatCompactText(value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -806,10 +825,7 @@ export default function SignalDetailCard({
               : [],
           skip_recommendation: p.skip_recommendation || p.skip || "",
         };
-        next[planId] = {
-          ...normalized,
-          ...(prev?.[planId] || {}),
-        };
+        next[planId] = mergePlanKeepingFresh(normalized, prev?.[planId] || {});
       });
       if (!next.main) {
         next.main = {

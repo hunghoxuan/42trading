@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 19:46 - ui-tradeplan-sync-fix"); // prefer meaningful raw trade_plan values over zero fallbacks in SignalDetailCard
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 19:56 - tradeplan-draft-merge-fix"); // prevent stale local draft zeros from overriding fresh AI trade plan values
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
