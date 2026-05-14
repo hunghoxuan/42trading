@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 16:37 - 8bb9c947"); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.14 16:37 - 8bb9c947",
+); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -20709,6 +20712,7 @@ const appHandler = async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/v2/broker/ack") {
+    console.log(`[v2/broker/ack] REQUEST from ${ip}`);
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
