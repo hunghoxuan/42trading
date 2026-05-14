@@ -1503,7 +1503,9 @@ export default function SignalDetailCard({
             <div style={{ padding: "10px 4px" }}>
               {/* ── AI Multi-Timeframe Analysis (at top) ── */}
               {(() => {
-                const mta = rawData?.multi_timeframes_analysis;
+                const mta =
+                  rawData?.multi_timeframes_analysis ||
+                  rawData?.analysis_snapshot?.multi_timeframes_analysis;
                 if (!mta || typeof mta !== "object") return null;
                 const htfCtx = Array.isArray(mta.htf_context)
                   ? mta.htf_context

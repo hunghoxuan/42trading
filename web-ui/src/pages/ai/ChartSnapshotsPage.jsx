@@ -423,6 +423,23 @@ function parseSnapshotMeta(it) {
   if (parts[0] === "UID" && parts.length >= 7) {
     parts = parts.slice(2);
   }
+  // Handle 2-part filenames: SYMBOL_TF (e.g., EURUSD_15.jpg)
+  if (parts.length === 2) {
+    const sym = parts[0] || "";
+    const tfRaw = (parts[1] || "").toUpperCase();
+    // Normalize: "15" → "15m", "D" → "1d", "240" → "4h"
+    const tfMap = { D: "1d", W: "1w", M: "1M" };
+    let tf = tfMap[tfRaw] || tfRaw;
+    if (/^\d+$/.test(tf) && !tf.endsWith("m")) tf = tf + "m";
+    if (!sym || !tf) return null;
+    return {
+      symbol: sym,
+      tf,
+      tfRaw,
+      sessionPrefix: "",
+      ts: 0,
+    };
+  }
   if (parts.length < 3) return null;
   let tfToken = "";
   let sessionPrefix = "";
@@ -559,7 +576,9 @@ function getPlanTpCandidates(plan = {}) {
 
 function getPlanPrimaryTp(plan = {}) {
   const entry = parseNum(plan?.entry ?? plan?.entry_price);
-  const direction = String(plan?.direction || "").trim().toUpperCase();
+  const direction = String(plan?.direction || "")
+    .trim()
+    .toUpperCase();
   const isBuy = direction === "BUY";
   const isSell = direction === "SELL";
   const isValidTp = (n) => {
@@ -692,7 +711,10 @@ const DEFAULT_TRADE_PLAN_PATHS = [
 function extractByRulePath(root, rulePath) {
   const pathText = String(rulePath || "").trim();
   if (!pathText) return [];
-  const steps = pathText.split(".").map((s) => s.trim()).filter(Boolean);
+  const steps = pathText
+    .split(".")
+    .map((s) => s.trim())
+    .filter(Boolean);
   let current = [root];
   for (const step of steps) {
     const isArrayStep = step.endsWith("[]");
@@ -738,19 +760,23 @@ function dedupeTradePlans(plans = []) {
   for (const p of list) {
     if (!p || typeof p !== "object") continue;
     const key = [
-      String(p.symbol || "").trim().toUpperCase(),
-      String(p.direction || p.dir || "").trim().toUpperCase(),
+      String(p.symbol || "")
+        .trim()
+        .toUpperCase(),
+      String(p.direction || p.dir || "")
+        .trim()
+        .toUpperCase(),
       Number(p.entry ?? p.entry_price ?? NaN),
       Number(p.sl ?? p.stop_loss ?? NaN),
       Number(
-        p.tp ??
-          p.take_profit ??
-          p.tp3 ??
-          p.multiple_exits?.tp3?.price ??
-          NaN,
+        p.tp ?? p.take_profit ?? p.tp3 ?? p.multiple_exits?.tp3?.price ?? NaN,
       ),
-      String(p.entry_model || "").trim().toUpperCase(),
-      String(p.strategy || "").trim().toUpperCase(),
+      String(p.entry_model || "")
+        .trim()
+        .toUpperCase(),
+      String(p.strategy || "")
+        .trim()
+        .toUpperCase(),
     ].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
@@ -808,7 +834,9 @@ function enforceActionableTradePlans(payload = {}) {
     const reasons = Array.isArray(plan?.reasons_to_skip)
       ? [...plan.reasons_to_skip]
       : [];
-    if (!reasons.some((r) => String(r?.reason || "").includes("Missing entry"))) {
+    if (
+      !reasons.some((r) => String(r?.reason || "").includes("Missing entry"))
+    ) {
       reasons.push({ reason: reasonText, severity: "warning" });
     }
     return {
@@ -821,9 +849,7 @@ function enforceActionableTradePlans(payload = {}) {
           ? {
               ...plan.risk_management,
               skip_decision: "Skip",
-              skip_reasons:
-                plan.risk_management.skip_reasons ||
-                reasonText,
+              skip_reasons: plan.risk_management.skip_reasons || reasonText,
             }
           : {
               skip_decision: "Skip",
@@ -839,7 +865,9 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
-  const mappedPlans = collectTradePlansByRules(out).map((p) => ({ ...(p || {}) }));
+  const mappedPlans = collectTradePlansByRules(out).map((p) => ({
+    ...(p || {}),
+  }));
   if (
     mappedPlans.length &&
     (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
@@ -869,7 +897,9 @@ function normalizeAnalysisContract(parsed) {
       out.symbol = String(first?.symbol || out?.symbol || "").trim();
       out.ai_full_analysis = {
         htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
-        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis)
+          ? first.ltf_analysis
+          : [],
         confluence_checklist:
           first?.confluence_checklist &&
           typeof first.confluence_checklist === "object"
@@ -901,7 +931,9 @@ function normalizeAnalysisContract(parsed) {
       out.symbol = String(first?.symbol || out?.symbol || "").trim();
       out.ai_full_analysis = {
         htf_context: Array.isArray(first?.htf_context) ? first.htf_context : [],
-        ltf_analysis: Array.isArray(first?.ltf_analysis) ? first.ltf_analysis : [],
+        ltf_analysis: Array.isArray(first?.ltf_analysis)
+          ? first.ltf_analysis
+          : [],
         confluence_checklist:
           first?.confluence_checklist &&
           typeof first.confluence_checklist === "object"
@@ -1915,7 +1947,6 @@ function tryParseJsonLoose(textRaw) {
   }
 }
 
-
 function recoverTradePlansFromRaw(rawText) {
   const raw = String(rawText || "");
   let clean = raw.trim();
@@ -1924,10 +1955,14 @@ function recoverTradePlansFromRaw(rawText) {
     const m = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (m) clean = m[1];
   }
-  clean = clean.replace(/^```json/, "").replace(/```$/, "").trim();
+  clean = clean
+    .replace(/^```json/, "")
+    .replace(/```$/, "")
+    .trim();
   // Unescape JSON-string-wrapped responses
   if (clean.startsWith('"') && clean.endsWith('"') && clean.length > 2) {
-    clean = clean.slice(1, -1)
+    clean = clean
+      .slice(1, -1)
       .replace(/\\"/g, '"')
       .replace(/\\n/g, "\n")
       .replace(/\\t/g, "\t")
@@ -1937,17 +1972,34 @@ function recoverTradePlansFromRaw(rawText) {
   if (!clean) return [];
 
   const extractBalancedArray = (text, startIdx) => {
-    let depth = 0, inString = false, escaped = false;
+    let depth = 0,
+      inString = false,
+      escaped = false;
     for (let i = startIdx; i < text.length; i++) {
       const ch = text[i];
       if (inString) {
-        if (escaped) { escaped = false; continue; }
-        if (ch === "\\") { escaped = true; continue; }
-        if (ch === '"') { inString = false; continue; }
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = false;
+          continue;
+        }
         continue;
       }
-      if (ch === '"') { inString = true; continue; }
-      if (ch === "[") { depth++; continue; }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "[") {
+        depth++;
+        continue;
+      }
       if (ch === "]") {
         if (depth > 0) depth--;
         if (depth === 0) return text.slice(startIdx, i + 1);
@@ -1961,9 +2013,14 @@ function recoverTradePlansFromRaw(rawText) {
   const symbolRe = /"symbol"\s*:\s*"([^"]+)"/g;
   let m;
   while ((m = symbolRe.exec(clean)) !== null) {
-    const sym = String(m[1] || "").trim().toUpperCase();
+    const sym = String(m[1] || "")
+      .trim()
+      .toUpperCase();
     if (!sym) continue;
-    const lookahead = clean.slice(m.index, Math.min(clean.length, m.index + 20000));
+    const lookahead = clean.slice(
+      m.index,
+      Math.min(clean.length, m.index + 20000),
+    );
     const tpIdx = lookahead.search(/"trade_plan"\s*:/);
     if (tpIdx < 0) continue;
     const bracketIdx = clean.indexOf("[", m.index + tpIdx);
@@ -1971,7 +2028,11 @@ function recoverTradePlansFromRaw(rawText) {
     const arrText = extractBalancedArray(clean, bracketIdx);
     let arr = null;
     if (arrText) {
-      try { arr = JSON.parse(arrText); } catch (_) { arr = null; }
+      try {
+        arr = JSON.parse(arrText);
+      } catch (_) {
+        arr = null;
+      }
     }
     if (!Array.isArray(arr)) continue;
     for (const p of arr) {
@@ -1983,7 +2044,15 @@ function recoverTradePlansFromRaw(rawText) {
         String(plan.trade_id || ""),
         Number(plan.entry_price ?? plan.entry ?? NaN),
         Number(plan.stop_loss ?? plan.sl ?? NaN),
-        Number(plan.tp ?? plan.take_profit ?? plan.tp3 ?? plan.tp2 ?? plan.tp1 ?? plan.multiple_exits?.tp1?.price ?? NaN),
+        Number(
+          plan.tp ??
+            plan.take_profit ??
+            plan.tp3 ??
+            plan.tp2 ??
+            plan.tp1 ??
+            plan.multiple_exits?.tp1?.price ??
+            NaN,
+        ),
       ]);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -2105,12 +2174,21 @@ function enrichParsedAnalysis(rawText, parsed) {
     const recovered = recoverTradePlansFromRaw(rawText);
     if (recovered.length) {
       // Prefer recovered plans if they have valid prices or more entries
-      const existingValid = (Array.isArray(res.trade_plan) ? res.trade_plan : [])
-        .filter((p) => p && !String(p.entry_model || "").includes("No valid setup"));
-      const recoveredValid = recovered.filter(
-        (p) => p && (Number(p.entry_price ?? p.entry) > 0 || Number(p.stop_loss ?? p.sl) > 0),
+      const existingValid = (
+        Array.isArray(res.trade_plan) ? res.trade_plan : []
+      ).filter(
+        (p) => p && !String(p.entry_model || "").includes("No valid setup"),
       );
-      if (recoveredValid.length >= existingValid.length || !existingValid.length) {
+      const recoveredValid = recovered.filter(
+        (p) =>
+          p &&
+          (Number(p.entry_price ?? p.entry) > 0 ||
+            Number(p.stop_loss ?? p.sl) > 0),
+      );
+      if (
+        recoveredValid.length >= existingValid.length ||
+        !existingValid.length
+      ) {
         res.trade_plan = recovered;
       }
     }
@@ -2528,10 +2606,7 @@ export default function ChartSnapshotsPage() {
       if (!entry || entry.type !== "analyze") return false;
       const out = entry.data || {};
       const raw = String(out?.raw_response || "");
-      const parsed = enrichParsedAnalysis(
-        raw,
-        tryParseJsonLoose(raw),
-      );
+      const parsed = enrichParsedAnalysis(raw, tryParseJsonLoose(raw));
       const used = Array.isArray(out?.used_files) ? out.used_files : [];
       const display = used.length ? used : analysisFilesDisplay;
       const firstPlanSymbol = normalizeWatchSymbol(
@@ -2672,7 +2747,8 @@ export default function ChartSnapshotsPage() {
   const currentBarsSnapshot = barsCache[currentBarsKey] || null;
   const defaultSeedEntry = useMemo(() => {
     const bars = normalizeSnapshotBars(currentBarsSnapshot, timeframe);
-    const last = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+    const last =
+      Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
     const c = Number(last?.close);
     return Number.isFinite(c) && c > 0 ? c : null;
   }, [currentBarsSnapshot, timeframe]);
@@ -3090,17 +3166,26 @@ export default function ChartSnapshotsPage() {
         const cached = barsCache[cacheKey];
         if (cached && cached.bar_end) {
           const age = Date.now() - cached.bar_end * 1000;
-          if (age < 300000) { // 5 min
-            status[tf] = { status: "cached", time: new Date(cached.bar_end * 1000).toLocaleTimeString() };
+          if (age < 300000) {
+            // 5 min
+            status[tf] = {
+              status: "cached",
+              time: new Date(cached.bar_end * 1000).toLocaleTimeString(),
+            };
             setBarsStatus({ ...status });
             continue;
           }
         }
         const out = await api.chartTwelveCandles(sym, tf, bars, true);
-        const snap = out?.snapshot ? normalizeSnapshotBars(out.snapshot, tf) : null;
+        const snap = out?.snapshot
+          ? normalizeSnapshotBars(out.snapshot, tf)
+          : null;
         if (snap && snap.bars?.length) {
           setBarsCache((prev) => ({ ...prev, [cacheKey]: snap }));
-          status[tf] = { status: "cached", time: new Date().toLocaleTimeString() };
+          status[tf] = {
+            status: "cached",
+            time: new Date().toLocaleTimeString(),
+          };
         } else {
           status[tf] = { status: "none" };
         }
@@ -3123,27 +3208,38 @@ export default function ChartSnapshotsPage() {
       const { promise: snapPromise } = NotificationHub.track(
         "snapshot",
         { symbol: sym },
-        () => api.chartSnapshotCreateBatch({
-          symbols: [sym],
-          provider: provider || "ICMARKETS",
-          session_prefix: sessionPrefix || "",
-          tfs,
-          lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
-          quality: Number(cfg.snapshotQuality || 80) || 80,
-        }),
+        () =>
+          api.chartSnapshotCreateBatch({
+            symbols: [sym],
+            provider: provider || "ICMARKETS",
+            session_prefix: sessionPrefix || "",
+            tfs,
+            lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
+            quality: Number(cfg.snapshotQuality || 80) || 80,
+          }),
       );
       const batch = await snapPromise;
       const items = Array.isArray(batch?.items) ? batch.items : [];
       for (const tf of tfs) {
         const found = items.find((x) => {
           const f = String(x?.file_name || "");
-          return f.includes(`_${tf}_`) || f.includes(`_${tf.toUpperCase()}_`);
+          const base = f.replace(/\.(png|jpe?g)$/i, "");
+          return (
+            base.endsWith(`_${tf}`) || base.endsWith(`_${tf.toUpperCase()}`)
+          );
         });
         status[tf] = found
-          ? { status: "snapshot", time: new Date(found.created_at || Date.now()).toLocaleTimeString() }
+          ? {
+              status: "snapshot",
+              time: new Date(
+                found.created_at || Date.now(),
+              ).toLocaleTimeString(),
+            }
           : { status: "none" };
         setSnapshotStatus({ ...status });
       }
+      // Refresh snapshot list so resolveRecentSnapshots finds new files
+      loadSnapshots().catch(() => {});
     } catch (_) {
       for (const tf of tfs) {
         status[tf] = { status: "none" };
@@ -3320,7 +3416,10 @@ export default function ChartSnapshotsPage() {
                     Array.isArray(snapshotTfs) && snapshotTfs.length
                       ? snapshotTfs
                       : ["D", "240", "15", "5"],
-                  lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
+                  lookbackBars: resolveLookbackBarsValue(
+                    cfg.lookbackBars,
+                    timeframe,
+                  ),
                   quality: Number(cfg.snapshotQuality || 80) || 80,
                 }),
             );
@@ -3389,10 +3488,7 @@ export default function ChartSnapshotsPage() {
         }
       }
       setAnalysisRaw(raw);
-      let parsed = enrichParsedAnalysis(
-        raw,
-        tryParseJsonLoose(raw),
-      );
+      let parsed = enrichParsedAnalysis(raw, tryParseJsonLoose(raw));
       if (parsed && typeof parsed === "object") {
         //         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
         //         const inputSymbol = String(activeSymbol || cfg.symbol || "")
@@ -4172,7 +4268,13 @@ export default function ChartSnapshotsPage() {
     if (`${location.pathname}${location.search}` !== next) {
       navigate(next, { replace: true });
     }
-  }, [cfg.symbols, isResultRoute, location.pathname, location.search, navigate]);
+  }, [
+    cfg.symbols,
+    isResultRoute,
+    location.pathname,
+    location.search,
+    navigate,
+  ]);
 
   useEffect(() => {
     loadWatchlist();
@@ -4803,7 +4905,9 @@ export default function ChartSnapshotsPage() {
               p?.skip ||
               p?.position_management?.trade_decision ||
               "",
-          trade_decision: forcedSkip ? "Skip" : String(p?.trade_decision || "").trim(),
+          trade_decision: forcedSkip
+            ? "Skip"
+            : String(p?.trade_decision || "").trim(),
           entry_condition: String(
             p?.entry_condition ||
               p?.entry_trigger ||
@@ -5290,7 +5394,6 @@ export default function ChartSnapshotsPage() {
               marginTop: "auto",
             }}
           >
-
             <div
               className="snapshot-activity-list-v4"
               style={{ flex: 1, overflowY: "auto" }}
@@ -5320,7 +5423,11 @@ export default function ChartSnapshotsPage() {
                     : "0";
                   const entryTxt = Number.isFinite(Number(x?.entry))
                     ? Number(x.entry).toFixed(
-                        Number(x.entry) >= 100 ? 1 : Number(x.entry) >= 10 ? 2 : 4,
+                        Number(x.entry) >= 100
+                          ? 1
+                          : Number(x.entry) >= 10
+                            ? 2
+                            : 4,
                       )
                     : "-";
                   const tpTxt = Number.isFinite(Number(x?.tp))
@@ -5351,9 +5458,7 @@ export default function ChartSnapshotsPage() {
                           {String(x.symbol || "").toUpperCase()}
                         </span>
                         {!isSignal ? (
-                          <span style={{ color: sideColor }}>
-                            {pnlText}
-                          </span>
+                          <span style={{ color: sideColor }}>{pnlText}</span>
                         ) : (
                           <span />
                         )}
@@ -5635,11 +5740,28 @@ export default function ChartSnapshotsPage() {
                       <select
                         className="secondary-button"
                         value={cfg.lookbackBars || "300"}
-                        onChange={(e) => setCfgField("lookbackBars", e.target.value)}
-                        style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+                        onChange={(e) =>
+                          setCfgField("lookbackBars", e.target.value)
+                        }
+                        style={{
+                          height: "30px",
+                          padding: "0 6px",
+                          fontSize: "11px",
+                        }}
                         title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
                       >
-                        {["50", "100", "200", "300", "500", "700", "1000", "1w", "2w", "1mo"].map((v) => (
+                        {[
+                          "50",
+                          "100",
+                          "200",
+                          "300",
+                          "500",
+                          "700",
+                          "1000",
+                          "1w",
+                          "2w",
+                          "1mo",
+                        ].map((v) => (
                           <option key={v} value={v}>
                             {v === "1w"
                               ? "1 week"
@@ -5654,12 +5776,20 @@ export default function ChartSnapshotsPage() {
                       <select
                         className="secondary-button"
                         value={cfg.snapshotQuality || "80"}
-                        onChange={(e) => setCfgField("snapshotQuality", e.target.value)}
-                        style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+                        onChange={(e) =>
+                          setCfgField("snapshotQuality", e.target.value)
+                        }
+                        style={{
+                          height: "30px",
+                          padding: "0 6px",
+                          fontSize: "11px",
+                        }}
                         title="Snapshot image quality"
                       >
                         {["60", "70", "80", "90", "100"].map((v) => (
-                          <option key={v} value={v}>Q{v}</option>
+                          <option key={v} value={v}>
+                            Q{v}
+                          </option>
                         ))}
                       </select>
                       <button
@@ -5966,7 +6096,8 @@ export default function ChartSnapshotsPage() {
                                     defaultMode="live"
                                     initialGridCols={masterGridCols}
                                     analyzeLabel={
-                                      normalizeWatchSymbol(sym) === normalizeWatchSymbol(cfg.symbol)
+                                      normalizeWatchSymbol(sym) ===
+                                      normalizeWatchSymbol(cfg.symbol)
                                         ? "Analyze"
                                         : ">"
                                     }
@@ -6011,7 +6142,8 @@ export default function ChartSnapshotsPage() {
                             defaultMode="live"
                             initialGridCols={masterGridCols}
                             analyzeLabel={
-                              normalizeWatchSymbol(sym) === normalizeWatchSymbol(cfg.symbol)
+                              normalizeWatchSymbol(sym) ===
+                              normalizeWatchSymbol(cfg.symbol)
                                 ? "Analyze"
                                 : ">"
                             }
@@ -6137,13 +6269,36 @@ export default function ChartSnapshotsPage() {
                 onDetailTfTabChange: setSelectedEntryTf,
                 entryNode: (
                   <div className="snapshot-live-card-v3">
-                    <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        marginBottom: 8,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                      }}
+                    >
                       {snapshotTfs.map((tf) => {
                         const s = barsStatus[tf] || {};
-                        const icon = s.status === "cached" ? "✅" : s.status === "loading" ? "⏳" : "❌";
+                        const icon =
+                          s.status === "cached"
+                            ? "✅"
+                            : s.status === "loading"
+                              ? "⏳"
+                              : "❌";
                         return (
-                          <span key={tf} className="minor-text" style={{ fontSize: "10px", padding: "2px 6px", background: "rgba(255,255,255,0.05)", borderRadius: 4 }}>
-                            {icon} {tf} {s.time || (s.status === "none" ? "No cache" : "")}
+                          <span
+                            key={tf}
+                            className="minor-text"
+                            style={{
+                              fontSize: "10px",
+                              padding: "2px 6px",
+                              background: "rgba(255,255,255,0.05)",
+                              borderRadius: 4,
+                            }}
+                          >
+                            {icon} {tf}{" "}
+                            {s.time || (s.status === "none" ? "No cache" : "")}
                           </span>
                         );
                       })}
@@ -6157,7 +6312,10 @@ export default function ChartSnapshotsPage() {
                           fetchAllBars(
                             cfg.symbol || tvSymbol,
                             snapshotTfs,
-                            resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
+                            resolveLookbackBarsValue(
+                              cfg.lookbackBars,
+                              timeframe,
+                            ),
                           )
                         }
                       >
@@ -6167,7 +6325,14 @@ export default function ChartSnapshotsPage() {
                         type="button"
                         className="secondary-button"
                         style={{ fontSize: "10px", padding: "2px 8px" }}
-                        onClick={() => fetchAllSnapshots(cfg.symbol || tvSymbol, snapshotTfs, sessionPrefix, provider)}
+                        onClick={() =>
+                          fetchAllSnapshots(
+                            cfg.symbol || tvSymbol,
+                            snapshotTfs,
+                            sessionPrefix,
+                            provider,
+                          )
+                        }
                       >
                         📷 Snapshot
                       </button>
@@ -6196,9 +6361,10 @@ export default function ChartSnapshotsPage() {
                 enabled: true,
                 hasData: hasAnalyzeResponse || isTradeRoute,
                 pending: analyzing,
-                pendingText: hasAnalyzeResponse || isTradeRoute
-                  ? "Refreshing analysis result..."
-                  : "Analyzing screenshots...",
+                pendingText:
+                  hasAnalyzeResponse || isTradeRoute
+                    ? "Refreshing analysis result..."
+                    : "Analyzing screenshots...",
                 label: "Response",
                 tab: responseTab,
                 onTabChange: setResponseTab,
@@ -6210,74 +6376,95 @@ export default function ChartSnapshotsPage() {
                   null,
                   2,
                 ),
-                tradePlans: (
-                  analysisTradePlans.length
-                    ? analysisTradePlans.map((plan, idx) => ({
-                  ...(plan?.raw || {}),
-                  __raw_plan: plan?.raw || {},
-                  __plan_index: idx,
-                  symbol: normalizeSignalSymbol(
-                    plan?.raw?.symbol ||
-                      plan.symbol ||
-                      selectedSymbol ||
-                      cfg.symbol ||
-                      tvSymbol ||
-                      "",
-                  ),
-                  direction: plan?.raw?.direction || plan.direction,
-                  entry: getPlanPositionOverride(plan, idx).entry || plan?.raw?.entry_price || plan?.raw?.entry,
-                  tp:
-                    getPlanPositionOverride(plan, idx).tp ||
-                    (() => {
-                      const resolved = getPlanPrimaryTp(plan?.raw || {});
-                      return Number.isFinite(resolved)
-                        ? formatNum3(resolved)
-                        : (plan?.raw?.take_profit || plan?.raw?.tp || "");
-                    })(),
-                  sl: getPlanPositionOverride(plan, idx).sl || plan?.raw?.stop_loss || plan?.raw?.sl,
-                  rr: getPlanPositionOverride(plan, idx).rr || plan?.raw?.risk_reward || plan?.raw?.rr,
-                  trade_type: getPlanPositionOverride(plan, idx).trade_type || plan?.raw?.order_type || plan?.raw?.type || "limit",
-                  note: getPlanPositionOverride(plan, idx).note || plan?.raw?.note || "",
-                  strategy: plan?.raw?.strategy || plan.strategy || "",
-                  entry_model:
-                    plan?.raw?.entry_model ||
-                    plan?.raw?.entryModel ||
-                    plan.entryModel ||
-                    "",
-                  skip_recommendation:
-                    plan?.raw?.skip_recommendation ||
-                    plan?.raw?.position_management?.trade_decision ||
-                    plan?.raw?.trade_decision ||
-                    plan.skip_recommendation ||
-                    "",
-                  confidence_level: plan?.raw?.confidence_level || "",
-                  risk_level: plan?.raw?.risk_level || plan?.raw?.risk_tier || "",
-                  confluence_checklist:
-                    plan?.raw?.ai_full_analysis?.confluence_checklists ||
-                    plan?.raw?.confluence_checklist ||
-                    [],
-                  reasons_to_skip:
-                    plan?.raw?.reasons_to_skip ||
-                    (plan?.raw?.position_management?.skips_reasons
-                      ? [{ reason: plan.raw.position_management.skips_reasons, severity: "" }]
-                      : plan.reasons_to_skip || []),
-                }))
-                    : [
-                        {
-                          __plan_index: 0,
-                          symbol: normalizeSignalSymbol(
-                            selectedSymbol || cfg.symbol || tvSymbol || "",
-                          ),
-                          direction: position.direction || "BUY",
-                          entry: position.entry || "",
-                          tp: position.tp || "",
-                          sl: position.sl || "",
-                          rr: position.rr || "",
-                          trade_type: position.trade_type || "limit",
-                          note: position.note || "",
-                        },
-                      ]
-                ),
+                tradePlans: analysisTradePlans.length
+                  ? analysisTradePlans.map((plan, idx) => ({
+                      ...(plan?.raw || {}),
+                      __raw_plan: plan?.raw || {},
+                      __plan_index: idx,
+                      symbol: normalizeSignalSymbol(
+                        plan?.raw?.symbol ||
+                          plan.symbol ||
+                          selectedSymbol ||
+                          cfg.symbol ||
+                          tvSymbol ||
+                          "",
+                      ),
+                      direction: plan?.raw?.direction || plan.direction,
+                      entry:
+                        getPlanPositionOverride(plan, idx).entry ||
+                        plan?.raw?.entry_price ||
+                        plan?.raw?.entry,
+                      tp:
+                        getPlanPositionOverride(plan, idx).tp ||
+                        (() => {
+                          const resolved = getPlanPrimaryTp(plan?.raw || {});
+                          return Number.isFinite(resolved)
+                            ? formatNum3(resolved)
+                            : plan?.raw?.take_profit || plan?.raw?.tp || "";
+                        })(),
+                      sl:
+                        getPlanPositionOverride(plan, idx).sl ||
+                        plan?.raw?.stop_loss ||
+                        plan?.raw?.sl,
+                      rr:
+                        getPlanPositionOverride(plan, idx).rr ||
+                        plan?.raw?.risk_reward ||
+                        plan?.raw?.rr,
+                      trade_type:
+                        getPlanPositionOverride(plan, idx).trade_type ||
+                        plan?.raw?.order_type ||
+                        plan?.raw?.type ||
+                        "limit",
+                      note:
+                        getPlanPositionOverride(plan, idx).note ||
+                        plan?.raw?.note ||
+                        "",
+                      strategy: plan?.raw?.strategy || plan.strategy || "",
+                      entry_model:
+                        plan?.raw?.entry_model ||
+                        plan?.raw?.entryModel ||
+                        plan.entryModel ||
+                        "",
+                      skip_recommendation:
+                        plan?.raw?.skip_recommendation ||
+                        plan?.raw?.position_management?.trade_decision ||
+                        plan?.raw?.trade_decision ||
+                        plan.skip_recommendation ||
+                        "",
+                      confidence_level: plan?.raw?.confidence_level || "",
+                      risk_level:
+                        plan?.raw?.risk_level || plan?.raw?.risk_tier || "",
+                      confluence_checklist:
+                        plan?.raw?.ai_full_analysis?.confluence_checklists ||
+                        plan?.raw?.confluence_checklist ||
+                        [],
+                      reasons_to_skip:
+                        plan?.raw?.reasons_to_skip ||
+                        (plan?.raw?.position_management?.skips_reasons
+                          ? [
+                              {
+                                reason:
+                                  plan.raw.position_management.skips_reasons,
+                                severity: "",
+                              },
+                            ]
+                          : plan.reasons_to_skip || []),
+                    }))
+                  : [
+                      {
+                        __plan_index: 0,
+                        symbol: normalizeSignalSymbol(
+                          selectedSymbol || cfg.symbol || tvSymbol || "",
+                        ),
+                        direction: position.direction || "BUY",
+                        entry: position.entry || "",
+                        tp: position.tp || "",
+                        sl: position.sl || "",
+                        rr: position.rr || "",
+                        trade_type: position.trade_type || "limit",
+                        note: position.note || "",
+                      },
+                    ],
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{
