@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 17:09 - fa925690"); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.14 17:09 - fa925690",
+); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -20693,12 +20696,16 @@ const appHandler = async (req, res) => {
           };
         }),
       };
-      console.log(
-        `[v2/broker/pull] aid=${account.account_id} items=${resp.items.length}` +
-          (resp.items.length > 0
-            ? ` types=${resp.items.map((i) => `${i.sid}=${i.type}`).join(",")}`
-            : ""),
-      );
+      if (resp.items.length > 0) {
+        console.log(
+          `[v2/broker/pull] aid=${account.account_id} items=${resp.items.length} types=${resp.items.map((i) => `${i.sid}=${i.type}`).join(",")}`,
+        );
+        console.log(
+          `[v2/broker/pull] BODY[0]: ${JSON.stringify(resp.items[0])}`,
+        );
+      } else {
+        console.log(`[v2/broker/pull] aid=${account.account_id} items=0`);
+      }
       return json(res, 200, resp);
     } catch (error) {
       return json(res, 400, {
