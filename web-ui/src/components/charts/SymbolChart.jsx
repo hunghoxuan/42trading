@@ -1728,7 +1728,7 @@ export default function SymbolChart({
                             <span
                               style={{
                                 position: "absolute",
-                                right: 2,
+                                right: 52,
                                 top: -10,
                                 fontSize: 10,
                                 fontWeight: 700,
@@ -1841,14 +1841,14 @@ export default function SymbolChart({
           onClick={(e) => e.stopPropagation()}
         >
           {[
+            { label: "Line", color: "#60a5fa", fn: handleDrawLine },
+            { label: "Zone", color: "#22c55e", fn: () => addObject("ZONE", "#22c55e", "zone") },
             ...(hasTradePlan && hasAnalysis
               ? [
                   { label: "Buy", fn: () => handleQuickTrade("BUY") },
                   { label: "Sell", fn: () => handleQuickTrade("SELL") },
                 ]
               : [
-                  { label: "Line", color: "#60a5fa", fn: handleDrawLine },
-                  { label: "Zone", color: "#22c55e", fn: () => addObject("ZONE", "#22c55e", "zone") },
                   { label: "TP", fn: () => handleQuickLevel("TP") },
                   { label: "SL", fn: () => handleQuickLevel("SL") },
                   { label: "Buy", fn: () => handleQuickTrade("BUY") },

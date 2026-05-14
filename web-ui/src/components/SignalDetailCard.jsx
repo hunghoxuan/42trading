@@ -1589,7 +1589,17 @@ export default function SignalDetailCard({
             openedAt={chart?.openedAt}
             closedAt={chart?.closedAt}
             onPlanLevelChange={chart?.onPlanLevelChange}
-            analysisSnapshot={selectedRawData}
+            analysisSnapshot={{
+              ...(rawData && typeof rawData === "object" ? rawData : {}),
+              trade_plan:
+                Array.isArray(response?.tradePlans) && response.tradePlans.length
+                  ? response.tradePlans
+                  : Array.isArray(rawData?.trade_plan)
+                    ? rawData.trade_plan
+                    : rawData?.trade_plan && typeof rawData.trade_plan === "object"
+                      ? [rawData.trade_plan]
+                      : [],
+            }}
             hasTradePlan={Boolean(
               tradePlan?.value?.entry ||
               tradePlan?.value?.tp ||
