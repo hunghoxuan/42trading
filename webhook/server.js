@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 14:35 - fix-pending-mod-constraint",
+  "v2026.05.14 14:50 - fix-bulk-actions",
 ); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
 
 const SERVER_LOG_DIR = envStr(
@@ -6475,7 +6475,7 @@ async function _mt5InitBackendInternal() {
       `
     ALTER TABLE trades
     ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['PENDING','PENDING_MOD','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
+    CHECK (execution_status = ANY (ARRAY['PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
   `,
     )
     .catch(() => {});
@@ -14998,14 +14998,6 @@ const appHandler = async (req, res) => {
         50000,
       );
       const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
-      // Update trades table directly
-      if (ids.length) {
-        const backend = await mt5Backend();
-        await backend.pool.query(
-          `UPDATE trades SET execution_status = 'CANCELLED', updated_at = NOW() WHERE sid = ANY($1::text[])`,
-          [ids],
-        );
-      }
       const updated = await mt5CancelSignalsByIds(ids);
       const cleanup = await mt5CleanupSignalTradeArtifacts({
         signalRows: rows,
