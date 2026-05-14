@@ -1328,16 +1328,6 @@ export default function SignalDetailCard({
               : planDrafts[selectedPlanId] || p;
 
           const fields = [
-            { label: "Source", value: planVal.source || rawData.source },
-            {
-              label: "Confluence Checklist",
-              value:
-                planVal.confluence_checklist ||
-                rawData.confluence_checklist ||
-                rawData.market_analysis?.confluence_checklist,
-              isList: true,
-              fullWidth: true,
-            },
             {
               label: "Invalidation",
               value: planVal.invalidation || rawData.invalidation,
@@ -1511,327 +1501,7 @@ export default function SignalDetailCard({
 
           return (
             <div style={{ padding: "10px 4px" }}>
-              {mode === "trade" &&
-                Array.isArray(metaItems) &&
-                metaItems.length > 0 && (
-                  <div style={{ marginBottom: 24 }}>
-                    <div
-                      className="minor-text"
-                      style={{
-                        marginBottom: 10,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Trade Info
-                    </div>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "14px 24px",
-                      }}
-                    >
-                      {metaItems
-                        .filter((item) => {
-                          if (!item || typeof item !== "object") return false;
-                          const label = String(item.label || "");
-                          if (!label) return false;
-                          if (
-                            label === "Metadata" ||
-                            label === "Raw Metadata" ||
-                            label === "Raw JSON"
-                          ) {
-                            return false;
-                          }
-                          const val = item.value;
-                          return (
-                            val !== null &&
-                            val !== undefined &&
-                            String(val) !== ""
-                          );
-                        })
-                        .map((item, idx) => (
-                          <div
-                            key={`trade-info-${idx}-${String(item.label)}`}
-                            style={{
-                              gridColumn: item.fullWidth ? "1 / -1" : "auto",
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 4,
-                            }}
-                          >
-                            <span className="minor-text">{item.label}</span>
-                            <div
-                              style={{
-                                fontSize: "13px",
-                                color: "var(--foreground)",
-                                fontWeight: 500,
-                                lineHeight: 1.5,
-                                ...(item.valueStyle || {}),
-                              }}
-                            >
-                              {typeof item.value === "object"
-                                ? JSON.stringify(item.value)
-                                : String(item.value)}
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-              {/* Bias & Trend Cards */}
-              {compactTfs.length > 0 && (
-                <div style={{ marginBottom: 24 }}>
-                  <div
-                    className="minor-text"
-                    style={{
-                      marginBottom: 10,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                    }}
-                  >
-                    Bias & Trend
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {compactTfs.map((tf) => {
-                      const b = formatCompactText(tf.bias || "");
-                      const trendText = formatCompactText(tf.trend || "");
-                      const structureText = formatCompactText(
-                        tf.structure || "",
-                      );
-                      const paSummaryText = formatCompactText(
-                        tf.price_action_summary?.recent_move ||
-                          tf.price_action_summary ||
-                          "",
-                      );
-                      const predictionText = formatCompactText(
-                        tf.price_prediction?.narrative ||
-                          tf.price_prediction ||
-                          "",
-                      );
-                      const lowerBias = b.toLowerCase();
-                      const isLong =
-                        lowerBias.includes("long") ||
-                        lowerBias.includes("bull");
-                      const isShort =
-                        lowerBias.includes("short") ||
-                        lowerBias.includes("bear");
-                      const biasColor = isLong
-                        ? "#26a69a"
-                        : isShort
-                          ? "#ef5350"
-                          : "var(--muted)";
-                      return (
-                        <div
-                          key={tf.tf}
-                          style={{
-                            flex: "1 1 0",
-                            minWidth: 140,
-                            padding: 10,
-                            background: "rgba(255,255,255,0.03)",
-                            borderRadius: 8,
-                            border: `1px solid ${biasColor}30`,
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontWeight: 700,
-                              fontSize: 13,
-                              marginBottom: 4,
-                              display: "flex",
-                              justifyContent: "space-between",
-                            }}
-                          >
-                            <span>{tf.tf}</span>
-                            <span style={{ fontSize: 14, color: biasColor }}>
-                              {isLong ? "↑" : isShort ? "↓" : ""}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 10,
-                              color: biasColor,
-                              fontWeight: 600,
-                            }}
-                          >
-                            {b || "—"}
-                          </div>
-                          <div
-                            className="minor-text"
-                            style={{ fontSize: "9px" }}
-                          >
-                            {[trendText, structureText]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </div>
-                          {paSummaryText && (
-                            <div
-                              className="minor-text"
-                              style={{
-                                fontSize: "9px",
-                                marginTop: 4,
-                                fontStyle: "italic",
-                                borderTop: "1px solid rgba(255,255,255,0.05)",
-                                paddingTop: 4,
-                              }}
-                            >
-                              {paSummaryText}
-                            </div>
-                          )}
-                          {predictionText && (
-                            <div
-                              style={{
-                                fontSize: "9px",
-                                color: "var(--accent-soft)",
-                                fontWeight: 600,
-                                marginTop: 2,
-                              }}
-                            >
-                              Pred: {predictionText}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Analysis narrative */}
-              {analysisText && (
-                <div
-                  style={{
-                    marginBottom: 24,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
-                >
-                  <span className="minor-text">Analysis</span>
-                  <div
-                    style={{
-                      fontSize: "13px",
-                      color: "var(--foreground)",
-                      fontWeight: 500,
-                      lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {analysisText}
-                  </div>
-                </div>
-              )}
-
-              {/* Checklist */}
-              {checklist.length > 0 && (
-                <div
-                  style={{
-                    marginBottom: 24,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                  }}
-                >
-                  <span className="minor-text">Checklist</span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {checklist.map((item, idx) => (
-                      <span
-                        key={idx}
-                        className="badge badge-mini"
-                        style={{ opacity: 0.8 }}
-                      >
-                        {typeof item === "object"
-                          ? item.item || item.condition
-                          : item}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Other Fields (Invalidation, Conditions, etc.) */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "20px 30px",
-                }}
-              >
-                {fields.map((f, i) => {
-                  if (!hasVal(f.value)) return null;
-                  return (
-                    <div
-                      key={i}
-                      style={{
-                        gridColumn: f.fullWidth ? "1 / -1" : "auto",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      <span className="minor-text">{f.label}</span>
-                      <div
-                        style={{
-                          fontSize: "13px",
-                          color: "var(--foreground)",
-                          fontWeight: 500,
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {f.isList ? (
-                          <ul
-                            style={{
-                              margin: 0,
-                              paddingLeft: 18,
-                              fontSize: "12px",
-                              opacity: 0.9,
-                            }}
-                          >
-                            {(Array.isArray(f.value) ? f.value : []).map(
-                              (item, idx) => {
-                                if (
-                                  typeof item === "string" ||
-                                  typeof item === "number" ||
-                                  typeof item === "boolean"
-                                ) {
-                                  return <li key={idx}>{String(item)}</li>;
-                                }
-                                if (item && typeof item === "object") {
-                                  const reason = formatCompactText(
-                                    item.reason ||
-                                      item.item ||
-                                      item.condition ||
-                                      item.text ||
-                                      "",
-                                  );
-                                  const severity = formatCompactText(
-                                    item.severity || "",
-                                  );
-                                  const rendered = [reason, severity]
-                                    .filter(Boolean)
-                                    .join(" | ");
-                                  return (
-                                    <li key={idx}>
-                                      {rendered || formatCompactText(item)}
-                                    </li>
-                                  );
-                                }
-                                return <li key={idx}>-</li>;
-                              },
-                            )}
-                          </ul>
-                        ) : (
-                          f.value
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* ── AI Multi-Timeframe Analysis ── */}
+              {/* ── AI Multi-Timeframe Analysis (at top) ── */}
               {(() => {
                 const mta = rawData?.multi_timeframes_analysis;
                 if (!mta || typeof mta !== "object") return null;
@@ -1867,7 +1537,7 @@ export default function SignalDetailCard({
                   minWidth: 120,
                 };
                 return (
-                  <div style={{ marginTop: 8 }}>
+                  <div style={{ marginBottom: 8 }}>
                     {(htfCtx.length > 0 || ltfAn.length > 0) && (
                       <div style={sec}>
                         <div style={head}>Trend / Bias</div>
@@ -2246,6 +1916,86 @@ export default function SignalDetailCard({
                   </div>
                 );
               })()}
+
+              {/* Other Fields (Invalidation, Conditions, etc.) */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "20px 30px",
+                }}
+              >
+                {fields.map((f, i) => {
+                  if (!hasVal(f.value)) return null;
+                  return (
+                    <div
+                      key={i}
+                      style={{
+                        gridColumn: f.fullWidth ? "1 / -1" : "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}
+                    >
+                      <span className="minor-text">{f.label}</span>
+                      <div
+                        style={{
+                          fontSize: "13px",
+                          color: "var(--foreground)",
+                          fontWeight: 500,
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {f.isList ? (
+                          <ul
+                            style={{
+                              margin: 0,
+                              paddingLeft: 18,
+                              fontSize: "12px",
+                              opacity: 0.9,
+                            }}
+                          >
+                            {(Array.isArray(f.value) ? f.value : []).map(
+                              (item, idx) => {
+                                if (
+                                  typeof item === "string" ||
+                                  typeof item === "number" ||
+                                  typeof item === "boolean"
+                                ) {
+                                  return <li key={idx}>{String(item)}</li>;
+                                }
+                                if (item && typeof item === "object") {
+                                  const reason = formatCompactText(
+                                    item.reason ||
+                                      item.item ||
+                                      item.condition ||
+                                      item.text ||
+                                      "",
+                                  );
+                                  const severity = formatCompactText(
+                                    item.severity || "",
+                                  );
+                                  const rendered = [reason, severity]
+                                    .filter(Boolean)
+                                    .join(" | ");
+                                  return (
+                                    <li key={idx}>
+                                      {rendered || formatCompactText(item)}
+                                    </li>
+                                  );
+                                }
+                                return <li key={idx}>-</li>;
+                              },
+                            )}
+                          </ul>
+                        ) : (
+                          f.value
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
