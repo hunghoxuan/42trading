@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.14 17:00 - fix-cancel-dedup";
+        private const string BuildVersion = "v2026.05.14 17:15 - fix-nested-json-parse";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -530,10 +530,30 @@ namespace cAlgo.Robots
         private void ProcessResponse(string json)
         {
             if (string.IsNullOrEmpty(json) || !json.Contains("\"items\"")) return;
-            var itemsMatch = Regex.Match(json, "\"items\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+            var itemsMatch = Regex.Match(json, "\"items\"\\s*:\\s*\\[(.*)\\]", RegexOptions.Singleline);
             if (!itemsMatch.Success) return;
-            var objects = Regex.Matches(itemsMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
-            foreach (Match objMatch in objects) ExecuteSignal("{" + objMatch.Groups[1].Value + "}");
+            var itemsBody = itemsMatch.Groups[1].Value;
+            // Balanced bracket parser — handles nested JSON in metadata
+            var objects = new List<string>();
+            int depth = 0, start = -1;
+            for (int i = 0; i < itemsBody.Length; i++)
+            {
+                if (itemsBody[i] == '{')
+                {
+                    if (depth == 0) start = i;
+                    depth++;
+                }
+                else if (itemsBody[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0 && start >= 0)
+                    {
+                        objects.Add(itemsBody.Substring(start, i - start + 1));
+                        start = -1;
+                    }
+                }
+            }
+            foreach (var obj in objects) ExecuteSignal(obj);
         }
 
         private void ExecuteSignal(string json)
