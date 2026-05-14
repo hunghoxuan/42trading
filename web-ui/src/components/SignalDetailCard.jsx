@@ -785,32 +785,57 @@ export default function SignalDetailCard({
     planLooksMeaningful(p || {}),
   );
   const plans =
-    hasMeaningfulResponsePlans
-      ? responsePlans
-      : hasMeaningfulDerivedPlans
-        ? derivedPlansFromRaw
-        : [
-    {
-      direction: tradePlan?.value?.direction,
-      entry: tradePlan?.value?.entry,
-      sl: tradePlan?.value?.sl,
-      tp: tradePlan?.value?.tp,
-      rr: tradePlan?.value?.rr,
-      strategy: tradePlan?.value?.strategy,
-      entryModel: tradePlan?.value?.entry_model,
-      confidence: tradePlan?.value?.confidence_pct,
-      risk_management: tradePlan?.value?.risk_management,
-      entry_condition: tradePlan?.value?.entry_condition,
-      exit_condition: tradePlan?.value?.exit_condition,
-      confluence_checklist: tradePlan?.value?.confluence_checklist,
-      partial_tps: tradePlan?.value?.partial_tps,
-      reasons_to_skip: tradePlan?.value?.reasons_to_skip,
-      skip_recommendation: tradePlan?.value?.skip_recommendation,
-      be_trigger: tradePlan?.value?.be_trigger,
-      invalidation: tradePlan?.value?.invalidation,
-      estimated_bars: tradePlan?.value?.estimated_bars,
-    },
-  ];
+    mode === "trade"
+      ? [
+          {
+            direction: tradePlan?.value?.direction,
+            entry: tradePlan?.value?.entry,
+            sl: tradePlan?.value?.sl,
+            tp: tradePlan?.value?.tp,
+            rr: tradePlan?.value?.rr,
+            strategy: tradePlan?.value?.strategy,
+            entryModel: tradePlan?.value?.entry_model,
+            confidence: tradePlan?.value?.confidence_pct,
+            risk_management: tradePlan?.value?.risk_management,
+            entry_condition: tradePlan?.value?.entry_condition,
+            exit_condition: tradePlan?.value?.exit_condition,
+            confluence_checklist: tradePlan?.value?.confluence_checklist,
+            partial_tps: tradePlan?.value?.partial_tps,
+            reasons_to_skip: tradePlan?.value?.reasons_to_skip,
+            skip_recommendation: tradePlan?.value?.skip_recommendation,
+            be_trigger: tradePlan?.value?.be_trigger,
+            invalidation: tradePlan?.value?.invalidation,
+            estimated_bars: tradePlan?.value?.estimated_bars,
+            symbol: tradePlan?.value?.symbol || chart?.symbol || "",
+            note: tradePlan?.value?.note || "",
+          },
+        ]
+      : hasMeaningfulResponsePlans
+        ? responsePlans
+        : hasMeaningfulDerivedPlans
+          ? derivedPlansFromRaw
+          : [
+              {
+                direction: tradePlan?.value?.direction,
+                entry: tradePlan?.value?.entry,
+                sl: tradePlan?.value?.sl,
+                tp: tradePlan?.value?.tp,
+                rr: tradePlan?.value?.rr,
+                strategy: tradePlan?.value?.strategy,
+                entryModel: tradePlan?.value?.entry_model,
+                confidence: tradePlan?.value?.confidence_pct,
+                risk_management: tradePlan?.value?.risk_management,
+                entry_condition: tradePlan?.value?.entry_condition,
+                exit_condition: tradePlan?.value?.exit_condition,
+                confluence_checklist: tradePlan?.value?.confluence_checklist,
+                partial_tps: tradePlan?.value?.partial_tps,
+                reasons_to_skip: tradePlan?.value?.reasons_to_skip,
+                skip_recommendation: tradePlan?.value?.skip_recommendation,
+                be_trigger: tradePlan?.value?.be_trigger,
+                invalidation: tradePlan?.value?.invalidation,
+                estimated_bars: tradePlan?.value?.estimated_bars,
+              },
+            ];
   const selectedPlanIndex =
     selectedPlanId === "main"
       ? 0
