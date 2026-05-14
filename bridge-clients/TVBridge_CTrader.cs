@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.14 20:00 - fix-dup-pending-order";
+        private const string BuildVersion = "v2026.05.14 20:15 - fix-broker-ticket-overwrite";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -654,7 +654,7 @@ namespace cAlgo.Robots
                                     var pRes = ClosePosition(p);
                                     if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                                 }
-                                _ = AckAsync(id, leaseToken, "CANCELLED", "MANUAL", targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
+                                _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
                             }
                         }
                     }
@@ -667,7 +667,7 @@ namespace cAlgo.Robots
                             var pRes = ClosePosition(p);
                             if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                         }
-                        _ = AckAsync(id, leaseToken, "CANCELLED", "MANUAL", targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
+                        _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
                     }
                     return;
                 }
@@ -698,7 +698,7 @@ namespace cAlgo.Robots
                         var cRes = ClosePosition(p);
                         if (!cRes.IsSuccessful) Print("[Error] Close failed: {0}", cRes.Error);
                     }
-                    _ = AckAsync(id, leaseToken, "CLOSED", "MANUAL", "");
+                    _ = AckAsync(id, leaseToken, "CLOSED", ticketStr, "");
                     return;
                 }
 

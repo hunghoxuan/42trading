@@ -7284,7 +7284,7 @@ async function _mt5InitBackendInternal() {
          UPDATE trades
          SET dispatch_status = CASE WHEN $14 = TRUE THEN 'NEW' ELSE 'CONSUMED' END,
              execution_status = $1,
-             broker_trade_id = $2,
+             broker_trade_id = CASE WHEN $2::text IN ('MANUAL', '') THEN broker_trade_id ELSE $2 END,
              entry_exec = $3,
              pnl_realized = CASE WHEN $10 = TRUE THEN $4 ELSE pnl_realized END,
              volume = COALESCE($11, volume),
