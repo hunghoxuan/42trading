@@ -962,7 +962,9 @@ export default function SymbolChart({
               ? Number(hoverInfo.price)
               : Number.isFinite(activeLastClose)
                 ? activeLastClose
-                : Number(latestCachedPrice);
+                : Number.isFinite(Number(latestCachedPrice))
+                  ? Number(latestCachedPrice)
+                  : null;
       if (!Number.isFinite(usePrice)) return;
       const payload = {
         symbol: cleanSym,
@@ -1074,7 +1076,9 @@ export default function SymbolChart({
           ? Number(hoverInfo.price)
           : Number.isFinite(activeLastClose)
             ? activeLastClose
-            : Number(latestCachedPrice);
+                : Number.isFinite(Number(latestCachedPrice))
+                  ? Number(latestCachedPrice)
+                  : null;
       if (!Number.isFinite(levelPrice)) return;
       const payload = {
         symbol: cleanSym,
@@ -1295,36 +1299,6 @@ export default function SymbolChart({
                   {label}
                 </button>
               ))}
-              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
-                |
-              </span>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => handleClearLevel("ENTRY")}
-                style={{ fontSize: 10, padding: "2px 6px" }}
-                title="Clear Entry"
-              >
-                Entry x
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => handleClearLevel("TP")}
-                style={{ fontSize: 10, padding: "2px 6px", color: "#10b981", borderColor: "#10b98166" }}
-                title="Clear TP"
-              >
-                TP x
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => handleClearLevel("SL")}
-                style={{ fontSize: 10, padding: "2px 6px", color: "#ef4444", borderColor: "#ef444466" }}
-                title="Clear SL"
-              >
-                SL x
-              </button>
             </>
           )}
           <button
@@ -1963,20 +1937,20 @@ export default function SymbolChart({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                border: `1px solid ${a.color || "var(--border)"}`,
-                color: a.color || "var(--foreground)",
+                border: `1px solid ${a.kind === "tradeplan" && a.visible === false ? "#cbd5e133" : a.color || "var(--border)"}`,
+                color: a.kind === "tradeplan" && a.visible === false ? "#cbd5e199" : a.color || "var(--foreground)",
                 borderRadius: 12,
-                padding: "2px 8px",
-                fontSize: 10,
+                padding: "1px 6px",
+                fontSize: 9,
                 cursor: "pointer",
                 background:
                   selectedObjectId === a.id
-                    ? `${a.color || "#60a5fa"}22`
+                    ? `${a.kind === "tradeplan" && a.visible === false ? "#cbd5e1" : a.color || "#60a5fa"}22`
                     : "transparent",
               }}
               title={a.id}
             >
-              {a.kind === "tradeplan" ? `${a.label || "TradePlan"}` : a.type}
+              {a.kind === "tradeplan" ? `TP ${String(a.plan_id || "P1")}` : a.type}
               {a.kind === "tradeplan" ? (
                 <button
                   type="button"
@@ -1984,10 +1958,10 @@ export default function SymbolChart({
                     e.stopPropagation();
                     setAnnotations((prev) => prev.map((x) => x.id === a.id ? { ...x, visible: x.visible === false ? true : false } : x));
                   }}
-                  style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 11, lineHeight: 1 }}
+                  style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 10, lineHeight: 1 }}
                   title={a.visible === false ? "Show" : "Hide"}
                 >
-                  {a.visible === false ? "show" : "hide"}
+                  {a.visible === false ? "◌" : "👁"}
                 </button>
               ) : null}
               <button

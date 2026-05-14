@@ -1612,11 +1612,8 @@ export default function SignalDetailCard({
               const side = String(intent?.side || "BUY").toUpperCase();
               const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
-              const planId =
-                String(intent?.plan_id || "P1").toUpperCase() === "P2" &&
-                plans?.length > 1
-                  ? "suggested_1"
-                  : "main";
+              const requestedPlan = String(intent?.plan_id || "P1").toUpperCase();
+              const planId = requestedPlan === "P2" ? "suggested_1" : "main";
               const applyToPlan = (field, value) => {
                 if (planId === "main") {
                   tradePlan?.onChange?.(field, value);
@@ -1624,7 +1621,19 @@ export default function SignalDetailCard({
                 }
                 setPlanDrafts((prev) => ({
                   ...prev,
-                  [planId]: applyLinkedPlanChange(prev?.[planId] || plans[1], field, value),
+                  [planId]: applyLinkedPlanChange(
+                    prev?.[planId] ||
+                      plans?.[1] || {
+                        ...(tradePlan?.value || plans?.[0] || {}),
+                        direction: requestedPlan === "P2" ? "SELL" : String(side || "BUY").toUpperCase(),
+                        entry: "",
+                        tp: "",
+                        sl: "",
+                        rr: "",
+                      },
+                    field,
+                    value,
+                  ),
                 }));
               };
               if (tradePlan?.onChange || planId !== "main") {
