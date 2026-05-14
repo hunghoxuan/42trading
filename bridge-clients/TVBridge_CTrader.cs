@@ -578,6 +578,10 @@ namespace cAlgo.Robots
 
                 symbolCode = symbol.Name;
 
+                // Shared variables for all task types
+                var sl = ParseDouble(GetJsonValue(json, "sl"));
+                var tp = ParseDouble(GetJsonValue(json, "tp"));
+
                 // --- CANCEL: close position or delete order ---
                 if (taskType == "CANCEL")
                 {
@@ -677,8 +681,6 @@ namespace cAlgo.Robots
                 // --- MODIFY: update SL/TP on position or order ---
                 if (taskType == "MODIFY")
                 {
-                    var sl = ParseDouble(GetJsonValue(json, "sl"));
-                    var tp = ParseDouble(GetJsonValue(json, "tp"));
                     if (ticketNum > 0)
                     {
                         var pos = Positions.FirstOrDefault(p => p.Id == ticketNum);
@@ -726,8 +728,6 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                var sl = ParseDouble(GetJsonValue(json, "sl"));
-                var tp = ParseDouble(GetJsonValue(json, "tp"));
                 var entry = ParseDouble(GetJsonValue(json, "entry"));
                 var orderTypeStr = GetJsonValue(json, "order_type").ToLower();
                 if (string.IsNullOrEmpty(orderTypeStr)) orderTypeStr = "market";
