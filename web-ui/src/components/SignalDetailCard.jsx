@@ -116,6 +116,20 @@ function normalizeRawPlan(p = {}) {
   };
 }
 
+function planLooksMeaningful(p = {}) {
+  const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
+  const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
+  const tp = parseNumLoose(
+    p?.tp ??
+      p?.take_profit ??
+      p?.tp1 ??
+      p?.multiple_exits?.full_tp?.price ??
+      p?.multiple_exits?.tp2?.price ??
+      p?.multiple_exits?.tp1?.price,
+  );
+  return (entry != null && entry !== 0) || (sl != null && sl !== 0) || (tp != null && tp !== 0);
+}
+
 function formatCompactText(value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -685,12 +699,24 @@ export default function SignalDetailCard({
     }
     return [];
   }, [rawSource]);
-  const plans =
+  const responsePlans =
     Array.isArray(response?.tradePlans) && response.tradePlans.length
       ? response.tradePlans
-      : derivedPlansFromRaw.length
+      : [];
+  const hasMeaningfulResponsePlans = responsePlans.some((p) =>
+    planLooksMeaningful(p || {}),
+  );
+  const hasMeaningfulDerivedPlans = derivedPlansFromRaw.some((p) =>
+    planLooksMeaningful(p || {}),
+  );
+  const plans =
+    hasMeaningfulResponsePlans
+      ? responsePlans
+      : hasMeaningfulDerivedPlans
         ? derivedPlansFromRaw
-        : [
+        : responsePlans.length
+          ? responsePlans
+          : [
     {
       direction: tradePlan?.value?.direction,
       entry: tradePlan?.value?.entry,
@@ -793,7 +819,7 @@ export default function SignalDetailCard({
       }
       return next;
     });
-  }, [response?.tradePlans]);
+  }, [plans, response?.tradePlans, tradePlan?.value]);
 
   useEffect(() => {
     if (!displayPlanIds.includes(selectedPlanId)) {
