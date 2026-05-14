@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 12:28 - 77211a5b"); // Fix TradePlan chip UX, entry null fallback, and P2 array append behavior
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 13:05 - 385c3602"); // Fix TradePlan chip UX, entry null fallback, and P2 array append behavior
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

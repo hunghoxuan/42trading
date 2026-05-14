@@ -130,6 +130,15 @@ function tfRankForLatest(tf) {
   if (t === "w") return 10080;
   return Number.MAX_SAFE_INTEGER;
 }
+function defaultTpSlFromEntry(entry, direction) {
+  const e = Number(entry);
+  const isSell = String(direction || "BUY").toUpperCase() === "SELL";
+  if (!Number.isFinite(e)) return { tp: null, sl: null };
+  return {
+    tp: isSell ? e * 0.98 : e * 1.02,
+    sl: isSell ? e * 1.02 : e * 0.98,
+  };
+}
 
 function NumberAdjuster({
   value,
@@ -626,18 +635,28 @@ export default function SymbolChart({
         ? [analysisSnapshot.trade_plan]
         : [];
     if (!rawPlans.length) return;
+    const keys = Object.keys(master?.bars || {});
+    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
+    let fallbackEntry = null;
+    for (const k of sorted) {
+      const bars = master?.bars?.[k] || [];
+      if (!bars.length) continue;
+      const close = Number(bars[bars.length - 1]?.close);
+      if (Number.isFinite(close)) {
+        fallbackEntry = close;
+        break;
+      }
+    }
     setAnnotations((prev) => {
       let next = [...prev];
       rawPlans.slice(0, 2).forEach((p, idx) => {
         const planId = idx === 0 ? "P1" : "P2";
         const id = `tradeplan_${planId}`;
         if (next.some((x) => x.id === id && x.kind === "tradeplan")) return;
-        const entry = Number(p?.entry ?? p?.entry_price);
-        const tp = Number(
-          p?.tp ?? p?.take_profit ?? p?.tp1?.price ?? p?.multiple_exits?.tp1?.price,
-        );
-        const sl = Number(p?.sl ?? p?.stop_loss);
         const direction = String(p?.direction || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+        const entry = Number(p?.entry ?? p?.entry_price);
+        const effectiveEntry = Number.isFinite(entry) ? entry : fallbackEntry;
+        const defaults = defaultTpSlFromEntry(effectiveEntry, direction);
         next.push({
           id,
           kind: "tradeplan",
@@ -645,9 +664,9 @@ export default function SymbolChart({
           label: `TradePlan ${planId}`,
           plan_id: planId,
           direction,
-          entryPrice: Number.isFinite(entry) ? entry : null,
-          tpPrice: Number.isFinite(tp) ? tp : null,
-          slPrice: Number.isFinite(sl) ? sl : null,
+          entryPrice: Number.isFinite(effectiveEntry) ? effectiveEntry : null,
+          tpPrice: Number.isFinite(defaults.tp) ? defaults.tp : null,
+          slPrice: Number.isFinite(defaults.sl) ? defaults.sl : null,
           visible: true,
           color: direction === "SELL" ? "#ef4444" : "#10b981",
           line_width: 0.1,
@@ -659,7 +678,7 @@ export default function SymbolChart({
       });
       return next;
     });
-  }, [hasTradePlan, hasAnalysis, analysisSnapshot]);
+  }, [hasTradePlan, hasAnalysis, analysisSnapshot, master]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
@@ -1020,8 +1039,9 @@ export default function SymbolChart({
               ? activeNum
               : existingMax + 1);
           const nextPlanId = `P${targetNum}`;
-          const tpNum = Number(tpPrice);
-          const slNum = Number(slPrice);
+          const defaults = defaultTpSlFromEntry(usePrice, isBuy ? "BUY" : "SELL");
+          const tpNum = Number(defaults.tp);
+          const slNum = Number(defaults.sl);
           const planObjectId = `tradeplan_${nextPlanId}`;
           createdPlanObjectId = planObjectId;
           const existing = prev.find((x) => x.id === planObjectId && x.kind === "tradeplan");
@@ -1063,6 +1083,7 @@ export default function SymbolChart({
               ctxMenu,
             }),
             kind: "line",
+            visible: true,
             tf: null,
             price_top: usePrice,
             price_bottom: usePrice,
@@ -1126,6 +1147,7 @@ export default function SymbolChart({
             ctxMenu,
           }),
           kind: "line",
+          visible: true,
           tf: null,
           price_top: levelPrice,
           price_bottom: levelPrice,
@@ -1294,36 +1316,7 @@ export default function SymbolChart({
               Edit
             </button>
           )}
-          {/* Overlay toggles (only when cache mode + hasTradePlan + hasBars) */}
-          {hasTradePlan && mode === "cache" && hasAnyBars && (
-            <>
-              <span style={{ opacity: 0.3, fontSize: 8, margin: "0 2px" }}>
-                |
-              </span>
-              {overlayButtons.map(({ key, label }) => (
-                <button
-                  key={key}
-                  className={
-                    (overlays[key] || activePlanGroup === label) ? "primary-button" : "secondary-button"
-                  }
-                  onClick={() => {
-                    toggleOverlay(key);
-                    if (label === "P1" || label === "P2") setActivePlanGroup(label);
-                  }}
-                  type="button"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    padding: "3px 7px",
-                    borderRadius: 4,
-                    minWidth: 28,
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </>
-          )}
+          {/* Removed redundant P1/P2/PD/KL mini-row; use Objects panel as source of truth */}
           <button
             className="secondary-button"
             style={{
@@ -1614,6 +1607,7 @@ export default function SymbolChart({
                             {
                               id,
                               kind: "zone",
+                              visible: true,
                               type: "ZONE",
                               color: "#22c55e",
                               tf: null,
@@ -1761,6 +1755,7 @@ export default function SymbolChart({
                         );
                       }
                       if (a.kind === "line") {
+                        if (a.visible === false) return null;
                         const isSelected = selectedObjectId === a.id;
                         const styleMap = { solid: "solid", dot: "dotted", dash: "dashed" };
                         const lineStyle = styleMap[String(a.line_style || "dash").toLowerCase()] || "dashed";
@@ -1797,6 +1792,7 @@ export default function SymbolChart({
                         );
                       }
                       if (a.kind === "point") {
+                        if (a.visible === false) return null;
                         const isSelected = selectedObjectId === a.id;
                         return (
                           <div
@@ -1821,6 +1817,7 @@ export default function SymbolChart({
                         );
                       }
                       if (a.kind === "zone") {
+                        if (a.visible === false) return null;
                         const isSelected = selectedObjectId === a.id;
                         const y1 = Number(a._y1Ratio || 0.4);
                         const y2 = Number(a._y2Ratio || 0.6);
@@ -1979,33 +1976,31 @@ export default function SymbolChart({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                border: `1px solid ${a.kind === "tradeplan" && a.visible === false ? "#cbd5e133" : a.color || "var(--border)"}`,
-                color: a.kind === "tradeplan" && a.visible === false ? "#cbd5e199" : a.color || "var(--foreground)",
+                border: `1px solid ${a.visible === false ? "#cbd5e133" : a.color || "var(--border)"}`,
+                color: a.visible === false ? "#cbd5e199" : a.color || "var(--foreground)",
                 borderRadius: 12,
                 padding: "1px 6px",
                 fontSize: 9,
                 cursor: "pointer",
                 background:
                   selectedObjectId === a.id
-                    ? `${a.kind === "tradeplan" && a.visible === false ? "#cbd5e1" : a.color || "#60a5fa"}22`
+                    ? `${a.visible === false ? "#cbd5e1" : a.color || "#60a5fa"}22`
                     : "transparent",
               }}
               title={a.id}
             >
               {a.kind === "tradeplan" ? `TP ${String(a.plan_id || "P1")}` : a.type}
-              {a.kind === "tradeplan" ? (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAnnotations((prev) => prev.map((x) => x.id === a.id ? { ...x, visible: x.visible === false ? true : false } : x));
-                  }}
-                  style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 10, lineHeight: 1 }}
-                  title={a.visible === false ? "Show" : "Hide"}
-                >
-                  {a.visible === false ? "◌" : "👁"}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAnnotations((prev) => prev.map((x) => x.id === a.id ? { ...x, visible: x.visible === false ? true : false } : x));
+                }}
+                style={{ border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 10, lineHeight: 1 }}
+                title={a.visible === false ? "Show" : "Hide"}
+              >
+                {a.visible === false ? "◌" : "👁"}
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
