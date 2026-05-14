@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 19:34 - ce82f1e1"); // fix Analyze UI RR mapping to honor risk_reward from JSON
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.14 19:34 - ce82f1e1",
+); // fix Analyze UI RR mapping to honor risk_reward from JSON
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -8109,11 +8112,11 @@ async function _mt5InitBackendInternal() {
             INSERT INTO trades (
               sid, account_id, user_id,
               symbol, action, order_type, volume, entry, sl, tp, note,
-              execution_status, source_id, metadata, broker_trade_id,
+              execution_status, dispatch_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, $12::text, $13::text, $14::jsonb, $15::text, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, NOW(), NOW())
+            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, $12::text, 'CONSUMED', $13::text, $14::jsonb, $15::text, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
               [
@@ -17480,7 +17483,10 @@ const appHandler = async (req, res) => {
         out.trade_plan = plans;
         return out;
       };
-      const collectAutoSavableTradePlans = (parsed = {}, fallbackSymbol = "") => {
+      const collectAutoSavableTradePlans = (
+        parsed = {},
+        fallbackSymbol = "",
+      ) => {
         const plans = Array.isArray(parsed?.trade_plan)
           ? parsed.trade_plan
           : [];
@@ -17529,7 +17535,9 @@ const appHandler = async (req, res) => {
               error: "No valid trade_plan entry with entry/sl/tp",
             };
           }
-          const symbol = String(sourceSymbol || parsedJson?.symbol || body?.symbol || "")
+          const symbol = String(
+            sourceSymbol || parsedJson?.symbol || body?.symbol || "",
+          )
             .trim()
             .toUpperCase();
           if (!symbol) {
@@ -17562,10 +17570,15 @@ const appHandler = async (req, res) => {
             const savedSignals = [];
             for (const pick of picks) {
               const plan = pick.plan || {};
-              const planSymbol = String(pick.symbol || symbol).trim().toUpperCase();
+              const planSymbol = String(pick.symbol || symbol)
+                .trim()
+                .toUpperCase();
               if (!planSymbol) continue;
               const signalId = mt5GenerateTimeSid();
-              const signalSid = normalizePublicSidBase(`${planSymbol}_AI`, "SIG");
+              const signalSid = normalizePublicSidBase(
+                `${planSymbol}_AI`,
+                "SIG",
+              );
               const orderType = mt5NormalizeOrderType({
                 order_type: plan?.type || "limit",
               });
@@ -17585,7 +17598,8 @@ const appHandler = async (req, res) => {
                   normalizeDirectionToAction(plan?.direction || action),
                 ),
                 entry: pick.entry,
-                strategy: String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
+                strategy:
+                  String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
                 entry_model: entryModel,
                 sl: pick.sl,
                 tp: pick.tp,
@@ -17607,11 +17621,19 @@ const appHandler = async (req, res) => {
                 "signals",
                 {
                   event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
-                  data: { ...sharedRawJson, trade_plan: plan, symbol: planSymbol },
+                  data: {
+                    ...sharedRawJson,
+                    trade_plan: plan,
+                    symbol: planSymbol,
+                  },
                 },
                 userId,
               ).catch(() => null);
-              savedSignals.push({ signal_id: signalId, sid: signalSid, symbol: planSymbol });
+              savedSignals.push({
+                signal_id: signalId,
+                sid: signalSid,
+                symbol: planSymbol,
+              });
             }
             if (!savedSignals.length) {
               return {
