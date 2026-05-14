@@ -135,7 +135,7 @@ export function TradePlanEditor({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "84px minmax(140px, 1fr) 98px",
+          gridTemplateColumns: "20% minmax(140px, 1fr) 40%",
           alignItems: "center",
           gap: 8,
         }}

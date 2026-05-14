@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 09:36 - 1b8de4fa"); // Unify TradePlan as grouped chart object with show/hide + grouped edit
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.14 10:18 - 95c12ea4"); // Sync TradePlan objects with editor/cards + cross-TF overlay/render fixes
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

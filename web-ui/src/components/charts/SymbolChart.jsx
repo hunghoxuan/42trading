@@ -539,12 +539,16 @@ export default function SymbolChart({
   }, [selectedObjectId]);
   const updateSelectedField = useCallback((field, value) => {
     if (!selectedObjectId) return;
+    const current = (annotations || []).find((a) => a.id === selectedObjectId) || null;
     const numericKeys = new Set([
       "price",
       "price_top",
       "price_bottom",
       "time",
       "line_width",
+      "entryPrice",
+      "tpPrice",
+      "slPrice",
     ]);
     const next = numericKeys.has(field)
       ? value === "" || value == null
@@ -552,7 +556,91 @@ export default function SymbolChart({
         : Number(value)
       : value;
     updateSelectedObject({ [field]: next });
-  }, [selectedObjectId, updateSelectedObject]);
+    if (current?.kind === "tradeplan" && typeof onQuickTradeIntent === "function") {
+      const planId = String(current.plan_id || "P1").toUpperCase();
+      if (field === "entryPrice") {
+        if (Number.isFinite(Number(next))) {
+          onQuickTradeIntent({
+            symbol: cleanSym,
+            side: String(current.direction || "BUY").toUpperCase(),
+            action: "ENTRY",
+            plan_id: planId,
+            price: Number(next),
+          });
+        }
+      } else if (field === "tpPrice") {
+        onQuickTradeIntent({
+          symbol: cleanSym,
+          side: "TP",
+          action: Number.isFinite(Number(next)) ? "TP" : "CLEAR_TP",
+          plan_id: planId,
+          price: Number.isFinite(Number(next)) ? Number(next) : null,
+        });
+      } else if (field === "slPrice") {
+        onQuickTradeIntent({
+          symbol: cleanSym,
+          side: "SL",
+          action: Number.isFinite(Number(next)) ? "SL" : "CLEAR_SL",
+          plan_id: planId,
+          price: Number.isFinite(Number(next)) ? Number(next) : null,
+        });
+      } else if (field === "direction") {
+        const entryNow = Number(current.entryPrice);
+        if (Number.isFinite(entryNow)) {
+          onQuickTradeIntent({
+            symbol: cleanSym,
+            side: String(next || "BUY").toUpperCase(),
+            action: "ENTRY",
+            plan_id: planId,
+            price: entryNow,
+          });
+        }
+      }
+    }
+  }, [selectedObjectId, annotations, updateSelectedObject, onQuickTradeIntent, cleanSym]);
+
+  useEffect(() => {
+    if (!(hasTradePlan && hasAnalysis)) return;
+    const rawPlans = Array.isArray(analysisSnapshot?.trade_plan)
+      ? analysisSnapshot.trade_plan
+      : analysisSnapshot?.trade_plan && typeof analysisSnapshot.trade_plan === "object"
+        ? [analysisSnapshot.trade_plan]
+        : [];
+    if (!rawPlans.length) return;
+    setAnnotations((prev) => {
+      let next = [...prev];
+      rawPlans.slice(0, 2).forEach((p, idx) => {
+        const planId = idx === 0 ? "P1" : "P2";
+        const id = `tradeplan_${planId}`;
+        if (next.some((x) => x.id === id && x.kind === "tradeplan")) return;
+        const entry = Number(p?.entry ?? p?.entry_price);
+        const tp = Number(
+          p?.tp ?? p?.take_profit ?? p?.tp1?.price ?? p?.multiple_exits?.tp1?.price,
+        );
+        const sl = Number(p?.sl ?? p?.stop_loss);
+        const direction = String(p?.direction || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+        next.push({
+          id,
+          kind: "tradeplan",
+          type: "TRADEPLAN",
+          label: `TradePlan ${planId}`,
+          plan_id: planId,
+          direction,
+          entryPrice: Number.isFinite(entry) ? entry : null,
+          tpPrice: Number.isFinite(tp) ? tp : null,
+          slPrice: Number.isFinite(sl) ? sl : null,
+          visible: true,
+          color: direction === "SELL" ? "#ef4444" : "#10b981",
+          line_width: 0.1,
+          line_style: "solid",
+          bg_color: "transparent",
+          tf: null,
+          time: null,
+        });
+      });
+      return next;
+    });
+  }, [hasTradePlan, hasAnalysis, analysisSnapshot]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
@@ -1472,9 +1560,9 @@ export default function SymbolChart({
                   historicalData={barsForTf}
                   height={chartHeight}
                   analysisSnapshot={analysisSnapshot || null}
-                  entryPrice={overlays.plan1 ? entryPrice : null}
-                  slPrice={overlays.plan1 ? slPrice : null}
-                  tpPrice={overlays.plan1 ? tpPrice : null}
+                  entryPrice={hasTradePlan && hasAnalysis ? null : overlays.plan1 ? entryPrice : null}
+                  slPrice={hasTradePlan && hasAnalysis ? null : overlays.plan1 ? slPrice : null}
+                  tpPrice={hasTradePlan && hasAnalysis ? null : overlays.plan1 ? tpPrice : null}
                   createdAt={createdAt}
                   openedAt={openedAt}
                   closedAt={closedAt}
@@ -1623,9 +1711,9 @@ export default function SymbolChart({
                             <span
                               style={{
                                 position: "absolute",
-                                right: 2,
+                                left: 4,
                                 top: -10,
-                                fontSize: 10,
+                                fontSize: 9,
                                 fontWeight: 700,
                                 color,
                                 background: "#0b1220",
@@ -1907,6 +1995,12 @@ export default function SymbolChart({
                 onClick={(e) => {
                   e.stopPropagation();
                   setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+                  if (a.kind === "tradeplan" && typeof onQuickTradeIntent === "function") {
+                    const planId = String(a.plan_id || "P1").toUpperCase();
+                    onQuickTradeIntent({ symbol: cleanSym, side: "ENTRY", action: "CLEAR_ENTRY", plan_id: planId, price: null });
+                    onQuickTradeIntent({ symbol: cleanSym, side: "TP", action: "CLEAR_TP", plan_id: planId, price: null });
+                    onQuickTradeIntent({ symbol: cleanSym, side: "SL", action: "CLEAR_SL", plan_id: planId, price: null });
+                  }
                   setSelectedObjectId((prev) => (prev === a.id ? null : prev));
                 }}
                 style={{
@@ -1944,12 +2038,6 @@ export default function SymbolChart({
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>SL
                     <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={(v)=>updateSelectedField("slPrice", v)} min={0} max={200000} step={1} placeholder="sl" />
-                  </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Visible
-                    <select value={selectedObject.visible === false ? "no" : "yes"} onChange={(e)=>updateSelectedField("visible", e.target.value === "yes") }>
-                      <option value="yes">yes</option>
-                      <option value="no">no</option>
-                    </select>
                   </label>
                 </>
               ) : (
