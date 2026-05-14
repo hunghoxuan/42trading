@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-14 18:30 UTC`
-- note: `Deploy TP/symbol-scope/selection-sync hotfix for ChartSnapshots trade plans.`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: `Set lock_status=LOCKED before deploy; release after verification.`
 
 ## Required Entry Template
 
@@ -47,6 +47,23 @@ Copy and fill:
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
+### [2026-05-14 19:02 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 40ec7169
+- scope: `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/components/charts/SymbolChart.jsx`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (40ec7169)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.14 18:58 - 39df8d4c
+  - ea_version: v2026.05.14 18:58 - 39df8d4c
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.14 18:58 - 39df8d4c`
+  - /ui asset: `/assets/index-LPr2N_Ht.js`
+  - key endpoint: `GET /v2/chart/snapshots?limit=2 -> 401 AUTH_REQUIRED` (expected without auth)
+- handoff_next: none
 
 # Handoff — 2026-05-08
 
