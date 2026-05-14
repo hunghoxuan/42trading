@@ -581,14 +581,8 @@ export default function SymbolChart({
     const incoming = String(selectedTradePlanGroup || "").toUpperCase();
     if (!incoming) return;
     const sameIncoming = lastIncomingPlanGroupRef.current === incoming;
-    // Do not override manual selection (e.g. LINE/ZONE) unless top plan actually changed.
-    if (
-      sameIncoming &&
-      selectedObject &&
-      selectedObject.kind !== "tradeplan"
-    ) {
-      return;
-    }
+    // Prevent selection ping-pong: only sync when parent group actually changes.
+    if (sameIncoming) return;
     lastIncomingPlanGroupRef.current = incoming;
     if (incoming !== activePlanGroup) setActivePlanGroup(incoming);
     const target = (annotations || []).find(
@@ -604,7 +598,6 @@ export default function SymbolChart({
     hasAnalysis,
     annotations,
     selectedObjectId,
-    selectedObject,
     activePlanGroup,
   ]);
   const updateSelectedObject = useCallback((patch) => {

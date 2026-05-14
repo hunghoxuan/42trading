@@ -81,12 +81,23 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function choosePrimaryTpAndRr(p = {}) {
+function normalizePlanSymbol(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function choosePrimaryTpAndRr(p = {}, ctx = {}) {
   const toCandidate = (price, rr = null, source = "") => ({
     price: parseNumLoose(price),
     rr: parseNumLoose(rr),
     source,
   });
+  const entry = parseNumLoose(ctx?.entry ?? p?.entry ?? p?.entry_price);
+  const direction = String(ctx?.direction || p?.direction || "").toUpperCase();
+  const isBuy = direction === "BUY";
+  const isSell = direction === "SELL";
   const candidates = [
     toCandidate(p?.tp, p?.rr ?? p?.risk_reward, "tp"),
     toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
@@ -105,7 +116,15 @@ function choosePrimaryTpAndRr(p = {}) {
     ),
   ];
 
-  const selected = candidates.find((c) => c.price != null && c.price !== 0) || null;
+  const selected =
+    candidates.find((c) => {
+      if (c.price == null || c.price === 0) return false;
+      if (Number.isFinite(entry)) {
+        if (isBuy && c.price <= entry) return false;
+        if (isSell && c.price >= entry) return false;
+      }
+      return true;
+    }) || null;
   return {
     tp: selected ? String(selected.price) : "",
     rr: selected && selected.rr != null ? String(selected.rr) : "",
@@ -117,7 +136,10 @@ function normalizeRawPlan(p = {}) {
   const direction = side.includes("SELL") ? "SELL" : "BUY";
   const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
   const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
-  const chosen = choosePrimaryTpAndRr(p);
+  const chosen = choosePrimaryTpAndRr(p, {
+    entry: entry,
+    direction,
+  });
   const tpNum = parseNumLoose(chosen.tp);
   const rrRaw = parseNumLoose(p?.rr ?? p?.risk_reward);
   const rrFromChosen = parseNumLoose(chosen.rr);
@@ -745,9 +767,16 @@ export default function SignalDetailCard({
     }
     return [];
   }, [rawSource]);
+  const activeSymbol = normalizePlanSymbol(
+    chart?.symbol || response?.symbol || tradePlan?.value?.symbol || "",
+  );
   const responsePlans =
     Array.isArray(response?.tradePlans) && response.tradePlans.length
-      ? response.tradePlans
+      ? response.tradePlans.filter((p) => {
+          if (!activeSymbol) return true;
+          const sym = normalizePlanSymbol(p?.symbol || "");
+          return !sym || sym === activeSymbol;
+        })
       : [];
   const hasMeaningfulResponsePlans = responsePlans.some((p) =>
     planLooksMeaningful(p || {}),

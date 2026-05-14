@@ -558,6 +558,18 @@ function getPlanTpCandidates(plan = {}) {
 }
 
 function getPlanPrimaryTp(plan = {}) {
+  const entry = parseNum(plan?.entry ?? plan?.entry_price);
+  const direction = String(plan?.direction || "").trim().toUpperCase();
+  const isBuy = direction === "BUY";
+  const isSell = direction === "SELL";
+  const isValidTp = (n) => {
+    if (!Number.isFinite(n)) return false;
+    if (Number.isFinite(entry)) {
+      if (isBuy && n <= entry) return false;
+      if (isSell && n >= entry) return false;
+    }
+    return true;
+  };
   const primaryCandidates = [
     plan?.breakeven_trigger,
     Array.isArray(plan?.partial_tps) && plan.partial_tps[0]
@@ -580,14 +592,14 @@ function getPlanPrimaryTp(plan = {}) {
     const value =
       candidate && typeof candidate === "object" ? candidate.price : candidate;
     const n = parseNum(value);
-    if (Number.isFinite(n)) return n;
+    if (isValidTp(n)) return n;
   }
   // Fallback: choose first valid TP-like value from any available list.
   for (const candidate of getPlanTpCandidates(plan)) {
     const n = parseNum(
       candidate && typeof candidate === "object" ? candidate.price : candidate,
     );
-    if (Number.isFinite(n)) return n;
+    if (isValidTp(n)) return n;
   }
   return NaN;
 }

@@ -2,12 +2,21 @@
 
 Use this section for parallel-agent safety and deploy ordering.
 
+## Refresh Context Checklist (All Agents)
+
+- Read in order:
+  1. `AI.md`
+  2. `.agents/BOOTSTRAP.md`
+  3. `.agents/rules/deploy.md` (especially: "Multi-Agent Commit/Merge/Deploy SOP")
+  4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
+- If deploying, acquire lock first. No lock = no deploy.
+
 ## Current Deploy Lock
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: ``
-- note: `Set lock_status=LOCKED before deploy; release after verification.`
+- lock_status: `LOCKED`
+- deploy_owner: `codex-gpt5`
+- since_utc: `2026-05-14 18:30 UTC`
+- note: `Deploy TP/symbol-scope/selection-sync hotfix for ChartSnapshots trade plans.`
 
 ## Required Entry Template
 
@@ -263,4 +272,3 @@ Copy and fill:
 - Dashboard grid: removed 20% sidebar column
 - Removed Direction and Chart TF filters
 - **User reports not seeing changes** — verify `body{margin:0}` in `/opt/trading/web-ui/dist/assets/index-*.css`
-
