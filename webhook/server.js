@@ -9722,7 +9722,7 @@ async function _mt5InitBackendInternal() {
       const res = await pool.query(
         `
         UPDATE signals
-        SET status = 'CANCEL', updated_at = NOW()
+        SET status = 'CANCEL'
         WHERE sid = ANY($1::text[])
            OR sid = ANY($1::text[])
            OR id = ANY($2::bigint[])
