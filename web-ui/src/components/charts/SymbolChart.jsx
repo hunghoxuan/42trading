@@ -601,6 +601,9 @@ export default function SymbolChart({
           price: Number.isFinite(Number(next)) ? Number(next) : null,
         });
       } else if (field === "direction") {
+        updateSelectedObject({
+          color: String(next || "BUY").toUpperCase() === "SELL" ? "#ef4444" : "#10b981",
+        });
         const entryNow = Number(current.entryPrice);
         if (Number.isFinite(entryNow)) {
           onQuickTradeIntent({
@@ -1003,8 +1006,24 @@ export default function SymbolChart({
             .filter((x) => x.kind === "tradeplan")
             .map((x) => Number(String(x.plan_id || "").replace(/^P/i, "")))
             .filter((n) => Number.isFinite(n) && n > 0);
-          const nextPlanNum = existingPlanNums.length ? Math.max(...existingPlanNums) + 1 : 1;
-          const nextPlanId = `P${nextPlanNum}`;
+          const supportedPlanCount = Math.max(
+            1,
+            Math.min(
+              2,
+              Array.isArray(analysisSnapshot?.trade_plan)
+                ? analysisSnapshot.trade_plan.length
+                : 2,
+            ),
+          );
+          const firstMissing = Array.from({ length: supportedPlanCount }, (_, i) => i + 1)
+            .find((n) => !existingPlanNums.includes(n));
+          const activeNum = Number(String(activePlanGroup || "P1").replace(/^P/i, ""));
+          const targetNum = Number.isFinite(firstMissing)
+            ? firstMissing
+            : (Number.isFinite(activeNum) && activeNum >= 1 && activeNum <= supportedPlanCount
+              ? activeNum
+              : 1);
+          const nextPlanId = `P${targetNum}`;
           const tpNum = Number(tpPrice);
           const slNum = Number(slPrice);
           const planObjectId = `tradeplan_${nextPlanId}`;

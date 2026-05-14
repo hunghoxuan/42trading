@@ -1601,6 +1601,8 @@ export default function SignalDetailCard({
                       : [],
             }}
             hasTradePlan={Boolean(
+              (Array.isArray(response?.tradePlans) && response.tradePlans.length > 0) ||
+              (Array.isArray(rawData?.trade_plan) && rawData.trade_plan.length > 0) ||
               tradePlan?.value?.entry ||
               tradePlan?.value?.tp ||
               tradePlan?.value?.sl,
@@ -1623,7 +1625,13 @@ export default function SignalDetailCard({
               const action = String(intent?.action || "ENTRY").toUpperCase();
               const price = Number(intent?.price);
               const requestedPlan = String(intent?.plan_id || "P1").toUpperCase();
-              const planId = requestedPlan === "P2" ? "suggested_1" : "main";
+              const requestedPlanNum = Number(
+                String(requestedPlan).replace(/^P/i, ""),
+              );
+              const planIndex = Number.isFinite(requestedPlanNum) && requestedPlanNum > 0
+                ? requestedPlanNum - 1
+                : 0;
+              const planId = planIndex <= 0 ? "main" : `suggested_${planIndex}`;
               const applyToPlan = (field, value) => {
                 if (planId === "main") {
                   tradePlan?.onChange?.(field, value);
@@ -1633,9 +1641,12 @@ export default function SignalDetailCard({
                   ...prev,
                   [planId]: applyLinkedPlanChange(
                     prev?.[planId] ||
-                      plans?.[1] || {
+                      plans?.[planIndex] || {
                         ...(tradePlan?.value || plans?.[0] || {}),
-                        direction: requestedPlan === "P2" ? "SELL" : String(side || "BUY").toUpperCase(),
+                        direction:
+                          planIndex === 1
+                            ? "SELL"
+                            : String(side || "BUY").toUpperCase(),
                         entry: "",
                         tp: "",
                         sl: "",
