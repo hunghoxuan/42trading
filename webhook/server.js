@@ -20712,9 +20712,6 @@ const appHandler = async (req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/v2/broker/ack") {
-    console.log(
-      `[v2/broker/ack] ENTER mt5Enabled=${CFG.mt5Enabled} v2Enabled=${CFG.mt5V2BrokerApiEnabled}`,
-    );
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
@@ -20728,9 +20725,6 @@ const appHandler = async (req, res) => {
       if (!account) return;
       const tradeId = String(payload.trade_id || "").trim();
       const leaseToken = String(payload.lease_token || "").trim();
-      console.log(
-        `[v2/broker/ack] trade=${tradeId} lease=${leaseToken.slice(0, 8)}... exec=${payload.execution_status} release=${payload.release_only || false}`,
-      );
       if (!tradeId || !leaseToken) {
         return json(res, 400, {
           ok: false,
