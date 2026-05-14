@@ -1254,16 +1254,9 @@ export default function TradesPage() {
                           className={isSelected ? "active" : ""}
                           onClick={() => {
                             const k = tradeKeyOf(t);
-                            if (tradeKeyOf(selectedTrade) === k) {
-                              // Deselect — back to list
-                              setSelectedTrade(null);
-                              selectedTradeIdRef.current = "";
-                              navigate("/trades", { replace: true });
-                            } else {
-                              selectedTradeIdRef.current = k;
-                              setSelectedTrade(t);
-                              navigate(`/trades/${k}`, { replace: true });
-                            }
+                            selectedTradeIdRef.current = k;
+                            setSelectedTrade(t);
+                            navigate(`/trades/${k}`, { replace: true });
                           }}
                         >
                           <td onClick={(e) => e.stopPropagation()}>
@@ -1632,9 +1625,10 @@ export default function TradesPage() {
                     interval:
                       selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
                     live: true,
-                    entryPrice: asNum(selectedTrade.entry),
-                    slPrice: asNum(selectedTrade.sl),
-                    tpPrice: asNum(selectedTrade.tp),
+                    entryPrice:
+                      asNum(detailPlan.entry) ?? asNum(selectedTrade.entry),
+                    slPrice: asNum(detailPlan.sl) ?? asNum(selectedTrade.sl),
+                    tpPrice: asNum(detailPlan.tp) ?? asNum(selectedTrade.tp),
                     openedAt: selectedTrade.opened_at,
                     closedAt: selectedTrade.closed_at,
                     createdAt: selectedTrade.created_at,

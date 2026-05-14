@@ -479,9 +479,30 @@ export function extractTradePlanFromTrade(trade = {}) {
   const sideRaw = String(
     trade.action || trade.side || meta.direction || plan?.direction || "",
   ).toUpperCase();
-  const entry = asNum(trade.entry);
-  const tp = asNum(trade.tp);
-  const sl = asNum(trade.sl);
+  const entry =
+    asNum(trade.entry) ??
+    asNum(trade.target_price) ??
+    asNum(trade.entry_price) ??
+    asNum(meta?.broker_data?.entry) ??
+    asNum(raw?.entry) ??
+    asNum(raw?.entry_price) ??
+    asNum(plan?.entry) ??
+    asNum(plan?.entry_price);
+  const tp =
+    asNum(trade.tp) ??
+    asNum(meta?.broker_data?.tp) ??
+    planPrimaryTp(plan) ??
+    asNum(raw?.tp) ??
+    asNum(raw?.take_profit) ??
+    asNum(plan?.tp) ??
+    asNum(plan?.take_profit);
+  const sl =
+    asNum(trade.sl) ??
+    asNum(meta?.broker_data?.sl) ??
+    asNum(raw?.sl) ??
+    asNum(raw?.stop_loss) ??
+    asNum(plan?.sl) ??
+    asNum(plan?.stop_loss);
   const rr = asNum(trade.rr_planned) ?? calcRrFromSignal(trade);
 
   return {

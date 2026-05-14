@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: ``
-- note: `Set lock_status=LOCKED before deploy; release after verification.`
+- lock_status: `LOCKED`
+- deploy_owner: `codex-gpt5`
+- since_utc: `2026-05-14 19:32 UTC`
+- note: `Deploy Trades detail fallback + full-mode trade route + info-tab enrichment fix.`
 
 ## Required Entry Template
 

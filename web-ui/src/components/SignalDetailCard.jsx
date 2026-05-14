@@ -1428,6 +1428,70 @@ export default function SignalDetailCard({
 
           return (
             <div style={{ padding: "10px 4px" }}>
+              {mode === "trade" && Array.isArray(metaItems) && metaItems.length > 0 && (
+                <div style={{ marginBottom: 24 }}>
+                  <div
+                    className="minor-text"
+                    style={{
+                      marginBottom: 10,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                    }}
+                  >
+                    Trade Info
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: "14px 24px",
+                    }}
+                  >
+                    {metaItems
+                      .filter((item) => {
+                        if (!item || typeof item !== "object") return false;
+                        const label = String(item.label || "");
+                        if (!label) return false;
+                        if (
+                          label === "Metadata" ||
+                          label === "Raw Metadata" ||
+                          label === "Raw JSON"
+                        ) {
+                          return false;
+                        }
+                        const val = item.value;
+                        return val !== null && val !== undefined && String(val) !== "";
+                      })
+                      .map((item, idx) => (
+                        <div
+                          key={`trade-info-${idx}-${String(item.label)}`}
+                          style={{
+                            gridColumn: item.fullWidth ? "1 / -1" : "auto",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                          }}
+                        >
+                          <span className="minor-text">{item.label}</span>
+                          <div
+                            style={{
+                              fontSize: "13px",
+                              color: "var(--foreground)",
+                              fontWeight: 500,
+                              lineHeight: 1.5,
+                              ...(item.valueStyle || {}),
+                            }}
+                          >
+                            {typeof item.value === "object"
+                              ? JSON.stringify(item.value)
+                              : String(item.value)}
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+
               {/* Bias & Trend Cards */}
               {compactTfs.length > 0 && (
                 <div style={{ marginBottom: 24 }}>
