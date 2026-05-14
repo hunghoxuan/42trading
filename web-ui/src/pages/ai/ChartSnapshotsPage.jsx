@@ -2275,6 +2275,33 @@ function validatePosition(pos = {}) {
   return "";
 }
 
+function buildDefaultPosition(seedEntry = null) {
+  const entryNum = Number(seedEntry);
+  if (Number.isFinite(entryNum) && entryNum > 0) {
+    const slNum = entryNum * 0.995;
+    const tpNum = entryNum * 1.01;
+    const rrNum = Math.abs(tpNum - entryNum) / Math.abs(entryNum - slNum);
+    return {
+      direction: "BUY",
+      entry: formatNum3(entryNum),
+      tp: formatNum3(tpNum),
+      sl: formatNum3(slNum),
+      rr: Number.isFinite(rrNum) ? formatNum3(rrNum) : "2",
+      trade_type: "limit",
+      note: "",
+    };
+  }
+  return {
+    direction: "BUY",
+    entry: "0",
+    tp: "0",
+    sl: "0",
+    rr: "",
+    trade_type: "limit",
+    note: "",
+  };
+}
+
 export default function ChartSnapshotsPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -2369,15 +2396,7 @@ export default function ChartSnapshotsPage() {
   const [autoSaveResult, setAutoSaveResult] = useState(null);
   const [manualAddedMode, setManualAddedMode] = useState("");
   const [addedEntities, setAddedEntities] = useState({});
-  const [position, setPosition] = useState({
-    direction: "BUY",
-    entry: "",
-    tp: "",
-    sl: "",
-    rr: "",
-    trade_type: "limit",
-    note: "",
-  });
+  const [position, setPosition] = useState(buildDefaultPosition(null));
   const [barsCache, setBarsCache] = useState({});
   const [selectedPlanIdx, setSelectedPlanIdx] = useState(0);
   const [planEdits, setPlanEdits] = useState({});
@@ -2549,15 +2568,7 @@ export default function ChartSnapshotsPage() {
     setAnalysisRaw("");
     setAnalysisJson("");
     setAnalysisParsed(null);
-    setPosition({
-      direction: "BUY",
-      entry: "",
-      tp: "",
-      sl: "",
-      rr: "",
-      trade_type: "limit",
-      note: "",
-    });
+    setPosition(buildDefaultPosition(defaultSeedEntry));
     setResponseTab("chart");
     setUsedFiles([]);
     setAnalysisFilesDisplay([]);
@@ -2579,7 +2590,7 @@ export default function ChartSnapshotsPage() {
         setAnalysisFilesDisplay(p.displayFiles);
       setResponseTab("chart");
     }
-  }, [cfg.symbol]);
+  }, [cfg.symbol, defaultSeedEntry]);
   const [selectedEntryTf, setSelectedEntryTf] = useState("");
   const timeframe = useMemo(() => {
     const raw = selectedEntryTf || "";
@@ -2637,6 +2648,12 @@ export default function ChartSnapshotsPage() {
     [normalizedSymbolForBars, timeframe, cfg.lookbackBars],
   );
   const currentBarsSnapshot = barsCache[currentBarsKey] || null;
+  const defaultSeedEntry = useMemo(() => {
+    const bars = normalizeSnapshotBars(currentBarsSnapshot, timeframe);
+    const last = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+    const c = Number(last?.close);
+    return Number.isFinite(c) && c > 0 ? c : null;
+  }, [currentBarsSnapshot, timeframe]);
   const contextByTf = useMemo(() => {
     const map = new Map();
     const rows = Array.isArray(aiContext?.timeframes)
@@ -2738,6 +2755,10 @@ export default function ChartSnapshotsPage() {
     position.direction,
     cfg.symbol,
   ]);
+  const hasPositionInput = useMemo(() => {
+    const fields = [position.entry, position.tp, position.sl];
+    return fields.some((v) => String(v ?? "").trim() !== "");
+  }, [position.entry, position.tp, position.sl]);
   const autoSavedSignal =
     autoSaveResult?.enabled === true &&
     autoSaveResult?.saved === true &&
@@ -2811,15 +2832,7 @@ export default function ChartSnapshotsPage() {
       setPosition(extractPositionFromAnalysis(effectiveParsed));
       return;
     }
-    setPosition({
-      direction: "BUY",
-      entry: "",
-      tp: "",
-      sl: "",
-      rr: "",
-      trade_type: "limit",
-      note: "",
-    });
+    setPosition(buildDefaultPosition(defaultSeedEntry));
   };
   const setProfilePreset = (profileKey) => {
     const key = String(profileKey || "")
@@ -6283,7 +6296,10 @@ export default function ChartSnapshotsPage() {
                 },
                 submittingPlanId: submittingPlanId,
                 disabled: false,
-                error: !canAddSignal ? validatePosition(position) : "",
+                error:
+                  !canAddSignal && (hasPositionInput || hasAnalyzeResponse)
+                    ? validatePosition(position)
+                    : "",
                 successMessage:
                   actionStatus.action === "add" &&
                   actionStatus.text &&
