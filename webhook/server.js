@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 16:00 - fix-cancel-modify-close",
-); // cTrader: CANCEL/MODIFY/CLOSE task handling; /v2/broker/pull includes type+ticket; pullLeasedTradesV2 picks PENDING_*
+  "v2026.05.14 16:30 - fix-executor-type-filter",
+); // /v2/broker/pull task_type filter; ackTradeV2 release_only; paper executor only pulls OPEN tasks
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7155,7 +7155,12 @@ async function _mt5InitBackendInternal() {
         client.release();
       }
     },
-    async pullLeasedTradesV2(accountId, maxItems = 1, leaseSeconds = 30) {
+    async pullLeasedTradesV2(
+      accountId,
+      maxItems = 1,
+      leaseSeconds = 30,
+      taskTypeFilter = null,
+    ) {
       const aid = String(accountId || "").trim();
       const leaseSec = Math.max(5, Math.min(300, Number(leaseSeconds) || 30));
       if (!aid) return [];
@@ -7171,12 +7176,26 @@ async function _mt5InitBackendInternal() {
               OR dispatch_status = 'NEW'
               OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW())
             )
+            AND (
+              $3::text IS NULL
+              OR ($3 = 'OPEN' AND execution_status NOT IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL'))
+              OR ($3 <> 'OPEN' AND execution_status = CASE $3
+                    WHEN 'MODIFY' THEN 'PENDING_MOD'
+                    WHEN 'CLOSE' THEN 'PENDING_CLOSE'
+                    WHEN 'CANCEL' THEN 'PENDING_CANCEL'
+                    ELSE execution_status
+                  END)
+            )
           ORDER BY
             CASE WHEN execution_status IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL') THEN 0 ELSE 1 END ASC,
             created_at ASC
           LIMIT $2 FOR UPDATE SKIP LOCKED
         `,
-          [aid, Math.max(1, Math.min(100, Number(maxItems) || 1))],
+          [
+            aid,
+            Math.max(1, Math.min(100, Number(maxItems) || 1)),
+            taskTypeFilter || null,
+          ],
         );
         const out = [];
         for (const row of sel.rows || []) {
@@ -7263,7 +7282,7 @@ async function _mt5InitBackendInternal() {
       const res = await pool.query(
         `
          UPDATE trades
-         SET dispatch_status = 'CONSUMED',
+         SET dispatch_status = CASE WHEN $14 = TRUE THEN 'NEW' ELSE 'CONSUMED' END,
              execution_status = $1,
              broker_trade_id = $2,
              entry_exec = $3,
@@ -7293,6 +7312,7 @@ async function _mt5InitBackendInternal() {
           usedVolume,
           JSON.stringify(telemetryMeta),
           payload.order_type || null,
+          payload.release_only === true,
         ],
       );
       if (res.rowCount > 0) {
@@ -12319,10 +12339,16 @@ async function mt5PullLeasedTradesV2(
   accountId,
   maxItems = 1,
   leaseSeconds = 30,
+  taskTypeFilter = null,
 ) {
   const b = await mt5Backend();
   if (!b.pullLeasedTradesV2) return [];
-  return b.pullLeasedTradesV2(accountId, maxItems, leaseSeconds);
+  return b.pullLeasedTradesV2(
+    accountId,
+    maxItems,
+    leaseSeconds,
+    taskTypeFilter,
+  );
 }
 
 async function mt5AckTradeV2(accountId, payload) {
@@ -20631,10 +20657,13 @@ const appHandler = async (req, res) => {
           Number.isFinite(CFG.mt5V2LeaseSeconds) ? CFG.mt5V2LeaseSeconds : 30,
         ),
       );
+      const taskTypeFilter =
+        payload?.task_type || url.searchParams.get("task_type") || "";
       const items = await mt5PullLeasedTradesV2(
         account.account_id,
         maxItems,
         leaseSeconds,
+        String(taskTypeFilter).trim() || null,
       );
       const resp = {
         ok: true,

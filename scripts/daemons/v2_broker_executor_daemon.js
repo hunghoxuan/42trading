@@ -13,10 +13,15 @@
  * by a real broker adapter later without changing the VPS queue contract.
  */
 
-const BASE_URL = String(process.env.V2_BROKER_BASE_URL || "https://127.0.0.1").replace(/\/+$/, "");
+const BASE_URL = String(
+  process.env.V2_BROKER_BASE_URL || "https://127.0.0.1",
+).replace(/\/+$/, "");
 const API_KEY = String(process.env.V2_BROKER_ACCOUNT_API_KEY || "");
 const POLL_MS = Math.max(500, Number(process.env.V2_BROKER_POLL_MS || 2000));
-const MAX_ITEMS = Math.max(1, Math.min(20, Number(process.env.V2_BROKER_PULL_MAX_ITEMS || 1)));
+const MAX_ITEMS = Math.max(
+  1,
+  Math.min(20, Number(process.env.V2_BROKER_PULL_MAX_ITEMS || 1)),
+);
 const TAG = "v2-broker-executor";
 
 if (!API_KEY) {
@@ -29,7 +34,9 @@ function sleep(ms) {
 }
 
 function normOrderType(v) {
-  const t = String(v || "").trim().toLowerCase();
+  const t = String(v || "")
+    .trim()
+    .toLowerCase();
   if (!t) return "market";
   if (t === "buy_limit" || t === "sell_limit") return "limit";
   if (t === "buy_stop" || t === "sell_stop") return "stop";
@@ -74,6 +81,22 @@ async function processTrade(item) {
   const leaseToken = String(item?.lease_token || "");
   if (!tradeId || !leaseToken) return false;
 
+  // Only handle OPEN (new trade) tasks. CANCEL/MODIFY/CLOSE must go to real broker (EA/cTrader).
+  const taskType = String(item?.type || "").toUpperCase();
+  if (taskType && taskType !== "OPEN") {
+    // Release lease immediately so real broker can pick it up
+    console.log(
+      `[${TAG}] release type=${taskType} trade=${tradeId} — deferring to real broker`,
+    );
+    await postJson("/v2/broker/ack", {
+      trade_id: tradeId,
+      lease_token: leaseToken,
+      execution_status: item?.execution_status || "PENDING",
+      release_only: true,
+    });
+    return false;
+  }
+
   const orderType = normOrderType(item?.order_type);
   const executionStatus = statusForOrderType(orderType);
   const ticket = makeTicket();
@@ -82,7 +105,9 @@ async function processTrade(item) {
     lease_token: leaseToken,
     execution_status: executionStatus,
     broker_trade_id: ticket,
-    entry_exec: Number.isFinite(Number(item?.entry)) ? Number(item.entry) : null,
+    entry_exec: Number.isFinite(Number(item?.entry))
+      ? Number(item.entry)
+      : null,
     event_type: "EXECUTOR_ACK",
     idempotency_key: `${tradeId}:${leaseToken}`,
     payload_json: {
@@ -96,16 +121,21 @@ async function processTrade(item) {
 
   const out = await postJson("/v2/broker/ack", ackPayload);
   console.log(
-    `[${TAG}] ack ok trade=${tradeId} status=${executionStatus} ticket=${ticket} resp=${JSON.stringify({
-      dispatch_status: out?.dispatch_status,
-      execution_status: out?.execution_status,
-    })}`,
+    `[${TAG}] ack ok trade=${tradeId} status=${executionStatus} ticket=${ticket} resp=${JSON.stringify(
+      {
+        dispatch_status: out?.dispatch_status,
+        execution_status: out?.execution_status,
+      },
+    )}`,
   );
   return true;
 }
 
 async function once() {
-  const out = await postJson("/v2/broker/pull", { max_items: MAX_ITEMS });
+  const out = await postJson("/v2/broker/pull", {
+    max_items: MAX_ITEMS,
+    task_type: "OPEN",
+  });
   const items = Array.isArray(out?.items) ? out.items : [];
   if (items.length === 0) return 0;
   let processed = 0;
@@ -114,14 +144,18 @@ async function once() {
       const ok = await processTrade(item);
       if (ok) processed += 1;
     } catch (error) {
-      console.error(`[${TAG}] trade failed id=${item?.trade_id || "-"} err=${error?.message || error}`);
+      console.error(
+        `[${TAG}] trade failed id=${item?.trade_id || "-"} err=${error?.message || error}`,
+      );
     }
   }
   return processed;
 }
 
 async function main() {
-  console.log(`[${TAG}] starting base=${BASE_URL} poll_ms=${POLL_MS} max_items=${MAX_ITEMS}`);
+  console.log(
+    `[${TAG}] starting base=${BASE_URL} poll_ms=${POLL_MS} max_items=${MAX_ITEMS}`,
+  );
   while (true) {
     try {
       await once();
@@ -136,4 +170,3 @@ main().catch((error) => {
   console.error(`[${TAG}] fatal: ${error?.message || error}`);
   process.exit(1);
 });
-
