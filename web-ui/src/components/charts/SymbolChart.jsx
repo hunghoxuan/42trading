@@ -1006,23 +1006,19 @@ export default function SymbolChart({
             .filter((x) => x.kind === "tradeplan")
             .map((x) => Number(String(x.plan_id || "").replace(/^P/i, "")))
             .filter((n) => Number.isFinite(n) && n > 0);
-          const supportedPlanCount = Math.max(
-            1,
-            Math.min(
-              2,
-              Array.isArray(analysisSnapshot?.trade_plan)
-                ? analysisSnapshot.trade_plan.length
-                : 2,
-            ),
-          );
-          const firstMissing = Array.from({ length: supportedPlanCount }, (_, i) => i + 1)
+          const existingMax = existingPlanNums.length ? Math.max(...existingPlanNums) : 0;
+          const analysisCount = Array.isArray(analysisSnapshot?.trade_plan)
+            ? analysisSnapshot.trade_plan.length
+            : 0;
+          const searchCount = Math.max(analysisCount, existingMax + 1, 2);
+          const firstMissing = Array.from({ length: searchCount }, (_, i) => i + 1)
             .find((n) => !existingPlanNums.includes(n));
           const activeNum = Number(String(activePlanGroup || "P1").replace(/^P/i, ""));
           const targetNum = Number.isFinite(firstMissing)
             ? firstMissing
-            : (Number.isFinite(activeNum) && activeNum >= 1 && activeNum <= supportedPlanCount
+            : (Number.isFinite(activeNum) && activeNum >= 1
               ? activeNum
-              : 1);
+              : existingMax + 1);
           const nextPlanId = `P${targetNum}`;
           const tpNum = Number(tpPrice);
           const slNum = Number(slPrice);
