@@ -433,6 +433,7 @@ export default function SymbolChart({
   const [drawMode, setDrawMode] = useState(null);
   const dragRef = useRef(null);
   const parentDrivenSelectionRef = useRef(null);
+  const lastIncomingPlanGroupRef = useRef(null);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
@@ -566,6 +567,16 @@ export default function SymbolChart({
     if (!(hasTradePlan && hasAnalysis)) return;
     const incoming = String(selectedTradePlanGroup || "").toUpperCase();
     if (!incoming) return;
+    const sameIncoming = lastIncomingPlanGroupRef.current === incoming;
+    // Do not override manual selection (e.g. LINE/ZONE) unless top plan actually changed.
+    if (
+      sameIncoming &&
+      selectedObject &&
+      selectedObject.kind !== "tradeplan"
+    ) {
+      return;
+    }
+    lastIncomingPlanGroupRef.current = incoming;
     if (incoming !== activePlanGroup) setActivePlanGroup(incoming);
     const target = (annotations || []).find(
       (a) => a.kind === "tradeplan" && String(a.plan_id || "P1").toUpperCase() === incoming,
@@ -580,6 +591,7 @@ export default function SymbolChart({
     hasAnalysis,
     annotations,
     selectedObjectId,
+    selectedObject,
     activePlanGroup,
   ]);
   const updateSelectedObject = useCallback((patch) => {
@@ -2030,8 +2042,13 @@ export default function SymbolChart({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                border: `1px solid ${a.visible === false ? "#cbd5e133" : a.color || "var(--border)"}`,
-                color: a.visible === false ? "#cbd5e199" : a.color || "var(--foreground)",
+                border: selectedObjectId === a.id
+                  ? `1px solid ${a.visible === false ? "#94a3b8" : a.color || "#60a5fa"}`
+                  : "1px solid var(--border)",
+                color:
+                  selectedObjectId === a.id
+                    ? (a.visible === false ? "#94a3b8" : a.color || "var(--foreground)")
+                    : "var(--foreground)",
                 borderRadius: 12,
                 padding: "1px 6px",
                 fontSize: 9,

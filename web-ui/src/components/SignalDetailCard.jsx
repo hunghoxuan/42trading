@@ -1724,7 +1724,22 @@ export default function SignalDetailCard({
                 setSelectedPlanId("main");
                 return;
               }
-              setSelectedPlanId(`suggested_${planNum - 1}`);
+              const nextPlanId = `suggested_${planNum - 1}`;
+              setPlanDrafts((prev) => {
+                if (prev?.[nextPlanId]) return prev;
+                const seed = prev?.main || plans?.[0] || tradePlan?.value || {};
+                return {
+                  ...(prev || {}),
+                  [nextPlanId]: {
+                    ...seed,
+                    direction:
+                      planNum === 2
+                        ? "SELL"
+                        : String(seed?.direction || "BUY").toUpperCase(),
+                  },
+                };
+              });
+              setSelectedPlanId(nextPlanId);
             }}
             showEditButton={chart?.showEditButton !== false}
             showTradeButton={chart?.showTradeButton !== false}
