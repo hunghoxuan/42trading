@@ -790,6 +790,11 @@ export default function SignalDetailCard({
     selectedPlanFromList?.__raw_plan ||
     selectedPlanFromList ||
     {};
+  const selectedTradePlanGroup = useMemo(() => {
+    if (selectedPlanId === "main") return "P1";
+    const idx = Number(String(selectedPlanId).replace("suggested_", ""));
+    return Number.isFinite(idx) && idx >= 1 ? `P${idx + 1}` : "P1";
+  }, [selectedPlanId]);
   const selectedPlanSymbol = String(
     selectedPlanRaw?.symbol ||
       selectedPlanFromList?.symbol ||
@@ -1682,6 +1687,15 @@ export default function SignalDetailCard({
                   }
                 }
               }
+            }}
+            selectedTradePlanGroup={selectedTradePlanGroup}
+            onTradePlanGroupChange={(planGroup) => {
+              const planNum = Number(String(planGroup || "").replace(/^P/i, ""));
+              if (!Number.isFinite(planNum) || planNum <= 1) {
+                setSelectedPlanId("main");
+                return;
+              }
+              setSelectedPlanId(`suggested_${planNum - 1}`);
             }}
             showEditButton={chart?.showEditButton !== false}
             showTradeButton={chart?.showTradeButton !== false}

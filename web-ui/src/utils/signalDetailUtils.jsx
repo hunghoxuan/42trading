@@ -165,8 +165,34 @@ export function formatNum3(v) {
   return String(Number(n.toFixed(3)));
 }
 
+export function normalizeTpSlFromEntryDirection(plan = {}) {
+  const entry = asNum(plan.entry);
+  const tp = asNum(plan.tp);
+  const sl = asNum(plan.sl);
+  const side = String(plan.direction || "").toUpperCase();
+  if (entry == null || !["BUY", "SELL"].includes(side)) {
+    return { tp: plan.tp, sl: plan.sl };
+  }
+  const isBuy = side === "BUY";
+  const defaultTp = isBuy ? entry * 1.01 : entry * 0.99;
+  const defaultSl = isBuy ? entry * 0.99 : entry * 1.01;
+  const invalidTp =
+    tp == null || tp === 0 || (isBuy ? tp <= entry : tp >= entry);
+  const invalidSl =
+    sl == null || sl === 0 || (isBuy ? sl >= entry : sl <= entry);
+  return {
+    tp: formatNum3(invalidTp ? defaultTp : tp),
+    sl: formatNum3(invalidSl ? defaultSl : sl),
+  };
+}
+
 export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   const next = { ...(prevPlan || {}), [key]: rawVal };
+  if (key === "entry" || key === "direction") {
+    const normalized = normalizeTpSlFromEntryDirection(next);
+    next.tp = normalized.tp;
+    next.sl = normalized.sl;
+  }
   const entry = asNum(next.entry);
   const sl = asNum(next.sl);
   const tp = asNum(next.tp);

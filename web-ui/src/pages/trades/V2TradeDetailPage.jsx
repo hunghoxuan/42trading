@@ -9,6 +9,7 @@ const SignalDetailCard = lazy(
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import {
   asNum,
+  applyLinkedPlanChange,
   buildHeaderMeta,
   renderHistoryItem,
   extractTradePlanFromTrade,
@@ -124,7 +125,7 @@ export default function TradeDetailPage() {
 
   const applyPlanChange = (key, rawValue) => {
     setDetailPlan((prev) => {
-      const next = { ...prev, [key]: rawValue };
+      const next = applyLinkedPlanChange(prev, key, rawValue);
       const entry = asNum(next.entry);
       const tp = asNum(next.tp);
       const sl = asNum(next.sl);

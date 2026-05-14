@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useSymbolChartData } from "../../hooks/useChartTileData";
 import TradeSignalChart from "../TradeSignalChart";
+import { resolveAdjusterValue, toNumLoose } from "./numberUtils";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
   createLineObject,
@@ -140,14 +141,6 @@ function defaultTpSlFromEntry(entry, direction) {
   };
 }
 
-function toNumLoose(v) {
-  if (v == null) return NaN;
-  const s = String(v).trim();
-  if (!s) return NaN;
-  const n = Number(s.replace(",", "."));
-  return Number.isFinite(n) ? n : NaN;
-}
-
 function NumberAdjuster({
   value,
   onChange,
@@ -156,14 +149,9 @@ function NumberAdjuster({
   step = 1,
   fallbackValue = null,
   placeholder = "",
+  disabled = false,
 }) {
-  const numVal = toNumLoose(value);
-  const fallbackNum = toNumLoose(fallbackValue);
-  const safeVal = Number.isFinite(numVal)
-    ? numVal
-    : Number.isFinite(fallbackNum)
-      ? fallbackNum
-      : 0;
+  const safeVal = resolveAdjusterValue(value, fallbackValue);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <input
@@ -171,6 +159,7 @@ function NumberAdjuster({
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        disabled={disabled}
         style={{ width: 120 }}
       />
       <button
@@ -178,6 +167,7 @@ function NumberAdjuster({
         className="secondary-button"
         style={{ fontSize: 10, width: 22, height: 22, padding: 0, minWidth: 22 }}
         onClick={() => onChange(String(Math.max(min, safeVal - step)))}
+        disabled={disabled}
       >
         -
       </button>
@@ -188,6 +178,7 @@ function NumberAdjuster({
         step={step}
         value={Math.max(min, Math.min(max, safeVal))}
         onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
         style={{ flex: 1, minWidth: 84 }}
       />
       <button
@@ -195,6 +186,7 @@ function NumberAdjuster({
         className="secondary-button"
         style={{ fontSize: 10, width: 22, height: 22, padding: 0, minWidth: 22 }}
         onClick={() => onChange(String(Math.min(max, safeVal + step)))}
+        disabled={disabled}
       >
         +
       </button>
@@ -401,6 +393,8 @@ export default function SymbolChart({
   showTradeButton = true,
   showEditButton = true,
   analyzeLabel = "Analyze",
+  selectedTradePlanGroup = null,
+  onTradePlanGroupChange = null,
 }) {
   const rootRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
@@ -554,6 +548,34 @@ export default function SymbolChart({
     () => (annotations || []).find((a) => a.id === selectedObjectId) || null,
     [annotations, selectedObjectId],
   );
+  useEffect(() => {
+    if (!selectedObject || selectedObject.kind !== "tradeplan") return;
+    const planId = String(selectedObject.plan_id || "P1").toUpperCase();
+    if (activePlanGroup !== planId) setActivePlanGroup(planId);
+    if (typeof onTradePlanGroupChange === "function") {
+      onTradePlanGroupChange(planId);
+    }
+  }, [selectedObject, activePlanGroup, onTradePlanGroupChange]);
+
+  useEffect(() => {
+    if (!(hasTradePlan && hasAnalysis)) return;
+    const incoming = String(selectedTradePlanGroup || "").toUpperCase();
+    if (!incoming) return;
+    if (incoming !== activePlanGroup) setActivePlanGroup(incoming);
+    const target = (annotations || []).find(
+      (a) => a.kind === "tradeplan" && String(a.plan_id || "P1").toUpperCase() === incoming,
+    );
+    if (target?.id && target.id !== selectedObjectId) {
+      setSelectedObjectId(target.id);
+    }
+  }, [
+    selectedTradePlanGroup,
+    hasTradePlan,
+    hasAnalysis,
+    annotations,
+    selectedObjectId,
+    activePlanGroup,
+  ]);
   const updateSelectedObject = useCallback((patch) => {
     if (!selectedObjectId) return;
     setAnnotations((prev) =>
@@ -2046,23 +2068,33 @@ export default function SymbolChart({
             <div style={{ width: "100%", display: "grid", gridTemplateColumns: "repeat(2, minmax(220px, 1fr))", gap: 8 }}>
               {selectedObject.kind === "tradeplan" ? (
                 <>
+                  <div
+                    className="minor-text"
+                    style={{
+                      gridColumn: "1 / -1",
+                      fontSize: 10,
+                      opacity: 0.9,
+                    }}
+                  >
+                    TradePlan values are read-only here. Edit Trade Plan in the top panel.
+                  </div>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Label
-                    <input value={selectedObject.label || ""} onChange={(e)=>updateSelectedField("label", e.target.value)} placeholder="TradePlan label" />
+                    <input value={selectedObject.label || ""} readOnly placeholder="TradePlan label" />
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Direction
-                    <select value={String(selectedObject.direction || "BUY").toUpperCase()} onChange={(e)=>updateSelectedField("direction", e.target.value)}>
+                    <select value={String(selectedObject.direction || "BUY").toUpperCase()} disabled>
                       <option value="BUY">BUY</option>
                       <option value="SELL">SELL</option>
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Entry
-                    <NumberAdjuster value={selectedObject.entryPrice ?? ""} onChange={(v)=>updateSelectedField("entryPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="entry" />
+                    <NumberAdjuster value={selectedObject.entryPrice ?? ""} onChange={() => {}} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="entry" disabled />
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>TP
-                    <NumberAdjuster value={selectedObject.tpPrice ?? ""} onChange={(v)=>updateSelectedField("tpPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="tp" />
+                    <NumberAdjuster value={selectedObject.tpPrice ?? ""} onChange={() => {}} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="tp" disabled />
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>SL
-                    <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={(v)=>updateSelectedField("slPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="sl" />
+                    <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={() => {}} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="sl" disabled />
                   </label>
                 </>
               ) : (
