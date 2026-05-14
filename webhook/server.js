@@ -9060,9 +9060,19 @@ async function _mt5InitBackendInternal() {
       let where = "";
       const params = [limit, offset];
       if (query && validCols.length) {
-        params.push(`%${query}%`);
-        const pIdx = params.length;
-        where = `WHERE ${validCols.map((col) => `"${col}"::text ILIKE $${pIdx}`).join(" OR ")}`;
+        // SID/id columns: prefix match. Other columns: substring match.
+        const idCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const otherCols = validCols.filter((c) => !idCols.includes(c));
+        const clauses = [];
+        if (idCols.length) {
+          params.push(`${query}%`);
+          clauses.push(`(${idCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`);
+        }
+        if (otherCols.length) {
+          params.push(`%${query}%`);
+          clauses.push(`(${otherCols.map((c) => `"${c}"::text ILIKE $${params.length}`).join(" OR ")})`);
+        }
+        where = `WHERE ${clauses.join(" OR ")}`;
       }
       // Validate sort column against schema to prevent SQL injection
       let orderClause = "ORDER BY 1 DESC";
@@ -9076,12 +9086,27 @@ async function _mt5InitBackendInternal() {
         `SELECT * FROM ${table} ${where} ${orderClause} LIMIT $1 OFFSET $2`,
         params,
       );
-      const countWhere = query && validCols.length
-        ? `WHERE ${validCols.map((col) => `"${col}"::text ILIKE $1`).join(" OR ")}`
-        : "";
+      // Count query: reuse main query's where but with $1,$2 params
+      let countWhere = "";
+      if (query && validCols.length) {
+        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const cOtherCols = validCols.filter((c) => !cIdCols.includes(c));
+        const cClauses = [];
+        if (cIdCols.length) cClauses.push(`(${cIdCols.map((c) => `"${c}"::text ILIKE $1`).join(" OR ")})`);
+        if (cOtherCols.length) cClauses.push(`(${cOtherCols.map((c) => `"${c}"::text ILIKE $2`).join(" OR ")})`);
+        countWhere = `WHERE ${cClauses.join(" OR ")}`;
+      }
+      // Count query params: $1=query prefix, $2=query substring (if other cols present)
+      const countParams = [];
+      if (query && validCols.length) {
+        const cIdCols = ["sid", "id", "broker_trade_id"].filter((c) => validCols.includes(c));
+        const cOtherCols = validCols.filter((c) => !cIdCols.includes(c));
+        if (cIdCols.length) countParams.push(`${query}%`);
+        if (cOtherCols.length) countParams.push(`%${query}%`);
+      }
       const totalRes = await pool.query(
         `SELECT COUNT(*) FROM ${table} ${countWhere}`,
-        query ? [params[2]] : [],
+        countParams,
       );
       return { rows: res.rows, total: parseInt(totalRes.rows[0].count) };
     },
