@@ -550,11 +550,9 @@ namespace cAlgo.Robots
             if (!string.IsNullOrEmpty(ticketStr)) long.TryParse(ticketStr, out ticketNum);
 
             if (string.IsNullOrEmpty(id)) return;
-            if (_processedSignalIds.Contains(id)) return;
 
             Print("[Debug] Task Received: type={0} action={1} symbol={2} ticket={3} (ID: {4})", taskType, action, symbolCode, ticketNum, id);
 
-            _processedSignalIds.Add(id);
             UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (PENDING)");
 
             BeginInvokeOnMainThread(() =>
