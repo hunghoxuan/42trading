@@ -9731,8 +9731,7 @@ async function _mt5InitBackendInternal() {
         WHERE sid = ANY($1::text[])
            OR sid = ANY($1::text[])
            OR id = ANY($2::bigint[])
-        AND execution_status <> 'CANCELLED'
-          RETURNING sid
+        RETURNING sid
       `,
         [refs, numericIds],
       );
