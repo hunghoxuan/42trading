@@ -3345,6 +3345,13 @@ export default function ChartSnapshotsPage() {
         );
         if (autoEntity)
           setAddedEntities((prev) => ({ ...prev, main: autoEntity }));
+        if (
+          autoMode === "trades" &&
+          autoEntity?.kind === "trade" &&
+          autoEntity?.id
+        ) {
+          navigate(`/trades/${autoEntity.id}`);
+        }
       }
       setAnalysisRaw(raw);
       let parsed = enrichParsedAnalysis(
@@ -3372,6 +3379,15 @@ export default function ChartSnapshotsPage() {
           );
         }
         setPosition(extractPositionFromAnalysis(parsed));
+        const nextRouteSymbols = (Array.isArray(activeSymbols) && activeSymbols.length
+          ? activeSymbols
+          : [activeSymbol]
+        )
+          .map((x) => normalizeWatchSymbol(x))
+          .filter(Boolean);
+        if (nextRouteSymbols.length && !isTradeRoute) {
+          navigate(buildAiTradeRoute(nextRouteSymbols), { replace: false });
+        }
         if (!cfg.symbol) {
           const nextSymbol = normalizeWatchSymbol(parsed?.symbol || "");
           if (nextSymbol) {

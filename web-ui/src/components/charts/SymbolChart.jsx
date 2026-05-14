@@ -887,31 +887,101 @@ export default function SymbolChart({
       };
       if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
+        // In analyze mode, Buy/Sell should create/manage a full TradePlan set.
+        if (hasTradePlan && hasAnalysis) {
+          const tpNum = Number(tpPrice);
+          const slNum = Number(slPrice);
+          if (Number.isFinite(tpNum)) {
+            onQuickTradeIntent({
+              ...payload,
+              side: "TP",
+              action: "TP",
+              price: tpNum,
+            });
+          }
+          if (Number.isFinite(slNum)) {
+            onQuickTradeIntent({
+              ...payload,
+              side: "SL",
+              action: "SL",
+              price: slNum,
+            });
+          }
+        }
       }
       const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       const isBuy = String(side || "").toUpperCase() === "BUY";
-      setAnnotations((prev) => [
-        ...prev,
-        {
-          ...createLineObject({
-            id,
-            type: isBuy ? "BUY" : "SELL",
-            color: isBuy ? "#10b981" : "#ef4444",
-            yRatio: Number(ctxMenu?.yRatio || 0.5),
-            ctxMenu,
-          }),
-          kind: "line",
-          tf: null,
-          price_top: usePrice,
-          price_bottom: usePrice,
-          price: usePrice,
-          time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
-          line_style: "solid",
-          line_width: 0.1,
-          label: isBuy ? "Buy" : "Sell",
-          bg_color: "transparent",
-        },
-      ]);
+      setAnnotations((prev) => {
+        const next = [
+          ...prev,
+          {
+            ...createLineObject({
+              id,
+              type: isBuy ? "BUY" : "SELL",
+              color: isBuy ? "#10b981" : "#ef4444",
+              yRatio: Number(ctxMenu?.yRatio || 0.5),
+              ctxMenu,
+            }),
+            kind: "line",
+            tf: null,
+            price_top: usePrice,
+            price_bottom: usePrice,
+            price: usePrice,
+            time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+            line_style: "solid",
+            line_width: 0.1,
+            label: isBuy ? "Buy" : "Sell",
+            bg_color: "transparent",
+          },
+        ];
+        if (hasTradePlan && hasAnalysis) {
+          const tpNum = Number(tpPrice);
+          const slNum = Number(slPrice);
+          if (Number.isFinite(tpNum)) {
+            next.push({
+              ...createLineObject({
+                id: `${id}_tp`,
+                type: "TP",
+                color: "#10b981",
+                yRatio: ratioFromAnchorPrice(tpNum, barsRange(activeBars)) ?? Number(ctxMenu?.yRatio || 0.5),
+                ctxMenu,
+              }),
+              kind: "line",
+              tf: null,
+              price_top: tpNum,
+              price_bottom: tpNum,
+              price: tpNum,
+              time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+              line_style: "dot",
+              line_width: 0.1,
+              label: "TP",
+              bg_color: "transparent",
+            });
+          }
+          if (Number.isFinite(slNum)) {
+            next.push({
+              ...createLineObject({
+                id: `${id}_sl`,
+                type: "SL",
+                color: "#ef4444",
+                yRatio: ratioFromAnchorPrice(slNum, barsRange(activeBars)) ?? Number(ctxMenu?.yRatio || 0.5),
+                ctxMenu,
+              }),
+              kind: "line",
+              tf: null,
+              price_top: slNum,
+              price_bottom: slNum,
+              price: slNum,
+              time: Number.isFinite(Number(ctxMenu?.time)) ? Number(ctxMenu?.time) : null,
+              line_style: "dot",
+              line_width: 0.1,
+              label: "SL",
+              bg_color: "transparent",
+            });
+          }
+        }
+        return next;
+      });
       setSelectedObjectId(id);
       try {
         window.dispatchEvent(
@@ -920,7 +990,7 @@ export default function SymbolChart({
       } catch {}
       setCtxMenu(null);
     },
-    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master, activePlanGroup],
+    [ctxMenu, cleanSym, onQuickTradeIntent, hoverInfo, latestCachedPrice, activeChartId, master, activePlanGroup, hasTradePlan, hasAnalysis, tpPrice, slPrice],
   );
 
   const handleQuickLevel = useCallback(
@@ -1687,12 +1757,19 @@ export default function SymbolChart({
           onClick={(e) => e.stopPropagation()}
         >
           {[
-            { label: "Line", color: "#60a5fa", fn: handleDrawLine },
-            { label: "Zone", color: "#22c55e", fn: () => addObject("ZONE", "#22c55e", "zone") },
-            { label: "TP", fn: () => handleQuickLevel("TP") },
-            { label: "SL", fn: () => handleQuickLevel("SL") },
-            { label: "Buy", fn: () => handleQuickTrade("BUY") },
-            { label: "Sell", fn: () => handleQuickTrade("SELL") },
+            ...(hasTradePlan && hasAnalysis
+              ? [
+                  { label: "Buy", fn: () => handleQuickTrade("BUY") },
+                  { label: "Sell", fn: () => handleQuickTrade("SELL") },
+                ]
+              : [
+                  { label: "Line", color: "#60a5fa", fn: handleDrawLine },
+                  { label: "Zone", color: "#22c55e", fn: () => addObject("ZONE", "#22c55e", "zone") },
+                  { label: "TP", fn: () => handleQuickLevel("TP") },
+                  { label: "SL", fn: () => handleQuickLevel("SL") },
+                  { label: "Buy", fn: () => handleQuickTrade("BUY") },
+                  { label: "Sell", fn: () => handleQuickTrade("SELL") },
+                ]),
           ].map((it) => (
             <button
               key={it.label}
