@@ -146,8 +146,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 15:30 - fix-trade-cancel-v2",
-); // Fix: cancel sets PENDING_CANCEL for opened trades; brokerSyncV2 protects CANCELLED/PENDING_CANCEL; UI refreshes detail after cancel
+  "v2026.05.14 15:45 - fix-cancel-position-close",
+); // Fix: EA CANCEL handler now does PositionClose for open positions, OrderDelete for pending orders
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

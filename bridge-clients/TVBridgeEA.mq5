@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.14 15:30 - fix-trade-cancel-v2";
+string EA_BUILD_VERSION = "v2026.05.14 15:45 - fix-cancel-position-close";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -2817,9 +2817,16 @@ void OnTimer()
     }
     else if(taskType == "CANCEL") {
        if(ticketNum > 0) {
-          ok = trade.OrderDelete(ticketNum);
-          if(ok) Ack(signalId, "CANCELLED", IntegerToString((int)ticketNum), "cancel_ok");
-          else Ack(signalId, "ERROR", IntegerToString((int)ticketNum), "cancel_fail");
+          // Try position close first (for open positions), then order delete (for pending orders)
+          if(PositionSelectByTicket(ticketNum)) {
+             ok = trade.PositionClose(ticketNum);
+             if(ok) Ack(signalId, "CANCELLED", IntegerToString((int)ticketNum), "cancel_close_ok");
+             else Ack(signalId, "ERROR", IntegerToString((int)ticketNum), "cancel_close_fail");
+          } else {
+             ok = trade.OrderDelete(ticketNum);
+             if(ok) Ack(signalId, "CANCELLED", IntegerToString((int)ticketNum), "cancel_ok");
+             else Ack(signalId, "ERROR", IntegerToString((int)ticketNum), "cancel_fail");
+          }
        }
     }
 
