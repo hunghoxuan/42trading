@@ -81,6 +81,41 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function primaryTpFromPlan(p = {}) {
+  const candidates = [
+    p?.tp,
+    p?.take_profit,
+    p?.tp1,
+    p?.multiple_exits?.full_tp?.price,
+    p?.multiple_exits?.tp3?.price,
+    p?.multiple_exits?.tp2?.price,
+    p?.multiple_exits?.tp1?.price,
+    Array.isArray(p?.partial_tps) ? (p.partial_tps[0]?.price ?? p.partial_tps[0]) : null,
+  ];
+  for (const c of candidates) {
+    const n = parseNumLoose(c);
+    if (n != null) return String(n);
+  }
+  return "";
+}
+
+function normalizeRawPlan(p = {}) {
+  const side = String(p?.direction || p?.action || p?.side || "BUY").toUpperCase();
+  const direction = side.includes("SELL") ? "SELL" : "BUY";
+  const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
+  const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
+  const rr = parseNumLoose(p?.rr ?? p?.risk_reward);
+  return {
+    ...p,
+    direction,
+    entry: entry == null ? "" : String(entry),
+    tp: primaryTpFromPlan(p),
+    sl: sl == null ? "" : String(sl),
+    rr: rr == null ? "" : String(rr),
+    trade_type: String(p?.type || p?.order_type || "limit").toLowerCase(),
+  };
+}
+
 function formatCompactText(value) {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -628,7 +663,34 @@ export default function SignalDetailCard({
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState("main");
   const [planDrafts, setPlanDrafts] = useState({});
-  const plans = response?.tradePlans || [
+  const rawSource =
+    response?.raw || response?.raw_json || response?.metadata || {};
+  const derivedPlansFromRaw = useMemo(() => {
+    if (!rawSource || typeof rawSource !== "object") return [];
+    if (Array.isArray(rawSource.trade_plan) && rawSource.trade_plan.length) {
+      return rawSource.trade_plan.map((p) => normalizeRawPlan(p || {}));
+    }
+    if (rawSource.trade_plan && typeof rawSource.trade_plan === "object") {
+      return [normalizeRawPlan(rawSource.trade_plan)];
+    }
+    if (
+      rawSource.entry_price != null ||
+      rawSource.entry != null ||
+      rawSource.stop_loss != null ||
+      rawSource.sl != null ||
+      rawSource.tp != null ||
+      rawSource.multiple_exits
+    ) {
+      return [normalizeRawPlan(rawSource)];
+    }
+    return [];
+  }, [rawSource]);
+  const plans =
+    Array.isArray(response?.tradePlans) && response.tradePlans.length
+      ? response.tradePlans
+      : derivedPlansFromRaw.length
+        ? derivedPlansFromRaw
+        : [
     {
       direction: tradePlan?.value?.direction,
       entry: tradePlan?.value?.entry,
@@ -810,8 +872,7 @@ export default function SignalDetailCard({
   }, [selectedTfs]);
 
   // Use raw data from multiple possible fields
-  const rawData =
-    response?.raw || response?.raw_json || response?.metadata || {};
+  const rawData = rawSource;
   const schemaVersion = String(
     response?.schemaVersion || rawData?.schema_version || "",
   ).trim();
