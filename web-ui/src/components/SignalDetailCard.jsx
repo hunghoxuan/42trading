@@ -81,22 +81,35 @@ function parseNumLoose(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function primaryTpFromPlan(p = {}) {
+function choosePrimaryTpAndRr(p = {}) {
+  const toCandidate = (price, rr = null, source = "") => ({
+    price: parseNumLoose(price),
+    rr: parseNumLoose(rr),
+    source,
+  });
   const candidates = [
-    p?.tp,
-    p?.take_profit,
-    p?.tp1,
-    p?.multiple_exits?.full_tp?.price,
-    p?.multiple_exits?.tp3?.price,
-    p?.multiple_exits?.tp2?.price,
-    p?.multiple_exits?.tp1?.price,
-    Array.isArray(p?.partial_tps) ? (p.partial_tps[0]?.price ?? p.partial_tps[0]) : null,
+    toCandidate(p?.tp, p?.rr ?? p?.risk_reward, "tp"),
+    toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
+    toCandidate(p?.breakeven_trigger, p?.risk_reward, "breakeven_trigger"),
+    toCandidate(p?.tp1, p?.risk_reward, "tp1"),
+    toCandidate(p?.multiple_exits?.tp1?.price, p?.multiple_exits?.tp1?.risk_reward, "multiple_exits.tp1"),
+    toCandidate(p?.multiple_exits?.tp2?.price, p?.multiple_exits?.tp2?.risk_reward, "multiple_exits.tp2"),
+    toCandidate(p?.multiple_exits?.tp3?.price, p?.multiple_exits?.tp3?.risk_reward, "multiple_exits.tp3"),
+    toCandidate(p?.multiple_exits?.full_tp?.price, p?.multiple_exits?.full_tp?.risk_reward, "multiple_exits.full_tp"),
+    toCandidate(
+      Array.isArray(p?.partial_tps) ? (p.partial_tps[0]?.price ?? p.partial_tps[0]) : null,
+      Array.isArray(p?.partial_tps)
+        ? (p.partial_tps[0]?.risk_reward ?? p.partial_tps[0]?.rr)
+        : null,
+      "partial_tps.0",
+    ),
   ];
-  for (const c of candidates) {
-    const n = parseNumLoose(c);
-    if (n != null) return String(n);
-  }
-  return "";
+
+  const selected = candidates.find((c) => c.price != null && c.price !== 0) || null;
+  return {
+    tp: selected ? String(selected.price) : "",
+    rr: selected && selected.rr != null ? String(selected.rr) : "",
+  };
 }
 
 function normalizeRawPlan(p = {}) {
@@ -104,12 +117,26 @@ function normalizeRawPlan(p = {}) {
   const direction = side.includes("SELL") ? "SELL" : "BUY";
   const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
   const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
-  const rr = parseNumLoose(p?.rr ?? p?.risk_reward);
+  const chosen = choosePrimaryTpAndRr(p);
+  const tpNum = parseNumLoose(chosen.tp);
+  const rrRaw = parseNumLoose(p?.rr ?? p?.risk_reward);
+  const rrFromChosen = parseNumLoose(chosen.rr);
+  let rr = rrRaw;
+  if (rr == null && rrFromChosen != null) rr = rrFromChosen;
+  if (
+    rr == null &&
+    entry != null &&
+    sl != null &&
+    tpNum != null &&
+    entry !== sl
+  ) {
+    rr = Math.abs(tpNum - entry) / Math.abs(entry - sl);
+  }
   return {
     ...p,
     direction,
     entry: entry == null ? "" : String(entry),
-    tp: primaryTpFromPlan(p),
+    tp: chosen.tp,
     sl: sl == null ? "" : String(sl),
     rr: rr == null ? "" : String(rr),
     trade_type: String(p?.type || p?.order_type || "limit").toLowerCase(),
