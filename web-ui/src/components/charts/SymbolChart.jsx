@@ -140,16 +140,30 @@ function defaultTpSlFromEntry(entry, direction) {
   };
 }
 
+function toNumLoose(v) {
+  if (v == null) return NaN;
+  const s = String(v).trim();
+  if (!s) return NaN;
+  const n = Number(s.replace(",", "."));
+  return Number.isFinite(n) ? n : NaN;
+}
+
 function NumberAdjuster({
   value,
   onChange,
   min = -1000000000,
   max = 1000000000,
   step = 1,
+  fallbackValue = null,
   placeholder = "",
 }) {
-  const numVal = Number(value);
-  const safeVal = Number.isFinite(numVal) ? numVal : 0;
+  const numVal = toNumLoose(value);
+  const fallbackNum = toNumLoose(fallbackValue);
+  const safeVal = Number.isFinite(numVal)
+    ? numVal
+    : Number.isFinite(fallbackNum)
+      ? fallbackNum
+      : 0;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <input
@@ -562,7 +576,7 @@ export default function SymbolChart({
     const next = numericKeys.has(field)
       ? value === "" || value == null
         ? null
-        : Number(value)
+        : toNumLoose(value)
       : value;
     if (field === "type") {
       const t = String(value || "").toUpperCase();
@@ -2042,13 +2056,13 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>Entry
-                    <NumberAdjuster value={selectedObject.entryPrice ?? ""} onChange={(v)=>updateSelectedField("entryPrice", v)} min={0} max={200000} step={1} placeholder="entry" />
+                    <NumberAdjuster value={selectedObject.entryPrice ?? ""} onChange={(v)=>updateSelectedField("entryPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="entry" />
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>TP
-                    <NumberAdjuster value={selectedObject.tpPrice ?? ""} onChange={(v)=>updateSelectedField("tpPrice", v)} min={0} max={200000} step={1} placeholder="tp" />
+                    <NumberAdjuster value={selectedObject.tpPrice ?? ""} onChange={(v)=>updateSelectedField("tpPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="tp" />
                   </label>
                   <label style={{ display: "grid", gap: 4, fontSize: 10 }}>SL
-                    <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={(v)=>updateSelectedField("slPrice", v)} min={0} max={200000} step={1} placeholder="sl" />
+                    <NumberAdjuster value={selectedObject.slPrice ?? ""} onChange={(v)=>updateSelectedField("slPrice", v)} min={0} max={200000} step={1} fallbackValue={latestCachedPrice} placeholder="sl" />
                   </label>
                 </>
               ) : (
