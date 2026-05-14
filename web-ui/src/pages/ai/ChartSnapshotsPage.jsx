@@ -3379,23 +3379,6 @@ export default function ChartSnapshotsPage() {
           );
         }
         setPosition(extractPositionFromAnalysis(parsed));
-        const parsedSymbol = normalizeWatchSymbol(
-          parsed?.symbol ||
-            parsed?.trade_plan?.[0]?.symbol ||
-            selectedSymbol ||
-            cfg.symbol ||
-            tvSymbol ||
-            "",
-        );
-        const nextRouteSymbols = (Array.isArray(activeSymbols) && activeSymbols.length
-          ? activeSymbols
-          : [activeSymbol, parsedSymbol]
-        )
-          .map((x) => normalizeWatchSymbol(x))
-          .filter(Boolean);
-        if (nextRouteSymbols.length && !isTradeRoute) {
-          navigate(buildAiTradeRoute(nextRouteSymbols), { replace: false });
-        }
         if (!cfg.symbol) {
           const nextSymbol = normalizeWatchSymbol(parsed?.symbol || "");
           if (nextSymbol) {
@@ -6092,7 +6075,7 @@ export default function ChartSnapshotsPage() {
             ) : null}
             <SignalDetailCard
               mode="ai"
-              hideTabsBeforeResponse={!isTradeRoute}
+              hideTabsBeforeResponse={!(isTradeRoute || hasAnalyzeResponse)}
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
@@ -6108,9 +6091,9 @@ export default function ChartSnapshotsPage() {
                 slPrice: position.sl,
                 tpPrice: position.tp,
                 detailTfTab: timeframe,
-                showEditButton: !isTradeRoute,
-                showTradeButton: !isTradeRoute,
-                showAnalyzeButton: !isTradeRoute,
+                showEditButton: !(isTradeRoute || hasAnalyzeResponse),
+                showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
+                showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
                 profileTfs: [
                   ...(PROFILE_PRESETS[cfg.profile]?.htf_tfs || []),
                   ...(PROFILE_PRESETS[cfg.profile]?.exec_tfs || []),
@@ -6256,7 +6239,7 @@ export default function ChartSnapshotsPage() {
                 snapshotFiles: chartFiles,
               }}
               tradePlan={{
-                enabled: isTradeRoute,
+                enabled: isTradeRoute || hasAnalyzeResponse,
                 signalId: null,
                 tradeId: null,
                 value: position,
