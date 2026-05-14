@@ -2568,7 +2568,7 @@ export default function ChartSnapshotsPage() {
     setAnalysisRaw("");
     setAnalysisJson("");
     setAnalysisParsed(null);
-    setPosition(buildDefaultPosition(defaultSeedEntry));
+    setPosition(buildDefaultPosition(null));
     setResponseTab("chart");
     setUsedFiles([]);
     setAnalysisFilesDisplay([]);
@@ -2590,7 +2590,7 @@ export default function ChartSnapshotsPage() {
         setAnalysisFilesDisplay(p.displayFiles);
       setResponseTab("chart");
     }
-  }, [cfg.symbol, defaultSeedEntry]);
+  }, [cfg.symbol]);
   const [selectedEntryTf, setSelectedEntryTf] = useState("");
   const timeframe = useMemo(() => {
     const raw = selectedEntryTf || "";
