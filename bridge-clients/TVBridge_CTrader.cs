@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.14 19:50 - lease-dedup-max50";
+        private const string BuildVersion = "v2026.05.14 20:00 - fix-dup-pending-order";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -749,6 +749,12 @@ namespace cAlgo.Robots
                 {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_OPEN)");
                     _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
+                    return;
+                }
+                if (PendingOrders.Any(o => o.Comment == id))
+                {
+                    UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_PLACED)");
+                    _ = AckAsync(id, leaseToken, "PENDING", "ALREADY_PLACED", "");
                     return;
                 }
 
