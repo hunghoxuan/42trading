@@ -7814,7 +7814,8 @@ async function _mt5InitBackendInternal() {
                 OR metadata->>'broker_position_id' = ANY($4::text[])
                 OR metadata->>'position_ticket' = ANY($4::text[])
               )
-            RETURNING sid, pnl_realized
+            AND execution_status <> 'CANCELLED'
+          RETURNING sid, pnl_realized
           `,
               [
                 it.execution_status,
@@ -9730,7 +9731,8 @@ async function _mt5InitBackendInternal() {
         WHERE sid = ANY($1::text[])
            OR sid = ANY($1::text[])
            OR id = ANY($2::bigint[])
-        RETURNING sid
+        AND execution_status <> 'CANCELLED'
+          RETURNING sid
       `,
         [refs, numericIds],
       );
@@ -20884,6 +20886,7 @@ const appHandler = async (req, res) => {
               OR metadata->>'order_ticket' = ANY($4::text[])
               OR ($7::text <> '' AND signal_id = $7)
             )
+          AND execution_status <> 'CANCELLED'
           RETURNING sid, user_id
         `,
           [
