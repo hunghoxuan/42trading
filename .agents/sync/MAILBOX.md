@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-14 19:32 UTC`
-- note: `Deploy Trades detail fallback + full-mode trade route + info-tab enrichment fix.`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: `Set lock_status=LOCKED before deploy; release after verification.`
 
 ## Required Entry Template
 
@@ -63,6 +63,23 @@ Copy and fill:
   - /health: `ok:true`, `version:v2026.05.14 18:58 - 39df8d4c`
   - /ui asset: `/assets/index-LPr2N_Ht.js`
   - key endpoint: `GET /v2/chart/snapshots?limit=2 -> 401 AUTH_REQUIRED` (expected without auth)
+- handoff_next: none
+
+### [2026-05-14 19:38 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 34504309
+- scope: `web-ui/src/utils/signalDetailUtils.jsx`, `web-ui/src/pages/trades/TradesPage.jsx`, `web-ui/src/components/SignalDetailCard.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (34504309)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.14 19:25 - 2beac38b
+  - ea_version: v2026.05.14 19:25 - 2beac38b
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.14 19:25 - 2beac38b`
+  - /ui asset: `/assets/index-ma7-_xVY.js`
+  - key endpoint: `GET /v2/trades/TF1K2UW11/events` reachable; no `TF1K2UW11` found in `/v2/broker/pull` log stream
 - handoff_next: none
 
 # Handoff — 2026-05-08
