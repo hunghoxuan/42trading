@@ -14998,6 +14998,23 @@ const appHandler = async (req, res) => {
         50000,
       );
       const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
+      // Also check trades table for direct trade IDs
+      if (payload.ids || payload.sids || payload.q) {
+        const tradeRefs = Array.isArray(payload.ids || payload.sids)
+          ? payload.ids || payload.sids
+          : [String(payload.q || "").trim()].filter(Boolean);
+        if (tradeRefs.length) {
+          const b = await mt5Backend();
+          const tradeRes = await b.pool.query(
+            `UPDATE trades SET execution_status = 'CANCELLED', updated_at = NOW() WHERE sid = ANY($1::text[]) RETURNING sid`,
+            [tradeRefs],
+          );
+          if (tradeRes.rowCount > 0) {
+            const tradeSids = tradeRes.rows.map((r) => r.sid);
+            ids.push(...tradeSids.filter((s) => !ids.includes(s)));
+          }
+        }
+      }
       const updated = await mt5CancelSignalsByIds(ids);
       const cleanup = await mt5CleanupSignalTradeArtifacts({
         signalRows: rows,
