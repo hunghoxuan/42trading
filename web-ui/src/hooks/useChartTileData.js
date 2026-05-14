@@ -139,6 +139,7 @@ export function useSymbolChartData({
   skipFetch = false,
   provider = "ICMARKETS",
   sessionPrefix = "",
+  profile = "day",
   attachedSnapshotFiles = [],
 }) {
   const [status, setStatus] = useState("IDLE");
@@ -373,7 +374,7 @@ export function useSymbolChartData({
       if (!hasAny) throw new Error("No data from provider");
       return { symbol: sym, entries };
     },
-    [sym, tfs, mode, provider, sessionPrefix, attachedSnapshotFiles],
+    [sym, tfs, mode, provider, sessionPrefix, profile, attachedSnapshotFiles],
   );
 
   const refresh = useCallback(

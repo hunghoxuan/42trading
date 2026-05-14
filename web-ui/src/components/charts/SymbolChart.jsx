@@ -462,6 +462,7 @@ export default function SymbolChart({
       provider,
       sessionPrefix,
       attachedSnapshotFiles,
+      profile,
     });
 
   const sortedTfs = useMemo(
