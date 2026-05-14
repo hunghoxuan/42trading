@@ -146,7 +146,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.14 14:25 - fix-trade-cancel",
+  "v2026.05.14 14:35 - fix-pending-mod-constraint",
 ); // TradePlan object editor now supports comma-decimal parsing and latest-price fallback for zero/null values
 
 const SERVER_LOG_DIR = envStr(
@@ -6475,7 +6475,7 @@ async function _mt5InitBackendInternal() {
       `
     ALTER TABLE trades
     ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['PENDING','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
+    CHECK (execution_status = ANY (ARRAY['PENDING','PENDING_MOD','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
   `,
     )
     .catch(() => {});
