@@ -127,43 +127,20 @@ export default function TradeDetailPage() {
     setDetailPlan((prev) => {
       const next = applyLinkedPlanChange(prev, key, rawValue);
       const entry = asNum(next.entry);
-      const tp = asNum(next.tp);
-      const sl = asNum(next.sl);
-      const rr = asNum(next.rr);
       const directionFromForm =
         String(next.direction || prev.direction || "BUY").toUpperCase() ===
         "SELL"
           ? "SELL"
           : "BUY";
       const direction = ["entry", "tp", "sl"].includes(key)
-        ? inferDirection(entry, tp, sl, directionFromForm)
+        ? inferDirection(
+            entry,
+            asNum(next.tp),
+            asNum(next.sl),
+            directionFromForm,
+          )
         : directionFromForm;
       next.direction = direction;
-
-      // Live auto-calc: RR → TP
-      if (
-        key === "rr" &&
-        Number.isFinite(entry) &&
-        Number.isFinite(sl) &&
-        Number.isFinite(rr) &&
-        rr > 0
-      ) {
-        const risk = Math.abs(entry - sl);
-        if (risk > 0) {
-          const nextTp =
-            direction === "BUY" ? entry + risk * rr : entry - risk * rr;
-          next.tp = formatNum3(nextTp);
-        }
-      } else if (
-        ["entry", "tp", "sl"].includes(key) &&
-        Number.isFinite(entry) &&
-        Number.isFinite(tp) &&
-        Number.isFinite(sl)
-      ) {
-        const risk = Math.abs(entry - sl);
-        const reward = Math.abs(tp - entry);
-        if (risk > 0) next.rr = formatNum3(reward / risk);
-      }
 
       const nextEntry = asNum(next.entry);
       next.trade_type = deriveOrderType(
@@ -173,7 +150,6 @@ export default function TradeDetailPage() {
         next.trade_type || prev.trade_type || "limit",
       );
 
-      // Validation deferred to save (onUpdateTradePlan)
       setPlanError("");
       return next;
     });

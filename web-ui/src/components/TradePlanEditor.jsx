@@ -146,6 +146,9 @@ export function TradePlanEditor({
         Number(sliderMeta.min),
         Math.min(Number(sliderMeta.max), nextRaw),
       );
+      console.log(
+        `[TradePlanEditor] +/- ${k} dir=${dir} base=${base} step=${sliderMeta.step} next=${next}`,
+      );
       update(k, formatNum3(next));
     };
     return (
