@@ -266,7 +266,7 @@ export default function TradeDetailPage() {
     );
   }, [trade?.execution_status]);
   const isLocked = useMemo(() => {
-    return ["CLOSED", "CANCELLED"].includes(
+    return ["FILLED", "CLOSED", "CANCELLED"].includes(
       String(trade?.execution_status || "").toUpperCase(),
     );
   }, [trade?.execution_status]);
