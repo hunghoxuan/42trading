@@ -15,7 +15,9 @@ function formatNum3(v) {
   return String(Number(v.toFixed(3)));
 }
 function cleanFieldValue(v) {
-  const s = String(v ?? "").trim().toLowerCase();
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
   if (!s || s === "null" || s === "undefined" || s === "nan") return "";
   return String(v);
 }
@@ -36,7 +38,9 @@ function calcSliderMeta(rawValue) {
 function priceSliderMeta(rawValue) {
   const n = parseNum(rawValue);
   const clamped = Number.isFinite(n) ? Math.max(0, Math.min(200000, n)) : 0;
-  return { min: 0, max: 200000, step: 1, value: clamped, enabled: true };
+  // Dynamic step: ~0.02% of price, smooth for slider
+  const step = Number.isFinite(n) && n > 0 ? Math.max(0.00001, n * 0.0002) : 1;
+  return { min: 0, max: 200000, step, value: clamped, enabled: true };
 }
 
 export function TradePlanEditor({
@@ -195,7 +199,13 @@ export function TradePlanEditor({
                   ? controlsDisabled
                   : !sliderMeta.enabled || controlsDisabled
             }
-            style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1 }}
+            style={{
+              width: 18,
+              height: 18,
+              padding: 0,
+              fontSize: 10,
+              lineHeight: 1,
+            }}
             title="-1 step"
           >
             -
@@ -208,7 +218,12 @@ export function TradePlanEditor({
             max={sliderMeta.max}
             step={sliderMeta.step}
             value={sliderOverride ? Number(value[k]) || 2 : sliderMeta.value}
-            style={{ accentColor: "var(--muted)", height: "8px", margin: 0, flex: 1 }}
+            style={{
+              accentColor: "var(--muted)",
+              height: "8px",
+              margin: 0,
+              flex: 1,
+            }}
             disabled={
               fieldDisabled
                 ? true
@@ -229,7 +244,13 @@ export function TradePlanEditor({
                   ? controlsDisabled
                   : !sliderMeta.enabled || controlsDisabled
             }
-            style={{ width: 18, height: 18, padding: 0, fontSize: 10, lineHeight: 1 }}
+            style={{
+              width: 18,
+              height: 18,
+              padding: 0,
+              fontSize: 10,
+              lineHeight: 1,
+            }}
             title="+1 step"
           >
             +
@@ -511,25 +532,17 @@ export function TradePlanEditor({
               disabled={tradeFieldsDisabled}
             />
 
-            <NumericInline
-              label="Take Profit"
-              k="tp"
-              disabled={tradeFieldsDisabled}
-            />
+            <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
+
+            <NumericInline label="SL" k="sl" disabled={tradeFieldsDisabled} />
 
             <NumericInline
-              label="Risk / Reward"
+              label="RR"
               k="rr"
               step="0.1"
               min="0.3"
               max="10"
               sliderOverride={{ min: 0.5, max: 8, step: (8 - 0.5) / 100 }}
-              disabled={tradeFieldsDisabled}
-            />
-
-            <NumericInline
-              label="Stop Loss"
-              k="sl"
               disabled={tradeFieldsDisabled}
             />
           </div>
