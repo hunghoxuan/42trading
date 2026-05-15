@@ -2624,12 +2624,12 @@ export default function SymbolChart({
                     top panel.
                   </div>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-label`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-label`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Label
                     <input
-                      id={`${symbol}-${chartId}-inspector-label`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-label`}
                       name="label"
                       value={selectedObject.label || ""}
                       readOnly
@@ -2637,12 +2637,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-direction`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-direction`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Direction
                     <select
-                      id={`${symbol}-${chartId}-inspector-direction`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-direction`}
                       name="direction"
                       value={String(
                         selectedObject.direction || "BUY",
@@ -2654,12 +2654,12 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-entry`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-entry`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Entry
                     <NumberAdjuster
-                      id={`${symbol}-${chartId}-inspector-entry`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-entry`}
                       value={selectedObject.entryPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2671,12 +2671,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-tp`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-tp`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     TP
                     <NumberAdjuster
-                      id={`${symbol}-${chartId}-inspector-tp`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-tp`}
                       value={selectedObject.tpPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2688,12 +2688,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-sl`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-sl`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     SL
                     <NumberAdjuster
-                      id={`${symbol}-${chartId}-inspector-sl`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-sl`}
                       value={selectedObject.slPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2708,12 +2708,12 @@ export default function SymbolChart({
               ) : (
                 <>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-label`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-label`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Label
                     <input
-                      id={`${symbol}-${chartId}-inspector-edit-label`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-label`}
                       name="label"
                       value={selectedObject.label || ""}
                       onChange={(e) =>
@@ -2723,12 +2723,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-type`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-type`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Type
                     <select
-                      id={`${symbol}-${chartId}-inspector-edit-type`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-type`}
                       name="type"
                       value={selectedObject.type || "line"}
                       onChange={(e) =>
@@ -2745,12 +2745,12 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-tf`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-tf`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     TF
                     <select
-                      id={`${symbol}-${chartId}-inspector-edit-tf`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-tf`}
                       name="tf"
                       value={selectedObject.tf || ""}
                       onChange={(e) =>
@@ -2766,12 +2766,12 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-price`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-price`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Price
                     <NumberAdjuster
-                      id={`${symbol}-${chartId}-inspector-edit-price`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-price`}
                       value={
                         selectedObject.price ?? selectedObject.price_top ?? ""
                       }
@@ -2787,12 +2787,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-style`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-style`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Line Style
                     <select
-                      id={`${symbol}-${chartId}-inspector-edit-style`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-style`}
                       name="line_style"
                       value={selectedObject.line_style || "solid"}
                       onChange={(e) =>
@@ -2807,12 +2807,12 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-width`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-width`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Line Width
                     <select
-                      id={`${symbol}-${chartId}-inspector-edit-width`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-width`}
                       name="line_width"
                       value={selectedObject.line_width || 2}
                       onChange={(e) =>
@@ -2827,12 +2827,12 @@ export default function SymbolChart({
                     </select>
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-color`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-color`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Color
                     <input
-                      id={`${symbol}-${chartId}-inspector-edit-color`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-color`}
                       name="color"
                       type="color"
                       value={toHexColor(selectedObject.color)}
@@ -2842,12 +2842,12 @@ export default function SymbolChart({
                     />
                   </label>
                   <label
-                    htmlFor={`${symbol}-${chartId}-inspector-edit-bg`}
+                    htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-bg`}
                     style={{ display: "grid", gap: 4, fontSize: 10 }}
                   >
                     Background Color
                     <input
-                      id={`${symbol}-${chartId}-inspector-edit-bg`}
+                      id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-bg`}
                       name="bg_color"
                       type="color"
                       value={toHexColor(selectedObject.bg_color || "#22c55e")}
