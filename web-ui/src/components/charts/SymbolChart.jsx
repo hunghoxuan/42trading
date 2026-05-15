@@ -2316,118 +2316,120 @@ export default function SymbolChart({
                   : 3,
             )}
           </div>
-          {[
-            { label: "Line", color: "#60a5fa", fn: handleDrawLine },
-            {
-              label: "Zone",
-              color: "#22c55e",
-              fn: () => addObject("ZONE", "#22c55e", "zone"),
-            },
-            ...(hasTradePlan && hasAnalysis
-              ? [
-                  { label: "Buy", fn: () => handleQuickTrade("BUY") },
-                  { label: "Sell", fn: () => handleQuickTrade("SELL") },
-                  {
-                    label: "Entry",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("entry", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                  {
-                    label: "TP",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("tp", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                  {
-                    label: "SL",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("sl", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                ]
-              : [
-                  { label: "Buy", fn: () => handleQuickTrade("BUY") },
-                  { label: "Sell", fn: () => handleQuickTrade("SELL") },
-                  {
-                    label: "Entry",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("entry", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                  {
-                    label: "TP",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("tp", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                  {
-                    label: "SL",
-                    fn: () => {
-                      if (typeof onPlanLevelChange === "function") {
-                        onPlanLevelChange("sl", Number(ctxMenu?.price));
-                        setCtxMenu(null);
-                      }
-                    },
-                  },
-                ]),
-          ].map((it) => (
-            <button
-              key={it.label}
-              type="button"
-              onClick={it.fn}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                background: "transparent",
-                color:
-                  it.label === "Buy" ||
-                  it.label === "Entry" ||
-                  it.label === "TP"
-                    ? "#10b981"
-                    : it.label === "Sell" || it.label === "SL"
-                      ? "#ef4444"
-                      : "#e2e8f0",
-                border: "none",
-                padding: "6px 8px",
-                fontSize: 11,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              {it.color ? (
-                <span
-                  style={{
-                    width: 16,
-                    height: it.label === "Zone" ? 10 : 2,
-                    borderRadius: 2,
-                    border: `1px solid ${it.color}`,
-                    background:
-                      it.label === "Zone" ? `${it.color}33` : it.color,
-                    display: "inline-block",
-                  }}
-                />
-              ) : null}
-              {it.label}
-            </button>
-          ))}
+          {(() => {
+            const price = Number(ctxMenu?.price || 0);
+            const priceStr = price.toFixed(
+              price >= 1000 ? 1 : price >= 100 ? 2 : 3,
+            );
+            return [
+              { label: "Line", color: "#60a5fa", fn: handleDrawLine },
+              {
+                label: "Zone",
+                color: "#22c55e",
+                fn: () => addObject("ZONE", "#22c55e", "zone"),
+              },
+              { label: `Buy @ ${priceStr}`, fn: () => handleQuickTrade("BUY") },
+              {
+                label: `Sell @ ${priceStr}`,
+                fn: () => handleQuickTrade("SELL"),
+              },
+              {
+                label: `Entry @ ${priceStr}`,
+                fn: () => {
+                  const p = Number(ctxMenu?.price);
+                  if (typeof onPlanLevelChange === "function") {
+                    onPlanLevelChange("entry", p);
+                  } else if (typeof onQuickTradeIntent === "function") {
+                    onQuickTradeIntent({
+                      symbol: cleanSym,
+                      side: "ENTRY",
+                      action: "ENTRY",
+                      plan_id: activePlanGroup,
+                      price: p,
+                    });
+                  }
+                  setCtxMenu(null);
+                },
+              },
+              {
+                label: `TP @ ${priceStr}`,
+                fn: () => {
+                  const p = Number(ctxMenu?.price);
+                  if (typeof onPlanLevelChange === "function") {
+                    onPlanLevelChange("tp", p);
+                  } else if (typeof onQuickTradeIntent === "function") {
+                    onQuickTradeIntent({
+                      symbol: cleanSym,
+                      side: "TP",
+                      action: "TP",
+                      plan_id: activePlanGroup,
+                      price: p,
+                    });
+                  }
+                  setCtxMenu(null);
+                },
+              },
+              {
+                label: `SL @ ${priceStr}`,
+                fn: () => {
+                  const p = Number(ctxMenu?.price);
+                  if (typeof onPlanLevelChange === "function") {
+                    onPlanLevelChange("sl", p);
+                  } else if (typeof onQuickTradeIntent === "function") {
+                    onQuickTradeIntent({
+                      symbol: cleanSym,
+                      side: "SL",
+                      action: "SL",
+                      plan_id: activePlanGroup,
+                      price: p,
+                    });
+                  }
+                  setCtxMenu(null);
+                },
+              },
+            ].map((it) => (
+              <button
+                key={it.label}
+                type="button"
+                onClick={it.fn}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  color:
+                    it.label.startsWith("Buy") ||
+                    it.label.startsWith("Entry") ||
+                    it.label.startsWith("TP")
+                      ? "#10b981"
+                      : it.label.startsWith("Sell") || it.label.startsWith("SL")
+                        ? "#ef4444"
+                        : "#e2e8f0",
+                  border: "none",
+                  padding: "6px 8px",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                {it.color ? (
+                  <span
+                    style={{
+                      width: 16,
+                      height: it.label === "Zone" ? 10 : 2,
+                      borderRadius: 2,
+                      border: `1px solid ${it.color}`,
+                      background:
+                        it.label === "Zone" ? `${it.color}33` : it.color,
+                      display: "inline-block",
+                    }}
+                  />
+                ) : null}
+                {it.label}
+              </button>
+            ));
+          })()}
         </div>
       )}
       {mode === "cache" && (
