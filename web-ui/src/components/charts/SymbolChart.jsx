@@ -277,6 +277,33 @@ function TfHeader({
       style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}
     >
       <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
+      {(() => {
+        const bars = master?.bars?.[tf.toLowerCase()] || [];
+        const count = bars.length;
+        const firstBar = bars[0];
+        const startTime =
+          firstBar && Number.isFinite(Number(firstBar?.time))
+            ? new Date(Number(firstBar.time) * 1000).toLocaleDateString(
+                "en-GB",
+                {
+                  day: "2-digit",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                },
+              )
+            : null;
+        if (!count) return null;
+        return (
+          <span
+            className="minor-text"
+            style={{ fontSize: 8, opacity: 0.5 }}
+            title={`${count} bars, starts ${showDateTime(firstBar?.time ? new Date(Number(firstBar.time) * 1000).toISOString() : null)}`}
+          >
+            {count}b {startTime ? `since ${startTime}` : ""}
+          </span>
+        );
+      })()}
       {typeof onRefreshTf === "function" && (
         <button
           type="button"
