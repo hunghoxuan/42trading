@@ -97,6 +97,7 @@ export function TradePlanEditor({
   const lockedView = Boolean(viewOnly);
   useEffect(() => {
     if (lockedView) setMode("view");
+    else setMode("edit");
   }, [lockedView]);
   const isEditMode = !lockedView && mode === "edit";
 
