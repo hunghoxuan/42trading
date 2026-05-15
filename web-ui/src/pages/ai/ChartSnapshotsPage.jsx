@@ -6022,14 +6022,9 @@ export default function ChartSnapshotsPage() {
               <div
                 className="browser-grid-v1"
                 style={{
-                  gridTemplateColumns:
-                    symbolFilterTab === "SMT"
-                      ? "1fr"
-                      : browserTfs.length === 1
-                        ? "repeat(4, 1fr)"
-                        : browserTfs.length === 2
-                          ? "repeat(2, 1fr)"
-                          : "1fr",
+                  ...(symbolFilterTab === "SMT"
+                    ? { gridTemplateColumns: "1fr" }
+                    : {}),
                   gap: 12,
                 }}
               >
