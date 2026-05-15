@@ -5,6 +5,7 @@ import { showToast } from "./ToastContainer";
 import { NotificationHub } from "../services/NotificationHub";
 
 window.__tickerFilledTrades = window.__tickerFilledTrades || [];
+window.__tickerMessages = window.__tickerMessages || [];
 
 /**
  * Global component: SSE stream listener for real-time notifications.
@@ -84,6 +85,19 @@ export default function NotificationWatcher() {
           type: p.type,
           position: p.position || "bottom-right",
         });
+      }
+
+      // 3. Notification Ticker
+      if (showTicker) {
+        const msg = p.message || `[${(p.event || "").replace(/_/g, " ").toUpperCase()}]`;
+        const newItem = {
+          id: p.id || Math.random().toString(36).slice(2, 9),
+          message: msg,
+          type: p.type || "info",
+          ts: Date.now()
+        };
+        window.__tickerMessages = [newItem, ...(window.__tickerMessages || [])].slice(0, 15);
+        window.dispatchEvent(new CustomEvent("ticker-update"));
       }
 
 // 4. Page refresh

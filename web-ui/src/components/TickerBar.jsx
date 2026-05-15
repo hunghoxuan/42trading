@@ -9,11 +9,12 @@ import "./TickerBar.css";
 export default function TickerBar() {
   const navigate = useNavigate();
   const [filledTrades, setFilledTrades] = useState([]);
+  const [tickerMessages, setTickerMessages] = useState([]);
 
   useEffect(() => {
     const handler = () => {
-      const trades = window.__tickerFilledTrades || [];
-      setFilledTrades([...trades]);
+      setFilledTrades([...(window.__tickerFilledTrades || [])]);
+      setTickerMessages([...(window.__tickerMessages || [])]);
     };
     window.addEventListener("ticker-update", handler);
     handler();
@@ -25,13 +26,21 @@ export default function TickerBar() {
     return `${n >= 0 ? "+" : ""}${n.toFixed(2)}`;
   };
 
-  if (!filledTrades.length) return null;
+  const hasData = filledTrades.length > 0 || tickerMessages.length > 0;
+  if (!hasData) return null;
 
   return (
-    <div
-      className="ticker-bar"
-      style={{ display: "flex", justifyContent: "flex-end" }}
-    >
+    <div className="ticker-bar">
+      <div className="ticker-left">
+        <div className="ticker-scroll">
+          {tickerMessages.map((m) => (
+            <span key={m.id} className={`ticker-msg ${m.type || ""}`}>
+              {m.message}
+            </span>
+          ))}
+        </div>
+      </div>
+
       <div className="ticker-right">
         <div className="ticker-filled-list">
           {filledTrades.map((t) => (

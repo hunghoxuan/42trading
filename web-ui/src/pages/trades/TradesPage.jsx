@@ -894,22 +894,26 @@ export default function TradesPage() {
                 </button>
               </div>
             )}
-            <select
-              value={filter.pageSize}
-              onChange={(e) =>
-                setFilter((f) => ({
-                  ...f,
-                  pageSize: Number(e.target.value),
-                  page: 1,
-                }))
-              }
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="trades-page-size" className="sr-only">
+            Page Size
+          </label>
+          <select
+            id="trades-page-size"
+            value={filter.pageSize}
+            onChange={(e) =>
+              setFilter((f) => ({
+                ...f,
+                pageSize: Number(e.target.value),
+                page: 1,
+              }))
+            }
+          >
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
           </div>
         </div>
 
@@ -917,15 +921,22 @@ export default function TradesPage() {
           className="toolbar-group toolbar-search-filter"
           style={{ flexWrap: "wrap" }}
         >
+          <label htmlFor="trades-search" className="sr-only">
+            Search
+          </label>
           <input
+            id="trades-search"
+            placeholder="SEARCH..."
             value={filter.q}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, q: e.target.value, page: 1 }))
-            }
-            placeholder="Search sid, symbol, note..."
-            style={{ width: 220 }}
+            onChange={(e) => {
+              setFilter((f) => ({ ...f, q: e.target.value, page: 1 }));
+            }}
           />
+          <label htmlFor="trades-filter-account" className="sr-only">
+            Account
+          </label>
           <select
+            id="trades-filter-account"
             value={filter.account_id}
             onChange={(e) =>
               setFilter((f) => ({ ...f, account_id: e.target.value, page: 1 }))
@@ -938,7 +949,28 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
+          <label htmlFor="trades-filter-tf" className="sr-only">
+            Timeframe
+          </label>
           <select
+            id="trades-filter-tf"
+            value={filter.chart_tf}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
+            }
+          >
+            <option value="">ALL TFS</option>
+            {uniqueOptions.tfs.map((tf) => (
+              <option key={tf} value={tf}>
+                {formatTimeframe(tf)}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="trades-filter-source" className="sr-only">
+            Source
+          </label>
+          <select
+            id="trades-filter-source"
             value={filter.source_id}
             onChange={(e) =>
               setFilter((f) => ({ ...f, source_id: e.target.value, page: 1 }))
@@ -950,6 +982,20 @@ export default function TradesPage() {
                 {s.name || s.source_id}
               </option>
             ))}
+          </select>
+          <label htmlFor="trades-filter-side" className="sr-only">
+            Side
+          </label>
+          <select
+            id="trades-filter-side"
+            value={filter.side}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, side: e.target.value, page: 1 }))
+            }
+          >
+            <option value="">ALL SIDES</option>
+            <option value="BUY">BUY</option>
+            <option value="SELL">SELL</option>
           </select>
           <select
             value={filter.execution_status}
@@ -965,7 +1011,11 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
+          <label htmlFor="trades-filter-symbol" className="sr-only">
+            Symbol
+          </label>
           <select
+            id="trades-filter-symbol"
             value={filter.symbol}
             onChange={(e) =>
               setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
@@ -978,7 +1028,11 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
+          <label htmlFor="trades-filter-model" className="sr-only">
+            Model
+          </label>
           <select
+            id="trades-filter-model"
             value={filter.entry_model}
             onChange={(e) =>
               setFilter((f) => ({ ...f, entry_model: e.target.value, page: 1 }))
@@ -991,7 +1045,11 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
+          <label htmlFor="trades-filter-range" className="sr-only">
+            Time Range
+          </label>
           <select
+            id="trades-filter-range"
             value={filter.range}
             onChange={(e) =>
               setFilter((f) => ({ ...f, range: e.target.value, page: 1 }))
@@ -1005,7 +1063,11 @@ export default function TradesPage() {
           </select>
         </div>
         <div className="toolbar-group toolbar-bulk-action">
+          <label htmlFor="trades-bulk-action" className="sr-only">
+            Bulk Action
+          </label>
           <select
+            id="trades-bulk-action"
             value={bulkAction}
             onChange={(e) => setBulkAction(e.target.value)}
             disabled={bulkBusy}

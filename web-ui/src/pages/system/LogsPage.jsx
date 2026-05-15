@@ -223,7 +223,11 @@ export default function LogsPage() {
                 </button>
               </div>
             )}
+            <label htmlFor="logs-page-size" className="sr-only">
+              Page Size
+            </label>
             <select
+              id="logs-page-size"
               value={pageSize}
               onChange={(e) => {
                 setPageSize(Number(e.target.value));
@@ -240,7 +244,11 @@ export default function LogsPage() {
         </div>
 
         <div className="toolbar-group toolbar-search-filter">
+          <label htmlFor="logs-search" className="sr-only">
+            Search
+          </label>
           <input
+            id="logs-search"
             placeholder="SEARCH TICKET, ID..."
             value={filter.q}
             onChange={(e) => {
@@ -249,7 +257,11 @@ export default function LogsPage() {
             }}
             style={{ width: "180px" }}
           />
+          <label htmlFor="logs-symbol" className="sr-only">
+            Symbol
+          </label>
           <select
+            id="logs-symbol"
             value={filter.symbol}
             onChange={(e) => {
               setFilter((f) => ({ ...f, symbol: e.target.value }));
@@ -263,7 +275,11 @@ export default function LogsPage() {
               </option>
             ))}
           </select>
+          <label htmlFor="logs-range" className="sr-only">
+            Time Range
+          </label>
           <select
+            id="logs-range"
             value={filter.range}
             onChange={(e) => {
               setFilter((f) => ({ ...f, range: e.target.value }));
@@ -279,7 +295,11 @@ export default function LogsPage() {
         </div>
 
         <div className="toolbar-group toolbar-bulk-action">
+          <label htmlFor="logs-bulk-action" className="sr-only">
+            Bulk Action
+          </label>
           <select
+            id="logs-bulk-action"
             value={bulkAction}
             onChange={(e) => setBulkAction(e.target.value)}
           >

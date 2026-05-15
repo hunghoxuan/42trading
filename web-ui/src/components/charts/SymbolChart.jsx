@@ -26,6 +26,26 @@ const STATUS_COLORS = {
   ERROR: "#ef4444",
 };
 
+function toHexColor(v) {
+  if (!v) return "#60a5fa";
+  const s = String(v).trim();
+  if (s.startsWith("#")) {
+    if (s.length === 4 || s.length === 7) return s;
+    if (s.length === 9) return s.slice(0, 7);
+    return "#60a5fa";
+  }
+  if (s.startsWith("rgb")) {
+    const parts = s.match(/\d+/g);
+    if (parts && parts.length >= 3) {
+      const r = parseInt(parts[0]).toString(16).padStart(2, "0");
+      const g = parseInt(parts[1]).toString(16).padStart(2, "0");
+      const b = parseInt(parts[2]).toString(16).padStart(2, "0");
+      return `#${r}${g}${b}`;
+    }
+  }
+  return "#60a5fa";
+}
+
 function normSym(s) {
   return String(s || "")
     .toUpperCase()
@@ -155,11 +175,15 @@ function NumberAdjuster({
   fallbackValue = null,
   placeholder = "",
   disabled = false,
+  id = undefined,
+  name = undefined,
 }) {
   const safeVal = resolveAdjusterValue(value, fallbackValue);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <input
+        id={id}
+        name={name || id}
         type="number"
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
@@ -2585,17 +2609,27 @@ export default function SymbolChart({
                     TradePlan values are read-only here. Edit Trade Plan in the
                     top panel.
                   </div>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-label`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Label
                     <input
+                      id={`${symbol}-${chartId}-inspector-label`}
+                      name="label"
                       value={selectedObject.label || ""}
                       readOnly
                       placeholder="TradePlan label"
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-direction`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Direction
                     <select
+                      id={`${symbol}-${chartId}-inspector-direction`}
+                      name="direction"
                       value={String(
                         selectedObject.direction || "BUY",
                       ).toUpperCase()}
@@ -2605,9 +2639,13 @@ export default function SymbolChart({
                       <option value="SELL">SELL</option>
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-entry`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Entry
                     <NumberAdjuster
+                      id={`${symbol}-${chartId}-inspector-entry`}
                       value={selectedObject.entryPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2618,9 +2656,13 @@ export default function SymbolChart({
                       disabled
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-tp`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     TP
                     <NumberAdjuster
+                      id={`${symbol}-${chartId}-inspector-tp`}
                       value={selectedObject.tpPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2631,9 +2673,13 @@ export default function SymbolChart({
                       disabled
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-sl`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     SL
                     <NumberAdjuster
+                      id={`${symbol}-${chartId}-inspector-sl`}
                       value={selectedObject.slPrice ?? ""}
                       onChange={() => {}}
                       min={0}
@@ -2647,9 +2693,14 @@ export default function SymbolChart({
                 </>
               ) : (
                 <>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-label`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Label
                     <input
+                      id={`${symbol}-${chartId}-inspector-edit-label`}
+                      name="label"
                       value={selectedObject.label || ""}
                       onChange={(e) =>
                         updateSelectedField("label", e.target.value)
@@ -2657,9 +2708,14 @@ export default function SymbolChart({
                       placeholder="label"
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-type`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Type
                     <select
+                      id={`${symbol}-${chartId}-inspector-edit-type`}
+                      name="type"
                       value={selectedObject.type || "line"}
                       onChange={(e) =>
                         updateSelectedField("type", e.target.value)
@@ -2674,9 +2730,14 @@ export default function SymbolChart({
                       )}
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-tf`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     TF
                     <select
+                      id={`${symbol}-${chartId}-inspector-edit-tf`}
+                      name="tf"
                       value={selectedObject.tf || ""}
                       onChange={(e) =>
                         updateSelectedField("tf", e.target.value || null)
@@ -2690,9 +2751,13 @@ export default function SymbolChart({
                       ))}
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-price`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Price
                     <NumberAdjuster
+                      id={`${symbol}-${chartId}-inspector-edit-price`}
                       value={
                         selectedObject.price ?? selectedObject.price_top ?? ""
                       }
@@ -2707,9 +2772,14 @@ export default function SymbolChart({
                       placeholder="price"
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-style`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Line Style
                     <select
+                      id={`${symbol}-${chartId}-inspector-edit-style`}
+                      name="line_style"
                       value={selectedObject.line_style || "solid"}
                       onChange={(e) =>
                         updateSelectedField("line_style", e.target.value)
@@ -2722,9 +2792,14 @@ export default function SymbolChart({
                       ))}
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-width`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Line Width
                     <select
+                      id={`${symbol}-${chartId}-inspector-edit-width`}
+                      name="line_width"
                       value={selectedObject.line_width || 2}
                       onChange={(e) =>
                         updateSelectedField("line_width", e.target.value)
@@ -2737,21 +2812,31 @@ export default function SymbolChart({
                       ))}
                     </select>
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-color`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Color
                     <input
+                      id={`${symbol}-${chartId}-inspector-edit-color`}
+                      name="color"
                       type="color"
-                      value={selectedObject.color || "#60a5fa"}
+                      value={toHexColor(selectedObject.color)}
                       onChange={(e) =>
                         updateSelectedField("color", e.target.value)
                       }
                     />
                   </label>
-                  <label style={{ display: "grid", gap: 4, fontSize: 10 }}>
+                  <label
+                    htmlFor={`${symbol}-${chartId}-inspector-edit-bg`}
+                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                  >
                     Background Color
                     <input
+                      id={`${symbol}-${chartId}-inspector-edit-bg`}
+                      name="bg_color"
                       type="color"
-                      value={selectedObject.bg_color || "#22c55e"}
+                      value={toHexColor(selectedObject.bg_color || "#22c55e")}
                       onChange={(e) =>
                         updateSelectedField("bg_color", e.target.value)
                       }

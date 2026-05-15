@@ -124,8 +124,11 @@ export function TradePlanEditor({
     sliderOverride = null,
     disabled: fieldDisabled = false,
   }) => {
-    const sliderMeta = sliderOverride
-      || (k === "entry" || k === "tp" || k === "sl"
+    const idPrefix = signalId || tradeId || "tp-editor";
+    const fieldId = `${idPrefix}-${k}`;
+    const sliderMeta =
+      sliderOverride ||
+      (k === "entry" || k === "tp" || k === "sl"
         ? priceSliderMeta(value[k])
         : calcSliderMeta(value[k]));
     const isDisabled = fieldDisabled || controlsDisabled;
@@ -150,6 +153,7 @@ export function TradePlanEditor({
         }}
       >
         <label
+          htmlFor={fieldId}
           className="minor-text"
           style={{
             fontWeight: "700",
@@ -162,6 +166,8 @@ export function TradePlanEditor({
           {label}
         </label>
         <input
+          id={fieldId}
+          name={k}
           style={{
             height: "22px",
             fontSize: "11px",
@@ -195,6 +201,7 @@ export function TradePlanEditor({
             -
           </button>
           <input
+            id={`${fieldId}-range`}
             className="snapshot-number-slider-v4"
             type="range"
             min={sliderMeta.min}
@@ -440,6 +447,7 @@ export function TradePlanEditor({
               }}
             >
               <label
+                htmlFor={`${signalId || tradeId || "tp-editor"}-direction`}
                 className="minor-text"
                 style={{
                   fontWeight: "700",
@@ -453,6 +461,8 @@ export function TradePlanEditor({
               </label>
               <div style={{ display: "flex", gap: "4px" }}>
                 <select
+                  id={`${signalId || tradeId || "tp-editor"}-direction`}
+                  name="direction"
                   style={{
                     flex: 1,
                     height: "24px",
@@ -473,6 +483,8 @@ export function TradePlanEditor({
                   ))}
                 </select>
                 <select
+                  id={`${signalId || tradeId || "tp-editor"}-trade_type`}
+                  name="trade_type"
                   style={{
                     flex: 1,
                     height: "24px",
@@ -533,6 +545,7 @@ export function TradePlanEditor({
               }}
             >
               <label
+                htmlFor={`${signalId || tradeId || "tp-editor"}-note`}
                 className="minor-text"
                 style={{
                   fontWeight: "700",

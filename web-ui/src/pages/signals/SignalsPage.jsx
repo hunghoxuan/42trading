@@ -1077,7 +1077,23 @@ export default function SignalsPage() {
                 >
                   <label>
                     <div className="muted small">Action</div>
+                    <label htmlFor="signal-create-action" className="sr-only">
+                      Action
+                    </label>
+                    <label htmlFor="signal-create-note" className="sr-only">
+                      Note
+                    </label>
+                    <input
+                      id="signal-create-note"
+                      style={{ gridColumn: "1/-1" }}
+                      value={createForm.note}
+                      onChange={(e) =>
+                        setCreateForm((p) => ({ ...p, note: e.target.value }))
+                      }
+                      placeholder="Note"
+                    />
                     <select
+                      id="signal-create-action"
                       value={createForm.action}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, action: e.target.value }))
@@ -1089,27 +1105,39 @@ export default function SignalsPage() {
                   </label>
                   <label>
                     <div className="muted small">Symbol</div>
+                    <label htmlFor="signal-create-symbol" className="sr-only">
+                      Symbol
+                    </label>
                     <input
+                      id="signal-create-symbol"
                       value={createForm.symbol}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, symbol: e.target.value }))
                       }
-                      placeholder="XAUUSD"
+                      placeholder="BTCUSD"
                     />
                   </label>
                   <label>
                     <div className="muted small">Volume (Lots)</div>
+                    <label htmlFor="signal-create-volume" className="sr-only">
+                      Volume
+                    </label>
                     <input
+                      id="signal-create-volume"
                       value={createForm.volume}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, volume: e.target.value }))
                       }
-                      placeholder="0.01"
+                      placeholder="Lots (0.01)"
                     />
                   </label>
                   <label>
                     <div className="muted small">Risk (%)</div>
+                    <label htmlFor="signal-create-risk-pct" className="sr-only">
+                      Risk %
+                    </label>
                     <input
+                      id="signal-create-risk-pct"
                       value={createForm.risk_pct}
                       onChange={(e) =>
                         setCreateForm((p) => ({
@@ -1117,12 +1145,16 @@ export default function SignalsPage() {
                           risk_pct: e.target.value,
                         }))
                       }
-                      placeholder="0.01"
+                      placeholder="Risk % (0.01)"
                     />
                   </label>
                   <label>
                     <div className="muted small">Risk ($)</div>
+                    <label htmlFor="signal-create-risk-money" className="sr-only">
+                      Risk $
+                    </label>
                     <input
+                      id="signal-create-risk-money"
                       value={createForm.risk_money}
                       onChange={(e) =>
                         setCreateForm((p) => ({
@@ -1130,37 +1162,49 @@ export default function SignalsPage() {
                           risk_money: e.target.value,
                         }))
                       }
-                      placeholder="100"
+                      placeholder="Risk $ (100)"
                     />
                   </label>
                   <label>
                     <div className="muted small">Entry Price</div>
+                    <label htmlFor="signal-create-price" className="sr-only">
+                      Entry Price
+                    </label>
                     <input
+                      id="signal-create-price"
                       value={createForm.price}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, price: e.target.value }))
                       }
-                      placeholder="3345.20"
+                      placeholder="Entry"
                     />
                   </label>
                   <label>
                     <div className="muted small">SL</div>
+                    <label htmlFor="signal-create-sl" className="sr-only">
+                      Stop Loss
+                    </label>
                     <input
+                      id="signal-create-sl"
                       value={createForm.sl}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, sl: e.target.value }))
                       }
-                      placeholder="3330.00"
+                      placeholder="SL"
                     />
                   </label>
                   <label>
                     <div className="muted small">TP</div>
+                    <label htmlFor="signal-create-tp" className="sr-only">
+                      Take Profit
+                    </label>
                     <input
+                      id="signal-create-tp"
                       value={createForm.tp}
                       onChange={(e) =>
                         setCreateForm((p) => ({ ...p, tp: e.target.value }))
                       }
-                      placeholder="3365.00"
+                      placeholder="TP"
                     />
                   </label>
                   <label>

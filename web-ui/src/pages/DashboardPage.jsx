@@ -566,7 +566,11 @@ export default function DashboardPage() {
                 flex: 1,
               }}
             >
+              <label htmlFor="db-filter-account" className="sr-only">
+                Account
+              </label>
               <select
+                id="db-filter-account"
                 value={filters.account_id}
                 onChange={(e) =>
                   setFilters((prev) => ({
@@ -582,7 +586,11 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="db-filter-symbol" className="sr-only">
+                Symbol
+              </label>
               <select
+                id="db-filter-symbol"
                 value={filters.symbol}
                 onChange={(e) =>
                   setFilters((prev) => ({ ...prev, symbol: e.target.value }))
@@ -595,7 +603,11 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="db-filter-source" className="sr-only">
+                Source
+              </label>
               <select
+                id="db-filter-source"
                 value={filters.source}
                 onChange={(e) =>
                   setFilters((prev) => ({ ...prev, source: e.target.value }))
@@ -608,7 +620,11 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="db-filter-model" className="sr-only">
+                Model
+              </label>
               <select
+                id="db-filter-model"
                 value={filters.entry_model}
                 onChange={(e) =>
                   setFilters((prev) => ({
@@ -625,8 +641,11 @@ export default function DashboardPage() {
                 ))}
               </select>
 
-              
+              <label htmlFor="db-filter-tf" className="sr-only">
+                Timeframe
+              </label>
               <select
+                id="db-filter-tf"
                 value={filters.signal_tf}
                 onChange={(e) =>
                   setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))
@@ -639,7 +658,11 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="db-filter-range" className="sr-only">
+                Time Range
+              </label>
               <select
+                id="db-filter-range"
                 value={filters.range}
                 onChange={(e) =>
                   setFilters((prev) => ({ ...prev, range: e.target.value }))

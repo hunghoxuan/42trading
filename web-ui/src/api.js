@@ -170,10 +170,17 @@ async function get(path) {
 
   let data;
   try {
-    data = await res.json();
-  } catch {
-    throw new Error(`Server returned non-JSON response (${res.status})`);
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+    }
+  } catch (err) {
+    if (err.message.includes("Server returned non-JSON")) throw err;
+    throw new Error(`Failed to read response body (${res.status})`);
   }
+
   if (!res.ok || !data.ok) {
     if (
       path !== "/auth/login" &&
@@ -311,10 +318,17 @@ async function post(path, body = {}) {
 
   let data;
   try {
-    data = await res.json();
-  } catch {
-    throw new Error(`Server returned non-JSON response (${res.status})`);
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+    }
+  } catch (err) {
+    if (err.message.includes("Server returned non-JSON")) throw err;
+    throw new Error(`Failed to read response body (${res.status})`);
   }
+
   if (!res.ok || !data.ok) {
     if (
       path !== "/auth/login" &&
@@ -388,10 +402,17 @@ async function postWithTimeout(
 
   let data;
   try {
-    data = await res.json();
-  } catch {
-    throw new Error(`Server returned non-JSON response (${res.status})`);
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+    }
+  } catch (err) {
+    if (err.message.includes("Server returned non-JSON")) throw err;
+    throw new Error(`Failed to read response body (${res.status})`);
   }
+
   if (!res.ok || !data.ok) {
     if (
       path !== "/auth/login" &&
@@ -458,10 +479,17 @@ async function put(path, body = {}) {
 
   let data;
   try {
-    data = await res.json();
-  } catch {
-    throw new Error(`Server returned non-JSON response (${res.status})`);
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+    }
+  } catch (err) {
+    if (err.message.includes("Server returned non-JSON")) throw err;
+    throw new Error(`Failed to read response body (${res.status})`);
   }
+
   if (!res.ok || !data.ok) {
     if (
       path !== "/auth/login" &&
@@ -523,10 +551,17 @@ async function del(path) {
   }
   let data;
   try {
-    data = await res.json();
-  } catch {
-    throw new Error(`Server returned non-JSON response (${res.status})`);
+    const text = await res.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+    }
+  } catch (err) {
+    if (err.message.includes("Server returned non-JSON")) throw err;
+    throw new Error(`Failed to read response body (${res.status})`);
   }
+
   if (!res.ok || !data.ok) {
     if (
       path !== "/auth/login" &&
