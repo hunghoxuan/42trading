@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `LOCKED`
-- deploy_owner: `Antigravity`
-- since_utc: `2026-05-15 16:44 UTC`
-- note: `Reverting responsive grid changes in styles.css and ChartSnapshotsPage.jsx as per user request.`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: `Set lock_status=LOCKED before deploy; release after verification.`
 
 ## Required Entry Template
 
@@ -48,7 +48,23 @@ Copy and fill:
 - Agent C repeats only after B posts success.
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
 
-### [2026-05-15 07:55 UTC] AGENT:Antigravity
+### [2026-05-15 16:46 UTC] AGENT:Antigravity
+- status: DEPLOYED
+- branch: main
+- commit: e95116a2
+- scope: `web-ui/src/styles.css`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/components/charts/SymbolChart.jsx`
+- merge_to_main: YES (e95116a2)
+- deploy:
+  - owner: Antigravity
+  - server_version: v2026.05.15 16:44 - 7e7d1275
+  - ea_version: v2026.05.15 16:44 - 7e7d1275
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.15 16:44 - 7e7d1275`
+  - /ui asset: `/assets/index-D7U5o-P2.js`
+  - key endpoint: `GET /webhook/health` returns `ok:true`
+- handoff_next: none
+
 - status: DEPLOYED
 - branch: main
 - commit: ab15d175
