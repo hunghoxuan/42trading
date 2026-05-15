@@ -2361,8 +2361,17 @@ export default function SymbolChart({
                 label: `Entry @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
+                  console.log(
+                    "[ctxMenu] Entry clicked price=",
+                    p,
+                    "onPlanLevelChange=",
+                    typeof onPlanLevelChange,
+                    "onQuickTradeIntent=",
+                    typeof onQuickTradeIntent,
+                  );
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("entry", p);
+                    console.log("[ctxMenu] Entry → onPlanLevelChange done");
                   } else if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
@@ -2371,6 +2380,9 @@ export default function SymbolChart({
                       plan_id: activePlanGroup,
                       price: p,
                     });
+                    console.log("[ctxMenu] Entry → onQuickTradeIntent done");
+                  } else {
+                    console.log("[ctxMenu] Entry → NO HANDLER available");
                   }
                   setCtxMenu(null);
                 },
@@ -2379,6 +2391,7 @@ export default function SymbolChart({
                 label: `TP @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
+                  console.log("[ctxMenu] TP clicked price=", p);
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("tp", p);
                   } else if (typeof onQuickTradeIntent === "function") {
@@ -2397,6 +2410,7 @@ export default function SymbolChart({
                 label: `SL @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
+                  console.log("[ctxMenu] SL clicked price=", p);
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("sl", p);
                   } else if (typeof onQuickTradeIntent === "function") {

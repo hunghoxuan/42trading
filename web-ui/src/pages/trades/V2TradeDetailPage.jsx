@@ -140,6 +140,7 @@ export default function TradeDetailPage() {
         : directionFromForm;
       next.direction = direction;
 
+      // Live auto-calc: RR → TP
       if (
         key === "rr" &&
         Number.isFinite(entry) &&
@@ -172,14 +173,8 @@ export default function TradeDetailPage() {
         next.trade_type || prev.trade_type || "limit",
       );
 
-      const baseErr = validateTradePlan(next, { skipRrCheck: false });
-      const typeErr = orderTypeRuleError(
-        next.direction,
-        next.trade_type,
-        asNum(next.entry),
-        lastPrice,
-      );
-      setPlanError(baseErr || typeErr || "");
+      // Validation deferred to save (onUpdateTradePlan)
+      setPlanError("");
       return next;
     });
   };
@@ -459,8 +454,10 @@ export default function TradeDetailPage() {
               createdAt: trade.created_at,
               openedAt: trade.opened_at,
               closedAt: trade.closed_at,
-              provider: trade.provider || trade.metadata?.provider || "ICMARKETS",
-              sessionPrefix: trade.session_prefix || trade.metadata?.session_prefix || "",
+              provider:
+                trade.provider || trade.metadata?.provider || "ICMARKETS",
+              sessionPrefix:
+                trade.session_prefix || trade.metadata?.session_prefix || "",
               analysisSnapshot:
                 trade?.metadata?.analysis_snapshot ||
                 trade?.raw_json?.analysis_snapshot ||
