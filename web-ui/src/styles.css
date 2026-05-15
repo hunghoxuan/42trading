@@ -1860,25 +1860,6 @@ button:disabled {
     grid-template-columns: repeat(4, 1fr);
     gap: 16px;
     margin-top: 16px;
-    width: 100%;
-}
-
-@media (max-width: 1600px) {
-    .browser-grid-v1 {
-        grid-template-columns: repeat(3, 1fr);
-    }
-}
-
-@media (max-width: 1100px) {
-    .browser-grid-v1 {
-        grid-template-columns: repeat(2, 1fr);
-    }
-}
-
-@media (max-width: 700px) {
-    .browser-grid-v1 {
-        grid-template-columns: 1fr;
-    }
 }
 
 .browser-card-v1 {

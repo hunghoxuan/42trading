@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: ``
-- note: `Set lock_status=LOCKED before deploy; release after verification.`
+- lock_status: `LOCKED`
+- deploy_owner: `Antigravity`
+- since_utc: `2026-05-15 16:44 UTC`
+- note: `Reverting responsive grid changes in styles.css and ChartSnapshotsPage.jsx as per user request.`
 
 ## Required Entry Template
 
