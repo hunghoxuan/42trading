@@ -1518,12 +1518,12 @@ export default function SymbolChart({
               setLocalBarsCount(n);
             }}
             style={{ fontSize: 10, padding: "2px 4px", height: 22 }}
-            title="Bars per TF (auto-scaled)"
+            title="Bars per TF"
           >
-            <option value={0}>Default</option>
-            {[50, 100, 200, 300, 500, 700, 1000].map((v) => (
+            <option value={100}>100</option>
+            {[300, 600, 900, 1200, 1500, 1800, 2200, 2600, 3000].map((v) => (
               <option key={v} value={v}>
-                {v}b
+                {v}
               </option>
             ))}
           </select>
