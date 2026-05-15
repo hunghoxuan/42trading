@@ -1425,17 +1425,17 @@ const LOOKBACK_PRESET_SECONDS = {
 };
 
 function resolveLookbackBarsValue(lookbackRaw, tfRaw = "15m") {
-  const raw = String(lookbackRaw || "300")
+  const raw = String(lookbackRaw || "1200")
     .trim()
     .toLowerCase();
   if (/^\d+$/.test(raw)) {
     const n = Number(raw);
-    return Math.max(50, Math.min(1000, Number.isFinite(n) ? n : 300));
+    return Math.max(50, Math.min(5000, Number.isFinite(n) ? n : 1200));
   }
   const sec = LOOKBACK_PRESET_SECONDS[raw];
-  if (!Number.isFinite(sec) || sec <= 0) return 300;
+  if (!Number.isFinite(sec) || sec <= 0) return 1200;
   const tfSec = Math.max(60, tfToSeconds(tfRaw));
-  return Math.max(50, Math.min(1000, Math.ceil(sec / tfSec)));
+  return Math.max(50, Math.min(5000, Math.ceil(sec / tfSec)));
 }
 
 function normalizeSnapshotBars(snapshot, tfRaw = "") {
@@ -5739,7 +5739,7 @@ export default function ChartSnapshotsPage() {
                       </select>
                       <select
                         className="secondary-button"
-                        value={cfg.lookbackBars || "300"}
+                        value={cfg.lookbackBars || "1200"}
                         onChange={(e) =>
                           setCfgField("lookbackBars", e.target.value)
                         }
@@ -5751,25 +5751,19 @@ export default function ChartSnapshotsPage() {
                         title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
                       >
                         {[
-                          "50",
                           "100",
-                          "200",
                           "300",
-                          "500",
-                          "700",
-                          "1000",
-                          "1w",
-                          "2w",
-                          "1mo",
+                          "600",
+                          "900",
+                          "1200",
+                          "1500",
+                          "1800",
+                          "2200",
+                          "2600",
+                          "3000",
                         ].map((v) => (
                           <option key={v} value={v}>
-                            {v === "1w"
-                              ? "1 week"
-                              : v === "2w"
-                                ? "2 weeks"
-                                : v === "1mo"
-                                  ? "1 month"
-                                  : `${v} bars`}
+                            {v} bars
                           </option>
                         ))}
                       </select>

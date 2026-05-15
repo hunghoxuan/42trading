@@ -280,7 +280,8 @@ export default function TradeSignalChart({
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState("");
   const lwTimeToMs = useCallback((v) => {
-    if (typeof v === "number" && Number.isFinite(v)) return Math.round(v * 1000);
+    if (typeof v === "number" && Number.isFinite(v))
+      return Math.round(v * 1000);
     if (v && typeof v === "object") {
       if (
         Number.isFinite(Number(v.year)) &&
@@ -322,6 +323,19 @@ export default function TradeSignalChart({
           borderColor: "rgba(197, 203, 206, 0.4)",
           timeVisible: true,
           secondsVisible: false,
+        },
+        rightPriceScale: {
+          borderColor: "rgba(197, 203, 206, 0.3)",
+          scaleMargins: { top: 0.05, bottom: 0.05 },
+          entireTextOnly: true,
+        },
+        localization: {
+          priceFormatter: (price) => {
+            if (price >= 1000) return price.toFixed(1);
+            if (price >= 100) return price.toFixed(2);
+            if (price >= 1) return price.toFixed(3);
+            return price.toFixed(5);
+          },
         },
       });
 
@@ -378,7 +392,9 @@ export default function TradeSignalChart({
           timeStartMs: Number.isFinite(t0) ? t0 : null,
           timeEndMs: Number.isFinite(t1) ? t1 : null,
           priceTop: Number.isFinite(Number(pTop)) ? Number(pTop) : null,
-          priceBottom: Number.isFinite(Number(pBottom)) ? Number(pBottom) : null,
+          priceBottom: Number.isFinite(Number(pBottom))
+            ? Number(pBottom)
+            : null,
         });
       };
 
@@ -434,44 +450,48 @@ export default function TradeSignalChart({
             const cachedEntry = chartFetchManager.get(symbol, interval);
             if (cachedEntry?.bars && cachedEntry.bars.length > 0) {
               candles = cachedEntry.bars;
-              snapshot = { ...snapshot, bar_start: cachedEntry.bar_start, bar_end: cachedEntry.bar_end };
+              snapshot = {
+                ...snapshot,
+                bar_start: cachedEntry.bar_start,
+                bar_end: cachedEntry.bar_end,
+              };
               snapshotBars = candles;
               hasSnapshotBars = true;
               setDataSource("cache");
             } else {
-            // Try Twelve Data on-demand (for old trades without stored snapshot)
-            try {
-              // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
-              const apiTf =
-                String(interval).toUpperCase() === "ENTRY" ? "15m" : interval;
-              // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
-              const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
+              // Try Twelve Data on-demand (for old trades without stored snapshot)
+              try {
+                // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
+                const apiTf =
+                  String(interval).toUpperCase() === "ENTRY" ? "15m" : interval;
+                // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
+                const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
 
-              if (!apiSym) {
-                setLoading(false);
-                return;
-              }
-              const r = await fetch(
-                `/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`,
-                {
-                  credentials: "include",
-                  cache: "no-store",
-                },
-              );
-              const j = await r.json().catch(() => ({}));
-              const snap =
-                j?.snapshot && typeof j.snapshot === "object"
-                  ? j.snapshot
-                  : null;
-              const bars = parseSnapshotBars(snap);
-              if (r.ok && bars.length > 0) {
-                // Merge: keep original snapshot analysis (plans, levels) but use new bars
-                snapshot = { ...snapshot, ...(snap || {}) };
-                snapshotBars = bars;
-                hasSnapshotBars = true;
-                candles = bars;
-                setDataSource("twelve");
-              }
+                if (!apiSym) {
+                  setLoading(false);
+                  return;
+                }
+                const r = await fetch(
+                  `/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`,
+                  {
+                    credentials: "include",
+                    cache: "no-store",
+                  },
+                );
+                const j = await r.json().catch(() => ({}));
+                const snap =
+                  j?.snapshot && typeof j.snapshot === "object"
+                    ? j.snapshot
+                    : null;
+                const bars = parseSnapshotBars(snap);
+                if (r.ok && bars.length > 0) {
+                  // Merge: keep original snapshot analysis (plans, levels) but use new bars
+                  snapshot = { ...snapshot, ...(snap || {}) };
+                  snapshotBars = bars;
+                  hasSnapshotBars = true;
+                  candles = bars;
+                  setDataSource("twelve");
+                }
               } catch (err) {
                 console.error("Twelve fetch failed for", apiSym, err);
               }
