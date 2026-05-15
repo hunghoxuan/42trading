@@ -767,7 +767,7 @@ export default function SignalsPage() {
       <div className="logs-layout-split">
         <div
           className="logs-list-pane component-frozen-wrap"
-          style={listMode === "compact" ? { flex: "0 0 180px", minWidth: 180, overflow: "hidden", minWidth: 150, paddingTop: 40 } : { flex: "0 0 40%" }}
+          style={listMode === "compact" ? { flex: "0 0 150px", minWidth: 150, overflow: "hidden", paddingTop: 40 } : { flex: "0 0 40%" }}
         >
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
             <button

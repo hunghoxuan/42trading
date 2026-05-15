@@ -1111,10 +1111,9 @@ export default function TradesPage() {
           style={
             listMode === "compact"
               ? {
-                  flex: "0 0 44px",
-                  minWidth: 44,
-                  overflow: "hidden",
+                  flex: "0 0 150px",
                   minWidth: 150,
+                  overflow: "hidden",
                   paddingTop: 40,
                 }
               : { flex: "0 0 40%" }
