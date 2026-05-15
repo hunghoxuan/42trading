@@ -427,12 +427,56 @@ export default function TradeSignalChart({
 
       chart.subscribeCrosshairMove(handleCrosshairMove);
       const chartElement = chart.chartElement();
+
+      // --- Price line tooltip ---
+      const priceLinesRef = { lines: [] };
+      const tooltipEl = document.createElement("div");
+      tooltipEl.style.cssText =
+        "display:none;position:absolute;z-index:100;background:rgba(0,0,0,0.85);color:#d1d4dc;padding:4px 8px;border-radius:4px;font-size:11px;pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,0.1);";
+      chartElement.appendChild(tooltipEl);
+
+      const handlePriceLineHover = (param) => {
+        if (!param?.point || !candleSeries) {
+          tooltipEl.style.display = "none";
+          return;
+        }
+        const lines = priceLinesRef.lines;
+        let closest = null;
+        let closestDist = 12; // pixels threshold
+        for (const l of lines) {
+          const y = candleSeries.priceToCoordinate(l.price);
+          if (y == null) continue;
+          const dist = Math.abs(param.point.y - y);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closest = { ...l, y };
+          }
+        }
+        if (closest) {
+          tooltipEl.style.display = "block";
+          tooltipEl.style.left = param.point.x + 10 + "px";
+          tooltipEl.style.top = closest.y - 20 + "px";
+          tooltipEl.innerHTML = `<b>${closest.label}</b> ${closest.priceText}`;
+        } else {
+          tooltipEl.style.display = "none";
+        }
+      };
+
+      chart.subscribeCrosshairMove((param) => {
+        handlePriceLineHover(param);
+        handleCrosshairMove(param);
+      });
+      // Remove the old subscription (replaced by combined one above)
+      // Actually, subscribeCrosshairMove supports multiple subscribers, so both work.
+      // But we use the combined one to avoid duplicate handling.
+
       const dragState = { activeKey: null };
       let removeDragListeners = () => {};
       let removeContextMenuListener = () => {};
 
       // 3. Fetch History + Start Live
       async function initData() {
+        priceLinesRef.lines = []; // Clear previous price lines
         let snapshot = extractAnalysisSnapshot(analysisSnapshot);
         let snapshotBars = parseSnapshotBars(snapshot);
         let hasSnapshotBars = snapshotBars.length > 0;
@@ -618,28 +662,47 @@ export default function TradeSignalChart({
                 axisLabelVisible: true,
                 title: `${actionLabel}${pNum}`,
               });
+              priceLinesRef.lines.push({
+                price: ep,
+                label: `${actionLabel}${pNum}`,
+                priceText: ep.toFixed(2),
+              });
               if (isPrimary) levelPriceMap.entry = ep;
               // SL line: dashed, always RED
-              if (sp)
+              if (sp) {
+                const slPct = ep ? (((sp - ep) / ep) * 100).toFixed(1) : "";
                 candleSeries.createPriceLine({
                   price: sp,
                   color: `rgba(239, 83, 80, ${alpha})`,
                   lineWidth,
                   lineStyle: 2,
                   axisLabelVisible: true,
-                  title: `SL${pNum}`,
+                  title: `SL${pNum} ${slPct}%`,
                 });
+                priceLinesRef.lines.push({
+                  price: sp,
+                  label: `SL${pNum}`,
+                  priceText: `${sp.toFixed(2)} (${slPct}%)`,
+                });
+              }
               if (isPrimary && sp) levelPriceMap.sl = sp;
               // TP line: dotted, always GREEN
-              if (tp)
+              if (tp) {
+                const tpPct = ep ? (((tp - ep) / ep) * 100).toFixed(1) : "";
                 candleSeries.createPriceLine({
                   price: tp,
                   color: `rgba(38, 166, 154, ${alpha})`,
                   lineWidth,
                   lineStyle: 1,
                   axisLabelVisible: true,
-                  title: `TP${pNum}`,
+                  title: `TP${pNum} +${tpPct}%`,
                 });
+                priceLinesRef.lines.push({
+                  price: tp,
+                  label: `TP${pNum}`,
+                  priceText: `${tp.toFixed(2)} (+${tpPct}%)`,
+                });
+              }
               if (isPrimary && tp) levelPriceMap.tp = tp;
 
               // Entry → TP zone box: Reward zone = Green
@@ -1008,6 +1071,9 @@ export default function TradeSignalChart({
         } catch {}
         removeDragListeners();
         removeContextMenuListener();
+        try {
+          tooltipEl.remove();
+        } catch {}
         chartRef.current = null;
         seriesRef.current = null;
         try {
