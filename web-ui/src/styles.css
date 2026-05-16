@@ -324,7 +324,7 @@ button {
     border-radius: 8px;
     color: var(--text);
     padding: 8px 12px;
-    font-size: 13px;
+    font-size: 10px;
     outline: none;
 }
 button {
@@ -389,6 +389,7 @@ button:disabled {
     border-radius: 12px;
     padding: 12px 20px;
     gap: 12px;
+    font-size: 10px;
     flex-wrap: wrap;
 }
 .toolbar-left {
@@ -1221,7 +1222,7 @@ button:disabled {
     border-radius: 8px;
     color: var(--text);
     padding: 8px 12px;
-    font-size: 13px;
+    font-size: 10px;
     outline: none;
     width: 100%;
     min-height: 86px;
@@ -1531,7 +1532,7 @@ button:disabled {
 }
 .snapshot-card-file-v2 strong {
     color: var(--text);
-    font-size: 13px;
+    font-size: 10px;
 }
 .snapshot-card-file-v2 span {
     font-size: 11px;
@@ -1827,7 +1828,7 @@ button:disabled {
     border: 1px solid transparent;
     border-radius: 8px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 10px;
     font-weight: 600;
     display: flex;
     align-items: center;
