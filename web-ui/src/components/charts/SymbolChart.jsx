@@ -1964,7 +1964,7 @@ export default function SymbolChart({
                 <div
                   style={{
                     position: "relative",
-                    height: chartHeight,
+                    height: isMasterSnapshot ? 410 : chartHeight,
                     overflow: "hidden",
                     borderRadius: 6,
                   }}
@@ -1978,7 +1978,7 @@ export default function SymbolChart({
                     style={{
                       width: "100%",
                       height: "100%",
-                      objectFit: "contain",
+                      objectFit: isMasterSnapshot ? "fill" : "contain",
                       background: "#000",
                     }}
                     onError={(e) => {

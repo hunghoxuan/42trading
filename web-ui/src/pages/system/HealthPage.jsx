@@ -150,17 +150,36 @@ export default function HealthPage() {
                 color: "var(--muted)",
                 padding: "4px 0",
                 borderBottom: "1px solid rgba(255,255,255,0.04)",
-                display: "flex",
-                justifyContent: "space-between",
               }}
             >
-              <span>
-                <StatusDot ok={ev.status === "ok"} />
-                {ev.events?.join(", ") || "-"}
-              </span>
-              <span>
-                {new Date(ev.time).toLocaleTimeString()} ({ev.elapsed}s)
-              </span>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span>
+                  <StatusDot ok={ev.status === "ok"} />
+                  {ev.events?.join(", ") || "-"}
+                </span>
+                <span style={{ fontSize: 9, opacity: 0.7 }}>
+                  {new Date(ev.time).toLocaleTimeString()} - {ev.elapsed}s
+                </span>
+              </div>
+              {ev.events?.map((evt, j) => {
+                const isError = /error/i.test(evt);
+                if (!isError && ev.status === "ok") return null;
+                return (
+                  <div
+                    key={j}
+                    style={{
+                      fontSize: 9,
+                      opacity: 0.65,
+                      marginTop: 1,
+                      marginLeft: 14,
+                      color: isError ? "var(--danger, #ef4444)" : "var(--muted)",
+                      fontWeight: isError ? 600 : 300,
+                    }}
+                  >
+                    {evt}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
