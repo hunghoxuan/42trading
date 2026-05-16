@@ -2945,11 +2945,13 @@ export default function ChartSnapshotsPage() {
       const arr = Array.isArray(out?.items) ? out.items : [];
       setItems(arr);
       setSelectedFiles(new Set());
+      return arr;
     } catch (e) {
       setStatus({
         type: "error",
         text: String(e?.message || e || "Failed to load snapshots."),
       });
+      return items;
     } finally {
       setLoading(false);
     }
@@ -2987,6 +2989,7 @@ export default function ChartSnapshotsPage() {
   const resolveRecentSnapshots = (opts = {}) => {
     const nowMs = Date.now();
     const activeSessionPrefix = String(opts.sessionPrefix || "").trim();
+    const snapshotItems = Array.isArray(opts.items) ? opts.items : items;
     const requestedSymbols = Array.isArray(opts.symbols)
       ? opts.symbols
           .map((x) =>
@@ -3034,7 +3037,7 @@ export default function ChartSnapshotsPage() {
     const symbolTokens = new Set(
       Array.from(requestedTokenMap.values()).flatMap((set) => Array.from(set)),
     );
-    const candidates = items
+    const candidates = snapshotItems
       .map(parseSnapshotMeta)
       .filter((x) => x && x.createdAtMs > 0)
       .filter((x) => symbolTokens.has(x.symbolToken))
@@ -3610,9 +3613,10 @@ export default function ChartSnapshotsPage() {
     setStatus({ type: "", text: "" });
     try {
       // Ensure snapshot list is fresh before checking
-      await loadSnapshots();
+      const freshItems = await loadSnapshots();
       const hasContext = true; // backend handles context bundle in analyze
       const recent = resolveRecentSnapshots({
+        items: freshItems,
         sessionPrefix: activeSessionPrefix,
         symbols: targetSymbols,
       });
