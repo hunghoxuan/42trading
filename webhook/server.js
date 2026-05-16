@@ -22069,99 +22069,6 @@ function initMarketDataQueue() {
 }
 
 
-async function mt5RunSnapshotsCron() {
-  const b = await mt5Backend();
-  const res = await b.query(`
-    SELECT s.*
-    FROM user_settings s
-    JOIN users u ON s.user_id = u.user_id
-    WHERE s.type = 'cron' AND s.name = 'SNAPSHOTS_CRON'
-      AND UPPER(s.status) = 'ACTIVE'
-      AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
-  `);
-  const configs = res.rows || [];
-  if (!configs.length) return null;
-
-  const now = Date.now();
-  const summary = {
-    configs: 0,
-    captured: 0,
-    skipped: 0,
-    symbols: [],
-    errors: [],
-  };
-
-  for (const conf of configs) {
-    const userId = conf.user_id;
-    const data = conf.data || {};
-    if (!asBool(data.enabled ?? true, true)) continue;
-    summary.configs++;
-    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
-    const excludeSymbols = new Set(
-      (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
-        .map((s) => String(s).toUpperCase().trim())
-        .filter(Boolean),
-    );
-    const filteredSymbols = symbols.filter(
-      (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
-    );
-    const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
-    if (!filteredSymbols.length || !tfs.length) continue;
-    const cadenceMin = Number(data.cadence_minutes || 60);
-
-    const stateKey = `${userId}_${conf.name || "default"}`;
-    const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
-
-    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) {
-      summary.skipped++;
-      continue;
-    }
-
-    console.log(
-      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`,
-    );
-    CRON_STATE.lastSnapshotsRun[stateKey] = now;
-
-    try {
-      const provider = String(data.provider || "tv");
-      const sessionPrefix = String(data.session_prefix || sanitizeSessionPrefix(""));
-      const lookbackBars = Number(data.lookback_bars || 200);
-      const format = String(data.format || "png");
-      const quality = Number(data.quality || 90);
-      const theme = String(data.theme || "dark");
-      const width = Number(data.width || 1200);
-      const height = Number(data.height || 800);
-
-      const results = await captureTradingViewSnapshotsBatch({
-        symbols: filteredSymbols,
-        timeframes: tfs,
-        provider,
-        sessionPrefix,
-        lookbackBars,
-        format,
-        quality,
-        theme,
-        width,
-        height,
-        userId,
-      });
-
-      if (Array.isArray(results)) {
-        for (const r of results) {
-          if (r && r.id) {
-            summary.captured++;
-            summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`);
-          }
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      summary.errors.push(msg);
-      console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg);
-    }
-  }
-  return summary;
-}
 
 
 async function mt5RunSnapshotsCron() {
@@ -22215,6 +22122,7 @@ async function mt5CronLoop() {
     try {
       await mt5RunMarketDataCron();
       await mt5RunAiAnalysisCron();
+      await mt5RunSnapshotsCron();
       global._cronStatus = `ok (${Math.round((Date.now() - startMs) / 1000)}s)`;
     } catch (err) {
       console.error("[Cron] Run error:", err);
