@@ -1059,30 +1059,38 @@ export default function SignalDetailCard({
   }, [chart?.enabled, chart?.interval]);
 
   useEffect(() => {
+    let isMounted = true;
     if (
       mainTab === "chart" &&
       chart?.symbol &&
       selectedTfs.length > 0 &&
       chartModes.includes("static")
     ) {
-      let isMounted = true;
-      setLoadingCharts(true);
-      const res = await fetch(
-        `/api/charts/multi?symbol=${encodeURIComponent(chart.symbol)}&tfs=${encodeURIComponent(selectedTfs.join(","))}`,
-      );
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { ok: false };
-      }
-      if (isMounted && data.ok) setMultiChartData(data.data || {});
-      setLoadingCharts(false);
-      return () => {
-        isMounted = false;
+      const load = async () => {
+        setLoadingCharts(true);
+        try {
+          const res = await fetch(
+            `/api/charts/multi?symbol=${encodeURIComponent(chart.symbol)}&tfs=${encodeURIComponent(selectedTfs.join(","))}`,
+          );
+          const text = await res.text();
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            data = { ok: false };
+          }
+          if (isMounted && data.ok) setMultiChartData(data.data || {});
+        } catch (e) {
+          // ignore
+        } finally {
+          if (isMounted) setLoadingCharts(false);
+        }
       };
+      load();
     }
+    return () => {
+      isMounted = false;
+    };
   }, [mainTab, chart?.symbol, selectedTfs, chartModes]);
 
   const toggleTf = (tf) => {
