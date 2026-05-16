@@ -522,7 +522,13 @@ export default function TradeSignalChart({
                     cache: "no-store",
                   },
                 );
-                const j = await r.json().catch(() => ({}));
+                const text = await r.text();
+                let j;
+                try {
+                  j = JSON.parse(text);
+                } catch {
+                  j = { ok: false };
+                }
                 const snap =
                   j?.snapshot && typeof j.snapshot === "object"
                     ? j.snapshot

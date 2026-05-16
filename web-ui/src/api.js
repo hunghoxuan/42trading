@@ -244,8 +244,10 @@ async function getBlob(path) {
 
   if (!res.ok) {
     let data = {};
+    let text = "";
     try {
-      data = await res.json();
+      text = await res.text();
+      data = JSON.parse(text);
     } catch {
       data = {};
     }
@@ -783,11 +785,17 @@ export const api = {
       `${base}/v2/trades/${encodeURIComponent(tradeId)}/files/upload`,
       { method: "POST", headers, body: form },
     );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error || `Upload failed (${res.status})`);
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Upload failed - server returned non-JSON (${res.status}): ${text.slice(0, 100)}`);
     }
-    return res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `Upload failed (${res.status})`);
+    }
+    return data;
   },
   listTradeFiles: (tradeId) =>
     get(`/v2/trades/${encodeURIComponent(tradeId)}/files`),

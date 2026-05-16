@@ -1067,16 +1067,18 @@ export default function SignalDetailCard({
     ) {
       let isMounted = true;
       setLoadingCharts(true);
-      fetch(
+      const res = await fetch(
         `/api/charts/multi?symbol=${encodeURIComponent(chart.symbol)}&tfs=${encodeURIComponent(selectedTfs.join(","))}`,
-      )
-        .then((res) => (res.ok ? res.json() : null))
-        .then((res) => {
-          if (isMounted && res?.ok) setMultiChartData(res.data || {});
-        })
-        .finally(() => {
-          if (isMounted) setLoadingCharts(false);
-        });
+      );
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { ok: false };
+      }
+      if (isMounted && data.ok) setMultiChartData(data.data || {});
+      setLoadingCharts(false);
       return () => {
         isMounted = false;
       };

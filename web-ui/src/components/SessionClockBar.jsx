@@ -110,9 +110,19 @@ export default function SessionClockBar({ displayTimezone }) {
     // Fetch News Today
     const fetchNews = async () => {
       try {
-        const res = await fetch("/v2/calendar/today").then((r) => r.json());
-        if (res.ok) setNews(res.events || []);
-      } catch (e) {}
+        const res = await fetch("/v2/calendar/today");
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          // ignore HTML responses or other non-JSON
+          return;
+        }
+        if (data.ok) setNews(data.events || []);
+      } catch (e) {
+        // ignore network errors
+      }
     };
     fetchNews();
     const newsTimer = setInterval(fetchNews, 300000); // Every 5m
