@@ -1,6 +1,9 @@
 "use strict";
 
 const crypto = require("crypto");
+
+// Configuration for snapshot strategy
+const ALL_SNAPSHOTS_IN_1_FILE = true; // Set to false to revert to separate files
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
@@ -144,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:54 - cd11e002"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:05 - 0416110f"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3723,6 +3726,50 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     ],
   });
   try {
+    if (ALL_SNAPSHOTS_IN_1_FILE) {
+      const results = [];
+      for (const symbol of symbols) {
+        try {
+          const ext = opts.format === "png" ? "png" : "jpg";
+          const outFileName = `${symbol}_MASTER.${ext}`;
+          const outPath = path.join(CHART_SNAPSHOT_DIR, outFileName);
+          // Use internal loopback to fetch the grid HTML
+          const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${symbol}?tfs=${timeframes.join(",")}&theme=${opts.theme || "dark"}`;
+
+          const context = await browser.newContext({
+            viewport: { width: 1920, height: 1080 },
+            deviceScaleFactor: 2, // High DPI for better AI recognition
+          });
+          const page = await context.newPage();
+          console.log(`[snapshot-grid] Capturing master grid for ${symbol} at ${gridUrl}`);
+          
+          await page.goto(gridUrl, { waitUntil: "networkidle", timeout: 60000 });
+          // Wait for iframes to stabilize
+          await page.waitForTimeout(12000);
+
+          await page.screenshot({
+            path: outPath,
+            type: opts.format === "png" ? "png" : "jpeg",
+            quality: opts.format === "png" ? undefined : 90,
+          });
+          await context.close();
+
+          results.push({
+            symbol,
+            timeframe: timeframes.join(","),
+            status: "ok",
+            file: outFileName,
+            url: `/v2/tv/snapshot/${outFileName}`,
+            master: true
+          });
+        } catch (e) {
+          console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
+          results.push({ symbol, status: "error", error: e.message });
+        }
+      }
+      return results;
+    }
+
     const items = new Array(tasks.length);
     let cursor = 0;
 
@@ -16999,6 +17046,79 @@ const appHandler = async (req, res) => {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/v2/chart/snapshots-grid/")) {
+    const symbol = url.pathname.split("/").pop() || "BTCUSD";
+    const tfsRaw = url.searchParams.get("timeframes") || url.searchParams.get("tfs") || "15,60,240,D";
+    const tfs = tfsRaw.split(",").filter(Boolean).map(x => x.trim().toUpperCase());
+    const theme = url.searchParams.get("theme") || "dark";
+    
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Grid ${symbol}</title>
+          <style>
+            body { 
+              margin: 0; 
+              background: ${theme === "dark" ? "#0b1220" : "#ffffff"}; 
+              overflow: hidden; 
+              font-family: sans-serif;
+            }
+            .grid { 
+              display: grid; 
+              grid-template-columns: repeat(${tfs.length > 2 ? 2 : tfs.length}, 1fr);
+              grid-auto-rows: 1fr;
+              width: 100vw;
+              height: 100vh;
+              gap: 2px;
+              background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
+            }
+            .chart-cell {
+              position: relative;
+              overflow: hidden;
+              background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
+            }
+            .chart-cell iframe {
+              position: absolute;
+              /* Precision cropping: move the iframe up and left to hide toolbars/legends */
+              top: -38px;
+              left: -42px;
+              width: calc(100% + 45px);
+              height: calc(100% + 40px);
+              border: none;
+            }
+            .tf-badge {
+              position: absolute;
+              top: 5px;
+              right: 5px;
+              background: rgba(0,0,0,0.6);
+              color: white;
+              padding: 2px 6px;
+              border-radius: 4px;
+              font-size: 10px;
+              font-weight: bold;
+              z-index: 10;
+              pointer-events: none;
+              border: 1px solid rgba(255,255,255,0.2);
+            }
+          </style>
+        </head>
+        <body>
+          <div class="grid">
+            ${tfs.map(tf => `
+              <div class="chart-cell">
+                <div class="tf-badge">${tf}</div>
+                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tf}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
+              </div>
+            `).join('')}
+          </div>
+        </body>
+      </html>
+    `);
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/v2/chart/refresh") {
