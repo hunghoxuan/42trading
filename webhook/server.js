@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:22 - 562d00d1"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:27 - 68cc7a18"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -18574,11 +18574,13 @@ const appHandler = async (req, res) => {
           ),
         ),
       );
-      if (!files.length)
+      if (!files.length) {
+        console.warn("[snapshot-analyze] 400: No snapshots found for analysis.");
         return json(res, 400, {
           ok: false,
           error: "No snapshots found for analysis.",
         });
+      }
 
       const snapshotFiles = [];
       for (const fileNameRaw of files) {
@@ -18595,11 +18597,13 @@ const appHandler = async (req, res) => {
         if (!mediaType) continue;
         snapshotFiles.push({ fileName: safeName, abs, mediaType });
       }
-      if (!snapshotFiles.length)
+      if (!snapshotFiles.length) {
+        console.warn("[snapshot-analyze] 400: No valid snapshot images available. Input files:", files);
         return json(res, 400, {
           ok: false,
           error: "No valid snapshot images available.",
         });
+      }
       const usedSymbols = [
         ...new Set(
           snapshotFiles
