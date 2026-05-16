@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:07 - 06730ae4"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:11 - 2fe1a481"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3209,12 +3209,23 @@ async function loginToTradingView(username, password) {
 
     // Wait for any 'Email' login button or the actual form
     try {
-      await page.waitForTimeout(1000); // Give it a moment to settle
+      await page.waitForTimeout(2000); // Give it a moment to settle
+      
+      // Try to dismiss potential cookie banners that might block interaction
+      try {
+        const cookieBtn = page.locator('button:has-text("Accept"), button:has-text("Agree"), button:has-text("I agree")').first();
+        if (await cookieBtn.isVisible()) {
+          await cookieBtn.click();
+          await page.waitForTimeout(500);
+        }
+      } catch (e) {}
+
       const emailOptions = [
         'button:has-text("Email")',
         'span:has-text("Email")',
         'div[name="Email"]',
         '.tv-signin-dialog__social-button--email',
+        'a[href*="email"]',
       ];
       
       let clicked = false;
@@ -3224,6 +3235,7 @@ async function loginToTradingView(username, password) {
           console.log(`[tv-login] Clicking email option: ${sel}`);
           await loc.click();
           clicked = true;
+          await page.waitForLoadState('networkidle');
           break;
         }
       }
@@ -3260,6 +3272,16 @@ async function loginToTradingView(username, password) {
     return { ok: true, message: "Login successful" };
   } catch (err) {
     console.error("[tv-login] Error:", err.message);
+    try {
+      if (page) {
+        const debugPath = path.join(CHART_SNAPSHOT_DIR, `login_error_${Date.now()}.png`);
+        await page.screenshot({ path: debugPath, fullPage: true });
+        console.log("[tv-login] Error screenshot saved to:", debugPath);
+        err.message += ` (Debug screenshot saved to VPS: ${path.basename(debugPath)})`;
+      }
+    } catch (e) {
+      console.error("[tv-login] Failed to take error screenshot:", e.message);
+    }
     throw err;
   } finally {
     await browser.close();
