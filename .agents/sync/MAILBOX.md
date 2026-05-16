@@ -13,10 +13,10 @@ Use this section for parallel-agent safety and deploy ordering.
 
 ## Current Deploy Lock
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: ``
-- note: `SNAPSHOTS_CRON + broker sync updated_at/notification fixes + UI snapshots_cron checkbox`
+- lock_status: `LOCKED`
+- deploy_owner: `Antigravity`
+- since_utc: `2026-05-16 15:06 UTC`
+- note: `TradingView Live integration + authenticated snapshots`
 
 ## Required Entry Template
 

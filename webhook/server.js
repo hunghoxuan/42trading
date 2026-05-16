@@ -3207,13 +3207,37 @@ async function loginToTradingView(username, password) {
       waitUntil: "networkidle",
     });
 
+    // Wait for any 'Email' login button or the actual form
     try {
-      const emailBtn = page.getByRole("button", { name: /Email/i });
-      if (await emailBtn.isVisible()) {
-        await emailBtn.click();
+      await page.waitForTimeout(1000); // Give it a moment to settle
+      const emailOptions = [
+        'button:has-text("Email")',
+        'span:has-text("Email")',
+        'div[name="Email"]',
+        '.tv-signin-dialog__social-button--email',
+      ];
+      
+      let clicked = false;
+      for (const sel of emailOptions) {
+        const loc = page.locator(sel).first();
+        if (await loc.isVisible()) {
+          console.log(`[tv-login] Clicking email option: ${sel}`);
+          await loc.click();
+          clicked = true;
+          break;
+        }
       }
-    } catch (e) {}
+      if (!clicked) {
+        console.log("[tv-login] No explicit 'Email' button found, checking for inputs directly...");
+      }
+    } catch (e) {
+      console.log("[tv-login] Search for email button failed/timed out:", e.message);
+    }
 
+    // Wait for inputs to be available
+    console.log("[tv-login] Waiting for username input...");
+    await page.waitForSelector('input[name="username"]', { state: 'visible', timeout: 20000 });
+    
     await page.fill('input[name="username"]', username);
     await page.fill('input[name="password"]', password);
 
@@ -3352,6 +3376,8 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
                 locale: "en",
                 withdateranges: false,
                 hide_side_toolbar: true,
+                hide_top_toolbar: true,
+                hide_legend: true,
                 allow_symbol_change: false,
                 details: false,
                 hotlist: false,
