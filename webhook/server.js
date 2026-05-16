@@ -713,6 +713,7 @@ const CFG = {
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean),
 
+  binanceEnabled: !!envStr(process.env.BINANCE_MODE),
   binanceMode: envStr(process.env.BINANCE_MODE).toLowerCase(),
   binanceProduct: envStr(process.env.BINANCE_PRODUCT, "spot").toLowerCase(),
   binanceApiKey: envStr(process.env.BINANCE_API_KEY),
@@ -721,6 +722,7 @@ const CFG = {
   binanceDefaultQty: asNum(process.env.BINANCE_DEFAULT_QTY, NaN),
   binanceDefaultQuoteQty: asNum(process.env.BINANCE_DEFAULT_QUOTE_QTY, NaN),
 
+  ctraderEnabled: !!envStr(process.env.CTRADER_MODE),
   ctraderMode: envStr(process.env.CTRADER_MODE).toLowerCase(),
   ctraderExecutorUrl: envStr(process.env.CTRADER_EXECUTOR_URL),
   ctraderExecutorApiKey: envStr(process.env.CTRADER_EXECUTOR_API_KEY),
@@ -7467,7 +7469,7 @@ async function _mt5InitBackendInternal() {
         await pool.query(
           `
           UPDATE user_accounts
-          SET user_id = $2, updated_at = NOW()
+          SET user_id = $2, updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
           WHERE account_id = $1
         `,
           [aid, uid],
@@ -7529,7 +7531,7 @@ async function _mt5InitBackendInternal() {
           free_margin = EXCLUDED.free_margin,
           leverage = EXCLUDED.leverage,
           broker_name = EXCLUDED.broker_name,
-          updated_at = NOW()
+          updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
       `,
         [
           aid,
@@ -7779,7 +7781,7 @@ async function _mt5InitBackendInternal() {
               SET broker_trade_id = NULL,
                   execution_status = CASE WHEN execution_status = 'OPEN' THEN 'PENDING' ELSE execution_status END,
                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-                  updated_at = NOW()
+                  updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
               WHERE account_id = $1
                 AND broker_trade_id = ANY($2::text[])
                 AND symbol <> $3
@@ -7832,7 +7834,7 @@ async function _mt5InitBackendInternal() {
                 metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
                 opened_at = COALESCE($5::timestamptz, opened_at),
                 closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
-                updated_at = NOW()
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE account_id = $3
               AND ($11::text = '' OR symbol = $11::text)
               AND (
@@ -7912,7 +7914,7 @@ async function _mt5InitBackendInternal() {
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
                 opened_at = COALESCE($9::timestamptz, opened_at),
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10::timestamptz, closed_at, NOW()) ELSE closed_at END,
-                updated_at = NOW()
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE sid = (
               SELECT sid
               FROM trades
@@ -7993,7 +7995,7 @@ async function _mt5InitBackendInternal() {
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::timestamptz, closed_at, NOW()) ELSE closed_at END,
-                updated_at = NOW()
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE sid = (
               SELECT sid
               FROM trades
@@ -8220,7 +8222,7 @@ async function _mt5InitBackendInternal() {
                 `
                 UPDATE trades
                 SET pnl_realized = COALESCE(pnl_realized, $2::numeric),
-                    updated_at = NOW()
+                    updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
                 WHERE sid = $1::text
               `,
                 [tradeId, inferred],
@@ -8250,7 +8252,7 @@ async function _mt5InitBackendInternal() {
             SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
                 closed_at = COALESCE(closed_at, NOW()),
-                updated_at = NOW()
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE account_id = $1::text
               AND execution_status IN ('OPEN','PENDING')
               AND broker_trade_id IS NOT NULL
@@ -8269,7 +8271,7 @@ async function _mt5InitBackendInternal() {
             SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
                 closed_at = COALESCE(closed_at, NOW()),
-                updated_at = NOW()
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE account_id = $1::text
               AND execution_status IN ('OPEN','PENDING')
               AND broker_trade_id IS NOT NULL
@@ -8289,7 +8291,10 @@ async function _mt5InitBackendInternal() {
         if (!it.sid) continue;
         const matchedResult = results.find((r) => r.sid === it.sid);
         if (!matchedResult || matchedResult.status === "Skip") continue;
-        tradeUpdates.push({
+        const oldStatus = oldStatusMap.get(it.sid) || null;
+        const statusChanged = !oldStatus || oldStatus !== it.execution_status;
+        if (statusChanged) {
+          tradeUpdates.push({
           sid: it.sid,
           symbol: it.symbol,
           pnl_realized: it.pnl,
@@ -8297,11 +8302,13 @@ async function _mt5InitBackendInternal() {
           broker_pips: it.pips,
           execution_status: it.execution_status,
           last_price: it.last_price,
-        });
+          });
+        }
       }
 
-      // Emit SSE via NotificationManager
-      notificationManager.handle("BROKER_SYNC", "sync", {
+      // Emit SSE via NotificationManager (only when status changes)
+      if (tradeUpdates.length > 0) {
+        notificationManager.handle("BROKER_SYNC", "sync", {
         user_id: uid,
         page_id: "trades",
         event: "broker_sync",
@@ -8324,7 +8331,8 @@ async function _mt5InitBackendInternal() {
         type: "info",
         need_refresh: false,
         comp_refresh: matched > 0,
-      });
+        });
+      }
 
       return {
         ok: true,
@@ -14323,7 +14331,9 @@ const appHandler = async (req, res) => {
       redis: redisOk ? "ok" : CFG.redisEnabled ? "error" : "disabled",
       redisEnabled: CFG.redisEnabled || false,
       cron: global._cronStatus || "unknown",
-      cronSnapshotEnabled: CFG.marketDataCronEnabled || false,
+      cronMarketDataEnabled: CFG.marketDataCronEnabled || false,
+      cronAiEnabled: true,
+      cronSnapshotsEnabled: true,
     });
   }
 
@@ -21570,6 +21580,7 @@ async function start() {
 const CRON_STATE = {
   lastMarketDataRun: {}, // { [userId_name_tf]: timestamp }
   lastAiAnalysisRun: {}, // { [userId_name_tf]: timestamp }
+  lastSnapshotsRun: {}, // { [userId_name]: timestamp }
   isRunning: false,
 };
 let MARKET_DATA_QUEUE = null;
@@ -21742,6 +21753,101 @@ function initMarketDataQueue() {
   return true;
 }
 
+
+async function mt5RunSnapshotsCron() {
+  const b = await mt5Backend();
+  const res = await b.query(`
+    SELECT s.*
+    FROM user_settings s
+    JOIN users u ON s.user_id = u.user_id
+    WHERE s.type = 'cron' AND s.name = 'SNAPSHOTS_CRON'
+      AND UPPER(s.status) = 'ACTIVE'
+      AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
+  `);
+  const configs = res.rows || [];
+  if (!configs.length) return null;
+
+  const now = Date.now();
+  const summary = {
+    configs: 0,
+    captured: 0,
+    skipped: 0,
+    symbols: [],
+    errors: [],
+  };
+
+  for (const conf of configs) {
+    const userId = conf.user_id;
+    const data = conf.data || {};
+    if (!asBool(data.enabled ?? true, true)) continue;
+    summary.configs++;
+    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+    const excludeSymbols = new Set(
+      (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
+        .map((s) => String(s).toUpperCase().trim())
+        .filter(Boolean),
+    );
+    const filteredSymbols = symbols.filter(
+      (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
+    );
+    const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
+    if (!filteredSymbols.length || !tfs.length) continue;
+    const cadenceMin = Number(data.cadence_minutes || 60);
+
+    const stateKey = `${userId}_${conf.name || "default"}`;
+    const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
+
+    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) {
+      summary.skipped++;
+      continue;
+    }
+
+    console.log(
+      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`,
+    );
+    CRON_STATE.lastSnapshotsRun[stateKey] = now;
+
+    try {
+      const provider = String(data.provider || "tv");
+      const sessionPrefix = String(data.session_prefix || sanitizeSessionPrefix(""));
+      const lookbackBars = Number(data.lookback_bars || 200);
+      const format = String(data.format || "png");
+      const quality = Number(data.quality || 90);
+      const theme = String(data.theme || "dark");
+      const width = Number(data.width || 1200);
+      const height = Number(data.height || 800);
+
+      const results = await captureTradingViewSnapshotsBatch({
+        symbols: filteredSymbols,
+        timeframes: tfs,
+        provider,
+        sessionPrefix,
+        lookbackBars,
+        format,
+        quality,
+        theme,
+        width,
+        height,
+        userId,
+      });
+
+      if (Array.isArray(results)) {
+        for (const r of results) {
+          if (r && r.id) {
+            summary.captured++;
+            summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`);
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.errors.push(msg);
+      console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg);
+    }
+  }
+  return summary;
+}
+
 async function mt5CronLoop() {
   console.log("[Cron] Initializing master loop (1min cadence)");
   const intervalMs = 60 * 1000;
@@ -21835,7 +21941,7 @@ async function mt5RunMarketDataCron() {
                     timezone,
                   },
                   {
-                    jobId: `market:${userId}:${conf.name || "default"}:${symbolNorm}:${tfNorm}:${bucket}`,
+                    jobId: `market_${userId}_${conf.name || "default"}_${symbolNorm}_${tfNorm}_${bucket}`,
                   },
                 );
               }),

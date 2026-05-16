@@ -113,6 +113,7 @@ export default function SettingsPage({
     display_timezone: "Local",
     market_data_cron: true,
     ai_analysis_cron: true,
+    snapshots_cron: true,
   });
   const [metadataLoading, setMetadataLoading] = useState(false);
 
@@ -277,6 +278,7 @@ export default function SettingsPage({
           display_timezone: tz,
           market_data_cron: metaSettings.market_data_cron !== false,
           ai_analysis_cron: metaSettings.ai_analysis_cron !== false,
+          snapshots_cron: metaSettings.snapshots_cron !== false,
         });
       }
 
@@ -1198,7 +1200,7 @@ export default function SettingsPage({
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
+                        gridTemplateColumns: "1fr 1fr 1fr",
                         gap: 16,
                       }}
                     >
@@ -1241,6 +1243,26 @@ export default function SettingsPage({
                           }
                         />
                         <span className="minor-text">AI Analysis Cron</span>
+                      </label>
+                      <label
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={metadataForm.snapshots_cron}
+                          onChange={(e) =>
+                            setMetadataForm((p) => ({
+                              ...p,
+                              snapshots_cron: e.target.checked,
+                            }))
+                          }
+                        />
+                        <span className="minor-text">Snapshots Cron</span>
                       </label>
                     </div>
                     <button

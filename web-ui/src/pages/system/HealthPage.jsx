@@ -35,25 +35,64 @@ export default function HealthPage() {
     }
   };
 
-  useEffect(() => { fetchHealth(); }, []);
+  useEffect(() => {
+    fetchHealth();
+  }, []);
   useEffect(() => {
     const t = setInterval(fetchHealth, 30000);
     return () => clearInterval(t);
   }, []);
 
-  if (loading && !health) return <div className="loading-card">Loading health...</div>;
+  if (loading && !health)
+    return <div className="loading-card">Loading health...</div>;
   if (error && !health) return <div className="msg-error">{error}</div>;
 
   const items = [
-    { label: "Server", value: health?.ok ? "Online" : "Offline", ok: health?.ok },
+    {
+      label: "Server",
+      value: health?.ok ? "Online" : "Offline",
+      ok: health?.ok,
+    },
     { label: "Version", value: health?.version || "-", ok: true },
-    { label: "Postgres", value: health?.postgres || "-", ok: health?.postgres === "ok" },
-    { label: "Redis", value: health?.redis || "-", ok: health?.redis === "ok" || health?.redis === "disabled" },
-    { label: "Cron Jobs", value: health?.cron || "-", ok: health?.cron?.startsWith?.("ok") },
-    { label: "Cron Snapshots", value: health?.cronSnapshotEnabled ? "Enabled" : "Disabled", ok: true },
-    { label: "MT5 Bridge", value: health?.mt5Enabled ? "Enabled" : "Disabled", ok: health?.mt5Enabled },
-    { label: "Binance", value: health?.binanceEnabled ? `${health.binanceMode || "on"}` : "Disabled", ok: true },
-    { label: "cTrader", value: health?.ctraderEnabled ? `${health.ctraderMode || "on"}` : "Disabled", ok: true },
+    {
+      label: "Postgres",
+      value: health?.postgres || "-",
+      ok: health?.postgres === "ok",
+    },
+    {
+      label: "Redis",
+      value: health?.redis || "-",
+      ok: health?.redis === "ok" || health?.redis === "disabled",
+    },
+    {
+      label: "Cron Jobs",
+      value: health?.cron || "-",
+      ok: health?.cron?.startsWith?.("ok"),
+    },
+    {
+      label: "Cron Snapshots",
+      value: health?.cronSnapshotEnabled ? "Enabled" : "Disabled",
+      ok: true,
+    },
+    {
+      label: "MT5 Bridge",
+      value: health?.mt5Enabled ? "Enabled" : "Disabled",
+      ok: health?.mt5Enabled,
+    },
+    {
+      label: "Binance",
+      value: health?.binanceEnabled
+        ? `${health.binanceMode || "on"}`
+        : "Disabled",
+      ok: true,
+    },
+    {
+      label: "cTrader",
+      value: health?.ctraderEnabled
+        ? `${health.ctraderMode || "on"}`
+        : "Disabled",
+      ok: true,
+    },
   ];
 
   return (
@@ -82,11 +121,50 @@ export default function HealthPage() {
             }}
           >
             <StatusDot ok={item.ok} />
-            <span className="minor-text" style={{ marginRight: 8 }}>{item.label}</span>
-            <span style={{ marginLeft: "auto", fontWeight: 500 }}>{item.value}</span>
+            <span className="minor-text" style={{ marginRight: 8 }}>
+              {item.label}
+            </span>
+            <span style={{ marginLeft: "auto", fontWeight: 500 }}>
+              {item.value}
+            </span>
           </div>
         ))}
       </div>
+      {health?.cronEvents?.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div
+            className="minor-text"
+            style={{
+              marginBottom: 8,
+              fontSize: 10,
+              textTransform: "uppercase",
+            }}
+          >
+            Recent Cron Runs
+          </div>
+          {health.cronEvents.map((ev, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: 10,
+                color: "var(--muted)",
+                padding: "4px 0",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>
+                <StatusDot ok={ev.status === "ok"} />
+                {ev.events?.join(", ") || "-"}
+              </span>
+              <span>
+                {new Date(ev.time).toLocaleTimeString()} ({ev.elapsed}s)
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <button
         type="button"
         className="secondary-button"
