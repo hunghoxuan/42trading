@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:21 - 0bef75eb"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:22 - 29d574a9"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

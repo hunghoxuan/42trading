@@ -56,7 +56,21 @@ export default function TradingViewLoginModal({ isOpen, onClose, onLogin }) {
               required
             />
           </div>
-          {error && <div style={errorStyle}>{error}</div>}
+          {error && (
+            <div style={errorStyle}>
+              {error}
+              {error.includes("login_error_latest.png") && (
+                <div style={{ marginTop: 8, border: "1px solid rgba(248, 81, 73, 0.3)", borderRadius: 4, overflow: "hidden" }}>
+                  <p style={{ margin: "4px 8px", fontSize: 10, color: "#8b949e" }}>View from VPS:</p>
+                  <img 
+                    src={`/v2/chart/snapshots/login_error_latest.png?t=${Date.now()}`} 
+                    alt="Login Error Debug" 
+                    style={{ width: "100%", height: "auto", display: "block" }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           <div style={footerStyle}>
             <button
               type="button"
