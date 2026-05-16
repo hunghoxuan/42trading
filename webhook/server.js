@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 17:05 - 940da44d"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 17:08 - 8cee316f"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3760,7 +3760,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             timeframe: timeframes.join(","),
             status: "ok",
             file_name: outFileName,
-            url: `/v2/tv/snapshot/${outFileName}`,
+            url: `/v2/chart/snapshots/${outFileName}`,
             master: true
           });
         } catch (e) {
