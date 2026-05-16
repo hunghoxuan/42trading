@@ -16,7 +16,7 @@ Use this section for parallel-agent safety and deploy ordering.
 - lock_status: `UNLOCKED`
 - deploy_owner: `NONE`
 - since_utc: ``
-- note: `Set lock_status=LOCKED before deploy; release after verification.`
+- note: `SNAPSHOTS_CRON + broker sync updated_at/notification fixes + UI snapshots_cron checkbox`
 
 ## Required Entry Template
 
@@ -46,6 +46,24 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-16 16:05 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 24b67f84
+- scope: webhook/server.js (SNAPSHOTS_CRON, independent cron loop, BullMQ jobId fix, health endpoint), web-ui (snapshots_cron checkbox)
+- merge_to_main: YES (24b67f84)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.16 14:26 - 14479f1c
+  - ea_version: v2026.05.16 14:26 - 14479f1c
+  - result: PASS
+- verify:
+  - /health: ok:true, version:v2026.05.16 14:26 - 14479f1c, cronSnapshotsEnabled:true, postgres:ok, redis:ok
+  - /ui asset: /assets/index-D9u8nUQ0.js
+  - VPS DB: SNAPSHOTS_CRON + snapshots_cron metadata inserted
+  - PM2: no errors after restart
+- handoff_next: none
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
 
 ### [2026-05-15 16:46 UTC] AGENT:Antigravity
