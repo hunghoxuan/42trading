@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:32 - 6f2d9220"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:51 - 56d8a7da"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -17053,6 +17053,22 @@ const appHandler = async (req, res) => {
     const symbol = url.pathname.split("/").pop() || "BTCUSD";
     const tfsRaw = url.searchParams.get("timeframes") || url.searchParams.get("tfs") || "15,60,240,D";
     const tfs = tfsRaw.split(",").filter(Boolean).map(x => x.trim().toUpperCase());
+    
+    // Map standard TV intervals to clear display names for AI
+    const displayTfs = tfs.map(tf => {
+      if (tf === "5") return "5m";
+      if (tf === "15") return "15m";
+      if (tf === "30") return "30m";
+      if (tf === "60") return "1h";
+      if (tf === "240") return "4h";
+      if (tf === "D" || tf === "1D") return "1D";
+      if (tf === "W" || tf === "1W") return "1W";
+      if (tf === "M" || tf === "1M") return "1M";
+      // Handle "5M" -> "5m" if it mistakenly came through
+      if (tf.endsWith("M") && !isNaN(tf.replace("M", ""))) return tf.replace("M", "m");
+      return tf;
+    });
+
     const theme = url.searchParams.get("theme") || "dark";
     
     res.writeHead(200, { "Content-Type": "text/html" });
@@ -17074,17 +17090,19 @@ const appHandler = async (req, res) => {
               grid-auto-rows: 1fr;
               width: 100vw;
               height: 100vh;
-              gap: 2px;
+              gap: 8px; /* Increased gap to help AI partition */
               background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
+              padding: 8px; /* Outer padding */
+              box-sizing: border-box;
             }
             .chart-cell {
               position: relative;
               overflow: hidden;
               background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
+              border-radius: 4px; /* Slight rounding for clean edges */
             }
             .chart-cell iframe {
               position: absolute;
-              /* Precision cropping: move the iframe up and left to hide toolbars/legends */
               top: -38px;
               left: -42px;
               width: calc(100% + 45px);
@@ -17093,25 +17111,28 @@ const appHandler = async (req, res) => {
             }
             .tf-badge {
               position: absolute;
-              top: 5px;
-              right: 5px;
-              background: rgba(0,0,0,0.6);
-              color: white;
-              padding: 2px 6px;
-              border-radius: 4px;
-              font-size: 10px;
-              font-weight: bold;
+              top: 15px; /* Moved down to avoid top chart edge */
+              right: 15px; /* Moved left to avoid right chart edge */
+              background: rgba(0,0,0,0.85); /* Darker for better contrast */
+              color: #ffffff;
+              padding: 6px 14px; /* Much larger padding */
+              border-radius: 6px;
+              font-size: 24px; /* Significantly larger text */
+              font-family: monospace; /* Monospace for clear 'm' vs 'M' */
+              font-weight: 800;
+              letter-spacing: 1px;
               z-index: 10;
               pointer-events: none;
-              border: 1px solid rgba(255,255,255,0.2);
+              border: 2px solid rgba(255,255,255,0.4);
+              box-shadow: 0 4px 12px rgba(0,0,0,0.5); /* Shadow to stand out from chart */
             }
           </style>
         </head>
         <body>
           <div class="grid">
-            ${tfs.map(tf => `
+            ${tfs.map((tf, i) => `
               <div class="chart-cell">
-                <div class="tf-badge">${tf}</div>
+                <div class="tf-badge">${displayTfs[i]}</div>
                 <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tf}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
               </div>
             `).join('')}

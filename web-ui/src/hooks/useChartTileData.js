@@ -265,6 +265,15 @@ export function useSymbolChartData({
               );
             });
           }
+          // Fallback: If no individual TF snapshot, check if we have a master grid snapshot
+          if (!found) {
+            found = matchingItems.find((x) => {
+              const f = String(x?.file_name || "").toUpperCase();
+              return x.master === true || f.includes("_MASTER");
+            });
+            // Don't mark master as 'usedFiles' so it can be reused for other TFs if needed,
+            // though ideally the frontend should render it once.
+          }
           entries[key] = {
             bars: [],
             snapshot: found

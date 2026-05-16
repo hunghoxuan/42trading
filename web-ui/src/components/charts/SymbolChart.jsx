@@ -1782,14 +1782,19 @@ export default function SymbolChart({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
-          gap: 8,
-        }}
-      >
-        {sortedTfs.map((tf) => {
+      {(() => {
+        const isMasterSnapshot = mode === "snapshots" && master?.snapshots && Object.values(master.snapshots).some((s) => String(s?.file_name).toUpperCase().includes("_MASTER"));
+        const activeGridCols = isMasterSnapshot ? 1 : gridCols;
+        const displayTfs = isMasterSnapshot && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
+        return (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${activeGridCols}, 1fr)`,
+              gap: 8,
+            }}
+          >
+            {displayTfs.map((tf) => {
           const isLive = mode === "live";
           const context = master?.context?.[tf.toLowerCase()];
           const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
@@ -2437,7 +2442,9 @@ export default function SymbolChart({
             </div>
           );
         })}
-      </div>
+          </div>
+        );
+      })()}
 
       {(lastError || error) && (
         <div style={{ marginTop: 4, fontSize: 9, color: "#ef4444" }}>
