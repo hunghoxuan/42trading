@@ -283,11 +283,12 @@ export default function NotificationDot() {
                     handleClick(entry);
                   }}
                   style={{
-                    padding: "8px 12px",
+                    padding: "5px 12px",
                     borderBottom: "1px solid rgba(255,255,255,0.05)",
                     cursor: "pointer",
                     fontSize: "11px",
                     transition: "background 0.15s",
+                    lineHeight: 1.4,
                   }}
                   onMouseEnter={function (e) {
                     e.currentTarget.style.background = "rgba(255,255,255,0.05)";
@@ -296,47 +297,51 @@ export default function NotificationDot() {
                     e.currentTarget.style.background = "transparent";
                   }}
                 >
-                  <span
-                    style={{ fontSize: "14px", flexShrink: 0, marginTop: 1 }}
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
                   >
-                    {statusIcon(entry.status)}
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
+                    <span style={{ fontSize: "14px", flexShrink: 0 }}>
+                      {statusIcon(entry.status)}
+                    </span>
+                    <span
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
+                        fontWeight: 500,
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
                       }}
                     >
-                      <span style={{ fontWeight: 500 }}>
-                        {meta.label}
-                        {entry.symbol ? ": " + entry.symbol : ""}
-                      </span>
-                      <span
-                        style={{
-                          color: "#666",
-                          fontSize: "9px",
-                          flexShrink: 0,
-                          marginLeft: 8,
-                        }}
-                      >
-                        {formatTime(entry.createdAt)}
-                        {entry.completedAt
-                          ? " → " + formatTime(entry.completedAt)
-                          : ""}
-                      </span>
-                    </div>
-                    <div
-                      style={{ color: "#888", fontSize: "10px", marginTop: 2 }}
+                      {meta.icon} {meta.label}
+                      {entry.symbol ? ": " + entry.symbol : ""}
+                      {entry.status === "running" ? " - In progress..." : ""}
+                      {entry.status === "error"
+                        ? " - " + String(entry.error || "Failed")
+                        : ""}
+                    </span>
+                    <span
+                      style={{ color: "#666", fontSize: "9px", flexShrink: 0 }}
                     >
-                      {entry.status === "running"
-                        ? "In progress..."
-                        : entry.status === "error"
-                          ? String(entry.error || "Failed")
-                          : entry.extra || ""}
-                    </div>
+                      {formatTime(entry.createdAt)}
+                      {entry.completedAt
+                        ? "-" + formatTime(entry.completedAt)
+                        : ""}
+                    </span>
                   </div>
+                  {entry.extra &&
+                  entry.status !== "running" &&
+                  entry.status !== "error" ? (
+                    <div
+                      style={{
+                        color: "#888",
+                        fontSize: "10px",
+                        paddingLeft: 20,
+                      }}
+                    >
+                      {entry.extra}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
