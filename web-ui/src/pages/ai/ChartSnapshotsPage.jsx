@@ -3217,11 +3217,17 @@ export default function ChartSnapshotsPage() {
       const createdNames = items
         .map((x) => String(x?.file_name || ""))
         .filter(Boolean);
+      console.log(
+        "[Snapshot] S button result:",
+        `symbol=${sym}`,
+        `created=${createdNames.length} files:`,
+        createdNames,
+      );
       // Attach notification extra info to the result
       if (!batch._notify_extra) {
         batch._notify_extra = createdNames.length
-          ? `Captured ${createdNames.length} snapshots`
-          : "No snapshots captured";
+          ? `📷 ${sym}: ${createdNames.length} new`
+          : `📷 ${sym}: 0 new (all cached)`;
       }
       for (const tf of tfs) {
         const found = items.find((x) => {

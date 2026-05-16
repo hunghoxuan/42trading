@@ -129,10 +129,7 @@ export default function NotificationDot() {
   var pending = results.filter(function (r) {
     return r.status === "running";
   });
-  var completed = results.filter(function (r) {
-    return r.status !== "running" && !r._seen;
-  });
-  var badgeCount = pending.length + completed.length;
+  var badgeCount = pending.length;
 
   var handleClick = function (entry) {
     var meta = TYPE_META[entry.type] || {};
@@ -173,8 +170,16 @@ export default function NotificationDot() {
         type="button"
         className="secondary-button"
         onClick={function () {
+          if (!open) {
+            // Mark all as read when opening
+            var all = loadResults();
+            var updated = all.map(function (r) {
+              return { ...r, _seen: true };
+            });
+            localStorage.setItem(HUB_KEY, JSON.stringify(updated));
+          }
           setOpen(!open);
-          if (!open) refresh();
+          refresh();
         }}
         style={{
           padding: "4px 10px",
