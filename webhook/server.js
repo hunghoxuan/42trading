@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:11 - 2fe1a481"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:17 - 214d0bdb"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3274,10 +3274,10 @@ async function loginToTradingView(username, password) {
     console.error("[tv-login] Error:", err.message);
     try {
       if (page) {
-        const debugPath = path.join(CHART_SNAPSHOT_DIR, `login_error_${Date.now()}.png`);
+        const debugPath = path.join(CHART_SNAPSHOT_DIR, `login_error_latest.png`);
         await page.screenshot({ path: debugPath, fullPage: true });
-        console.log("[tv-login] Error screenshot saved to:", debugPath);
-        err.message += ` (Debug screenshot saved to VPS: ${path.basename(debugPath)})`;
+        console.log("[tv-login] Latest error screenshot saved to:", debugPath);
+        err.message += ` (Debug screenshot saved: login_error_latest.png)`;
       }
     } catch (e) {
       console.error("[tv-login] Failed to take error screenshot:", e.message);

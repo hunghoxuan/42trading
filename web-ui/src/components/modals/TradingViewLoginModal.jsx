@@ -158,4 +158,6 @@ const errorStyle = {
   backgroundColor: "rgba(248, 81, 73, 0.1)",
   borderRadius: 4,
   border: "1px solid rgba(248, 81, 73, 0.2)",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
 };
