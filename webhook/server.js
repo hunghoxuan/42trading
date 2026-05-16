@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:27 - 68cc7a18"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:32 - 6f2d9220"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3739,6 +3739,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           const context = await browser.newContext({
             viewport: { width: 1920, height: 1080 },
             deviceScaleFactor: 2, // High DPI for better AI recognition
+            ignoreHTTPSErrors: true,
           });
           const page = await context.newPage();
           console.log(`[snapshot-grid] Capturing master grid for ${symbol} at ${gridUrl}`);
