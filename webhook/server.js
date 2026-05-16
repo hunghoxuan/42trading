@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:43 - 7a0bb44c"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:49 - 9ed09127"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3391,69 +3391,12 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     await page.goto(embedUrl.toString(), { waitUntil: "networkidle" });
 
     // Wait for the chart to stabilize
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(6000);
 
-    let intervalSec = 300;
-    try {
-      intervalSec = await page.evaluate((tvInterval) => {
-        const upper = String(tvInterval || "").toUpperCase();
-        if (upper === "D") return 86400;
-        if (upper === "W") return 604800;
-        if (upper === "M") return 2592000;
-        const n = Number(upper);
-        if (Number.isFinite(n) && n > 0) return n * 60;
-        return 300;
-      }, interval);
-    } catch {
-      intervalSec = 300;
-    }
-    try {
-      await page.evaluate(
-        ({ bars, sec }) => {
-          function applyRange() {
-            try {
-              const chart = window?.TradingView?.widget?.activeChart
-                ? window.TradingView.widget.activeChart()
-                : null;
-              if (!chart || typeof chart.setVisibleRange !== "function") {
-                window.__tvShotReady = true;
-                return;
-              }
-              const to = Math.floor(Date.now() / 1000);
-              const from = Math.max(
-                0,
-                to -
-                  Math.max(50, Number(bars) || 300) *
-                    Math.max(60, Number(sec) || 300),
-              );
-              chart.setVisibleRange({ from, to });
-              setTimeout(() => {
-                window.__tvShotReady = true;
-              }, 900);
-            } catch {
-              window.__tvShotReady = true;
-            }
-          }
-          if (window?.TradingView?.widget?.onChartReady) {
-            window.TradingView.widget.onChartReady(applyRange);
-          } else {
-            setTimeout(applyRange, 700);
-          }
-        },
-        { bars: lookbackBars, sec: intervalSec },
-      );
-    } catch {
-      // page may still be renderable even if evaluate step fails
-    }
-    try {
-      await page.waitForFunction(() => window.__tvShotReady === true, {
-        timeout: 12000,
-      });
-    } catch {
-      await page.waitForTimeout(1800);
-    }
-    const root = page.locator("#tv-root");
-    await page.waitForTimeout(900);
+    const root = page;
+
+    await page.waitForTimeout(1000);
+    
     let shotOk = false;
     let lastShotErr = null;
     // Retry element screenshot once; Playwright can timeout waiting for "stable" element under load.
