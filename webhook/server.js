@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:05 - 0416110f"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:14 - bcc7a057"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -17527,6 +17527,22 @@ const appHandler = async (req, res) => {
           .replace(/\.(png|jpe?g)$/i, "")
           .toUpperCase();
         const parts = base.split("_").filter(Boolean);
+        // Handle MASTER grid snapshots (SYMBOL_MASTER or PROVIDER_SYMBOL_MASTER)
+        if (parts.length >= 2 && parts[parts.length - 1] === "MASTER") {
+          const sub = parts.slice(0, -1);
+          const KNOWN_PROVIDERS = new Set([
+            "ICMARKETS",
+            "OANDA",
+            "FOREXCOM",
+            "EIGHTCAP",
+            "PEPPERSTONE",
+            "FXCM",
+            "BINANCE",
+            "BYBIT",
+          ]);
+          if (sub.length >= 2 && KNOWN_PROVIDERS.has(sub[0])) return sub.slice(1).join("_");
+          return sub.join("_");
+        }
         if (parts.length < 3) return "";
         let symbolParts = [];
         if (
@@ -18455,6 +18471,13 @@ const appHandler = async (req, res) => {
               inferSymbolFromSnapshotFile(f),
             );
             if (sym && inferred && sym !== inferred) continue;
+            
+            // Handle MASTER file as matching everything
+            if (f.toUpperCase().includes("_MASTER.")) {
+              out.push(f);
+              continue;
+            }
+
             const parts = f.split("_");
             const tfRaw = parts.length >= 3 ? parts[2] : "";
             const tf = normalizeTf(tfRaw);
