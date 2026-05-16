@@ -432,12 +432,13 @@ function parseSnapshotMeta(it) {
     let tf = tfMap[tfRaw] || tfRaw;
     if (/^\d+$/.test(tf) && !tf.endsWith("m")) tf = tf + "m";
     if (!sym || !tf) return null;
+    const createdAtMs = Date.parse(it?.created_at || "") || Date.now();
     return {
-      symbol: sym,
-      tf,
-      tfRaw,
+      fileName,
+      symbolToken: sanitizeSnapshotFileToken(sym),
+      tfToken: tfRaw,
       sessionPrefix: "",
-      ts: 0,
+      createdAtMs,
     };
   }
   if (parts.length < 3) return null;
@@ -3055,7 +3056,7 @@ export default function ChartSnapshotsPage() {
           x.sessionPrefix === activeSessionPrefix,
       )
       .filter((x) => isSameDay(x.createdAtMs, nowMs))
-      .filter((x) => Math.abs(nowMs - x.createdAtMs) <= 15 * 60 * 1000)
+      .filter((x) => Math.abs(nowMs - x.createdAtMs) <= 60 * 60 * 1000)
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
 
     const matchedFiles = [];
