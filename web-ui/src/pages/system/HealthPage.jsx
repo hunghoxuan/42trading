@@ -1,0 +1,100 @@
+import { useState, useEffect } from "react";
+import { api } from "../../api";
+
+function StatusDot({ ok }) {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: ok ? "#26a69a" : "#ef5350",
+        marginRight: 6,
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+export default function HealthPage() {
+  const [health, setHealth] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const fetchHealth = async () => {
+    setLoading(true);
+    try {
+      const data = await api.health();
+      setHealth(data);
+      setError("");
+    } catch (e) {
+      setError(e?.message || "Failed to fetch health");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchHealth(); }, []);
+  useEffect(() => {
+    const t = setInterval(fetchHealth, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (loading && !health) return <div className="loading-card">Loading health...</div>;
+  if (error && !health) return <div className="msg-error">{error}</div>;
+
+  const items = [
+    { label: "Server", value: health?.ok ? "Online" : "Offline", ok: health?.ok },
+    { label: "Version", value: health?.version || "-", ok: true },
+    { label: "Postgres", value: health?.postgres || "-", ok: health?.postgres === "ok" },
+    { label: "Redis", value: health?.redis || "-", ok: health?.redis === "ok" || health?.redis === "disabled" },
+    { label: "Cron Jobs", value: health?.cron || "-", ok: health?.cron?.startsWith?.("ok") },
+    { label: "Cron Snapshots", value: health?.cronSnapshotEnabled ? "Enabled" : "Disabled", ok: true },
+    { label: "MT5 Bridge", value: health?.mt5Enabled ? "Enabled" : "Disabled", ok: health?.mt5Enabled },
+    { label: "Binance", value: health?.binanceEnabled ? `${health.binanceMode || "on"}` : "Disabled", ok: true },
+    { label: "cTrader", value: health?.ctraderEnabled ? `${health.ctraderMode || "on"}` : "Disabled", ok: true },
+  ];
+
+  return (
+    <div className="stack-layout fadeIn" style={{ maxWidth: 500 }}>
+      <h2 style={{ fontSize: 16, marginBottom: 16 }}>System Health</h2>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "8px 24px",
+          background: "rgba(255,255,255,0.02)",
+          borderRadius: 8,
+          padding: 16,
+          border: "1px solid var(--border)",
+        }}
+      >
+        {items.map((item) => (
+          <div
+            key={item.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              fontSize: 12,
+              padding: "4px 0",
+              borderBottom: "1px solid rgba(255,255,255,0.04)",
+            }}
+          >
+            <StatusDot ok={item.ok} />
+            <span className="minor-text" style={{ marginRight: 8 }}>{item.label}</span>
+            <span style={{ marginLeft: "auto", fontWeight: 500 }}>{item.value}</span>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={fetchHealth}
+        style={{ marginTop: 12, fontSize: 11 }}
+      >
+        Refresh
+      </button>
+    </div>
+  );
+}

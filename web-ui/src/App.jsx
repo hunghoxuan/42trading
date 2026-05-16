@@ -14,6 +14,7 @@ const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
 const LogsPage = lazy(() => import("./pages/system/LogsPage"));
 const DatabasePage = lazy(() => import("./pages/system/DatabasePage"));
+const HealthPage = lazy(() => import("./pages/system/HealthPage"));
 const UsersPage = lazy(() => import("./pages/system/UsersPage"));
 const AccountsV2Page = lazy(() => import("./pages/system/AccountsV2Page"));
 const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
@@ -219,7 +220,8 @@ export default function App() {
                 className={({ isActive }) =>
                   isActive &&
                   location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") === "PENDING"
+                  new URLSearchParams(location.search).get("status") ===
+                    "PENDING"
                     ? "active"
                     : ""
                 }
@@ -231,7 +233,8 @@ export default function App() {
                 className={({ isActive }) =>
                   isActive &&
                   location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") === "FILLED"
+                  new URLSearchParams(location.search).get("status") ===
+                    "FILLED"
                     ? "active"
                     : ""
                 }
@@ -243,7 +246,8 @@ export default function App() {
                 className={({ isActive }) =>
                   isActive &&
                   location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") === "CLOSED"
+                  new URLSearchParams(location.search).get("status") ===
+                    "CLOSED"
                     ? "active"
                     : ""
                 }
@@ -269,6 +273,7 @@ export default function App() {
                 <NavLink to="/system/cache">Cache</NavLink>
                 <NavLink to="/system/logs">Logs</NavLink>
                 <NavLink to="/system/db">DB</NavLink>
+                <NavLink to="/system/health">Health</NavLink>
                 <NavLink to="/system/users">Users</NavLink>
                 <hr
                   style={{
@@ -452,6 +457,16 @@ export default function App() {
               element={
                 canAccessSystemPages ? (
                   <DatabasePage />
+                ) : (
+                  <Navigate to="/dashboard" replace />
+                )
+              }
+            />
+            <Route
+              path="/system/health"
+              element={
+                canAccessSystemPages ? (
+                  <HealthPage />
                 ) : (
                   <Navigate to="/dashboard" replace />
                 )

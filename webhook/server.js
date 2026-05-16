@@ -144,7 +144,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 07:41 - 56a21ed3"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.16 07:41 - 56a21ed3",
+); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -14288,6 +14291,25 @@ const appHandler = async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/health") {
     res.setHeader("Cache-Control", "no-store");
+    let postgresOk = false;
+    let redisOk = false;
+    try {
+      const b = await mt5Backend();
+      if (b?.pool) {
+        const pgRes = await b.pool.query("SELECT 1 AS ok");
+        postgresOk = pgRes?.rows?.[0]?.ok === 1;
+      }
+    } catch {}
+    try {
+      if (createRedisClient) {
+        const rc = createRedisClient({
+          url: CFG.redisUrl || "redis://127.0.0.1:6379",
+        });
+        await rc.connect();
+        redisOk = (await rc.ping()) === "PONG";
+        await rc.disconnect();
+      }
+    } catch {}
     return json(res, 200, {
       ok: true,
       service: "telegram-trading-bot",
@@ -14297,6 +14319,11 @@ const appHandler = async (req, res) => {
       ctraderEnabled: CFG.ctraderEnabled,
       ctraderMode: CFG.ctraderMode || null,
       mt5Enabled: CFG.mt5Enabled,
+      postgres: postgresOk ? "ok" : "error",
+      redis: redisOk ? "ok" : CFG.redisEnabled ? "error" : "disabled",
+      redisEnabled: CFG.redisEnabled || false,
+      cron: global._cronStatus || "unknown",
+      cronSnapshotEnabled: CFG.marketDataCronEnabled || false,
     });
   }
 
@@ -21718,15 +21745,19 @@ function initMarketDataQueue() {
 async function mt5CronLoop() {
   console.log("[Cron] Initializing master loop (1min cadence)");
   const intervalMs = 60 * 1000;
+  global._cronStatus = "running";
 
   const run = async () => {
     if (CRON_STATE.isRunning) return;
     CRON_STATE.isRunning = true;
+    const startMs = Date.now();
     try {
       await mt5RunMarketDataCron();
       await mt5RunAiAnalysisCron();
+      global._cronStatus = `ok (${Math.round((Date.now() - startMs) / 1000)}s)`;
     } catch (err) {
       console.error("[Cron] Run error:", err);
+      global._cronStatus = "error";
     } finally {
       CRON_STATE.isRunning = false;
     }
