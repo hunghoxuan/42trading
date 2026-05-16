@@ -558,7 +558,6 @@ function getPlanTpCandidates(plan = {}) {
   const targets = Array.isArray(plan?.targets) ? plan.targets : [];
   return [
     plan?.tp,
-    plan?.breakeven_trigger,
     ...partialPrices,
     ...compactTps,
     ...legacyLevels,
@@ -591,7 +590,6 @@ function getPlanPrimaryTp(plan = {}) {
     return true;
   };
   const primaryCandidates = [
-    plan?.breakeven_trigger,
     Array.isArray(plan?.partial_tps) && plan.partial_tps[0]
       ? (plan.partial_tps[0].price ?? plan.partial_tps[0])
       : null,
@@ -1598,17 +1596,13 @@ function extractPositionFromAnalysis(parsed) {
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
   const rrRaw = parseNum(plan.rr ?? plan.risk_reward ?? parsed?.rr);
-  let rr = Number.isFinite(rrRaw) ? rrRaw : null;
-  if (
-    !Number.isFinite(rr) &&
-    Number.isFinite(entry) &&
-    Number.isFinite(sl) &&
-    Number.isFinite(tp)
-  ) {
+  let rr = null;
+  if (Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp)) {
     const risk = Math.abs(entry - sl);
     const reward = Math.abs(tp - entry);
     if (risk > 0 && reward > 0) rr = Number((reward / risk).toFixed(2));
   }
+  if (!Number.isFinite(rr)) rr = Number.isFinite(rrRaw) ? rrRaw : null;
   return {
     direction: direction || "BUY",
     entry: Number.isFinite(entry) ? formatNum3(entry) : "",
@@ -1703,17 +1697,13 @@ function extractPositionFromPlan(plan, parsed = {}) {
     ? planTp
     : parseNum(parsed?.tp ?? parsed?.take_profit);
   const rrRaw = parseNum(item.rr ?? item.risk_reward ?? parsed?.rr);
-  let rr = Number.isFinite(rrRaw) ? rrRaw : null;
-  if (
-    !Number.isFinite(rr) &&
-    Number.isFinite(entry) &&
-    Number.isFinite(sl) &&
-    Number.isFinite(tp)
-  ) {
+  let rr = null;
+  if (Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp)) {
     const risk = Math.abs(entry - sl);
     const reward = Math.abs(tp - entry);
     if (risk > 0 && reward > 0) rr = Number((reward / risk).toFixed(2));
   }
+  if (!Number.isFinite(rr)) rr = Number.isFinite(rrRaw) ? rrRaw : null;
   return {
     direction,
     entry: Number.isFinite(entry) ? formatNum3(entry) : "",
@@ -3619,6 +3609,8 @@ export default function ChartSnapshotsPage() {
 
     setStatus({ type: "", text: "" });
     try {
+      // Ensure snapshot list is fresh before checking
+      await loadSnapshots();
       const hasContext = true; // backend handles context bundle in analyze
       const recent = resolveRecentSnapshots({
         sessionPrefix: activeSessionPrefix,
