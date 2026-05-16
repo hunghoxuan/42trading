@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:14 - bcc7a057"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:22 - 562d00d1"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3758,7 +3758,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             symbol,
             timeframe: timeframes.join(","),
             status: "ok",
-            file: outFileName,
+            file_name: outFileName,
             url: `/v2/tv/snapshot/${outFileName}`,
             master: true
           });
