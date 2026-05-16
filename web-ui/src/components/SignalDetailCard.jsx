@@ -101,7 +101,6 @@ function choosePrimaryTpAndRr(p = {}, ctx = {}) {
   const candidates = [
     toCandidate(p?.tp, p?.rr ?? p?.risk_reward, "tp"),
     toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
-    toCandidate(p?.breakeven_trigger, p?.risk_reward, "breakeven_trigger"),
     toCandidate(p?.tp1, p?.risk_reward, "tp1"),
     toCandidate(
       p?.multiple_exits?.tp1?.price,
@@ -162,11 +161,8 @@ function normalizeRawPlan(p = {}) {
   });
   const tpNum = parseNumLoose(chosen.tp);
   const rrRaw = parseNumLoose(p?.rr ?? p?.risk_reward);
-  const rrFromChosen = parseNumLoose(chosen.rr);
-  let rr = rrRaw;
-  if (rr == null && rrFromChosen != null) rr = rrFromChosen;
+  let rr = null;
   if (
-    rr == null &&
     entry != null &&
     sl != null &&
     tpNum != null &&
@@ -174,8 +170,10 @@ function normalizeRawPlan(p = {}) {
   ) {
     rr = Math.abs(tpNum - entry) / Math.abs(entry - sl);
   }
+  if (rr == null) rr = rrRaw;
   return {
     ...p,
+    ai_rr: rrRaw == null ? "" : String(rrRaw),
     direction,
     entry: entry == null ? "" : String(entry),
     tp: chosen.tp,
@@ -306,6 +304,26 @@ function PlanHeader({
     : "";
 
   const riskTier = plan.risk_management || plan.risk_tier || "";
+  const riskMgmt =
+    plan?.risk_management && typeof plan.risk_management === "object"
+      ? plan.risk_management
+      : {};
+  const gradeVal = String(
+    riskMgmt?.grade ?? plan?.grade ?? plan?.risk_grade ?? "",
+  ).trim();
+  const confidenceBadgeNum = parseNumLoose(
+    riskMgmt?.confidence_pct ?? plan?.confidence_pct ?? plan?.confidence,
+  );
+  const confidenceBadgeVal =
+    confidenceBadgeNum != null ? `${confidenceBadgeNum.toFixed(1)}%` : "";
+  const estMinsNum = parseNumLoose(
+    riskMgmt?.estimate_mins_that_entry_happens ??
+      plan?.estimate_mins_that_entry_happens,
+  );
+  const estMinsVal = estMinsNum != null ? `${Math.round(estMinsNum)}m` : "";
+  const skipDecisionVal = String(
+    riskMgmt?.skip_decision ?? plan?.skip_decision ?? "",
+  ).trim();
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
@@ -315,11 +333,12 @@ function PlanHeader({
   const confidenceLevel = (plan.confidence_level || "").toLowerCase();
   const riskLevel = (plan.risk_level || plan.risk_tier || "").toLowerCase();
   const mx = plan.multiple_exits || {};
+  const tp3Price = mx.tp3?.price ?? mx.full_tp?.price;
   const mxExits = [
     mx.break_even?.price != null && { label: "BE", price: mx.break_even.price },
     mx.tp1?.price != null && { label: "TP1", price: mx.tp1.price },
     mx.tp2?.price != null && { label: "TP2", price: mx.tp2.price },
-    mx.full_tp?.price != null && { label: "TP3", price: mx.full_tp.price },
+    tp3Price != null && { label: "TP3", price: tp3Price },
   ].filter(Boolean);
 
   return (
@@ -509,7 +528,11 @@ function PlanHeader({
           strategy ||
           entryModel ||
           confidenceText ||
-          riskLevel) && (
+          riskLevel ||
+          gradeVal ||
+          confidenceBadgeVal ||
+          estMinsVal ||
+          skipDecisionVal) && (
           <div
             style={{
               display: "flex",
@@ -578,6 +601,56 @@ function PlanHeader({
                 }}
               >
                 {riskLevel}
+              </span>
+            )}
+            {gradeVal && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  textTransform: "uppercase",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {gradeVal}
+              </span>
+            )}
+            {confidenceBadgeVal && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {confidenceBadgeVal}
+              </span>
+            )}
+            {estMinsVal && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {estMinsVal}
+              </span>
+            )}
+            {skipDecisionVal && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  whiteSpace: "nowrap",
+                  textTransform: "capitalize",
+                }}
+              >
+                {skipDecisionVal}
               </span>
             )}
           </div>
@@ -1398,15 +1471,20 @@ export default function SignalDetailCard({
               ? raw.market_analysis.timeframes
               : [];
             const mx = plan24?.multiple_exits || {};
+            const tp3Price = mx?.tp3?.price ?? mx?.full_tp?.price;
+            const tp3Rr = mx?.tp3?.risk_reward ?? mx?.full_tp?.risk_reward;
             const mxRows = [
               mx?.break_even?.price != null
                 ? `BE: ${mx.break_even.price} (${mx.break_even.risk_reward ?? "-"}r)`
                 : "",
+              mx?.tp1?.price != null
+                ? `TP1: ${mx.tp1.price} (${mx.tp1.risk_reward ?? "-"}r)`
+                : "",
               mx?.tp2?.price != null
                 ? `TP2: ${mx.tp2.price} (${mx.tp2.risk_reward ?? "-"}r)`
                 : "",
-              mx?.full_tp?.price != null
-                ? `TP3: ${mx.full_tp.price} (${mx.full_tp.risk_reward ?? "-"}r)`
+              tp3Price != null
+                ? `TP3: ${tp3Price} (${tp3Rr ?? "-"}r)`
                 : "",
             ].filter(Boolean);
             const skips = Array.isArray(
