@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:22 - 29d574a9"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:43 - 7a0bb44c"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3361,7 +3361,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   }
 
   const context = await browser.newContext({
-    viewport: { width: width + 24, height: height + 64 },
+    viewport: { width: width, height: height },
     deviceScaleFactor: 1,
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -3371,52 +3371,28 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   }
   try {
     const page = await context.newPage();
-    await page.setContent(
-      `
-      <html>
-        <head><meta charset="utf-8" /></head>
-        <body style="margin:0;background:${theme === "dark" ? "#0b1220" : "#ffffff"};">
-          <div id="tv-root" style="width:${width}px;height:${height}px;"></div>
-          <script src="https://s3.tradingview.com/tv.js"></script>
-          <script>
-            window.__tvReady = false;
-            function boot() {
-              if (!window.TradingView || !window.TradingView.widget) {
-                setTimeout(boot, 120);
-                return;
-              }
-              new TradingView.widget({
-                container_id: "tv-root",
-                autosize: false,
-                width: ${width},
-                height: ${height},
-                symbol: ${JSON.stringify(symbol)},
-                interval: ${JSON.stringify(interval)},
-                timezone: "Etc/UTC",
-                theme: ${JSON.stringify(theme)},
-                style: "1",
-                locale: "en",
-                withdateranges: false,
-                hide_side_toolbar: true,
-                hide_top_toolbar: true,
-                hide_legend: true,
-                allow_symbol_change: false,
-                details: false,
-                hotlist: false,
-                calendar: false
-              });
-              window.__tvReady = true;
-            }
-            boot();
-          </script>
-        </body>
-      </html>
-      `,
-      { waitUntil: "domcontentloaded" },
-    );
-    await page.waitForFunction(() => window.__tvReady === true, {
-      timeout: 15000,
-    });
+    
+    const embedUrl = new URL("https://s.tradingview.com/widgetembed/");
+    embedUrl.searchParams.set("symbol", symbol);
+    embedUrl.searchParams.set("interval", interval);
+    embedUrl.searchParams.set("theme", theme);
+    embedUrl.searchParams.set("style", "1");
+    embedUrl.searchParams.set("timezone", "Etc/UTC");
+    embedUrl.searchParams.set("hide_side_toolbar", "1");
+    embedUrl.searchParams.set("hide_top_toolbar", "1");
+    embedUrl.searchParams.set("hide_legend", "1");
+    embedUrl.searchParams.set("withdateranges", "0");
+    embedUrl.searchParams.set("allow_symbol_change", "0");
+    embedUrl.searchParams.set("save_image", "0");
+    embedUrl.searchParams.set("show_popup_button", "0");
+    embedUrl.searchParams.set("locale", "en");
+
+    console.log(`[snapshot] Navigating to ${embedUrl.toString()}`);
+    await page.goto(embedUrl.toString(), { waitUntil: "networkidle" });
+
+    // Wait for the chart to stabilize
+    await page.waitForTimeout(5000);
+
     let intervalSec = 300;
     try {
       intervalSec = await page.evaluate((tvInterval) => {
