@@ -3184,6 +3184,64 @@ function loadPlaywrightMaybe() {
   return null;
 }
 
+async function loginToTradingView(username, password) {
+  const playwright = loadPlaywrightMaybe();
+  if (!playwright) throw new Error("Playwright not installed");
+
+  const executablePath = resolvePlaywrightChromiumExecutablePath();
+  const browser = await playwright.chromium.launch({
+    executablePath: executablePath || undefined,
+    headless: true,
+  });
+
+  try {
+    const context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(45000);
+
+    console.log("[tv-login] Navigating to signin...");
+    await page.goto("https://www.tradingview.com/signin/", {
+      waitUntil: "networkidle",
+    });
+
+    try {
+      const emailBtn = page.getByRole("button", { name: /Email/i });
+      if (await emailBtn.isVisible()) {
+        await emailBtn.click();
+      }
+    } catch (e) {}
+
+    await page.fill('input[name="username"]', username);
+    await page.fill('input[name="password"]', password);
+
+    console.log("[tv-login] Submitting credentials...");
+    await Promise.all([
+      page.click('button[type="submit"]'),
+      page.waitForURL(
+        (url) =>
+          url.origin === "https://www.tradingview.com" &&
+          !url.pathname.includes("signin"),
+        { timeout: 60000 },
+      ),
+    ]);
+
+    const cookies = await context.cookies();
+    const sessionPath = path.join(__dirname, "tv_session.json");
+    fs.writeFileSync(sessionPath, JSON.stringify(cookies));
+    console.log("[tv-login] Session saved to", sessionPath);
+
+    return { ok: true, message: "Login successful" };
+  } catch (err) {
+    console.error("[tv-login] Error:", err.message);
+    throw err;
+  } finally {
+    await browser.close();
+  }
+}
+
 function resolvePlaywrightChromiumExecutablePath() {
   const fromEnv = String(
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
@@ -3248,10 +3306,23 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   // Simple naming: SYMBOL_TF.png — overwrites on re-capture
   const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
   const outPath = path.join(CHART_SNAPSHOT_DIR, fileName);
+  const sessionPath = path.join(__dirname, "tv_session.json");
+  let savedCookies = [];
+  if (fs.existsSync(sessionPath)) {
+    try {
+      savedCookies = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+    } catch (e) {}
+  }
+
   const context = await browser.newContext({
     viewport: { width: width + 24, height: height + 64 },
     deviceScaleFactor: 1,
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
   });
+  if (savedCookies.length > 0) {
+    await context.addCookies(savedCookies);
+  }
   try {
     const page = await context.newPage();
     await page.setContent(
@@ -16827,6 +16898,25 @@ const appHandler = async (req, res) => {
     } catch (e) {
       console.error("[ai] generation error:", e);
       return json(res, 500, { ok: false, error: e.message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/tv/login") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const result = await loginToTradingView(body.username, body.password);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

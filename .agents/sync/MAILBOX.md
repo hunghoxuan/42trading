@@ -47,6 +47,23 @@ Copy and fill:
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
 
+### [2026-05-16 16:36 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 4c7e354d
+- scope: webhook/server.js (broker sync: conditional updated_at on trades only, status-change-only notifications with oldStatusMap, notification guard)
+- merge_to_main: YES (4c7e354d)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.16 14:36 - 5b3ea48e
+  - ea_version: v2026.05.16 14:36 - 5b3ea48e
+  - result: PASS
+- verify:
+  - /health: ok:true, version:v2026.05.16 14:36 - 5b3ea48e
+  - PM2: no errors after restart
+  - broker/sync: aid=... items=0 results=2, no errors
+- handoff_next: none
+
 ### [2026-05-16 16:05 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
 - branch: main

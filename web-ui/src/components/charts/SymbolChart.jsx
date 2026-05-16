@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useSymbolChartData } from "../../hooks/useChartTileData";
 import TradeSignalChart from "../TradeSignalChart";
+import TradingViewLoginModal from "../modals/TradingViewLoginModal";
 import { resolveAdjusterValue, toNumLoose } from "./numberUtils";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
@@ -500,6 +501,14 @@ export default function SymbolChart({
   const dragRef = useRef(null);
   const parentDrivenSelectionRef = useRef(null);
   const lastIncomingPlanGroupRef = useRef(null);
+
+  const [tvSettings, setTvSettings] = useState({
+    sidebar: false,
+    toolbar: false,
+    legend: false,
+  });
+  const [showTvLogin, setShowTvLogin] = useState(false);
+  const [showTvControls, setShowTvControls] = useState(true);
 
   useEffect(() => {
     setAnnotations([]);
@@ -1094,18 +1103,28 @@ export default function SymbolChart({
         payload?.sourceId &&
         payload.sourceId !== activeChartId
       ) {
-        return;
+        // Sync
       }
-      setHoverInfo({
-        chartId: payload.sourceId || null,
-        time: payload.time || null,
-        price: Number.isFinite(Number(payload.price))
-          ? Number(payload.price)
-          : null,
-      });
     },
     [activeChartId],
   );
+
+  const toggleTvSetting = (key) => {
+    setTvSettings((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleTvLogin = async (username, password) => {
+    const res = await fetch("/v2/tv/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || "Login failed");
+    return data;
+  };
+
+
 
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
@@ -1527,6 +1546,92 @@ export default function SymbolChart({
               </option>
             ))}
           </select>
+
+          {mode === "live" && (
+            <button
+              className="secondary-button"
+              onClick={() => setShowTvControls((v) => !v)}
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "3px 7px",
+                borderRadius: 4,
+                marginRight: 4,
+                borderColor: "var(--border)",
+              }}
+              title="Toggle TV Controls Visibility"
+            >
+              {showTvControls ? "«" : "⚙"}
+            </button>
+          )}
+
+          {mode === "live" && showTvControls && (
+            <>
+              <button
+                className="secondary-button"
+                onClick={() => setShowTvLogin(true)}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 4,
+                  marginRight: 4,
+                  borderColor: "#60a5fa44",
+                }}
+              >
+                Login
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => toggleTvSetting("sidebar")}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 4,
+                  marginRight: 4,
+                  color: tvSettings.sidebar ? "#60a5fa" : "var(--muted)",
+                  borderColor: tvSettings.sidebar ? "#60a5fa66" : "var(--border)",
+                }}
+                title="Toggle Side Toolbar"
+              >
+                Side
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => toggleTvSetting("toolbar")}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 4,
+                  marginRight: 4,
+                  color: tvSettings.toolbar ? "#60a5fa" : "var(--muted)",
+                  borderColor: tvSettings.toolbar ? "#60a5fa66" : "var(--border)",
+                }}
+                title="Toggle Top Toolbar"
+              >
+                Top
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => toggleTvSetting("legend")}
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "3px 7px",
+                  borderRadius: 4,
+                  marginRight: 8,
+                  color: tvSettings.legend ? "#60a5fa" : "var(--muted)",
+                  borderColor: tvSettings.legend ? "#60a5fa66" : "var(--border)",
+                }}
+                title="Toggle Legend"
+              >
+                Leg
+              </button>
+            </>
+          )}
+
           {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
           {MODES.map((m) => (
             <button
@@ -1840,7 +1945,7 @@ export default function SymbolChart({
                   title={`tv-${symbol}-${tf}`}
                   className="browser-chart-v1"
                   style={{ height: chartHeight }}
-                  src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_top_toolbar=1&hide_legend=1&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                  src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                 />
               ) : mode === "snapshots" &&
                 master?.snapshots?.[tf.toLowerCase()] ? (
@@ -2896,6 +3001,22 @@ export default function SymbolChart({
           )}
         </div>
       )}
+
+      <TvLoginOverlay
+        isOpen={showTvLogin}
+        onClose={() => setShowTvLogin(false)}
+        onLogin={handleTvLogin}
+      />
     </div>
+  );
+}
+
+function TvLoginOverlay({ isOpen, onClose, onLogin }) {
+  return (
+    <TradingViewLoginModal
+      isOpen={isOpen}
+      onClose={onClose}
+      onLogin={onLogin}
+    />
   );
 }
