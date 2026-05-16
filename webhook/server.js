@@ -7468,7 +7468,7 @@ async function _mt5InitBackendInternal() {
         await pool.query(
           `
           UPDATE user_accounts
-          SET user_id = $2, updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+          SET user_id = $2, updated_at = NOW()
           WHERE account_id = $1
         `,
           [aid, uid],
@@ -7530,7 +7530,7 @@ async function _mt5InitBackendInternal() {
           free_margin = EXCLUDED.free_margin,
           leverage = EXCLUDED.leverage,
           broker_name = EXCLUDED.broker_name,
-          updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+          updated_at = NOW()
       `,
         [
           aid,
@@ -7745,6 +7745,20 @@ async function _mt5InitBackendInternal() {
       let matched = 0;
       let synced = 0;
       const results = [];
+    // Batch-query old execution_statuses for change detection
+    const oldStatusMap = new Map();
+    {
+      const sids = items.map((it) => it.sid).filter(Boolean);
+      if (sids.length) {
+        const oldRows = await pool.query(
+          `SELECT sid, execution_status FROM trades WHERE sid = ANY($1::text[])`,
+          [sids],
+        );
+        for (const r of oldRows.rows || []) {
+          oldStatusMap.set(r.sid, r.execution_status);
+        }
+      }
+    }
       for (const it of items) {
         try {
           let res = { rowCount: 0 };
