@@ -126,25 +126,18 @@ export default function TradeDetailPage() {
   const applyPlanChange = (key, rawValue) => {
     setDetailPlan((prev) => {
       const next = applyLinkedPlanChange(prev, key, rawValue);
-      const entry = asNum(next.entry);
-      const directionFromForm =
-        String(next.direction || prev.direction || "BUY").toUpperCase() ===
-        "SELL"
-          ? "SELL"
-          : "BUY";
-      const direction = ["entry", "tp", "sl"].includes(key)
-        ? inferDirection(
-            entry,
-            asNum(next.tp),
-            asNum(next.sl),
-            directionFromForm,
-          )
-        : directionFromForm;
-      next.direction = direction;
+
+      // Only infer direction when user explicitly changes direction field
+      if (key === "direction") {
+        next.direction =
+          String(next.direction || "BUY").toUpperCase() === "SELL"
+            ? "SELL"
+            : "BUY";
+      }
 
       const nextEntry = asNum(next.entry);
       next.trade_type = deriveOrderType(
-        next.direction,
+        next.direction || prev.direction || "BUY",
         nextEntry,
         lastPrice,
         next.trade_type || prev.trade_type || "limit",
