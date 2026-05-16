@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useSymbolChartData } from "../../hooks/useChartTileData";
 import TradeSignalChart from "../TradeSignalChart";
 import TradingViewLoginModal from "../modals/TradingViewLoginModal";
+import ImageViewer from "../ImageViewer";
 import { resolveAdjusterValue, toNumLoose } from "./numberUtils";
 import { chartFetchManager } from "../../services/chartFetchManager";
 import {
@@ -509,6 +510,8 @@ export default function SymbolChart({
   });
   const [showTvLogin, setShowTvLogin] = useState(false);
   const [showTvControls, setShowTvControls] = useState(true);
+  const [fullscreenTf, setFullscreenTf] = useState(null);
+  const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
 
   useEffect(() => {
     setAnnotations([]);
@@ -1124,8 +1127,6 @@ export default function SymbolChart({
     return data;
   };
 
-
-
   const handleDrawLine = useCallback(() => {
     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -1490,7 +1491,7 @@ export default function SymbolChart({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>{symbol}</span>
-          
+
           {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
           <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
             {MODES.map((m) => (
@@ -1510,7 +1511,9 @@ export default function SymbolChart({
                       ? btnColor(m) + "60"
                       : "var(--border)",
                   backgroundColor:
-                    (pendingMode || mode) === m ? btnColor(m) + "10" : "transparent",
+                    (pendingMode || mode) === m
+                      ? btnColor(m) + "10"
+                      : "transparent",
                   boxShadow:
                     (pendingMode || mode) === m
                       ? `0 0 10px ${btnColor(m)}20`
@@ -1518,7 +1521,9 @@ export default function SymbolChart({
                 }}
               >
                 {MODE_LABELS[m]}
-                {(pendingMode || mode) === m && status === "LOADING" && " \u23F3"}
+                {(pendingMode || mode) === m &&
+                  status === "LOADING" &&
+                  " \u23F3"}
               </button>
             ))}
           </div>
@@ -1624,7 +1629,9 @@ export default function SymbolChart({
                   borderRadius: 4,
                   marginRight: 4,
                   color: tvSettings.sidebar ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.sidebar ? "#60a5fa66" : "var(--border)",
+                  borderColor: tvSettings.sidebar
+                    ? "#60a5fa66"
+                    : "var(--border)",
                 }}
                 title="Toggle Side Toolbar"
               >
@@ -1640,7 +1647,9 @@ export default function SymbolChart({
                   borderRadius: 4,
                   marginRight: 4,
                   color: tvSettings.toolbar ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.toolbar ? "#60a5fa66" : "var(--border)",
+                  borderColor: tvSettings.toolbar
+                    ? "#60a5fa66"
+                    : "var(--border)",
                 }}
                 title="Toggle Top Toolbar"
               >
@@ -1656,7 +1665,9 @@ export default function SymbolChart({
                   borderRadius: 4,
                   marginRight: 8,
                   color: tvSettings.legend ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.legend ? "#60a5fa66" : "var(--border)",
+                  borderColor: tvSettings.legend
+                    ? "#60a5fa66"
+                    : "var(--border)",
                 }}
                 title="Toggle Legend"
               >
@@ -1783,9 +1794,15 @@ export default function SymbolChart({
       </div>
 
       {(() => {
-        const isMasterSnapshot = mode === "snapshots" && master?.snapshots && Object.values(master.snapshots).some((s) => String(s?.file_name).toUpperCase().includes("_MASTER"));
+        const isMasterSnapshot =
+          mode === "snapshots" &&
+          master?.snapshots &&
+          Object.values(master.snapshots).some((s) =>
+            String(s?.file_name).toUpperCase().includes("_MASTER"),
+          );
         const activeGridCols = isMasterSnapshot ? 1 : gridCols;
-        const displayTfs = isMasterSnapshot && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
+        const displayTfs =
+          isMasterSnapshot && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
         return (
           <div
             style={{
@@ -1795,653 +1812,694 @@ export default function SymbolChart({
             }}
           >
             {displayTfs.map((tf) => {
-          const isLive = mode === "live";
-          const context = master?.context?.[tf.toLowerCase()];
-          const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
-          const barsForTf = master?.bars?.[tf.toLowerCase()] || [];
-          const hasBars = status !== "LOADING" && barsForTf.length > 0;
-          const noData = !isLive && !hasBars && status !== "LOADING";
-          const tfViewport = viewports[chartId] || null;
-          const tfRangeFromViewport =
-            tfViewport &&
-            Number.isFinite(Number(tfViewport.timeStartMs)) &&
-            Number.isFinite(Number(tfViewport.timeEndMs)) &&
-            Number.isFinite(Number(tfViewport.priceTop)) &&
-            Number.isFinite(Number(tfViewport.priceBottom))
-              ? {
-                  t0: Math.min(
-                    Number(tfViewport.timeStartMs),
-                    Number(tfViewport.timeEndMs),
-                  ),
-                  t1: Math.max(
-                    Number(tfViewport.timeStartMs),
-                    Number(tfViewport.timeEndMs),
-                  ),
-                  pMin: Math.min(
-                    Number(tfViewport.priceTop),
-                    Number(tfViewport.priceBottom),
-                  ),
-                  pMax: Math.max(
-                    Number(tfViewport.priceTop),
-                    Number(tfViewport.priceBottom),
-                  ),
-                }
-              : null;
-          const tfRange = tfRangeFromViewport || barsRange(barsForTf);
+              const isLive = mode === "live";
+              const context = master?.context?.[tf.toLowerCase()];
+              const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+              const barsForTf = master?.bars?.[tf.toLowerCase()] || [];
+              const hasBars = status !== "LOADING" && barsForTf.length > 0;
+              const noData = !isLive && !hasBars && status !== "LOADING";
+              const tfViewport = viewports[chartId] || null;
+              const tfRangeFromViewport =
+                tfViewport &&
+                Number.isFinite(Number(tfViewport.timeStartMs)) &&
+                Number.isFinite(Number(tfViewport.timeEndMs)) &&
+                Number.isFinite(Number(tfViewport.priceTop)) &&
+                Number.isFinite(Number(tfViewport.priceBottom))
+                  ? {
+                      t0: Math.min(
+                        Number(tfViewport.timeStartMs),
+                        Number(tfViewport.timeEndMs),
+                      ),
+                      t1: Math.max(
+                        Number(tfViewport.timeStartMs),
+                        Number(tfViewport.timeEndMs),
+                      ),
+                      pMin: Math.min(
+                        Number(tfViewport.priceTop),
+                        Number(tfViewport.priceBottom),
+                      ),
+                      pMax: Math.max(
+                        Number(tfViewport.priceTop),
+                        Number(tfViewport.priceBottom),
+                      ),
+                    }
+                  : null;
+              const tfRange = tfRangeFromViewport || barsRange(barsForTf);
 
-          const projectedAnnotations = (annotations || [])
-            .filter(
-              (a) =>
-                !a.tf ||
-                String(a.tf).toLowerCase() === String(tf).toLowerCase(),
-            )
-            .map((a) => {
-              const baseTime = Number(a.time);
-              const lineTime =
-                Number.isFinite(baseTime) && baseTime > 0
-                  ? baseTime
-                  : toEpochMs(a.anchorTimeMs);
-              const lineTop = Number(a.price ?? a.price_top);
-              const lineBottom = Number(
-                a.price ?? a.price_bottom ?? a.price_top,
-              );
-              const p1 = Number.isFinite(lineTop)
-                ? lineTop
-                : Number(a.anchorPrice);
-              const p2 = Number.isFinite(lineBottom)
-                ? lineBottom
-                : Number(a.anchorPrice2);
-              const timeRatio = ratioFromAnchorTime(lineTime, tfRange);
-              const priceRatio = ratioFromAnchorPrice(p1, tfRange);
-              const priceRatio2 = ratioFromAnchorPrice(p2, tfRange);
-              const x1TimeRatio = ratioFromAnchorTime(
-                toEpochMs(a.anchorTimeMs),
-                tfRange,
-              );
-              const x2TimeRatio = ratioFromAnchorTime(
-                toEpochMs(a.anchorTimeMs2),
-                tfRange,
-              );
-              return {
-                ...a,
-                _xRatio: Number.isFinite(timeRatio)
-                  ? timeRatio
-                  : clamp01(Number(a.xRatio ?? 0.5)),
-                _yRatio: Number.isFinite(priceRatio)
-                  ? priceRatio
-                  : clamp01(Number(a.yRatio ?? 0.5)),
-                _y1Ratio: Number.isFinite(priceRatio)
-                  ? priceRatio
-                  : clamp01(Number(a.y1Ratio ?? 0.4)),
-                _y2Ratio: Number.isFinite(priceRatio2)
-                  ? priceRatio2
-                  : clamp01(Number(a.y2Ratio ?? 0.6)),
-                _x1Ratio: Number.isFinite(x1TimeRatio)
-                  ? x1TimeRatio
-                  : clamp01(Number(a.x1Ratio ?? 0.2)),
-                _x2Ratio: Number.isFinite(x2TimeRatio)
-                  ? x2TimeRatio
-                  : clamp01(Number(a.x2Ratio ?? 0.8)),
-              };
-            })
-            .filter((a) => {
-              if (a.kind === "line") {
-                return (
-                  Number.isFinite(Number(a._yRatio)) &&
-                  Number(a._yRatio) >= 0 &&
-                  Number(a._yRatio) <= 1
-                );
-              }
-              if (a.kind === "point") {
-                return (
-                  Number.isFinite(Number(a._xRatio)) &&
-                  Number.isFinite(Number(a._yRatio)) &&
-                  Number(a._xRatio) >= 0 &&
-                  Number(a._xRatio) <= 1 &&
-                  Number(a._yRatio) >= 0 &&
-                  Number(a._yRatio) <= 1
-                );
-              }
-              if (a.kind === "zone") {
-                const y1 = Number(a._y1Ratio);
-                const y2 = Number(a._y2Ratio);
-                const x1 = Number(a._x1Ratio);
-                const x2 = Number(a._x2Ratio);
-                const yIn =
-                  Number.isFinite(y1) &&
-                  Number.isFinite(y2) &&
-                  !(Math.max(y1, y2) < 0 || Math.min(y1, y2) > 1);
-                const xIn =
-                  Number.isFinite(x1) &&
-                  Number.isFinite(x2) &&
-                  !(Math.max(x1, x2) < 0 || Math.min(x1, x2) > 1);
-                return yIn && xIn;
-              }
-              return true;
-            });
+              const projectedAnnotations = (annotations || [])
+                .filter(
+                  (a) =>
+                    !a.tf ||
+                    String(a.tf).toLowerCase() === String(tf).toLowerCase(),
+                )
+                .map((a) => {
+                  const baseTime = Number(a.time);
+                  const lineTime =
+                    Number.isFinite(baseTime) && baseTime > 0
+                      ? baseTime
+                      : toEpochMs(a.anchorTimeMs);
+                  const lineTop = Number(a.price ?? a.price_top);
+                  const lineBottom = Number(
+                    a.price ?? a.price_bottom ?? a.price_top,
+                  );
+                  const p1 = Number.isFinite(lineTop)
+                    ? lineTop
+                    : Number(a.anchorPrice);
+                  const p2 = Number.isFinite(lineBottom)
+                    ? lineBottom
+                    : Number(a.anchorPrice2);
+                  const timeRatio = ratioFromAnchorTime(lineTime, tfRange);
+                  const priceRatio = ratioFromAnchorPrice(p1, tfRange);
+                  const priceRatio2 = ratioFromAnchorPrice(p2, tfRange);
+                  const x1TimeRatio = ratioFromAnchorTime(
+                    toEpochMs(a.anchorTimeMs),
+                    tfRange,
+                  );
+                  const x2TimeRatio = ratioFromAnchorTime(
+                    toEpochMs(a.anchorTimeMs2),
+                    tfRange,
+                  );
+                  return {
+                    ...a,
+                    _xRatio: Number.isFinite(timeRatio)
+                      ? timeRatio
+                      : clamp01(Number(a.xRatio ?? 0.5)),
+                    _yRatio: Number.isFinite(priceRatio)
+                      ? priceRatio
+                      : clamp01(Number(a.yRatio ?? 0.5)),
+                    _y1Ratio: Number.isFinite(priceRatio)
+                      ? priceRatio
+                      : clamp01(Number(a.y1Ratio ?? 0.4)),
+                    _y2Ratio: Number.isFinite(priceRatio2)
+                      ? priceRatio2
+                      : clamp01(Number(a.y2Ratio ?? 0.6)),
+                    _x1Ratio: Number.isFinite(x1TimeRatio)
+                      ? x1TimeRatio
+                      : clamp01(Number(a.x1Ratio ?? 0.2)),
+                    _x2Ratio: Number.isFinite(x2TimeRatio)
+                      ? x2TimeRatio
+                      : clamp01(Number(a.x2Ratio ?? 0.8)),
+                  };
+                })
+                .filter((a) => {
+                  if (a.kind === "line") {
+                    return (
+                      Number.isFinite(Number(a._yRatio)) &&
+                      Number(a._yRatio) >= 0 &&
+                      Number(a._yRatio) <= 1
+                    );
+                  }
+                  if (a.kind === "point") {
+                    return (
+                      Number.isFinite(Number(a._xRatio)) &&
+                      Number.isFinite(Number(a._yRatio)) &&
+                      Number(a._xRatio) >= 0 &&
+                      Number(a._xRatio) <= 1 &&
+                      Number(a._yRatio) >= 0 &&
+                      Number(a._yRatio) <= 1
+                    );
+                  }
+                  if (a.kind === "zone") {
+                    const y1 = Number(a._y1Ratio);
+                    const y2 = Number(a._y2Ratio);
+                    const x1 = Number(a._x1Ratio);
+                    const x2 = Number(a._x2Ratio);
+                    const yIn =
+                      Number.isFinite(y1) &&
+                      Number.isFinite(y2) &&
+                      !(Math.max(y1, y2) < 0 || Math.min(y1, y2) > 1);
+                    const xIn =
+                      Number.isFinite(x1) &&
+                      Number.isFinite(x2) &&
+                      !(Math.max(x1, x2) < 0 || Math.min(x1, x2) > 1);
+                    return yIn && xIn;
+                  }
+                  return true;
+                });
 
-          const isActiveTf = activeChartId === chartId;
+              const isActiveTf = activeChartId === chartId;
 
-          return (
-            <div
-              key={`${mode}-${tf}`}
-              style={{
-                minWidth: 0,
-                position: "relative",
-                border: "1px solid",
-                borderColor: isActiveTf ? "#22d3ee" : "transparent",
-                borderRadius: 8,
-                padding: 0,
-              }}
-              onMouseEnter={() => setActiveChartId(chartId)}
-              onMouseDown={() => setActiveChartId(chartId)}
-              onMouseMove={() => {
-                if (activeChartId !== chartId) setActiveChartId(chartId);
-              }}
-            >
-              <TfHeader
-                tf={tf}
-                context={context}
-                master={master}
-                mode={mode}
-                analysisSnapshot={analysisSnapshot}
-                barsStatus={barsStatus}
-                snapshotStatus={snapshotStatus}
-                onRefreshTf={mode === "cache" ? handleRefreshTf : null}
-                forceRefresh={forceRefresh}
-              />
-              {isLive ? (
-                <iframe
-                  key={`tv-${symbol}-${tf}-${liveKey}`}
-                  title={`tv-${symbol}-${tf}`}
-                  className="browser-chart-v1"
-                  style={{ height: chartHeight }}
-                  src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
-                />
-              ) : mode === "snapshots" &&
-                master?.snapshots?.[tf.toLowerCase()] ? (
-                /* Snapshot image */
+              return (
                 <div
+                  key={`${mode}-${tf}`}
                   style={{
+                    minWidth: 0,
                     position: "relative",
-                    height: isMasterSnapshot ? 410 : chartHeight,
-                    overflow: "hidden",
-                    borderRadius: 6,
+                    border: "1px solid",
+                    borderColor: isActiveTf ? "#22d3ee" : "transparent",
+                    borderRadius: 8,
+                    padding: 0,
+                  }}
+                  onMouseEnter={() => setActiveChartId(chartId)}
+                  onMouseDown={() => setActiveChartId(chartId)}
+                  onMouseMove={() => {
+                    if (activeChartId !== chartId) setActiveChartId(chartId);
                   }}
                 >
-                  <img
-                    src={
-                      master.snapshots[tf.toLowerCase()].url ||
-                      `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}`
-                    }
-                    alt={`snapshot-${tf}`}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: isMasterSnapshot ? "fill" : "contain",
-                      background: "#000",
-                    }}
-                    onError={(e) => {
-                      e.target.style.display = "none";
-                    }}
+                  <TfHeader
+                    tf={tf}
+                    context={context}
+                    master={master}
+                    mode={mode}
+                    analysisSnapshot={analysisSnapshot}
+                    barsStatus={barsStatus}
+                    snapshotStatus={snapshotStatus}
+                    onRefreshTf={mode === "cache" ? handleRefreshTf : null}
+                    forceRefresh={forceRefresh}
                   />
-                </div>
-              ) : hasBars ? (
-                <>
-                  <TradeSignalChart
-                    key={`tsc-${symbol}-${tf}`}
-                    chartId={chartId}
-                    symbol={cleanSym}
-                    interval={tf}
-                    historicalData={barsForTf}
-                    height={chartHeight}
-                    analysisSnapshot={analysisSnapshot || null}
-                    entryPrice={
-                      hasTradePlan && hasAnalysis
-                        ? null
-                        : overlays.plan1
-                          ? entryPrice
-                          : null
-                    }
-                    slPrice={
-                      hasTradePlan && hasAnalysis
-                        ? null
-                        : overlays.plan1
-                          ? slPrice
-                          : null
-                    }
-                    tpPrice={
-                      hasTradePlan && hasAnalysis
-                        ? null
-                        : overlays.plan1
-                          ? tpPrice
-                          : null
-                    }
-                    createdAt={createdAt}
-                    openedAt={openedAt}
-                    closedAt={closedAt}
-                    showPrimaryPlan={overlays.plan1}
-                    showExtraPlans={overlays.plan2}
-                    showPdArrays={overlays.pdArrays}
-                    showKeyLevels={overlays.keyLevels}
-                    onPlanLevelChange={onPlanLevelChange}
-                    syncedCrosshair={mode === "cache" ? syncedCrosshair : null}
-                    onCrosshairSync={
-                      mode === "cache" ? handleCrosshairSync : undefined
-                    }
-                    onBarsLoaded={handleBarsLoaded}
-                    sharedLines={mode === "cache" ? [] : []}
-                    onContextRequest={
-                      mode === "cache" ? handleContextRequest : undefined
-                    }
-                    onViewportChange={
-                      mode === "cache" ? handleViewportChange : undefined
-                    }
-                  />
-                  {mode === "cache" && (
+                  {isLive ? (
+                    <div style={{ position: "relative", height: chartHeight }}>
+                      <iframe
+                        key={`tv-${symbol}-${tf}-${liveKey}`}
+                        title={`tv-${symbol}-${tf}`}
+                        className="browser-chart-v1"
+                        style={{ width: "100%", height: "100%", border: "none" }}
+                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                      />
+                      <button
+                        className="secondary-button"
+                        onClick={() => setFullscreenTf(tf)}
+                        style={{
+                          position: "absolute",
+                          top: 6,
+                          right: 6,
+                          fontSize: 10,
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                          background: "rgba(0,0,0,0.6)",
+                          border: "1px solid rgba(255,255,255,0.15)",
+                          color: "#fff",
+                          zIndex: 10,
+                        }}
+                        title="Fullscreen"
+                      >
+                        ⛶
+                      </button>
+                    </div>
+                  ) : mode === "snapshots" &&
+                    master?.snapshots?.[tf.toLowerCase()] ? (
+                    /* Snapshot image */
                     <div
                       style={{
-                        position: "absolute",
-                        inset: 0,
-                        zIndex: 25,
-                        pointerEvents:
-                          drawMode === "zone" || editObjects ? "auto" : "none",
-                      }}
-                      onMouseDown={(evt) => {
-                        const rect = evt.currentTarget.getBoundingClientRect();
-                        const x = evt.clientX - rect.left;
-                        const y = evt.clientY - rect.top;
-                        const xr = Math.max(
-                          0,
-                          Math.min(1, x / Math.max(rect.width, 1)),
-                        );
-                        const yr = Math.max(
-                          0,
-                          Math.min(1, y / Math.max(rect.height, 1)),
-                        );
-                        if (drawMode === "zone") {
-                          const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-                          const start = { x: xr, y: yr };
-                          const onUp = (upEvt) => {
-                            const ux = upEvt.clientX - rect.left;
-                            const uy = upEvt.clientY - rect.top;
-                            const xr2 = Math.max(
-                              0,
-                              Math.min(1, ux / Math.max(rect.width, 1)),
-                            );
-                            const yr2 = Math.max(
-                              0,
-                              Math.min(1, uy / Math.max(rect.height, 1)),
-                            );
-                            const p1 = anchorPriceFromRatio(start.y, tfRange);
-                            const p2 = anchorPriceFromRatio(yr2, tfRange);
-                            const t1 = anchorTimeFromRatio(
-                              Math.min(start.x, xr2),
-                              tfRange,
-                            );
-                            setAnnotations((prev) => [
-                              ...prev,
-                              {
-                                id,
-                                kind: "zone",
-                                visible: true,
-                                type: "ZONE",
-                                color: "#22c55e",
-                                tf: null,
-                                price_top:
-                                  Number.isFinite(Number(p1)) &&
-                                  Number.isFinite(Number(p2))
-                                    ? Math.max(Number(p1), Number(p2))
-                                    : null,
-                                price_bottom:
-                                  Number.isFinite(Number(p1)) &&
-                                  Number.isFinite(Number(p2))
-                                    ? Math.min(Number(p1), Number(p2))
-                                    : null,
-                                price:
-                                  Number.isFinite(Number(p1)) &&
-                                  Number.isFinite(Number(p2))
-                                    ? Number(p1)
-                                    : null,
-                                time: Number.isFinite(Number(t1))
-                                  ? Number(t1)
-                                  : null,
-                                line_style: "solid",
-                                line_width: 1,
-                                bg_color: "rgba(34,197,94,0.18)",
-                                label: "Zone",
-                                x1Ratio: Math.min(start.x, xr2),
-                                x2Ratio: Math.max(start.x, xr2),
-                                y1Ratio: start.y,
-                                y2Ratio: yr2,
-                                anchorTimeMs: anchorTimeFromRatio(
-                                  Math.min(start.x, xr2),
-                                  tfRange,
-                                ),
-                                anchorTimeMs2: anchorTimeFromRatio(
-                                  Math.max(start.x, xr2),
-                                  tfRange,
-                                ),
-                                anchorPrice: anchorPriceFromRatio(
-                                  start.y,
-                                  tfRange,
-                                ),
-                                anchorPrice2: anchorPriceFromRatio(
-                                  yr2,
-                                  tfRange,
-                                ),
-                              },
-                            ]);
-                            setSelectedObjectId(id);
-                            setDrawMode(null);
-                            window.removeEventListener("mouseup", onUp);
-                          };
-                          window.addEventListener("mouseup", onUp);
-                          evt.preventDefault();
-                          return;
-                        }
-                        const hit = (projectedAnnotations || [])
-                          .map((a) => {
-                            if (a.kind === "line") {
-                              const ay = Number(a._yRatio) * rect.height;
-                              return { a, d: Math.abs(ay - y), edge: null };
-                            }
-                            if (a.kind === "point") {
-                              const ax = Number(a._xRatio) * rect.width;
-                              const ay = Number(a._yRatio) * rect.height;
-                              return {
-                                a,
-                                d: Math.hypot(ax - x, ay - y),
-                                edge: null,
-                              };
-                            }
-                            if (a.kind === "zone") {
-                              const y1 = Number(a._y1Ratio) * rect.height;
-                              const y2 = Number(a._y2Ratio) * rect.height;
-                              const lo = Math.min(y1, y2);
-                              const hi = Math.max(y1, y2);
-                              if (y < lo - 6 || y > hi + 6) return null;
-                              const dTop = Math.abs(y - lo);
-                              const dBot = Math.abs(y - hi);
-                              return {
-                                a,
-                                d: Math.min(dTop, dBot),
-                                edge: dTop < dBot ? "top" : "bottom",
-                              };
-                            }
-                            return null;
-                          })
-                          .filter(Boolean)
-                          .sort((p, q) => p.d - q.d)[0];
-                        if (hit && hit.d <= 10) {
-                          dragRef.current = {
-                            id: hit.a.id,
-                            edge: hit.edge,
-                            rect,
-                            range: tfRange,
-                          };
-                          setSelectedObjectId(hit.a.id);
-                          evt.preventDefault();
-                        }
+                        position: "relative",
+                        height: isMasterSnapshot ? 410 : chartHeight,
+                        overflow: "hidden",
+                        borderRadius: 6,
                       }}
                     >
-                      {(projectedAnnotations || []).map((a) => {
-                        if (a.kind === "tradeplan") {
-                          if (a.visible === false) return null;
-                          const isSelected = selectedObjectId === a.id;
-                          const entry = toNumLoose(a.entryPrice);
-                          const tp = toNumLoose(a.tpPrice);
-                          const sl = toNumLoose(a.slPrice);
-                          const rEntry = ratioFromAnchorPriceUnclamped(
-                            entry,
-                            tfRange,
-                          );
-                          const rTp = ratioFromAnchorPriceUnclamped(
-                            tp,
-                            tfRange,
-                          );
-                          const rSl = ratioFromAnchorPriceUnclamped(
-                            sl,
-                            tfRange,
-                          );
-                          const inView = (r) =>
-                            Number.isFinite(r) && r >= 0 && r <= 1;
-                          const mkLine = (
-                            yRatio,
-                            color,
-                            label,
-                            style = "solid",
-                          ) => (
-                            <div
-                              key={`${a.id}_${label}`}
-                              style={{
-                                position: "absolute",
-                                left: 0,
-                                right: 0,
-                                top: `${clamp01(Number(yRatio || 0.5)) * 100}%`,
-                                pointerEvents: "none",
-                                zIndex: 26,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  borderTop: `${isSelected ? 1.4 : 0.9}px ${style === "dot" ? "dotted" : "solid"} ${color}`,
-                                  boxShadow: isSelected
-                                    ? `0 0 0 1px ${color}55`
-                                    : "none",
-                                }}
-                              />
-                              <span
-                                style={{
-                                  position: "absolute",
-                                  left: 4,
-                                  top: -10,
-                                  fontSize: 9,
-                                  fontWeight: 700,
-                                  color,
-                                  background: "#0b1220",
-                                  border: `1px solid ${color}55`,
-                                  borderRadius: 4,
-                                  padding: "0 4px",
-                                  lineHeight: 1.2,
-                                }}
-                              >
-                                {label}
-                              </span>
-                            </div>
-                          );
-                          return (
-                            <>
-                              {inView(rEntry) && inView(rTp) ? (
+                      <img
+                        src={
+                          master.snapshots[tf.toLowerCase()].url ||
+                          `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(master.snapshots[tf.toLowerCase()].file_name || "")}`
+                        }
+                        alt={`snapshot-${tf}`}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: isMasterSnapshot ? "fill" : "contain",
+                          background: "#000",
+                          cursor: "pointer",
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = "none";
+                        }}
+                        onClick={() => {
+                          const snap = master?.snapshots?.[tf.toLowerCase()];
+                          if (snap) {
+                            const url = snap.url || `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(snap.file_name || "")}`;
+                            setSnapshotModalFiles([{ name: snap.file_name || `snapshot-${tf}`, url, size_bytes: snap.size_bytes || 0 }]);
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : hasBars ? (
+                    <>
+                      <TradeSignalChart
+                        key={`tsc-${symbol}-${tf}`}
+                        chartId={chartId}
+                        symbol={cleanSym}
+                        interval={tf}
+                        historicalData={barsForTf}
+                        height={chartHeight}
+                        analysisSnapshot={analysisSnapshot || null}
+                        entryPrice={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? entryPrice
+                              : null
+                        }
+                        slPrice={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? slPrice
+                              : null
+                        }
+                        tpPrice={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? tpPrice
+                              : null
+                        }
+                        createdAt={createdAt}
+                        openedAt={openedAt}
+                        closedAt={closedAt}
+                        showPrimaryPlan={overlays.plan1}
+                        showExtraPlans={overlays.plan2}
+                        showPdArrays={overlays.pdArrays}
+                        showKeyLevels={overlays.keyLevels}
+                        onPlanLevelChange={onPlanLevelChange}
+                        syncedCrosshair={
+                          mode === "cache" ? syncedCrosshair : null
+                        }
+                        onCrosshairSync={
+                          mode === "cache" ? handleCrosshairSync : undefined
+                        }
+                        onBarsLoaded={handleBarsLoaded}
+                        sharedLines={mode === "cache" ? [] : []}
+                        onContextRequest={
+                          mode === "cache" ? handleContextRequest : undefined
+                        }
+                        onViewportChange={
+                          mode === "cache" ? handleViewportChange : undefined
+                        }
+                      />
+                      {mode === "cache" && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            zIndex: 25,
+                            pointerEvents:
+                              drawMode === "zone" || editObjects
+                                ? "auto"
+                                : "none",
+                          }}
+                          onMouseDown={(evt) => {
+                            const rect =
+                              evt.currentTarget.getBoundingClientRect();
+                            const x = evt.clientX - rect.left;
+                            const y = evt.clientY - rect.top;
+                            const xr = Math.max(
+                              0,
+                              Math.min(1, x / Math.max(rect.width, 1)),
+                            );
+                            const yr = Math.max(
+                              0,
+                              Math.min(1, y / Math.max(rect.height, 1)),
+                            );
+                            if (drawMode === "zone") {
+                              const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+                              const start = { x: xr, y: yr };
+                              const onUp = (upEvt) => {
+                                const ux = upEvt.clientX - rect.left;
+                                const uy = upEvt.clientY - rect.top;
+                                const xr2 = Math.max(
+                                  0,
+                                  Math.min(1, ux / Math.max(rect.width, 1)),
+                                );
+                                const yr2 = Math.max(
+                                  0,
+                                  Math.min(1, uy / Math.max(rect.height, 1)),
+                                );
+                                const p1 = anchorPriceFromRatio(
+                                  start.y,
+                                  tfRange,
+                                );
+                                const p2 = anchorPriceFromRatio(yr2, tfRange);
+                                const t1 = anchorTimeFromRatio(
+                                  Math.min(start.x, xr2),
+                                  tfRange,
+                                );
+                                setAnnotations((prev) => [
+                                  ...prev,
+                                  {
+                                    id,
+                                    kind: "zone",
+                                    visible: true,
+                                    type: "ZONE",
+                                    color: "#22c55e",
+                                    tf: null,
+                                    price_top:
+                                      Number.isFinite(Number(p1)) &&
+                                      Number.isFinite(Number(p2))
+                                        ? Math.max(Number(p1), Number(p2))
+                                        : null,
+                                    price_bottom:
+                                      Number.isFinite(Number(p1)) &&
+                                      Number.isFinite(Number(p2))
+                                        ? Math.min(Number(p1), Number(p2))
+                                        : null,
+                                    price:
+                                      Number.isFinite(Number(p1)) &&
+                                      Number.isFinite(Number(p2))
+                                        ? Number(p1)
+                                        : null,
+                                    time: Number.isFinite(Number(t1))
+                                      ? Number(t1)
+                                      : null,
+                                    line_style: "solid",
+                                    line_width: 1,
+                                    bg_color: "rgba(34,197,94,0.18)",
+                                    label: "Zone",
+                                    x1Ratio: Math.min(start.x, xr2),
+                                    x2Ratio: Math.max(start.x, xr2),
+                                    y1Ratio: start.y,
+                                    y2Ratio: yr2,
+                                    anchorTimeMs: anchorTimeFromRatio(
+                                      Math.min(start.x, xr2),
+                                      tfRange,
+                                    ),
+                                    anchorTimeMs2: anchorTimeFromRatio(
+                                      Math.max(start.x, xr2),
+                                      tfRange,
+                                    ),
+                                    anchorPrice: anchorPriceFromRatio(
+                                      start.y,
+                                      tfRange,
+                                    ),
+                                    anchorPrice2: anchorPriceFromRatio(
+                                      yr2,
+                                      tfRange,
+                                    ),
+                                  },
+                                ]);
+                                setSelectedObjectId(id);
+                                setDrawMode(null);
+                                window.removeEventListener("mouseup", onUp);
+                              };
+                              window.addEventListener("mouseup", onUp);
+                              evt.preventDefault();
+                              return;
+                            }
+                            const hit = (projectedAnnotations || [])
+                              .map((a) => {
+                                if (a.kind === "line") {
+                                  const ay = Number(a._yRatio) * rect.height;
+                                  return { a, d: Math.abs(ay - y), edge: null };
+                                }
+                                if (a.kind === "point") {
+                                  const ax = Number(a._xRatio) * rect.width;
+                                  const ay = Number(a._yRatio) * rect.height;
+                                  return {
+                                    a,
+                                    d: Math.hypot(ax - x, ay - y),
+                                    edge: null,
+                                  };
+                                }
+                                if (a.kind === "zone") {
+                                  const y1 = Number(a._y1Ratio) * rect.height;
+                                  const y2 = Number(a._y2Ratio) * rect.height;
+                                  const lo = Math.min(y1, y2);
+                                  const hi = Math.max(y1, y2);
+                                  if (y < lo - 6 || y > hi + 6) return null;
+                                  const dTop = Math.abs(y - lo);
+                                  const dBot = Math.abs(y - hi);
+                                  return {
+                                    a,
+                                    d: Math.min(dTop, dBot),
+                                    edge: dTop < dBot ? "top" : "bottom",
+                                  };
+                                }
+                                return null;
+                              })
+                              .filter(Boolean)
+                              .sort((p, q) => p.d - q.d)[0];
+                            if (hit && hit.d <= 10) {
+                              dragRef.current = {
+                                id: hit.a.id,
+                                edge: hit.edge,
+                                rect,
+                                range: tfRange,
+                              };
+                              setSelectedObjectId(hit.a.id);
+                              evt.preventDefault();
+                            }
+                          }}
+                        >
+                          {(projectedAnnotations || []).map((a) => {
+                            if (a.kind === "tradeplan") {
+                              if (a.visible === false) return null;
+                              const isSelected = selectedObjectId === a.id;
+                              const entry = toNumLoose(a.entryPrice);
+                              const tp = toNumLoose(a.tpPrice);
+                              const sl = toNumLoose(a.slPrice);
+                              const rEntry = ratioFromAnchorPriceUnclamped(
+                                entry,
+                                tfRange,
+                              );
+                              const rTp = ratioFromAnchorPriceUnclamped(
+                                tp,
+                                tfRange,
+                              );
+                              const rSl = ratioFromAnchorPriceUnclamped(
+                                sl,
+                                tfRange,
+                              );
+                              const inView = (r) =>
+                                Number.isFinite(r) && r >= 0 && r <= 1;
+                              const mkLine = (
+                                yRatio,
+                                color,
+                                label,
+                                style = "solid",
+                              ) => (
                                 <div
+                                  key={`${a.id}_${label}`}
                                   style={{
                                     position: "absolute",
                                     left: 0,
                                     right: 0,
-                                    top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rTp ?? 0.5)) * 100}%`,
-                                    height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rTp ?? 0.5)) * 100}%`,
-                                    background: "rgba(16,185,129,0.12)",
+                                    top: `${clamp01(Number(yRatio || 0.5)) * 100}%`,
                                     pointerEvents: "none",
-                                    zIndex: 24,
+                                    zIndex: 26,
                                   }}
-                                />
-                              ) : null}
-                              {inView(rEntry) && inView(rSl) ? (
+                                >
+                                  <div
+                                    style={{
+                                      borderTop: `${isSelected ? 1.4 : 0.9}px ${style === "dot" ? "dotted" : "solid"} ${color}`,
+                                      boxShadow: isSelected
+                                        ? `0 0 0 1px ${color}55`
+                                        : "none",
+                                    }}
+                                  />
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      left: 4,
+                                      top: -10,
+                                      fontSize: 9,
+                                      fontWeight: 700,
+                                      color,
+                                      background: "#0b1220",
+                                      border: `1px solid ${color}55`,
+                                      borderRadius: 4,
+                                      padding: "0 4px",
+                                      lineHeight: 1.2,
+                                    }}
+                                  >
+                                    {label}
+                                  </span>
+                                </div>
+                              );
+                              return (
+                                <>
+                                  {inView(rEntry) && inView(rTp) ? (
+                                    <div
+                                      style={{
+                                        position: "absolute",
+                                        left: 0,
+                                        right: 0,
+                                        top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rTp ?? 0.5)) * 100}%`,
+                                        height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rTp ?? 0.5)) * 100}%`,
+                                        background: "rgba(16,185,129,0.12)",
+                                        pointerEvents: "none",
+                                        zIndex: 24,
+                                      }}
+                                    />
+                                  ) : null}
+                                  {inView(rEntry) && inView(rSl) ? (
+                                    <div
+                                      style={{
+                                        position: "absolute",
+                                        left: 0,
+                                        right: 0,
+                                        top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rSl ?? 0.5)) * 100}%`,
+                                        height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rSl ?? 0.5)) * 100}%`,
+                                        background: "rgba(239,68,68,0.12)",
+                                        pointerEvents: "none",
+                                        zIndex: 24,
+                                      }}
+                                    />
+                                  ) : null}
+                                  {inView(rEntry)
+                                    ? mkLine(
+                                        rEntry ?? 0.5,
+                                        String(a.color || "#60a5fa"),
+                                        `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`,
+                                      )
+                                    : null}
+                                  {inView(rTp)
+                                    ? mkLine(
+                                        rTp ?? 0.5,
+                                        "#10b981",
+                                        `${a.plan_id || "P1"} TP`,
+                                        "dot",
+                                      )
+                                    : null}
+                                  {inView(rSl)
+                                    ? mkLine(
+                                        rSl ?? 0.5,
+                                        "#ef4444",
+                                        `${a.plan_id || "P1"} SL`,
+                                        "dot",
+                                      )
+                                    : null}
+                                </>
+                              );
+                            }
+                            if (a.kind === "line") {
+                              if (a.visible === false) return null;
+                              const isSelected = selectedObjectId === a.id;
+                              const styleMap = {
+                                solid: "solid",
+                                dot: "dotted",
+                                dash: "dashed",
+                              };
+                              const lineStyle =
+                                styleMap[
+                                  String(a.line_style || "dash").toLowerCase()
+                                ] || "dashed";
+                              const lineWidth = Math.max(
+                                1,
+                                Math.min(10, Number(a.line_width || 2)),
+                              );
+                              const lineLabel = String(
+                                a.label || a.type || "Line",
+                              );
+                              return (
                                 <div
+                                  key={a.id}
                                   style={{
                                     position: "absolute",
                                     left: 0,
                                     right: 0,
-                                    top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rSl ?? 0.5)) * 100}%`,
-                                    height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rSl ?? 0.5)) * 100}%`,
-                                    background: "rgba(239,68,68,0.12)",
+                                    top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
                                     pointerEvents: "none",
-                                    zIndex: 24,
+                                    zIndex: 26,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      borderTop: `${isSelected ? Math.max(1, lineWidth + 0.8) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
+                                      boxShadow: isSelected
+                                        ? `0 0 0 1px ${a.color || "#60a5fa"}55`
+                                        : "none",
+                                    }}
+                                  />
+                                  <span
+                                    style={{
+                                      position: "absolute",
+                                      right: 52,
+                                      top: -10,
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      color: a.color || "#60a5fa",
+                                      background: "#0b1220",
+                                      border: `1px solid ${a.color || "#60a5fa"}55`,
+                                      borderRadius: 4,
+                                      padding: "0 4px",
+                                      lineHeight: 1.2,
+                                    }}
+                                  >
+                                    {lineLabel}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (a.kind === "point") {
+                              if (a.visible === false) return null;
+                              const isSelected = selectedObjectId === a.id;
+                              return (
+                                <div
+                                  key={a.id}
+                                  style={{
+                                    position: "absolute",
+                                    left: `${clamp01(Number(a._xRatio || 0.5)) * 100}%`,
+                                    top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
+                                    width: isSelected ? 10 : 8,
+                                    height: isSelected ? 10 : 8,
+                                    borderRadius: "50%",
+                                    background: a.color || "#eab308",
+                                    outline: isSelected
+                                      ? "1px solid #fff"
+                                      : "none",
+                                    boxShadow: isSelected
+                                      ? `0 0 0 2px ${a.color || "#eab308"}55`
+                                      : "none",
+                                    transform: "translate(-50%, -50%)",
+                                    pointerEvents: "none",
+                                    zIndex: 26,
                                   }}
                                 />
-                              ) : null}
-                              {inView(rEntry)
-                                ? mkLine(
-                                    rEntry ?? 0.5,
-                                    String(a.color || "#60a5fa"),
-                                    `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`,
-                                  )
-                                : null}
-                              {inView(rTp)
-                                ? mkLine(
-                                    rTp ?? 0.5,
-                                    "#10b981",
-                                    `${a.plan_id || "P1"} TP`,
-                                    "dot",
-                                  )
-                                : null}
-                              {inView(rSl)
-                                ? mkLine(
-                                    rSl ?? 0.5,
-                                    "#ef4444",
-                                    `${a.plan_id || "P1"} SL`,
-                                    "dot",
-                                  )
-                                : null}
-                            </>
-                          );
-                        }
-                        if (a.kind === "line") {
-                          if (a.visible === false) return null;
-                          const isSelected = selectedObjectId === a.id;
-                          const styleMap = {
-                            solid: "solid",
-                            dot: "dotted",
-                            dash: "dashed",
-                          };
-                          const lineStyle =
-                            styleMap[
-                              String(a.line_style || "dash").toLowerCase()
-                            ] || "dashed";
-                          const lineWidth = Math.max(
-                            1,
-                            Math.min(10, Number(a.line_width || 2)),
-                          );
-                          const lineLabel = String(a.label || a.type || "Line");
-                          return (
-                            <div
-                              key={a.id}
-                              style={{
-                                position: "absolute",
-                                left: 0,
-                                right: 0,
-                                top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                                pointerEvents: "none",
-                                zIndex: 26,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  borderTop: `${isSelected ? Math.max(1, lineWidth + 0.8) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
-                                  boxShadow: isSelected
-                                    ? `0 0 0 1px ${a.color || "#60a5fa"}55`
-                                    : "none",
-                                }}
-                              />
-                              <span
-                                style={{
-                                  position: "absolute",
-                                  right: 52,
-                                  top: -10,
-                                  fontSize: 10,
-                                  fontWeight: 700,
-                                  color: a.color || "#60a5fa",
-                                  background: "#0b1220",
-                                  border: `1px solid ${a.color || "#60a5fa"}55`,
-                                  borderRadius: 4,
-                                  padding: "0 4px",
-                                  lineHeight: 1.2,
-                                }}
-                              >
-                                {lineLabel}
-                              </span>
-                            </div>
-                          );
-                        }
-                        if (a.kind === "point") {
-                          if (a.visible === false) return null;
-                          const isSelected = selectedObjectId === a.id;
-                          return (
-                            <div
-                              key={a.id}
-                              style={{
-                                position: "absolute",
-                                left: `${clamp01(Number(a._xRatio || 0.5)) * 100}%`,
-                                top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                                width: isSelected ? 10 : 8,
-                                height: isSelected ? 10 : 8,
-                                borderRadius: "50%",
-                                background: a.color || "#eab308",
-                                outline: isSelected ? "1px solid #fff" : "none",
-                                boxShadow: isSelected
-                                  ? `0 0 0 2px ${a.color || "#eab308"}55`
-                                  : "none",
-                                transform: "translate(-50%, -50%)",
-                                pointerEvents: "none",
-                                zIndex: 26,
-                              }}
-                            />
-                          );
-                        }
-                        if (a.kind === "zone") {
-                          if (a.visible === false) return null;
-                          const isSelected = selectedObjectId === a.id;
-                          const y1 = Number(a._y1Ratio || 0.4);
-                          const y2 = Number(a._y2Ratio || 0.6);
-                          const x1 = Number(a._x1Ratio || 0.2);
-                          const x2 = Number(a._x2Ratio || 0.8);
-                          return (
-                            <div
-                              key={a.id}
-                              style={{
-                                position: "absolute",
-                                left: `${Math.min(x1, x2) * 100}%`,
-                                top: `${Math.min(y1, y2) * 100}%`,
-                                width: `${Math.abs(x2 - x1) * 100}%`,
-                                height: `${Math.abs(y2 - y1) * 100}%`,
-                                border: `${isSelected ? 2 : Math.max(1, Math.min(10, Number(a.line_width || 2)))}px solid ${a.color || "#22c55e"}`,
-                                background:
-                                  a.bg_color || `${a.color || "#22c55e"}22`,
-                                boxShadow: isSelected
-                                  ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
-                                  : "none",
-                                pointerEvents: "none",
-                                zIndex: 26,
-                              }}
-                            />
-                          );
-                        }
-                        return null;
-                      })}
+                              );
+                            }
+                            if (a.kind === "zone") {
+                              if (a.visible === false) return null;
+                              const isSelected = selectedObjectId === a.id;
+                              const y1 = Number(a._y1Ratio || 0.4);
+                              const y2 = Number(a._y2Ratio || 0.6);
+                              const x1 = Number(a._x1Ratio || 0.2);
+                              const x2 = Number(a._x2Ratio || 0.8);
+                              return (
+                                <div
+                                  key={a.id}
+                                  style={{
+                                    position: "absolute",
+                                    left: `${Math.min(x1, x2) * 100}%`,
+                                    top: `${Math.min(y1, y2) * 100}%`,
+                                    width: `${Math.abs(x2 - x1) * 100}%`,
+                                    height: `${Math.abs(y2 - y1) * 100}%`,
+                                    border: `${isSelected ? 2 : Math.max(1, Math.min(10, Number(a.line_width || 2)))}px solid ${a.color || "#22c55e"}`,
+                                    background:
+                                      a.bg_color || `${a.color || "#22c55e"}22`,
+                                    boxShadow: isSelected
+                                      ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
+                                      : "none",
+                                    pointerEvents: "none",
+                                    zIndex: 26,
+                                  }}
+                                />
+                              );
+                            }
+                            return null;
+                          })}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div
+                      style={{
+                        height: chartHeight,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "var(--muted)",
+                        fontSize: 11,
+                      }}
+                    >
+                      {status === "LOADING"
+                        ? "Loading..."
+                        : mode === "snapshots"
+                          ? "No snapshots — click 📷 to capture"
+                          : "No data — click C to fetch"}
                     </div>
                   )}
-                </>
-              ) : (
-                <div
-                  style={{
-                    height: chartHeight,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--muted)",
-                    fontSize: 11,
-                  }}
-                >
-                  {status === "LOADING"
-                    ? "Loading..."
-                    : mode === "snapshots"
-                      ? "No snapshots — click 📷 to capture"
-                      : "No data — click C to fetch"}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
           </div>
         );
       })()}
