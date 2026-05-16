@@ -89,6 +89,10 @@ function track(type, pay, fetchFn) {
     .then(function (d) {
       entry.status = "ok";
       entry.data = d;
+      entry.completedAt = Date.now();
+      if (d && typeof d === "object") {
+        entry.extra = d._notify_extra || d.extra || "";
+      }
       save(
         load().map(function (r) {
           return r.requestId === id ? entry : r;

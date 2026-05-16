@@ -3214,6 +3214,15 @@ export default function ChartSnapshotsPage() {
       );
       const batch = await snapPromise;
       const items = Array.isArray(batch?.items) ? batch.items : [];
+      const createdNames = items
+        .map((x) => String(x?.file_name || ""))
+        .filter(Boolean);
+      // Attach notification extra info to the result
+      if (!batch._notify_extra) {
+        batch._notify_extra = createdNames.length
+          ? `Captured ${createdNames.length} snapshots`
+          : "No snapshots captured";
+      }
       for (const tf of tfs) {
         const found = items.find((x) => {
           const f = String(x?.file_name || "");
@@ -3423,6 +3432,11 @@ export default function ChartSnapshotsPage() {
                   .map((x) => String(x?.file_name || "").trim())
                   .filter(Boolean)
               : [];
+            if (!batch._notify_extra) {
+              batch._notify_extra = freshFiles.length
+                ? `Re-captured ${freshFiles.length} snapshots`
+                : "No snapshots captured";
+            }
             if (freshFiles.length) payload.files = freshFiles;
           } catch {
             // Backend will still validate symbol-matched snapshots and return clear error if unavailable.

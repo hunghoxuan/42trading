@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-var HUB_KEY = "hub:results", TTL = 3600000, MAX_VISIBLE = 50;
+var HUB_KEY = "hub:results",
+  TTL = 3600000,
+  MAX_VISIBLE = 50;
 
 function loadResults() {
   try {
@@ -161,7 +163,11 @@ export default function NotificationDot() {
 
   return (
     <div
-      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
     >
       <button
         type="button"
@@ -280,43 +286,55 @@ export default function NotificationDot() {
                     padding: "8px 12px",
                     borderBottom: "1px solid rgba(255,255,255,0.05)",
                     cursor: "pointer",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 8,
                     fontSize: "11px",
                     transition: "background 0.15s",
                   }}
                   onMouseEnter={function (e) {
-                    e.currentTarget.style.background =
-                      "rgba(255,255,255,0.05)";
+                    e.currentTarget.style.background = "rgba(255,255,255,0.05)";
                   }}
                   onMouseLeave={function (e) {
                     e.currentTarget.style.background = "transparent";
                   }}
                 >
-                  <span style={{ fontSize: "14px", flexShrink: 0 }}>
+                  <span
+                    style={{ fontSize: "14px", flexShrink: 0, marginTop: 1 }}
+                  >
                     {statusIcon(entry.status)}
                   </span>
-                  
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 500 }}>
-                      {meta.label}
-                      {entry.symbol ? ": " + entry.symbol : ""}
-                    </div>
                     <div
                       style={{
-                        color: "#888",
-                        fontSize: "10px",
-                        marginTop: 2,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
                       }}
+                    >
+                      <span style={{ fontWeight: 500 }}>
+                        {meta.label}
+                        {entry.symbol ? ": " + entry.symbol : ""}
+                      </span>
+                      <span
+                        style={{
+                          color: "#666",
+                          fontSize: "9px",
+                          flexShrink: 0,
+                          marginLeft: 8,
+                        }}
+                      >
+                        {formatTime(entry.createdAt)}
+                        {entry.completedAt
+                          ? " → " + formatTime(entry.completedAt)
+                          : ""}
+                      </span>
+                    </div>
+                    <div
+                      style={{ color: "#888", fontSize: "10px", marginTop: 2 }}
                     >
                       {entry.status === "running"
                         ? "In progress..."
                         : entry.status === "error"
                           ? String(entry.error || "Failed")
-                          : "Completed"}
-                      {" · "}
-                      {formatTime(entry.createdAt)}
+                          : entry.extra || ""}
                     </div>
                   </div>
                 </div>
