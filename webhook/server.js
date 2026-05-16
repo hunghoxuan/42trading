@@ -711,6 +711,7 @@ const CFG = {
     .filter(Boolean),
 
   binanceEnabled: !!envStr(process.env.BINANCE_MODE),
+  binanceEnabled: !!envStr(process.env.BINANCE_MODE),
   binanceMode: envStr(process.env.BINANCE_MODE).toLowerCase(),
   binanceProduct: envStr(process.env.BINANCE_PRODUCT, "spot").toLowerCase(),
   binanceApiKey: envStr(process.env.BINANCE_API_KEY),
@@ -719,6 +720,7 @@ const CFG = {
   binanceDefaultQty: asNum(process.env.BINANCE_DEFAULT_QTY, NaN),
   binanceDefaultQuoteQty: asNum(process.env.BINANCE_DEFAULT_QUOTE_QTY, NaN),
 
+  ctraderEnabled: !!envStr(process.env.CTRADER_MODE),
   ctraderEnabled: !!envStr(process.env.CTRADER_MODE),
   ctraderMode: envStr(process.env.CTRADER_MODE).toLowerCase(),
   ctraderExecutorUrl: envStr(process.env.CTRADER_EXECUTOR_URL),
@@ -21845,6 +21847,46 @@ async function mt5RunSnapshotsCron() {
   return summary;
 }
 
+
+async function mt5RunSnapshotsCron() {
+  const b = await mt5Backend();
+  const res = await b.query(`
+    SELECT s.*
+    FROM user_settings s
+    JOIN users u ON s.user_id = u.user_id
+    WHERE s.type = 'cron' AND s.name = 'SNAPSHOTS_CRON'
+      AND UPPER(s.status) = 'ACTIVE'
+      AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
+  `);
+  const configs = res.rows || [];
+  if (!configs.length) return null;
+  const now = Date.now();
+  const summary = { configs: 0, captured: 0, skipped: 0, symbols: [], errors: [] };
+  for (const conf of configs) {
+    const userId = conf.user_id;
+    const data = conf.data || {};
+    if (!asBool(data.enabled ?? true, true)) continue;
+    summary.configs++;
+    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+    const excludeSymbols = new Set((Array.isArray(data.exclude_symbols) ? data.exclude_symbols : []).map((s) => String(s).toUpperCase().trim()).filter(Boolean));
+    const filteredSymbols = symbols.filter((s) => !excludeSymbols.has(String(s).toUpperCase().trim()));
+    const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
+    if (!filteredSymbols.length || !tfs.length) continue;
+    const cadenceMin = Number(data.cadence_minutes || 60);
+    const stateKey = `${userId}_${conf.name || "default"}`;
+    const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
+    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) { summary.skipped++; continue; }
+    console.log(`[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`);
+    CRON_STATE.lastSnapshotsRun[stateKey] = now;
+    try {
+      const provider = String(data.provider || "tv");
+      const sessionPrefix = String(data.session_prefix || sanitizeSessionPrefix(""));
+      const results = await captureTradingViewSnapshotsBatch({ symbols: filteredSymbols, timeframes: tfs, provider, sessionPrefix, lookbackBars: Number(data.lookback_bars || 200), format: String(data.format || "png"), quality: Number(data.quality || 90), theme: String(data.theme || "dark"), width: Number(data.width || 1200), height: Number(data.height || 800), userId });
+      if (Array.isArray(results)) { for (const r of results) { if (r && r.id) { summary.captured++; summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`); } } }
+    } catch (err) { const msg = err instanceof Error ? err.message : String(err); summary.errors.push(msg); console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg); }
+  }
+  return summary;
+}
 async function mt5CronLoop() {
   console.log("[Cron] Initializing master loop (1min cadence)");
   const intervalMs = 60 * 1000;
