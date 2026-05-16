@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 16:51 - 56d8a7da"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 17:05 - 940da44d"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -17054,17 +17054,43 @@ const appHandler = async (req, res) => {
     const tfsRaw = url.searchParams.get("timeframes") || url.searchParams.get("tfs") || "15,60,240,D";
     const tfs = tfsRaw.split(",").filter(Boolean).map(x => x.trim().toUpperCase());
     
-    // Map standard TV intervals to clear display names for AI
+    // Map to exact intervals that TradingView Widget expects (e.g. "5" for 5 min, "240" for 4H)
+    const tvIntervals = tfs.map(tf => {
+      if (tf === "1M") return "1";
+      if (tf === "3M") return "3";
+      if (tf === "5M") return "5";
+      if (tf === "15M") return "15";
+      if (tf === "30M") return "30";
+      if (tf === "1H") return "60";
+      if (tf === "4H") return "240";
+      if (tf === "1D") return "D";
+      if (tf === "1W") return "W";
+      if (tf.endsWith("M") && !isNaN(tf.replace("M", ""))) return tf.replace("M", "");
+      return tf;
+    });
+
+    // Map standard TV intervals to clear display names for AI (e.g. "5m", "1h", "1D")
     const displayTfs = tfs.map(tf => {
+      if (tf === "1M") return "1m";
+      if (tf === "3M") return "3m";
+      if (tf === "5M") return "5m";
+      if (tf === "15M") return "15m";
+      if (tf === "30M") return "30m";
+      if (tf === "1H") return "1h";
+      if (tf === "4H") return "4h";
+      if (tf === "1D") return "1D";
+      if (tf === "1W") return "1W";
+      
+      if (tf === "1") return "1m";
+      if (tf === "3") return "3m";
       if (tf === "5") return "5m";
       if (tf === "15") return "15m";
       if (tf === "30") return "30m";
       if (tf === "60") return "1h";
       if (tf === "240") return "4h";
-      if (tf === "D" || tf === "1D") return "1D";
-      if (tf === "W" || tf === "1W") return "1W";
-      if (tf === "M" || tf === "1M") return "1M";
-      // Handle "5M" -> "5m" if it mistakenly came through
+      if (tf === "D") return "1D";
+      if (tf === "W") return "1W";
+      
       if (tf.endsWith("M") && !isNaN(tf.replace("M", ""))) return tf.replace("M", "m");
       return tf;
     });
@@ -17133,7 +17159,7 @@ const appHandler = async (req, res) => {
             ${tfs.map((tf, i) => `
               <div class="chart-cell">
                 <div class="tf-badge">${displayTfs[i]}</div>
-                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tf}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
+                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tvIntervals[i]}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
               </div>
             `).join('')}
           </div>
