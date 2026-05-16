@@ -11,14 +11,29 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-## Current Deploy Lock
-
-- lock_status: `LOCKED`
-- deploy_owner: `Antigravity`
-- since_utc: `2026-05-16 15:06 UTC`
-- note: `TradingView Live integration + authenticated snapshots`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: ``
 
 ## Required Entry Template
+...
+### [2026-05-16 15:08 UTC] AGENT:Antigravity
+- status: DEPLOYED
+- branch: main
+- commit: 226cd3f
+- scope: `web-ui/src/components/charts/SymbolChart.jsx`, `web-ui/src/components/modals/TradingViewLoginModal.jsx`, `webhook/server.js`
+- merge_to_main: YES (226cd3f)
+- deploy:
+  - owner: Antigravity
+  - server_version: v2026.05.16 15:07 - 06730ae4
+  - ea_version: v2026.05.16 15:07 - 06730ae4
+  - result: PASS
+- verify:
+  - /health: remote check timed out, but PM2 logs show success
+  - UI asset: /assets/index-Gybg9axs.js
+  - key endpoint: POST /v2/tv/login implemented
+- handoff_next: none
 
 Copy and fill:
 
