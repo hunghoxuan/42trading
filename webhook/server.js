@@ -144,7 +144,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:49 - 9ed09127"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 15:54 - cd11e002"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3391,11 +3391,61 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     await page.goto(embedUrl.toString(), { waitUntil: "networkidle" });
 
     // Wait for the chart to stabilize
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(8000);
 
-    const root = page;
+    // Nuke UI elements that don't respect the URL parameters
+    await page.evaluate(() => {
+      const hideTags = (tags) => {
+        tags.forEach(t => {
+          document.querySelectorAll(t).forEach(el => {
+            el.style.setProperty('display', 'none', 'important');
+            el.style.setProperty('visibility', 'hidden', 'important');
+            el.style.setProperty('opacity', '0', 'important');
+            el.style.setProperty('pointer-events', 'none', 'important');
+            el.style.setProperty('height', '0', 'important');
+          });
+        });
+      };
+
+      // Comprehensive list of selectors for the public widgetembed
+      hideTags([
+        '.header-chart-panel',
+        '.left-panel',
+        '.legend',
+        '.chart-controls',
+        '.tv-floating-toolbar',
+        '.tv-market-status',
+        '.widgetbar-wrap',
+        '[class*="header-chart-panel"]',
+        '[class*="left-panel"]',
+        '[class*="legend-"]',
+        '[class*="chart-controls"]',
+        '[class*="toolbar-"]',
+        '[class*="button-"]',
+        '[class*="menu-"]',
+        '#page-pi-loading'
+      ]);
+
+      // Ensure the chart container takes the whole space if it was offset
+      const mainContainer = document.querySelector('.chart-container') || document.querySelector('[class*="chart-container"]');
+      if (mainContainer) {
+        mainContainer.style.setProperty('top', '0', 'important');
+        mainContainer.style.setProperty('left', '0', 'important');
+        mainContainer.style.setProperty('width', '100%', 'important');
+        mainContainer.style.setProperty('height', '100%', 'important');
+        mainContainer.style.setProperty('margin', '0', 'important');
+        mainContainer.style.setProperty('padding', '0', 'important');
+      }
+      
+      const chartGui = document.querySelector('.chart-gui-wrapper');
+      if (chartGui) {
+        chartGui.style.setProperty('top', '0', 'important');
+      }
+    });
 
     await page.waitForTimeout(1000);
+
+    const root = page;
     
     let shotOk = false;
     let lastShotErr = null;
