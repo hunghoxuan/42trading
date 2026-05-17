@@ -564,11 +564,10 @@ export default function DashboardPage() {
                 flexWrap: "wrap",
                 justifyContent: "flex-end",
                 flex: 1,
+                alignItems: "flex-start",
               }}
             >
-              <label htmlFor="db-filter-account" className="sr-only">
-                Account
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Account</span>
               <select
                 id="db-filter-account"
                 value={filters.account_id}
@@ -586,9 +585,7 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <label htmlFor="db-filter-symbol" className="sr-only">
-                Symbol
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Symbol</span>
               <select
                 id="db-filter-symbol"
                 value={filters.symbol}
@@ -603,9 +600,7 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <label htmlFor="db-filter-source" className="sr-only">
-                Source
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Source</span>
               <select
                 id="db-filter-source"
                 value={filters.source}
@@ -620,9 +615,7 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <label htmlFor="db-filter-model" className="sr-only">
-                Model
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Model</span>
               <select
                 id="db-filter-model"
                 value={filters.entry_model}
@@ -641,9 +634,7 @@ export default function DashboardPage() {
                 ))}
               </select>
 
-              <label htmlFor="db-filter-tf" className="sr-only">
-                Timeframe
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Timeframe</span>
               <select
                 id="db-filter-tf"
                 value={filters.signal_tf}
@@ -658,9 +649,7 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <label htmlFor="db-filter-range" className="sr-only">
-                Time Range
-              </label>
+              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Range</span>
               <select
                 id="db-filter-range"
                 value={filters.range}

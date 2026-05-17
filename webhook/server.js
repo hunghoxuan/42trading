@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.16 20:42 - 06f4a5c0"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.16 20:42 - 06f4a5c0",
+); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3213,10 +3216,14 @@ async function loginToTradingView(username, password) {
     // Wait for any 'Email' login button or the actual form
     try {
       await page.waitForTimeout(2000); // Give it a moment to settle
-      
+
       // Try to dismiss potential cookie banners that might block interaction
       try {
-        const cookieBtn = page.locator('button:has-text("Accept"), button:has-text("Agree"), button:has-text("I agree")').first();
+        const cookieBtn = page
+          .locator(
+            'button:has-text("Accept"), button:has-text("Agree"), button:has-text("I agree")',
+          )
+          .first();
         if (await cookieBtn.isVisible()) {
           await cookieBtn.click();
           await page.waitForTimeout(500);
@@ -3227,10 +3234,10 @@ async function loginToTradingView(username, password) {
         'button:has-text("Email")',
         'span:has-text("Email")',
         'div[name="Email"]',
-        '.tv-signin-dialog__social-button--email',
+        ".tv-signin-dialog__social-button--email",
         'a[href*="email"]',
       ];
-      
+
       let clicked = false;
       for (const sel of emailOptions) {
         const loc = page.locator(sel).first();
@@ -3238,21 +3245,29 @@ async function loginToTradingView(username, password) {
           console.log(`[tv-login] Clicking email option: ${sel}`);
           await loc.click();
           clicked = true;
-          await page.waitForLoadState('networkidle');
+          await page.waitForLoadState("networkidle");
           break;
         }
       }
       if (!clicked) {
-        console.log("[tv-login] No explicit 'Email' button found, checking for inputs directly...");
+        console.log(
+          "[tv-login] No explicit 'Email' button found, checking for inputs directly...",
+        );
       }
     } catch (e) {
-      console.log("[tv-login] Search for email button failed/timed out:", e.message);
+      console.log(
+        "[tv-login] Search for email button failed/timed out:",
+        e.message,
+      );
     }
 
     // Wait for inputs to be available
     console.log("[tv-login] Waiting for username input...");
-    await page.waitForSelector('input[name="username"]', { state: 'visible', timeout: 20000 });
-    
+    await page.waitForSelector('input[name="username"]', {
+      state: "visible",
+      timeout: 20000,
+    });
+
     await page.fill('input[name="username"]', username);
     await page.fill('input[name="password"]', password);
 
@@ -3277,7 +3292,10 @@ async function loginToTradingView(username, password) {
     console.error("[tv-login] Error:", err.message);
     try {
       if (page) {
-        const debugPath = path.join(CHART_SNAPSHOT_DIR, `login_error_latest.png`);
+        const debugPath = path.join(
+          CHART_SNAPSHOT_DIR,
+          `login_error_latest.png`,
+        );
         await page.screenshot({ path: debugPath, fullPage: true });
         console.log("[tv-login] Latest error screenshot saved to:", debugPath);
         err.message += ` (Debug screenshot saved: login_error_latest.png)`;
@@ -3374,7 +3392,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   }
   try {
     const page = await context.newPage();
-    
+
     const embedUrl = new URL("https://s.tradingview.com/widgetembed/");
     embedUrl.searchParams.set("symbol", symbol);
     embedUrl.searchParams.set("interval", interval);
@@ -3399,26 +3417,26 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     // Nuke UI elements that don't respect the URL parameters
     await page.evaluate(() => {
       const hideTags = (tags) => {
-        tags.forEach(t => {
-          document.querySelectorAll(t).forEach(el => {
-            el.style.setProperty('display', 'none', 'important');
-            el.style.setProperty('visibility', 'hidden', 'important');
-            el.style.setProperty('opacity', '0', 'important');
-            el.style.setProperty('pointer-events', 'none', 'important');
-            el.style.setProperty('height', '0', 'important');
+        tags.forEach((t) => {
+          document.querySelectorAll(t).forEach((el) => {
+            el.style.setProperty("display", "none", "important");
+            el.style.setProperty("visibility", "hidden", "important");
+            el.style.setProperty("opacity", "0", "important");
+            el.style.setProperty("pointer-events", "none", "important");
+            el.style.setProperty("height", "0", "important");
           });
         });
       };
 
       // Comprehensive list of selectors for the public widgetembed
       hideTags([
-        '.header-chart-panel',
-        '.left-panel',
-        '.legend',
-        '.chart-controls',
-        '.tv-floating-toolbar',
-        '.tv-market-status',
-        '.widgetbar-wrap',
+        ".header-chart-panel",
+        ".left-panel",
+        ".legend",
+        ".chart-controls",
+        ".tv-floating-toolbar",
+        ".tv-market-status",
+        ".widgetbar-wrap",
         '[class*="header-chart-panel"]',
         '[class*="left-panel"]',
         '[class*="legend-"]',
@@ -3426,30 +3444,32 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
         '[class*="toolbar-"]',
         '[class*="button-"]',
         '[class*="menu-"]',
-        '#page-pi-loading'
+        "#page-pi-loading",
       ]);
 
       // Ensure the chart container takes the whole space if it was offset
-      const mainContainer = document.querySelector('.chart-container') || document.querySelector('[class*="chart-container"]');
+      const mainContainer =
+        document.querySelector(".chart-container") ||
+        document.querySelector('[class*="chart-container"]');
       if (mainContainer) {
-        mainContainer.style.setProperty('top', '0', 'important');
-        mainContainer.style.setProperty('left', '0', 'important');
-        mainContainer.style.setProperty('width', '100%', 'important');
-        mainContainer.style.setProperty('height', '100%', 'important');
-        mainContainer.style.setProperty('margin', '0', 'important');
-        mainContainer.style.setProperty('padding', '0', 'important');
+        mainContainer.style.setProperty("top", "0", "important");
+        mainContainer.style.setProperty("left", "0", "important");
+        mainContainer.style.setProperty("width", "100%", "important");
+        mainContainer.style.setProperty("height", "100%", "important");
+        mainContainer.style.setProperty("margin", "0", "important");
+        mainContainer.style.setProperty("padding", "0", "important");
       }
-      
-      const chartGui = document.querySelector('.chart-gui-wrapper');
+
+      const chartGui = document.querySelector(".chart-gui-wrapper");
       if (chartGui) {
-        chartGui.style.setProperty('top', '0', 'important');
+        chartGui.style.setProperty("top", "0", "important");
       }
     });
 
     await page.waitForTimeout(1000);
 
     const root = page;
-    
+
     let shotOk = false;
     let lastShotErr = null;
     // Retry element screenshot once; Playwright can timeout waiting for "stable" element under load.
@@ -3742,9 +3762,14 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             ignoreHTTPSErrors: true,
           });
           const page = await context.newPage();
-          console.log(`[snapshot-grid] Capturing master grid for ${symbol} at ${gridUrl}`);
-          
-          await page.goto(gridUrl, { waitUntil: "networkidle", timeout: 60000 });
+          console.log(
+            `[snapshot-grid] Capturing master grid for ${symbol} at ${gridUrl}`,
+          );
+
+          await page.goto(gridUrl, {
+            waitUntil: "networkidle",
+            timeout: 60000,
+          });
           // Wait for iframes to stabilize
           await page.waitForTimeout(12000);
 
@@ -3761,7 +3786,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             status: "ok",
             file_name: outFileName,
             url: `/v2/chart/snapshots/${outFileName}`,
-            master: true
+            master: true,
           });
         } catch (e) {
           console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
@@ -7881,20 +7906,20 @@ async function _mt5InitBackendInternal() {
       let matched = 0;
       let synced = 0;
       const results = [];
-    // Batch-query old execution_statuses for change detection
-    const oldStatusMap = new Map();
-    {
-      const sids = items.map((it) => it.sid).filter(Boolean);
-      if (sids.length) {
-        const oldRows = await pool.query(
-          `SELECT sid, execution_status FROM trades WHERE sid = ANY($1::text[])`,
-          [sids],
-        );
-        for (const r of oldRows.rows || []) {
-          oldStatusMap.set(r.sid, r.execution_status);
+      // Batch-query old execution_statuses for change detection
+      const oldStatusMap = new Map();
+      {
+        const sids = items.map((it) => it.sid).filter(Boolean);
+        if (sids.length) {
+          const oldRows = await pool.query(
+            `SELECT sid, execution_status FROM trades WHERE sid = ANY($1::text[])`,
+            [sids],
+          );
+          for (const r of oldRows.rows || []) {
+            oldStatusMap.set(r.sid, r.execution_status);
+          }
         }
       }
-    }
       for (const it of items) {
         try {
           let res = { rowCount: 0 };
@@ -8444,13 +8469,13 @@ async function _mt5InitBackendInternal() {
         const statusChanged = !oldStatus || oldStatus !== it.execution_status;
         if (statusChanged) {
           tradeUpdates.push({
-          sid: it.sid,
-          symbol: it.symbol,
-          pnl_realized: it.pnl,
-          broker_pnl: it.pnl,
-          broker_pips: it.pips,
-          execution_status: it.execution_status,
-          last_price: it.last_price,
+            sid: it.sid,
+            symbol: it.symbol,
+            pnl_realized: it.pnl,
+            broker_pnl: it.pnl,
+            broker_pips: it.pips,
+            execution_status: it.execution_status,
+            last_price: it.last_price,
           });
         }
       }
@@ -8458,28 +8483,28 @@ async function _mt5InitBackendInternal() {
       // Emit SSE via NotificationManager (only when status changes)
       if (tradeUpdates.length > 0) {
         notificationManager.handle("BROKER_SYNC", "sync", {
-        user_id: uid,
-        page_id: "trades",
-        event: "broker_sync",
-        data: tradeUpdates,
-        message: (() => {
-          const changedSymbols = [
-            ...new Set(
-              (tradeUpdates || []).map((u) => u.symbol).filter(Boolean),
-            ),
-          ].slice(0, 3);
-          const symbolSummary = changedSymbols.length
-            ? changedSymbols.join(", ")
-            : "none";
-          const extra =
-            (tradeUpdates || []).length > 3
-              ? ` +${(tradeUpdates || []).length - 3} more`
-              : "";
-          return `BROKER SYNC: ${symbolSummary}${extra} (${matched} updated)`;
-        })(),
-        type: "info",
-        need_refresh: false,
-        comp_refresh: matched > 0,
+          user_id: uid,
+          page_id: "trades",
+          event: "broker_sync",
+          data: tradeUpdates,
+          message: (() => {
+            const changedSymbols = [
+              ...new Set(
+                (tradeUpdates || []).map((u) => u.symbol).filter(Boolean),
+              ),
+            ].slice(0, 3);
+            const symbolSummary = changedSymbols.length
+              ? changedSymbols.join(", ")
+              : "none";
+            const extra =
+              (tradeUpdates || []).length > 3
+                ? ` +${(tradeUpdates || []).length - 3} more`
+                : "";
+            return `BROKER SYNC: ${symbolSummary}${extra} (${matched} updated)`;
+          })(),
+          type: "info",
+          need_refresh: false,
+          comp_refresh: matched > 0,
         });
       }
 
@@ -17049,13 +17074,22 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname.startsWith("/v2/chart/snapshots-grid/")) {
+  if (
+    req.method === "GET" &&
+    url.pathname.startsWith("/v2/chart/snapshots-grid/")
+  ) {
     const symbol = url.pathname.split("/").pop() || "BTCUSD";
-    const tfsRaw = url.searchParams.get("timeframes") || url.searchParams.get("tfs") || "15,60,240,D";
-    const tfs = tfsRaw.split(",").filter(Boolean).map(x => x.trim().toUpperCase());
-    
+    const tfsRaw =
+      url.searchParams.get("timeframes") ||
+      url.searchParams.get("tfs") ||
+      "15,60,240,D";
+    const tfs = tfsRaw
+      .split(",")
+      .filter(Boolean)
+      .map((x) => x.trim().toUpperCase());
+
     // Map to exact intervals that TradingView Widget expects (e.g. "5" for 5 min, "240" for 4H)
-    const tvIntervals = tfs.map(tf => {
+    const tvIntervals = tfs.map((tf) => {
       if (tf === "1M") return "1";
       if (tf === "3M") return "3";
       if (tf === "5M") return "5";
@@ -17065,12 +17099,13 @@ const appHandler = async (req, res) => {
       if (tf === "4H") return "240";
       if (tf === "1D") return "D";
       if (tf === "1W") return "W";
-      if (tf.endsWith("M") && !isNaN(tf.replace("M", ""))) return tf.replace("M", "");
+      if (tf.endsWith("M") && !isNaN(tf.replace("M", "")))
+        return tf.replace("M", "");
       return tf;
     });
 
     // Map standard TV intervals to clear display names for AI (e.g. "5m", "1h", "1D")
-    const displayTfs = tfs.map(tf => {
+    const displayTfs = tfs.map((tf) => {
       if (tf === "1M") return "1m";
       if (tf === "3M") return "3m";
       if (tf === "5M") return "5m";
@@ -17080,7 +17115,7 @@ const appHandler = async (req, res) => {
       if (tf === "4H") return "4h";
       if (tf === "1D") return "1D";
       if (tf === "1W") return "1W";
-      
+
       if (tf === "1") return "1m";
       if (tf === "3") return "3m";
       if (tf === "5") return "5m";
@@ -17090,13 +17125,14 @@ const appHandler = async (req, res) => {
       if (tf === "240") return "4h";
       if (tf === "D") return "1D";
       if (tf === "W") return "1W";
-      
-      if (tf.endsWith("M") && !isNaN(tf.replace("M", ""))) return tf.replace("M", "m");
+
+      if (tf.endsWith("M") && !isNaN(tf.replace("M", "")))
+        return tf.replace("M", "m");
       return tf;
     });
 
     const theme = url.searchParams.get("theme") || "dark";
-    
+
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`
       <html>
@@ -17104,14 +17140,14 @@ const appHandler = async (req, res) => {
           <meta charset="utf-8">
           <title>Grid ${symbol}</title>
           <style>
-            body { 
-              margin: 0; 
-              background: ${theme === "dark" ? "#0b1220" : "#ffffff"}; 
-              overflow: hidden; 
+            body {
+              margin: 0;
+              background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
+              overflow: hidden;
               font-family: sans-serif;
             }
-            .grid { 
-              display: grid; 
+            .grid {
+              display: grid;
               grid-template-columns: repeat(${tfs.length > 2 ? 2 : tfs.length}, 1fr);
               grid-auto-rows: 1fr;
               width: 100vw;
@@ -17156,12 +17192,16 @@ const appHandler = async (req, res) => {
         </head>
         <body>
           <div class="grid">
-            ${tfs.map((tf, i) => `
+            ${tfs
+              .map(
+                (tf, i) => `
               <div class="chart-cell">
                 <div class="tf-badge">${displayTfs[i]}</div>
                 <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tvIntervals[i]}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
               </div>
-            `).join('')}
+            `,
+              )
+              .join("")}
           </div>
         </body>
       </html>
@@ -17588,7 +17628,8 @@ const appHandler = async (req, res) => {
             "BINANCE",
             "BYBIT",
           ]);
-          if (sub.length >= 2 && KNOWN_PROVIDERS.has(sub[0])) return sub.slice(1).join("_");
+          if (sub.length >= 2 && KNOWN_PROVIDERS.has(sub[0]))
+            return sub.slice(1).join("_");
           return sub.join("_");
         }
         if (parts.length < 3) return "";
@@ -18519,7 +18560,7 @@ const appHandler = async (req, res) => {
               inferSymbolFromSnapshotFile(f),
             );
             if (sym && inferred && sym !== inferred) continue;
-            
+
             // Handle MASTER file as matching everything
             if (f.toUpperCase().includes("_MASTER.")) {
               out.push(f);
@@ -18623,7 +18664,9 @@ const appHandler = async (req, res) => {
         ),
       );
       if (!files.length) {
-        console.warn("[snapshot-analyze] 400: No snapshots found for analysis.");
+        console.warn(
+          "[snapshot-analyze] 400: No snapshots found for analysis.",
+        );
         return json(res, 400, {
           ok: false,
           error: "No snapshots found for analysis.",
@@ -18646,7 +18689,10 @@ const appHandler = async (req, res) => {
         snapshotFiles.push({ fileName: safeName, abs, mediaType });
       }
       if (!snapshotFiles.length) {
-        console.warn("[snapshot-analyze] 400: No valid snapshot images available. Input files:", files);
+        console.warn(
+          "[snapshot-analyze] 400: No valid snapshot images available. Input files:",
+          files,
+        );
         return json(res, 400, {
           ok: false,
           error: "No valid snapshot images available.",
@@ -22068,9 +22114,6 @@ function initMarketDataQueue() {
   return true;
 }
 
-
-
-
 async function mt5RunSnapshotsCron() {
   const b = await mt5Backend();
   const res = await b.query(`
@@ -22084,29 +22127,71 @@ async function mt5RunSnapshotsCron() {
   const configs = res.rows || [];
   if (!configs.length) return null;
   const now = Date.now();
-  const summary = { configs: 0, captured: 0, skipped: 0, symbols: [], errors: [] };
+  const summary = {
+    configs: 0,
+    captured: 0,
+    skipped: 0,
+    symbols: [],
+    errors: [],
+  };
   for (const conf of configs) {
     const userId = conf.user_id;
     const data = conf.data || {};
     if (!asBool(data.enabled ?? true, true)) continue;
     summary.configs++;
     const symbols = Array.isArray(data.symbols) ? data.symbols : [];
-    const excludeSymbols = new Set((Array.isArray(data.exclude_symbols) ? data.exclude_symbols : []).map((s) => String(s).toUpperCase().trim()).filter(Boolean));
-    const filteredSymbols = symbols.filter((s) => !excludeSymbols.has(String(s).toUpperCase().trim()));
+    const excludeSymbols = new Set(
+      (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
+        .map((s) => String(s).toUpperCase().trim())
+        .filter(Boolean),
+    );
+    const filteredSymbols = symbols.filter(
+      (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
+    );
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     if (!filteredSymbols.length || !tfs.length) continue;
     const cadenceMin = Number(data.cadence_minutes || 60);
     const stateKey = `${userId}_${conf.name || "default"}`;
     const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
-    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) { summary.skipped++; continue; }
-    console.log(`[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`);
+    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) {
+      summary.skipped++;
+      continue;
+    }
+    console.log(
+      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`,
+    );
     CRON_STATE.lastSnapshotsRun[stateKey] = now;
     try {
       const provider = String(data.provider || "tv");
-      const sessionPrefix = String(data.session_prefix || sanitizeSessionPrefix(""));
-      const results = await captureTradingViewSnapshotsBatch({ symbols: filteredSymbols, timeframes: tfs, provider, sessionPrefix, lookbackBars: Number(data.lookback_bars || 200), format: String(data.format || "png"), quality: Number(data.quality || 90), theme: String(data.theme || "dark"), width: Number(data.width || 1200), height: Number(data.height || 800), userId });
-      if (Array.isArray(results)) { for (const r of results) { if (r && r.id) { summary.captured++; summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`); } } }
-    } catch (err) { const msg = err instanceof Error ? err.message : String(err); summary.errors.push(msg); console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg); }
+      const sessionPrefix = String(
+        data.session_prefix || sanitizeSessionPrefix(""),
+      );
+      const results = await captureTradingViewSnapshotsBatch({
+        symbols: filteredSymbols,
+        timeframes: tfs,
+        provider,
+        sessionPrefix,
+        lookbackBars: Number(data.lookback_bars || 200),
+        format: String(data.format || "png"),
+        quality: Number(data.quality || 90),
+        theme: String(data.theme || "dark"),
+        width: Number(data.width || 1200),
+        height: Number(data.height || 800),
+        userId,
+      });
+      if (Array.isArray(results)) {
+        for (const r of results) {
+          if (r && r.id) {
+            summary.captured++;
+            summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`);
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.errors.push(msg);
+      console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg);
+    }
   }
   return summary;
 }
@@ -22119,14 +22204,34 @@ async function mt5CronLoop() {
     if (CRON_STATE.isRunning) return;
     CRON_STATE.isRunning = true;
     const startMs = Date.now();
+    const events = [];
     try {
       await mt5RunMarketDataCron();
+      events.push("MarketData: done");
       await mt5RunAiAnalysisCron();
+      events.push("AI: done");
       await mt5RunSnapshotsCron();
-      global._cronStatus = `ok (${Math.round((Date.now() - startMs) / 1000)}s)`;
+      events.push("Snapshots: done");
+      const elapsed = Math.round((Date.now() - startMs) / 1000);
+      global._cronStatus = `ok (${elapsed}s)`;
+      global._cronEvents = global._cronEvents || [];
+      global._cronEvents.unshift({ time: new Date().toISOString(), elapsed, events, status: "ok" });
+      if (global._cronEvents.length > 20) global._cronEvents.length = 20;
+      if (notificationManager) {
+        notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
+          message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
+          metadata: { elapsed_sec: elapsed, events },
+        });
+      }
     } catch (err) {
       console.error("[Cron] Run error:", err);
       global._cronStatus = "error";
+      if (notificationManager) {
+        notificationManager.handle("SYSTEM_EVENT", "cron_error", {
+          message: `Cron ERROR: ${err?.message || err}`,
+          metadata: { error: err?.message || String(err) },
+        });
+      }
     } finally {
       CRON_STATE.isRunning = false;
     }
