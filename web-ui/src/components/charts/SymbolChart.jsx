@@ -1116,6 +1116,19 @@ export default function SymbolChart({
     setTvSettings((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const toggleAllTvSettings = () => {
+    setTvSettings((prev) => {
+      const allEnabled = !!(prev.sidebar && prev.toolbar && prev.legend);
+      const next = !allEnabled;
+      return {
+        ...prev,
+        sidebar: next,
+        toolbar: next,
+        legend: next,
+      };
+    });
+  };
+
   const handleTvLogin = async (username, password) => {
     const res = await fetch("/v2/tv/login", {
       method: "POST",
@@ -1621,57 +1634,25 @@ export default function SymbolChart({
               </button>
               <button
                 className="secondary-button"
-                onClick={() => toggleTvSetting("sidebar")}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 7px",
-                  borderRadius: 4,
-                  marginRight: 4,
-                  color: tvSettings.sidebar ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.sidebar
-                    ? "#60a5fa66"
-                    : "var(--border)",
-                }}
-                title="Toggle Side Toolbar"
-              >
-                Side
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => toggleTvSetting("toolbar")}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 7px",
-                  borderRadius: 4,
-                  marginRight: 4,
-                  color: tvSettings.toolbar ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.toolbar
-                    ? "#60a5fa66"
-                    : "var(--border)",
-                }}
-                title="Toggle Top Toolbar"
-              >
-                Top
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => toggleTvSetting("legend")}
+                onClick={toggleAllTvSettings}
                 style={{
                   fontSize: 10,
                   fontWeight: 700,
                   padding: "3px 7px",
                   borderRadius: 4,
                   marginRight: 8,
-                  color: tvSettings.legend ? "#60a5fa" : "var(--muted)",
-                  borderColor: tvSettings.legend
-                    ? "#60a5fa66"
-                    : "var(--border)",
+                  color:
+                    tvSettings.sidebar && tvSettings.toolbar && tvSettings.legend
+                      ? "#60a5fa"
+                      : "var(--muted)",
+                  borderColor:
+                    tvSettings.sidebar && tvSettings.toolbar && tvSettings.legend
+                      ? "#60a5fa66"
+                      : "var(--border)",
                 }}
-                title="Toggle Legend"
+                title="Toggle Side + Top + Legend"
               >
-                Leg
+                UI
               </button>
             </>
           )}

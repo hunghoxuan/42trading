@@ -5273,7 +5273,7 @@ export default function ChartSnapshotsPage() {
             <div
               style={{
                 position: "relative",
-                minWidth: 140,
+                minWidth: 180,
                 display: "flex",
                 gap: 4,
               }}
@@ -5418,56 +5418,89 @@ export default function ChartSnapshotsPage() {
                           >
                             {s}
                           </button>
-                          {symbolFilterTab === "FAVOURITE" ? (
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              style={{
-                                width: 18,
-                                height: 18,
-                                padding: 0,
-                                fontSize: 10,
-                                lineHeight: 1,
-                                minWidth: 18,
-                                borderRadius: 4,
-                                color: "rgba(239,68,68,0.5)",
-                                borderColor: "rgba(239,68,68,0.25)",
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeFromWatchlist(s);
-                              }}
-                              title={"Remove " + s + " from watchlist"}
-                            >
-                              -
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              style={{
-                                width: 18,
-                                height: 18,
-                                padding: 0,
-                                fontSize: 10,
-                                lineHeight: 1,
-                                minWidth: 18,
-                                borderRadius: 4,
-                                color: "var(--muted)",
-                                borderColor: "rgba(255,255,255,0.08)",
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const next = [...new Set([...watchlist, s])];
-                                saveWatchlistToDb(next).then(() =>
-                                  setWatchlist(next),
-                                );
-                              }}
-                              title={"Add " + s + " to watchlist"}
-                            >
-                              +
-                            </button>
-                          )}
+                          {(() => {
+                            const inWatchlist = watchlist.includes(s);
+                            const inSelected = selectedSymbols.includes(s);
+                            return (
+                              <>
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  style={{
+                                    width: 18,
+                                    height: 18,
+                                    padding: 0,
+                                    fontSize: 10,
+                                    lineHeight: 1,
+                                    minWidth: 18,
+                                    borderRadius: 4,
+                                    color: inWatchlist
+                                      ? "rgba(239,68,68,0.7)"
+                                      : "var(--muted)",
+                                    borderColor: inWatchlist
+                                      ? "rgba(239,68,68,0.35)"
+                                      : "rgba(255,255,255,0.08)",
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (inWatchlist) {
+                                      removeFromWatchlist(s);
+                                    } else {
+                                      const next = [...new Set([...watchlist, s])];
+                                      saveWatchlistToDb(next).then(() =>
+                                        setWatchlist(next),
+                                      );
+                                    }
+                                  }}
+                                  title={
+                                    inWatchlist
+                                      ? "Remove " + s + " from watchlist"
+                                      : "Add " + s + " to watchlist"
+                                  }
+                                >
+                                  {inWatchlist ? "-" : "+"}
+                                </button>
+                                {inSelected ? (
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    style={{
+                                      width: 18,
+                                      height: 18,
+                                      padding: 0,
+                                      fontSize: 10,
+                                      lineHeight: 1,
+                                      minWidth: 18,
+                                      borderRadius: 4,
+                                      color: "#fca5a5",
+                                      borderColor: "rgba(248,113,113,0.4)",
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setCfg((prev) => {
+                                        const prevSelected = Array.isArray(
+                                          prev?.symbols,
+                                        )
+                                          ? prev.symbols
+                                          : [];
+                                        const nextSelected = prevSelected.filter(
+                                          (x) => x !== s,
+                                        );
+                                        return {
+                                          ...prev,
+                                          symbols: nextSelected,
+                                          symbol: nextSelected[0] || "",
+                                        };
+                                      });
+                                    }}
+                                    title={"Remove " + s + " from selected"}
+                                  >
+                                    x
+                                  </button>
+                                ) : null}
+                              </>
+                            );
+                          })()}
                         </span>
                       ))}
                     </div>

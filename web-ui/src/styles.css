@@ -1003,9 +1003,8 @@ button:disabled {
 }
 
 .tf-pill {
-    padding: 6px 12px;
-    font-size: 11px;
-    font-weight: 800;
+    padding: 2px 4px;
+    font-size: 9px;
     border-radius: 6px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -1252,7 +1251,7 @@ button:disabled {
 }
 .snapshot-symbol-row-inline-v4 {
     display: grid;
-    grid-template-columns: auto minmax(160px, 1fr) auto;
+    grid-template-columns: auto minmax(120px, 1fr) minmax(180px, 1fr);
     gap: 8px;
     align-items: center;
 }
