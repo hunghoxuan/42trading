@@ -4989,6 +4989,15 @@ export default function ChartSnapshotsPage() {
   const selectedSymbols = Array.isArray(cfg?.symbols)
     ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
     : [];
+  const watchlistNormSet = useMemo(
+    () =>
+      new Set(
+        (Array.isArray(watchlist) ? watchlist : [])
+          .map((s) => normalizeWatchSymbol(s))
+          .filter(Boolean),
+      ),
+    [watchlist],
+  );
 
   const applyTradePlanToEditor = (plan) => {
     if (!plan?.raw) return;
@@ -6186,36 +6195,41 @@ export default function ChartSnapshotsPage() {
                             onTrade={handleChartTrade}
                             showTradeButton={true}
                             showAnalyzeButton={true}
-                                    isInWatchlist={watchlist.includes(sym)}
-                                    isInSelected={selectedSymbols.includes(sym)}
-                                    onToggleWatchlist={(s) => {
-                                      const inWatchlist = watchlist.includes(s);
-                                      if (inWatchlist) {
-                                        removeFromWatchlist(s);
-                                      } else {
-                                        const next = [...new Set([...watchlist, s])];
-                                        saveWatchlistToDb(next).then(() =>
-                                          setWatchlist(next),
-                                        );
-                                      }
-                                    }}
-                                    onRemoveSelected={(s) => {
-                                      setCfg((prev) => {
-                                        const prevSelected = Array.isArray(
-                                          prev?.symbols,
-                                        )
-                                          ? prev.symbols
-                                          : [];
-                                        const nextSelected = prevSelected.filter(
-                                          (x) => x !== s,
-                                        );
-                                        return {
-                                          ...prev,
-                                          symbols: nextSelected,
-                                          symbol: nextSelected[0] || "",
-                                        };
-                                      });
-                                    }}
+                            isInWatchlist={watchlistNormSet.has(
+                              normalizeWatchSymbol(sym),
+                            )}
+                            isInSelected={selectedSymbols.includes(sym)}
+                            onToggleWatchlist={(s) => {
+                              const sn = normalizeWatchSymbol(s);
+                              const inWatchlist = watchlistNormSet.has(sn);
+                              if (inWatchlist) {
+                                const existingRaw =
+                                  (Array.isArray(watchlist) ? watchlist : []).find(
+                                    (w) => normalizeWatchSymbol(w) === sn,
+                                  ) || s;
+                                removeFromWatchlist(existingRaw);
+                              } else {
+                                const next = [...new Set([...watchlist, s])];
+                                saveWatchlistToDb(next).then(() =>
+                                  setWatchlist(next),
+                                );
+                              }
+                            }}
+                            onRemoveSelected={(s) => {
+                              setCfg((prev) => {
+                                const prevSelected = Array.isArray(prev?.symbols)
+                                  ? prev.symbols
+                                  : [];
+                                const nextSelected = prevSelected.filter(
+                                  (x) => x !== s,
+                                );
+                                return {
+                                  ...prev,
+                                  symbols: nextSelected,
+                                  symbol: nextSelected[0] || "",
+                                };
+                              });
+                            }}
                           />
                         </Suspense>
                       ));

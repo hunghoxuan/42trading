@@ -438,7 +438,7 @@ export default function SymbolChart({
   initialGridCols = null,
   onAnalyze,
   onRemove,
-  isInWatchlist = true,
+  isInWatchlist = false,
   isInSelected = false,
   onToggleWatchlist = null,
   onRemoveSelected = null,
