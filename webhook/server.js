@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 15:20 - e2b8c4f1"); // normalized watchlist matching for symbol-card +/-/x actions
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.17 15:20 - e2b8c4f1",
+); // normalized watchlist matching for symbol-card +/-/x actions
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -5903,6 +5906,43 @@ function mt5NowIso() {
   return new Date().toISOString();
 }
 
+function mt5ParsePriceOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function mt5NormalizeTpTargets(input = [], sideRaw = "") {
+  const side = String(sideRaw || "").toUpperCase();
+  const isSell = side === "SELL";
+  const vals = [];
+  for (const raw of Array.isArray(input) ? input : []) {
+    const n = mt5ParsePriceOrNull(raw);
+    if (n != null) vals.push(n);
+  }
+  const uniq = Array.from(new Set(vals.map((x) => Number(x.toFixed(8)))));
+  uniq.sort((a, b) => (isSell ? b - a : a - b));
+  return uniq.slice(0, 3);
+}
+
+function mt5NormalizeTpFields(payload = {}, sideRaw = "") {
+  const cands = [
+    payload.tp1,
+    payload.tp2,
+    payload.tp3,
+    payload.tp,
+    payload.take_profit,
+  ];
+  if (Array.isArray(payload.tp_targets)) cands.push(...payload.tp_targets);
+  const targets = mt5NormalizeTpTargets(cands, sideRaw);
+  return {
+    tp1: targets[0] ?? null,
+    tp2: targets[1] ?? null,
+    tp3: targets[2] ?? null,
+    tp: targets[0] ?? null,
+    tp_targets: targets,
+  };
+}
+
 function mt5ParseNumericId(value) {
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
@@ -6006,6 +6046,12 @@ function mt5MapDbRow(row) {
     volume: Number(row.volume),
     sl: row.sl === null || row.sl === undefined ? null : Number(row.sl),
     tp: row.tp === null || row.tp === undefined ? null : Number(row.tp),
+    tp1: row.tp1 === null || row.tp1 === undefined ? null : Number(row.tp1),
+    tp2: row.tp2 === null || row.tp2 === undefined ? null : Number(row.tp2),
+    tp3: row.tp3 === null || row.tp3 === undefined ? null : Number(row.tp3),
+    tp_targets: [row.tp1, row.tp2, row.tp3]
+      .map((x) => (x === null || x === undefined ? null : Number(x)))
+      .filter((x) => Number.isFinite(x)),
     entry: resolvedEntry,
     rr_planned:
       row.rr_planned === null || row.rr_planned === undefined
@@ -6236,6 +6282,9 @@ async function _mt5InitBackendInternal() {
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS confidence_pct FLOAT8;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS estimated_bars INT;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS be_trigger FLOAT8;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp1 FLOAT8 NULL;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp2 FLOAT8 NULL;
+    ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp3 FLOAT8 NULL;
 
 
 
@@ -6734,6 +6783,21 @@ async function _mt5InitBackendInternal() {
   await pool
     .query(
       `ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker_sl_pnl DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp1 DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp2 DOUBLE PRECISION NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp3 DOUBLE PRECISION NULL`,
     )
     .catch(() => {});
 
@@ -7251,11 +7315,11 @@ async function _mt5InitBackendInternal() {
             INSERT INTO trades (
               sid, account_id, user_id, source_id,
               strategy, entry_model, signal_tf, chart_tf,
-              symbol, action, order_type, entry, sl, tp, volume, note,
+              symbol, action, order_type, entry, sl, tp, tp1, tp2, tp3, volume, note,
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, estimated_bars, be_trigger,
               rr_planned, risk_money_planned, risk_pct_planned
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::text,'NEW','PENDING',$17::jsonb,$18::jsonb,$19::timestamptz,$19::timestamptz,$20::text,$21::numeric,$22::numeric,$23::numeric,$24::numeric,$25::numeric,$26::numeric)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::numeric,$20::text,'NEW','PENDING',$21::jsonb,$22::jsonb,$23::timestamptz,$23::timestamptz,$24::text,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric,$30::numeric)
           `,
             [
               tradeSid,
@@ -7272,11 +7336,23 @@ async function _mt5InitBackendInternal() {
               payload.entry,
               payload.sl,
               payload.tp,
+              payload.tp1,
+              payload.tp2,
+              payload.tp3,
               payload.volume,
               payload.note,
               JSON.stringify(
                 (() => {
                   const m = { ...(payload.metadata || {}) };
+                  m.tp_targets = mt5NormalizeTpTargets(
+                    payload.tp_targets || [
+                      payload.tp1,
+                      payload.tp2,
+                      payload.tp3,
+                      payload.tp,
+                    ],
+                    payload.action,
+                  );
                   delete m.raw_json;
                   if (signalId && !m.signal_sid) m.signal_sid = signalId;
                   return m;
@@ -7800,6 +7876,17 @@ async function _mt5InitBackendInternal() {
           }
           let executionStatus = "PENDING";
           const s = String(statusRaw || "").toUpperCase();
+          const remainingVolume = Number(
+            raw.remaining_volume ?? raw.volume_remaining ?? NaN,
+          );
+          const closedVolumePartial = Number(
+            raw.closed_volume_partial ?? raw.partial_closed_volume ?? NaN,
+          );
+          const hasPartial =
+            Number.isFinite(remainingVolume) ||
+            Number.isFinite(closedVolumePartial) ||
+            Number.isFinite(Number(raw.realized_pnl_partial ?? NaN)) ||
+            Number.isFinite(Number(raw.realized_pnl_total ?? NaN));
 
           if (["START", "OPEN", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
             executionStatus = "OPEN";
@@ -7821,10 +7908,19 @@ async function _mt5InitBackendInternal() {
           ) {
             executionStatus = "CLOSED";
           }
+          if (
+            executionStatus === "CLOSED" &&
+            Number.isFinite(remainingVolume) &&
+            remainingVolume > 0
+          ) {
+            executionStatus = "OPEN";
+          }
           const commission = Number(raw.commission ?? 0);
           const swap = Number(raw.swap ?? 0);
           const pipsVal = Number(raw.pips ?? 0);
-          const pnlVal = Number(raw.pnl ?? raw.net_pnl ?? 0);
+          const pnlVal = Number(
+            raw.realized_pnl_total ?? raw.pnl ?? raw.net_pnl ?? 0,
+          );
           const volumeVal = Number(raw.volume || raw.lots || 0);
           const lotsVal = Number(raw.lots ?? volumeVal / 100000);
           const brokerComment = String(raw.comment || "").trim();
@@ -7994,7 +8090,10 @@ async function _mt5InitBackendInternal() {
                   WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
                   ELSE $1::text
                 END,
-                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2::numeric, pnl_realized) ELSE pnl_realized END,
+                pnl_realized = CASE
+                  WHEN $26::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2::numeric, pnl_realized)
+                  ELSE pnl_realized
+                END,
                 broker_pnl = $2::numeric,
                 volume = COALESCE($7::numeric, volume),
                 broker_pips = $13::numeric,
@@ -8009,6 +8108,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($22::numeric, entry_exec),
                 sl = COALESCE($23::numeric, sl),
                 tp = COALESCE($24::numeric, tp),
+                tp1 = COALESCE($26::numeric, tp1),
+                tp2 = COALESCE($27::numeric, tp2),
+                tp3 = COALESCE($28::numeric, tp3),
                 note = COALESCE(NULLIF($25::text, ''), note),
                 order_type = COALESCE($12::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
@@ -8055,6 +8157,10 @@ async function _mt5InitBackendInternal() {
                 it.sl,
                 it.tp,
                 it.note || "",
+                hasPartial,
+                mt5ParsePriceOrNull(it.tp1),
+                mt5ParsePriceOrNull(it.tp2),
+                mt5ParsePriceOrNull(it.tp3),
               ],
             );
           }
@@ -8075,7 +8181,10 @@ async function _mt5InitBackendInternal() {
                   ELSE $1::text
                 END,
                 broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
-                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized) ELSE pnl_realized END,
+                pnl_realized = CASE
+                  WHEN $25::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
+                  ELSE pnl_realized
+                END,
                 broker_pnl = $3::numeric,
                 volume = COALESCE($6::numeric, volume),
                 broker_pips = $12::numeric,
@@ -8090,6 +8199,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($21::numeric, entry_exec),
                 sl = COALESCE($22::numeric, sl),
                 tp = COALESCE($23::numeric, tp),
+                tp1 = COALESCE($25::numeric, tp1),
+                tp2 = COALESCE($26::numeric, tp2),
+                tp3 = COALESCE($27::numeric, tp3),
                 note = COALESCE(NULLIF($24::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
@@ -8138,6 +8250,10 @@ async function _mt5InitBackendInternal() {
                   it.sl,
                   it.tp,
                   it.note || "",
+                  hasPartial,
+                  mt5ParsePriceOrNull(it.tp1),
+                  mt5ParsePriceOrNull(it.tp2),
+                  mt5ParsePriceOrNull(it.tp3),
                 ],
               );
             }
@@ -8157,7 +8273,10 @@ async function _mt5InitBackendInternal() {
                   ELSE $1::text
                 END,
                 broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
-                pnl_realized = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized) ELSE pnl_realized END,
+                pnl_realized = CASE
+                  WHEN $24::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
+                  ELSE pnl_realized
+                END,
                 broker_pnl = $3::numeric,
                 volume = COALESCE($5::numeric, volume),
                 broker_pips = $12::numeric,
@@ -8172,6 +8291,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($20::numeric, entry_exec),
                 sl = COALESCE($21::numeric, sl),
                 tp = COALESCE($22::numeric, tp),
+                tp1 = COALESCE($24::numeric, tp1),
+                tp2 = COALESCE($25::numeric, tp2),
+                tp3 = COALESCE($26::numeric, tp3),
                 note = COALESCE(NULLIF($23::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
@@ -8220,6 +8342,10 @@ async function _mt5InitBackendInternal() {
                 it.sl,
                 it.tp,
                 it.note || "",
+                hasPartial,
+                mt5ParsePriceOrNull(it.tp1),
+                mt5ParsePriceOrNull(it.tp2),
+                mt5ParsePriceOrNull(it.tp3),
               ],
             );
           }
@@ -8295,12 +8421,12 @@ async function _mt5InitBackendInternal() {
               `
             INSERT INTO trades (
               sid, account_id, user_id,
-              symbol, action, order_type, volume, entry, sl, tp, note,
+              symbol, action, order_type, volume, entry, sl, tp, tp1, tp2, tp3, note,
               execution_status, dispatch_status, source_id, metadata, broker_trade_id,
               broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
               broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
               created_at, updated_at
-            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::text, $12::text, 'CONSUMED', $13::text, $14::jsonb, $15::text, $16::numeric, $17::numeric, $18::numeric, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, NOW(), NOW())
+            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric, $14::text, $15::text, 'CONSUMED', $16::text, $17::jsonb, $18::text, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, $25::numeric, $26::numeric, $27::numeric, NOW(), NOW())
             ON CONFLICT (sid) DO NOTHING
           `,
               [
@@ -8314,6 +8440,9 @@ async function _mt5InitBackendInternal() {
                 it.entry || 0,
                 it.sl || null,
                 it.tp || null,
+                mt5ParsePriceOrNull(it.tp1 ?? it.tp),
+                mt5ParsePriceOrNull(it.tp2),
+                mt5ParsePriceOrNull(it.tp3),
                 it.note || "",
                 it.execution_status,
                 brokerSource,
@@ -15157,8 +15286,9 @@ const appHandler = async (req, res) => {
         ) || null;
       const entry = asNum(payload.entry ?? payload.price, NaN);
       const sl = asNum(payload.sl, NaN);
-      const tp = asNum(payload.tp, NaN);
       const note = String(derived.note || payload.note || "").trim();
+      const tpNorm = mt5NormalizeTpFields(payload, mt5MapActionToSide(action));
+      const tp = asNum(tpNorm.tp, NaN);
       const rawPayload =
         payload && typeof payload === "object" ? { ...payload } : {};
       const sessionPrefix = sanitizeSessionPrefix(
@@ -15217,7 +15347,11 @@ const appHandler = async (req, res) => {
         action: mt5MapActionToSide(action),
         entry,
         sl: Number.isFinite(sl) ? sl : null,
-        tp: Number.isFinite(tp) ? tp : null,
+        tp: Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
+        tp1: tpNorm.tp1,
+        tp2: tpNorm.tp2,
+        tp3: tpNorm.tp3,
+        tp_targets: tpNorm.tp_targets,
         volume: volume ?? null,
         rr_planned: asNum(
           payload.rr_planned ?? payload.rr ?? payload.risk_reward,
@@ -20287,7 +20421,9 @@ const appHandler = async (req, res) => {
         entry_price: Number.isFinite(entry) ? entry : null,
         sl: Number.isFinite(sl) ? sl : null,
         stop_loss: Number.isFinite(sl) ? sl : null,
-        tp1: Number.isFinite(tp) ? tp : null,
+        tp1: Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+        tp2: Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+        tp3: Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
         take_profit: Number.isFinite(tp) ? tp : null,
         rr: Number.isFinite(rr) ? rr : null,
         risk_reward: Number.isFinite(rr) ? rr : null,
@@ -20309,7 +20445,10 @@ const appHandler = async (req, res) => {
       const params = [
         side,
         Number.isFinite(sl) ? sl : null,
-        Number.isFinite(tp) ? tp : null,
+        Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
+        Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+        Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+        Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
         Number.isFinite(rr) ? rr : null,
         note || null,
         JSON.stringify(rawPatch || {}),
@@ -20320,26 +20459,29 @@ const appHandler = async (req, res) => {
         payload.profile || null,
         asNum(payload.be_trigger),
       ];
-      const whereUser = userId ? "AND user_id = $8" : "";
+      const whereUser = userId ? "AND user_id = $11" : "";
       const resUpd = await b.query(
         `
         UPDATE signals
         SET side = COALESCE($1, side),
             sl = COALESCE($2, sl),
             tp = COALESCE($3, tp),
-            rr_planned = COALESCE($4, rr_planned),
-            note = COALESCE($5, note),
-            raw_json = COALESCE(raw_json, '{}'::jsonb) || $6::jsonb,
-            confidence_pct = COALESCE($9, confidence_pct),
-            estimated_bars = COALESCE($10, estimated_bars),
-            profile = COALESCE($11, profile),
-            be_trigger = COALESCE($12::numeric, be_trigger),
+            tp1 = COALESCE($4, tp1),
+            tp2 = COALESCE($5, tp2),
+            tp3 = COALESCE($6, tp3),
+            rr_planned = COALESCE($7, rr_planned),
+            note = COALESCE($8, note),
+            raw_json = COALESCE(raw_json, '{}'::jsonb) || $9::jsonb,
+            confidence_pct = COALESCE($12, confidence_pct),
+            estimated_bars = COALESCE($13, estimated_bars),
+            profile = COALESCE($14, profile),
+            be_trigger = COALESCE($15::numeric, be_trigger),
             updated_at = NOW()
-        WHERE sid = $7
+        WHERE sid = $10
         ${whereUser}
         RETURNING *
       `,
-        userId ? params : params.slice(0, 18), // userId is $8, so if it exists we need 18 params
+        params,
       );
       const row = resUpd.rows?.[0];
       if (!row) return json(res, 404, { ok: false, error: "signal not found" });
@@ -20412,7 +20554,18 @@ const appHandler = async (req, res) => {
         NaN,
       );
       const sl = asNum(payload.sl ?? signal.sl, NaN);
-      const tp = asNum(payload.tp ?? signal.tp, NaN);
+      const tpNorm = mt5NormalizeTpFields(
+        {
+          ...signalRawJson,
+          tp: payload.tp ?? signal.tp,
+          tp1: payload.tp1 ?? signal.tp1 ?? signalRawJson.tp1,
+          tp2: payload.tp2 ?? signal.tp2 ?? signalRawJson.tp2,
+          tp3: payload.tp3 ?? signal.tp3 ?? signalRawJson.tp3,
+          tp_targets: payload.tp_targets ?? signalRawJson.tp_targets,
+        },
+        side,
+      );
+      const tp = asNum(tpNorm.tp, NaN);
       const rr = asNum(payload.rr ?? signal.rr_planned, NaN);
       const note = String(payload.note || signal.note || "").trim();
       const tradeType = String(
@@ -20496,6 +20649,10 @@ const appHandler = async (req, res) => {
         entry: Number.isFinite(entry) ? entry : null,
         sl: Number.isFinite(sl) ? sl : null,
         tp: Number.isFinite(tp) ? tp : null,
+        tp1: tpNorm.tp1,
+        tp2: tpNorm.tp2,
+        tp3: tpNorm.tp3,
+        tp_targets: tpNorm.tp_targets,
         volume: asNum(payload.volume ?? raw.volume, NaN) || null,
         note: note || null,
         metadata: copiedMetadata,
@@ -20584,7 +20741,8 @@ const appHandler = async (req, res) => {
           : null;
       const entry = asNum(payload.entry ?? payload.price, NaN);
       const sl = asNum(payload.sl, NaN);
-      const tp = asNum(payload.tp, NaN);
+      const tpNorm = mt5NormalizeTpFields(payload, side);
+      const tp = asNum(tpNorm.tp, NaN);
       const rr = asNum(payload.rr, NaN);
       const tradeType = String(
         payload.trade_type || payload.order_type || "limit",
@@ -20610,11 +20768,15 @@ const appHandler = async (req, res) => {
           sl: Number.isFinite(sl) ? sl : null,
           stop_loss: Number.isFinite(sl) ? sl : null,
           tp: Number.isFinite(tp) ? tp : null,
+          tp1: Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+          tp2: Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+          tp3: Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
           take_profit: Number.isFinite(tp) ? tp : null,
           rr: Number.isFinite(rr) ? rr : null,
           risk_reward: Number.isFinite(rr) ? rr : null,
           note: note || null,
         },
+        tp_targets: tpNorm.tp_targets,
       };
       if (payload.invalidation) metaPatch.invalidation = payload.invalidation;
       if (payload.exit_condition)
@@ -20631,7 +20793,10 @@ const appHandler = async (req, res) => {
         side,
         Number.isFinite(entry) ? entry : null,
         Number.isFinite(sl) ? sl : null,
-        Number.isFinite(tp) ? tp : null,
+        Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
+        Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+        Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+        Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
         note || null,
         JSON.stringify(metaPatch || {}),
         tradeId,
@@ -20641,7 +20806,7 @@ const appHandler = async (req, res) => {
         payload.profile || null,
         asNum(payload.be_trigger),
       ];
-      const whereUser = userId ? "AND user_id = $8" : "";
+      const whereUser = userId ? "AND user_id = $11" : "";
       const resUpd = await (
         await mt5Backend()
       ).query(
@@ -20651,22 +20816,25 @@ const appHandler = async (req, res) => {
             entry = COALESCE($2, entry),
             sl = $3,
             tp = $4,
-            note = COALESCE($5, note),
-            metadata = metadata || $6,
-            confidence_pct = COALESCE($9, confidence_pct),
-            estimated_bars = COALESCE($10, estimated_bars),
-            profile = COALESCE($11, profile),
-            be_trigger = COALESCE($12::numeric, be_trigger),
+            tp1 = COALESCE($5, tp1),
+            tp2 = COALESCE($6, tp2),
+            tp3 = COALESCE($7, tp3),
+            note = COALESCE($8, note),
+            metadata = metadata || $9,
+            confidence_pct = COALESCE($12, confidence_pct),
+            estimated_bars = COALESCE($13, estimated_bars),
+            profile = COALESCE($14, profile),
+            be_trigger = COALESCE($15::numeric, be_trigger),
             execution_status = CASE
               WHEN execution_status IN ('OPEN', 'PENDING') THEN 'PENDING_MOD'
               ELSE execution_status
             END,
             updated_at = NOW()
-        WHERE sid = $7
+        WHERE sid = $10
           ${whereUser}
         RETURNING *
       `,
-        userId ? params : params.slice(0, 18),
+        params,
       );
       const row = resUpd.rows?.[0];
       if (!row) return json(res, 404, { ok: false, error: "trade not found" });
@@ -21169,7 +21337,15 @@ const appHandler = async (req, res) => {
             ),
             sl: t.sl ?? t.intent_sl ?? null,
             tp: t.tp ?? t.intent_tp ?? null,
+            tp1: t.tp1 ?? null,
+            tp2: t.tp2 ?? null,
+            tp3: t.tp3 ?? null,
+            tp_targets: [t.tp1, t.tp2, t.tp3]
+              .map((x) => mt5ParsePriceOrNull(x))
+              .filter((x) => x != null),
             volume: t.volume ?? t.intent_volume ?? null,
+            risk_money: t.risk_money_planned ?? null,
+            risk_pct: t.risk_pct_planned ?? null,
             note: t.note ?? t.intent_note ?? null,
             metadata:
               t.metadata && typeof t.metadata === "object" ? t.metadata : {},
@@ -22262,7 +22438,9 @@ async function mt5CronLoop() {
       try {
         const res = await Promise.race([
           fn(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 120000)),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 120000),
+          ),
         ]);
         const elapsed = Math.round((Date.now() - t0) / 1000);
         if (res) {
@@ -22280,20 +22458,37 @@ async function mt5CronLoop() {
     };
 
     await Promise.all([
-      runOne("marketData", mt5RunMarketDataCron, (r) => `${r.queued || 0} jobs`),
-      runOne("aiAnalysis", mt5RunAiAnalysisCron, (r) => `${r.triggered || 0} trig`),
+      runOne(
+        "marketData",
+        mt5RunMarketDataCron,
+        (r) => `${r.queued || 0} jobs`,
+      ),
+      runOne(
+        "aiAnalysis",
+        mt5RunAiAnalysisCron,
+        (r) => `${r.triggered || 0} trig`,
+      ),
       runOne("snapshots", mt5RunSnapshotsCron, (r) => `${r.captured || 0} img`),
     ]);
 
     const elapsed = Math.round((Date.now() - startMs) / 1000);
     global._cronStatus = `ok (${elapsed}s)`;
     global._cronEvents = global._cronEvents || [];
-    global._cronEvents.unshift({ time: new Date().toISOString(), elapsed, events, status: "ok" });
+    global._cronEvents.unshift({
+      time: new Date().toISOString(),
+      elapsed,
+      events,
+      status: "ok",
+    });
     if (global._cronEvents.length > 20) global._cronEvents.length = 20;
     if (notificationManager) {
       notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
         message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
-        metadata: { elapsed_sec: elapsed, events, details: global._cronDetails },
+        metadata: {
+          elapsed_sec: elapsed,
+          events,
+          details: global._cronDetails,
+        },
       });
     }
   };
@@ -22470,3 +22665,4 @@ start().catch((err) => {
   console.error(`Failed to start server: ${message}`);
   process.exit(1);
 });
+rawPatch.tp_targets = tpNorm.tp_targets;
