@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-17 12:45 UTC`
-- note: `snapshot ui tweak + cron jobId fix deploy`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: ``
 
 ## Required Entry Template
 ...
@@ -97,6 +97,23 @@ Copy and fill:
   - PM2: no errors after restart
 - handoff_next: none
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
+### [2026-05-17 12:58 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 542a2ed5
+- scope: `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (542a2ed5)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 14:56 - 6d2f1eab
+  - ea_version: v2026.05.17 14:56 - 6d2f1eab
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.17 14:56 - 6d2f1eab`, `cronSnapshotsEnabled:true`
+  - ui asset: `/assets/index-kqiIUSfK.js`
+  - key endpoint: `GET /v2/chart/snapshots-grid/XAUUSD?...` reachable from localhost (seen in PM2 logs)
+- handoff_next: none
 
 ### [2026-05-15 16:46 UTC] AGENT:Antigravity
 - status: DEPLOYED
