@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-17 17:18 UTC`
-- note: `Deploy AI trade-plan mapping hotfix (__raw_plan precedence + TP ladder + direction)` 
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: ``
 
 ## Required Entry Template
 ...
@@ -131,6 +131,23 @@ Copy and fill:
   - UI asset: `/assets/index-COYEoWqk.js`
   - key endpoint: `/v2/broker/sync` active in PM2 logs; latest `webhook-error.log` tail has no new `ReferenceError: hasPartial is not defined`
 - handoff_next: monitor remaining non-blocking broker DB timeout noise separately
+
+### [2026-05-17 18:14 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 223d236c
+- scope: `web-ui/src/utils/signalDetailUtils.jsx` (`__raw_plan` precedence + direction/TP/checklist mapping), plus version bump + tracker ticket docs
+- merge_to_main: YES (223d236c)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 18:12 - 0a5eb5bd
+  - ea_version: v2026.05.17 18:12 - 0a5eb5bd
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.17 18:12 - 0a5eb5bd`, `postgres:ok`, `redis:ok`
+  - UI asset: `/assets/index-Bk2b0gVt.js`
+  - key endpoint: `/v2/broker/sync` processing continues; newest error tail has no fresh `ReferenceError: hasPartial is not defined` (only prior historical lines in full log)
+- handoff_next: none
 
 ### [2026-05-17 13:18 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
