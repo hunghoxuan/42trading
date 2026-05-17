@@ -133,7 +133,7 @@ export function TradePlanEditor({
     const fieldId = `${idPrefix}-${k}`;
     const sliderMeta =
       sliderOverride ||
-      (k === "entry" || k === "tp" || k === "sl"
+      (k === "entry" || k === "tp" || k === "tp1" || k === "tp2" || k === "tp3" || k === "sl"
         ? priceSliderMeta(value[k])
         : calcSliderMeta(value[k]));
     const isDisabled = fieldDisabled || controlsDisabled;
@@ -537,6 +537,9 @@ export function TradePlanEditor({
             />
 
             <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
+            <NumericInline label="TP1" k="tp1" disabled={tradeFieldsDisabled} />
+            <NumericInline label="TP2" k="tp2" disabled={tradeFieldsDisabled} />
+            <NumericInline label="TP3" k="tp3" disabled={tradeFieldsDisabled} />
 
             <NumericInline label="SL" k="sl" disabled={tradeFieldsDisabled} />
 

@@ -2318,13 +2318,45 @@ export default function SignalDetailCard({
                   ),
                 }));
               };
+              const withTpSlots = (planDraft, newTp) => {
+                const base = planDraft || {};
+                const sideDir = String(base?.direction || side || "BUY").toUpperCase();
+                const prices = [base.tp1, base.tp2, base.tp3]
+                  .map((x) => parseNumLoose(x))
+                  .filter((x) => x != null);
+                const n = Number(newTp);
+                if (Number.isFinite(n)) prices.push(n);
+                const uniq = Array.from(new Set(prices.map((x) => Number(x.toFixed(8)))));
+                uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
+                const out = {
+                  ...base,
+                  tp1: uniq[0] != null ? String(uniq[0]) : "",
+                  tp2: uniq[1] != null ? String(uniq[1]) : "",
+                  tp3: uniq[2] != null ? String(uniq[2]) : "",
+                };
+                out.tp = out.tp1 || "";
+                return out;
+              };
               if (tradePlan?.onChange || planId !== "main") {
                 if (action === "TP") {
-                  if (Number.isFinite(price)) applyToPlan("tp", String(price));
+                  if (Number.isFinite(price)) {
+                    const current =
+                      (planId === "main"
+                        ? tradePlan?.value
+                        : planDrafts?.[planId] || plans?.[planIndex]) || {};
+                    const nextPlan = withTpSlots(current, price);
+                    applyToPlan("tp1", nextPlan.tp1 || "");
+                    applyToPlan("tp2", nextPlan.tp2 || "");
+                    applyToPlan("tp3", nextPlan.tp3 || "");
+                    applyToPlan("tp", nextPlan.tp || "");
+                  }
                 } else if (action === "SL") {
                   if (Number.isFinite(price)) applyToPlan("sl", String(price));
                 } else if (action === "CLEAR_TP") {
                   applyToPlan("tp", "");
+                  applyToPlan("tp1", "");
+                  applyToPlan("tp2", "");
+                  applyToPlan("tp3", "");
                 } else if (action === "CLEAR_SL") {
                   applyToPlan("sl", "");
                 } else if (action === "CLEAR_ENTRY") {

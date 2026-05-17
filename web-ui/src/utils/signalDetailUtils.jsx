@@ -189,10 +189,14 @@ export function normalizeTpSlFromEntryDirection(plan = {}) {
 export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   const next = { ...(prevPlan || {}), [key]: rawVal };
   // Format numeric fields consistently
-  if (["entry", "tp", "sl", "rr"].includes(key)) {
+  if (["entry", "tp", "tp1", "tp2", "tp3", "sl", "rr"].includes(key)) {
     const val = asNum(next[key]);
     if (val != null) next[key] = formatNum3(val);
   }
+  const tp1Num = asNum(next.tp1);
+  const tpNum = asNum(next.tp);
+  if (tp1Num != null) next.tp = formatNum3(tp1Num);
+  else if (tpNum != null && asNum(next.tp1) == null) next.tp1 = formatNum3(tpNum);
   return next;
 }
 
@@ -331,6 +335,9 @@ export function extractTradePlanFromSignal(signal = {}) {
     asNum(signal?.entry || signal?.target_price || signal?.entry_price) ??
     asNum(raw?.entry ?? raw?.price);
   const tp = asNum(signal?.tp || signal?.tp_price) ?? planPrimaryTp(tradePlan);
+  const tp1 = asNum(signal?.tp1 ?? tradePlan?.tp1 ?? tp);
+  const tp2 = asNum(signal?.tp2 ?? tradePlan?.tp2);
+  const tp3 = asNum(signal?.tp3 ?? tradePlan?.tp3);
   const sl = asNum(signal?.sl || signal?.sl_price) ?? asNum(tradePlan?.sl);
   const rr =
     asNum(signal?.rr_planned) ??
@@ -361,6 +368,9 @@ export function extractTradePlanFromSignal(signal = {}) {
     ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
+    tp1: formatNum3(tp1 ?? NaN),
+    tp2: formatNum3(tp2 ?? NaN),
+    tp3: formatNum3(tp3 ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(tradePlan?.note || signal?.note || "").trim(),

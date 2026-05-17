@@ -1,6 +1,6 @@
-# DB Schema (v2.5)
+# DB Schema (v2.6)
 
-> Updated 2026-05-09. 11 tables, PostgreSQL with JSONB.
+> Updated 2026-05-17. 11 tables, PostgreSQL with JSONB.
 
 ## Tables
 
@@ -26,3 +26,4 @@
 - **`ai_analysis`** — NOT a table. A `user_settings` row (type='cron', name='ai_analysis') for cron schedule.
 - **`accounts`** — Legacy table, still present on VPS.
 - **`logs` metadata** — Structure: `{ status, error, data: {...}, payload, response }`. Status defaults to "OK", "ERROR" if error present.
+- **`trades` TP ladder** — `tp` remains legacy alias; new nullable `tp1`, `tp2`, `tp3` store multi-target planning.

@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.17 15:20 - e2b8c4f1";
+        private const string BuildVersion = "v2026.05.17 16:14 - ca4da650";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
