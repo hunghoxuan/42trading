@@ -6396,7 +6396,6 @@ export default function ChartSnapshotsPage() {
                 ),
                 tradePlans: analysisTradePlans.length
                   ? analysisTradePlans.map((plan, idx) => ({
-                      ...(plan?.raw || {}),
                       __raw_plan: plan?.raw || {},
                       __plan_index: idx,
                       symbol: normalizeSignalSymbol(
@@ -6407,7 +6406,7 @@ export default function ChartSnapshotsPage() {
                           tvSymbol ||
                           "",
                       ),
-                      direction: plan?.raw?.direction || plan.direction,
+                      direction: plan.direction || plan?.raw?.direction,
                       entry:
                         getPlanPositionOverride(plan, idx).entry ||
                         plan?.raw?.entry_price ||
