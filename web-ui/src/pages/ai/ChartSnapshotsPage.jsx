@@ -2931,25 +2931,6 @@ export default function ChartSnapshotsPage() {
     }
     setPosition(buildDefaultPosition(defaultSeedEntry));
   };
-  const moveWatchlistSymbol = useCallback(
-    (fromSymbol, toSymbol) => {
-      const from = normalizeWatchSymbol(fromSymbol);
-      const to = normalizeWatchSymbol(toSymbol);
-      if (!from || !to || from === to) return;
-      const current = (Array.isArray(watchlist) ? watchlist : [])
-        .map((x) => normalizeWatchSymbol(x))
-        .filter(Boolean);
-      const fromIdx = current.indexOf(from);
-      const toIdx = current.indexOf(to);
-      if (fromIdx < 0 || toIdx < 0) return;
-      const next = [...current];
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      setWatchlist(next);
-      saveWatchlistToDb(next);
-    },
-    [watchlist, saveWatchlistToDb],
-  );
   const setProfilePreset = (profileKey) => {
     const key = String(profileKey || "")
       .trim()
@@ -4216,6 +4197,26 @@ export default function ChartSnapshotsPage() {
       throw e;
     }
   };
+
+  const moveWatchlistSymbol = useCallback(
+    (fromSymbol, toSymbol) => {
+      const from = normalizeWatchSymbol(fromSymbol);
+      const to = normalizeWatchSymbol(toSymbol);
+      if (!from || !to || from === to) return;
+      const current = (Array.isArray(watchlist) ? watchlist : [])
+        .map((x) => normalizeWatchSymbol(x))
+        .filter(Boolean);
+      const fromIdx = current.indexOf(from);
+      const toIdx = current.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const next = [...current];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      setWatchlist(next);
+      saveWatchlistToDb(next);
+    },
+    [watchlist, saveWatchlistToDb],
+  );
 
   const addCurrentSymbolToWatchlist = async () => {
     const s = normalizeWatchSymbol(cfg.symbol);
