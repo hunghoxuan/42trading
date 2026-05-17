@@ -1140,3 +1140,28 @@
   - Documentation and cross-link integrity check completed.
 - **Deploy Status**:
   - No deploy performed in this documentation handoff step.
+## Session Log: 2026-05-17 17:11
+- **Starting Task**:
+  - Execute P0 deploy for Multi-TP hardening hotfix and clear `DEPLOY_BLOCKED` runtime state.
+- **Work Accomplished**:
+  - Fixed `brokerSyncV2` runtime scope bug (`hasPartial`) by carrying partial flag in merged sync item state.
+  - Corrected SQL placeholder indexing collisions in broker sync update queries (`boolean partial flag` vs `tp1/tp2/tp3` params).
+  - Bumped aligned build versions and deployed to VPS with PM2 restart.
+  - Verified live health/version and UI asset; checked latest PM2 error tail for absence of new `hasPartial` runtime exceptions.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/bridge-clients/TVBridgeEA.mq5`
+  - `/Users/macmini/Trade/Bot/trading/bridge-clients/TVBridge_CTrader.cs`
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+  - `rtk bash scripts/deploy/deploy_webhook.sh` ✅
+  - `rtk curl -sS --max-time 20 https://trade.mozasolution.com/health` ✅ (`version:v2026.05.17 17:01 - 8f0c9b1a`)
+  - `rtk curl -sS --max-time 20 https://trade.mozasolution.com/ui/` ✅ (`/assets/index-COYEoWqk.js`)
+  - `rtk ssh root@139.59.211.192 "tail -n 40 /root/.pm2/logs/webhook-error.log"` ✅ (latest tail: no fresh `ReferenceError: hasPartial is not defined`)
+- **Deploy Status**:
+  - Deployed.
+  - Commit pushed: `b416a142`
+  - Build version: `v2026.05.17 17:01 - 8f0c9b1a`

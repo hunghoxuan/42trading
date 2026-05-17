@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-17 17:03 UTC`
-- note: `P0 hotfix deploy: brokerSyncV2 hasPartial runtime fix`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: ``
 
 ## Required Entry Template
 ...
@@ -114,6 +114,23 @@ Copy and fill:
   - PM2 logs: `ReferenceError: hasPartial is not defined` in `brokerSyncV2`
   - key endpoint: `/v2/broker/sync` path throwing runtime exceptions
 - handoff_next: fix `hasPartial` scope bug, redeploy, and post PASS ledger
+
+### [2026-05-17 17:11 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: b416a142
+- scope: `webhook/server.js` (`brokerSyncV2` hasPartial scope/runtime fix + SQL placeholder hardening), `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (b416a142)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 17:01 - 8f0c9b1a
+  - ea_version: v2026.05.17 17:01 - 8f0c9b1a
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.17 17:01 - 8f0c9b1a`, `postgres:ok`, `redis:ok`
+  - UI asset: `/assets/index-COYEoWqk.js`
+  - key endpoint: `/v2/broker/sync` active in PM2 logs; latest `webhook-error.log` tail has no new `ReferenceError: hasPartial is not defined`
+- handoff_next: monitor remaining non-blocking broker DB timeout noise separately
 
 ### [2026-05-17 13:18 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
