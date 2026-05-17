@@ -22204,39 +22204,46 @@ async function mt5CronLoop() {
     const startMs = Date.now();
     const events = [];
     global._cronDetails = global._cronDetails || {};
-    try {
-      let mdRes = await mt5RunMarketDataCron();
-      global._cronDetails.marketData = mdRes ? `ok (${mdRes.queued || 0} jobs)` : "no configs";
-      events.push("MarketData: " + (mdRes ? "done" : "skipped"));
-      let aiRes = await mt5RunAiAnalysisCron();
-      global._cronDetails.aiAnalysis = aiRes ? `ok (${aiRes.triggered || 0} trig)` : "no configs";
-      events.push("AI: " + (aiRes ? "done" : "skipped"));
-      let snapRes = await mt5RunSnapshotsCron();
-      global._cronDetails.snapshots = snapRes ? `ok (${snapRes.captured || 0} img)` : "no configs";
-      events.push("Snapshots: " + (snapRes ? "done" : "skipped"));
-      const elapsed = Math.round((Date.now() - startMs) / 1000);
-      global._cronStatus = `ok (${elapsed}s)`;
-      global._cronEvents = global._cronEvents || [];
-      global._cronEvents.unshift({ time: new Date().toISOString(), elapsed, events, status: "ok" });
-      if (global._cronEvents.length > 20) global._cronEvents.length = 20;
-      if (notificationManager) {
-        notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
-          message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
-          metadata: { elapsed_sec: elapsed, events },
-        });
+
+    // Run each cron independently — one hanging won't block others
+    const runOne = async (name, fn, okLabel) => {
+      const t0 = Date.now();
+      try {
+        const res = await Promise.race([
+          fn(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 120000)),
+        ]);
+        const elapsed = Math.round((Date.now() - t0) / 1000);
+        if (res) {
+          global._cronDetails[name] = `ok (${elapsed}s, ${okLabel(res)})`;
+          events.push(`${name}: done`);
+        } else {
+          global._cronDetails[name] = "no configs";
+          events.push(`${name}: skipped`);
+        }
+      } catch (e) {
+        global._cronDetails[name] = `error: ${e.message}`;
+        events.push(`${name}: ERROR`);
+        console.error(`[Cron] ${name} error:`, e.message);
       }
-    } catch (err) {
-      console.error("[Cron] Run error:", err);
-      global._cronStatus = "error";
-      global._cronDetails = { marketData: "error", aiAnalysis: "error", snapshots: "error" };
-      if (notificationManager) {
-        notificationManager.handle("SYSTEM_EVENT", "cron_error", {
-          message: `Cron ERROR: ${err?.message || err}`,
-          metadata: { error: err?.message || String(err) },
-        });
-      }
-    } finally {
-      CRON_STATE.isRunning = false;
+    };
+
+    await Promise.all([
+      runOne("marketData", mt5RunMarketDataCron, (r) => `${r.queued || 0} jobs`),
+      runOne("aiAnalysis", mt5RunAiAnalysisCron, (r) => `${r.triggered || 0} trig`),
+      runOne("snapshots", mt5RunSnapshotsCron, (r) => `${r.captured || 0} img`),
+    ]);
+
+    const elapsed = Math.round((Date.now() - startMs) / 1000);
+    global._cronStatus = `ok (${elapsed}s)`;
+    global._cronEvents = global._cronEvents || [];
+    global._cronEvents.unshift({ time: new Date().toISOString(), elapsed, events, status: "ok" });
+    if (global._cronEvents.length > 20) global._cronEvents.length = 20;
+    if (notificationManager) {
+      notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
+        message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
+        metadata: { elapsed_sec: elapsed, events, details: global._cronDetails },
+      });
     }
   };
 
