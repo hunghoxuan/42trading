@@ -199,7 +199,8 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   const tp1Num = asNum(next.tp1);
   const tpNum = asNum(next.tp);
   if (tp1Num != null) next.tp = formatNum3(tp1Num);
-  else if (tpNum != null && asNum(next.tp1) == null) next.tp1 = formatNum3(tpNum);
+  else if (tpNum != null && asNum(next.tp1) == null)
+    next.tp1 = formatNum3(tpNum);
   return next;
 }
 
@@ -363,7 +364,9 @@ export function extractTradePlanFromSignal(signal = {}) {
   const tradePlan = firstTradePlan(raw);
   const rawPlan =
     raw?.__raw_plan && typeof raw.__raw_plan === "object" ? raw.__raw_plan : {};
-  const effectivePlan = Object.keys(tradePlan || {}).length ? tradePlan : rawPlan;
+  const effectivePlan = Object.keys(tradePlan || {}).length
+    ? tradePlan
+    : rawPlan;
   const sideRaw = String(
     effectivePlan?.direction ||
       effectivePlan?.dir ||
@@ -376,7 +379,8 @@ export function extractTradePlanFromSignal(signal = {}) {
     asNum(effectivePlan?.entry ?? effectivePlan?.entry_price) ??
     asNum(signal?.entry || signal?.target_price || signal?.entry_price) ??
     asNum(raw?.entry ?? raw?.price);
-  const tp = planPrimaryTp(effectivePlan) ?? asNum(signal?.tp || signal?.tp_price);
+  const tp =
+    planPrimaryTp(effectivePlan) ?? asNum(signal?.tp || signal?.tp_price);
   const tp1 = planTpLevel(effectivePlan, 1) ?? asNum(signal?.tp1 ?? tp);
   const tp2 = planTpLevel(effectivePlan, 2) ?? asNum(signal?.tp2);
   const tp3 = planTpLevel(effectivePlan, 3) ?? asNum(signal?.tp3);
@@ -438,7 +442,10 @@ export function extractTradePlanFromSignal(signal = {}) {
         effectivePlan?.risk_management?.confidence_pct,
     ),
     invalidation: String(
-      signal.invalidation || raw.invalidation || effectivePlan.invalidation || "",
+      signal.invalidation ||
+        raw.invalidation ||
+        effectivePlan.invalidation ||
+        "",
     ),
     estimated_bars: asNum(
       signal.estimated_bars ??
@@ -453,7 +460,9 @@ export function extractTradePlanFromSignal(signal = {}) {
         effectivePlan.breakeven_trigger ??
         raw.be_trigger_raw,
     ),
-    profile: String(signal.profile || raw.profile || effectivePlan.profile || ""),
+    profile: String(
+      signal.profile || raw.profile || effectivePlan.profile || "",
+    ),
     exit_condition: String(
       signal.exit_condition ||
         raw.exit_condition ||
@@ -502,7 +511,7 @@ export function extractTradePlanFromSignal(signal = {}) {
         : typeof effectivePlan?.risk_management?.skip_reasons === "string" &&
             effectivePlan.risk_management.skip_reasons.trim()
           ? [effectivePlan.risk_management.skip_reasons.trim()]
-        : [],
+          : [],
   };
 }
 
@@ -555,17 +564,20 @@ export function extractTradePlanFromTrade(trade = {}) {
   const tp1 =
     asNum(trade.tp1) ??
     asNum(meta?.tp1) ??
+    asNum(meta?.tp_targets?.[0]) ??
     asNum(raw?.tp1) ??
     planTpLevel(plan, 1) ??
     tp;
   const tp2 =
     asNum(trade.tp2) ??
     asNum(meta?.tp2) ??
+    asNum(meta?.tp_targets?.[1]) ??
     asNum(raw?.tp2) ??
     planTpLevel(plan, 2);
   const tp3 =
     asNum(trade.tp3) ??
     asNum(meta?.tp3) ??
+    asNum(meta?.tp_targets?.[2]) ??
     asNum(raw?.tp3) ??
     planTpLevel(plan, 3);
   const sl =
