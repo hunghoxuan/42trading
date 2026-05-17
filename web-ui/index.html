@@ -10,5 +10,23 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-  </body>
+  
+  <script>
+    // Auto-reload on new deploy: poll /health every 60s, reload if version changed
+    (function(){
+      var currentVersion = null;
+      fetch('/health').then(function(r){return r.json()}).then(function(d){
+        currentVersion = d.version;
+      });
+      setInterval(function(){
+        fetch('/health').then(function(r){return r.json()}).then(function(d){
+          if(currentVersion && d.version !== currentVersion){
+            location.reload();
+          }
+        });
+      }, 60000);
+    })();
+  </script>
+
+</body>
 </html>
