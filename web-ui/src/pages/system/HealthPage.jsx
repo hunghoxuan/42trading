@@ -132,6 +132,27 @@ export default function HealthPage() {
       </div>
       {health?.cronEvents?.length > 0 && (
         <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+            <div className="summary-item">
+              <span className="minor-text" style={{ fontSize: 9 }}>MARKET DATA</span>
+              <div style={{ fontSize: 12, color: (health.cronDetails?.marketData || "").includes("error") ? "#ef4444" : "var(--success)" }}>
+                {health.cronDetails?.marketData || "-"}
+              </div>
+            </div>
+            <div className="summary-item">
+              <span className="minor-text" style={{ fontSize: 9 }}>AI ANALYSIS</span>
+              <div style={{ fontSize: 12, color: (health.cronDetails?.aiAnalysis || "").includes("error") ? "#ef4444" : "var(--muted)" }}>
+                {health.cronDetails?.aiAnalysis || "-"}
+              </div>
+            </div>
+            <div className="summary-item">
+              <span className="minor-text" style={{ fontSize: 9 }}>SNAPSHOTS</span>
+              <div style={{ fontSize: 12, color: (health.cronDetails?.snapshots || "").includes("error") ? "#ef4444" : "var(--muted)" }}>
+                {health.cronDetails?.snapshots || "-"}
+              </div>
+            </div>
+          </div>
+
           <div
             className="minor-text"
             style={{
