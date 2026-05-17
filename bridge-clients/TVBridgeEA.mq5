@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.17 15:20 - e2b8c4f1";
+string EA_BUILD_VERSION = "v2026.05.17 16:14 - 6a34c559";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -2821,6 +2821,7 @@ void OnTimer()
     double entry    = JsonGetNumber(resp, "entry", 0.0);
     double sl       = JsonGetNumber(resp, "sl", 0.0);
     double tp       = JsonGetNumber(resp, "tp", 0.0);
+    if(tp <= 0.0) tp = JsonGetNumber(resp, "tp1", 0.0);
     string orderType = JsonGetString(resp, "order_type");
     if(orderType == "") orderType = "market";
 

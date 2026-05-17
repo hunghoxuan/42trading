@@ -605,6 +605,7 @@ namespace cAlgo.Robots
                 // Shared variables for all task types
                 var sl = ParseDouble(GetJsonValue(json, "sl"));
                 var tp = ParseDouble(GetJsonValue(json, "tp"));
+                if (tp <= 0) tp = ParseDouble(GetJsonValue(json, "tp1"));
 
                 // --- CANCEL: close position or delete order ---
                 if (taskType == "CANCEL")
