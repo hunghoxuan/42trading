@@ -3908,10 +3908,70 @@ export default function ChartSnapshotsPage() {
             return s && p ? `${s}_${p}` : undefined;
           })(),
           action: dir === "BUY" || dir === "SELL" ? dir : payload.action,
-          entry: parseNum(activePosition.entry) || payload.entry,
-          tp: parseNum(activePosition.tp) || payload.tp,
-          sl: parseNum(activePosition.sl) || payload.sl,
-          rr: parseNum(activePosition.rr) || payload.rr,
+          entry:
+            Number.isFinite(parseNum(activePosition.entry)) &&
+            parseNum(activePosition.entry) !== null
+              ? parseNum(activePosition.entry)
+              : payload.entry,
+          tp:
+            Number.isFinite(parseNum(activePosition.tp)) &&
+            parseNum(activePosition.tp) !== null
+              ? parseNum(activePosition.tp)
+              : payload.tp,
+          tp1:
+            Number.isFinite(parseNum(activePosition.tp1)) &&
+            parseNum(activePosition.tp1) !== null
+              ? parseNum(activePosition.tp1)
+              : Number.isFinite(parseNum(payload.tp1))
+                ? parseNum(payload.tp1)
+                : Number.isFinite(parseNum(payload.tp))
+                  ? parseNum(payload.tp)
+                  : undefined,
+          tp2:
+            Number.isFinite(parseNum(activePosition.tp2)) &&
+            parseNum(activePosition.tp2) !== null
+              ? parseNum(activePosition.tp2)
+              : Number.isFinite(parseNum(payload.tp2))
+                ? parseNum(payload.tp2)
+                : undefined,
+          tp3:
+            Number.isFinite(parseNum(activePosition.tp3)) &&
+            parseNum(activePosition.tp3) !== null
+              ? parseNum(activePosition.tp3)
+              : Number.isFinite(parseNum(payload.tp3))
+                ? parseNum(payload.tp3)
+                : undefined,
+          tp_targets: [
+            Number.isFinite(parseNum(activePosition.tp1))
+              ? parseNum(activePosition.tp1)
+              : Number.isFinite(parseNum(payload.tp1))
+                ? parseNum(payload.tp1)
+                : Number.isFinite(parseNum(activePosition.tp))
+                  ? parseNum(activePosition.tp)
+                  : Number.isFinite(parseNum(payload.tp))
+                    ? parseNum(payload.tp)
+                    : null,
+            Number.isFinite(parseNum(activePosition.tp2))
+              ? parseNum(activePosition.tp2)
+              : Number.isFinite(parseNum(payload.tp2))
+                ? parseNum(payload.tp2)
+                : null,
+            Number.isFinite(parseNum(activePosition.tp3))
+              ? parseNum(activePosition.tp3)
+              : Number.isFinite(parseNum(payload.tp3))
+                ? parseNum(payload.tp3)
+                : null,
+          ].filter((v) => Number.isFinite(v)),
+          sl:
+            Number.isFinite(parseNum(activePosition.sl)) &&
+            parseNum(activePosition.sl) !== null
+              ? parseNum(activePosition.sl)
+              : payload.sl,
+          rr:
+            Number.isFinite(parseNum(activePosition.rr)) &&
+            parseNum(activePosition.rr) !== null
+              ? parseNum(activePosition.rr)
+              : payload.rr,
           order_type: String(
             activePosition.trade_type || payload.order_type || "limit",
           ).toLowerCase(),
