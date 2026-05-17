@@ -2716,28 +2716,23 @@ export default function ChartSnapshotsPage() {
     return JSON.stringify(payload, null, 2);
   }, [cfg, guideUserDraft]);
   const widgetTfs = useMemo(() => {
-    const base = [
-      ...new Set(
-        [
-          ...(tfConfig.htf_tfs || []),
-          ...(tfConfig.exec_tfs || []),
-          ...(tfConfig.conf_tfs || []),
-        ]
+    const base = Array.isArray(browserTfs)
+      ? browserTfs
           .map((x) =>
             String(x || "")
               .toLowerCase()
               .trim(),
           )
-          .filter(Boolean),
-      ),
-    ];
+          .filter(Boolean)
+      : [];
+    const uniq = [...new Set(base)];
     const fallback = ["d", "4h", "15m", "5m", "1m", "w"];
     for (const tf of fallback) {
-      if (base.length >= 4) break;
-      if (!base.includes(tf.toLowerCase())) base.push(tf.toLowerCase());
+      if (uniq.length >= 4) break;
+      if (!uniq.includes(tf)) uniq.push(tf);
     }
-    return base.slice(0, 4);
-  }, [tfConfig.htf_tfs, tfConfig.exec_tfs, tfConfig.conf_tfs]);
+    return uniq.slice(0, 4);
+  }, [browserTfs]);
   const normalizedSymbolForBars = useMemo(
     () => normalizeSignalSymbol(tvSymbol || cfg.symbol || ""),
     [tvSymbol, cfg.symbol],
@@ -5737,31 +5732,6 @@ export default function ChartSnapshotsPage() {
                 gap: 8,
               }}
             >
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <select
-                  className="secondary-button"
-                  style={{ height: "30px", padding: "0 10px", fontSize: "12px" }}
-                  value={templateId}
-                  onChange={(e) => handleSelectTemplate(e.target.value)}
-                >
-                  <option value="">New Template</option>
-                  <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setSettingsModalOpen(true)}
-                  style={{ height: "30px", fontSize: "12px", padding: "0 10px" }}
-                >
-                  Settings
-                </button>
-              </div>
-
               <div
                 className=""
                 style={{
@@ -5774,6 +5744,45 @@ export default function ChartSnapshotsPage() {
                   boxShadow: "none",
                 }}
               >
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <select
+                    className="secondary-button"
+                    style={{
+                      height: "30px",
+                      padding: "0 10px",
+                      fontSize: "12px",
+                    }}
+                    value={templateId}
+                    onChange={(e) => handleSelectTemplate(e.target.value)}
+                  >
+                    <option value="">New Template</option>
+                    <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setSettingsModalOpen(true)}
+                    style={{
+                      height: "30px",
+                      fontSize: "12px",
+                      padding: "0 10px",
+                    }}
+                  >
+                    Settings
+                  </button>
+                </div>
                 <div
                   style={{
                     display: "grid",
@@ -6043,6 +6052,9 @@ export default function ChartSnapshotsPage() {
                                     timeframes={browserTfs}
                                     defaultMode="live"
                                     initialGridCols={masterGridCols}
+                                    initialBarsCount={Number(
+                                      cfg.lookbackBars || 300,
+                                    )}
                                     analyzeLabel={
                                       normalizeWatchSymbol(sym) ===
                                       normalizeWatchSymbol(cfg.symbol)
@@ -6089,6 +6101,7 @@ export default function ChartSnapshotsPage() {
                             timeframes={browserTfs}
                             defaultMode="live"
                             initialGridCols={masterGridCols}
+                            initialBarsCount={Number(cfg.lookbackBars || 300)}
                             analyzeLabel={
                               normalizeWatchSymbol(sym) ===
                               normalizeWatchSymbol(cfg.symbol)
@@ -6189,6 +6202,8 @@ export default function ChartSnapshotsPage() {
                     symbol={sym}
                     timeframes={widgetTfs}
                     defaultMode="live"
+                    initialGridCols={masterGridCols}
+                    initialBarsCount={Number(cfg.lookbackBars || 300)}
                     onAnalyze={() => analyzeSelected()}
                     onTrade={handleChartTrade}
                     showAnalyzeButton={isAnalyzeRoute}
@@ -6206,22 +6221,6 @@ export default function ChartSnapshotsPage() {
           <Suspense
             fallback={<div className="loading-card">Loading Details...</div>}
           >
-            {isTradeRoute ? (
-              <div style={{ marginBottom: 10 }}>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() =>
-                    navigate(buildAiAnalyzeRoute([selectedSymbol]), {
-                      replace: false,
-                    })
-                  }
-                  style={{ fontSize: 12, padding: "4px 10px" }}
-                >
-                  {"< Back"}
-                </button>
-              </div>
-            ) : null}
             <SignalDetailCard
               mode="ai"
               hideTabsBeforeResponse={!(isTradeRoute || hasAnalyzeResponse)}
@@ -6243,11 +6242,7 @@ export default function ChartSnapshotsPage() {
                 showEditButton: !(isTradeRoute || hasAnalyzeResponse),
                 showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
                 showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
-                profileTfs: [
-                  ...(PROFILE_PRESETS[cfg.profile]?.htf_tfs || []),
-                  ...(PROFILE_PRESETS[cfg.profile]?.exec_tfs || []),
-                  ...(PROFILE_PRESETS[cfg.profile]?.conf_tfs || []),
-                ],
+                profileTfs: widgetTfs,
                 onDetailTfTabChange: setSelectedEntryTf,
                 entryNode: (
                   <div className="snapshot-live-card-v3">

@@ -436,6 +436,7 @@ export default function SymbolChart({
   timeframes = ["D", "4h", "15m", "5m"],
   defaultMode = "live",
   initialGridCols = null,
+  initialBarsCount = 300,
   onAnalyze,
   onRemove,
   isInWatchlist = false,
@@ -492,7 +493,11 @@ export default function SymbolChart({
     keyLevels: false,
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
-  const [localBarsCount, setLocalBarsCount] = useState(300);
+  const [localBarsCount, setLocalBarsCount] = useState(
+    Number.isFinite(Number(initialBarsCount)) && Number(initialBarsCount) > 0
+      ? Number(initialBarsCount)
+      : 300,
+  );
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
@@ -537,6 +542,15 @@ export default function SymbolChart({
       setGridCols(Math.max(1, timeframes?.length || 1));
     }
   }, [initialGridCols, timeframes?.length]);
+
+  useEffect(() => {
+    if (
+      Number.isFinite(Number(initialBarsCount)) &&
+      Number(initialBarsCount) > 0
+    ) {
+      setLocalBarsCount(Number(initialBarsCount));
+    }
+  }, [initialBarsCount]);
 
   // Re-fetch when bars count changes (skip initial)
   const barsInitRef = useRef(true);
