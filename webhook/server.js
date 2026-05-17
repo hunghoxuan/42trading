@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 14:40 - c7b4d90a"); // snapshot UI symbol controls moved left + cron BullMQ jobId sanitize
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 14:56 - 6d2f1eab"); // snapshot cron capture now uses faster grid navigation (no networkidle stall)
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -3764,11 +3764,12 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           );
 
           await page.goto(gridUrl, {
-            waitUntil: "networkidle",
-            timeout: 60000,
+            // networkidle can stall indefinitely on live iframe feeds.
+            waitUntil: "domcontentloaded",
+            timeout: 30000,
           });
-          // Wait for iframes to stabilize
-          await page.waitForTimeout(12000);
+          // Give embedded charts a short warm-up; keep cron under global timeout.
+          await page.waitForTimeout(4000);
 
           await page.screenshot({
             path: outPath,
