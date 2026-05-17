@@ -882,7 +882,6 @@ namespace cAlgo.Robots
                 }
 
                 if (partials.Count > 0) _tradePartials[id] = partials;
-                }
 
                 var label = MagicNumber.ToString();
                 var tradeType = (action == "BUY") ? TradeType.Buy : TradeType.Sell;
