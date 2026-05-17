@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-17 13:00 UTC`
-- note: `snapshot ui polish deploy`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: ``
+- note: ``
 
 ## Required Entry Template
 ...
@@ -97,6 +97,23 @@ Copy and fill:
   - PM2: no errors after restart
 - handoff_next: none
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
+### [2026-05-17 13:03 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 630d9502
+- scope: `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/components/charts/SymbolChart.jsx`, `web-ui/src/styles.css`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (630d9502)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 15:06 - b3f9d124
+  - ea_version: v2026.05.17 15:06 - b3f9d124
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.17 15:06 - b3f9d124`, `cronSnapshotsEnabled:true`
+  - UI asset: `/assets/index-kqiIUSfK.js`
+  - key endpoint: snapshot cron loop running (`[Cron][Snapshots] Running ...`)
+- handoff_next: none
 
 ### [2026-05-17 12:58 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
