@@ -149,18 +149,23 @@ function choosePrimaryTpAndRr(p = {}, ctx = {}) {
 }
 
 function normalizeRawPlan(p = {}) {
+  const canonical =
+    p?.__raw_plan && typeof p.__raw_plan === "object" ? p.__raw_plan : null;
+  const src = canonical ? { ...p, ...canonical } : p;
   const side = String(
-    p?.direction || p?.action || p?.side || "BUY",
+    src?.direction || src?.action || src?.side || "BUY",
   ).toUpperCase();
   const direction = side.includes("SELL") ? "SELL" : "BUY";
-  const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
-  const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
-  const chosen = choosePrimaryTpAndRr(p, {
+  const entry = parseNumLoose(
+    src?.entry ?? src?.entry_price ?? src?.target_price,
+  );
+  const sl = parseNumLoose(src?.sl ?? src?.stop_loss);
+  const chosen = choosePrimaryTpAndRr(src, {
     entry: entry,
     direction,
   });
   const tpNum = parseNumLoose(chosen.tp);
-  const rrRaw = parseNumLoose(p?.rr ?? p?.risk_reward);
+  const rrRaw = parseNumLoose(src?.rr ?? src?.risk_reward);
   let rr = null;
   if (
     entry != null &&
@@ -172,7 +177,7 @@ function normalizeRawPlan(p = {}) {
   }
   if (rr == null) rr = rrRaw;
   return {
-    ...p,
+    ...src,
     ai_rr: rrRaw == null ? "" : String(rrRaw),
     direction,
     entry: entry == null ? "" : String(entry),
@@ -856,6 +861,9 @@ export default function SignalDetailCard({
     response?.raw || response?.raw_json || response?.metadata || {};
   const derivedPlansFromRaw = useMemo(() => {
     if (!rawSource || typeof rawSource !== "object") return [];
+    if (rawSource?.__raw_plan && typeof rawSource.__raw_plan === "object") {
+      return [normalizeRawPlan(rawSource.__raw_plan)];
+    }
     if (Array.isArray(rawSource.trade_plan) && rawSource.trade_plan.length) {
       return rawSource.trade_plan.map((p) => normalizeRawPlan(p || {}));
     }
@@ -879,7 +887,18 @@ export default function SignalDetailCard({
   );
   const responsePlans =
     Array.isArray(response?.tradePlans) && response.tradePlans.length
-      ? response.tradePlans.filter((p) => {
+      ? response.tradePlans
+          .map((p, idx) => {
+            // Force canonical direction/TP mapping from raw payload when available.
+            if (idx === 0 && rawSource?.__raw_plan) {
+              return normalizeRawPlan({
+                ...(p || {}),
+                __raw_plan: rawSource.__raw_plan,
+              });
+            }
+            return normalizeRawPlan(p || {});
+          })
+          .filter((p) => {
           if (!activeSymbol) return true;
           const sym = normalizePlanSymbol(p?.symbol || "");
           return !sym || sym === activeSymbol;
