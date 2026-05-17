@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: ``
-- note: ``
+- lock_status: `LOCKED`
+- deploy_owner: `codex-gpt5`
+- since_utc: `2026-05-17 17:03 UTC`
+- note: `P0 hotfix deploy: brokerSyncV2 hasPartial runtime fix`
 
 ## Required Entry Template
 ...
@@ -97,6 +97,23 @@ Copy and fill:
   - PM2: no errors after restart
 - handoff_next: none
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
+### [2026-05-17 18:55 UTC] AGENT:codex-gpt5
+- status: DEPLOY_BLOCKED
+- branch: main
+- commit: main (latest push before hotfix docs package)
+- scope: Multi-TP rollout follow-up (`webhook/server.js` brokerSyncV2 runtime stability)
+- merge_to_main: YES (latest pushed main)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 16:14 - ca4da650
+  - ea_version: v2026.05.17 16:14 - ca4da650
+  - result: FAIL (runtime)
+- verify:
+  - /health: external check unstable during deploy script
+  - PM2 logs: `ReferenceError: hasPartial is not defined` in `brokerSyncV2`
+  - key endpoint: `/v2/broker/sync` path throwing runtime exceptions
+- handoff_next: fix `hasPartial` scope bug, redeploy, and post PASS ledger
 
 ### [2026-05-17 13:18 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
@@ -218,6 +235,27 @@ Copy and fill:
 # Handoff — 2026-05-08
 
 > From: Codex session
+
+### [2026-05-17 17:15 UTC] AGENT:codex-gpt5
+- status: DONE (PLANNING ONLY)
+- branch: main
+- commit: none (docs planning package prepared; no code execution changes requested)
+- scope:
+  - `.agents/.product/features/1-plan/multi_tp_trade_lifecycle.md`
+  - `.agents/.product/tickets/1-backlog/2026-05-17-multi-tp-trade-lifecycle.md`
+  - `.agents/.product/tickets/feature_tracker.md`
+  - `.agents/.product/tickets/1-backlog/_master-backlog.md`
+- merge_to_main: NO
+- deploy:
+  - owner: NONE
+  - server_version: n/a
+  - ea_version: n/a
+  - result: n/a
+- verify:
+  - docs_created: YES
+  - ticket_linked: YES
+  - backlog_index_updated: YES
+- handoff_next: implementation agent for DB/API/UI/bridge rollout
 > To: Next agent / Self
 
 ## What Was Done

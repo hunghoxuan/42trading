@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 16:14 - ca4da650"); // normalized watchlist matching for symbol-card +/-/x actions
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 17:01 - 8f0c9b1a"); // brokerSyncV2 hasPartial scope + placeholder hardening
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7960,6 +7960,7 @@ async function _mt5InitBackendInternal() {
               close_reason: closeReason,
               opened_at: openedAt,
               closed_at: closedAt,
+              has_partial: hasPartial,
             });
           } else {
             // Keep existing fields and merge new ones
@@ -7993,6 +7994,7 @@ async function _mt5InitBackendInternal() {
             if (closeReason) prev.close_reason = closeReason;
             if (openedAt) prev.opened_at = openedAt;
             if (closedAt) prev.closed_at = closedAt;
+            prev.has_partial = Boolean(prev.has_partial) || hasPartial;
           }
         }
       };
@@ -8105,9 +8107,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($22::numeric, entry_exec),
                 sl = COALESCE($23::numeric, sl),
                 tp = COALESCE($24::numeric, tp),
-                tp1 = COALESCE($26::numeric, tp1),
-                tp2 = COALESCE($27::numeric, tp2),
-                tp3 = COALESCE($28::numeric, tp3),
+                tp1 = COALESCE($27::numeric, tp1),
+                tp2 = COALESCE($28::numeric, tp2),
+                tp3 = COALESCE($29::numeric, tp3),
                 note = COALESCE(NULLIF($25::text, ''), note),
                 order_type = COALESCE($12::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
@@ -8154,7 +8156,7 @@ async function _mt5InitBackendInternal() {
                 it.sl,
                 it.tp,
                 it.note || "",
-                hasPartial,
+                Boolean(it.has_partial),
                 mt5ParsePriceOrNull(it.tp1),
                 mt5ParsePriceOrNull(it.tp2),
                 mt5ParsePriceOrNull(it.tp3),
@@ -8196,9 +8198,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($21::numeric, entry_exec),
                 sl = COALESCE($22::numeric, sl),
                 tp = COALESCE($23::numeric, tp),
-                tp1 = COALESCE($25::numeric, tp1),
-                tp2 = COALESCE($26::numeric, tp2),
-                tp3 = COALESCE($27::numeric, tp3),
+                tp1 = COALESCE($26::numeric, tp1),
+                tp2 = COALESCE($27::numeric, tp2),
+                tp3 = COALESCE($28::numeric, tp3),
                 note = COALESCE(NULLIF($24::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
@@ -8247,7 +8249,7 @@ async function _mt5InitBackendInternal() {
                   it.sl,
                   it.tp,
                   it.note || "",
-                  hasPartial,
+                  Boolean(it.has_partial),
                   mt5ParsePriceOrNull(it.tp1),
                   mt5ParsePriceOrNull(it.tp2),
                   mt5ParsePriceOrNull(it.tp3),
@@ -8288,9 +8290,9 @@ async function _mt5InitBackendInternal() {
                 entry_exec = COALESCE($20::numeric, entry_exec),
                 sl = COALESCE($21::numeric, sl),
                 tp = COALESCE($22::numeric, tp),
-                tp1 = COALESCE($24::numeric, tp1),
-                tp2 = COALESCE($25::numeric, tp2),
-                tp3 = COALESCE($26::numeric, tp3),
+                tp1 = COALESCE($25::numeric, tp1),
+                tp2 = COALESCE($26::numeric, tp2),
+                tp3 = COALESCE($27::numeric, tp3),
                 note = COALESCE(NULLIF($23::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
@@ -8339,7 +8341,7 @@ async function _mt5InitBackendInternal() {
                 it.sl,
                 it.tp,
                 it.note || "",
-                hasPartial,
+                Boolean(it.has_partial),
                 mt5ParsePriceOrNull(it.tp1),
                 mt5ParsePriceOrNull(it.tp2),
                 mt5ParsePriceOrNull(it.tp3),
