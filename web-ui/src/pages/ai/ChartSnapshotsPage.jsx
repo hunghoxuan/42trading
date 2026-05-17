@@ -5424,7 +5424,6 @@ export default function ChartSnapshotsPage() {
                           </button>
                           {(() => {
                             const inWatchlist = watchlist.includes(s);
-                            const inSelected = selectedSymbols.includes(s);
                             return (
                               <>
                                 <button
@@ -5464,44 +5463,6 @@ export default function ChartSnapshotsPage() {
                                 >
                                   {inWatchlist ? "-" : "+"}
                                 </button>
-                                {inSelected ? (
-                                  <button
-                                    type="button"
-                                    className="secondary-button"
-                                    style={{
-                                      width: 18,
-                                      height: 18,
-                                      padding: 0,
-                                      fontSize: 10,
-                                      lineHeight: 1,
-                                      minWidth: 18,
-                                      borderRadius: 4,
-                                      color: "#fca5a5",
-                                      borderColor: "rgba(248,113,113,0.4)",
-                                    }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setCfg((prev) => {
-                                        const prevSelected = Array.isArray(
-                                          prev?.symbols,
-                                        )
-                                          ? prev.symbols
-                                          : [];
-                                        const nextSelected = prevSelected.filter(
-                                          (x) => x !== s,
-                                        );
-                                        return {
-                                          ...prev,
-                                          symbols: nextSelected,
-                                          symbol: nextSelected[0] || "",
-                                        };
-                                      });
-                                    }}
-                                    title={"Remove " + s + " from selected"}
-                                  >
-                                    x
-                                  </button>
-                                ) : null}
                               </>
                             );
                           })()}
@@ -5606,250 +5567,199 @@ export default function ChartSnapshotsPage() {
         className="panel snapshot-col-v3 snapshot-col-settings-v3"
         style={isSymbolPanelOpen ? {} : { gridColumn: "1 / -1" }}
       >
+        <div className="fadeIn" style={{ marginBottom: 10 }}>
+          <div
+            className="TFs-Charts-Header"
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            {!isSymbolPanelOpen && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setIsSymbolPanelOpen(true)}
+                title="Expand symbols panel"
+                style={{
+                  width: 28,
+                  height: 28,
+                  padding: 0,
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {">>"}
+              </button>
+            )}
+            {selectedSymbol && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setCfgField("symbol", "");
+                  setSelectedSymbols([]);
+                  navigate("/ai/analyze", { replace: false });
+                }}
+                style={{ fontSize: 12, padding: "4px 8px" }}
+              >
+                {"< Back"}
+              </button>
+            )}
+            <select
+              className="secondary-button"
+              style={{
+                height: "34px",
+                padding: "0 10px",
+                fontSize: "12px",
+              }}
+              value={cfg.profile || "day"}
+              onChange={(e) => {
+                const newProfile = e.target.value;
+                setProfilePreset(newProfile);
+                const preset = PROFILE_PRESETS[newProfile];
+                if (preset) {
+                  const newTfs = [
+                    ...new Set([
+                      ...(preset.htf_tfs || []),
+                      ...(preset.exec_tfs || []),
+                      ...(preset.conf_tfs || []),
+                    ]),
+                  ];
+                  if (newTfs.length > 0) {
+                    setBrowserTfs(newTfs);
+                    setBrowserTf(newTfs[0]);
+                  }
+                }
+              }}
+            >
+              {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+            <div className="tf-pills">
+              {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
+                <button
+                  key={tf}
+                  className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
+                  onClick={() => {
+                    setBrowserTfs((prev) => {
+                      if (prev.includes(tf)) {
+                        if (prev.length <= 1) return prev;
+                        return prev.filter((t) => t !== tf);
+                      }
+                      return [...prev, tf];
+                    });
+                    setBrowserTf(tf);
+                  }}
+                >
+                  {tf.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <select
+              className="secondary-button"
+              value={cfg.lookbackBars || "1200"}
+              onChange={(e) => setCfgField("lookbackBars", e.target.value)}
+              style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+              title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
+            >
+              {["100", "300", "600", "900", "1200", "1500", "1800", "2200", "2600", "3000"].map((v) => (
+                <option key={v} value={v}>
+                  {v} bars
+                </option>
+              ))}
+            </select>
+            <select
+              className="secondary-button"
+              value={cfg.snapshotQuality || "80"}
+              onChange={(e) => setCfgField("snapshotQuality", e.target.value)}
+              style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
+              title="Snapshot image quality"
+            >
+              {["60", "70", "80", "90", "100"].map((v) => (
+                <option key={v} value={v}>
+                  Q{v}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                className="secondary-button"
+                style={{
+                  width: 28,
+                  height: 28,
+                  padding: 0,
+                  fontSize: 16,
+                  fontWeight: 800,
+                  borderRadius: 6,
+                }}
+                onClick={() =>
+                  setMasterGridCols((prev) => Math.max(1, (prev ?? 2) - 1))
+                }
+                title="All: Larger charts"
+              >
+                +
+              </button>
+              <button
+                className="secondary-button"
+                style={{
+                  width: 28,
+                  height: 28,
+                  padding: 0,
+                  fontSize: 16,
+                  fontWeight: 800,
+                  borderRadius: 6,
+                }}
+                onClick={() =>
+                  setMasterGridCols((prev) => Math.min(6, (prev ?? 2) + 1))
+                }
+                title="All: Smaller charts"
+              >
+                -
+              </button>
+            </div>
+          </div>
+        </div>
+
         {!hasAnalyzeResponse && !isTradeRoute && (
           <div className="fadeIn">
             <div
-              className=""
+              className="Analyze-component"
               style={{
                 marginBottom: 8,
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                display: "flex",
+                flexDirection: "column",
                 gap: 8,
-                alignItems: "start",
               }}
             >
-              <div style={{ display: "grid", gap: 6 }}>
-                <>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 12,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {selectedSymbol && (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => {
-                          setCfgField("symbol", "");
-                          setSelectedSymbols([]);
-                          navigate("/ai/analyze", { replace: false });
-                        }}
-                        style={{ fontSize: 12, padding: "4px 8px" }}
-                      >
-                        {"<"}
-                      </button>
-                    )}
-                    {!isSymbolPanelOpen && (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => setIsSymbolPanelOpen(true)}
-                        title="Expand symbols panel"
-                        style={{
-                          width: 28,
-                          height: 28,
-                          padding: 0,
-                          fontSize: 12,
-                          fontWeight: 700,
-                        }}
-                      >
-                        {">>"}
-                      </button>
-                    )}
-                    <select
-                      className="secondary-button"
-                      style={{
-                        height: "34px",
-                        padding: "0 10px",
-                        fontSize: "12px",
-                      }}
-                      value={cfg.profile || "day"}
-                      onChange={(e) => {
-                        const newProfile = e.target.value;
-                        setProfilePreset(newProfile);
-                        const preset = PROFILE_PRESETS[newProfile];
-                        if (preset) {
-                          const newTfs = [
-                            ...new Set([
-                              ...(preset.htf_tfs || []),
-                              ...(preset.exec_tfs || []),
-                              ...(preset.conf_tfs || []),
-                            ]),
-                          ];
-                          if (newTfs.length > 0) {
-                            setBrowserTfs(newTfs);
-                            setBrowserTf(newTfs[0]);
-                          }
-                        }
-                      }}
-                    >
-                      {Object.entries(PROFILE_PRESETS).map(([k, v]) => (
-                        <option key={k} value={k}>
-                          {v.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                      marginTop: 4,
-                    }}
-                  >
-                    <div className="tf-pills">
-                      {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
-                        <button
-                          key={tf}
-                          className={`tf-pill ${browserTfs.includes(tf) ? "active" : ""}`}
-                          onClick={() => {
-                            setBrowserTfs((prev) => {
-                              if (prev.includes(tf)) {
-                                if (prev.length <= 1) return prev;
-                                return prev.filter((t) => t !== tf);
-                              }
-                              return [...prev, tf];
-                            });
-                            setBrowserTf(tf);
-                          }}
-                        >
-                          {tf.toUpperCase()}
-                        </button>
-                      ))}
-                      <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
-                        <button
-                          className="secondary-button"
-                          style={{
-                            width: 28,
-                            height: 28,
-                            padding: 0,
-                            fontSize: 16,
-                            fontWeight: 800,
-                            borderRadius: 6,
-                          }}
-                          onClick={() =>
-                            setMasterGridCols((prev) =>
-                              Math.max(1, (prev ?? 2) - 1),
-                            )
-                          }
-                          title="All: Larger charts"
-                        >
-                          +
-                        </button>
-                        <button
-                          className="secondary-button"
-                          style={{
-                            width: 28,
-                            height: 28,
-                            padding: 0,
-                            fontSize: 16,
-                            fontWeight: 800,
-                            borderRadius: 6,
-                          }}
-                          onClick={() =>
-                            setMasterGridCols((prev) =>
-                              Math.min(6, (prev ?? 2) + 1),
-                            )
-                          }
-                          title="All: Smaller charts"
-                        >
-                          -
-                        </button>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{ display: "flex", gap: 10, alignItems: "center" }}
-                    >
-                      <select
-                        className="secondary-button"
-                        style={{
-                          height: "30px",
-                          padding: "0 10px",
-                          fontSize: "12px",
-                        }}
-                        value={templateId}
-                        onChange={(e) => handleSelectTemplate(e.target.value)}
-                      >
-                        <option value="">New Template</option>
-                        <option value={DEFAULT_TEMPLATE_ID}>
-                          Default Template
-                        </option>
-                        {templates.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="secondary-button"
-                        value={cfg.lookbackBars || "1200"}
-                        onChange={(e) =>
-                          setCfgField("lookbackBars", e.target.value)
-                        }
-                        style={{
-                          height: "30px",
-                          padding: "0 6px",
-                          fontSize: "11px",
-                        }}
-                        title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
-                      >
-                        {[
-                          "100",
-                          "300",
-                          "600",
-                          "900",
-                          "1200",
-                          "1500",
-                          "1800",
-                          "2200",
-                          "2600",
-                          "3000",
-                        ].map((v) => (
-                          <option key={v} value={v}>
-                            {v} bars
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className="secondary-button"
-                        value={cfg.snapshotQuality || "80"}
-                        onChange={(e) =>
-                          setCfgField("snapshotQuality", e.target.value)
-                        }
-                        style={{
-                          height: "30px",
-                          padding: "0 6px",
-                          fontSize: "11px",
-                        }}
-                        title="Snapshot image quality"
-                      >
-                        {["60", "70", "80", "90", "100"].map((v) => (
-                          <option key={v} value={v}>
-                            Q{v}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setSettingsModalOpen(true)}
-                        style={{
-                          height: "30px",
-                          fontSize: "12px",
-                          padding: "0 10px",
-                        }}
-                      >
-                        Settings
-                      </button>
-                    </div>
-                  </div>
-                </>
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <select
+                  className="secondary-button"
+                  style={{ height: "30px", padding: "0 10px", fontSize: "12px" }}
+                  value={templateId}
+                  onChange={(e) => handleSelectTemplate(e.target.value)}
+                >
+                  <option value="">New Template</option>
+                  <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setSettingsModalOpen(true)}
+                  style={{ height: "30px", fontSize: "12px", padding: "0 10px" }}
+                >
+                  Settings
+                </button>
               </div>
 
               <div

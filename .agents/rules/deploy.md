@@ -1,5 +1,6 @@
 # Deploy Rules
 
+- Always deploy without waiting once required checks are complete.
 - For backend, EA, UI, or script changes, bump both:
   - `webhook/server.js` -> `SERVER_VERSION`
   - `bridge-clients/TVBridge_Ctrader.cs` (priority) and `bridge-clients/TVBridgeEA.mq5` -> `EA_BUILD_VERSION`
