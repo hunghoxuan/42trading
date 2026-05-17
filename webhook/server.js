@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 18:53 - 0e15c675"); // brokerSyncV2 hasPartial scope + placeholder hardening
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 21:20 - tp123fix"); // trade detail TP1/TP2/TP3 persist + symbol selection sync fix
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

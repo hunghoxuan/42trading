@@ -633,6 +633,9 @@ export default function TradeSignalChart({
               const ep = parsePosNum(p.entry);
               const sp = parsePosNum(p.sl);
               const tp = parsePosNum(p.tp);
+              const tp1 = parsePosNum(p.tp1) ?? tp;
+              const tp2 = parsePosNum(p.tp2);
+              const tp3 = parsePosNum(p.tp3);
               if (!ep) return;
 
               const isPrimary = index === 0;
@@ -709,7 +712,33 @@ export default function TradeSignalChart({
                   priceText: `${tp.toFixed(2)} (+${tpPct}%)`,
                 });
               }
-              if (isPrimary && tp) levelPriceMap.tp = tp;
+              const tpLineLevels = [
+                { key: "TP1", value: tp1 },
+                { key: "TP2", value: tp2 },
+                { key: "TP3", value: tp3 },
+              ].filter((x) => Number.isFinite(x.value));
+              tpLineLevels.forEach((lvl, idx2) => {
+                if (idx2 === 0 && tp && Number(lvl.value) === Number(tp)) return;
+                const tpPct = ep
+                  ? (((Number(lvl.value) - ep) / ep) * 100).toFixed(1)
+                  : "";
+                candleSeries.createPriceLine({
+                  price: Number(lvl.value),
+                  color: `rgba(38, 166, 154, ${alpha})`,
+                  lineWidth,
+                  lineStyle: 1,
+                  axisLabelVisible: true,
+                  title: `${lvl.key}${pNum} +${tpPct}%`,
+                });
+                priceLinesRef.lines.push({
+                  price: Number(lvl.value),
+                  label: `${lvl.key}${pNum}`,
+                  priceText: `${Number(lvl.value).toFixed(2)} (+${tpPct}%)`,
+                });
+              });
+              if (isPrimary)
+                levelPriceMap.tp =
+                  tp1 ?? tp ?? tp2 ?? tp3 ?? levelPriceMap.tp;
 
               // Entry → TP zone box: Reward zone = Green
               if (ep && tp && boxAnchorTs) {
@@ -720,6 +749,24 @@ export default function TradeSignalChart({
                   greenColor,
                 );
                 candleSeries.attachPrimitive(primitive);
+              }
+              // Entry → TP1, TP1 → TP2, TP2 → TP3 zones with decreasing opacity.
+              if (boxAnchorTs && Number.isFinite(tp1)) {
+                const tpZones = [
+                  [ep, tp1, 0.24],
+                  [tp1, tp2, 0.16],
+                  [tp2, tp3, 0.1],
+                ];
+                tpZones.forEach(([a, b, zoneAlpha]) => {
+                  if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+                  const primitive = new PdArrayBoxPrimitive(
+                    boxAnchorTs,
+                    Math.min(a, b),
+                    Math.max(a, b),
+                    `rgba(38, 166, 154, ${Math.max(0.05, Math.min(0.5, zoneAlpha * alpha))})`,
+                  );
+                  candleSeries.attachPrimitive(primitive);
+                });
               }
               // Entry → SL zone box: Risk zone = Red
               if (ep && sp && boxAnchorTs) {

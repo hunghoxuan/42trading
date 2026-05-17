@@ -552,6 +552,22 @@ export function extractTradePlanFromTrade(trade = {}) {
     asNum(raw?.take_profit) ??
     asNum(plan?.tp) ??
     asNum(plan?.take_profit);
+  const tp1 =
+    asNum(trade.tp1) ??
+    asNum(meta?.tp1) ??
+    asNum(raw?.tp1) ??
+    planTpLevel(plan, 1) ??
+    tp;
+  const tp2 =
+    asNum(trade.tp2) ??
+    asNum(meta?.tp2) ??
+    asNum(raw?.tp2) ??
+    planTpLevel(plan, 2);
+  const tp3 =
+    asNum(trade.tp3) ??
+    asNum(meta?.tp3) ??
+    asNum(raw?.tp3) ??
+    planTpLevel(plan, 3);
   const sl =
     asNum(trade.sl) ??
     asNum(meta?.broker_data?.sl) ??
@@ -585,6 +601,9 @@ export function extractTradePlanFromTrade(trade = {}) {
     ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
+    tp1: formatNum3(tp1 ?? NaN),
+    tp2: formatNum3(tp2 ?? NaN),
+    tp3: formatNum3(tp3 ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(trade.note || "").trim(),

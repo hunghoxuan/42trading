@@ -656,6 +656,9 @@ export default function TradesPage() {
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
         tp: asNum(detailPlan.tp),
+        tp1: asNum(detailPlan.tp1),
+        tp2: asNum(detailPlan.tp2),
+        tp3: asNum(detailPlan.tp3),
         sl: asNum(detailPlan.sl),
         rr: asNum(detailPlan.rr),
         note: detailPlan.note,
@@ -693,6 +696,9 @@ export default function TradesPage() {
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
         tp: asNum(detailPlan.tp),
+        tp1: asNum(detailPlan.tp1),
+        tp2: asNum(detailPlan.tp2),
+        tp3: asNum(detailPlan.tp3),
         sl: asNum(detailPlan.sl),
         rr: asNum(detailPlan.rr),
         note: detailPlan.note,
@@ -1460,6 +1466,7 @@ export default function TradesPage() {
                 }
               >
                 <SignalDetailCard
+                  key={`trade-detail-${tradeKeyOf(selectedTrade)}`}
                   mode="trade"
                   response={{
                     raw: (() => {

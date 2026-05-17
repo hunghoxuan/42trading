@@ -149,6 +149,16 @@ export default function TradeDetailPage() {
   };
 
   useEffect(() => {
+    const pickExactTrade = (items = [], idRaw = "") => {
+      const id = String(idRaw || "").trim();
+      if (!id || !Array.isArray(items) || items.length === 0) return null;
+      return (
+        items.find((x) => String(x?.sid || "").trim() === id) ||
+        items.find((x) => String(x?.id || "").trim() === id) ||
+        items[0] ||
+        null
+      );
+    };
     async function loadData() {
       try {
         setLoading(true);
@@ -157,10 +167,7 @@ export default function TradeDetailPage() {
           api.v2Trades({ q: tradeId }),
         ]);
         setEvents(Array.isArray(evs?.items) ? evs.items : []);
-        const t =
-          Array.isArray(data?.items) && data.items.length
-            ? data.items[0]
-            : null;
+        const t = pickExactTrade(data?.items || [], tradeId);
         setTrade(t);
         if (t) {
           setDetailPlan(extractTradePlanFromTrade(t));
@@ -261,6 +268,9 @@ export default function TradeDetailPage() {
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
         tp: asNum(detailPlan.tp),
+        tp1: asNum(detailPlan.tp1),
+        tp2: asNum(detailPlan.tp2),
+        tp3: asNum(detailPlan.tp3),
         sl: asNum(detailPlan.sl),
         rr: asNum(detailPlan.rr),
         note: detailPlan.note,
@@ -273,8 +283,13 @@ export default function TradeDetailPage() {
       ]);
       setEvents(Array.isArray(evs?.items) ? evs.items : []);
       const t =
-        Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
+        (Array.isArray(data?.items) &&
+          (data.items.find((x) => String(x?.sid || "") === String(tradeId)) ||
+            data.items.find((x) => String(x?.id || "") === String(tradeId)) ||
+            data.items[0])) ||
+        null;
       setTrade(t);
+      if (t) setDetailPlan(extractTradePlanFromTrade(t));
     } catch (e) {
       setError(e?.message || "Update failed");
     } finally {
@@ -303,6 +318,9 @@ export default function TradeDetailPage() {
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
         tp: asNum(detailPlan.tp),
+        tp1: asNum(detailPlan.tp1),
+        tp2: asNum(detailPlan.tp2),
+        tp3: asNum(detailPlan.tp3),
         sl: asNum(detailPlan.sl),
         rr: asNum(detailPlan.rr),
         note: detailPlan.note,
@@ -386,6 +404,7 @@ export default function TradeDetailPage() {
           fallback={<div className="loading-card">Loading Details...</div>}
         >
           <SignalDetailCard
+            key={`trade-detail-${trade?.sid || trade?.id || tradeId}`}
             mode="trade"
             header={header}
             response={trade}
