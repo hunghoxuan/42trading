@@ -438,6 +438,10 @@ export default function SymbolChart({
   initialGridCols = null,
   onAnalyze,
   onRemove,
+  isInWatchlist = true,
+  isInSelected = false,
+  onToggleWatchlist = null,
+  onRemoveSelected = null,
   entryPrice = null,
   tpPrice = null,
   slPrice = null,
@@ -1541,7 +1545,7 @@ export default function SymbolChart({
             ))}
           </div>
 
-          {onRemove && showControls && (
+          {showControls && (onToggleWatchlist || onRemove) && (
             <button
               className="secondary-button"
               style={{
@@ -1552,16 +1556,45 @@ export default function SymbolChart({
                 lineHeight: 1,
                 minWidth: 18,
                 borderRadius: 4,
-                color: "rgba(239,68,68,0.5)",
-                borderColor: "rgba(239,68,68,0.25)",
+                color: isInWatchlist
+                  ? "rgba(239,68,68,0.7)"
+                  : "var(--muted)",
+                borderColor: isInWatchlist
+                  ? "rgba(239,68,68,0.35)"
+                  : "rgba(255,255,255,0.08)",
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                onRemove(symbol);
+                if (typeof onToggleWatchlist === "function")
+                  onToggleWatchlist(symbol);
+                else if (typeof onRemove === "function") onRemove(symbol);
               }}
-              title="Remove"
+              title={isInWatchlist ? "Remove from watchlist" : "Add to watchlist"}
             >
-              -
+              {isInWatchlist ? "-" : "+"}
+            </button>
+          )}
+          {showControls && isInSelected && typeof onRemoveSelected === "function" && (
+            <button
+              className="secondary-button"
+              style={{
+                width: 18,
+                height: 18,
+                padding: 0,
+                fontSize: 10,
+                lineHeight: 1,
+                minWidth: 18,
+                borderRadius: 4,
+                color: "#fca5a5",
+                borderColor: "rgba(248,113,113,0.4)",
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveSelected(symbol);
+              }}
+              title="Remove from selected symbols"
+            >
+              x
             </button>
           )}
           {(pendingMode || mode) === "snapshots" &&

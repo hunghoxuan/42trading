@@ -5233,51 +5233,46 @@ export default function ChartSnapshotsPage() {
             height: "100%",
           }}
         >
-          <div className="snapshot-symbol-row-inline-v4" style={{ gap: 6 }}>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setIsSymbolPanelOpen(false)}
-              title="Collapse symbols panel"
-              style={{
-                width: 32,
-                minWidth: 32,
-                padding: "4px 0",
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {"<<"}
-            </button>
-            <select
-              className="secondary-button"
-              value={symbolFilterTab}
-              onChange={(e) => {
-                setSymbolFilterTab(e.target.value);
-                setVisibleCount(8);
-              }}
-              style={{
-                padding: "6px 8px",
-                paddingRight: 26,
-                fontSize: 12,
-                height: 34,
-              }}
-            >
-              <option value="FAVOURITE">Watchlist</option>
-              <option value="CRYPTO">Crypto</option>
-              <option value="FOREX">Forex</option>
-              <option value="COMMODITY">Commodity</option>
-              <option value="INDICES">Indices</option>
-              <option value="SMT">SMT</option>
-            </select>
-            <div
-              style={{
-                position: "relative",
-                minWidth: 180,
-                display: "flex",
-                gap: 4,
-              }}
-            >
+          <div style={{ display: "grid", gap: 6 }}>
+            <div className="snapshot-symbol-row-inline-v4" style={{ gap: 6 }}>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setIsSymbolPanelOpen(false)}
+                title="Collapse symbols panel"
+                style={{
+                  width: 32,
+                  minWidth: 32,
+                  padding: "4px 0",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+              >
+                {"<<"}
+              </button>
+              <select
+                className="secondary-button"
+                value={symbolFilterTab}
+                onChange={(e) => {
+                  setSymbolFilterTab(e.target.value);
+                  setVisibleCount(8);
+                }}
+                style={{
+                  padding: "6px 8px",
+                  paddingRight: 26,
+                  fontSize: 12,
+                  height: 34,
+                }}
+              >
+                <option value="FAVOURITE">Watchlist</option>
+                <option value="CRYPTO">Crypto</option>
+                <option value="FOREX">Forex</option>
+                <option value="COMMODITY">Commodity</option>
+                <option value="INDICES">Indices</option>
+                <option value="SMT">SMT</option>
+              </select>
+            </div>
+            <div style={{ position: "relative", display: "flex", gap: 4 }}>
               <input
                 list="tv-symbol-options"
                 value={searchTerm}
@@ -6191,7 +6186,36 @@ export default function ChartSnapshotsPage() {
                             onTrade={handleChartTrade}
                             showTradeButton={true}
                             showAnalyzeButton={true}
-                            onRemove={(s) => removeFromWatchlist(s)}
+                                    isInWatchlist={watchlist.includes(sym)}
+                                    isInSelected={selectedSymbols.includes(sym)}
+                                    onToggleWatchlist={(s) => {
+                                      const inWatchlist = watchlist.includes(s);
+                                      if (inWatchlist) {
+                                        removeFromWatchlist(s);
+                                      } else {
+                                        const next = [...new Set([...watchlist, s])];
+                                        saveWatchlistToDb(next).then(() =>
+                                          setWatchlist(next),
+                                        );
+                                      }
+                                    }}
+                                    onRemoveSelected={(s) => {
+                                      setCfg((prev) => {
+                                        const prevSelected = Array.isArray(
+                                          prev?.symbols,
+                                        )
+                                          ? prev.symbols
+                                          : [];
+                                        const nextSelected = prevSelected.filter(
+                                          (x) => x !== s,
+                                        );
+                                        return {
+                                          ...prev,
+                                          symbols: nextSelected,
+                                          symbol: nextSelected[0] || "",
+                                        };
+                                      });
+                                    }}
                           />
                         </Suspense>
                       ));
