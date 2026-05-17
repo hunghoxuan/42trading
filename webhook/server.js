@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 18:21 - 57df7460"); // brokerSyncV2 hasPartial scope + placeholder hardening
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 18:36 - a3375510"); // brokerSyncV2 hasPartial scope + placeholder hardening
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -18828,9 +18828,9 @@ const appHandler = async (req, res) => {
       );
       if (!files.length) {
         console.warn(
-          "[snapshot-analyze] 400: No snapshots found for analysis.",
+          "[snapshot-analyze] No snapshots found for analysis.",
         );
-        return json(res, 400, {
+        return json(res, 200, {
           ok: false,
           error: "No snapshots found for analysis.",
         });
@@ -18853,10 +18853,10 @@ const appHandler = async (req, res) => {
       }
       if (!snapshotFiles.length) {
         console.warn(
-          "[snapshot-analyze] 400: No valid snapshot images available. Input files:",
+          "[snapshot-analyze] No valid snapshot images available. Input files:",
           files,
         );
-        return json(res, 400, {
+        return json(res, 200, {
           ok: false,
           error: "No valid snapshot images available.",
         });

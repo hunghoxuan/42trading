@@ -164,6 +164,15 @@ function normalizeRawPlan(p = {}) {
     entry: entry,
     direction,
   });
+  const tp1 = parseNumLoose(
+    src?.tp1 ?? src?.multiple_exits?.tp1?.price ?? chosen.tp,
+  );
+  const tp2 = parseNumLoose(src?.tp2 ?? src?.multiple_exits?.tp2?.price);
+  const tp3 = parseNumLoose(
+    src?.tp3 ??
+      src?.multiple_exits?.tp3?.price ??
+      src?.multiple_exits?.full_tp?.price,
+  );
   const tpNum = parseNumLoose(chosen.tp);
   const rrRaw = parseNumLoose(src?.rr ?? src?.risk_reward);
   let rr = null;
@@ -182,9 +191,13 @@ function normalizeRawPlan(p = {}) {
     direction,
     entry: entry == null ? "" : String(entry),
     tp: chosen.tp,
+    tp1: tp1 == null ? "" : String(tp1),
+    tp2: tp2 == null ? "" : String(tp2),
+    tp3: tp3 == null ? "" : String(tp3),
     sl: sl == null ? "" : String(sl),
     rr: rr == null ? "" : String(rr),
-    trade_type: String(p?.type || p?.order_type || "limit").toLowerCase(),
+    trade_type: String(src?.type || src?.order_type || "limit").toLowerCase(),
+    __canonical_plan: Boolean(canonical),
   };
 }
 
@@ -209,9 +222,30 @@ function planLooksMeaningful(p = {}) {
 function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
   const next = { ...basePlan };
   const prev = previousDraft || {};
+  const keepFreshKeys = new Set([
+    "direction",
+    "trade_type",
+    "order_type",
+    "entry",
+    "tp",
+    "tp1",
+    "tp2",
+    "tp3",
+    "sl",
+    "rr",
+    "multiple_exits",
+  ]);
   Object.entries(prev).forEach(([k, v]) => {
     if (v === undefined) return;
     const freshVal = next[k];
+    if (
+      keepFreshKeys.has(k) &&
+      freshVal !== undefined &&
+      freshVal !== null &&
+      String(freshVal).trim() !== ""
+    ) {
+      return;
+    }
     // Keep fresh non-zero numeric-ish values from latest analysis payload.
     if (
       typeof freshVal !== "undefined" &&
