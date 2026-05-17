@@ -5256,7 +5256,12 @@ export default function ChartSnapshotsPage() {
                 setSymbolFilterTab(e.target.value);
                 setVisibleCount(8);
               }}
-              style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
+              style={{
+                padding: "6px 8px",
+                paddingRight: 26,
+                fontSize: 12,
+                height: 34,
+              }}
             >
               <option value="FAVOURITE">Watchlist</option>
               <option value="CRYPTO">Crypto</option>
@@ -5265,6 +5270,63 @@ export default function ChartSnapshotsPage() {
               <option value="INDICES">Indices</option>
               <option value="SMT">SMT</option>
             </select>
+            <div
+              style={{
+                position: "relative",
+                minWidth: 140,
+                display: "flex",
+                gap: 4,
+              }}
+            >
+              <input
+                list="tv-symbol-options"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && searchTerm.trim()) {
+                    setCfgField(
+                      "symbol",
+                      normalizeWatchSymbol(searchTerm.trim()),
+                    );
+                  }
+                }}
+                placeholder="Search symbol..."
+                style={{
+                  flex: 1,
+                  padding: "6px 10px",
+                  fontSize: 13,
+                  minWidth: 0,
+                }}
+              />
+              <button
+                className="secondary-button"
+                type="button"
+                style={{
+                  width: 28,
+                  minWidth: 28,
+                  padding: "4px 0",
+                  fontSize: 14,
+                }}
+                onClick={() => {
+                  if (searchTerm.trim()) {
+                    const s = normalizeWatchSymbol(searchTerm.trim());
+                    setCfgField("symbol", s);
+                    const next = [...new Set([...watchlist, s])];
+                    saveWatchlistToDb(next).then(() => setWatchlist(next));
+                  }
+                }}
+                title="Add current symbol"
+              >
+                +
+              </button>
+              <datalist id="tv-symbol-options">
+                {[...new Set([...symbolSelectOptions, ...apiSymbolOptions])].map(
+                  (opt) => (
+                    <option key={opt} value={opt} />
+                  ),
+                )}
+              </datalist>
+            </div>
           </div>
           {isSymbolPanelOpen && (
             <>
@@ -5560,85 +5622,6 @@ export default function ChartSnapshotsPage() {
                         {">>"}
                       </button>
                     )}
-                    <select
-                      className="secondary-button"
-                      value={symbolFilterTab}
-                      onChange={(e) => {
-                        setSymbolFilterTab(e.target.value);
-                        setVisibleCount(8);
-                      }}
-                      style={{ padding: "6px 8px", fontSize: 12, height: 34 }}
-                    >
-                      <option value="FAVOURITE">Watchlist</option>
-                      <option value="CRYPTO">Crypto</option>
-                      <option value="FOREX">Forex</option>
-                      <option value="COMMODITY">Commodity</option>
-                      <option value="INDICES">Indices</option>
-                      <option value="SMT">SMT</option>
-                    </select>
-                    <div
-                      style={{
-                        position: "relative",
-                        width: "30%",
-                        minWidth: 120,
-                        display: "flex",
-                        gap: 4,
-                      }}
-                    >
-                      <input
-                        list="tv-symbol-options"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && searchTerm.trim()) {
-                            setCfgField(
-                              "symbol",
-                              normalizeWatchSymbol(searchTerm.trim()),
-                            );
-                          }
-                        }}
-                        placeholder="Search symbol..."
-                        style={{
-                          flex: 1,
-                          padding: "6px 10px",
-                          fontSize: 13,
-                          minWidth: 0,
-                        }}
-                      />
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        style={{
-                          width: 28,
-                          minWidth: 28,
-                          padding: "4px 0",
-                          fontSize: 14,
-                        }}
-                        onClick={() => {
-                          if (searchTerm.trim()) {
-                            const s = normalizeWatchSymbol(searchTerm.trim());
-                            setCfgField("symbol", s);
-                            const next = [...new Set([...watchlist, s])];
-                            saveWatchlistToDb(next).then(() =>
-                              setWatchlist(next),
-                            );
-                          }
-                        }}
-                        title="Add current symbol"
-                      >
-                        +
-                      </button>
-                      <datalist id="tv-symbol-options">
-                        {[
-                          ...new Set([
-                            ...symbolSelectOptions,
-                            ...apiSymbolOptions,
-                          ]),
-                        ].map((opt) => (
-                          <option key={opt} value={opt} />
-                        ))}
-                      </datalist>
-                    </div>
                     <select
                       className="secondary-button"
                       style={{

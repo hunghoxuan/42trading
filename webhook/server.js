@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 09:04 - f25b6441"); // recalc RR from prices, exclude breakeven from TP, and surface TP3 reliably
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 14:40 - c7b4d90a"); // snapshot UI symbol controls moved left + cron BullMQ jobId sanitize
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -21998,6 +21998,13 @@ function bullConnectionFromRedisUrl(redisUrl) {
   }
 }
 
+function sanitizeBullJobIdPart(value) {
+  return String(value || "default")
+    .replace(/[:\s]+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .slice(0, 80);
+}
+
 function trackSourceActivity(sourceId, connected = true) {
   const key = String(sourceId || "").toLowerCase();
   if (!SOURCE_STATUS[key]) return;
@@ -22362,7 +22369,7 @@ async function mt5RunMarketDataCron() {
                     timezone,
                   },
                   {
-                    jobId: `market_${userId}_${conf.name || "default"}_${symbolNorm}_${tfNorm}_${bucket}`,
+                    jobId: `market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`,
                   },
                 );
               }),
