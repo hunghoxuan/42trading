@@ -14505,6 +14505,7 @@ const appHandler = async (req, res) => {
       cronMarketDataEnabled: CFG.marketDataCronEnabled || false,
       cronAiEnabled: true,
       cronSnapshotsEnabled: true,
+      cronDetails: global._cronDetails || {},
     });
   }
 
@@ -22202,13 +22203,17 @@ async function mt5CronLoop() {
     CRON_STATE.isRunning = true;
     const startMs = Date.now();
     const events = [];
+    global._cronDetails = global._cronDetails || {};
     try {
-      await mt5RunMarketDataCron();
-      events.push("MarketData: done");
-      await mt5RunAiAnalysisCron();
-      events.push("AI: done");
-      await mt5RunSnapshotsCron();
-      events.push("Snapshots: done");
+      let mdRes = await mt5RunMarketDataCron();
+      global._cronDetails.marketData = mdRes ? `ok (${mdRes.queued || 0} jobs)` : "no configs";
+      events.push("MarketData: " + (mdRes ? "done" : "skipped"));
+      let aiRes = await mt5RunAiAnalysisCron();
+      global._cronDetails.aiAnalysis = aiRes ? `ok (${aiRes.triggered || 0} trig)` : "no configs";
+      events.push("AI: " + (aiRes ? "done" : "skipped"));
+      let snapRes = await mt5RunSnapshotsCron();
+      global._cronDetails.snapshots = snapRes ? `ok (${snapRes.captured || 0} img)` : "no configs";
+      events.push("Snapshots: " + (snapRes ? "done" : "skipped"));
       const elapsed = Math.round((Date.now() - startMs) / 1000);
       global._cronStatus = `ok (${elapsed}s)`;
       global._cronEvents = global._cronEvents || [];
@@ -22223,6 +22228,7 @@ async function mt5CronLoop() {
     } catch (err) {
       console.error("[Cron] Run error:", err);
       global._cronStatus = "error";
+      global._cronDetails = { marketData: "error", aiAnalysis: "error", snapshots: "error" };
       if (notificationManager) {
         notificationManager.handle("SYSTEM_EVENT", "cron_error", {
           message: `Cron ERROR: ${err?.message || err}`,
