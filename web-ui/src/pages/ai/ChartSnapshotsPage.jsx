@@ -2463,6 +2463,7 @@ export default function ChartSnapshotsPage() {
   }));
   const [browserTf, setBrowserTf] = useState("4h");
   const [browserTfs, setBrowserTfs] = useState(["4h"]);
+  const dragWatchSymbolRef = useRef("");
   const [visibleCount, setVisibleCount] = useState(8);
   const [masterGridCols, setMasterGridCols] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -2930,6 +2931,25 @@ export default function ChartSnapshotsPage() {
     }
     setPosition(buildDefaultPosition(defaultSeedEntry));
   };
+  const moveWatchlistSymbol = useCallback(
+    (fromSymbol, toSymbol) => {
+      const from = normalizeWatchSymbol(fromSymbol);
+      const to = normalizeWatchSymbol(toSymbol);
+      if (!from || !to || from === to) return;
+      const current = (Array.isArray(watchlist) ? watchlist : [])
+        .map((x) => normalizeWatchSymbol(x))
+        .filter(Boolean);
+      const fromIdx = current.indexOf(from);
+      const toIdx = current.indexOf(to);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const next = [...current];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      setWatchlist(next);
+      saveWatchlistToDb(next);
+    },
+    [watchlist, saveWatchlistToDb],
+  );
   const setProfilePreset = (profileKey) => {
     const key = String(profileKey || "")
       .trim()
@@ -5392,6 +5412,21 @@ export default function ChartSnapshotsPage() {
                             alignItems: "center",
                             gap: 2,
                           }}
+                          draggable={symbolFilterTab === "FAVOURITE"}
+                          onDragStart={() => {
+                            dragWatchSymbolRef.current = s;
+                          }}
+                          onDragOver={(e) => {
+                            if (symbolFilterTab !== "FAVOURITE") return;
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            if (symbolFilterTab !== "FAVOURITE") return;
+                            e.preventDefault();
+                            const from = dragWatchSymbolRef.current;
+                            moveWatchlistSymbol(from, s);
+                            dragWatchSymbolRef.current = "";
+                          }}
                         >
                           <button
                             type="button"
@@ -5746,45 +5781,6 @@ export default function ChartSnapshotsPage() {
               >
                 <div
                   style={{
-                    display: "flex",
-                    gap: 10,
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}
-                >
-                  <select
-                    className="secondary-button"
-                    style={{
-                      height: "30px",
-                      padding: "0 10px",
-                      fontSize: "12px",
-                    }}
-                    value={templateId}
-                    onChange={(e) => handleSelectTemplate(e.target.value)}
-                  >
-                    <option value="">New Template</option>
-                    <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setSettingsModalOpen(true)}
-                    style={{
-                      height: "30px",
-                      fontSize: "12px",
-                      padding: "0 10px",
-                    }}
-                  >
-                    Settings
-                  </button>
-                </div>
-                <div
-                  style={{
                     display: "grid",
                     gridTemplateColumns: "1fr 1fr",
                     gap: 8,
@@ -5900,11 +5896,41 @@ export default function ChartSnapshotsPage() {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "1fr 1fr 1fr auto",
+                    gridTemplateColumns: "auto auto 1fr 1fr 1fr auto",
                     gap: 8,
                     alignItems: "center",
                   }}
                 >
+                  <select
+                    className="secondary-button"
+                    style={{
+                      height: "34px",
+                      padding: "0 10px",
+                      fontSize: "12px",
+                    }}
+                    value={templateId}
+                    onChange={(e) => handleSelectTemplate(e.target.value)}
+                  >
+                    <option value="">New Template</option>
+                    <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setSettingsModalOpen(true)}
+                    style={{
+                      height: "34px",
+                      fontSize: "12px",
+                      padding: "0 10px",
+                    }}
+                  >
+                    Settings
+                  </button>
                   <select
                     value={analysisSource}
                     onChange={(e) => {
@@ -6243,6 +6269,8 @@ export default function ChartSnapshotsPage() {
                 showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
                 showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
                 profileTfs: widgetTfs,
+                initialGridCols: masterGridCols,
+                initialBarsCount: Number(cfg.lookbackBars || 300),
                 onDetailTfTabChange: setSelectedEntryTf,
                 entryNode: (
                   <div className="snapshot-live-card-v3">

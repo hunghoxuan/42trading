@@ -2224,7 +2224,18 @@ export default function SignalDetailCard({
             symbol={selectedPlanSymbol || chart?.symbol}
             timeframes={effectiveTfs}
             defaultMode={chart?.mode || "live"}
-            initialGridCols={2}
+            initialGridCols={
+              Number.isFinite(Number(chart?.initialGridCols)) &&
+              Number(chart?.initialGridCols) > 0
+                ? Number(chart?.initialGridCols)
+                : 2
+            }
+            initialBarsCount={
+              Number.isFinite(Number(chart?.initialBarsCount)) &&
+              Number(chart?.initialBarsCount) > 0
+                ? Number(chart?.initialBarsCount)
+                : 300
+            }
             entryPrice={selectedPlanRaw?.entry || chart?.entryPrice}
             slPrice={selectedPlanRaw?.sl || chart?.slPrice}
             tpPrice={selectedPlanRaw?.tp || chart?.tpPrice}
