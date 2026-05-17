@@ -2445,7 +2445,19 @@ export default function ChartSnapshotsPage() {
       },
       ai_openrouter: {
         label: "OpenRouter",
-        models: [{ value: "openai/gpt-4o", label: "GPT-4o" }],
+        models: [
+          { value: "openai/gpt-4o", label: "GPT-4o" },
+          { value: "openai/gpt-4.1", label: "GPT-4.1" },
+          { value: "openai/o3-mini", label: "o3 Mini" },
+          { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+          { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
+          { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+          { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+          { value: "deepseek/deepseek-chat", label: "DeepSeek V3" },
+          { value: "deepseek/deepseek-r1", label: "DeepSeek R1" },
+          { value: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick" },
+          { value: "qwen/qwen3-235b-a22b", label: "Qwen3 235B" },
+        ],
       },
     },
   }));

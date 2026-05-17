@@ -5436,7 +5436,9 @@ async function callAiProvider({
         ? "deepseek-chat"
         : provider === "openai"
           ? "gpt-4o"
-          : "gemini-2.0-flash"),
+          : provider === "openrouter"
+            ? "openai/gpt-4o"
+            : "gemini-2.0-flash"),
     messages: convertedMessages,
     max_tokens: maxTokens,
     response_format:
@@ -5452,6 +5454,12 @@ async function callAiProvider({
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        ...(provider === "openrouter"
+          ? {
+              "HTTP-Referer": "https://trade.mozasolution.com",
+              "X-Title": "Trading Bot",
+            }
+          : {}),
       },
       body,
     });
