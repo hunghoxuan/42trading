@@ -6082,6 +6082,7 @@ export default function ChartSnapshotsPage() {
                                     initialBarsCount={Number(
                                       cfg.lookbackBars || 300,
                                     )}
+                                    showPerCardLayoutControls={false}
                                     analyzeLabel={
                                       normalizeWatchSymbol(sym) ===
                                       normalizeWatchSymbol(cfg.symbol)
@@ -6129,6 +6130,7 @@ export default function ChartSnapshotsPage() {
                             defaultMode="live"
                             initialGridCols={masterGridCols}
                             initialBarsCount={Number(cfg.lookbackBars || 300)}
+                            showPerCardLayoutControls={false}
                             analyzeLabel={
                               normalizeWatchSymbol(sym) ===
                               normalizeWatchSymbol(cfg.symbol)
@@ -6231,6 +6233,7 @@ export default function ChartSnapshotsPage() {
                     defaultMode="live"
                     initialGridCols={masterGridCols}
                     initialBarsCount={Number(cfg.lookbackBars || 300)}
+                    showPerCardLayoutControls={false}
                     onAnalyze={() => analyzeSelected()}
                     onTrade={handleChartTrade}
                     showAnalyzeButton={isAnalyzeRoute}
@@ -6272,6 +6275,7 @@ export default function ChartSnapshotsPage() {
                 profileTfs: widgetTfs,
                 initialGridCols: masterGridCols,
                 initialBarsCount: Number(cfg.lookbackBars || 300),
+                showPerCardLayoutControls: false,
                 onDetailTfTabChange: setSelectedEntryTf,
                 entryNode: (
                   <div className="snapshot-live-card-v3">

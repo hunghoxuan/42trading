@@ -466,6 +466,7 @@ export default function SymbolChart({
   showTradeButton = true,
   showEditButton = true,
   analyzeLabel = "Analyze",
+  showPerCardLayoutControls = true,
   selectedTradePlanGroup = null,
   onTradePlanGroupChange = null,
 }) {
@@ -1626,24 +1627,25 @@ export default function SymbolChart({
             )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* Bars combo */}
-          <select
-            className="secondary-button"
-            value={localBarsCount}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              setLocalBarsCount(n);
-            }}
-            style={{ fontSize: 10, padding: "2px 4px", height: 22 }}
-            title="Bars per TF"
-          >
-            <option value={100}>100</option>
-            {[300, 600, 900, 1200, 1500, 1800, 2200, 2600, 3000].map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+          {showPerCardLayoutControls && (
+            <select
+              className="secondary-button"
+              value={localBarsCount}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setLocalBarsCount(n);
+              }}
+              style={{ fontSize: 10, padding: "2px 4px", height: 22 }}
+              title="Bars per TF"
+            >
+              <option value={100}>100</option>
+              {[300, 600, 900, 1200, 1500, 1800, 2200, 2600, 3000].map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          )}
 
           {mode === "live" && (
             <button
@@ -1745,38 +1747,42 @@ export default function SymbolChart({
             </button>
           )}
           {/* Removed redundant P1/P2/PD/KL mini-row; use Objects panel as source of truth */}
-          <button
-            className="secondary-button"
-            style={{
-              width: 22,
-              height: 22,
-              padding: 0,
-              fontSize: 14,
-              lineHeight: 1,
-              minWidth: 22,
-              fontWeight: 700,
-            }}
-            onClick={() => setGridCols((prev) => Math.max(1, prev - 1))}
-            title="Larger charts (fewer columns)"
-          >
-            +
-          </button>
-          <button
-            className="secondary-button"
-            style={{
-              width: 22,
-              height: 22,
-              padding: 0,
-              fontSize: 14,
-              lineHeight: 1,
-              minWidth: 22,
-              fontWeight: 700,
-            }}
-            onClick={() => setGridCols((prev) => Math.min(6, prev + 1))}
-            title="Smaller charts (more columns)"
-          >
-            -
-          </button>
+          {showPerCardLayoutControls && (
+            <>
+              <button
+                className="secondary-button"
+                style={{
+                  width: 22,
+                  height: 22,
+                  padding: 0,
+                  fontSize: 14,
+                  lineHeight: 1,
+                  minWidth: 22,
+                  fontWeight: 700,
+                }}
+                onClick={() => setGridCols((prev) => Math.max(1, prev - 1))}
+                title="Larger charts (fewer columns)"
+              >
+                +
+              </button>
+              <button
+                className="secondary-button"
+                style={{
+                  width: 22,
+                  height: 22,
+                  padding: 0,
+                  fontSize: 14,
+                  lineHeight: 1,
+                  minWidth: 22,
+                  fontWeight: 700,
+                }}
+                onClick={() => setGridCols((prev) => Math.min(6, prev + 1))}
+                title="Smaller charts (more columns)"
+              >
+                -
+              </button>
+            </>
+          )}
           <button
             className="secondary-button"
             style={{

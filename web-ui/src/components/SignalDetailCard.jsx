@@ -1039,13 +1039,15 @@ export default function SignalDetailCard({
     if (chart?.enabled) {
       const initial = [];
 
-      // Trade detail chart defaults must stay stable and explicit.
-      // Do not derive from signal/chart interval because values like "15"
-      // can create duplicate tiles (15m + 15) and hide 5m.
+      const configured = Array.isArray(chart?.profileTfs)
+        ? chart.profileTfs
+        : [];
       const signalTf = (chart.interval || "").toLowerCase();
-      const defaults = tradePlan?.enabled
-        ? ["d", "4h", "15m", "5m"]
-        : [signalTf, "15m", "4h", "d"];
+      const defaults = configured.length
+        ? configured
+        : tradePlan?.enabled
+          ? ["d", "4h", "15m", "5m"]
+          : [signalTf, "15m", "4h", "d"];
 
       defaults.forEach((tf) => {
         const t = String(tf || "")
@@ -1056,7 +1058,7 @@ export default function SignalDetailCard({
 
       setSelectedTfs(sortTimeframes(initial, "desc"));
     }
-  }, [chart?.enabled, chart?.interval]);
+  }, [chart?.enabled, chart?.interval, chart?.profileTfs, tradePlan?.enabled]);
 
   useEffect(() => {
     let isMounted = true;
