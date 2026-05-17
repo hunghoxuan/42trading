@@ -120,3 +120,20 @@ This file tracks the status of user-facing features and links them to technical 
 - **Feature Doc**: [../features/1-plan/advanced_order_entry.md]
 - **Ticket**: [./1-backlog/2026-05-06-advanced-order-panel.md]
 - **Summary**: Integrated professional order entry panel with real-time risk-based sizing, broker metrics sync, and one-click execution.
+
+## [ ] Multi-TP Trade Lifecycle (TP1/TP2/TP3)
+- **Status**: Planned
+- **Feature Doc**: [../features/1-plan/multi_tp_trade_lifecycle.md]
+- **Ticket**: [./1-backlog/2026-05-17-multi-tp-trade-lifecycle.md]
+- **Summary**: Add TP1/TP2/TP3 to DB/UI/bridge flow, enforce ordered TP assignment from chart context menu, and handle partial-close PnL + sync status without premature `CLOSED`.
+
+## [ ] Multi-TP Trade Lifecycle Hardening (Phase-1B)
+- **Status**: Planned (Hotfix)
+- **Feature Doc**: [../features/1-plan/multi_tp_trade_lifecycle_status_and_contract.md]
+- **Ticket**: [./1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md]
+- **Summary**: Close production gaps after initial rollout: fix broker sync runtime exception, enforce canonical TP contract, complete validation matrix, redeploy with clean health/log evidence.
+
+## [x] Source Tracking & Cron Dashboard
+- **Status**: Done
+- **Feature Doc**: [../features/2-done/source_tracking_and_cron_status.md]
+- **Summary**: Per-source connectivity tracking (MT5/cTrader/Binance) with real-time Health page display. Per-cron status monitoring. SNAPSHOTS_CRON for automated chart capture. Risk sizing fix, direction parsing fix, OpenRouter 11-model support.

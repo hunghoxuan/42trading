@@ -207,6 +207,8 @@
   },
   "active": "4bf2b34a6a4ef4d8",
   "lastOpenFiles": [
+    "sync/HANDOFF_2026-05-17.md",
+    "sync/HANDOFF_2026-05-17_MULTI_TP_LIFECYCLE.md",
     "sync/TICKET_2026-05-16_tradingview-sync-and-login.md",
     "sync/TICKET_2026-05-16_fix-console-html-json-error.md",
     "skills/image_to_ticket.md",
@@ -237,8 +239,6 @@
     "wiki/decisions/20260326-trend-priority-entry-gate.md",
     "wiki/decisions/20260325-signal-event-semantics-v1.md",
     "wiki/decisions/20260325-gate-inventory-v1.md",
-    "wiki/decisions/20260325-feature-notes.md",
-    "wiki/tradingview-24-7-live-trading-guide.md",
     "wiki/decisions",
     "wiki",
     "features",

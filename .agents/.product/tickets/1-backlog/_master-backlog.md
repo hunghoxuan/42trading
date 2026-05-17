@@ -27,6 +27,8 @@
 - [ ] [2026-05-02 10:49] [Web-UI/AI] [Author: User] Feature: Chart Snapshots symbols panel update with `Favourite | All | Crypto | Forex` filters, panel open/close toggle, and favorites from user settings. Spec: `2-backlog/2026-05-02-chart-snapshots-symbol-panel-filters-favorites.md`.
 - [ ] [2026-05-02 13:35] [Web-UI/AI/Architecture] [Author: User] Feature: Chart Sync cards with per-card refresh/status and mode-aware pipeline (`Live TV`/`Fixed Data`/`Snapshot`), using canonical process `api.chartRefresh` (`POST /v2/chart/refresh`) and persisted cache contract `MARKET_DATA:SYMBOL`. Spec: `2-backlog/2026-05-02-chart-snapshots-componentized-async-chart-tiles.md`.
 - [ ] [2026-05-13 17:30] [Web-UI/Charting/Interaction] [Author: User] Feature: TradingView-style interactive overlay engine for chart objects (PD arrays, key levels, buy/sell, zones) with canonical `time/price` anchors, cross-TF projection, and edit-mode drag/resize lifecycle. Spec: `1-backlog/2026-05-13-chart-interactive-overlay-engine.md`.
+- [ ] [2026-05-17 17:15] [Trades/DB/Web-UI/Bridge/Sync] [Author: User] Feature: Multi-TP lifecycle support with `tp1/tp2/tp3` in trades table, TradePlan Editor fields, ordered TP context-menu assignment, and bridge partial-close PnL/sync semantics. Spec: `1-backlog/2026-05-17-multi-tp-trade-lifecycle.md`.
+- [ ] [2026-05-17 18:55] [Trades/DB/Web-UI/Bridge/Sync] [Author: Codex] Hotfix: Multi-TP hardening Phase-1B to fix `brokerSyncV2` runtime scope error (`hasPartial`), complete validation matrix, and redeploy with clean health/log evidence. Spec: `1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.

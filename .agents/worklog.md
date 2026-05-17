@@ -1098,3 +1098,45 @@
   - Manual doc consistency check ✅
 - **Deploy Status**:
   - Not deployed (docs/process updates only).
+# Session Log: 2026-05-17 17:15
+- **Starting Task**: Plan multi-TP feature (`tp1/tp2/tp3`) and prepare feature/ticket/handoff package.
+- **Work Accomplished**:
+  - Wrote full feature design for multi-TP lifecycle across DB, backend normalization, UI editor flow, chart context-menu TP ordering, and bridge partial-close sync/PnL semantics.
+  - Created implementation backlog ticket with phased tasks, constraints, non-goals, and verification checklist.
+  - Linked new feature/ticket in tracker and master backlog.
+  - Added MAILBOX handoff entry for next implementation agent.
+- **Changed Files**:
+  - `.agents/.product/features/1-plan/multi_tp_trade_lifecycle.md`
+  - `.agents/.product/tickets/1-backlog/2026-05-17-multi-tp-trade-lifecycle.md`
+  - `.agents/.product/tickets/feature_tracker.md`
+  - `.agents/.product/tickets/1-backlog/_master-backlog.md`
+  - `.agents/sync/MAILBOX.md`
+  - `.agents/worklog.md`
+- **Technical Decisions**:
+  - Keep `tp` as compatibility alias to `tp1`.
+  - Enforce side-aware TP ordering and preserve `OPEN` during partial closes.
+  - Roll out in two phases: compatibility first, execution parity second.
+- **Verification**:
+  - Manual doc integrity check and cross-links verified.
+- **Deploy Status**:
+  - Not deployed (planning/docs only).
+## Session Log: 2026-05-17 18:55
+- **Starting Task**:
+  - Review current Multi-TP implementation status and prepare architecture-level documentation, execution ticket, and handoff package.
+- **Work Accomplished**:
+  - Audited current rollout state and identified production blocker (`hasPartial` scope error in `brokerSyncV2`).
+  - Added detailed status + canonical contract doc for Multi-TP lifecycle.
+  - Added hardening ticket (Phase-1B) with required validation/deploy checklist.
+  - Added dedicated handoff file for next execution agent.
+  - Updated feature tracker, backlog index, and mailbox ledger with `DEPLOY_BLOCKED` status.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/1-plan/multi_tp_trade_lifecycle_status_and_contract.md` (new)
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md` (new)
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/HANDOFF_2026-05-17_MULTI_TP_LIFECYCLE.md` (new)
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/feature_tracker.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/1-backlog/_master-backlog.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
+- **Verification**:
+  - Documentation and cross-link integrity check completed.
+- **Deploy Status**:
+  - No deploy performed in this documentation handoff step.
