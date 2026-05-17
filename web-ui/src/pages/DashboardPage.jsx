@@ -560,109 +560,84 @@ export default function DashboardPage() {
               className="toolbar-group toolbar-filters"
               style={{
                 display: "flex",
-                gap: "8px",
+                gap: "12px",
                 flexWrap: "wrap",
                 justifyContent: "flex-end",
                 flex: 1,
-                alignItems: "flex-start",
+                alignItems: "flex-end",
               }}
             >
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Account</span>
-              <select
-                id="db-filter-account"
-                value={filters.account_id}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    account_id: e.target.value,
-                  }))
-                }
-              >
-                <option value="">All accounts</option>
-                {(f.accounts || []).map((v) => (
-                  <option key={v} value={v}>
-                    {accountNameById.get(String(v)) || v}
-                  </option>
-                ))}
-              </select>
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Symbol</span>
-              <select
-                id="db-filter-symbol"
-                value={filters.symbol}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, symbol: e.target.value }))
-                }
-              >
-                <option value="">All symbols</option>
-                {(f.symbols || []).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Source</span>
-              <select
-                id="db-filter-source"
-                value={filters.source}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, source: e.target.value }))
-                }
-              >
-                <option value="">All Sources</option>
-                {(f.sources || []).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Model</span>
-              <select
-                id="db-filter-model"
-                value={filters.entry_model}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    entry_model: e.target.value,
-                  }))
-                }
-              >
-                <option value="">All Models</option>
-                {(f.entry_models || []).map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Timeframe</span>
-              <select
-                id="db-filter-tf"
-                value={filters.signal_tf}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))
-                }
-              >
-                <option value="">Signal TF</option>
-                {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (
-                  <option key={v} value={v}>
-                    {formatTimeframe(v)}
-                  </option>
-                ))}
-              </select>
-              <span className="minor-text" style={{ fontSize: 9, marginBottom: 2, display: "block", opacity: 0.7 }}>Range</span>
-              <select
-                id="db-filter-range"
-                value={filters.range}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, range: e.target.value }))
-                }
-              >
-                {RANGE_OPTIONS.map((r) => (
-                  <option key={r.val} value={r.val}>
-                    {r.lab}
-                  </option>
-                ))}
-              </select>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>ACCOUNT</span>
+                <select
+                  id="db-filter-account"
+                  value={filters.account_id}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, account_id: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  <option value="">All</option>
+                  {(f.accounts || []).map((v) => (<option key={v} value={v}>{accountNameById.get(String(v)) || v}</option>))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>SYMBOL</span>
+                <select
+                  id="db-filter-symbol"
+                  value={filters.symbol}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  <option value="">All</option>
+                  {(f.symbols || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>SOURCE</span>
+                <select
+                  id="db-filter-source"
+                  value={filters.source}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, source: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  <option value="">All</option>
+                  {(f.sources || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>MODEL</span>
+                <select
+                  id="db-filter-model"
+                  value={filters.entry_model}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, entry_model: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  <option value="">All</option>
+                  {(f.entry_models || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>TF</span>
+                <select
+                  id="db-filter-tf"
+                  value={filters.signal_tf}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  <option value="">All</option>
+                  {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (<option key={v} value={v}>{formatTimeframe(v)}</option>))}
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>RANGE</span>
+                <select
+                  id="db-filter-range"
+                  value={filters.range}
+                  onChange={(e) => setFilters((prev) => ({ ...prev, range: e.target.value }))}
+                  style={{ fontSize: 10, padding: "4px 8px" }}
+                >
+                  {RANGE_OPTIONS.map((r) => (<option key={r.val} value={r.val}>{r.lab}</option>))}
+                </select>
+              </div>
             </div>
           </div>
 
