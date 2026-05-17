@@ -445,6 +445,7 @@ export function extractTradePlanFromSignal(signal = {}) {
       signal.invalidation ||
         raw.invalidation ||
         effectivePlan.invalidation ||
+        effectivePlan.risk_management?.pre_entry_invalidation ||
         "",
     ),
     estimated_bars: asNum(
@@ -644,6 +645,7 @@ export function extractTradePlanFromTrade(trade = {}) {
         meta.invalidation ||
         raw.invalidation ||
         plan.invalidation ||
+        plan.risk_management?.pre_entry_invalidation ||
         "",
     ),
     estimated_bars: asNum(
@@ -667,6 +669,7 @@ export function extractTradePlanFromTrade(trade = {}) {
         meta.exit_condition ||
         raw.exit_condition ||
         plan.exit_condition ||
+        plan.risk_management?.mid_trade_invalidation ||
         "",
     ),
     entry_condition: String(
@@ -674,6 +677,8 @@ export function extractTradePlanFromTrade(trade = {}) {
         meta.entry_condition ||
         raw.entry_condition ||
         plan.entry_condition ||
+        plan.risk_management?.entry_trigger ||
+        plan.risk_management?.entry_trigger_full ||
         "",
     ),
     confluence_checklist: Array.isArray(
