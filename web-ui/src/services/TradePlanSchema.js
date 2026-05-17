@@ -50,6 +50,7 @@ export function resolveField(p, field, ctx) {
       );
     case "tp3":
       return (
+        p?.multiple_exits?.tp3?.price ??
         p?.multiple_exits?.full_tp?.price ??
         p?.tp3 ??
         (Array.isArray(p?.tps) && p.tps[2]?.price) ??
@@ -289,6 +290,9 @@ export function resolveField(p, field, ctx) {
  */
 export function extractPlans(root) {
   if (!root || typeof root !== "object") return [];
+  if (root.__raw_plan && typeof root.__raw_plan === "object") {
+    return [root.__raw_plan];
+  }
   if (Array.isArray(root.analysis_data) && root.analysis_data.length) {
     return root.analysis_data.flatMap((item) =>
       Array.isArray(item?.trade_plan)

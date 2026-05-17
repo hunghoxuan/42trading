@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 18:36 - a3375510"); // brokerSyncV2 hasPartial scope + placeholder hardening
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 18:53 - 0e15c675"); // brokerSyncV2 hasPartial scope + placeholder hardening
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7316,7 +7316,7 @@ async function _mt5InitBackendInternal() {
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, estimated_bars, be_trigger,
               rr_planned, risk_money_planned, risk_pct_planned
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::numeric,$20::text,'NEW','PENDING',$21::jsonb,$22::jsonb,$23::timestamptz,$23::timestamptz,$24::text,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric,$30::numeric)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'NEW','PENDING',$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
           `,
             [
               tradeSid,

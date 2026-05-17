@@ -1165,3 +1165,26 @@
   - Deployed.
   - Commit pushed: `b416a142`
   - Build version: `v2026.05.17 17:01 - 8f0c9b1a`
+
+## Session Log: 2026-05-17 18:52
+- **Starting Task**:
+  - Apply two targeted fixes: RR display precision to 1 decimal and save-path SQL insert mismatch.
+- **Work Accomplished**:
+  - Fixed `fanoutSignalTradeV2` trade insert placeholder/typing mismatch causing `INSERT has more expressions than target columns`.
+  - Normalized RR display/edit behavior to 1 decimal in signal detail flow.
+  - Added canonical raw-plan regression test and fixed schema resolver gaps (`__raw_plan` precedence, `multiple_exits.tp3.price`).
+  - Wrote dedicated handoff note for continuation/deploy.
+- **Changed Files**:
+  - `/Users/macmini/Trade/Bot/trading/webhook/server.js`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/utils/signalDetailUtils.jsx`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/components/SignalDetailCard.jsx`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/src/services/TradePlanSchema.js`
+  - `/Users/macmini/Trade/Bot/trading/web-ui/tests/unit/tradePlanSchema.test.mjs`
+  - `/Users/macmini/Trade/Bot/trading/.agents/sync/HANDOFF_2026-05-17_RR_INSERT_FIX.md`
+  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk npm --prefix web-ui run test:unit` ✅ (7/7)
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Not deployed in this step (handoff-ready local validated patch).

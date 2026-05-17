@@ -195,7 +195,7 @@ function normalizeRawPlan(p = {}) {
     tp2: tp2 == null ? "" : String(tp2),
     tp3: tp3 == null ? "" : String(tp3),
     sl: sl == null ? "" : String(sl),
-    rr: rr == null ? "" : String(rr),
+    rr: rr == null ? "" : String(Number(rr.toFixed(1))),
     trade_type: String(src?.type || src?.order_type || "limit").toLowerCase(),
     __canonical_plan: Boolean(canonical),
   };

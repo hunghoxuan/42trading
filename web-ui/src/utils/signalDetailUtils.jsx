@@ -71,7 +71,7 @@ export function buildRrVolRiskText({
     volVal != null ? `risk ${Number((volVal * 100).toFixed(2))}%` : "risk -";
 
   const lotsText = vol != null ? `${Number(vol.toFixed(3))} lots` : "- lots";
-  const rrText = rr != null ? `${rr.toFixed(2)} rr` : "- rr";
+  const rrText = rr != null ? `${rr.toFixed(1)} rr` : "- rr";
 
   return (
     <div
@@ -191,7 +191,10 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   // Format numeric fields consistently
   if (["entry", "tp", "tp1", "tp2", "tp3", "sl", "rr"].includes(key)) {
     const val = asNum(next[key]);
-    if (val != null) next[key] = formatNum3(val);
+    if (val != null) {
+      next[key] =
+        key === "rr" ? String(Number(val.toFixed(1))) : formatNum3(val);
+    }
   }
   const tp1Num = asNum(next.tp1);
   const tpNum = asNum(next.tp);
