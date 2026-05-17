@@ -133,6 +133,11 @@ This file tracks the status of user-facing features and links them to technical 
 - **Ticket**: [./1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md]
 - **Summary**: Close production gaps after initial rollout: fix broker sync runtime exception, enforce canonical TP contract, complete validation matrix, redeploy with clean health/log evidence.
 
+## [ ] AI Trade Plan Mapping Hardening (`__raw_plan` precedence)
+- **Status**: Planned (Hotfix)
+- **Ticket**: [./1-backlog/2026-05-17-ai-trade-plan-mapping-regression-direction-tp.md]
+- **Summary**: Fix signal/trade-plan prefill regression where flattened payload can override canonical AI plan (`__raw_plan`), causing direction flips and dropped TP ladder/checklist metadata.
+
 ## [x] Source Tracking & Cron Dashboard
 - **Status**: Done
 - **Feature Doc**: [../features/2-done/source_tracking_and_cron_status.md]

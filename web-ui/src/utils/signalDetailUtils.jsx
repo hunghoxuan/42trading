@@ -221,8 +221,10 @@ function firstTradePlan(raw = {}) {
     rawResponseParsed = null;
   }
   const candidates = [
+    raw?.__raw_plan,
     raw,
     rawResponseParsed,
+    rawResponseParsed?.__raw_plan,
     raw?.analysis_result,
     raw?.analysis,
     raw?.raw_json,
@@ -234,6 +236,8 @@ function firstTradePlan(raw = {}) {
   ];
   for (const src of candidates) {
     if (!src || typeof src !== "object") continue;
+    if (src?.__raw_plan && typeof src.__raw_plan === "object")
+      return src.__raw_plan;
     if (Array.isArray(src?.analysis_data) && src.analysis_data.length) {
       for (const entry of src.analysis_data) {
         if (Array.isArray(entry?.trade_plan) && entry.trade_plan.length) {
@@ -249,6 +253,13 @@ function firstTradePlan(raw = {}) {
       return src.tradePlan[0] || {};
     if (src?.trade_plan && typeof src.trade_plan === "object")
       return src.trade_plan;
+    const hasPlanShape =
+      (src?.direction || src?.dir) &&
+      (src?.entry_price != null ||
+        src?.entry != null ||
+        src?.stop_loss != null ||
+        src?.sl != null);
+    if (hasPlanShape) return src;
   }
   return {};
 }
@@ -276,6 +287,25 @@ function planPrimaryTp(plan = {}) {
     if (n != null) return n;
   }
   return null;
+}
+
+function planTpLevel(plan = {}, idx = 1) {
+  const mx = plan?.multiple_exits || {};
+  if (idx === 1) {
+    return asNum(
+      plan?.tp1 ?? mx?.tp1?.price ?? plan?.tp ?? plan?.take_profit ?? null,
+    );
+  }
+  if (idx === 2) return asNum(plan?.tp2 ?? mx?.tp2?.price ?? null);
+  return asNum(plan?.tp3 ?? mx?.tp3?.price ?? mx?.full_tp?.price ?? null);
+}
+
+function checklistToArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value)
+    .filter(([, v]) => Boolean(v))
+    .map(([k]) => k);
 }
 
 export function calcRrFromSignal(s) {
@@ -328,43 +358,58 @@ export function extractTradePlanFromSignal(signal = {}) {
     return {};
   })();
   const tradePlan = firstTradePlan(raw);
+  const rawPlan =
+    raw?.__raw_plan && typeof raw.__raw_plan === "object" ? raw.__raw_plan : {};
+  const effectivePlan = Object.keys(tradePlan || {}).length ? tradePlan : rawPlan;
   const sideRaw = String(
-    signal?.action || signal?.side || tradePlan?.direction || "",
+    effectivePlan?.direction ||
+      effectivePlan?.dir ||
+      signal?.action ||
+      signal?.side ||
+      raw?.direction ||
+      "",
   ).toUpperCase();
   const entry =
+    asNum(effectivePlan?.entry ?? effectivePlan?.entry_price) ??
     asNum(signal?.entry || signal?.target_price || signal?.entry_price) ??
     asNum(raw?.entry ?? raw?.price);
-  const tp = asNum(signal?.tp || signal?.tp_price) ?? planPrimaryTp(tradePlan);
-  const tp1 = asNum(signal?.tp1 ?? tradePlan?.tp1 ?? tp);
-  const tp2 = asNum(signal?.tp2 ?? tradePlan?.tp2);
-  const tp3 = asNum(signal?.tp3 ?? tradePlan?.tp3);
-  const sl = asNum(signal?.sl || signal?.sl_price) ?? asNum(tradePlan?.sl);
+  const tp = planPrimaryTp(effectivePlan) ?? asNum(signal?.tp || signal?.tp_price);
+  const tp1 = planTpLevel(effectivePlan, 1) ?? asNum(signal?.tp1 ?? tp);
+  const tp2 = planTpLevel(effectivePlan, 2) ?? asNum(signal?.tp2);
+  const tp3 = planTpLevel(effectivePlan, 3) ?? asNum(signal?.tp3);
+  const sl =
+    asNum(effectivePlan?.sl ?? effectivePlan?.stop_loss) ??
+    asNum(signal?.sl || signal?.sl_price);
   const rr =
+    asNum(effectivePlan?.rr ?? effectivePlan?.risk_reward) ??
     asNum(signal?.rr_planned) ??
-    asNum(tradePlan?.rr) ??
     calcRrFromSignal(signal);
 
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
     trade_type: String(
-      tradePlan?.type || raw?.order_type || "limit",
+      effectivePlan?.type ||
+        effectivePlan?.order_type ||
+        raw?.order_type ||
+        "limit",
     ).toLowerCase(),
     risk_pct: asNum(
       signal.risk_pct_planned ??
+        effectivePlan?.risk_percent ??
+        effectivePlan?.risk_pct ??
         raw.risk_pct ??
         raw.riskPct ??
-        tradePlan.risk_pct ??
-        tradePlan.riskPct ??
+        effectivePlan.riskPct ??
         signal.volume ??
         raw.volume ??
         0.01,
     ),
     risk_money: asNum(
       signal.risk_money_planned ??
+        effectivePlan?.risk_money ??
         raw.risk_money ??
         raw.riskMoney ??
-        tradePlan.risk_money ??
-        tradePlan.riskMoney,
+        effectivePlan.riskMoney,
     ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
@@ -373,76 +418,87 @@ export function extractTradePlanFromSignal(signal = {}) {
     tp3: formatNum3(tp3 ?? NaN),
     sl: formatNum3(sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
-    note: String(tradePlan?.note || signal?.note || "").trim(),
+    note: String(effectivePlan?.note || signal?.note || "").trim(),
     entry_model: String(
-      signal.entry_model || raw.entry_model || tradePlan.entry_model || "",
+      signal.entry_model || raw.entry_model || effectivePlan.entry_model || "",
     ),
     strategy: String(
-      signal.strategy || raw.strategy || tradePlan.strategy || "",
+      signal.strategy || raw.strategy || effectivePlan.strategy || "",
     ),
     confidence_pct: asNum(
       signal.confidence_pct ??
         signal.confidence ??
         raw.confidence_pct ??
         raw.confidence ??
-        tradePlan.confidence_pct ??
-        tradePlan.confidence,
+        effectivePlan.confidence_pct ??
+        effectivePlan.confidence ??
+        effectivePlan?.risk_management?.confidence_pct,
     ),
     invalidation: String(
-      signal.invalidation || raw.invalidation || tradePlan.invalidation || "",
+      signal.invalidation || raw.invalidation || effectivePlan.invalidation || "",
     ),
     estimated_bars: asNum(
-      signal.estimated_bars ?? raw.estimated_bars ?? tradePlan.estimated_bars,
+      signal.estimated_bars ??
+        raw.estimated_bars ??
+        effectivePlan.estimated_bars ??
+        effectivePlan?.risk_management?.estimate_mins_that_entry_happens,
     ),
     be_trigger: asNum(
       signal.be_trigger ??
         raw.be_trigger ??
-        tradePlan.be_trigger ??
+        effectivePlan.be_trigger ??
+        effectivePlan.breakeven_trigger ??
         raw.be_trigger_raw,
     ),
-    profile: String(signal.profile || raw.profile || tradePlan.profile || ""),
+    profile: String(signal.profile || raw.profile || effectivePlan.profile || ""),
     exit_condition: String(
       signal.exit_condition ||
         raw.exit_condition ||
-        tradePlan.exit_condition ||
+        effectivePlan.exit_condition ||
+        effectivePlan.mid_trade_invalidation ||
         "",
     ),
     entry_condition: String(
       signal.entry_condition ||
         raw.entry_condition ||
-        tradePlan.entry_condition ||
+        effectivePlan.entry_condition ||
+        effectivePlan.entry_trigger ||
         "",
     ),
-    confluence_checklist: Array.isArray(
-      signal.confluence_checklist ||
-        raw.confluence_checklist ||
-        tradePlan.confluence_checklist,
-    )
-      ? signal.confluence_checklist ||
-        raw.confluence_checklist ||
-        tradePlan.confluence_checklist
-      : [],
+    confluence_checklist: (() => {
+      const fromSignal = checklistToArray(signal.confluence_checklist);
+      if (fromSignal.length) return fromSignal;
+      const fromRaw = checklistToArray(raw.confluence_checklist);
+      if (fromRaw.length) return fromRaw;
+      const fromPlan = checklistToArray(effectivePlan.confluence_checklist);
+      if (fromPlan.length) return fromPlan;
+      return checklistToArray(effectivePlan.entry_checklists);
+    })(),
     skip_recommendation: String(
       signal.skip_recommendation ||
         raw.skip_recommendation ||
-        tradePlan.skip_recommendation ||
+        effectivePlan.skip_recommendation ||
+        effectivePlan?.risk_management?.skip_decision ||
         "",
     ),
     risk_management: String(
       signal.risk_management ||
-        tradePlan.risk_management ||
+        effectivePlan.risk_management ||
         raw.risk_management ||
         "",
     ),
-    partial_tps: Array.isArray(tradePlan.partial_tps)
-      ? tradePlan.partial_tps
+    partial_tps: Array.isArray(effectivePlan.partial_tps)
+      ? effectivePlan.partial_tps
       : Array.isArray(raw.partial_tps)
         ? raw.partial_tps
         : [],
-    reasons_to_skip: Array.isArray(tradePlan.reasons_to_skip)
-      ? tradePlan.reasons_to_skip
+    reasons_to_skip: Array.isArray(effectivePlan.reasons_to_skip)
+      ? effectivePlan.reasons_to_skip
       : Array.isArray(raw.reasons_to_skip)
         ? raw.reasons_to_skip
+        : typeof effectivePlan?.risk_management?.skip_reasons === "string" &&
+            effectivePlan.risk_management.skip_reasons.trim()
+          ? [effectivePlan.risk_management.skip_reasons.trim()]
         : [],
   };
 }
