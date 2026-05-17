@@ -983,7 +983,7 @@ namespace cAlgo.Robots
             try
             {
                 var payload = string.Format(CultureInfo.InvariantCulture,
-                    "{{\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[{6}],\"closed\":[{7}],\"symbol_metrics\":[{8}]}}",
+                    "{{\"source_id\":\"Ctrader\",\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[{6}],\"closed\":[{7}],\"symbol_metrics\":[{8}]}}",
                     accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", ordersList), string.Join(",", closedList), string.Join(",", metricsList));
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);

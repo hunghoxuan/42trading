@@ -47,6 +47,32 @@ export default function HealthPage() {
     return <div className="loading-card">Loading health...</div>;
   if (error && !health) return <div className="msg-error">{error}</div>;
 
+  const timeAgo = (iso) => {
+    if (!iso) return "-";
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return Math.round(diff) + "s ago";
+    if (diff < 3600) return Math.round(diff / 60) + "m ago";
+    if (diff < 86400) return Math.round(diff / 3600) + "h ago";
+    return Math.round(diff / 86400) + "d ago";
+  };
+
+  const sourceDefaults = {
+    ctrader: {
+      id: "Ctrader",
+      connected: false,
+      enabled: false,
+      lastActivity: null,
+    },
+    mt5: { id: "MT5", connected: false, enabled: false, lastActivity: null },
+    binance: {
+      id: "Binance",
+      connected: false,
+      enabled: false,
+      lastActivity: null,
+    },
+  };
+  const sources = health?.sources || sourceDefaults;
+
   const items = [
     {
       label: "Server",
@@ -69,29 +95,26 @@ export default function HealthPage() {
       value: health?.cron || "-",
       ok: health?.cron?.startsWith?.("ok"),
     },
+  ];
+
+  const sourceItems = [
     {
-      label: "Cron Snapshots",
-      value: health?.cronSnapshotEnabled ? "Enabled" : "Disabled",
-      ok: true,
+      label: sources.ctrader.id,
+      dot: sources.ctrader.connected,
+      status: sources.ctrader.enabled ? "Enabled" : "Disabled",
+      last: timeAgo(sources.ctrader.lastActivity),
     },
     {
-      label: "MT5 Bridge",
-      value: health?.mt5Enabled ? "Enabled" : "Disabled",
-      ok: health?.mt5Enabled,
+      label: sources.mt5.id,
+      dot: sources.mt5.connected,
+      status: sources.mt5.enabled ? "Enabled" : "Disabled",
+      last: timeAgo(sources.mt5.lastActivity),
     },
     {
-      label: "Binance",
-      value: health?.binanceEnabled
-        ? `${health.binanceMode || "on"}`
-        : "Disabled",
-      ok: true,
-    },
-    {
-      label: "cTrader",
-      value: health?.ctraderEnabled
-        ? `${health.ctraderMode || "on"}`
-        : "Disabled",
-      ok: true,
+      label: sources.binance.id,
+      dot: sources.binance.connected,
+      status: sources.binance.enabled ? "Enabled" : "Disabled",
+      last: timeAgo(sources.binance.lastActivity),
     },
   ];
 
@@ -130,24 +153,90 @@ export default function HealthPage() {
           </div>
         ))}
       </div>
+      <div style={{ marginTop: 16 }}>
+        <div className="minor-text" style={{ fontSize: 10, textTransform: "uppercase", marginBottom: 8 }}>
+          Sources
+        </div>
+        {sourceItems.map((s) => (
+          <div
+            key={s.label}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontSize: 11,
+              padding: "5px 0",
+              borderBottom: "1px solid rgba(255,255,255,0.04)",
+            }}
+          >
+            <span style={{ color: s.dot ? "#22c55e" : "#555", fontSize: 14 }}>●</span>
+            <span style={{ flex: 1, fontWeight: 600 }}>{s.label}</span>
+            <span style={{ color: s.status === "Enabled" ? "#22c55e" : "#666", fontSize: 10 }}>
+              {s.status}
+            </span>
+            <span className="minor-text" style={{ fontSize: 9, minWidth: 50, textAlign: "right" }}>
+              {s.last}
+            </span>
+          </div>
+        ))}
+      </div>
+
       {health?.cronEvents?.length > 0 && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 16,
+              flexWrap: "wrap",
+              marginBottom: 12,
+            }}
+          >
             <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>MARKET DATA</span>
-              <div style={{ fontSize: 12, color: (health.cronDetails?.marketData || "").includes("error") ? "#ef4444" : "var(--success)" }}>
+              <span className="minor-text" style={{ fontSize: 9 }}>
+                MARKET DATA
+              </span>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: (health.cronDetails?.marketData || "").includes(
+                    "error",
+                  )
+                    ? "#ef4444"
+                    : "var(--success)",
+                }}
+              >
                 {health.cronDetails?.marketData || "-"}
               </div>
             </div>
             <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>AI ANALYSIS</span>
-              <div style={{ fontSize: 12, color: (health.cronDetails?.aiAnalysis || "").includes("error") ? "#ef4444" : "var(--muted)" }}>
+              <span className="minor-text" style={{ fontSize: 9 }}>
+                AI ANALYSIS
+              </span>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: (health.cronDetails?.aiAnalysis || "").includes(
+                    "error",
+                  )
+                    ? "#ef4444"
+                    : "var(--muted)",
+                }}
+              >
                 {health.cronDetails?.aiAnalysis || "-"}
               </div>
             </div>
             <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>SNAPSHOTS</span>
-              <div style={{ fontSize: 12, color: (health.cronDetails?.snapshots || "").includes("error") ? "#ef4444" : "var(--muted)" }}>
+              <span className="minor-text" style={{ fontSize: 9 }}>
+                SNAPSHOTS
+              </span>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: (health.cronDetails?.snapshots || "").includes("error")
+                    ? "#ef4444"
+                    : "var(--muted)",
+                }}
+              >
                 {health.cronDetails?.snapshots || "-"}
               </div>
             </div>
@@ -193,7 +282,9 @@ export default function HealthPage() {
                       opacity: 0.65,
                       marginTop: 1,
                       marginLeft: 14,
-                      color: isError ? "var(--danger, #ef4444)" : "var(--muted)",
+                      color: isError
+                        ? "var(--danger, #ef4444)"
+                        : "var(--muted)",
                       fontWeight: isError ? 600 : 300,
                     }}
                   >

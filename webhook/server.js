@@ -7382,6 +7382,7 @@ async function _mt5InitBackendInternal() {
       }
     },
     async ackTradeV2(accountId, payload = {}) {
+      trackSourceActivity(payload?.source_id || "mt5", true);
       const now = mt5NowIso();
       const openedAt = payload.opened_at || payload.openedAt || null;
       const closedAt = payload.closed_at || payload.closedAt || null;
@@ -7593,6 +7594,7 @@ async function _mt5InitBackendInternal() {
       }
     },
     async brokerSyncV2(accountId, payload = {}) {
+      trackSourceActivity(payload?.source_id || "mt5", true);
       const aid = String(accountId || "").trim();
       const acc = await pool.query(
         `
@@ -8515,6 +8517,7 @@ async function _mt5InitBackendInternal() {
       };
     },
     async brokerHeartbeatV2(accountId, payload = {}) {
+      trackSourceActivity(payload?.source_id || "mt5", true);
       const aid = String(accountId || "").trim();
       const now = mt5NowIso();
       const balance = asNum(payload.balance, null);
@@ -14506,6 +14509,26 @@ const appHandler = async (req, res) => {
       cronAiEnabled: true,
       cronSnapshotsEnabled: true,
       cronDetails: global._cronDetails || {},
+      sources: {
+        ctrader: {
+          id: "Ctrader",
+          connected: SOURCE_STATUS.ctrader.connected,
+          enabled: CFG.ctraderEnabled,
+          lastActivity: SOURCE_STATUS.ctrader.lastActivity,
+        },
+        mt5: {
+          id: "MT5",
+          connected: SOURCE_STATUS.mt5.connected,
+          enabled: CFG.mt5Enabled,
+          lastActivity: SOURCE_STATUS.mt5.lastActivity,
+        },
+        binance: {
+          id: "Binance",
+          connected: SOURCE_STATUS.binance.connected,
+          enabled: CFG.binanceEnabled,
+          lastActivity: SOURCE_STATUS.binance.lastActivity,
+        },
+      },
     });
   }
 
@@ -21936,6 +21959,11 @@ async function start() {
   );
 }
 
+const SOURCE_STATUS = {
+  ctrader: { lastActivity: null, connected: false, enabled: false },
+  mt5: { lastActivity: null, connected: false, enabled: false },
+  binance: { lastActivity: null, connected: false, enabled: false },
+};
 const CRON_STATE = {
   lastMarketDataRun: {}, // { [userId_name_tf]: timestamp }
   lastAiAnalysisRun: {}, // { [userId_name_tf]: timestamp }
@@ -21962,6 +21990,13 @@ function bullConnectionFromRedisUrl(redisUrl) {
   }
 }
 
+function trackSourceActivity(sourceId, connected = true) {
+  const key = String(sourceId || "").toLowerCase();
+  if (!SOURCE_STATUS[key]) return;
+  SOURCE_STATUS[key].lastActivity = new Date().toISOString();
+  SOURCE_STATUS[key].connected = connected;
+  SOURCE_STATUS[key].enabled = true;
+}
 function marketDataCronSettingEnabled(data = {}) {
   return asBool(data.enabled ?? true, true);
 }

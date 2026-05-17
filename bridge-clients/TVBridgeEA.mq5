@@ -1812,7 +1812,7 @@ void RemoteLog(string msg, string level = "INFO")
       return;
 
    string body = "{";
-   body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
    body += "\"level\":\"" + JsonEscape(level) + "\",";
    body += "\"message\":\"" + JsonEscape(msg) + "\"";
    body += "}";
@@ -1866,7 +1866,7 @@ void Ack(const string signalId, const string status, const string ticket, const 
    if(StringLen(g_ackVolumeNote) > 0) ackNote += " volNote=" + g_ackVolumeNote;
    if(StringLen(g_ackStopNote) > 0) ackNote += " stopNote=" + g_ackStopNote;
    string body = "{";
-   body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
    body += "\"signal_id\":\"" + JsonEscape(signalId) + "\",";
    body += "\"status\":\"" + JsonEscape(status) + "\",";
    body += "\"execution_status\":\"" + JsonEscape(status) + "\",";
@@ -2931,7 +2931,7 @@ void SyncClosedHistory()
 
    if(count > 0)
    {
-      string body = "{\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",\"updates\":[" + updates + "]}";
+      string body = "{\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",\"updates\":[" + updates + "]}";
       HttpPostJson(BuildApiUrl("/v2/ea/trades/sync-bulk"), body);
    }
 }
@@ -3499,7 +3499,7 @@ void SyncWithVps()
    }
 
    string body = "{";
-   body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
    body += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + ",";
    body += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
    body += "\"margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) + ",";
