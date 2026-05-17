@@ -125,40 +125,92 @@ struct SPartialTarget {
 };
 SPartialTarget g_partialTargets[];
 
-void ParsePartialTps(string sid, string rawJson)
+void ParsePartialTps(string sid, string rawJson, string fullResp = "")
 {
-   if(sid == "" || rawJson == "") return;
+   if(sid == "") return;
+   bool parsed = false;
 
-   string token = "\"partial_tps\"";
-   int p = StringFind(rawJson, token);
-   if(p < 0) return;
-
-   int b1 = StringFind(rawJson, "[", p);
-   int b2 = StringFind(rawJson, "]", b1);
-   if(b1 < 0 || b2 < 0) return;
-
-   string list = StringSubstr(rawJson, b1 + 1, b2 - b1 - 1);
-
-   int start = 0;
-   while(true)
+   // 1. Try tp_targets from POLL response (preferred)
+   if(fullResp != "")
    {
-      int o1 = StringFind(list, "{", start);
-      int o2 = StringFind(list, "}", o1);
-      if(o1 < 0 || o2 < 0) break;
-
-      string item = StringSubstr(list, o1, o2 - o1 + 1);
-      double price = JsonGetNumber(item, "price");
-      double pct   = JsonGetNumber(item, "size_pct");
-
-      if(price > 0 && pct > 0)
+      string token = "\"tp_targets\"";
+      int tp = StringFind(fullResp, token);
+      if(tp >= 0)
       {
-         int n = ArraySize(g_partialTargets);
-         ArrayResize(g_partialTargets, n + 1);
-         g_partialTargets[n].sid = sid;
-         g_partialTargets[n].price = price;
-         g_partialTargets[n].pct = pct;
-         g_partialTargets[n].done = false;
+         int a1 = StringFind(fullResp, "[", tp);
+         int a2 = StringFind(fullResp, "]", a1);
+         if(a1 >= 0 && a2 >= 0)
+         {
+            string arr = StringSubstr(fullResp, a1 + 1, a2 - a1 - 1);
+            string prices[];
+            StringSplit(arr, ',', prices);
+
+            int count = ArraySize(prices);
+            if(count > 0)
+            {
+               double splits[];
+               if(count >= 3) { ArrayResize(splits, 3); splits[0] = 50; splits[1] = 30; splits[2] = 20; }
+               else if(count == 2) { ArrayResize(splits, 2); splits[0] = 60; splits[1] = 40; }
+               else { ArrayResize(splits, 1); splits[0] = 100; }
+
+               for(int i = 0; i < count && i < ArraySize(splits); i++)
+               {
+                  double px = StringToDouble(StringTrim(prices[i]));
+                  if(px > 0)
+                  {
+                     int n = ArraySize(g_partialTargets);
+                     ArrayResize(g_partialTargets, n + 1);
+                     g_partialTargets[n].sid = sid;
+                     g_partialTargets[n].price = px;
+                     g_partialTargets[n].pct = splits[i];
+                     g_partialTargets[n].done = false;
+                     parsed = true;
+                  }
+               }
+            }
+         }
       }
+   }
+
+   // 2. Fallback: raw_json.partial_tps (legacy)
+   if(!parsed && rawJson != "")
+   {
+      string token = "\"partial_tps\"";
+      int p = StringFind(rawJson, token);
+      if(p >= 0)
+      {
+         int b1 = StringFind(rawJson, "[", p);
+         int b2 = StringFind(rawJson, "]", b1);
+         if(b1 >= 0 && b2 >= 0)
+         {
+            string list = StringSubstr(rawJson, b1 + 1, b2 - b1 - 1);
+
+            int s2 = 0;
+            while(true)
+            {
+               int o1 = StringFind(list, "{", s2);
+               int o2 = StringFind(list, "}", o1);
+               if(o1 < 0 || o2 < 0) break;
+
+               string item = StringSubstr(list, o1, o2 - o1 + 1);
+               double price = JsonGetNumber(item, "price");
+               double pct   = JsonGetNumber(item, "size_pct");
+
+               if(price > 0 && pct > 0)
+               {
+                  int n = ArraySize(g_partialTargets);
+                  ArrayResize(g_partialTargets, n + 1);
+                  g_partialTargets[n].sid = sid;
+                  g_partialTargets[n].price = price;
+                  g_partialTargets[n].pct = pct;
+                  g_partialTargets[n].done = false;
+               }
+               s2 = o2 + 1;
+            }
+         }
+      }
+   }
+}
       start = o2 + 1;
    }
 }
@@ -2826,7 +2878,7 @@ void OnTimer()
     if(orderType == "") orderType = "market";
 
     string rawJson = JsonGetString(resp, "raw_json");
-    if(rawJson != "") ParsePartialTps(signalId, rawJson);
+    ParsePartialTps(signalId, rawJson, resp);
 
     g_lastPullSummary = "TASK=" + taskType + " ID=" + signalId + " " + action + " " + symbolIn;
 

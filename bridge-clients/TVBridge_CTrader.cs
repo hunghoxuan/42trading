@@ -831,24 +831,57 @@ namespace cAlgo.Robots
                     return;
                 }
 
-                // EXTRACT PARTIAL TPs
-                var rawJson = GetJsonValue(json, "raw_json");
-                if (!string.IsNullOrEmpty(rawJson))
+                // EXTRACT PARTIAL TPs — read tp_targets first, then fallback to raw_json.partial_tps
+                var partials = new List<PartialTP>();
+
+                // 1. Try tp_targets array from POLL response (preferred)
+                var tpMatch = Regex.Match(json, "\"tp_targets\"\\s*:\\s*\\[([^\\]]*)\\]");
+                if (tpMatch.Success)
                 {
-                    var partials = new List<PartialTP>();
-                    var pMatch = Regex.Match(rawJson, "\"partial_tps\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
-                    if (pMatch.Success)
+                    var tpVals = tpMatch.Groups[1].Value;
+                    var tpPrices = Regex.Matches(tpVals, @"[\d]+\.?[\d]*");
+                    var prices = new List<double>();
+                    foreach (Match m in tpPrices)
                     {
-                        var items = Regex.Matches(pMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
-                        foreach (Match m in items)
+                        var px = ParseDouble(m.Value);
+                        if (px > 0) prices.Add(px);
+                    }
+                    if (prices.Count > 0)
+                    {
+                        double[] splits;
+                        if (prices.Count >= 3) splits = new double[] { 50, 30, 20 };
+                        else if (prices.Count == 2) splits = new double[] { 60, 40 };
+                        else splits = new double[] { 100 };
+
+                        for (int i = 0; i < prices.Count && i < splits.Length; i++)
                         {
-                            var it = "{" + m.Groups[1].Value + "}";
-                            var pPrice = ParseDouble(GetJsonValue(it, "price"));
-                            var pPct = ParseDouble(GetJsonValue(it, "size_pct"));
-                            if (pPrice > 0 && pPct > 0) partials.Add(new PartialTP { Price = pPrice, SizePct = pPct });
+                            partials.Add(new PartialTP { Price = prices[i], SizePct = splits[i] });
                         }
                     }
-                    if (partials.Count > 0) _tradePartials[id] = partials;
+                }
+
+                // 2. Fallback: raw_json.partial_tps (legacy)
+                if (partials.Count == 0)
+                {
+                    var rawJson = GetJsonValue(json, "raw_json");
+                    if (!string.IsNullOrEmpty(rawJson))
+                    {
+                        var pMatch = Regex.Match(rawJson, "\"partial_tps\"\\s*:\\s*\\[(.*?)\\]", RegexOptions.Singleline);
+                        if (pMatch.Success)
+                        {
+                            var items = Regex.Matches(pMatch.Groups[1].Value, "\\{(.*?)\\}", RegexOptions.Singleline);
+                            foreach (Match m in items)
+                            {
+                                var it = "{" + m.Groups[1].Value + "}";
+                                var pPrice = ParseDouble(GetJsonValue(it, "price"));
+                                var pPct = ParseDouble(GetJsonValue(it, "size_pct"));
+                                if (pPrice > 0 && pPct > 0) partials.Add(new PartialTP { Price = pPrice, SizePct = pPct });
+                            }
+                        }
+                    }
+                }
+
+                if (partials.Count > 0) _tradePartials[id] = partials;
                 }
 
                 var label = MagicNumber.ToString();
