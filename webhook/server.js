@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 21:20 - tp123fix"); // trade detail TP1/TP2/TP3 persist + symbol selection sync fix
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.17 19:29 - 72a73159"); // trade detail TP1/TP2/TP3 persist + symbol selection sync fix
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -20819,7 +20819,7 @@ const appHandler = async (req, res) => {
             tp2 = COALESCE($6, tp2),
             tp3 = COALESCE($7, tp3),
             note = COALESCE($8, note),
-            metadata = metadata || $9,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $9,
             confidence_pct = COALESCE($12, confidence_pct),
             estimated_bars = COALESCE($13, estimated_bars),
             profile = COALESCE($14, profile),
