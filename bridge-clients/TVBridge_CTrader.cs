@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.18 08:35 - 9b7c1d2a";
+        private const string BuildVersion = "v2026.05.18 13:42 - ctpartialsafe1";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -213,8 +213,12 @@ namespace cAlgo.Robots
                             // Check if we can close at least the minimum volume
                             if (volToClose >= symbol.VolumeInUnitsMin)
                             {
-                                // Also check that we're not trying to close more than the position size
-                                if (volToClose <= pos.VolumeInUnits)
+                                // Cap at current remaining size (never exceed position volume)
+                                if (volToClose > pos.VolumeInUnits)
+                                    volToClose = pos.VolumeInUnits;
+
+                                // Also check that we're not trying to close less than min after capping
+                                if (volToClose >= symbol.VolumeInUnitsMin)
                                 {
                                     var res = ClosePosition(pos, volToClose);
                                     if (res.IsSuccessful)
@@ -227,36 +231,14 @@ namespace cAlgo.Robots
                                         Print("[Partial] Close failed for {0}: {1}", pos.Id, res.Error);
                                     }
                                 }
-                                else
-                                {
-                                    // If partial would close more than position size, close entire position
-                                    var res = ClosePosition(pos);
-                                    if (res.IsSuccessful)
-                                    {
-                                        _executedPartials.Add(pKey);
-                                        Print("[Partial] Closed entire position {0} ({1}% partial exceeded position size)", pos.Id, p.SizePct);
-                                    }
                                 }
                             }
                             else
                             {
-                                // If remaining volume is too small to split, check if we should close entire position
-                                if (pos.VolumeInUnits >= symbol.VolumeInUnitsMin)
-                                {
-                                    // Close entire position if partial is too small but position is valid
-                                    var res = ClosePosition(pos);
-                                    if (res.IsSuccessful)
-                                    {
-                                        _executedPartials.Add(pKey);
-                                        Print("[Partial] Closed entire position {0} (partial too small: {1} units)", pos.Id, volToClose);
-                                    }
-                                }
-                                else
-                                {
-                                    // If position itself is too small, just mark as done
-                                    _executedPartials.Add(pKey);
-                                    Print("[Partial] Skipped {0} (Position too small for any partial)", pos.Id);
-                                }
+                                // Safety: never close full position when one partial chunk is below min volume.
+                                // Mark this partial as skipped to avoid repeated trigger spam.
+                                _executedPartials.Add(pKey);
+                                Print("[Partial] Skipped {0} partial idx {1} (chunk too small: {2} units, min: {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
                             }
                         }
                     }
@@ -845,6 +827,19 @@ namespace cAlgo.Robots
                     {
                         var px = ParseDouble(m.Value);
                         if (px > 0) prices.Add(px);
+                    }
+                    if (prices.Count > 0)
+                    {
+                        // Safety filter: keep only targets that are true take-profit levels for side.
+                        // BUY: TP above entry. SELL: TP below entry.
+                        var filtered = prices
+                            .Where(px => action == "BUY" ? px > executionPrice : px < executionPrice)
+                            .Distinct()
+                            .ToList();
+                        if (action == "BUY") filtered = filtered.OrderBy(px => px).ToList();
+                        else filtered = filtered.OrderByDescending(px => px).ToList();
+
+                        prices = filtered;
                     }
                     if (prices.Count > 0)
                     {
