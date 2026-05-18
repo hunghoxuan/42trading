@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 11:56 UTC`
-- note: `Deploying cTrader multi-TP partial safety patch (ctpartialsafe1)`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 11:59 UTC`
+- note: `ctpartialsafe1 deployed and verified by codex-gpt5`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,23 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 11:59 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: e3a03cac
+- scope: `bridge-clients/TVBridge_CTrader.cs`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`
+- merge_to_main: YES (e3a03cac)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 13:42 - ctpartialsafe1
+  - ea_version: v2026.05.18 13:42 - ctpartialsafe1
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 13:42 - ctpartialsafe1`, `postgres:ok`, `redis:ok`
+  - /ui asset: `/assets/index-gNQEDFqu.js`
+  - key endpoint: PM2 logs show active `GET /v2/broker/pull` + `POST /v2/broker/sync` cycles with `items=0 results=1` and no partial-size crash signal
+- handoff_next: none
 
 ### [2026-05-16 16:36 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
