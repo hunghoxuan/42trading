@@ -870,7 +870,7 @@ export default function SignalDetailCard({
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length) tabs.push("info");
     if (mode === "trade") tabs.push("broker");
-    if (mode === "trade") tabs.push("files");
+    if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
     return tabs;
@@ -1509,8 +1509,14 @@ export default function SignalDetailCard({
                 showEditButton={false}
                 showPerCardLayoutControls={true}
                 skipFetch={false}
-                hasTradePlan={Boolean(tradePlan?.value?.entry)}
-                hasAnalysis={Boolean(tradePlan?.value?.entry)}
+                hasTradePlan={Boolean(
+                  tradePlan?.value?.entry ||
+                  (Array.isArray(response?.tradePlans) && response.tradePlans.length > 0)
+                )}
+                hasAnalysis={Boolean(
+                  response?.raw && typeof response.raw === "object" && Object.keys(response.raw).length > 0
+                )}
+                analysisSnapshot={{...(response?.raw || {}), trade_plan: Array.isArray(response?.tradePlans) ? response.tradePlans : []}}
                 onPlanLevelChange={chart?.onPlanLevelChange}
                 onTradePlanGroupChange={chart?.onTradePlanGroupChange}
                 onQuickTradeIntent={(intent) => {

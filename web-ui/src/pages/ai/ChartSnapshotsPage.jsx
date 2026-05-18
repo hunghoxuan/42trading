@@ -3529,7 +3529,12 @@ export default function ChartSnapshotsPage() {
           autoEntity?.kind === "trade" &&
           autoEntity?.id
         ) {
-          navigate(`/trades/${autoEntity.id}`);
+          const sym = normalizeWatchSymbol(activeSymbol || cfg.symbol || "");
+          if (sym) {
+            navigate(`/ai/trade/${encodeURIComponent(sym)}`, { replace: true });
+          } else {
+            navigate(`/trades/${autoEntity.id}`);
+          }
         }
       }
       setAnalysisRaw(raw);
