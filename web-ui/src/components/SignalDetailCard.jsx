@@ -1509,6 +1509,33 @@ export default function SignalDetailCard({
                 showEditButton={false}
                 showPerCardLayoutControls={true}
                 skipFetch={false}
+                hasTradePlan={Boolean(tradePlan?.value?.entry)}
+                hasAnalysis={Boolean(tradePlan?.value?.entry)}
+                onPlanLevelChange={chart?.onPlanLevelChange}
+                onTradePlanGroupChange={chart?.onTradePlanGroupChange}
+                onQuickTradeIntent={(intent) => {
+                  const iSide = String(intent?.side || "BUY").toUpperCase();
+                  const iAction = String(intent?.action || "ENTRY").toUpperCase();
+                  const iPrice = Number(intent?.price);
+                  const plan = tradePlan?.value || {};
+                  if (iAction === "TP" && Number.isFinite(iPrice)) {
+                    const base = plan || {};
+                    const sideDir = String(base.direction || iSide).toUpperCase();
+                    const prices = [base.tp1, base.tp2, base.tp3].map((x) => parseFloat(x)).filter((x) => Number.isFinite(x));
+                    if (Number.isFinite(iPrice)) prices.push(iPrice);
+                    const uniq = [...new Set(prices.map((x) => Number(x.toFixed(8))))];
+                    uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
+                    tradePlan?.onChange?.("tp1", uniq[0] != null ? String(uniq[0]) : "");
+                    tradePlan?.onChange?.("tp2", uniq[1] != null ? String(uniq[1]) : "");
+                    tradePlan?.onChange?.("tp3", uniq[2] != null ? String(uniq[2]) : "");
+                    tradePlan?.onChange?.("tp", uniq[0] != null ? String(uniq[0]) : "");
+                  } else if (iAction === "SL" && Number.isFinite(iPrice)) {
+                    tradePlan?.onChange?.("sl", String(iPrice));
+                  } else if (Number.isFinite(iPrice)) {
+                    tradePlan?.onChange?.("direction", iSide);
+                    tradePlan?.onChange?.("entry", String(iPrice));
+                  }
+                }}
               />
             </Suspense>
           </div>
