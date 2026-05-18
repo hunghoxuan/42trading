@@ -349,18 +349,17 @@ export default function SessionClockBar({ displayTimezone }) {
     let next;
     if (cur === "local") {
       next = "America/New_York";
-      setTz(next);
-      setTzMode(setDisplayTimezoneMode("selected"));
     } else if (cur.includes("new_york")) {
       next = "UTC";
-      setTz(next);
-      setTzMode(setDisplayTimezoneMode("selected"));
     } else {
       next = "Local";
-      setTz(next);
-      setTzMode(setDisplayTimezoneMode("local"));
     }
+    // Write localStorage BEFORE dispatching so listeners see the new value
     localStorage.setItem("ui_display_timezone", next);
+    const mode = next === "Local" ? "local" : "selected";
+    setDisplayTimezoneMode(mode);
+    setTz(next);
+    setTzMode(mode);
     window.dispatchEvent(new Event("ui-timezone-changed"));
   };
 

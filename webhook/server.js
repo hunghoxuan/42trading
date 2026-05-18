@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.18 19:55 - f1c856bb",
-); // cTrader SL diagnostic logging + partial TP else pairing fix
+  "v2026.05.18 20:23 - e56e7b53",
+); // TradeFilesTab delete + upload fix + clock toggle fix + snapshot delete support
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -21494,7 +21494,11 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = path.basename(fileName);
-      const abs = path.join(ensureTradeFilesDir(sid), safeName);
+      // Check both files dir and snapshots subdir
+      let abs = path.join(ensureTradeFilesDir(sid), safeName);
+      if (!fs.existsSync(abs)) {
+        abs = path.join(tradeSnapshotDir(sid), safeName);
+      }
       if (!fs.existsSync(abs))
         return json(res, 404, { ok: false, error: "file not found" });
       fs.unlinkSync(abs);
