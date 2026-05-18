@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 18:44 - eaaf9081"); // cTrader partial TP safety hardening + side-valid TP filtering
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 19:15 - 386c07fa"); // cTrader partial TP safety hardening + side-valid TP filtering
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

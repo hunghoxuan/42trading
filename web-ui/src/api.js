@@ -780,10 +780,12 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     const headers = {};
+    const activeUserId = getRuntimeActiveUserId();
     if (API_KEY) headers["x-api-key"] = API_KEY;
+    if (activeUserId) headers["x-active-user-id"] = activeUserId;
     const res = await fetch(
       `${base}/v2/trades/${encodeURIComponent(tradeId)}/files/upload`,
-      { method: "POST", headers, body: form },
+      { method: "POST", headers, body: form, credentials: "include" },
     );
     const text = await res.text();
     let data;

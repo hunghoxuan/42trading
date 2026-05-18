@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { api } from "../api";
 
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"];
@@ -15,9 +15,12 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState("");
   const [selectedTfs, setSelectedTfs] = useState(["15m", "1h", "4h"]);
   const [previewFile, setPreviewFile] = useState(null);
+  const inputRef = useRef(null);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -26,14 +29,26 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
       const sidFiles = tradeSid
         ? (await api.tradeSnapshots(tradeSid).catch(() => ({ files: [] }))).files || []
         : [];
+      const uploadFiles = tradeSid
+        ? (await api.listTradeFiles(tradeSid).catch(() => ({ files: [] }))).files || []
+        : [];
 
-      const serverFiles = sidFiles.map((item) => ({
-        name: item.name || item.file_name || "snapshot",
-        url:
-          item.url ||
-          `/v2/trades/${encodeURIComponent(tradeSid || "")}/snapshots/${encodeURIComponent(item.file_name || item.name || "")}/content`,
-        size_bytes: item.size_bytes || item.size || 0,
-      }));
+      const serverFiles = [
+        ...sidFiles.map((item) => ({
+          name: item.name || item.file_name || "snapshot",
+          url:
+            item.url ||
+            `/v2/trades/${encodeURIComponent(tradeSid || "")}/snapshots/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+          size_bytes: item.size_bytes || item.size || 0,
+        })),
+        ...uploadFiles.map((item) => ({
+          name: item.name || item.file_name || "file",
+          url:
+            item.url ||
+            `/v2/trades/${encodeURIComponent(tradeSid || "")}/files/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+          size_bytes: item.size_bytes || item.size || 0,
+        })),
+      ];
 
       const seen = new Set();
       const all = [];
@@ -53,6 +68,10 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
   useEffect(() => { loadFiles(); }, [loadFiles]);
 
   const takeSnapshots = async () => {
+    if (!tradeSid) {
+      setError("Trade SID is required before saving files.");
+      return;
+    }
     if (!symbol) return;
     setCapturing(true);
     setError("");
@@ -80,6 +99,33 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
     );
   };
 
+  const uploadFiles = async (fileList) => {
+    if (!tradeSid) {
+      setError("Trade SID is required before uploading files.");
+      return;
+    }
+    const selected = Array.from(fileList || []).filter(Boolean);
+    if (!selected.length) return;
+    setUploading(true);
+    setError("");
+    try {
+      for (const file of selected) {
+        await api.uploadTradeFile(tradeSid, file);
+      }
+      await loadFiles();
+    } catch (e) {
+      setError(e?.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    uploadFiles(e.dataTransfer.files);
+  };
+
   const isImage = (name) => /\.(png|jpg|jpeg|gif|webp)$/i.test(String(name || ""));
   const preview = previewFile ? files.find((f) => f.name === previewFile) : null;
 
@@ -103,6 +149,38 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
       </div>
 
       {error && <div className="minor-text" style={{ color: "#ef4444", fontSize: 10, marginBottom: 8 }}>{error}</div>}
+
+      <div
+        onDrop={handleDrop}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onClick={() => tradeSid && inputRef.current?.click()}
+        style={{
+          border: `1px dashed ${dragOver ? "var(--accent)" : "var(--border)"}`,
+          borderRadius: 8,
+          padding: 12,
+          marginBottom: 12,
+          textAlign: "center",
+          cursor: tradeSid ? "pointer" : "not-allowed",
+          background: dragOver ? "rgba(34,211,238,0.08)" : "rgba(255,255,255,0.02)",
+          opacity: uploading ? 0.65 : 1,
+        }}
+      >
+        <span className="minor-text" style={{ fontSize: 11 }}>
+          {uploading ? "Uploading..." : "Drop files here or click to upload"}
+        </span>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          disabled={!tradeSid}
+          onChange={(e) => uploadFiles(e.target.files)}
+          style={{ display: "none" }}
+        />
+      </div>
 
       {/* Thumbnail grid */}
       {files.length > 0 ? (

@@ -2889,6 +2889,14 @@ export default function ChartSnapshotsPage() {
     autoSaveResult?.mode === "trades";
   const manuallyAddedSignal = manualAddedMode === "signal";
   const manuallyAddedTrade = manualAddedMode === "trade";
+  const activeAddedTradeEntity = useMemo(() => {
+    const values = Object.values(addedEntities || {});
+    return (
+      [...values]
+        .reverse()
+        .find((item) => item?.kind === "trade" && item?.id) || null
+    );
+  }, [addedEntities]);
 
   const resolveCreatedId = (obj = {}, mode = "") => {
     const candidates = [
@@ -6548,7 +6556,7 @@ export default function ChartSnapshotsPage() {
               tradePlan={{
                 enabled: isTradeRoute || hasAnalyzeResponse,
                 signalId: null,
-                tradeId: null,
+                tradeId: activeAddedTradeEntity?.id || null,
                 value: position,
                 onChange: updatePositionField,
                 showSaveButton: false,
