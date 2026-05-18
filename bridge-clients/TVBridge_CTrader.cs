@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.18 19:15 - 386c07fa";
+        private const string BuildVersion = "v2026.05.18 19:30 - 8edb962f";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -231,19 +231,19 @@ namespace cAlgo.Robots
                                         Print("[Partial] Close failed for {0}: {1}", pos.Id, res.Error);
                                     }
                                 }
-                                }
                             }
-                            else
-                            {
-                                // Safety: never close full position when one partial chunk is below min volume.
-                                // Mark this partial as skipped to avoid repeated trigger spam.
-                                _executedPartials.Add(pKey);
-                                Print("[Partial] Skipped {0} partial idx {1} (chunk too small: {2} units, min: {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
-                            }
+                        }
+                        else
+                        {
+                            // Safety: never close full position when one partial chunk is below min volume.
+                            // Mark this partial as skipped to avoid repeated trigger spam.
+                            _executedPartials.Add(pKey);
+                            Print("[Partial] Skipped {0} partial idx {1} (chunk too small: {2} units, min: {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
                         }
                     }
                 }
             }
+        }
         }
 
         protected override void OnTimer()

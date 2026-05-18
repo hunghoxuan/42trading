@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 19:15 - 386c07fa"); // cTrader partial TP safety hardening + side-valid TP filtering
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.18 19:30 - 8edb962f",
+); // broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -2989,7 +2992,11 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
   const files = fs
     .readdirSync(CHART_SNAPSHOT_DIR)
     .filter((f) => /\.(png|jpe?g)$/i.test(f))
-    .filter((f) => String(f || "").toUpperCase().includes(sym))
+    .filter((f) =>
+      String(f || "")
+        .toUpperCase()
+        .includes(sym),
+    )
     .map((f) => {
       let t = 0;
       try {
@@ -2997,7 +3004,9 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
       } catch {}
       return { file_name: f, mtime_ms: t };
     });
-  const sorted = files.sort((a, b) => b.mtime_ms - a.mtime_ms).slice(0, Math.max(1, Number(limit) || 12));
+  const sorted = files
+    .sort((a, b) => b.mtime_ms - a.mtime_ms)
+    .slice(0, Math.max(1, Number(limit) || 12));
   return sorted.map((x) => x.file_name);
 }
 
@@ -3574,7 +3583,10 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   const symbolToken = sanitizeSnapshotFileToken(symbol);
   const tfToken = sanitizeSnapshotFileToken(interval, "TF");
   const userId = sanitizeSnapshotFileToken(opts.userId || "default");
-  const watermarkTs = new Date(ts).toISOString().replace("T", " ").replace("Z", " UTC");
+  const watermarkTs = new Date(ts)
+    .toISOString()
+    .replace("T", " ")
+    .replace("Z", " UTC");
 
   // Simple naming: SYMBOL_TF.png — overwrites on re-capture
   const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
@@ -3693,7 +3705,8 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
           watermark.style.background = "rgba(255,255,255,0.94)";
           watermark.style.color = "#07111f";
           watermark.style.border = "2px solid rgba(0,0,0,0.88)";
-          watermark.style.boxShadow = "0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65)";
+          watermark.style.boxShadow =
+            "0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65)";
           watermark.style.textShadow = "0 1px 0 rgba(255,255,255,0.9)";
           watermark.style.pointerEvents = "none";
           document.body.appendChild(watermark);
@@ -3708,7 +3721,12 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
       if (!el) return false;
       const r = el.getBoundingClientRect();
       const styles = window.getComputedStyle(el);
-      return r.width > 40 && r.height > 14 && styles.visibility !== "hidden" && styles.display !== "none";
+      return (
+        r.width > 40 &&
+        r.height > 14 &&
+        styles.visibility !== "hidden" &&
+        styles.display !== "none"
+      );
     });
     if (!watermarkVisible) {
       throw new Error("snapshot_watermark_not_visible_before_capture");
@@ -4019,16 +4037,25 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           // Give embedded charts time to load iframes
           await page.waitForTimeout(12000);
           const gridWatermarkOk = await page.evaluate(() => {
-            const badges = [...document.querySelectorAll(".sym-time-badge,.tf-badge")];
+            const badges = [
+              ...document.querySelectorAll(".sym-time-badge,.tf-badge"),
+            ];
             if (!badges.length) return false;
             return badges.every((el) => {
               const r = el.getBoundingClientRect();
               const styles = window.getComputedStyle(el);
-              return r.width > 20 && r.height > 14 && styles.display !== "none" && styles.visibility !== "hidden";
+              return (
+                r.width > 20 &&
+                r.height > 14 &&
+                styles.display !== "none" &&
+                styles.visibility !== "hidden"
+              );
             });
           });
           if (!gridWatermarkOk) {
-            throw new Error("snapshot_grid_watermark_not_visible_before_capture");
+            throw new Error(
+              "snapshot_grid_watermark_not_visible_before_capture",
+            );
           }
 
           await page.screenshot({
@@ -8018,11 +8045,17 @@ async function _mt5InitBackendInternal() {
         health_updated_at: new Date().toISOString(),
       };
 
+      // Only bump updated_at when status actually changes — not on PnL-only syncs.
+      const oldStatus = String(acc.rows[0]?.status || "").toUpperCase();
+      const newStatus = payload.status
+        ? String(payload.status).toUpperCase()
+        : oldStatus || "ACTIVE";
+
       await pool.query(
         `
         INSERT INTO user_accounts (
           account_id, user_id, metadata, balance, equity, margin, free_margin, leverage, broker_name, status, updated_at
-        ) VALUES ($1::text, $2::text, $3::jsonb, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::text, 'ACTIVE', NOW())
+        ) VALUES ($1::text, $2::text, $3::jsonb, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::text, $10::text, NOW())
         ON CONFLICT (account_id) DO UPDATE SET
           user_id = EXCLUDED.user_id,
           metadata = EXCLUDED.metadata,
@@ -8032,7 +8065,11 @@ async function _mt5InitBackendInternal() {
           free_margin = EXCLUDED.free_margin,
           leverage = EXCLUDED.leverage,
           broker_name = EXCLUDED.broker_name,
-          updated_at = NOW()
+          status = EXCLUDED.status,
+          updated_at = CASE
+            WHEN user_accounts.status IS DISTINCT FROM EXCLUDED.status THEN NOW()
+            ELSE user_accounts.updated_at
+          END
       `,
         [
           aid,
@@ -8044,6 +8081,7 @@ async function _mt5InitBackendInternal() {
           newMeta.free_margin,
           newMeta.leverage,
           newMeta.broker_name,
+          newStatus,
         ],
       );
       await StateRepo.del("USER_ACCOUNTS", uid);
@@ -8933,9 +8971,8 @@ async function _mt5InitBackendInternal() {
         `
         UPDATE user_accounts
         SET balance = COALESCE($1, balance),
-            metadata = $2,
-            updated_at = $3
-        WHERE account_id = $4
+            metadata = $2
+        WHERE account_id = $3
       `,
         [
           balance,
@@ -8944,8 +8981,8 @@ async function _mt5InitBackendInternal() {
             equity,
             margin,
             free_margin: freeMargin,
+            health_updated_at: now,
           }),
-          now,
           aid,
         ],
       );
@@ -11939,6 +11976,7 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
       .map(binanceKlineToBar)
       .filter((b) => Number.isFinite(b.time));
     console.log(`[binance] OK sym=${binanceSymbol} bars=${bars.length}`);
+    trackSourceActivity("binance", true);
     return {
       provider: "binance",
       status: "ok",
@@ -11956,6 +11994,7 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
     };
   } catch (e) {
     console.warn(`[binance] FAIL sym=${binanceSymbol}: ${e.message}`);
+    trackSourceActivity("binance", false);
     return null;
   }
 }
@@ -14906,6 +14945,7 @@ const appHandler = async (req, res) => {
       cronAiEnabled: true,
       cronSnapshotsEnabled: true,
       cronDetails: global._cronDetails || {},
+      cronEvents: global._cronEvents || [],
       sources: {
         ctrader: {
           id: "Ctrader",
@@ -15661,7 +15701,9 @@ const appHandler = async (req, res) => {
         Array.isArray(fanout?.sids) && fanout.sids.length > 0
           ? fanout.sids[0]
           : tradeSidBase;
-      const createdSids = Array.isArray(fanout?.sids) ? fanout.sids : [actualSid];
+      const createdSids = Array.isArray(fanout?.sids)
+        ? fanout.sids
+        : [actualSid];
       const copiedBySid = {};
       const persistedBySid = {};
       for (const sid of createdSids) {
@@ -17480,7 +17522,11 @@ const appHandler = async (req, res) => {
         body.trade_sid || body.tradeSid || body.sid || "",
       ).trim();
       if (tradeSid) {
-        const copied = copySnapshotsToTradeSidFolder(tradeSid, [item?.file_name], body.symbol || item?.symbol || "");
+        const copied = copySnapshotsToTradeSidFolder(
+          tradeSid,
+          [item?.file_name],
+          body.symbol || item?.symbol || "",
+        );
         const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
         item.trade_sid = tradeSid;
         item.trade_snapshot_copied = copied;
@@ -17525,15 +17571,25 @@ const appHandler = async (req, res) => {
       if (tradeSid) {
         const copied = copySnapshotsToTradeSidFolder(
           tradeSid,
-          (Array.isArray(items) ? items : []).map((x) => x?.file_name).filter(Boolean),
+          (Array.isArray(items) ? items : [])
+            .map((x) => x?.file_name)
+            .filter(Boolean),
           body.symbol ||
-            (Array.isArray(body.symbols) && body.symbols.length ? body.symbols[0] : ""),
+            (Array.isArray(body.symbols) && body.symbols.length
+              ? body.symbols[0]
+              : ""),
         );
         const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
         for (const it of Array.isArray(items) ? items : []) {
           it.trade_sid = tradeSid;
         }
-        return json(res, 200, { ok: true, items, trade_sid: tradeSid, copied, persisted });
+        return json(res, 200, {
+          ok: true,
+          items,
+          trade_sid: tradeSid,
+          copied,
+          persisted,
+        });
       }
       return json(res, 200, { ok: true, items });
     } catch (error) {
@@ -17602,7 +17658,10 @@ const appHandler = async (req, res) => {
     });
 
     const theme = url.searchParams.get("theme") || "dark";
-    const gridStamp = new Date().toISOString().replace("T", " ").replace("Z", " UTC");
+    const gridStamp = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace("Z", " UTC");
     const symbolEsc = htmlEscape(symbol);
     const gridStampEsc = htmlEscape(gridStamp);
 
@@ -17869,7 +17928,10 @@ const appHandler = async (req, res) => {
                   .filter(Boolean),
                 symbol,
               );
-              const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
+              const persisted = await persistTradeSnapshotFiles(
+                tradeSid,
+                copied,
+              );
               row.snapshots.trade_sid = tradeSid;
               row.snapshots.copied_to_trade = copied;
               row.snapshots.persisted_to_trade = persisted;
@@ -19173,9 +19235,7 @@ const appHandler = async (req, res) => {
         ),
       );
       if (!files.length) {
-        console.warn(
-          "[snapshot-analyze] No snapshots found for analysis.",
-        );
+        console.warn("[snapshot-analyze] No snapshots found for analysis.");
         return json(res, 200, {
           ok: false,
           error: "No snapshots found for analysis.",
@@ -19921,7 +19981,9 @@ const appHandler = async (req, res) => {
       const files = fs
         .readdirSync(CHART_SNAPSHOT_DIR, { withFileTypes: true })
         .filter((e) => e.isFile() && /\.(png|jpe?g)$/i.test(e.name))
-        .filter((e) => !reqSessionPrefix || e.name.includes(`_${reqSessionPrefix}_`))
+        .filter(
+          (e) => !reqSessionPrefix || e.name.includes(`_${reqSessionPrefix}_`),
+        )
         .map((e) => {
           const full = path.join(CHART_SNAPSHOT_DIR, e.name);
           const st = fs.statSync(full);
@@ -19935,9 +19997,11 @@ const appHandler = async (req, res) => {
           };
         });
 
-      const sorted = files.sort((a, b) =>
-        String(b.created_at).localeCompare(String(a.created_at)),
-      ).slice(0, limit);
+      const sorted = files
+        .sort((a, b) =>
+          String(b.created_at).localeCompare(String(a.created_at)),
+        )
+        .slice(0, limit);
       const final = sorted;
       return json(res, 200, { ok: true, items: final });
     } catch (error) {
@@ -20363,7 +20427,8 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = normalizeSnapshotFileName(fileName);
-      if (!safeName) return json(res, 400, { ok: false, error: "Invalid file" });
+      if (!safeName)
+        return json(res, 400, { ok: false, error: "Invalid file" });
       migrateLegacyTradeSnapshots(sid);
       const abs = path.join(tradeSnapshotDir(sid), safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
@@ -23000,10 +23065,11 @@ async function mt5RunMarketDataCron() {
           const batch = filteredSymbols.slice(i, i + batchSize);
           if (MARKET_DATA_QUEUE) {
             const bucket = Math.floor(now / (tfSec * 1000));
-            await Promise.all(
+            const results = await Promise.allSettled(
               batch.map((symbol) => {
                 const symbolNorm = normalizeMarketDataSymbol(symbol);
                 const tfNorm = normalizeMarketDataTf(tf);
+                const jobId = `market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`;
                 return MARKET_DATA_QUEUE.add(
                   "fetch-bars",
                   {
@@ -23013,12 +23079,16 @@ async function mt5RunMarketDataCron() {
                     tf,
                     timezone,
                   },
-                  {
-                    jobId: `market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`,
-                  },
+                  { jobId },
                 );
               }),
             );
+            const failed = results.filter((r) => r.status === "rejected");
+            if (failed.length) {
+              console.error(
+                `[Cron][MarketData] BullMQ add failed for ${failed.length} symbols: ${failed.map((f) => f.reason?.message || String(f.reason)).join("; ")}`,
+              );
+            }
           } else {
             await Promise.all(
               batch.map(async (symbol) => {
