@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 17:41 UTC`
-- note: `TradePlanEditor flicker fix deploy`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 17:45 UTC`
+- note: `TradePlanEditor flicker fix deployed and verified`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,24 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 17:45 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 694499f8
+- scope: `web-ui/src/components/TradePlanEditor.jsx`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (694499f8)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 16:17 - 7df2b6d4
+  - ea_version: v2026.05.18 16:17 - 7df2b6d4
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 16:17 - 7df2b6d4`, `postgres:ok`, `redis:ok`
+  - /ui asset: `/assets/index-Ffe2FdVO.js`
+  - key endpoint: PM2 logs show active `GET /v2/broker/pull`, `POST /v2/broker/ack`, and `POST /v2/broker/sync` loops with `items=0 results=1`
+  - task-specific: TradePlanEditor numeric row components stabilized to avoid DOM subtree replacement/flicker
+- handoff_next: none
 
 ### [2026-05-18 13:02 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
