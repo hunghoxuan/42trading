@@ -344,8 +344,20 @@ export default function SessionClockBar({ displayTimezone }) {
   };
 
   const toggleTz = () => {
-    const nextMode = tzMode === "local" ? "selected" : "local";
-    setTzMode(setDisplayTimezoneMode(nextMode));
+    // Cycle: Local → New York → UTC → Local
+    const cur = String(tz || "").toLowerCase();
+    if (cur === "local") {
+      setTz("America/New_York");
+      setTzMode(setDisplayTimezoneMode("selected"));
+    } else if (cur.includes("new_york")) {
+      setTz("UTC");
+      setTzMode(setDisplayTimezoneMode("selected"));
+    } else {
+      setTz("Local");
+      setTzMode(setDisplayTimezoneMode("local"));
+    }
+    localStorage.setItem("ui_display_timezone", cur === "local" ? "America/New_York" : cur.includes("new_york") ? "UTC" : "Local");
+    window.dispatchEvent(new Event("ui-timezone-changed"));
   };
 
   return (

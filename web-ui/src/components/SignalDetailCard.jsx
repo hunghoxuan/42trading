@@ -1494,7 +1494,7 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        {(mode === "trade" || mode === "ai") && chart?.symbol && (
+        {(mode === "trade" || (mode === "ai" && response?.hasData)) && chart?.symbol && (
           <div style={{ marginBottom: 16 }}>
             <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
               <SymbolChart
