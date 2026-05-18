@@ -11,6 +11,7 @@ import {
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
 const TradeFilesTab = lazy(() => import("./TradeFilesTab"));
+const InfoTabChart = lazy(() => import("./InfoTabChart"));
 import { sortTimeframes } from "../utils/format";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
@@ -1494,18 +1495,15 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
-          <button
-            className="secondary-button"
-            style={{ fontSize: 10, padding: "3px 10px" }}
-            onClick={() => chart?.onRefreshBars?.()}
-          >
-            Refresh Bars
-          </button>
-          <span className="minor-text" style={{ fontSize: 9, opacity: 0.5, alignSelf: "center" }}>
-            Reload latest price data
-          </span>
-        </div>
+        <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
+          <InfoTabChart
+            symbol={chart?.symbol}
+            interval={chart?.interval || chart?.detailTfTab || "1h"}
+            entryPrice={chart?.entryPrice}
+            slPrice={chart?.slPrice}
+            tpPrice={chart?.tpPrice}
+          />
+        </Suspense>
         {(() => {
           const p =
             plans.find(
