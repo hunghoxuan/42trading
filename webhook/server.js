@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.18 19:30 - 8edb962f",
-); // broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 19:51 - f1c856bb"); // broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -5853,7 +5850,29 @@ function tryServeUi(url, req, res, hostname) {
     isTradeRootUiPath;
   const isUiAssetPath = url.pathname.startsWith("/assets/");
   if (!isUiPath && !isUiAssetPath) return false;
-  if (!fs.existsSync(CFG.uiDistPath)) {
+  const uiRootCandidates = [
+    CFG.uiDistPath,
+    path.resolve(__dirname, "../web-ui"),
+    path.resolve(__dirname, "../webhook-ui/dist"),
+    path.resolve(__dirname, "../webhook-ui"),
+  ];
+  const uiRoot = uiRootCandidates.find((candidate) => {
+    try {
+      const indexPath = path.join(candidate, "index.html");
+      const assetsDir = path.join(candidate, "assets");
+      return (
+        fs.existsSync(candidate) &&
+        fs.statSync(candidate).isDirectory() &&
+        fs.existsSync(indexPath) &&
+        fs.statSync(indexPath).isFile() &&
+        fs.existsSync(assetsDir) &&
+        fs.statSync(assetsDir).isDirectory()
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (!uiRoot) {
     return json(res, 404, {
       ok: false,
       error: `UI dist folder not found: ${CFG.uiDistPath}`,
@@ -5875,7 +5894,7 @@ function tryServeUi(url, req, res, hostname) {
   }
 
   const normalizedRel = rel.replace(/^\/+/, "");
-  const requested = path.join(CFG.uiDistPath, normalizedRel);
+  const requested = path.join(uiRoot, normalizedRel);
   if (fs.existsSync(requested) && fs.statSync(requested).isFile()) {
     serveUiFile(res, requested, req.method);
     return true;
@@ -5886,7 +5905,7 @@ function tryServeUi(url, req, res, hostname) {
   }
 
   // SPA fallback
-  const indexPath = path.join(CFG.uiDistPath, "index.html");
+  const indexPath = path.join(uiRoot, "index.html");
   if (fs.existsSync(indexPath)) {
     serveUiFile(res, indexPath, req.method);
     return true;

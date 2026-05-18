@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.18 19:30 - 8edb962f";
+        private const string BuildVersion = "v2026.05.18 19:51 - f1c856bb";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -156,9 +156,12 @@ namespace cAlgo.Robots
 
                         if (needsMove)
                         {
+                            var oldSL = pos.StopLoss;
                             var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
                             if (result.IsSuccessful)
-                                Print("[BE] Moved SL to Entry+{0} pips for {1} {2}", BE_Offset, pos.SymbolName, pos.Id);
+                                Print("[BE] Moved SL from {0:F5} to {1:F5} (Entry+{2} pips) for {3} #{4}", oldSL, targetSL, BE_Offset, pos.SymbolName, pos.Id);
+                            else
+                                Print("[BE] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
                         }
                     }
                 }
@@ -186,9 +189,12 @@ namespace cAlgo.Robots
 
                         if (shouldMove)
                         {
+                            var oldSL = pos.StopLoss;
                             var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
                             if (result.IsSuccessful)
-                                Print("[Trail] Moved SL to {0:F5} for {1} {2}", targetSL, pos.SymbolName, pos.Id);
+                                Print("[Trail] Moved SL from {0:F5} to {1:F5} (trail={2} pips) for {3} #{4}", oldSL, targetSL, Trail_Start, pos.SymbolName, pos.Id);
+                            else
+                                Print("[Trail] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
                         }
                     }
                 }
@@ -205,40 +211,42 @@ namespace cAlgo.Robots
                         if (_executedPartials.Contains(pKey)) continue;
 
                         bool hit = (pos.TradeType == TradeType.Buy) ? (currentPrice >= p.Price) : (currentPrice <= p.Price);
-                        if (hit)
-                        {
-                            double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
-                            volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
+                        if (!hit) continue;  // price not reached yet, retry next tick
 
-                            // Check if we can close at least the minimum volume
+                        double volToClose = pos.VolumeInUnits * (p.SizePct / 100.0);
+                        volToClose = symbol.NormalizeVolumeInUnits(volToClose, RoundingMode.Down);
+
+                        // Only close if we can meet minimum volume; skip permanently if too small
+                        if (volToClose >= symbol.VolumeInUnitsMin)
+                        {
+                            // Cap at current remaining size (never exceed position volume)
+                            if (volToClose > pos.VolumeInUnits)
+                                volToClose = pos.VolumeInUnits;
+
+                            // Re-check min volume after capping
                             if (volToClose >= symbol.VolumeInUnitsMin)
                             {
-                                // Cap at current remaining size (never exceed position volume)
-                                if (volToClose > pos.VolumeInUnits)
-                                    volToClose = pos.VolumeInUnits;
-
-                                // Also check that we're not trying to close less than min after capping
-                                if (volToClose >= symbol.VolumeInUnitsMin)
+                                var res = ClosePosition(pos, volToClose);
+                                if (res.IsSuccessful)
                                 {
-                                    var res = ClosePosition(pos, volToClose);
-                                    if (res.IsSuccessful)
-                                    {
-                                        _executedPartials.Add(pKey);
-                                        Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
-                                    }
-                                    else
-                                    {
-                                        Print("[Partial] Close failed for {0}: {1}", pos.Id, res.Error);
-                                    }
+                                    _executedPartials.Add(pKey);
+                                    Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
                                 }
+                                else
+                                {
+                                    Print("[Partial] Close failed for {0}: {1}", pos.Id, res.Error);
+                                }
+                            }
+                            else
+                            {
+                                _executedPartials.Add(pKey);
+                                Print("[Partial] Skipped {0} idx {1} (post-cap too small: {2} < min {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
                             }
                         }
                         else
                         {
-                            // Safety: never close full position when one partial chunk is below min volume.
-                            // Mark this partial as skipped to avoid repeated trigger spam.
                             _executedPartials.Add(pKey);
-                            Print("[Partial] Skipped {0} partial idx {1} (chunk too small: {2} units, min: {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
+                            Print("[Partial] Skipped {0} idx {1} (chunk too small: {2} < min {3})", pos.Id, i, volToClose, symbol.VolumeInUnitsMin);
                         }
                     }
                 }

@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-18 19:40 UTC`
-- note: `broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking - DEPLOYED`
+- lock_status: `LOCKED`
+- deploy_owner: `codex-gpt5`
+- since_utc: `2026-05-18 19:51 UTC`
+- note: `UI path fallback hotfix deploy (/ui missing index)`
 
 ## Required Entry Template
 ...
