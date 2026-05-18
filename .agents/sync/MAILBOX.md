@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 12:21 UTC`
-- note: `Deploy trade snapshot SID archive + tradeplan/info layout updates`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 12:25 UTC`
+- note: `SID snapshot archive + tradeplan/info layout deployed and verified`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,23 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 12:25 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: a7fc81b1
+- scope: `webhook/server.js`, `web-ui/src/components/TradePlanEditor.jsx`, `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/components/charts/SymbolChart.jsx`, `web-ui/src/hooks/useChartTileData.js`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/pages/trades/V2TradeDetailPage.jsx`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (a7fc81b1)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 12:22 - a72e8a9f
+  - ea_version: v2026.05.18 12:22 - a72e8a9f
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 12:22 - a72e8a9f`, `postgres:ok`, `redis:ok`
+  - /ui asset: `/assets/index-gNQEDFqu.js`
+  - key endpoint: PM2 logs show active `GET /v2/broker/pull` + `POST /v2/broker/sync` loops with `items=0 results=1`
+- handoff_next: none
 
 ### [2026-05-18 11:59 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
