@@ -65,9 +65,9 @@ Copy and fill:
 ### [2026-05-18 17:45 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
 - branch: main
-- commit: 694499f8
-- scope: `web-ui/src/components/TradePlanEditor.jsx`, `bridge-clients/TVBridge_CTrader.cs`
-- merge_to_main: YES (694499f8)
+- commit: 3959e796
+- scope: `web-ui/src/components/TradePlanEditor.jsx`, `bridge-clients/TVBridge_CTrader.cs`, `.agents/sync/MAILBOX.md`
+- merge_to_main: YES (3959e796; code fix 694499f8)
 - deploy:
   - owner: codex-gpt5
   - server_version: v2026.05.18 16:17 - 7df2b6d4
@@ -75,7 +75,7 @@ Copy and fill:
   - result: PASS
 - verify:
   - /health: `ok:true`, `version:v2026.05.18 16:17 - 7df2b6d4`, `postgres:ok`, `redis:ok`
-  - /ui asset: `/assets/index-Ffe2FdVO.js`
+  - /ui asset: `/assets/index-BPnALjcL.js`
   - key endpoint: PM2 logs show active `GET /v2/broker/pull`, `POST /v2/broker/ack`, and `POST /v2/broker/sync` loops with `items=0 results=1`
   - task-specific: TradePlanEditor numeric row components stabilized to avoid DOM subtree replacement/flicker
 - handoff_next: none
