@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 06:27 UTC`
-- note: `Deploying precision+raw-plan-integrity+UI cleanup patch`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 06:39 UTC`
+- note: `Deploy completed and verified by codex-gpt5`
 
 ## Required Entry Template
 ...
@@ -97,6 +97,23 @@ Copy and fill:
   - PM2: no errors after restart
 - handoff_next: none
 - If any deploy fails, set `DEPLOY_BLOCKED` and stop next deployer.
+
+### [2026-05-18 06:39 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 2235f3e3
+- scope: `AI.md`, `.agents/sync/MAILBOX.md`, `web-ui/src/components/SmartContent.jsx`, `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/components/TradePlanEditor.jsx`, `web-ui/src/pages/ai/AiPromptBuilder.js`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/pages/trades/TradesPage.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (2235f3e3)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 08:35 - 9b7c1d2a
+  - ea_version: v2026.05.18 08:35 - 9b7c1d2a
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 08:35 - 9b7c1d2a`, `postgres:ok`, `redis:ok`
+  - /ui asset: `/assets/index-gNQEDFqu.js` (html entry present)
+  - key endpoint: `POST /v2/broker/sync` active in PM2 logs after restart
+- handoff_next: none
 
 ### [2026-05-17 18:55 UTC] AGENT:codex-gpt5
 - status: DEPLOY_BLOCKED
