@@ -13,8 +13,8 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `UNLOCKED`
 - deploy_owner: `NONE`
-- since_utc: `2026-05-18 19:19 UTC`
-- note: `AI add-trade Files SID hydration + upload fix deployed and verified`
+- since_utc: `2026-05-18 19:40 UTC`
+- note: `broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking - DEPLOYED`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,28 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 19:40 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: a3b43041
+- scope: `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (a3b43041)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.18 19:30 - 8edb962f
+  - ea_version: v2026.05.18 19:30 - 8edb962f
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 19:30 - 8edb962f`, `postgres:ok`, `redis:ok`, `cronEvents:[]`, `mt5.connected:true`, `ctrader.connected:true`, `binance.connected:false`
+  - key endpoint: broker sync/heartbeat active, health includes new `cronEvents` field
+  - task-specific: brokerSyncV2 updated_at only bumps on status changes; brokerHeartbeatV2 no longer touches updated_at; BullMQ add uses allSettled; Binance bars fetch tracks source activity
+- notes:
+  - Binance disabled: `BINANCE_MODE` env var not set on VPS
+  - cTrader disabled: `CTRADER_MODE` env var not set on VPS (set to "demo" or "live" to enable)
+  - Market Data cron: "no configs" — needs active `MARKET_DATA_CRON` user_setting
+  - AI Analysis cron: "no configs" — needs active `ANALYSIS_CRON` user_setting
+- handoff_next: none
 
 ### [2026-05-18 19:19 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
