@@ -11,7 +11,6 @@ import {
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
 const TradeFilesTab = lazy(() => import("./TradeFilesTab"));
-const InfoTabChart = lazy(() => import("./InfoTabChart"));
 import { sortTimeframes } from "../utils/format";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
@@ -1496,15 +1495,24 @@ export default function SignalDetailCard({
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {mode === "trade" && chart?.symbol && (
-          <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
-            <InfoTabChart
-              symbol={chart?.symbol}
-              interval={chart?.interval || chart?.detailTfTab || "1h"}
-              entryPrice={chart?.entryPrice}
-              slPrice={chart?.slPrice}
-              tpPrice={chart?.tpPrice}
-            />
-          </Suspense>
+          <div style={{ marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+            <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
+              <SymbolChart
+                symbol={chart?.symbol}
+                timeframes={[chart?.detailTfTab || chart?.interval || "1h"]}
+                defaultMode="cache"
+                entryPrice={chart?.entryPrice}
+                slPrice={chart?.slPrice}
+                tpPrice={chart?.tpPrice}
+                height={300}
+                showAnalyzeButton={false}
+                showTradeButton={false}
+                showEditButton={false}
+                showPerCardLayoutControls={false}
+                skipFetch={false}
+              />
+            </Suspense>
+          </div>
         )}
         {(() => {
           const p =
