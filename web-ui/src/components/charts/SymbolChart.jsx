@@ -19,6 +19,8 @@ import {
   formatNumValue,
 } from "../../utils/format";
 
+const MODES = [];
+const MODE_LABELS = {};
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
   LOADING: "#f59e0b",
