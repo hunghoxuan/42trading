@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-18 12:25 UTC`
-- note: `SID snapshot archive + tradeplan/info layout deployed and verified`
+- lock_status: `LOCKED`
+- deploy_owner: `codex-gpt5`
+- since_utc: `2026-05-18 12:45 UTC`
+- note: `snapshot watermark, trade snapshot refs, raw AI preservation, Info tab rendering`
 
 ## Required Entry Template
 ...
@@ -78,6 +78,23 @@ Copy and fill:
   - /ui asset: `/assets/index-gNQEDFqu.js`
   - key endpoint: PM2 logs show active `GET /v2/broker/pull` + `POST /v2/broker/sync` loops with `items=0 results=1`
 - handoff_next: none
+
+### [2026-05-18 12:30 UTC] AGENT:codex-gpt5
+- status: DONE (PLANNING/HANDOFF)
+- branch: main
+- commit: none
+- scope: Deepseek ticket + handoff package for snapshot watermark/info-tab/raw-json preservation
+- merge_to_main: NO
+- deploy:
+  - owner: NONE
+  - server_version: n/a
+  - ea_version: n/a
+  - result: n/a
+- verify:
+  - ticket: `.agents/.product/tickets/1-backlog/2026-05-18-snapshot-watermark-trade-info-preservation.md`
+  - handoff: `.agents/sync/HANDOFF_2026-05-18_DEEPSEEK_snapshot-watermark-info.md`
+  - user_open_questions_answered: YES
+- handoff_next: Deepseek
 
 ### [2026-05-18 11:59 UTC] AGENT:codex-gpt5
 - status: DEPLOYED

@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 12:22 - a72e8a9f"); // cTrader partial TP safety hardening + side-valid TP filtering
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 12:51 - 691fa45d"); // cTrader partial TP safety hardening + side-valid TP filtering
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -2994,6 +2994,105 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   return copied;
 }
 
+async function persistTradeSnapshotFiles(tradeSid, files = []) {
+  const sid = String(tradeSid || "").trim();
+  const safeFiles = [
+    ...new Set(
+      (Array.isArray(files) ? files : [])
+        .map((f) => normalizeSnapshotFileName(f))
+        .filter(Boolean),
+    ),
+  ];
+  if (!sid || !safeFiles.length) return { updated: 0, files: safeFiles };
+  const folder = `trade-${sid}/snapshots`;
+  try {
+    const db = await mt5Backend();
+    const fileJson = JSON.stringify(safeFiles);
+    const { rowCount } = await db.query(
+      `
+      WITH merged AS (
+        SELECT jsonb_agg(DISTINCT file_name ORDER BY file_name) AS files
+        FROM jsonb_array_elements_text(
+          COALESCE((SELECT metadata->'snapshot_files' FROM trades WHERE sid = $1 LIMIT 1), '[]'::jsonb)
+          || $2::jsonb
+        ) AS f(file_name)
+      )
+      UPDATE trades
+      SET metadata = COALESCE(metadata, '{}'::jsonb)
+            || jsonb_build_object(
+              'snapshot_files', COALESCE((SELECT files FROM merged), '[]'::jsonb),
+              'snapshot_folder', $3::text
+            ),
+          raw_json = COALESCE(raw_json, '{}'::jsonb)
+            || jsonb_build_object(
+              'snapshot_files', COALESCE((SELECT files FROM merged), '[]'::jsonb),
+              'snapshot_folder', $3::text
+            ),
+          updated_at = NOW()
+      WHERE sid = $1
+      `,
+      [sid, fileJson, folder],
+    );
+    return { updated: rowCount || 0, files: safeFiles, folder };
+  } catch (error) {
+    console.warn(
+      "[snapshot] failed to persist trade snapshot refs:",
+      error?.message || error,
+    );
+    return {
+      updated: 0,
+      files: safeFiles,
+      folder,
+      error: String(error?.message || error),
+    };
+  }
+}
+
+function cloneJsonForStorage(value) {
+  if (!value || typeof value !== "object") return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return Array.isArray(value) ? [...value] : { ...value };
+  }
+}
+
+function attachCanonicalAiRaw(parsed, canonicalRaw) {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const canonical =
+    canonicalRaw && typeof canonicalRaw === "object"
+      ? cloneJsonForStorage(canonicalRaw)
+      : null;
+  if (canonical && !parsed.__analysis_full_raw) {
+    parsed.__analysis_full_raw = canonical;
+  }
+  const exactPlans = [];
+  const pushPlans = (plans) => {
+    if (Array.isArray(plans))
+      exactPlans.push(...plans.filter((x) => x && typeof x === "object"));
+    else if (plans && typeof plans === "object") exactPlans.push(plans);
+  };
+  pushPlans(canonical?.trade_plan);
+  for (const entry of Array.isArray(canonical?.analysis_data)
+    ? canonical.analysis_data
+    : []) {
+    pushPlans(entry?.trade_plan);
+  }
+  if (exactPlans.length && !parsed.__ai_trade_plan_raw_exact) {
+    parsed.__ai_trade_plan_raw_exact = cloneJsonForStorage(exactPlans);
+  }
+  return parsed;
+}
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function parseTradeFileName(raw) {
   // Sanitize: keep only safe chars, collapse whitespace, max 200 chars
   return (
@@ -3533,15 +3632,17 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
           watermark.style.left = "10px";
           watermark.style.top = "8px";
           watermark.style.zIndex = "2147483647";
-          watermark.style.padding = "4px 8px";
+          watermark.style.padding = "7px 10px";
           watermark.style.borderRadius = "6px";
-          watermark.style.fontSize = "12px";
+          watermark.style.fontSize = "15px";
           watermark.style.fontFamily = "monospace";
-          watermark.style.fontWeight = "700";
-          watermark.style.letterSpacing = "0.2px";
-          watermark.style.background = "rgba(10,15,22,0.72)";
-          watermark.style.color = "#e5f4ff";
-          watermark.style.border = "1px solid rgba(148,163,184,0.45)";
+          watermark.style.fontWeight = "900";
+          watermark.style.letterSpacing = "0";
+          watermark.style.background = "rgba(255,255,255,0.94)";
+          watermark.style.color = "#07111f";
+          watermark.style.border = "2px solid rgba(0,0,0,0.88)";
+          watermark.style.boxShadow = "0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65)";
+          watermark.style.textShadow = "0 1px 0 rgba(255,255,255,0.9)";
           watermark.style.pointerEvents = "none";
           document.body.appendChild(watermark);
         } catch {}
@@ -3550,6 +3651,16 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     );
 
     await page.waitForTimeout(1000);
+    const watermarkVisible = await page.evaluate(() => {
+      const el = document.getElementById("snapshot-watermark-top");
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const styles = window.getComputedStyle(el);
+      return r.width > 40 && r.height > 14 && styles.visibility !== "hidden" && styles.display !== "none";
+    });
+    if (!watermarkVisible) {
+      throw new Error("snapshot_watermark_not_visible_before_capture");
+    }
 
     const root = page;
 
@@ -3856,6 +3967,18 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           });
           // Give embedded charts a short warm-up; keep cron under global timeout.
           await page.waitForTimeout(4000);
+          const gridWatermarkOk = await page.evaluate(() => {
+            const badges = [...document.querySelectorAll(".sym-time-badge,.tf-badge")];
+            if (!badges.length) return false;
+            return badges.every((el) => {
+              const r = el.getBoundingClientRect();
+              const styles = window.getComputedStyle(el);
+              return r.width > 20 && r.height > 14 && styles.display !== "none" && styles.visibility !== "hidden";
+            });
+          });
+          if (!gridWatermarkOk) {
+            throw new Error("snapshot_grid_watermark_not_visible_before_capture");
+          }
 
           await page.screenshot({
             path: outPath,
@@ -15466,6 +15589,11 @@ const appHandler = async (req, res) => {
           provider: payload.provider || null,
           session_prefix: sessionPrefix || null,
           entry_model_raw: derived.entryModelRaw || null,
+          snapshot_files: Array.isArray(payload?.snapshot_files)
+            ? payload.snapshot_files
+                .map((f) => normalizeSnapshotFileName(f))
+                .filter(Boolean)
+            : [],
           raw_json:
             rawPayload?.raw_json && typeof rawPayload.raw_json === "object"
               ? rawPayload.raw_json
@@ -15484,6 +15612,7 @@ const appHandler = async (req, res) => {
           : tradeSidBase;
       const createdSids = Array.isArray(fanout?.sids) ? fanout.sids : [actualSid];
       const copiedBySid = {};
+      const persistedBySid = {};
       for (const sid of createdSids) {
         const copied = copySnapshotsToTradeSidFolder(
           sid,
@@ -15491,6 +15620,7 @@ const appHandler = async (req, res) => {
           symbol,
         );
         copiedBySid[sid] = copied;
+        persistedBySid[sid] = await persistTradeSnapshotFiles(sid, copied);
       }
       return json(res, 200, {
         ok: true,
@@ -15500,6 +15630,7 @@ const appHandler = async (req, res) => {
         snapshot_folder: `trade-${actualSid}/snapshots`,
         snapshot_copied: copiedBySid[actualSid] || [],
         snapshot_copied_by_sid: copiedBySid,
+        snapshot_persisted_by_sid: persistedBySid,
         account_ids: fanout?.account_ids || [],
       });
     } catch (error) {
@@ -17299,8 +17430,10 @@ const appHandler = async (req, res) => {
       ).trim();
       if (tradeSid) {
         const copied = copySnapshotsToTradeSidFolder(tradeSid, [item?.file_name], body.symbol || item?.symbol || "");
+        const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
         item.trade_sid = tradeSid;
         item.trade_snapshot_copied = copied;
+        item.trade_snapshot_persisted = persisted;
       }
       return json(res, 200, { ok: true, item });
     } catch (error) {
@@ -17345,10 +17478,11 @@ const appHandler = async (req, res) => {
           body.symbol ||
             (Array.isArray(body.symbols) && body.symbols.length ? body.symbols[0] : ""),
         );
+        const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
         for (const it of Array.isArray(items) ? items : []) {
           it.trade_sid = tradeSid;
         }
-        return json(res, 200, { ok: true, items, trade_sid: tradeSid, copied });
+        return json(res, 200, { ok: true, items, trade_sid: tradeSid, copied, persisted });
       }
       return json(res, 200, { ok: true, items });
     } catch (error) {
@@ -17418,6 +17552,8 @@ const appHandler = async (req, res) => {
 
     const theme = url.searchParams.get("theme") || "dark";
     const gridStamp = new Date().toISOString().replace("T", " ").replace("Z", " UTC");
+    const symbolEsc = htmlEscape(symbol);
+    const gridStampEsc = htmlEscape(gridStamp);
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`
@@ -17461,32 +17597,34 @@ const appHandler = async (req, res) => {
               position: absolute;
               top: 15px; /* Moved down to avoid top chart edge */
               right: 15px; /* Moved left to avoid right chart edge */
-              background: rgba(0,0,0,0.85); /* Darker for better contrast */
-              color: #ffffff;
+              background: rgba(255,255,255,0.95);
+              color: #07111f;
               padding: 6px 14px; /* Much larger padding */
               border-radius: 6px;
               font-size: 24px; /* Significantly larger text */
               font-family: monospace; /* Monospace for clear 'm' vs 'M' */
               font-weight: 800;
-              letter-spacing: 1px;
-              z-index: 10;
+              letter-spacing: 0;
+              z-index: 2147483647;
               pointer-events: none;
-              border: 2px solid rgba(255,255,255,0.4);
-              box-shadow: 0 4px 12px rgba(0,0,0,0.5); /* Shadow to stand out from chart */
+              border: 2px solid rgba(0,0,0,0.88);
+              box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65);
             }
             .sym-time-badge {
               position: absolute;
               top: 12px;
               left: 12px;
-              background: rgba(8, 12, 18, 0.85);
-              color: #dbeafe;
-              padding: 4px 8px;
+              background: rgba(255,255,255,0.95);
+              color: #07111f;
+              padding: 7px 10px;
               border-radius: 6px;
-              font-size: 12px;
+              font-size: 15px;
               font-family: monospace;
-              font-weight: 700;
-              z-index: 11;
-              border: 1px solid rgba(255,255,255,0.3);
+              font-weight: 900;
+              letter-spacing: 0;
+              z-index: 2147483647;
+              border: 2px solid rgba(0,0,0,0.88);
+              box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65);
               pointer-events: none;
             }
           </style>
@@ -17497,9 +17635,9 @@ const appHandler = async (req, res) => {
               .map(
                 (tf, i) => `
               <div class="chart-cell">
-                <div class="sym-time-badge">${symbol} | ${displayTfs[i]} | ${gridStamp}</div>
-                <div class="tf-badge">${displayTfs[i]}</div>
-                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tvIntervals[i]}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
+                <div class="sym-time-badge">${symbolEsc} | ${htmlEscape(displayTfs[i])} | ${gridStampEsc}</div>
+                <div class="tf-badge">${htmlEscape(displayTfs[i])}</div>
+                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tvIntervals[i])}&theme=${encodeURIComponent(theme)}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
               </div>
             `,
               )
@@ -17680,8 +17818,10 @@ const appHandler = async (req, res) => {
                   .filter(Boolean),
                 symbol,
               );
+              const persisted = await persistTradeSnapshotFiles(tradeSid, copied);
               row.snapshots.trade_sid = tradeSid;
               row.snapshots.copied_to_trade = copied;
+              row.snapshots.persisted_to_trade = persisted;
             }
           } catch (error) {
             row.status = row.status === "ok" ? "partial" : row.status;
@@ -18247,7 +18387,6 @@ const appHandler = async (req, res) => {
             `ai_${providerRaw || "claude"}`,
             "ai_claude",
           );
-          const action = normalizeDirectionToAction(plan?.direction);
           const sharedRawJson = {
             source: "ai_analyze_auto_save",
             session_id: sessionId,
@@ -18349,6 +18488,7 @@ const appHandler = async (req, res) => {
           }
           const pick = picks[0];
           const plan = pick.plan || {};
+          const action = normalizeDirectionToAction(plan?.direction);
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({
             source_id: sourceId,
@@ -18661,7 +18801,9 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        const canonicalParsedJson = cloneJsonForStorage(parsedJson);
         parsedJson = normalizeAiAnalysisContract(parsedJson);
+        parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);
         if (
           (!Array.isArray(parsedJson?.trade_plan) ||
             parsedJson.trade_plan.length === 0) &&
@@ -19156,7 +19298,9 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      const canonicalParsedJson = cloneJsonForStorage(parsedJson);
       parsedJson = normalizeAiAnalysisContract(parsedJson);
+      parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);
       if (
         (!Array.isArray(parsedJson?.trade_plan) ||
           parsedJson.trade_plan.length === 0) &&

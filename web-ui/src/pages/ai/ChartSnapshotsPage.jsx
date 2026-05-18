@@ -1790,7 +1790,10 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
   // Preserve full original payload for later trade history/debug screens.
   // This prevents losing multi-timeframe analysis details when persisting a per-symbol view.
   if (!cloned.__analysis_full_raw) {
-    cloned.__analysis_full_raw = parsed;
+    cloned.__analysis_full_raw =
+      parsed.__analysis_full_raw && typeof parsed.__analysis_full_raw === "object"
+        ? parsed.__analysis_full_raw
+        : parsed;
   }
   return cloned;
 }

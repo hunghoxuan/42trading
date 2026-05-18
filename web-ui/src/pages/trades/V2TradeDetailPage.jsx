@@ -253,9 +253,22 @@ export default function TradeDetailPage() {
       trade?.metadata?.raw_json && typeof trade.metadata.raw_json === "object"
         ? trade.metadata.raw_json
         : {};
+    const canonicalFullRaw =
+      metaRaw.__analysis_full_raw ||
+      rowRaw.__analysis_full_raw ||
+      metaRaw.analysis_result ||
+      rowRaw.analysis_result ||
+      {};
     return {
-      ...metaRaw,
+      ...(canonicalFullRaw && typeof canonicalFullRaw === "object"
+        ? canonicalFullRaw
+        : {}),
       ...rowRaw,
+      ...metaRaw,
+      __analysis_full_raw:
+        canonicalFullRaw && typeof canonicalFullRaw === "object"
+          ? canonicalFullRaw
+          : undefined,
       __metadata_raw_json: metaRaw,
       __row_raw_json: rowRaw,
     };

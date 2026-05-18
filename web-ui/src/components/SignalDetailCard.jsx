@@ -891,8 +891,42 @@ export default function SignalDetailCard({
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState("main");
   const [planDrafts, setPlanDrafts] = useState({});
+  const responseRaw =
+    response?.raw && typeof response.raw === "object" ? response.raw : {};
+  const responseRowRaw =
+    response?.raw_json && typeof response.raw_json === "object"
+      ? response.raw_json
+      : {};
+  const responseMetaRaw =
+    response?.metadata?.raw_json && typeof response.metadata.raw_json === "object"
+      ? response.metadata.raw_json
+      : {};
+  const canonicalFullRaw =
+    responseMetaRaw.__analysis_full_raw ||
+    responseRowRaw.__analysis_full_raw ||
+    responseRaw.__analysis_full_raw ||
+    responseMetaRaw.analysis_result ||
+    responseRowRaw.analysis_result ||
+    null;
   const rawSource =
-    response?.raw || response?.raw_json || response?.metadata || {};
+    canonicalFullRaw && typeof canonicalFullRaw === "object"
+      ? {
+          ...canonicalFullRaw,
+          ...responseRowRaw,
+          ...responseMetaRaw,
+          ...responseRaw,
+          __analysis_full_raw: canonicalFullRaw,
+        }
+      : {
+          ...(responseRowRaw || {}),
+          ...(responseMetaRaw || {}),
+          ...(responseRaw || {}),
+          ...(response?.metadata &&
+          typeof response.metadata === "object" &&
+          !response?.raw_json
+            ? response.metadata
+            : {}),
+        };
   const derivedPlansFromRaw = useMemo(() => {
     if (!rawSource || typeof rawSource !== "object") return [];
     if (rawSource?.__raw_plan && typeof rawSource.__raw_plan === "object") {
@@ -2139,14 +2173,49 @@ export default function SignalDetailCard({
                               },
                             )}
                           </ul>
+                        ) : f.value && typeof f.value === "object" ? (
+                          <pre
+                            style={{
+                              margin: 0,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              fontFamily:
+                                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                              fontSize: 12,
+                            }}
+                          >
+                            {JSON.stringify(f.value, null, 2)}
+                          </pre>
                         ) : (
-                          f.value
+                          String(f.value ?? "")
                         )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+              {selectedRawData &&
+                typeof selectedRawData === "object" &&
+                Object.keys(selectedRawData).length > 0 && (
+                  <div style={{ marginTop: 18 }}>
+                    <span className="minor-text">Raw Analysis</span>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        padding: 12,
+                        background: "rgba(0,0,0,0.24)",
+                        border: "1px solid rgba(255,255,255,0.06)",
+                        borderRadius: 8,
+                      }}
+                    >
+                      <SmartContent
+                        content={selectedRawData}
+                        mode="readonly"
+                        showCopy
+                      />
+                    </div>
+                  </div>
+                )}
             </div>
           );
         })()}
