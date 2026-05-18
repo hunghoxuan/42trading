@@ -19,8 +19,8 @@ import {
   formatNumValue,
 } from "../../utils/format";
 
-const MODES = ["live", "cache"];
-const MODE_LABELS = { live: "Live", cache: "C" };
+const MODES = ["cache"];
+const MODE_LABELS = { cache: "C" };
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
   LOADING: "#f59e0b",

@@ -2930,10 +2930,10 @@ function ensureAiContextFileDir() {
 }
 
 function ensureTradeFilesDir(sid) {
-  const dir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensureChartSnapshotDir();
+  const dir = path.join(CHART_SNAPSHOT_DIR, String(sid || "").trim());
+  if (!dir || dir === CHART_SNAPSHOT_DIR) return CHART_SNAPSHOT_DIR;
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
@@ -21369,7 +21369,7 @@ const appHandler = async (req, res) => {
       if (!resolvedTrade?.sid)
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
-      const dir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
+      const dir = path.join(CHART_SNAPSHOT_DIR, sid);
       const files = [];
       if (fs.existsSync(dir)) {
         for (const entry of fs.readdirSync(dir)) {
@@ -21412,7 +21412,7 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = path.basename(fileName);
-      const abs = path.join(TRADE_FILES_DIR, `trade-${sid}`, safeName);
+      const abs = path.join(CHART_SNAPSHOT_DIR, sid, safeName);
       if (!fs.existsSync(abs))
         return json(res, 404, { ok: false, error: "file not found" });
       fs.unlinkSync(abs);
@@ -21448,7 +21448,7 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = path.basename(fileName);
-      const abs = path.join(TRADE_FILES_DIR, `trade-${sid}`, safeName);
+      const abs = path.join(CHART_SNAPSHOT_DIR, sid, safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
         return json(res, 404, { ok: false, error: "file not found" });
       const ext = path.extname(safeName).toLowerCase();
