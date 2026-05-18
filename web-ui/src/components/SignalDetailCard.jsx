@@ -1494,22 +1494,20 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        {mode === "trade" && chart?.symbol && (
-          <div style={{ marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+        {(mode === "trade" || mode === "ai") && chart?.symbol && (
+          <div style={{ marginBottom: 16 }}>
             <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
               <SymbolChart
                 symbol={chart?.symbol}
-                timeframes={[chart?.detailTfTab || chart?.interval || "1h"]}
+                timeframes={effectiveTfs}
                 defaultMode="cache"
                 entryPrice={chart?.entryPrice}
                 slPrice={chart?.slPrice}
                 tpPrice={chart?.tpPrice}
-                initialGridCols={1}
-                initialBarsCount={200}
                 showAnalyzeButton={false}
                 showTradeButton={false}
                 showEditButton={false}
-                showPerCardLayoutControls={false}
+                showPerCardLayoutControls={true}
                 skipFetch={false}
               />
             </Suspense>
