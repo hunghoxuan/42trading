@@ -1,6 +1,50 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { SmartContent } from "./SmartContent";
 import { TradeFileUpload } from "./TradeFileUpload";
+
+const numericInlineRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "20% minmax(140px, 1fr) 40%",
+  alignItems: "center",
+  gap: 8,
+};
+const numericNoSliderRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "20% minmax(140px, 1fr)",
+  alignItems: "center",
+  gap: 8,
+};
+const row2Style = {
+  display: "grid",
+  gridTemplateColumns: "1fr 1fr",
+  gap: 8,
+};
+const labelStyle = {
+  fontWeight: "700",
+  fontSize: "9px",
+  textTransform: "uppercase",
+  color: "var(--muted-bright)",
+};
+const numericInputStyle = {
+  height: "22px",
+  fontSize: "11px",
+  padding: "0 6px",
+  width: "100%",
+};
+const stepButtonStyle = {
+  width: 18,
+  height: 18,
+  padding: 0,
+  fontSize: 10,
+  lineHeight: 1,
+};
+const sliderWrapStyle = { display: "flex", alignItems: "center", gap: 4 };
+const sliderStyle = {
+  accentColor: "var(--muted)",
+  height: "8px",
+  margin: 0,
+  flex: 1,
+};
 
 function parseNum(v) {
   if (v == null) return null;
@@ -55,6 +99,158 @@ function calcRrByTarget(entryRaw, slRaw, targetRaw) {
   return String(Number((reward / risk).toFixed(2)));
 }
 
+const Row2 = memo(function Row2({ left, right }) {
+  return (
+    <div style={row2Style}>
+      {left}
+      {right}
+    </div>
+  );
+});
+
+const NumericInline = memo(function NumericInline({
+  idPrefix,
+  label,
+  k,
+  valueRaw,
+  step = "0.001",
+  min,
+  max,
+  sliderOverride = null,
+  disabled = false,
+  controlsDisabled = false,
+  onUpdate,
+}) {
+  const fieldId = `${idPrefix}-${k}`;
+  const sliderMeta = useMemo(
+    () =>
+      sliderOverride ||
+      (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(k)
+        ? priceSliderMeta(valueRaw)
+        : calcSliderMeta(valueRaw)),
+    [k, sliderOverride, valueRaw],
+  );
+  const isDisabled = disabled || controlsDisabled;
+  const sliderDisabled = disabled
+    ? true
+    : sliderOverride
+      ? controlsDisabled
+      : !sliderMeta.enabled || controlsDisabled;
+  const adjustByStep = useCallback(
+    (dir) => {
+      if (isDisabled || !sliderMeta.enabled) return;
+      const base = parseNum(valueRaw) ?? sliderMeta.value ?? 0;
+      const nextRaw = base + dir * Number(sliderMeta.step || 0);
+      const next = Math.max(
+        Number(sliderMeta.min),
+        Math.min(Number(sliderMeta.max), nextRaw),
+      );
+      onUpdate(k, formatNum3(next));
+    },
+    [isDisabled, k, onUpdate, sliderMeta, valueRaw],
+  );
+  return (
+    <div style={numericInlineRowStyle}>
+      <label
+        htmlFor={fieldId}
+        className="minor-text"
+        style={{ ...labelStyle, opacity: disabled ? 0.4 : 0.8 }}
+      >
+        {label}
+      </label>
+      <input
+        id={fieldId}
+        name={k}
+        style={numericInputStyle}
+        type="number"
+        step={step}
+        inputMode="decimal"
+        min={min}
+        max={max}
+        value={cleanFieldValue(valueRaw)}
+        onChange={(e) => onUpdate(k, e.target.value)}
+        disabled={isDisabled}
+      />
+      <div style={sliderWrapStyle}>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => adjustByStep(-1)}
+          disabled={sliderDisabled}
+          style={stepButtonStyle}
+          title="-1 step"
+        >
+          -
+        </button>
+        <input
+          id={`${fieldId}-range`}
+          className="snapshot-number-slider-v4"
+          type="range"
+          min={sliderMeta.min}
+          max={sliderMeta.max}
+          step={sliderMeta.step}
+          value={sliderOverride ? Number(valueRaw) || 2 : sliderMeta.value}
+          style={sliderStyle}
+          disabled={sliderDisabled}
+          onChange={(e) => onUpdate(k, formatNum3(Number(e.target.value)))}
+        />
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => adjustByStep(1)}
+          disabled={sliderDisabled}
+          style={stepButtonStyle}
+          title="+1 step"
+        >
+          +
+        </button>
+      </div>
+    </div>
+  );
+});
+
+const NumericNoSlider = memo(function NumericNoSlider({
+  idPrefix,
+  label,
+  k,
+  valueRaw,
+  step = "0.01",
+  min,
+  max,
+  disabled = false,
+  controlsDisabled = false,
+  readOnly = false,
+  valueOverride = null,
+  onUpdate,
+}) {
+  const fieldId = `${idPrefix}-${k}`;
+  const isDisabled = disabled || controlsDisabled || readOnly;
+  return (
+    <div style={numericNoSliderRowStyle}>
+      <label
+        htmlFor={fieldId}
+        className="minor-text"
+        style={{ ...labelStyle, opacity: disabled ? 0.4 : 0.8 }}
+      >
+        {label}
+      </label>
+      <input
+        id={fieldId}
+        name={k}
+        style={{ ...numericInputStyle, opacity: readOnly ? 0.85 : 1 }}
+        type="number"
+        step={step}
+        inputMode="decimal"
+        min={min}
+        max={max}
+        value={cleanFieldValue(valueOverride == null ? valueRaw : valueOverride)}
+        onChange={(e) => onUpdate(k, e.target.value)}
+        disabled={isDisabled}
+      />
+    </div>
+  );
+});
+
 export function TradePlanEditor({
   signalId = null,
   tradeId = null,
@@ -103,9 +299,9 @@ export function TradePlanEditor({
     disabled || Boolean(busy?.save || busy?.signal || busy?.trade);
   const directionOptions = useMemo(() => ["BUY", "SELL"], []);
 
-  const update = (key, val) => {
+  const update = useCallback((key, val) => {
     if (typeof onChange === "function") onChange(key, val);
-  };
+  }, [onChange]);
   const lockedView = Boolean(viewOnly);
   useEffect(() => {
     if (lockedView) setMode("view");
@@ -140,220 +336,7 @@ export function TradePlanEditor({
     [value.entry, value.sl, value.tp3],
   );
 
-  const NumericInline = ({
-    label,
-    k,
-    step = "0.001",
-    min,
-    max,
-    sliderOverride = null,
-    disabled: fieldDisabled = false,
-  }) => {
-    const idPrefix = signalId || tradeId || "tp-editor";
-    const fieldId = `${idPrefix}-${k}`;
-    const sliderMeta =
-      sliderOverride ||
-      (k === "entry" || k === "tp" || k === "tp1" || k === "tp2" || k === "tp3" || k === "sl"
-        ? priceSliderMeta(value[k])
-        : calcSliderMeta(value[k]));
-    const isDisabled = fieldDisabled || controlsDisabled;
-    const adjustByStep = (dir) => {
-      if (isDisabled) return;
-      if (!sliderMeta.enabled) return;
-      const base = parseNum(value[k]) ?? sliderMeta.value ?? 0;
-      const nextRaw = base + dir * Number(sliderMeta.step || 0);
-      const next = Math.max(
-        Number(sliderMeta.min),
-        Math.min(Number(sliderMeta.max), nextRaw),
-      );
-      console.log(
-        `[TradePlanEditor] +/- ${k} dir=${dir} base=${base} step=${sliderMeta.step} next=${next}`,
-      );
-      update(k, formatNum3(next));
-    };
-    return (
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "20% minmax(140px, 1fr) 40%",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <label
-          htmlFor={fieldId}
-          className="minor-text"
-          style={{
-            fontWeight: "700",
-            fontSize: "9px",
-            textTransform: "uppercase",
-            color: "var(--muted-bright)",
-            opacity: fieldDisabled ? 0.4 : 0.8,
-          }}
-        >
-          {label}
-        </label>
-        <input
-          id={fieldId}
-          name={k}
-          style={{
-            height: "22px",
-            fontSize: "11px",
-            padding: "0 6px",
-            width: "100%",
-          }}
-          type="number"
-          step={step}
-          inputMode="decimal"
-          min={min}
-          max={max}
-          value={cleanFieldValue(value[k])}
-          onChange={(e) => update(k, e.target.value)}
-          disabled={isDisabled}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => adjustByStep(-1)}
-            disabled={
-              fieldDisabled
-                ? true
-                : sliderOverride
-                  ? controlsDisabled
-                  : !sliderMeta.enabled || controlsDisabled
-            }
-            style={{
-              width: 18,
-              height: 18,
-              padding: 0,
-              fontSize: 10,
-              lineHeight: 1,
-            }}
-            title="-1 step"
-          >
-            -
-          </button>
-          <input
-            id={`${fieldId}-range`}
-            className="snapshot-number-slider-v4"
-            type="range"
-            min={sliderMeta.min}
-            max={sliderMeta.max}
-            step={sliderMeta.step}
-            value={sliderOverride ? Number(value[k]) || 2 : sliderMeta.value}
-            style={{
-              accentColor: "var(--muted)",
-              height: "8px",
-              margin: 0,
-              flex: 1,
-            }}
-            disabled={
-              fieldDisabled
-                ? true
-                : sliderOverride
-                  ? controlsDisabled
-                  : !sliderMeta.enabled || controlsDisabled
-            }
-            onChange={(e) => update(k, formatNum3(Number(e.target.value)))}
-          />
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => adjustByStep(1)}
-            disabled={
-              fieldDisabled
-                ? true
-                : sliderOverride
-                  ? controlsDisabled
-                  : !sliderMeta.enabled || controlsDisabled
-            }
-            style={{
-              width: 18,
-              height: 18,
-              padding: 0,
-              fontSize: 10,
-              lineHeight: 1,
-            }}
-            title="+1 step"
-          >
-            +
-          </button>
-        </div>
-      </div>
-    );
-  };
-  const NumericNoSlider = ({
-    label,
-    k,
-    step = "0.01",
-    min,
-    max,
-    disabled: fieldDisabled = false,
-    readOnly = false,
-    valueOverride = null,
-  }) => {
-    const idPrefix = signalId || tradeId || "tp-editor";
-    const fieldId = `${idPrefix}-${k}`;
-    const isDisabled = fieldDisabled || controlsDisabled || readOnly;
-    return (
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "20% minmax(140px, 1fr)",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <label
-          htmlFor={fieldId}
-          className="minor-text"
-          style={{
-            fontWeight: "700",
-            fontSize: "9px",
-            textTransform: "uppercase",
-            color: "var(--muted-bright)",
-            opacity: fieldDisabled ? 0.4 : 0.8,
-          }}
-        >
-          {label}
-        </label>
-        <input
-          id={fieldId}
-          name={k}
-          style={{
-            height: "22px",
-            fontSize: "11px",
-            padding: "0 6px",
-            width: "100%",
-            opacity: readOnly ? 0.85 : 1,
-          }}
-          type="number"
-          step={step}
-          inputMode="decimal"
-          min={min}
-          max={max}
-          value={cleanFieldValue(
-            valueOverride == null ? value[k] : valueOverride,
-          )}
-          onChange={(e) => update(k, e.target.value)}
-          disabled={isDisabled}
-        />
-      </div>
-    );
-  };
-  const Row2 = ({ left, right }) => (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: 8,
-      }}
-    >
-      {left}
-      {right}
-    </div>
-  );
+  const idPrefix = signalId || tradeId || "tp-editor";
 
   return (
     <div
@@ -611,26 +594,23 @@ export function TradePlanEditor({
             <Row2
               left={
                 <NumericInline
+                  idPrefix={idPrefix}
                   label="Entry"
                   k="entry"
+                  valueRaw={value.entry}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled={tradeFieldsDisabled}
                 />
               }
               right={
-                <NumericInline label="SL" k="sl" disabled={tradeFieldsDisabled} />
-              }
-            />
-            <Row2
-              left={
-                <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
-              }
-              right={
-                <NumericNoSlider
-                  label="RR"
-                  k="rr"
-                  step="0.01"
-                  min="0.1"
-                  max="20"
+                <NumericInline
+                  idPrefix={idPrefix}
+                  label="SL"
+                  k="sl"
+                  valueRaw={value.sl}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled={tradeFieldsDisabled}
                 />
               }
@@ -638,17 +618,52 @@ export function TradePlanEditor({
             <Row2
               left={
                 <NumericInline
-                  label="TP2"
-                  k="tp2"
+                  idPrefix={idPrefix}
+                  label="TP"
+                  k="tp"
+                  valueRaw={value.tp}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled={tradeFieldsDisabled}
                 />
               }
               right={
                 <NumericNoSlider
+                  idPrefix={idPrefix}
+                  label="RR"
+                  k="rr"
+                  valueRaw={value.rr}
+                  step="0.01"
+                  min="0.1"
+                  max="20"
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+            />
+            <Row2
+              left={
+                <NumericInline
+                  idPrefix={idPrefix}
+                  label="TP2"
+                  k="tp2"
+                  valueRaw={value.tp2}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+              right={
+                <NumericNoSlider
+                  idPrefix={idPrefix}
                   label="RR2"
                   k="rr2"
+                  valueRaw={value.rr2}
                   readOnly
                   valueOverride={rr2}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled
                 />
               }
@@ -656,17 +671,25 @@ export function TradePlanEditor({
             <Row2
               left={
                 <NumericInline
+                  idPrefix={idPrefix}
                   label="TP3"
                   k="tp3"
+                  valueRaw={value.tp3}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled={tradeFieldsDisabled}
                 />
               }
               right={
                 <NumericNoSlider
+                  idPrefix={idPrefix}
                   label="RR3"
                   k="rr3"
+                  valueRaw={value.rr3}
                   readOnly
                   valueOverride={rr3}
+                  controlsDisabled={controlsDisabled}
+                  onUpdate={update}
                   disabled
                 />
               }
