@@ -19,8 +19,6 @@ import {
   formatNumValue,
 } from "../../utils/format";
 
-const MODES = ["cache"];
-const MODE_LABELS = { cache: "C" };
 const STATUS_COLORS = {
   IDLE: "var(--muted)",
   LOADING: "#f59e0b",
@@ -1630,41 +1628,7 @@ export default function SymbolChart({
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>{symbol}</span>
 
-          {/* Mode buttons: Live / C (cache+bars) / S (snapshots) */}
-          <div style={{ display: "flex", gap: 4, marginLeft: 4 }}>
-            {MODES.map((m) => (
-              <button
-                key={m}
-                className="secondary-button"
-                onClick={() => handleModeClick(m)}
-                title={btnTitle(m)}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  color: btnColor(m),
-                  borderColor:
-                    (pendingMode || mode) === m
-                      ? btnColor(m) + "60"
-                      : "var(--border)",
-                  backgroundColor:
-                    (pendingMode || mode) === m
-                      ? btnColor(m) + "10"
-                      : "transparent",
-                  boxShadow:
-                    (pendingMode || mode) === m
-                      ? `0 0 10px ${btnColor(m)}20`
-                      : "none",
-                }}
-              >
-                {MODE_LABELS[m]}
-                {(pendingMode || mode) === m &&
-                  status === "LOADING" &&
-                  " \u23F3"}
-              </button>
-            ))}
-          </div>
+
           {(pendingMode || mode) === "snapshots" && (
             <button
               className="secondary-button"

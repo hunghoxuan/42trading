@@ -17,7 +17,7 @@ function fileUrl(tradeId, name) {
   return `${getRuntimeApiBase()}/v2/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(name)}/content`;
 }
 
-export function TradeFileUpload({ tradeId, disabled = false }) {
+export function TradeFileUpload({ tradeId, disabled = false, showList = true, showLabel = true }) {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -82,6 +82,7 @@ export function TradeFileUpload({ tradeId, disabled = false }) {
 
   return (
     <div style={{ marginTop: 8 }}>
+{showLabel && (
       <label
         className="minor-text"
         style={{
@@ -96,9 +97,10 @@ export function TradeFileUpload({ tradeId, disabled = false }) {
       >
         Attachments
       </label>
+      )}
 
       {/* File list */}
-      {files.length > 0 && (
+      {showList && files.length > 0 && (
         <div style={{ marginBottom: 6 }}>
           {files.map((f) => (
             <div key={f.name}>

@@ -424,7 +424,7 @@ export function TradePlanEditor({
             </div>
           )}
 
-          <TradeFileUpload tradeId={tradeId} disabled={lockedView} />
+          <TradeFileUpload tradeId={tradeId} disabled={lockedView} showList={false} showLabel={false} />
           {showActionsInView && (
             <div
               style={{
@@ -701,7 +701,7 @@ export function TradePlanEditor({
                 mode="editable"
                 onChange={(v) => update("note", v)}
               />
-              <TradeFileUpload tradeId={tradeId} disabled={controlsDisabled} />
+              <TradeFileUpload tradeId={tradeId} disabled={controlsDisabled} showList={false} showLabel={false} />
             </div>
 
             <div

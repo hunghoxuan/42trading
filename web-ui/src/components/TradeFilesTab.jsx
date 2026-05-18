@@ -28,22 +28,32 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
         return { name, url: `/v2/chart/snapshots/${encodeURIComponent(tradeSid || "")}/${encodeURIComponent(name)}`, size_bytes: file?.size_bytes || 0 };
       });
 
-      const sidList = tradeSid
-        ? await api.tradeSnapshots(tradeSid).catch(() => ({ files: [] }))
-        : null;
-      const globalList = await api.chartSnapshots(200).catch(() => ({ items: [] }));
+      // Trade sid files
+      const sidFiles = tradeSid
+        ? (await api.tradeSnapshots(tradeSid).catch(() => ({ files: [] }))).files || []
+        : [];
+      // Symbol-related snapshots (filter by symbol on server)
+      const symFiles = symbol
+        ? (await api.chartSnapshots(200).catch(() => ({ items: [] }))).items || []
+        : [];
 
       const serverFiles = [
-        ...(sidList?.files || []).map((item) => ({
+        ...sidFiles.map((item) => ({
           name: item.name || item.file_name || "snapshot",
           url: item.url || `/v2/chart/snapshots/${encodeURIComponent(tradeSid || "")}/${encodeURIComponent(item.file_name || item.name || "")}`,
           size_bytes: item.size_bytes || item.size || 0,
         })),
-        ...(globalList?.items || []).map((item) => ({
-          name: item.file_name || item.name || "snapshot",
-          url: item.url || `/v2/chart/snapshots/${encodeURIComponent(item.file_name || "")}`,
-          size_bytes: item.size_bytes || item.size || 0,
-        })),
+        ...symFiles
+          .filter((item) => {
+            const fn = (item.file_name || item.name || "").toUpperCase();
+            const sym = (symbol || "").toUpperCase();
+            return fn.includes(sym);
+          })
+          .map((item) => ({
+            name: item.file_name || item.name || "snapshot",
+            url: item.url || `/v2/chart/snapshots/${encodeURIComponent(item.file_name || "")}`,
+            size_bytes: item.size_bytes || item.size || 0,
+          })),
       ];
 
       const seen = new Set();
@@ -59,7 +69,7 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
     } finally {
       setLoading(false);
     }
-  }, [tradeSid, attachedFiles]);
+  }, [tradeSid, symbol, attachedFiles]);
 
   useEffect(() => { loadFiles(); }, []);
 

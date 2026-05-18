@@ -1494,6 +1494,18 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
+        <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
+          <button
+            className="secondary-button"
+            style={{ fontSize: 10, padding: "3px 10px" }}
+            onClick={() => chart?.onRefreshBars?.()}
+          >
+            Refresh Bars
+          </button>
+          <span className="minor-text" style={{ fontSize: 9, opacity: 0.5, alignSelf: "center" }}>
+            Reload latest price data
+          </span>
+        </div>
         {(() => {
           const p =
             plans.find(
