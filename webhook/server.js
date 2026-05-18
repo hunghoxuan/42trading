@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 19:51 - f1c856bb"); // broker sync updated_at conditional + cronEvents health endpoint + BullMQ error handling + Binance source tracking
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.18 19:55 - f1c856bb",
+); // cTrader SL diagnostic logging + partial TP else pairing fix
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,

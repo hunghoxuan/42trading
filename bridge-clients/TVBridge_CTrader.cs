@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.18 19:51 - f1c856bb";
+        private const string BuildVersion = "v2026.05.18 19:55 - f1c856bb";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -926,7 +926,10 @@ namespace cAlgo.Robots
                         if (res.Position != null)
                         {
                             var mRes = ModifyPosition(res.Position, (sl > 0 ? sl : (double?)null), (tp > 0 ? tp : (double?)null));
-                            if (!mRes.IsSuccessful) Print("[Error] SL/TP Modification failed for Position {0}: {1}", ticket, mRes.Error);
+                            if (mRes.IsSuccessful)
+                                Print("[Order] SL/TP set SL={0} TP={1} for {2} #{3}", sl, tp, symbolCode, ticket);
+                            else
+                                Print("[Error] SL/TP Modification failed for {0} #{1}: {2} (SL={3} TP={4})", symbolCode, ticket, mRes.Error, sl, tp);
                         }
                         else if (res.PendingOrder != null)
                         {
