@@ -141,6 +141,7 @@ export function useSymbolChartData({
   sessionPrefix = "",
   profile = "day",
   attachedSnapshotFiles = [],
+  tradeSid = "",
 }) {
   const [status, setStatus] = useState("IDLE");
   const [data, setData] = useState({}); // { "4h": { bars, snapshot, created_at }, ... }
@@ -169,6 +170,7 @@ export function useSymbolChartData({
           types: ["snapshots"],
           provider,
           session_prefix: sessionPrefix,
+          trade_sid: tradeSid || undefined,
           snapshot_max_age_ms: 15 * 60 * 1000,
           bars: barsCount,
           force,
@@ -199,6 +201,7 @@ export function useSymbolChartData({
             timeframes: tfs,
             provider,
             session_prefix: sessionPrefix,
+            trade_sid: tradeSid || undefined,
             lookbackBars: 300,
             format: "jpg",
             quality: 55,

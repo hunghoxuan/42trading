@@ -2337,6 +2337,7 @@ export default function SignalDetailCard({
                     ? response.metadata.snapshot_files
                     : []
             }
+            tradeSid={chart?.tradeId || response?.sid || response?.id || ""}
             onQuickTradeIntent={(intent) => {
               const side = String(intent?.side || "BUY").toUpperCase();
               const action = String(intent?.action || "ENTRY").toUpperCase();

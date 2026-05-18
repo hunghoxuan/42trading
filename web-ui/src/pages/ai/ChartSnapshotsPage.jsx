@@ -1787,6 +1787,11 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
     // Keep untouched AI plan items for audit/debug. Do not transform.
     cloned.__ai_trade_plan_raw_exact = exactNestedPlans;
   }
+  // Preserve full original payload for later trade history/debug screens.
+  // This prevents losing multi-timeframe analysis details when persisting a per-symbol view.
+  if (!cloned.__analysis_full_raw) {
+    cloned.__analysis_full_raw = parsed;
+  }
   return cloned;
 }
 
@@ -6265,25 +6270,6 @@ export default function ChartSnapshotsPage() {
             ) : null}{" "}
           </div>
         )}
-
-        {hasAnalyzeResponse ? (
-          <div style={{ marginBottom: 10 }}>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => {
-                setAnalysisRaw("");
-                setAnalysisJson("");
-                setAnalysisParsed(null);
-                setSelectedPlanIdx(0);
-                setResponseTab("chart");
-                setStatus({ type: "", text: "" });
-              }}
-            >
-              Back to Analyze
-            </button>
-          </div>
-        ) : null}
 
         {!hasAnalyzeResponse && !isTradeRoute && selectedSymbol && (
           <div

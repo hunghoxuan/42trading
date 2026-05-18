@@ -2937,6 +2937,63 @@ function ensureTradeFilesDir(sid) {
   return dir;
 }
 
+function tradeSnapshotDir(sid) {
+  const base = ensureTradeFilesDir(sid);
+  const dir = path.join(base, "snapshots");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
+  ensureChartSnapshotDir();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
+  if (!sym) return [];
+  const files = fs
+    .readdirSync(CHART_SNAPSHOT_DIR)
+    .filter((f) => /\.(png|jpe?g)$/i.test(f))
+    .filter((f) => String(f || "").toUpperCase().includes(sym))
+    .map((f) => {
+      const abs = path.join(CHART_SNAPSHOT_DIR, f);
+      let t = 0;
+      try {
+        t = Number(fs.statSync(abs).mtimeMs || 0);
+      } catch {}
+      return { file_name: f, mtime_ms: t };
+    })
+    .sort((a, b) => b.mtime_ms - a.mtime_ms)
+    .slice(0, Math.max(1, Number(limit) || 12));
+  return files.map((x) => x.file_name);
+}
+
+function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
+  const sid = String(tradeSid || "").trim();
+  if (!sid) return [];
+  ensureChartSnapshotDir();
+  const requested = (Array.isArray(files) ? files : [])
+    .map((f) => normalizeSnapshotFileName(f))
+    .filter(Boolean);
+  const fallback = requested.length
+    ? []
+    : listLatestSnapshotFilesForSymbol(symbol, 12);
+  const sourceFiles = requested.length ? requested : fallback;
+  const destDir = tradeSnapshotDir(sid);
+  const copied = [];
+  for (const fileName of sourceFiles) {
+    const safe = normalizeSnapshotFileName(fileName);
+    if (!safe) continue;
+    const src = path.join(CHART_SNAPSHOT_DIR, safe);
+    if (!fs.existsSync(src)) continue;
+    const dest = path.join(destDir, safe);
+    try {
+      fs.copyFileSync(src, dest);
+      copied.push(safe);
+    } catch {}
+  }
+  return copied;
+}
+
 function parseTradeFileName(raw) {
   // Sanitize: keep only safe chars, collapse whitespace, max 200 chars
   return (
@@ -3366,6 +3423,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   const symbolToken = sanitizeSnapshotFileToken(symbol);
   const tfToken = sanitizeSnapshotFileToken(interval, "TF");
   const userId = sanitizeSnapshotFileToken(opts.userId || "default");
+  const watermarkTs = new Date(ts).toISOString().replace("T", " ").replace("Z", " UTC");
 
   // Simple naming: SYMBOL_TF.png — overwrites on re-capture
   const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
@@ -3462,6 +3520,34 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
         chartGui.style.setProperty("top", "0", "important");
       }
     });
+
+    await page.evaluate(
+      ({ wmSymbol, wmTf, wmTs }) => {
+        try {
+          const existing = document.getElementById("snapshot-watermark-top");
+          if (existing) existing.remove();
+          const watermark = document.createElement("div");
+          watermark.id = "snapshot-watermark-top";
+          watermark.textContent = `${wmSymbol} ${wmTf} | ${wmTs}`;
+          watermark.style.position = "fixed";
+          watermark.style.left = "10px";
+          watermark.style.top = "8px";
+          watermark.style.zIndex = "2147483647";
+          watermark.style.padding = "4px 8px";
+          watermark.style.borderRadius = "6px";
+          watermark.style.fontSize = "12px";
+          watermark.style.fontFamily = "monospace";
+          watermark.style.fontWeight = "700";
+          watermark.style.letterSpacing = "0.2px";
+          watermark.style.background = "rgba(10,15,22,0.72)";
+          watermark.style.color = "#e5f4ff";
+          watermark.style.border = "1px solid rgba(148,163,184,0.45)";
+          watermark.style.pointerEvents = "none";
+          document.body.appendChild(watermark);
+        } catch {}
+      },
+      { wmSymbol: symbol, wmTf: interval, wmTs: watermarkTs },
+    );
 
     await page.waitForTimeout(1000);
 
@@ -15396,11 +15482,24 @@ const appHandler = async (req, res) => {
         Array.isArray(fanout?.sids) && fanout.sids.length > 0
           ? fanout.sids[0]
           : tradeSidBase;
+      const createdSids = Array.isArray(fanout?.sids) ? fanout.sids : [actualSid];
+      const copiedBySid = {};
+      for (const sid of createdSids) {
+        const copied = copySnapshotsToTradeSidFolder(
+          sid,
+          Array.isArray(payload?.snapshot_files) ? payload.snapshot_files : [],
+          symbol,
+        );
+        copiedBySid[sid] = copied;
+      }
       return json(res, 200, {
         ok: true,
         created: fanout?.created || 0,
         sid: actualSid,
         trade: { sid: actualSid },
+        snapshot_folder: `trade-${actualSid}/snapshots`,
+        snapshot_copied: copiedBySid[actualSid] || [],
+        snapshot_copied_by_sid: copiedBySid,
         account_ids: fanout?.account_ids || [],
       });
     } catch (error) {
@@ -17195,6 +17294,14 @@ const appHandler = async (req, res) => {
         format: body.format,
         quality: body.quality,
       });
+      const tradeSid = String(
+        body.trade_sid || body.tradeSid || body.sid || "",
+      ).trim();
+      if (tradeSid) {
+        const copied = copySnapshotsToTradeSidFolder(tradeSid, [item?.file_name], body.symbol || item?.symbol || "");
+        item.trade_sid = tradeSid;
+        item.trade_snapshot_copied = copied;
+      }
       return json(res, 200, { ok: true, item });
     } catch (error) {
       return json(res, 500, {
@@ -17228,6 +17335,21 @@ const appHandler = async (req, res) => {
         format: body.format,
         quality: body.quality,
       });
+      const tradeSid = String(
+        body.trade_sid || body.tradeSid || body.sid || "",
+      ).trim();
+      if (tradeSid) {
+        const copied = copySnapshotsToTradeSidFolder(
+          tradeSid,
+          (Array.isArray(items) ? items : []).map((x) => x?.file_name).filter(Boolean),
+          body.symbol ||
+            (Array.isArray(body.symbols) && body.symbols.length ? body.symbols[0] : ""),
+        );
+        for (const it of Array.isArray(items) ? items : []) {
+          it.trade_sid = tradeSid;
+        }
+        return json(res, 200, { ok: true, items, trade_sid: tradeSid, copied });
+      }
       return json(res, 200, { ok: true, items });
     } catch (error) {
       return json(res, 500, {
@@ -17295,6 +17417,7 @@ const appHandler = async (req, res) => {
     });
 
     const theme = url.searchParams.get("theme") || "dark";
+    const gridStamp = new Date().toISOString().replace("T", " ").replace("Z", " UTC");
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`
@@ -17351,6 +17474,21 @@ const appHandler = async (req, res) => {
               border: 2px solid rgba(255,255,255,0.4);
               box-shadow: 0 4px 12px rgba(0,0,0,0.5); /* Shadow to stand out from chart */
             }
+            .sym-time-badge {
+              position: absolute;
+              top: 12px;
+              left: 12px;
+              background: rgba(8, 12, 18, 0.85);
+              color: #dbeafe;
+              padding: 4px 8px;
+              border-radius: 6px;
+              font-size: 12px;
+              font-family: monospace;
+              font-weight: 700;
+              z-index: 11;
+              border: 1px solid rgba(255,255,255,0.3);
+              pointer-events: none;
+            }
           </style>
         </head>
         <body>
@@ -17359,6 +17497,7 @@ const appHandler = async (req, res) => {
               .map(
                 (tf, i) => `
               <div class="chart-cell">
+                <div class="sym-time-badge">${symbol} | ${displayTfs[i]} | ${gridStamp}</div>
                 <div class="tf-badge">${displayTfs[i]}</div>
                 <iframe src="https://s.tradingview.com/widgetembed/?symbol=${symbol}&interval=${tvIntervals[i]}&theme=${theme}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
               </div>
@@ -17430,6 +17569,9 @@ const appHandler = async (req, res) => {
       const sessionPrefix = sanitizeSessionPrefix(
         body.session_prefix || body.sessionPrefix || "",
       );
+      const tradeSid = String(
+        body.trade_sid || body.tradeSid || body.sid || "",
+      ).trim();
       const snapshotMaxAgeMs = Math.max(
         0,
         Number(
@@ -17530,6 +17672,17 @@ const appHandler = async (req, res) => {
                   ),
               ),
             };
+            if (tradeSid && row.snapshots?.items?.length) {
+              const copied = copySnapshotsToTradeSidFolder(
+                tradeSid,
+                row.snapshots.items
+                  .map((x) => String(x?.file_name || "").trim())
+                  .filter(Boolean),
+                symbol,
+              );
+              row.snapshots.trade_sid = tradeSid;
+              row.snapshots.copied_to_trade = copied;
+            }
           } catch (error) {
             row.status = row.status === "ok" ? "partial" : row.status;
             row.errors.push({

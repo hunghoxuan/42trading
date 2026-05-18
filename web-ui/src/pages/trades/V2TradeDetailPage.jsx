@@ -246,6 +246,20 @@ export default function TradeDetailPage() {
       String(trade?.execution_status || "").toUpperCase(),
     );
   }, [trade?.execution_status]);
+  const mergedRawJson = useMemo(() => {
+    const rowRaw =
+      trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+    const metaRaw =
+      trade?.metadata?.raw_json && typeof trade.metadata.raw_json === "object"
+        ? trade.metadata.raw_json
+        : {};
+    return {
+      ...metaRaw,
+      ...rowRaw,
+      __metadata_raw_json: metaRaw,
+      __row_raw_json: rowRaw,
+    };
+  }, [trade]);
 
   async function onUpdateTradePlan() {
     if (!trade) return;
@@ -446,6 +460,7 @@ export default function TradeDetailPage() {
                 trade.provider || trade.metadata?.provider || "ICMARKETS",
               sessionPrefix:
                 trade.session_prefix || trade.metadata?.session_prefix || "",
+              tradeId: trade.sid || trade.id || "",
               analysisSnapshot:
                 trade?.metadata?.analysis_snapshot ||
                 trade?.raw_json?.analysis_snapshot ||
@@ -650,10 +665,31 @@ export default function TradeDetailPage() {
                     "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                 },
               },
+              {
+                label: "Analysis Snapshot",
+                value:
+                  trade?.metadata?.analysis_snapshot ||
+                  trade?.raw_json?.analysis_snapshot
+                    ? JSON.stringify(
+                        trade?.metadata?.analysis_snapshot ||
+                          trade?.raw_json?.analysis_snapshot ||
+                          {},
+                        null,
+                        2,
+                      )
+                    : "-",
+                fullWidth: true,
+                valueStyle: {
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily:
+                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                },
+              },
               { label: "Note", value: trade.note || "-", fullWidth: true },
               {
-                label: "Raw JSON",
-                value: JSON.stringify(trade.raw_json || {}, null, 2),
+                label: "Raw JSON (Merged)",
+                value: JSON.stringify(mergedRawJson || {}, null, 2),
                 fullWidth: true,
                 valueStyle: {
                   whiteSpace: "pre-wrap",

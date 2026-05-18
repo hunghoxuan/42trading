@@ -43,6 +43,18 @@ function priceSliderMeta(rawValue) {
   return { min: 0, max: 200000, step, value: clamped, enabled: true };
 }
 
+function calcRrByTarget(entryRaw, slRaw, targetRaw) {
+  const entry = parseNum(entryRaw);
+  const sl = parseNum(slRaw);
+  const target = parseNum(targetRaw);
+  if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(target))
+    return "";
+  const risk = Math.abs(entry - sl);
+  if (!(risk > 0)) return "";
+  const reward = Math.abs(target - entry);
+  return String(Number((reward / risk).toFixed(2)));
+}
+
 export function TradePlanEditor({
   signalId = null,
   tradeId = null,
@@ -119,6 +131,14 @@ export function TradePlanEditor({
     },
     { label: "Strategy", value: value.strategy || "-" },
   ];
+  const rr2 = useMemo(
+    () => calcRrByTarget(value.entry, value.sl, value.tp2),
+    [value.entry, value.sl, value.tp2],
+  );
+  const rr3 = useMemo(
+    () => calcRrByTarget(value.entry, value.sl, value.tp3),
+    [value.entry, value.sl, value.tp3],
+  );
 
   const NumericInline = ({
     label,
@@ -263,6 +283,77 @@ export function TradePlanEditor({
       </div>
     );
   };
+  const NumericNoSlider = ({
+    label,
+    k,
+    step = "0.01",
+    min,
+    max,
+    disabled: fieldDisabled = false,
+    readOnly = false,
+    valueOverride = null,
+  }) => {
+    const idPrefix = signalId || tradeId || "tp-editor";
+    const fieldId = `${idPrefix}-${k}`;
+    const isDisabled = fieldDisabled || controlsDisabled || readOnly;
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "20% minmax(140px, 1fr)",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <label
+          htmlFor={fieldId}
+          className="minor-text"
+          style={{
+            fontWeight: "700",
+            fontSize: "9px",
+            textTransform: "uppercase",
+            color: "var(--muted-bright)",
+            opacity: fieldDisabled ? 0.4 : 0.8,
+          }}
+        >
+          {label}
+        </label>
+        <input
+          id={fieldId}
+          name={k}
+          style={{
+            height: "22px",
+            fontSize: "11px",
+            padding: "0 6px",
+            width: "100%",
+            opacity: readOnly ? 0.85 : 1,
+          }}
+          type="number"
+          step={step}
+          inputMode="decimal"
+          min={min}
+          max={max}
+          value={cleanFieldValue(
+            valueOverride == null ? value[k] : valueOverride,
+          )}
+          onChange={(e) => update(k, e.target.value)}
+          disabled={isDisabled}
+        />
+      </div>
+    );
+  };
+  const Row2 = ({ left, right }) => (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 8,
+      }}
+    >
+      {left}
+      {right}
+    </div>
+  );
 
   return (
     <div
@@ -462,43 +553,29 @@ export function TradePlanEditor({
               gap: "8px",
             }}
           >
-            <div
-              className="snapshot-field-mini"
-              style={{
-                gridColumn: "1 / -1",
-                display: "flex",
-                flexDirection: "column",
-                gap: "2px",
-              }}
-            >
-              <label
-                htmlFor={`${signalId || tradeId || "tp-editor"}-direction`}
-                className="minor-text"
-                style={{
-                  fontWeight: "700",
-                  fontSize: "9px",
-                  textTransform: "uppercase",
-                  color: "var(--muted-bright)",
-                  opacity: 0.8,
-                }}
-              >
-                Order Type
-              </label>
-              <div style={{ display: "flex", gap: "4px" }}>
+            <Row2
+              left={
                 <select
                   id={`${signalId || tradeId || "tp-editor"}-direction`}
                   name="direction"
                   style={{
-                    flex: 1,
                     height: "24px",
                     fontSize: "11px",
                     padding: "0 2px",
                     background: "rgba(255,255,255,0.05)",
                   }}
                   value={value.direction || "BUY"}
-                  onChange={(e) =>
-                    update("direction", String(e.target.value || ""))
-                  }
+                  onChange={(e) => {
+                    const nextDir = String(e.target.value || "");
+                    const oldDir = String(value.direction || "BUY").toUpperCase();
+                    if (nextDir.toUpperCase() !== oldDir) {
+                      const oldTp = cleanFieldValue(value.tp);
+                      const oldSl = cleanFieldValue(value.sl);
+                      update("tp", oldSl);
+                      update("sl", oldTp);
+                    }
+                    update("direction", nextDir);
+                  }}
                   disabled={tradeFieldsDisabled || controlsDisabled}
                 >
                   {directionOptions.map((x) => (
@@ -507,11 +584,12 @@ export function TradePlanEditor({
                     </option>
                   ))}
                 </select>
+              }
+              right={
                 <select
                   id={`${signalId || tradeId || "tp-editor"}-trade_type`}
                   name="trade_type"
                   style={{
-                    flex: 1,
                     height: "24px",
                     fontSize: "11px",
                     padding: "0 2px",
@@ -527,29 +605,71 @@ export function TradePlanEditor({
                   <option value="market">market</option>
                   <option value="stop">stop</option>
                 </select>
-              </div>
-            </div>
-
-            <NumericInline
-              label="Entry"
-              k="entry"
-              disabled={tradeFieldsDisabled}
+              }
             />
 
-            <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
-            <NumericInline label="TP2" k="tp2" disabled={tradeFieldsDisabled} />
-            <NumericInline label="TP3" k="tp3" disabled={tradeFieldsDisabled} />
-
-            <NumericInline label="SL" k="sl" disabled={tradeFieldsDisabled} />
-
-            <NumericInline
-              label="RR"
-              k="rr"
-              step="0.1"
-              min="0.3"
-              max="10"
-              sliderOverride={{ min: 0.5, max: 8, step: (8 - 0.5) / 100 }}
-              disabled={tradeFieldsDisabled}
+            <Row2
+              left={
+                <NumericInline
+                  label="Entry"
+                  k="entry"
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+              right={
+                <NumericInline label="SL" k="sl" disabled={tradeFieldsDisabled} />
+              }
+            />
+            <Row2
+              left={
+                <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
+              }
+              right={
+                <NumericNoSlider
+                  label="RR"
+                  k="rr"
+                  step="0.01"
+                  min="0.1"
+                  max="20"
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+            />
+            <Row2
+              left={
+                <NumericInline
+                  label="TP2"
+                  k="tp2"
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+              right={
+                <NumericNoSlider
+                  label="RR2"
+                  k="rr2"
+                  readOnly
+                  valueOverride={rr2}
+                  disabled
+                />
+              }
+            />
+            <Row2
+              left={
+                <NumericInline
+                  label="TP3"
+                  k="tp3"
+                  disabled={tradeFieldsDisabled}
+                />
+              }
+              right={
+                <NumericNoSlider
+                  label="RR3"
+                  k="rr3"
+                  readOnly
+                  valueOverride={rr3}
+                  disabled
+                />
+              }
             />
           </div>
 

@@ -460,6 +460,7 @@ export default function SymbolChart({
   sessionPrefix = "",
   profile = "day",
   attachedSnapshotFiles = [],
+  tradeSid = "",
   onQuickTradeIntent = null,
   onTrade = null,
   showAnalyzeButton = true,
@@ -599,6 +600,7 @@ export default function SymbolChart({
     sessionPrefix,
     attachedSnapshotFiles,
     profile,
+    tradeSid,
   });
 
   const sortedTfs = useMemo(
