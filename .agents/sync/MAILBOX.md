@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 18:44 UTC`
-- note: `Trade Files tab SID-scoped snapshots fix deploy`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 18:52 UTC`
+- note: `Trade Files tab SID-scoped snapshots fix deployed and verified`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,24 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 18:52 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 87e3664b
+- scope: `webhook/server.js`, `web-ui/src/components/TradeFilesTab.jsx`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (87e3664b)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 18:44 - eaaf9081
+  - ea_version: v2026.05.18 18:44 - eaaf9081
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 18:44 - eaaf9081`, `postgres:ok`, `redis:ok`, `mt5.connected:true`, `ctrader.connected:true`
+  - /ui asset: `/assets/index-CkpJjRb8.js`
+  - key endpoint: PM2 logs show active `GET /v2/broker/pull`, `POST /v2/broker/ack`, and `POST /v2/broker/sync` loops with `items=0 results=2`
+  - task-specific: Files tab now uses only `/v2/trades/<sid>/snapshots`; `TF8X13I78` legacy snapshots copied into `webhook/trade_files/trade-TF8X13I78/snapshots/` with 6 files and no overwrite
+- handoff_next: none
 
 ### [2026-05-18 17:45 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
