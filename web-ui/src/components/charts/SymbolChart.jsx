@@ -1009,10 +1009,15 @@ export default function SymbolChart({
         setMode("snapshots");
         setPendingMode(null);
         setLastError(null);
+        setCapturingSnapshots(true);
         try {
+          // Capture snapshots first, then list
+          await refresh();
           await openSnapshotFileList();
         } catch (err) {
-          setLastError(err?.message || "Failed to load snapshots");
+          setLastError(err?.message || "Failed to capture/load snapshots");
+        } finally {
+          setCapturingSnapshots(false);
         }
         return;
       }

@@ -4009,12 +4009,11 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           );
 
           await page.goto(gridUrl, {
-            // networkidle can stall indefinitely on live iframe feeds.
             waitUntil: "domcontentloaded",
-            timeout: 30000,
+            timeout: 60000,
           });
-          // Give embedded charts a short warm-up; keep cron under global timeout.
-          await page.waitForTimeout(4000);
+          // Give embedded charts time to load iframes
+          await page.waitForTimeout(12000);
           const gridWatermarkOk = await page.evaluate(() => {
             const badges = [...document.querySelectorAll(".sym-time-badge,.tf-badge")];
             if (!badges.length) return false;
