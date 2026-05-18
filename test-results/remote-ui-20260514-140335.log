@@ -1,0 +1,97 @@
+
+Running 2 tests using 1 worker
+
+  ✘  1 [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data (21.0s)
+  ✘  2 [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel (20.9s)
+
+
+  1) [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data ─────────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByRole('heading', { name: 'Dashboard' })
+    Expected: visible
+    Timeout: 20000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 20000ms[22m
+    [2m  - waiting for getByRole('heading', { name: 'Dashboard' })[22m
+
+
+      17 | test("dashboard page loads data", async ({ page }) => {
+      18 |   await page.goto("dashboard");
+    > 19 |   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 20_000 });
+         |                                                                  ^
+      20 |   await expect(page.getByText("Loading dashboard...")).toHaveCount(0);
+      21 |   await expect(page.locator(".error")).toHaveCount(0);
+      22 |   await expect(page.getByText("Total Trades")).toBeVisible();
+        at /Users/macmini/Trade/Bot/trading/web-ui/tests/e2e/remote-ui.spec.js:19:66
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/remote-ui-dashboard-page-loads-data-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/remote-ui-dashboard-page-loads-data-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/remote-ui-dashboard-page-loads-data-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/remote-ui-dashboard-page-loads-data-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/remote-ui-dashboard-page-loads-data-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel ──────────────────
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: getByRole('heading', { name: 'Trades' })
+    Expected: visible
+    Timeout: 20000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 20000ms[22m
+    [2m  - waiting for getByRole('heading', { name: 'Trades' })[22m
+
+
+      25 | test("trades page loads list panel", async ({ page }) => {
+      26 |   await page.goto("trades");
+    > 27 |   await expect(page.getByRole("heading", { name: "Trades" })).toBeVisible({ timeout: 20_000 });
+         |                                                               ^
+      28 |   await expect(page.getByText("Loading trades...")).toHaveCount(0);
+      29 |   await expect(page.locator(".error")).toHaveCount(0);
+      30 |   await expect(page.getByRole("heading", { name: "Filters" })).toBeVisible();
+        at /Users/macmini/Trade/Bot/trading/web-ui/tests/e2e/remote-ui.spec.js:27:63
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/remote-ui-trades-page-loads-list-panel-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/remote-ui-trades-page-loads-list-panel-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/remote-ui-trades-page-loads-list-panel-chromium/error-context.md
+
+    attachment #4: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/remote-ui-trades-page-loads-list-panel-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/remote-ui-trades-page-loads-list-panel-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data ──────────────────────
+    [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel ───────────────────
+
+To open last HTML report run:
+[36m[39m
+[36m  npx playwright show-report[39m
+[36m[39m

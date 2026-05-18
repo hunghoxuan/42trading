@@ -207,6 +207,8 @@
   },
   "active": "4bf2b34a6a4ef4d8",
   "lastOpenFiles": [
+    "sync/HANDOFF_2026-05-18_DEEPSEEK_snapshot-watermark-info.md",
+    "sync/HANDOFF_2026-05-17_RR_INSERT_FIX.md",
     "sync/HANDOFF_2026-05-17.md",
     "sync/HANDOFF_2026-05-17_MULTI_TP_LIFECYCLE.md",
     "sync/TICKET_2026-05-16_tradingview-sync-and-login.md",
@@ -237,8 +239,6 @@
     "wiki/decisions/20260326-wave1-cut2-confluence.md",
     "wiki/decisions/20260326-ui-trade-model-notes.md",
     "wiki/decisions/20260326-trend-priority-entry-gate.md",
-    "wiki/decisions/20260325-signal-event-semantics-v1.md",
-    "wiki/decisions/20260325-gate-inventory-v1.md",
     "wiki/decisions",
     "wiki",
     "features",

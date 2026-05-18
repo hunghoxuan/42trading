@@ -13,7 +13,7 @@ export default function InfoTabChart({ symbol, interval = "1h", entryPrice, slPr
     setError("");
     api.chartTwelveCandles(symbol, interval, 200)
       .then((data) => {
-        if (data?.bars?.length) setBars(data.bars);
+        if (data?.snapshot?.bars?.length) setBars(data.snapshot.bars);
         else setError("No bars returned");
       })
       .catch((e) => setError(e?.message || "Failed"))
@@ -25,7 +25,6 @@ export default function InfoTabChart({ symbol, interval = "1h", entryPrice, slPr
   return (
     <div style={{ marginBottom: 16, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
       {loading && <div className="minor-text" style={{ padding: 40, textAlign: "center" }}>Loading chart...</div>}
-      {error && <div className="minor-text" style={{ padding: 20, textAlign: "center", color: "#ef4444" }}>{error}</div>}
       {bars && bars.length > 0 && (
         <TradeSignalChart
           key={`info-chart-${symbol}-${interval}`}

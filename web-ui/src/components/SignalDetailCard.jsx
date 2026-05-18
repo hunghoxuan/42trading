@@ -1495,15 +1495,17 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
-          <InfoTabChart
-            symbol={chart?.symbol}
-            interval={chart?.interval || chart?.detailTfTab || "1h"}
-            entryPrice={chart?.entryPrice}
-            slPrice={chart?.slPrice}
-            tpPrice={chart?.tpPrice}
-          />
-        </Suspense>
+        {mode === "trade" && chart?.symbol && (
+          <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
+            <InfoTabChart
+              symbol={chart?.symbol}
+              interval={chart?.interval || chart?.detailTfTab || "1h"}
+              entryPrice={chart?.entryPrice}
+              slPrice={chart?.slPrice}
+              tpPrice={chart?.tpPrice}
+            />
+          </Suspense>
+        )}
         {(() => {
           const p =
             plans.find(

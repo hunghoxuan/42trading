@@ -1,0 +1,95 @@
+
+Running 2 tests using 1 worker
+
+(node:43222) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:43222) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  1 [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data (0ms)
+(node:43470) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:43470) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✘  2 [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel (1ms)
+
+
+  1) [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data ─────────────────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /Users/macmini/Library/Caches/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-mac-arm64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --user-data-dir=/var/folders/86/hf00kffn707fh322gxgvlcc00000gn/T/playwright_chromiumdev_profile-09Plsv --remote-debugging-pipe --no-startup-window
+    <launched> pid=43237
+    [pid=43237][err] [0514/135922.185723:ERROR:base/power_monitor/thermal_state_observer_mac.mm:140] ThermalStateObserverMac unable to register to power notifications. Result: 9
+    [pid=43237][err] [0514/135922.200535:ERROR:net/dns/dns_config_service_posix.cc:138] DNS config watch failed to start.
+    [pid=43237][err] [0514/135922.203120:WARNING:net/dns/dns_config_service_posix.cc:197] Failed to read DnsConfig.
+    [pid=43237][err] [0514/135922.208834:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.43237: Permission denied (1100)
+    Call log:
+    [2m  - <launching> /Users/macmini/Library/Caches/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-mac-arm64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --user-data-dir=/var/folders/86/hf00kffn707fh322gxgvlcc00000gn/T/playwright_chromiumdev_profile-09Plsv --remote-debugging-pipe --no-startup-window[22m
+    [2m  - <launched> pid=43237[22m
+    [2m  - [pid=43237][err] [0514/135922.185723:ERROR:base/power_monitor/thermal_state_observer_mac.mm:140] ThermalStateObserverMac unable to register to power notifications. Result: 9[22m
+    [2m  - [pid=43237][err] [0514/135922.200535:ERROR:net/dns/dns_config_service_posix.cc:138] DNS config watch failed to start.[22m
+    [2m  - [pid=43237][err] [0514/135922.203120:WARNING:net/dns/dns_config_service_posix.cc:197] Failed to read DnsConfig.[22m
+    [2m  - [pid=43237][err] [0514/135922.208834:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.43237: Permission denied (1100)[22m
+    [2m  - [pid=43237] <gracefully close start>[22m
+    [2m  - [pid=43237] <kill>[22m
+    [2m  - [pid=43237] <will force kill>[22m
+    [2m  - [pid=43237] exception while trying to kill process: Error: kill EPERM[22m
+    [2m  - [pid=43237] <process did exit: exitCode=null, signal=SIGTRAP>[22m
+    [2m  - [pid=43237] starting temporary directories cleanup[22m
+    [2m  - [pid=43237] finished temporary directories cleanup[22m
+    [2m  - [pid=43237] <gracefully close end>[22m
+
+
+    Error Context: test-results/remote-ui-dashboard-page-loads-data-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/remote-ui-dashboard-page-loads-data-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/remote-ui-dashboard-page-loads-data-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel ──────────────────
+
+    Error: browserType.launch: Target page, context or browser has been closed
+    Browser logs:
+
+    <launching> /Users/macmini/Library/Caches/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-mac-arm64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --user-data-dir=/var/folders/86/hf00kffn707fh322gxgvlcc00000gn/T/playwright_chromiumdev_profile-oA1Qkw --remote-debugging-pipe --no-startup-window
+    <launched> pid=43483
+    [pid=43483][err] [0514/135922.925117:ERROR:base/power_monitor/thermal_state_observer_mac.mm:140] ThermalStateObserverMac unable to register to power notifications. Result: 9
+    [pid=43483][err] [0514/135922.926457:ERROR:net/dns/dns_config_service_posix.cc:138] DNS config watch failed to start.
+    [pid=43483][err] [0514/135922.926941:WARNING:net/dns/dns_config_service_posix.cc:197] Failed to read DnsConfig.
+    [pid=43483][err] [0514/135922.927002:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.43483: Permission denied (1100)
+    [pid=43483] <process did exit: exitCode=null, signal=SIGTRAP>
+    [pid=43483] starting temporary directories cleanup
+    Call log:
+    [2m  - <launching> /Users/macmini/Library/Caches/ms-playwright/chromium_headless_shell-1217/chrome-headless-shell-mac-arm64/chrome-headless-shell --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --user-data-dir=/var/folders/86/hf00kffn707fh322gxgvlcc00000gn/T/playwright_chromiumdev_profile-oA1Qkw --remote-debugging-pipe --no-startup-window[22m
+    [2m  - <launched> pid=43483[22m
+    [2m  - [pid=43483][err] [0514/135922.925117:ERROR:base/power_monitor/thermal_state_observer_mac.mm:140] ThermalStateObserverMac unable to register to power notifications. Result: 9[22m
+    [2m  - [pid=43483][err] [0514/135922.926457:ERROR:net/dns/dns_config_service_posix.cc:138] DNS config watch failed to start.[22m
+    [2m  - [pid=43483][err] [0514/135922.926941:WARNING:net/dns/dns_config_service_posix.cc:197] Failed to read DnsConfig.[22m
+    [2m  - [pid=43483][err] [0514/135922.927002:FATAL:base/apple/mach_port_rendezvous_mac.cc:159] Check failed: kr == KERN_SUCCESS. bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer.43483: Permission denied (1100)[22m
+    [2m  - [pid=43483] <process did exit: exitCode=null, signal=SIGTRAP>[22m
+    [2m  - [pid=43483] starting temporary directories cleanup[22m
+    [2m  - [pid=43483] <gracefully close start>[22m
+    [2m  - [pid=43483] <kill>[22m
+    [2m  - [pid=43483] <skipped force kill spawnedProcess.killed=false processClosed=true>[22m
+    [2m  - [pid=43483] finished temporary directories cleanup[22m
+    [2m  - [pid=43483] <gracefully close end>[22m
+
+
+    Error Context: test-results/remote-ui-trades-page-loads-list-panel-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/remote-ui-trades-page-loads-list-panel-chromium/trace.zip
+    Usage:
+
+        npx playwright show-trace test-results/remote-ui-trades-page-loads-list-panel-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2 failed
+    [chromium] › tests/e2e/remote-ui.spec.js:17:1 › dashboard page loads data ──────────────────────
+    [chromium] › tests/e2e/remote-ui.spec.js:25:1 › trades page loads list panel ───────────────────

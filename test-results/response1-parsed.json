@@ -1,0 +1,105 @@
+{
+  "trade_plan": [
+    {
+      "symbol": "CADJPY",
+      "direction": "SELL",
+      "order_type": "Limit",
+      "profile": "Intraday",
+      "timeframe": "15m",
+      "session": "NewYork",
+      "strategy": "SMC",
+      "entry_model": "OB Mitigation Entry",
+      "entry_checklists": {
+        "HTF_Liquidy_Swept": false,
+        "HTF_POI": true,
+        "MSS_Shift": true,
+        "CHoCH": true,
+        "BOS": true,
+        "OB_Reversal": true,
+        "FVG_InDiscount": true,
+        "IDM_Internal_Liquidity": true,
+        "Consolidation_range": true,
+        "Retest_to_original_consolidation": true
+      },
+      "entry_price": 115.1,
+      "stop_loss": 115.55,
+      "risk_reward": 2.44,
+      "breakeven_trigger": 114.75,
+      "multiple_exits": {
+        "tp1": {
+          "price": 114,
+          "risk_reward": 2.44,
+          "position_pct": 50,
+          "reference": "15M SSL / PDL zone near 114.00"
+        },
+        "tp2": {
+          "price": 113.8,
+          "risk_reward": 2.89,
+          "position_pct": 30,
+          "reference": "4H-SSL-1"
+        },
+        "tp3": {
+          "price": 113.2,
+          "risk_reward": 4.22,
+          "position_pct": 20,
+          "reference": "D-SSL-1"
+        }
+      },
+      "risk_management": {
+        "grade": "B",
+        "risk_percent": 0.5,
+        "confidence_pct": 74,
+        "estimate_mins_that_entry_happens": 15,
+        "skip_decision": "Proceed",
+        "skip_reasons": "",
+        "entry_trigger": "Place sell limit at 115.10 (15M-OB-1 midpoint). Entry confirmed when 5M bearish engulfing or pin bar rejection closes below 115.05 inside the OB zone. Do not enter if price closes above 115.55.",
+        "mid_trade_invalidation": "Close trade if a 15M candle body closes above 115.55 — invalidates the bearish OB structure and suggests bullish continuation.",
+        "pre_entry_invalidation": "Cancel order if price closes above 115.55 on any 15M candle before entry triggers, or if a bullish BOS is confirmed on 4H."
+      },
+      "entry": 115.1,
+      "sl": 115.55,
+      "tp": 113.2
+    },
+    {
+      "symbol": "XAGUSD",
+      "direction": "BUY",
+      "profile": "Intraday",
+      "order_type": "Market",
+      "session": "Any",
+      "strategy": "SMC",
+      "entry_model": "No valid setup",
+      "entry_price": null,
+      "stop_loss": null,
+      "take_profits": [],
+      "risk_reward": null,
+      "risk_percent": null,
+      "estimated_candles_to_tp1": null,
+      "estimate_candles_that_entry_happens": null,
+      "entry_trigger": "",
+      "mid_trade_invalidation": "",
+      "pre_entry_invalidation": "",
+      "confluence_score": 0,
+      "trade_decision": "Skip",
+      "skip_reasons": [
+        {
+          "reason": "No valid setup found for XAGUSD from current chart files.",
+          "severity": "info"
+        }
+      ],
+      "risk_management": {
+        "grade": "C",
+        "risk_percent": null,
+        "confidence_pct": 0,
+        "estimate_mins_that_entry_happens": null,
+        "skip_decision": "Skip",
+        "skip_reasons": "No valid setup found for XAGUSD from current chart files.",
+        "entry_trigger": "",
+        "mid_trade_invalidation": "",
+        "pre_entry_invalidation": ""
+      },
+      "grade": "C",
+      "confidence_pct": 0,
+      "note": "Auto-added by server to ensure per-symbol coverage."
+    }
+  ]
+}
