@@ -2938,8 +2938,9 @@ function ensureTradeFilesDir(sid) {
 }
 
 function tradeSnapshotDir(sid) {
-  const base = ensureTradeFilesDir(sid);
-  const dir = path.join(base, "snapshots");
+  ensureChartSnapshotDir();
+  const dir = path.join(CHART_SNAPSHOT_DIR, String(sid || "").trim());
+  if (!dir || dir === CHART_SNAPSHOT_DIR) return CHART_SNAPSHOT_DIR;
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -2950,21 +2951,31 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
     .trim()
     .toUpperCase();
   if (!sym) return [];
-  const files = fs
-    .readdirSync(CHART_SNAPSHOT_DIR)
-    .filter((f) => /\.(png|jpe?g)$/i.test(f))
-    .filter((f) => String(f || "").toUpperCase().includes(sym))
-    .map((f) => {
-      const abs = path.join(CHART_SNAPSHOT_DIR, f);
-      let t = 0;
-      try {
-        t = Number(fs.statSync(abs).mtimeMs || 0);
-      } catch {}
-      return { file_name: f, mtime_ms: t };
-    })
-    .sort((a, b) => b.mtime_ms - a.mtime_ms)
-    .slice(0, Math.max(1, Number(limit) || 12));
-  return files.map((x) => x.file_name);
+
+  // Collect files from root + all {sid} subfolders
+  const collect = (dir, prefix = "") => {
+    const out = [];
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          out.push(...collect(full, prefix + e.name + "/"));
+        } else if (/\.(png|jpe?g)$/i.test(e.name)) {
+          const relPath = prefix + e.name;
+          if (String(relPath || "").toUpperCase().includes(sym)) {
+            let t = 0;
+            try { t = Number(fs.statSync(full).mtimeMs || 0); } catch {}
+            out.push({ file_name: relPath, mtime_ms: t });
+          }
+        }
+      }
+    } catch {}
+    return out;
+  };
+  const files = collect(CHART_SNAPSHOT_DIR);
+  const sorted = files.sort((a, b) => b.mtime_ms - a.mtime_ms).slice(0, Math.max(1, Number(limit) || 12));
+  return sorted.map((x) => x.file_name);
 }
 
 function snapshotTimestampToken(date = new Date()) {
@@ -2992,8 +3003,27 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   for (const fileName of sourceFiles) {
     const safe = normalizeSnapshotFileName(fileName);
     if (!safe) continue;
-    const src = path.join(CHART_SNAPSHOT_DIR, safe);
-    if (!fs.existsSync(src)) continue;
+    // Try root dir first, then search subfolders
+    let src = path.join(CHART_SNAPSHOT_DIR, safe);
+    if (!fs.existsSync(src)) {
+      // Search in subfolders
+      const findInDir = (dir) => {
+        try {
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              const found = findInDir(full);
+              if (found) return found;
+            } else if (e.name === safe) {
+              return full;
+            }
+          }
+        } catch {}
+        return null;
+      };
+      src = findInDir(CHART_SNAPSHOT_DIR);
+    }
+    if (!src || !fs.existsSync(src)) continue;
     const ext = path.extname(safe);
     const base = path.basename(safe, ext);
     let destName = `${base}_${snapshotTimestampToken()}${ext}`;
@@ -19885,28 +19915,39 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         url.searchParams.get("session_prefix") || "",
       );
-      const files = fs
-        .readdirSync(CHART_SNAPSHOT_DIR)
-        .filter((f) => !reqSessionPrefix || f.includes(`_${reqSessionPrefix}_`))
-        .map((f) => {
-          const abs = path.join(CHART_SNAPSHOT_DIR, f);
-          if (!fs.statSync(abs).isFile()) return null;
-          const st = fs.statSync(abs);
-          return {
-            id: f.replace(/\.[^.]+$/i, ""),
-            file_name: f,
-            created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
-            size_bytes: Number(st.size || 0),
-            mime_type: fileMimeByName(f),
-            url: `/v2/chart/snapshots/${encodeURIComponent(f)}`,
-          };
-        })
-        .filter(Boolean)
-        .sort((a, b) =>
-          String(b.created_at).localeCompare(String(a.created_at)),
-        )
-        .slice(0, limit);
-      return json(res, 200, { ok: true, items: files });
+      // Recurse into subfolders ({sid} dirs)
+      const collectFiles = (dir, prefix = "") => {
+        const out = [];
+        try {
+          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+              out.push(...collectFiles(full, prefix + e.name + "/"));
+            } else if (e.isFile() && /\.(png|jpe?g)$/i.test(e.name)) {
+              if (reqSessionPrefix && !e.name.includes(`_${reqSessionPrefix}_`)) continue;
+              const st = fs.statSync(full);
+              const relPath = prefix + e.name;
+              out.push({
+                id: relPath.replace(/\.[^.]+$/i, ""),
+                file_name: relPath,
+                created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
+                size_bytes: Number(st.size || 0),
+                mime_type: fileMimeByName(e.name),
+                url: `/v2/chart/snapshots/${encodeURIComponent(relPath)}`,
+              });
+            }
+          }
+        } catch {}
+        return out;
+      };
+      const files = collectFiles(CHART_SNAPSHOT_DIR)
+
+      const sorted = files.sort((a, b) =>
+        String(b.created_at).localeCompare(String(a.created_at)),
+      ).slice(0, limit);
+      const final = sorted;
+      return json(res, 200, { ok: true, items: final });
     } catch (error) {
       return json(res, 500, {
         ok: false,
