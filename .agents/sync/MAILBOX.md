@@ -13,8 +13,8 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `LOCKED`
 - deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-17 18:58 UTC`
-- note: `Deploy RR precision + insert mismatch + raw-plan regression test`
+- since_utc: `2026-05-18 06:27 UTC`
+- note: `Deploying precision+raw-plan-integrity+UI cleanup patch`
 
 ## Required Entry Template
 ...
@@ -114,6 +114,23 @@ Copy and fill:
   - PM2 logs: `ReferenceError: hasPartial is not defined` in `brokerSyncV2`
   - key endpoint: `/v2/broker/sync` path throwing runtime exceptions
 - handoff_next: fix `hasPartial` scope bug, redeploy, and post PASS ledger
+
+### [2026-05-17 19:18 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 72a73159
+- scope: `web-ui/src/components/TradeSignalChart.jsx`, `web-ui/src/pages/trades/TradesPage.jsx`, `web-ui/src/pages/trades/V2TradeDetailPage.jsx`, `web-ui/src/utils/signalDetailUtils.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_Ctrader.cs`
+- merge_to_main: YES (72a73159)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.17 21:20 - tp123fix
+  - ea_version: v2026.05.17 21:20 - tp123fix
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.17 21:20 - tp123fix`, `postgres:ok`, `redis:ok`
+  - /ui asset: `/assets/index-ChHIekm7.js`
+  - key endpoint: `POST /v2/trades/{id}/trade-plan/save` path deployed and UI reachable
+- handoff_next: none
 
 ### [2026-05-17 17:11 UTC] AGENT:codex-gpt5
 - status: DEPLOYED

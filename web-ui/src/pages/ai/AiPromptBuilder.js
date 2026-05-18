@@ -1000,6 +1000,16 @@ ${strategyContext}
 ## ANALYSIS INSTRUCTIONS
 ${GUIDE_SYSTEM}${guideUser ? "\n\n## USER INSTRUCTIONS\n" + guideUser : ""}
 
+## PRICE PRECISION RULE (MANDATORY)
+For each symbol, detect the market price precision from the provided chart/current price values and keep it consistent.
+If current price uses N decimals, all price outputs in trade_plan must also use exactly N decimals:
+- entry_price / entry
+- stop_loss / sl
+- take_profit / tp
+- multiple_exits.tp1.price / tp2.price / tp3.price
+- breakeven_trigger / be_trigger
+Do not round to fewer decimals than the symbol precision.
+
 ## EXPECTED OUTPUT SCHEMA
 Return your response as JSON exactly matching this structure:
 ${buildSchemaString(schemaUser)}

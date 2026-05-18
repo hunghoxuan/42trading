@@ -2471,6 +2471,7 @@ export default function SignalDetailCard({
             <SmartContent
               content={mode === "ai" ? selectedPlanRaw : selectedRawData}
               mode="readonly"
+              showCopy
             />
           ) : (
             <div className="minor-text">

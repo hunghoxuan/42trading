@@ -1771,7 +1771,22 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
       : plans.filter(
           (p) => normalizeSignalSymbol(String(p?.symbol || "")) === sym,
         );
+  const exactNestedPlans = Array.isArray(parsed.analysis_data)
+    ? parsed.analysis_data
+        .flatMap((entry) =>
+          Array.isArray(entry?.trade_plan) ? entry.trade_plan : [],
+        )
+        .filter(
+          (p) =>
+            normalizeSignalSymbol(String(p?.symbol || parsed?.symbol || "")) ===
+            sym,
+        )
+    : [];
   cloned.trade_plan = selected;
+  if (exactNestedPlans.length) {
+    // Keep untouched AI plan items for audit/debug. Do not transform.
+    cloned.__ai_trade_plan_raw_exact = exactNestedPlans;
+  }
   return cloned;
 }
 

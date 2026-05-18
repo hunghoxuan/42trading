@@ -12,7 +12,7 @@ function parseNum(v) {
 
 function formatNum3(v) {
   if (!Number.isFinite(v)) return "";
-  return String(Number(v.toFixed(3)));
+  return String(Number(v.toFixed(8)));
 }
 function cleanFieldValue(v) {
   const s = String(v ?? "")
@@ -537,7 +537,6 @@ export function TradePlanEditor({
             />
 
             <NumericInline label="TP" k="tp" disabled={tradeFieldsDisabled} />
-            <NumericInline label="TP1" k="tp1" disabled={tradeFieldsDisabled} />
             <NumericInline label="TP2" k="tp2" disabled={tradeFieldsDisabled} />
             <NumericInline label="TP3" k="tp3" disabled={tradeFieldsDisabled} />
 

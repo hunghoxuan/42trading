@@ -927,22 +927,18 @@ export default function TradesPage() {
           className="toolbar-group toolbar-search-filter"
           style={{ flexWrap: "wrap" }}
         >
-          <label htmlFor="trades-search" className="sr-only">
-            Search
-          </label>
           <input
             id="trades-search"
+            aria-label="Search"
             placeholder="SEARCH..."
             value={filter.q}
             onChange={(e) => {
               setFilter((f) => ({ ...f, q: e.target.value, page: 1 }));
             }}
           />
-          <label htmlFor="trades-filter-account" className="sr-only">
-            Account
-          </label>
           <select
             id="trades-filter-account"
+            aria-label="Account"
             value={filter.account_id}
             onChange={(e) =>
               setFilter((f) => ({ ...f, account_id: e.target.value, page: 1 }))
@@ -955,11 +951,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-tf" className="sr-only">
-            Timeframe
-          </label>
           <select
             id="trades-filter-tf"
+            aria-label="Timeframe"
             value={filter.chart_tf}
             onChange={(e) =>
               setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
@@ -972,11 +966,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-source" className="sr-only">
-            Source
-          </label>
           <select
             id="trades-filter-source"
+            aria-label="Source"
             value={filter.source_id}
             onChange={(e) =>
               setFilter((f) => ({ ...f, source_id: e.target.value, page: 1 }))
@@ -989,11 +981,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-side" className="sr-only">
-            Side
-          </label>
           <select
             id="trades-filter-side"
+            aria-label="Side"
             value={filter.side}
             onChange={(e) =>
               setFilter((f) => ({ ...f, side: e.target.value, page: 1 }))
@@ -1017,11 +1007,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-symbol" className="sr-only">
-            Symbol
-          </label>
           <select
             id="trades-filter-symbol"
+            aria-label="Symbol"
             value={filter.symbol}
             onChange={(e) =>
               setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
@@ -1034,11 +1022,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-model" className="sr-only">
-            Model
-          </label>
           <select
             id="trades-filter-model"
+            aria-label="Model"
             value={filter.entry_model}
             onChange={(e) =>
               setFilter((f) => ({ ...f, entry_model: e.target.value, page: 1 }))
@@ -1051,11 +1037,9 @@ export default function TradesPage() {
               </option>
             ))}
           </select>
-          <label htmlFor="trades-filter-range" className="sr-only">
-            Time Range
-          </label>
           <select
             id="trades-filter-range"
+            aria-label="Time Range"
             value={filter.range}
             onChange={(e) =>
               setFilter((f) => ({ ...f, range: e.target.value, page: 1 }))
@@ -1069,11 +1053,9 @@ export default function TradesPage() {
           </select>
         </div>
         <div className="toolbar-group toolbar-bulk-action">
-          <label htmlFor="trades-bulk-action" className="sr-only">
-            Bulk Action
-          </label>
           <select
             id="trades-bulk-action"
+            aria-label="Bulk Action"
             value={bulkAction}
             onChange={(e) => setBulkAction(e.target.value)}
             disabled={bulkBusy}

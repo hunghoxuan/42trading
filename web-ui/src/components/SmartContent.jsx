@@ -11,6 +11,7 @@ export function SmartContent({
   mode = "readonly",
   rows = 6,
   onChange,
+  showCopy = false,
 }) {
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -51,21 +52,40 @@ export function SmartContent({
     if (isEmpty) return <span className="minor-text">—</span>;
     if (isJson)
       return (
-        <pre
-          style={{
-            margin: 0,
-            fontSize: 10,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            maxHeight: 300,
-            overflow: "auto",
-            color: "var(--text)",
-            opacity: 0.85,
-            ...borderStyle,
-          }}
-        >
-          {displayText()}
-        </pre>
+        <div style={{ position: "relative" }}>
+          <pre
+            style={{
+              margin: 0,
+              fontSize: 10,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              maxHeight: 300,
+              overflow: "auto",
+              color: "var(--text)",
+              opacity: 0.85,
+              ...borderStyle,
+            }}
+          >
+            {displayText()}
+          </pre>
+          {showCopy ? (
+            <button
+              className="secondary-button"
+              onClick={handleCopy}
+              style={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                padding: "1px 5px",
+                fontSize: 8,
+                opacity: 0.8,
+              }}
+              title="Copy JSON"
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          ) : null}
+        </div>
       );
     if (isHtml) return <div dangerouslySetInnerHTML={{ __html: raw }} />;
     const lines = String(raw)
