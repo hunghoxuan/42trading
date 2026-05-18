@@ -1504,7 +1504,8 @@ export default function SignalDetailCard({
                 entryPrice={chart?.entryPrice}
                 slPrice={chart?.slPrice}
                 tpPrice={chart?.tpPrice}
-                height={300}
+                initialGridCols={1}
+                initialBarsCount={200}
                 showAnalyzeButton={false}
                 showTradeButton={false}
                 showEditButton={false}
