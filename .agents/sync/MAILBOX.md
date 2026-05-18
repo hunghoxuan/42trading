@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 19:15 UTC`
-- note: `AI add-trade Files SID hydration + upload fix deploy`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-18 19:19 UTC`
+- note: `AI add-trade Files SID hydration + upload fix deployed and verified`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,24 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-18 19:19 UTC] AGENT:codex-gpt5
+- status: DEPLOYED
+- branch: main
+- commit: 97ca8796
+- scope: `web-ui/src/api.js`, `web-ui/src/components/TradeFilesTab.jsx`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (97ca8796)
+- deploy:
+  - owner: codex-gpt5
+  - server_version: v2026.05.18 19:15 - 386c07fa
+  - ea_version: v2026.05.18 19:15 - 386c07fa
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `version:v2026.05.18 19:15 - 386c07fa`, `postgres:ok`, `redis:ok`, `mt5.connected:true`, `ctrader.connected:true`
+  - /ui asset: `/assets/index-DfNesrRj.js`
+  - key endpoint: PM2 logs show active `GET /v2/broker/pull`, `POST /v2/broker/ack`, and `POST /v2/broker/sync` loops with `items=0 results=1`
+  - task-specific: AI add-trade path now hydrates Files tab with created trade SID; Files tab loads only SID-scoped snapshots/uploads; upload uses UI session credentials
+- handoff_next: none
 
 ### [2026-05-18 18:52 UTC] AGENT:codex-gpt5
 - status: DEPLOYED
