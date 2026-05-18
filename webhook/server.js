@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 16:17 - 7df2b6d4"); // cTrader partial TP safety hardening + side-valid TP filtering
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 18:44 - eaaf9081"); // cTrader partial TP safety hardening + side-valid TP filtering
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -2930,19 +2930,53 @@ function ensureAiContextFileDir() {
 }
 
 function ensureTradeFilesDir(sid) {
-  ensureChartSnapshotDir();
-  const dir = path.join(CHART_SNAPSHOT_DIR, String(sid || "").trim());
-  if (!dir || dir === CHART_SNAPSHOT_DIR) return CHART_SNAPSHOT_DIR;
+  const safeSid = String(sid || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  if (!safeSid) return TRADE_FILES_DIR;
+  if (!fs.existsSync(TRADE_FILES_DIR)) {
+    fs.mkdirSync(TRADE_FILES_DIR, { recursive: true });
+  }
+  const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 function tradeSnapshotDir(sid) {
-  ensureChartSnapshotDir();
-  const dir = path.join(CHART_SNAPSHOT_DIR, String(sid || "").trim());
-  if (!dir || dir === CHART_SNAPSHOT_DIR) return CHART_SNAPSHOT_DIR;
+  const dir = path.join(ensureTradeFilesDir(sid), "snapshots");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function legacyTradeSnapshotDir(sid) {
+  ensureChartSnapshotDir();
+  const safeSid = String(sid || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  const dir = path.join(CHART_SNAPSHOT_DIR, safeSid);
+  if (!dir || dir === CHART_SNAPSHOT_DIR) return CHART_SNAPSHOT_DIR;
+  return dir;
+}
+
+function migrateLegacyTradeSnapshots(sid) {
+  const legacyDir = legacyTradeSnapshotDir(sid);
+  if (!legacyDir || !fs.existsSync(legacyDir)) return { copied: 0 };
+  const destDir = tradeSnapshotDir(sid);
+  let copied = 0;
+  try {
+    for (const entry of fs.readdirSync(legacyDir)) {
+      const safe = normalizeSnapshotFileName(entry);
+      if (!safe) continue;
+      const src = path.join(legacyDir, safe);
+      const dest = path.join(destDir, safe);
+      try {
+        if (!fs.statSync(src).isFile() || fs.existsSync(dest)) continue;
+        fs.copyFileSync(src, dest);
+        copied += 1;
+      } catch {}
+    }
+  } catch {}
+  return { copied };
 }
 
 function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
@@ -2952,28 +2986,17 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
     .toUpperCase();
   if (!sym) return [];
 
-  // Collect files from root + all {sid} subfolders
-  const collect = (dir, prefix = "") => {
-    const out = [];
-    try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const e of entries) {
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) {
-          out.push(...collect(full, prefix + e.name + "/"));
-        } else if (/\.(png|jpe?g)$/i.test(e.name)) {
-          const relPath = prefix + e.name;
-          if (String(relPath || "").toUpperCase().includes(sym)) {
-            let t = 0;
-            try { t = Number(fs.statSync(full).mtimeMs || 0); } catch {}
-            out.push({ file_name: relPath, mtime_ms: t });
-          }
-        }
-      }
-    } catch {}
-    return out;
-  };
-  const files = collect(CHART_SNAPSHOT_DIR);
+  const files = fs
+    .readdirSync(CHART_SNAPSHOT_DIR)
+    .filter((f) => /\.(png|jpe?g)$/i.test(f))
+    .filter((f) => String(f || "").toUpperCase().includes(sym))
+    .map((f) => {
+      let t = 0;
+      try {
+        t = Number(fs.statSync(path.join(CHART_SNAPSHOT_DIR, f)).mtimeMs || 0);
+      } catch {}
+      return { file_name: f, mtime_ms: t };
+    });
   const sorted = files.sort((a, b) => b.mtime_ms - a.mtime_ms).slice(0, Math.max(1, Number(limit) || 12));
   return sorted.map((x) => x.file_name);
 }
@@ -3003,26 +3026,7 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   for (const fileName of sourceFiles) {
     const safe = normalizeSnapshotFileName(fileName);
     if (!safe) continue;
-    // Try root dir first, then search subfolders
-    let src = path.join(CHART_SNAPSHOT_DIR, safe);
-    if (!fs.existsSync(src)) {
-      // Search in subfolders
-      const findInDir = (dir) => {
-        try {
-          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) {
-              const found = findInDir(full);
-              if (found) return found;
-            } else if (e.name === safe) {
-              return full;
-            }
-          }
-        } catch {}
-        return null;
-      };
-      src = findInDir(CHART_SNAPSHOT_DIR);
-    }
+    const src = path.join(CHART_SNAPSHOT_DIR, safe);
     if (!src || !fs.existsSync(src)) continue;
     const ext = path.extname(safe);
     const base = path.basename(safe, ext);
@@ -19914,33 +19918,22 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         url.searchParams.get("session_prefix") || "",
       );
-      // Recurse into subfolders ({sid} dirs)
-      const collectFiles = (dir, prefix = "") => {
-        const out = [];
-        try {
-          const entries = fs.readdirSync(dir, { withFileTypes: true });
-          for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) {
-              out.push(...collectFiles(full, prefix + e.name + "/"));
-            } else if (e.isFile() && /\.(png|jpe?g)$/i.test(e.name)) {
-              if (reqSessionPrefix && !e.name.includes(`_${reqSessionPrefix}_`)) continue;
-              const st = fs.statSync(full);
-              const relPath = prefix + e.name;
-              out.push({
-                id: relPath.replace(/\.[^.]+$/i, ""),
-                file_name: relPath,
-                created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
-                size_bytes: Number(st.size || 0),
-                mime_type: fileMimeByName(e.name),
-                url: `/v2/chart/snapshots/${encodeURIComponent(relPath)}`,
-              });
-            }
-          }
-        } catch {}
-        return out;
-      };
-      const files = collectFiles(CHART_SNAPSHOT_DIR)
+      const files = fs
+        .readdirSync(CHART_SNAPSHOT_DIR, { withFileTypes: true })
+        .filter((e) => e.isFile() && /\.(png|jpe?g)$/i.test(e.name))
+        .filter((e) => !reqSessionPrefix || e.name.includes(`_${reqSessionPrefix}_`))
+        .map((e) => {
+          const full = path.join(CHART_SNAPSHOT_DIR, e.name);
+          const st = fs.statSync(full);
+          return {
+            id: e.name.replace(/\.[^.]+$/i, ""),
+            file_name: e.name,
+            created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
+            size_bytes: Number(st.size || 0),
+            mime_type: fileMimeByName(e.name),
+            url: `/v2/chart/snapshots/${encodeURIComponent(e.name)}`,
+          };
+        });
 
       const sorted = files.sort((a, b) =>
         String(b.created_at).localeCompare(String(a.created_at)),
@@ -20304,6 +20297,7 @@ const appHandler = async (req, res) => {
       if (!resolvedTrade?.sid)
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
+      migrateLegacyTradeSnapshots(sid);
       const dir = tradeSnapshotDir(sid);
       const files = fs
         .readdirSync(dir)
@@ -20370,6 +20364,7 @@ const appHandler = async (req, res) => {
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = normalizeSnapshotFileName(fileName);
       if (!safeName) return json(res, 400, { ok: false, error: "Invalid file" });
+      migrateLegacyTradeSnapshots(sid);
       const abs = path.join(tradeSnapshotDir(sid), safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
         return json(res, 404, { ok: false, error: "file not found" });
@@ -21369,7 +21364,7 @@ const appHandler = async (req, res) => {
       if (!resolvedTrade?.sid)
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
-      const dir = path.join(CHART_SNAPSHOT_DIR, sid);
+      const dir = ensureTradeFilesDir(sid);
       const files = [];
       if (fs.existsSync(dir)) {
         for (const entry of fs.readdirSync(dir)) {
@@ -21412,7 +21407,7 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = path.basename(fileName);
-      const abs = path.join(CHART_SNAPSHOT_DIR, sid, safeName);
+      const abs = path.join(ensureTradeFilesDir(sid), safeName);
       if (!fs.existsSync(abs))
         return json(res, 404, { ok: false, error: "file not found" });
       fs.unlinkSync(abs);
@@ -21448,7 +21443,7 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "trade not found" });
       const sid = String(resolvedTrade.sid || "").trim();
       const safeName = path.basename(fileName);
-      const abs = path.join(CHART_SNAPSHOT_DIR, sid, safeName);
+      const abs = path.join(ensureTradeFilesDir(sid), safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
         return json(res, 404, { ok: false, error: "file not found" });
       const ext = path.extname(safeName).toLowerCase();

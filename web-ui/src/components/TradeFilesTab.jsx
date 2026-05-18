@@ -23,42 +23,21 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
     setLoading(true);
     setError("");
     try {
-      const attached = (Array.isArray(attachedFiles) ? attachedFiles : []).map((file) => {
-        const name = typeof file === "string" ? file : file?.file_name || file?.name || "";
-        return { name, url: `/v2/chart/snapshots/${encodeURIComponent(tradeSid || "")}/${encodeURIComponent(name)}`, size_bytes: file?.size_bytes || 0 };
-      });
-
-      // Trade sid files
       const sidFiles = tradeSid
         ? (await api.tradeSnapshots(tradeSid).catch(() => ({ files: [] }))).files || []
         : [];
-      // Symbol-related snapshots (filter by symbol on server)
-      const symFiles = symbol
-        ? (await api.chartSnapshots(200).catch(() => ({ items: [] }))).items || []
-        : [];
 
-      const serverFiles = [
-        ...sidFiles.map((item) => ({
-          name: item.name || item.file_name || "snapshot",
-          url: item.url || `/v2/chart/snapshots/${encodeURIComponent(tradeSid || "")}/${encodeURIComponent(item.file_name || item.name || "")}`,
-          size_bytes: item.size_bytes || item.size || 0,
-        })),
-        ...symFiles
-          .filter((item) => {
-            const fn = (item.file_name || item.name || "").toUpperCase();
-            const sym = (symbol || "").toUpperCase();
-            return fn.includes(sym);
-          })
-          .map((item) => ({
-            name: item.file_name || item.name || "snapshot",
-            url: item.url || `/v2/chart/snapshots/${encodeURIComponent(item.file_name || "")}`,
-            size_bytes: item.size_bytes || item.size || 0,
-          })),
-      ];
+      const serverFiles = sidFiles.map((item) => ({
+        name: item.name || item.file_name || "snapshot",
+        url:
+          item.url ||
+          `/v2/trades/${encodeURIComponent(tradeSid || "")}/snapshots/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+        size_bytes: item.size_bytes || item.size || 0,
+      }));
 
       const seen = new Set();
       const all = [];
-      for (const f of [...attached, ...serverFiles]) {
+      for (const f of serverFiles) {
         if (!f.name || seen.has(f.name)) continue;
         seen.add(f.name);
         all.push(f);
@@ -69,9 +48,9 @@ export default function TradeFilesTab({ tradeSid, symbol, attachedFiles = [] }) 
     } finally {
       setLoading(false);
     }
-  }, [tradeSid, symbol, attachedFiles]);
+  }, [tradeSid]);
 
-  useEffect(() => { loadFiles(); }, []);
+  useEffect(() => { loadFiles(); }, [loadFiles]);
 
   const takeSnapshots = async () => {
     if (!symbol) return;
