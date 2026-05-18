@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 12:51 - 691fa45d"); // cTrader partial TP safety hardening + side-valid TP filtering
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.18 13:16 - d2f45108"); // cTrader partial TP safety hardening + side-valid TP filtering
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -2967,6 +2967,15 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
   return files.map((x) => x.file_name);
 }
 
+function snapshotTimestampToken(date = new Date()) {
+  return date
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace("T", "_")
+    .replace("Z", "UTC")
+    .replace(".", "_");
+}
+
 function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   const sid = String(tradeSid || "").trim();
   if (!sid) return [];
@@ -2985,10 +2994,19 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
     if (!safe) continue;
     const src = path.join(CHART_SNAPSHOT_DIR, safe);
     if (!fs.existsSync(src)) continue;
-    const dest = path.join(destDir, safe);
+    const ext = path.extname(safe);
+    const base = path.basename(safe, ext);
+    let destName = `${base}_${snapshotTimestampToken()}${ext}`;
+    let dest = path.join(destDir, destName);
+    let suffix = 1;
+    while (fs.existsSync(dest)) {
+      destName = `${base}_${snapshotTimestampToken()}_${suffix}${ext}`;
+      dest = path.join(destDir, destName);
+      suffix += 1;
+    }
     try {
       fs.copyFileSync(src, dest);
-      copied.push(safe);
+      copied.push(destName);
     } catch {}
   }
   return copied;
@@ -20215,6 +20233,106 @@ const appHandler = async (req, res) => {
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
         return json(res, 404, { ok: false, error: "File not found" });
       }
+      serveUiFile(res, abs, req.method);
+      return;
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/snapshots$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/snapshots$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, { ok: false, error: "trade sid is required" });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const dir = tradeSnapshotDir(sid);
+      const files = fs
+        .readdirSync(dir)
+        .map((entry) => {
+          const safe = normalizeSnapshotFileName(entry);
+          if (!safe) return null;
+          const abs = path.join(dir, safe);
+          try {
+            const st = fs.statSync(abs);
+            if (!st.isFile()) return null;
+            return {
+              id: safe.replace(/\.[^.]+$/i, ""),
+              file_name: safe,
+              name: safe,
+              created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
+              size_bytes: Number(st.size || 0),
+              mime_type: fileMimeByName(safe),
+              trade_sid: sid,
+              url: `/v2/trades/${encodeURIComponent(sid)}/snapshots/${encodeURIComponent(safe)}/content`,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean)
+        .sort((a, b) =>
+          String(b.created_at).localeCompare(String(a.created_at)),
+        );
+      return json(res, 200, { ok: true, trade_sid: sid, items: files, files });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/snapshots\/.+\/content$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const m = url.pathname.match(
+        /^\/v2\/trades\/([^/]+)\/snapshots\/(.+)\/content$/,
+      );
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      const fileName = String(m?.[2] ? decodeURIComponent(m[2]) : "").trim();
+      if (!tradeRef || !fileName)
+        return json(res, 400, {
+          ok: false,
+          error: "trade sid and filename are required",
+        });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const safeName = normalizeSnapshotFileName(fileName);
+      if (!safeName) return json(res, 400, { ok: false, error: "Invalid file" });
+      const abs = path.join(tradeSnapshotDir(sid), safeName);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
+        return json(res, 404, { ok: false, error: "file not found" });
       serveUiFile(res, abs, req.method);
       return;
     } catch (error) {

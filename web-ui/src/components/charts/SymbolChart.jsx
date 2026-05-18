@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { api } from "../../api";
 import { useSymbolChartData } from "../../hooks/useChartTileData";
 import TradeSignalChart from "../TradeSignalChart";
 import TradingViewLoginModal from "../modals/TradingViewLoginModal";
@@ -523,6 +524,7 @@ export default function SymbolChart({
   const [showTvControls, setShowTvControls] = useState(true);
   const [fullscreenTf, setFullscreenTf] = useState(null);
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
+  const [capturingSnapshots, setCapturingSnapshots] = useState(false);
 
   useEffect(() => {
     setAnnotations([]);
@@ -962,12 +964,56 @@ export default function SymbolChart({
     return parts.join(" | ");
   }, [selectedObject, sortedTfs, cleanSym, viewports, master]);
 
+  const openSnapshotFileList = useCallback(async () => {
+    const attachedItems = (Array.isArray(attachedSnapshotFiles)
+      ? attachedSnapshotFiles
+      : []
+    )
+      .map((file) => String(file || "").trim())
+      .filter(Boolean)
+      .map((file) => ({
+        name: file,
+        file_name: file,
+        url: tradeSid
+          ? `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(file)}/content`
+          : `/v2/chart/snapshots/${encodeURIComponent(file)}`,
+      }));
+    const listed = tradeSid
+      ? await api.tradeSnapshots(tradeSid)
+      : await api.chartSnapshots(200);
+    const listedItems = Array.isArray(listed?.items) ? listed.items : [];
+    const all = [...listedItems, ...attachedItems];
+    if (all.length) {
+      setSnapshotModalFiles(
+        all.map((item) => ({
+          name: item.name || item.file_name || "snapshot",
+          url:
+            item.url ||
+            `/v2/chart/snapshots/${encodeURIComponent(item.file_name || "")}`,
+          size_bytes: item.size_bytes || 0,
+        })),
+      );
+    }
+    return all;
+  }, [attachedSnapshotFiles, tradeSid]);
+
   const handleModeClick = useCallback(
-    (newMode) => {
+    async (newMode) => {
       if (newMode === "live") {
         setMode("live");
         setPendingMode(null);
         setLastError(null);
+        return;
+      }
+      if (newMode === "snapshots") {
+        setMode("snapshots");
+        setPendingMode(null);
+        setLastError(null);
+        try {
+          await openSnapshotFileList();
+        } catch (err) {
+          setLastError(err?.message || "Failed to load snapshots");
+        }
         return;
       }
       // Re-click same mode: force refresh
@@ -980,8 +1026,61 @@ export default function SymbolChart({
       setPendingMode(null);
       setLastError(null);
     },
-    [mode, pendingMode, status, refresh, forceRefresh],
+    [mode, pendingMode, status, refresh, forceRefresh, openSnapshotFileList],
   );
+
+  const handleCaptureSnapshots = useCallback(async () => {
+    if (!cleanSym || capturingSnapshots) return;
+    try {
+      setCapturingSnapshots(true);
+      setLastError(null);
+      const out = await api.chartSnapshotCreateBatch({
+        symbol: cleanSym,
+        timeframes,
+        provider,
+        session_prefix: sessionPrefix,
+        trade_sid: tradeSid || undefined,
+        lookbackBars: 300,
+        format: "png",
+        quality: 80,
+      });
+      const copied = Array.isArray(out?.copied) ? out.copied : [];
+      const capturedItems =
+        tradeSid && copied.length
+          ? copied.map((name) => ({
+              name,
+              file_name: name,
+              url: `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(name)}/content`,
+            }))
+          : Array.isArray(out?.items)
+            ? out.items
+            : [];
+      if (capturedItems.length) {
+        setSnapshotModalFiles(
+          capturedItems.map((item) => ({
+            name: item.name || item.file_name || "snapshot",
+            url:
+              item.url ||
+              `/v2/chart/snapshots/${encodeURIComponent(item.file_name || "")}`,
+            size_bytes: item.size_bytes || 0,
+          })),
+        );
+      }
+      await refresh({ force: true });
+    } catch (err) {
+      setLastError(err?.message || "Snapshot capture failed");
+    } finally {
+      setCapturingSnapshots(false);
+    }
+  }, [
+    cleanSym,
+    capturingSnapshots,
+    timeframes,
+    provider,
+    sessionPrefix,
+    tradeSid,
+    refresh,
+  ]);
 
   const btnColor = (m) => {
     const active = pendingMode || mode;
@@ -1561,6 +1660,34 @@ export default function SymbolChart({
               </button>
             ))}
           </div>
+          {(pendingMode || mode) === "snapshots" && (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={handleCaptureSnapshots}
+              disabled={capturingSnapshots}
+              title={
+                tradeSid
+                  ? "Capture new timestamped snapshots into this trade SID folder"
+                  : "Capture new snapshots"
+              }
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                padding: "3px 8px",
+                borderRadius: 4,
+                color: capturingSnapshots ? "#f59e0b" : "#10b981",
+                borderColor: capturingSnapshots
+                  ? "rgba(245,158,11,0.45)"
+                  : "rgba(16,185,129,0.45)",
+                backgroundColor: capturingSnapshots
+                  ? "rgba(245,158,11,0.1)"
+                  : "rgba(16,185,129,0.1)",
+              }}
+            >
+              {capturingSnapshots ? "Snapshots ..." : "Snapshots"}
+            </button>
+          )}
 
           {showControls && (onToggleWatchlist || onRemove) && (
             <button
@@ -2529,7 +2656,7 @@ export default function SymbolChart({
                       {status === "LOADING"
                         ? "Loading..."
                         : mode === "snapshots"
-                          ? "No snapshots — click 📷 to capture"
+                          ? "No saved snapshots"
                           : "No data — click C to fetch"}
                     </div>
                   )}

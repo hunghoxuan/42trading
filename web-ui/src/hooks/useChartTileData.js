@@ -163,54 +163,17 @@ export function useSymbolChartData({
       console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
 
       if (mode === "snapshots") {
-        // Snapshot mode: 1) reuse valid VPS snapshots 2) capture missing 3) fallback list
-        const refreshPayload = {
-          symbol: sym,
-          timeframes: tfs,
-          types: ["snapshots"],
-          provider,
-          session_prefix: sessionPrefix,
-          trade_sid: tradeSid || undefined,
-          snapshot_max_age_ms: 15 * 60 * 1000,
-          bars: barsCount,
-          force,
-        };
+        // Snapshot mode is a viewer. Capture is explicit via the Snapshots button.
         const snapshotMaxAgeMs = 15 * 60 * 1000;
         let apiItems = [];
         let apiCachedItems = [];
         let apiCreatedItems = [];
-        const batch = await api.chartRefresh(refreshPayload);
-        apiItems = Array.isArray(batch?.snapshots?.items)
-          ? batch.snapshots.items
-          : [];
-        apiCachedItems = Array.isArray(batch?.snapshots?.cached)
-          ? batch.snapshots.cached
-          : [];
-        apiCreatedItems = Array.isArray(batch?.snapshots?.created)
-          ? batch.snapshots.created
-          : [];
-        console.log(
-          "[ChartData] snapshots refresh ok=" +
-            batch?.ok +
-            " items=" +
-            apiItems.length,
-        );
-        if (!apiItems.length) {
-          const created = await api.chartSnapshotCreateBatch({
-            symbol: sym,
-            timeframes: tfs,
-            provider,
-            session_prefix: sessionPrefix,
-            trade_sid: tradeSid || undefined,
-            lookbackBars: 300,
-            format: "jpg",
-            quality: 55,
-          });
-          const createdItems = Array.isArray(created?.items) ? created.items : [];
-          apiItems = [...apiItems, ...createdItems];
-          apiCreatedItems = [...apiCreatedItems, ...createdItems];
-        }
-        if (!apiItems.length) {
+        if (tradeSid) {
+          const listedTrade = await api.tradeSnapshots(tradeSid);
+          apiItems = Array.isArray(listedTrade?.items)
+            ? listedTrade.items
+            : [];
+        } else {
           const listed = await api.chartSnapshots(200);
           apiItems = Array.isArray(listed?.items) ? listed.items : [];
         }
@@ -222,7 +185,9 @@ export function useSymbolChartData({
           .filter(Boolean)
           .map((file) => ({
             file_name: file,
-            url: `/v2/chart/snapshots/${encodeURIComponent(file)}`,
+            url: tradeSid
+              ? `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(file)}/content`
+              : `/v2/chart/snapshots/${encodeURIComponent(file)}`,
             attached: true,
           }));
         const items = [...apiItems, ...attachedItems];

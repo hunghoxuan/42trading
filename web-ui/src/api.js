@@ -890,6 +890,8 @@ export const api = {
     ),
   chartSnapshots: (limit = 30) =>
     get(`/v2/chart/snapshots?limit=${encodeURIComponent(limit)}`),
+  tradeSnapshots: (tradeSid) =>
+    get(`/v2/trades/${encodeURIComponent(tradeSid)}/snapshots`),
   chartSnapshotsDelete: (payload = {}) =>
     post("/v2/chart/snapshots/delete", payload),
   getSettings: () => get("/v2/settings"),
