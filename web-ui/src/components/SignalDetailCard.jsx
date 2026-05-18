@@ -10,6 +10,7 @@ import {
 } from "../utils/signalDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
+const TradeFilesTab = lazy(() => import("./TradeFilesTab"));
 import { sortTimeframes } from "../utils/format";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
@@ -869,6 +870,7 @@ export default function SignalDetailCard({
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length) tabs.push("info");
     if (mode === "trade") tabs.push("broker");
+    if (mode === "trade") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
     return tabs;
@@ -2517,6 +2519,17 @@ export default function SignalDetailCard({
             showTradeButton={chart?.showTradeButton !== false}
             showAnalyzeButton={chart?.showAnalyzeButton !== false}
             skipFetch={false}
+          />
+        </Suspense>
+      </div>
+
+      {/* FILES TAB (Trades only) */}
+      <div style={{ display: mainTab === "files" ? "block" : "none" }}>
+        <Suspense fallback={<div className="loading-card">Loading files...</div>}>
+          <TradeFilesTab
+            tradeSid={tradePlan?.tradeId || tradePlan?.signalId || null}
+            symbol={chart?.symbol || null}
+            attachedFiles={chart?.attachedSnapshotFiles || []}
           />
         </Suspense>
       </div>
