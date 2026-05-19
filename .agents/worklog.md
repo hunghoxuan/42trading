@@ -13,7 +13,9 @@
 - **Verification**:
   - `rtk node --check webhook/server.js` ✅
 - **Deploy Status**:
-  - Not deployed in this step.
+  - Deployed.
+  - Commit pushed: `d8af2a29`
+  - Live version: `v2026.05.19 09:21 - 81bf521e`
 
 # Session Log: 2026-05-19 09:08 UTC
 - **Starting Task**:

@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-19 09:35 UTC`
-- note: `Deploy timezone toggle regression fix + health diagnostics consolidation`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-19 09:27 UTC`
+- note: `Timezone toggle + health diagnostics deployed`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,23 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-19 09:27 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: d8af2a29
+- scope: `web-ui/src/App.jsx`, `webhook/server.js` (+ required build version files)
+- merge_to_main: YES (d8af2a29)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.19 09:21 - 81bf521e
+  - ea_version: v2026.05.19 09:21 - 81bf521e
+  - result: PASS
+- verify:
+  - /health: `ok:true`, `uiRoot:html`, `version:v2026.05.19 09:21 - 81bf521e`
+  - /health diagnostics: `diagnostics.root_checks.public_trade_mozasolution_com.mode=html`, `diagnostics.cron` present with config/runtime fields
+  - /ui asset: `/assets/index-BctxFqhZ.js`, `/assets/index-DpDVeVav.css`
+- handoff_next: none
 
 ### [2026-05-19 09:28 UTC] AGENT:Codex
 - status: DONE
