@@ -270,6 +270,13 @@ function firstTradePlan(raw = {}) {
       )
         return first;
     }
+    if (
+      src?.execution_plan &&
+      typeof src.execution_plan === "object" &&
+      (src.direction || src.symbol || src.risk_management || src.analysis)
+    ) {
+      return src;
+    }
     // Root-level trade_plan key (new path)
     if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
       return src.trade_plan[0] || {};

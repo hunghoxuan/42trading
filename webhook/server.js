@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 10:45 - 1a183823",
-); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 17:35 - 47f1eae2"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -11386,6 +11383,7 @@ function enforceActionableTradePlans(payload = {}) {
 }
 
 function normalizeAiAnalysisContract(input = {}) {
+  return input;
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
   const indexedRootPlans = Object.keys(out)

@@ -158,24 +158,37 @@ function normalizeRawPlan(p = {}) {
   ).toUpperCase();
   const direction = side.includes("SELL") ? "SELL" : "BUY";
   const entry = parseNumLoose(
-    src?.entry ?? src?.entry_price ?? src?.target_price,
+    src?.execution_plan?.entry?.price ??
+      src?.entry ??
+      src?.entry_price ??
+      src?.target_price,
   );
-  const sl = parseNumLoose(src?.sl ?? src?.stop_loss);
+  const sl = parseNumLoose(
+    src?.execution_plan?.stop_loss?.price ?? src?.sl ?? src?.stop_loss,
+  );
   const chosen = choosePrimaryTpAndRr(src, {
     entry: entry,
     direction,
   });
   const tp1 = parseNumLoose(
-    src?.tp1 ?? src?.multiple_exits?.tp1?.price ?? chosen.tp,
+    src?.execution_plan?.tp1?.price ??
+      src?.tp1 ??
+      src?.multiple_exits?.tp1?.price ??
+      chosen.tp,
   );
-  const tp2 = parseNumLoose(src?.tp2 ?? src?.multiple_exits?.tp2?.price);
+  const tp2 = parseNumLoose(
+    src?.execution_plan?.tp2?.price ?? src?.tp2 ?? src?.multiple_exits?.tp2?.price,
+  );
   const tp3 = parseNumLoose(
-    src?.tp3 ??
+    src?.execution_plan?.tp3?.price ??
+      src?.tp3 ??
       src?.multiple_exits?.tp3?.price ??
       src?.multiple_exits?.full_tp?.price,
   );
-  const tpNum = parseNumLoose(chosen.tp);
-  const rrRaw = parseNumLoose(src?.rr ?? src?.risk_reward);
+  const tpNum = parseNumLoose(src?.execution_plan?.tp1?.price ?? chosen.tp);
+  const rrRaw = parseNumLoose(
+    src?.execution_plan?.risk_reward ?? src?.rr ?? src?.risk_reward,
+  );
   let rr = null;
   if (
     entry != null &&
@@ -191,7 +204,7 @@ function normalizeRawPlan(p = {}) {
     ai_rr: rrRaw == null ? "" : String(rrRaw),
     direction,
     entry: entry == null ? "" : String(entry),
-    tp: chosen.tp,
+    tp: tpNum == null ? chosen.tp : String(tpNum),
     tp1: tp1 == null ? "" : String(tp1),
     tp2: tp2 == null ? "" : String(tp2),
     tp3: tp3 == null ? "" : String(tp3),
@@ -200,6 +213,17 @@ function normalizeRawPlan(p = {}) {
     trade_type: String(src?.type || src?.order_type || "limit").toLowerCase(),
     __canonical_plan: Boolean(canonical),
   };
+}
+
+function isCurrentAiTradePlan(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value.execution_plan &&
+      typeof value.execution_plan === "object" &&
+      (value.direction || value.symbol || value.risk_management || value.analysis),
+  );
 }
 
 function planLooksMeaningful(p = {}) {
@@ -931,6 +955,9 @@ export default function SignalDetailCard({
         };
   const derivedPlansFromRaw = useMemo(() => {
     if (!rawSource || typeof rawSource !== "object") return [];
+    if (isCurrentAiTradePlan(rawSource)) {
+      return [normalizeRawPlan(rawSource)];
+    }
     if (rawSource?.__raw_plan && typeof rawSource.__raw_plan === "object") {
       return [normalizeRawPlan(rawSource.__raw_plan)];
     }
@@ -1249,6 +1276,7 @@ export default function SignalDetailCard({
     .toUpperCase();
   const selectedRawData = useMemo(() => {
     if (!rawData || typeof rawData !== "object") return rawData;
+    if (isCurrentAiTradePlan(rawData)) return rawData;
     const cloned = { ...rawData };
     const allPlans = Array.isArray(rawData?.trade_plan)
       ? rawData.trade_plan

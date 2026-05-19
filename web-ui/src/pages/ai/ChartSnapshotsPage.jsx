@@ -858,6 +858,17 @@ function collectTradePlansByRules(root) {
   return out;
 }
 
+function isCurrentAiTradePlan(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value.execution_plan &&
+      typeof value.execution_plan === "object" &&
+      (value.direction || value.symbol || value.risk_management || value.analysis),
+  );
+}
+
 function dedupeTradePlans(plans = []) {
   const list = Array.isArray(plans) ? plans : [];
   const seen = new Set();
@@ -970,6 +981,12 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
+  if (
+    isCurrentAiTradePlan(out) ||
+    (Array.isArray(out.trade_plan) && out.trade_plan.some(isCurrentAiTradePlan))
+  ) {
+    return out;
+  }
   const indexedRootPlans = Object.keys(out)
     .filter((k) => /^\d+$/.test(String(k)))
     .map((k) => out[k])
@@ -1835,6 +1852,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
 function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
   const sym = normalizeSignalSymbol(symbol || "");
   if (!parsed || typeof parsed !== "object") return {};
+  if (isCurrentAiTradePlan(parsed)) {
+    return { ...parsed };
+  }
   const cloned = { ...parsed };
   const plans = Array.isArray(parsed.trade_plan)
     ? parsed.trade_plan
@@ -1847,6 +1867,10 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
       : plans.filter(
           (p) => normalizeSignalSymbol(String(p?.symbol || "")) === sym,
         );
+  if (!selected.length && plans.some(isCurrentAiTradePlan)) {
+    cloned.trade_plan = plans;
+    return cloned;
+  }
   const exactNestedPlans = Array.isArray(parsed.analysis_data)
     ? parsed.analysis_data
         .flatMap((entry) =>
@@ -5047,12 +5071,14 @@ export default function ChartSnapshotsPage() {
   }, [effectiveParsed]);
 
   const analysisTradePlans = useMemo(() => {
-    const plans = Array.isArray(effectiveParsed?.trade_plan)
-      ? effectiveParsed.trade_plan
-      : effectiveParsed?.trade_plan &&
-          typeof effectiveParsed.trade_plan === "object"
-        ? [effectiveParsed.trade_plan]
-        : [];
+    const plans = isCurrentAiTradePlan(effectiveParsed)
+      ? [effectiveParsed]
+      : Array.isArray(effectiveParsed?.trade_plan)
+        ? effectiveParsed.trade_plan
+        : effectiveParsed?.trade_plan &&
+            typeof effectiveParsed.trade_plan === "object"
+          ? [effectiveParsed.trade_plan]
+          : [];
     return plans
       .map((p, idx) => {
         const entry = planEntryNumber(p, effectiveParsed || {});

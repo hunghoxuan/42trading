@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolvePlans } from "../../src/services/TradePlanSchema.js";
+import { extractPlans, resolvePlans } from "../../src/services/TradePlanSchema.js";
 
 test("resolvePlans prefers __raw_plan and keeps multi-tp values", () => {
   const root = {
@@ -29,4 +29,42 @@ test("resolvePlans prefers __raw_plan and keeps multi-tp values", () => {
   assert.equal(Number(plan.tp), 77700);
   assert.equal(Number(plan.tp2), 77200);
   assert.equal(Number(plan.tp3), 76500);
+});
+
+test("extractPlans preserves direct v3 AI plan object", () => {
+  const rawPlan = {
+    symbol: "CADJPY",
+    direction: "SELL",
+    context: {
+      htf_bias: "Bearish",
+      draw_on_liquidity: "SSL cluster near 114.800",
+    },
+    analysis: {
+      sl_validity: {
+        sl_behind_structure: {
+          invalidation_logic: "Candle body close above 116.150",
+        },
+      },
+    },
+    execution_plan: {
+      entry: { price: 115.65, reference: "15M-OB-1" },
+      stop_loss: { price: 116.15 },
+      tp1: { price: 115.13, rr: 1.04 },
+      tp2: { price: 114.8, rr: 1.7 },
+      tp3: { price: 114.2, rr: 2.9 },
+      risk_reward: 3.4,
+    },
+    risk_management: {
+      confidence_pct: 68,
+      suggested_action: "Proceed",
+    },
+  };
+
+  const plans = extractPlans(rawPlan);
+
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0], rawPlan);
+  assert.equal(plans[0].analysis.sl_validity.sl_behind_structure.invalidation_logic, "Candle body close above 116.150");
+  assert.equal(plans[0].execution_plan.tp3.price, 114.2);
+  assert.equal(plans[0].risk_management.confidence_pct, 68);
 });

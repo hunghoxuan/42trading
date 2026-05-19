@@ -293,6 +293,13 @@ export function extractPlans(root) {
   if (root.__raw_plan && typeof root.__raw_plan === "object") {
     return [root.__raw_plan];
   }
+  if (
+    root.execution_plan &&
+    typeof root.execution_plan === "object" &&
+    (root.direction || root.symbol || root.risk_management || root.analysis)
+  ) {
+    return [root];
+  }
   if (Array.isArray(root.analysis_data) && root.analysis_data.length) {
     return root.analysis_data.flatMap((item) =>
       Array.isArray(item?.trade_plan)
