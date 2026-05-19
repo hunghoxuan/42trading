@@ -924,6 +924,14 @@ export default function SignalDetailCard({
     response?.raw_json && typeof response.raw_json === "object"
       ? response.raw_json
       : {};
+  const cleanRowJson = useMemo(() => {
+    if (!responseRowRaw || typeof responseRowRaw !== "object") return {};
+    const cleaned = {};
+    for (const [k, v] of Object.entries(responseRowRaw)) {
+      if (!k.startsWith("__")) cleaned[k] = v;
+    }
+    return cleaned;
+  }, [responseRowRaw]);
   const responseMetaRaw =
     response?.metadata?.raw_json &&
     typeof response.metadata.raw_json === "object"
@@ -2649,10 +2657,10 @@ export default function SignalDetailCard({
             overflow: "auto",
           }}
         >
-          {responseRowRaw &&
-          typeof responseRowRaw === "object" &&
-          Object.keys(responseRowRaw).length > 0 ? (
-            <SmartContent content={responseRowRaw} mode="readonly" showCopy />
+          {cleanRowJson &&
+          typeof cleanRowJson === "object" &&
+          Object.keys(cleanRowJson).length > 0 ? (
+            <SmartContent content={cleanRowJson} mode="readonly" showCopy />
           ) : (
             <div className="minor-text">No AI response stored.</div>
           )}
@@ -2674,12 +2682,12 @@ export default function SignalDetailCard({
           {(
             mode === "ai"
               ? selectedPlanRaw && Object.keys(selectedPlanRaw).length > 0
-              : responseRowRaw &&
-                typeof responseRowRaw === "object" &&
-                Object.keys(responseRowRaw).length > 0
+              : cleanRowJson &&
+                typeof cleanRowJson === "object" &&
+                Object.keys(cleanRowJson).length > 0
           ) ? (
             <SmartContent
-              content={mode === "ai" ? selectedPlanRaw : responseRowRaw}
+              content={mode === "ai" ? selectedPlanRaw : cleanRowJson}
               mode="readonly"
               showCopy
             />
