@@ -11388,14 +11388,29 @@ function enforceActionableTradePlans(payload = {}) {
 function normalizeAiAnalysisContract(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return input;
   const out = { ...input };
+  const indexedRootPlans = Object.keys(out)
+    .filter((k) => /^\d+$/.test(String(k)))
+    .map((k) => out[k])
+    .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    .filter(
+      (x) =>
+        x.execution_plan ||
+        x.risk_management ||
+        x.entry != null ||
+        x.entry_price != null ||
+        x.stop_loss != null ||
+        x.sl != null,
+    )
+    .map((x) => ({ ...(x || {}) }));
   const mappedPlans = collectTradePlansByRules(out).map((p) => ({
     ...(p || {}),
   }));
+  const mergedMappedPlans = [...mappedPlans, ...indexedRootPlans];
   if (
-    mappedPlans.length &&
+    mergedMappedPlans.length &&
     (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
   ) {
-    out.trade_plan = mappedPlans;
+    out.trade_plan = mergedMappedPlans;
   }
   // Alternate schema variant: analyses[] with per-symbol trade_plan
   if (Array.isArray(out.analyses) && out.analyses.length > 0) {
@@ -19156,6 +19171,7 @@ const appHandler = async (req, res) => {
         // Store exact AI response — no normalization, no fake plans, no recovery.
         // If bare array [{...}], wrap as { trade_plan: [...] } for DB storage.
         if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
+        parsedJson = normalizeAiAnalysisContract(parsedJson);
         console.log(
           "[ai-response] symbol=" +
             (parsedJson?.symbol || "?") +
@@ -19627,6 +19643,7 @@ const appHandler = async (req, res) => {
           ? extracted.parsed
           : {};
       if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
+      parsedJson = normalizeAiAnalysisContract(parsedJson);
       console.log(
         "[ai-response] symbol=" +
           (parsedJson?.symbol || "?") +

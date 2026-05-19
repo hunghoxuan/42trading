@@ -547,6 +547,7 @@ function parsePdZoneBounds(zoneRaw) {
 }
 
 function getPlanTpCandidates(plan = {}) {
+  const ep = plan?.execution_plan || {};
   const partials = Array.isArray(plan?.partial_tps) ? plan.partial_tps : [];
   const partialPrices = partials.map((x) =>
     x && typeof x === "object" ? x.price : x,
@@ -557,6 +558,9 @@ function getPlanTpCandidates(plan = {}) {
   const legacyLevels = Array.isArray(plan?.tp_levels) ? plan.tp_levels : [];
   const targets = Array.isArray(plan?.targets) ? plan.targets : [];
   return [
+    ep?.tp1?.price,
+    ep?.tp2?.price,
+    ep?.tp3?.price,
     plan?.tp,
     ...partialPrices,
     ...compactTps,
@@ -574,8 +578,117 @@ function getPlanTpCandidates(plan = {}) {
   ];
 }
 
+function planEntryNumber(plan = {}, parsed = {}) {
+  return parseNum(
+    plan?.execution_plan?.entry?.price ??
+      plan?.entry ??
+      plan?.entry_price ??
+      parsed?.entry ??
+      parsed?.price,
+  );
+}
+
+function planStopLossNumber(plan = {}, parsed = {}) {
+  return parseNum(
+    plan?.execution_plan?.stop_loss?.price ??
+      plan?.sl ??
+      plan?.stop_loss ??
+      parsed?.sl,
+  );
+}
+
+function planTpLevelNumber(plan = {}, level = 1) {
+  const ep = plan?.execution_plan || {};
+  if (level === 1) {
+    return parseNum(
+      ep?.tp1?.price ??
+        plan?.tp1 ??
+        plan?.tp ??
+        plan?.take_profit ??
+        plan?.multiple_exits?.tp1?.price ??
+        plan?.multiple_exits?.full_tp?.price,
+    );
+  }
+  if (level === 2) {
+    return parseNum(
+      ep?.tp2?.price ?? plan?.tp2 ?? plan?.multiple_exits?.tp2?.price,
+    );
+  }
+  return parseNum(
+    ep?.tp3?.price ??
+      plan?.tp3 ??
+      plan?.multiple_exits?.tp3?.price ??
+      plan?.multiple_exits?.full_tp?.price,
+  );
+}
+
+function planInvalidationText(plan = {}, parsed = {}) {
+  return String(
+    plan?.invalidation ||
+      plan?.execution_plan?.entry?.invalidation_note ||
+      plan?.execution_plan?.stop_loss?.invalidation_note ||
+      parsed?.invalidation ||
+      "",
+  ).trim();
+}
+
+function planEntryConditionText(plan = {}) {
+  return String(
+    plan?.entry_condition ||
+      plan?.execution_plan?.entry?.reference ||
+      plan?.entry_trigger ||
+      plan?.position_management?.entry_trigger ||
+      "",
+  ).trim();
+}
+
+function planExitConditionText(plan = {}) {
+  return String(
+    plan?.exit_condition ||
+      plan?.analysis?.sl_validity?.sl_behind_structure?.invalidation_logic ||
+      plan?.mid_trade_invalidation ||
+      plan?.position_management?.mid_trade_invalidation ||
+      "",
+  ).trim();
+}
+
+function planOrderTypeText(plan = {}, parsed = {}) {
+  return (
+    String(
+      plan?.order_type || plan?.type || parsed?.order_type || parsed?.type || "limit",
+    )
+      .trim()
+      .toLowerCase() || "limit"
+  );
+}
+
+function planRiskPctNumber(plan = {}) {
+  return parseNum(
+    plan?.risk_pct ??
+      plan?.risk_percent ??
+      plan?.risk_management?.risk_percent ??
+      null,
+  );
+}
+
+function planConfidencePctNumber(plan = {}) {
+  return (
+    parseNum(plan?.confidence_pct) ??
+    parseNum(plan?.risk_management?.confidence_pct) ??
+    confidenceLevelToPct(plan?.confidence_level)
+  );
+}
+
+function planEstimatedBarsNumber(plan = {}) {
+  return parseNum(
+    plan?.estimated_bars ??
+      plan?.estimate_bars_that_entry_happens ??
+      plan?.risk_management?.estimated_entry_mins,
+  );
+}
+
 function getPlanPrimaryTp(plan = {}) {
-  const entry = parseNum(plan?.entry ?? plan?.entry_price);
+  const entry = planEntryNumber(plan, {});
   const direction = String(plan?.direction || "")
     .trim()
     .toUpperCase();
@@ -590,9 +703,7 @@ function getPlanPrimaryTp(plan = {}) {
     return true;
   };
   const primaryCandidates = [
-    Array.isArray(plan?.partial_tps) && plan.partial_tps[0]
-      ? (plan.partial_tps[0].price ?? plan.partial_tps[0])
-      : null,
+    planTpLevelNumber(plan, 1),
     Array.isArray(plan?.take_profits) && plan.take_profits[0]
       ? (plan.take_profits[0].price ?? plan.take_profits[0])
       : null,
@@ -859,14 +970,29 @@ function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
   const out = { ...parsed };
+  const indexedRootPlans = Object.keys(out)
+    .filter((k) => /^\d+$/.test(String(k)))
+    .map((k) => out[k])
+    .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    .filter(
+      (x) =>
+        x.execution_plan ||
+        x.risk_management ||
+        x.entry != null ||
+        x.entry_price != null ||
+        x.stop_loss != null ||
+        x.sl != null,
+    )
+    .map((x) => ({ ...(x || {}) }));
   const mappedPlans = collectTradePlansByRules(out).map((p) => ({
     ...(p || {}),
   }));
+  const mergedMappedPlans = [...mappedPlans, ...indexedRootPlans];
   if (
-    mappedPlans.length &&
+    mergedMappedPlans.length &&
     (!Array.isArray(out.trade_plan) || out.trade_plan.length === 0)
   ) {
-    out.trade_plan = mappedPlans;
+    out.trade_plan = mergedMappedPlans;
   }
   if (Array.isArray(out.analyses) && out.analyses.length > 0) {
     const entries = out.analyses.filter((x) => x && typeof x === "object");
@@ -974,49 +1100,27 @@ function normalizeAnalysisContract(parsed) {
       session_entry: x?.session || "",
       strategy: x?.strategy || "",
       entry_model: x?.entry_model || "",
-      entry: x?.entry_price ?? x?.entry ?? null,
-      sl: x?.stop_loss ?? x?.sl ?? null,
-      be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-      tp:
-        planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-        planTakeProfitValue(
-          planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
-        ) ??
-        x?.take_profit ??
-        x?.multiple_exits?.full_tp?.price ??
-        x?.tp3 ??
-        x?.tp1 ??
-        x?.tp ??
+      entry: planEntryNumber(x, out),
+      sl: planStopLossNumber(x, out),
+      be_trigger:
+        x?.execution_plan?.breakeven_trigger?.price ??
+        x?.breakeven_trigger ??
+        x?.be ??
         null,
-      tp2:
-        planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
-        x?.multiple_exits?.tp2?.price ??
-        x?.tp2 ??
-        null,
-      tp3:
-        planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-        x?.multiple_exits?.full_tp?.price ??
-        x?.tp3 ??
-        null,
-      estimated_bars: x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
-      rr: x?.risk_reward ?? x?.rr ?? null,
-      risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
+      tp: getPlanPrimaryTp(x),
+      tp2: planTpLevelNumber(x, 2),
+      tp3: planTpLevelNumber(x, 3),
+      estimated_bars: planEstimatedBarsNumber(x),
+      rr: x?.execution_plan?.risk_reward ?? x?.risk_reward ?? x?.rr ?? null,
+      risk_pct: planRiskPctNumber(x),
       partial_tps: planPartialTps(x),
-      confidence_pct:
-        x?.confidence_pct ?? confidenceLevelToPct(x?.confidence_level),
+      confidence_pct: planConfidencePctNumber(x),
       skip_recommendation: planDecisionText(x),
       reasons_to_skip: planSkipReasons(x),
-      entry_condition:
-        x?.entry_trigger || x?.position_management?.entry_trigger || "",
-      exit_condition:
-        x?.mid_trade_invalidation ||
-        x?.position_management?.mid_trade_invalidation ||
-        "",
-      invalidation:
-        x?.pre_entry_invalidation ||
-        x?.position_management?.pre_entry_invalidation ||
-        "",
-      note: x?.note || "",
+      entry_condition: planEntryConditionText(x),
+      exit_condition: planExitConditionText(x),
+      invalidation: planInvalidationText(x, out),
+      note: x?.execution_plan?.tp3?.note || x?.note || "",
     }));
     return enforceActionableTradePlans(out);
   }
@@ -1163,56 +1267,35 @@ function normalizeAnalysisContract(parsed) {
         session_entry: x?.session || "",
         strategy: x?.strategy || "",
         entry_model: x?.entry_model || "",
-        entry: x?.entry_price ?? x?.entry ?? null,
-        sl: x?.stop_loss ?? x?.sl ?? null,
-        be_trigger: x?.breakeven_trigger ?? x?.be ?? null,
-        tp:
-          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-          planTakeProfitValue(
-            planTakeProfitsRaw(x)[planTakeProfitsRaw(x).length - 1],
-          ) ??
-          x?.take_profit ??
-          x?.multiple_exits?.full_tp?.price ??
-          x?.tp3 ??
-          x?.tp ??
+        entry: planEntryNumber(x, out),
+        sl: planStopLossNumber(x, out),
+        be_trigger:
+          x?.execution_plan?.breakeven_trigger?.price ??
+          x?.breakeven_trigger ??
+          x?.be ??
           null,
-        tp2:
-          planTakeProfitValue(planTakeProfitsRaw(x)[1]) ??
-          x?.multiple_exits?.tp2?.price ??
-          x?.tp2 ??
-          null,
-        tp3:
-          planTakeProfitValue(planTakeProfitsRaw(x)[2]) ??
-          x?.multiple_exits?.full_tp?.price ??
-          x?.tp3 ??
-          null,
-        estimated_bars:
-          x?.estimated_candles_to_tp1 ?? x?.estimated_bars ?? null,
-        risk_pct: x?.risk_percent ?? x?.risk_pct ?? null,
-        rr: x?.risk_reward ?? x?.rr ?? null,
+        tp: getPlanPrimaryTp(x),
+        tp2: planTpLevelNumber(x, 2),
+        tp3: planTpLevelNumber(x, 3),
+        estimated_bars: planEstimatedBarsNumber(x),
+        risk_pct: planRiskPctNumber(x),
+        rr: x?.execution_plan?.risk_reward ?? x?.risk_reward ?? x?.rr ?? null,
         partial_tps: planPartialTps(x),
         confluence_checklist: Array.isArray(x?.confluence_checklist)
           ? x.confluence_checklist
           : [],
         reasons_to_skip: planSkipReasons(x),
         skip_recommendation: planDecisionText(x),
-        entry_condition:
-          x?.entry_trigger || x?.position_management?.entry_trigger || "",
-        exit_condition:
-          x?.mid_trade_invalidation ||
-          x?.position_management?.mid_trade_invalidation ||
-          "",
+        entry_condition: planEntryConditionText(x),
+        exit_condition: planExitConditionText(x),
         risk_management:
           x?.grade === "A" ? "normal" : x?.grade === "B" ? "low" : "high",
-        invalidation:
-          x?.pre_entry_invalidation ||
-          x?.position_management?.pre_entry_invalidation ||
-          "",
+        invalidation: planInvalidationText(x, out),
         confidence_pct:
-          x?.confidence_pct ??
+          planConfidencePctNumber(x) ??
           x?.confluence_score ??
           confidenceLevelToPct(x?.confidence_level),
-        note: x?.note || "",
+        note: x?.execution_plan?.tp3?.note || x?.note || "",
       }));
     }
     delete out.ai_full_analysis;
@@ -1582,10 +1665,8 @@ function extractPositionFromAnalysis(parsed) {
           directionRaw === "B"
         ? "BUY"
         : "";
-  const entry = parseNum(
-    plan.entry ?? plan.entry_price ?? parsed?.entry ?? parsed?.price,
-  );
-  const sl = parseNum(plan.sl ?? plan.stop_loss ?? parsed?.sl);
+  const entry = planEntryNumber(plan, parsed);
+  const sl = planStopLossNumber(plan, parsed);
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1604,45 +1685,46 @@ function extractPositionFromAnalysis(parsed) {
     tp: Number.isFinite(tp) ? formatNum3(tp) : "",
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
-    trade_type:
-      String(plan.type || plan.order_type || parsed?.type || "limit")
-        .trim()
-        .toLowerCase() || "limit",
-    note: String(
-      plan.note || parsed?.invalidation || parsed?.note || "",
-    ).trim(),
-    tp2: Number.isFinite(parseNum(plan?.tp2))
-      ? formatNum3(parseNum(plan?.tp2))
+    trade_type: planOrderTypeText(plan, parsed),
+    note: String(plan?.execution_plan?.tp3?.note || plan?.note || parsed?.note || "").trim(),
+    tp2: Number.isFinite(planTpLevelNumber(plan, 2))
+      ? formatNum3(planTpLevelNumber(plan, 2))
       : "",
-    tp3: Number.isFinite(parseNum(plan?.tp3))
-      ? formatNum3(parseNum(plan?.tp3))
+    tp3: Number.isFinite(planTpLevelNumber(plan, 3))
+      ? formatNum3(planTpLevelNumber(plan, 3))
       : "",
-    be_trigger: Number.isFinite(parseNum(plan?.be_trigger ?? plan?.be))
-      ? formatNum3(parseNum(plan?.be_trigger ?? plan?.be))
+    be_trigger: Number.isFinite(
+      parseNum(plan?.execution_plan?.breakeven_trigger?.price ?? plan?.be_trigger ?? plan?.be),
+    )
+      ? formatNum3(
+          parseNum(
+            plan?.execution_plan?.breakeven_trigger?.price ?? plan?.be_trigger ?? plan?.be,
+          ),
+        )
       : "",
-    confidence_pct: Number.isFinite(parseNum(plan?.confidence_pct))
-      ? parseNum(plan?.confidence_pct)
+    confidence_pct: Number.isFinite(planConfidencePctNumber(plan))
+      ? planConfidencePctNumber(plan)
       : "",
-    risk_pct: Number.isFinite(parseNum(plan?.risk_pct))
-      ? parseNum(plan?.risk_pct)
+    risk_pct: Number.isFinite(planRiskPctNumber(plan))
+      ? planRiskPctNumber(plan)
       : "",
-    estimated_bars: Number.isFinite(parseNum(plan?.estimated_bars))
-      ? parseNum(plan?.estimated_bars)
+    estimated_bars: Number.isFinite(planEstimatedBarsNumber(plan))
+      ? planEstimatedBarsNumber(plan)
       : "",
-    invalidation: String(
-      plan?.invalidation || parsed?.invalidation || "",
-    ).trim(),
+    invalidation: planInvalidationText(plan, parsed),
     entry_model: String(plan?.entry_model || parsed?.entry_model || "").trim(),
     strategy: String(plan?.strategy || parsed?.strategy || "").trim(),
     profile: String(plan?.profile || parsed?.profile || "").trim(),
-    entry_condition: String(plan?.entry_condition || "").trim(),
-    exit_condition: String(plan?.exit_condition || "").trim(),
+    entry_condition: planEntryConditionText(plan),
+    exit_condition: planExitConditionText(plan),
     skip_recommendation: String(
       plan?.skip_recommendation ||
         plan?.position_management?.trade_decision ||
         "",
     ).trim(),
-    risk_management: String(plan?.risk_management || "").trim(),
+    risk_management: String(
+      plan?.risk_management?.grade || plan?.risk_management || "",
+    ).trim(),
     confluence_checklist: Array.isArray(plan?.confluence_checklist)
       ? plan.confluence_checklist
       : [],
@@ -1658,8 +1740,8 @@ function hasRequiredPlanLevels(parsed) {
       : [];
   if (!plans.length) return false;
   return plans.some((p) => {
-    const entry = parseNum(p?.entry ?? p?.entry_price);
-    const sl = parseNum(p?.sl ?? p?.stop_loss);
+    const entry = planEntryNumber(p, parsed || {});
+    const sl = planStopLossNumber(p, parsed || {});
     const tp = getPlanPrimaryTp(p);
     return (
       Number.isFinite(entry) &&
@@ -1683,10 +1765,8 @@ function extractPositionFromPlan(plan, parsed = {}) {
       : directionRaw.includes("BUY") || directionRaw.includes("LONG")
         ? "BUY"
         : "BUY";
-  const entry = parseNum(
-    item.entry ?? item.entry_price ?? parsed?.entry ?? parsed?.price,
-  );
-  const sl = parseNum(item.sl ?? item.stop_loss ?? parsed?.sl);
+  const entry = planEntryNumber(item, parsed);
+  const sl = planStopLossNumber(item, parsed);
   const planTp = getPlanPrimaryTp(item);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1705,45 +1785,46 @@ function extractPositionFromPlan(plan, parsed = {}) {
     tp: Number.isFinite(tp) ? formatNum3(tp) : "",
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
-    trade_type:
-      String(item.type || item.order_type || parsed?.type || "limit")
-        .trim()
-        .toLowerCase() || "limit",
-    note: String(
-      item.note || parsed?.invalidation || parsed?.note || "",
-    ).trim(),
-    tp2: Number.isFinite(parseNum(item?.tp2))
-      ? formatNum3(parseNum(item?.tp2))
+    trade_type: planOrderTypeText(item, parsed),
+    note: String(item?.execution_plan?.tp3?.note || item?.note || parsed?.note || "").trim(),
+    tp2: Number.isFinite(planTpLevelNumber(item, 2))
+      ? formatNum3(planTpLevelNumber(item, 2))
       : "",
-    tp3: Number.isFinite(parseNum(item?.tp3))
-      ? formatNum3(parseNum(item?.tp3))
+    tp3: Number.isFinite(planTpLevelNumber(item, 3))
+      ? formatNum3(planTpLevelNumber(item, 3))
       : "",
-    be_trigger: Number.isFinite(parseNum(item?.be_trigger ?? item?.be))
-      ? formatNum3(parseNum(item?.be_trigger ?? item?.be))
+    be_trigger: Number.isFinite(
+      parseNum(item?.execution_plan?.breakeven_trigger?.price ?? item?.be_trigger ?? item?.be),
+    )
+      ? formatNum3(
+          parseNum(
+            item?.execution_plan?.breakeven_trigger?.price ?? item?.be_trigger ?? item?.be,
+          ),
+        )
       : "",
-    confidence_pct: Number.isFinite(parseNum(item?.confidence_pct))
-      ? parseNum(item?.confidence_pct)
+    confidence_pct: Number.isFinite(planConfidencePctNumber(item))
+      ? planConfidencePctNumber(item)
       : "",
-    risk_pct: Number.isFinite(parseNum(item?.risk_pct))
-      ? parseNum(item?.risk_pct)
+    risk_pct: Number.isFinite(planRiskPctNumber(item))
+      ? planRiskPctNumber(item)
       : "",
-    estimated_bars: Number.isFinite(parseNum(item?.estimated_bars))
-      ? parseNum(item?.estimated_bars)
+    estimated_bars: Number.isFinite(planEstimatedBarsNumber(item))
+      ? planEstimatedBarsNumber(item)
       : "",
-    invalidation: String(
-      item?.invalidation || parsed?.invalidation || "",
-    ).trim(),
+    invalidation: planInvalidationText(item, parsed),
     entry_model: String(item?.entry_model || parsed?.entry_model || "").trim(),
     strategy: String(item?.strategy || parsed?.strategy || "").trim(),
     profile: String(item?.profile || parsed?.profile || "").trim(),
-    entry_condition: String(item?.entry_condition || "").trim(),
-    exit_condition: String(item?.exit_condition || "").trim(),
+    entry_condition: planEntryConditionText(item),
+    exit_condition: planExitConditionText(item),
     skip_recommendation: String(
       item?.skip_recommendation ||
         item?.position_management?.trade_decision ||
         "",
     ).trim(),
-    risk_management: String(item?.risk_management || "").trim(),
+    risk_management: String(
+      item?.risk_management?.grade || item?.risk_management || "",
+    ).trim(),
     confluence_checklist: Array.isArray(item?.confluence_checklist)
       ? item.confluence_checklist
       : [],
@@ -2259,8 +2340,8 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
         s?.side || s?.direction || s?.action || "",
       ).toUpperCase();
       const action = sideRaw.includes("SELL") ? "SELL" : "BUY";
-      const entry = parseNum(s?.entry ?? s?.price ?? s?.entry_price);
-      const sl = parseNum(s?.sl ?? s?.stop_loss);
+      const entry = planEntryNumber(s, fallback);
+      const sl = planStopLossNumber(s, fallback);
       const planTp = getPlanPrimaryTp(s);
       const tp = Number.isFinite(planTp) ? planTp : parseNum(s?.take_profit);
       const strategy = String(s?.strategy || fallback.strategy || "ai").trim();
@@ -2278,20 +2359,16 @@ function extractSignalsFromAnalysis(parsed, fallback = {}) {
         tf: String(s?.timeframe || fallback.timeframe || "15m").trim(),
         model: entryModel,
         entry_model: entryModel,
-        order_type: String(s?.type || s?.order_type || "limit")
-          .trim()
-          .toLowerCase(),
+        order_type: planOrderTypeText(s, fallback),
         note: typeof s?.note === "string" ? s.note : "",
         source,
         strategy,
-        rr: parseNum(s?.rr ?? s?.risk_reward),
-        risk_pct: parseNum(s?.risk_pct ?? s?.risk_percent),
-        grade: String(s?.grade || "").trim(),
+        rr: parseNum(s?.execution_plan?.risk_reward ?? s?.rr ?? s?.risk_reward),
+        risk_pct: planRiskPctNumber(s),
+        grade: String(s?.risk_management?.grade || s?.grade || "").trim(),
         profile: String(s?.profile || parsed?.profile || "").trim(),
-        confidence_pct: parseNum(s?.confidence_pct),
-        invalidation: String(
-          s?.invalidation || parsed?.invalidation || "",
-        ).trim(),
+        confidence_pct: planConfidencePctNumber(s),
+        invalidation: planInvalidationText(s, parsed),
         trade_decision: String(s?.trade_decision || "").trim(),
       };
     })
@@ -4978,10 +5055,10 @@ export default function ChartSnapshotsPage() {
         : [];
     return plans
       .map((p, idx) => {
-        const entry = parseNum(p?.entry ?? p?.entry_price);
-        const sl = parseNum(p?.sl ?? p?.stop_loss);
+        const entry = planEntryNumber(p, effectiveParsed || {});
+        const sl = planStopLossNumber(p, effectiveParsed || {});
         const tp = getPlanPrimaryTp(p);
-        const rr = parseNum(p?.rr ?? p?.risk_reward);
+        const rr = parseNum(p?.execution_plan?.risk_reward ?? p?.rr ?? p?.risk_reward);
         const hasValidLevels = hasNumericEntrySlTp(p);
         const normalizedDecision = String(
           p?.skip_recommendation ||
@@ -5017,25 +5094,18 @@ export default function ChartSnapshotsPage() {
           sl,
           tp,
           rr,
-          trade_type: String(p?.type || p?.order_type || "limit")
-            .trim()
-            .toLowerCase(),
+          trade_type: planOrderTypeText(p, effectiveParsed || {}),
           be_trigger:
             p?.be_trigger ??
             p?.be ??
+            p?.execution_plan?.breakeven_trigger?.price ??
             p?.multiple_exits?.break_even?.price ??
             null,
           invalidation: String(
-            p?.invalidation ||
-              p?.pre_entry_invalidation ||
-              p?.position_management?.pre_entry_invalidation ||
-              "",
+            planInvalidationText(p, effectiveParsed || {}),
           ).trim(),
-          confidence_pct:
-            parseNum(p?.confidence_pct) ??
-            confidenceLevelToPct(p?.confidence_level),
-          estimated_bars:
-            p?.estimated_bars ?? p?.estimate_bars_that_entry_happens ?? null,
+          confidence_pct: planConfidencePctNumber(p),
+          estimated_bars: planEstimatedBarsNumber(p),
           reasons_to_skip: forcedSkip
             ? [{ reason: missingReason, severity: "warning" }]
             : Array.isArray(p?.reasons_to_skip)
@@ -5053,21 +5123,14 @@ export default function ChartSnapshotsPage() {
             ? "Skip"
             : String(p?.trade_decision || "").trim(),
           entry_condition: String(
-            p?.entry_condition ||
-              p?.entry_trigger ||
-              p?.position_management?.entry_trigger ||
-              "",
+            planEntryConditionText(p),
           ).trim(),
           exit_condition: String(
-            p?.exit_condition ||
-              p?.mid_trade_invalidation ||
-              p?.position_management?.mid_trade_invalidation ||
-              "",
+            planExitConditionText(p),
           ).trim(),
-          note:
-            forcedSkip && !String(p?.note || "").trim()
-              ? missingReason
-              : String(p?.note || "").trim(),
+          note: forcedSkip && !String(p?.note || "").trim()
+            ? missingReason
+            : String(p?.execution_plan?.tp3?.note || p?.note || "").trim(),
           has_valid_levels: hasValidLevels,
         };
       })

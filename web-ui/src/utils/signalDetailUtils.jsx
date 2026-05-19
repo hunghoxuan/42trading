@@ -248,6 +248,11 @@ function firstTradePlan(raw = {}) {
   ];
   for (const src of candidates) {
     if (!src || typeof src !== "object") continue;
+    const indexedEntries = Object.keys(src)
+      .filter((k) => /^\d+$/.test(String(k)))
+      .map((k) => src[k])
+      .filter((x) => x && typeof x === "object" && !Array.isArray(x));
+    if (indexedEntries.length) return indexedEntries[0] || {};
     if (src?.__raw_plan && typeof src.__raw_plan === "object")
       return src.__raw_plan;
     // New AI format: bare array of trade plans [{...}]
