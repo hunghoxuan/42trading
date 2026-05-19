@@ -19153,40 +19153,17 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        // Store exact AI response — no normalization, no fake plans, no recovery.
+        // If bare array [{...}], wrap as { trade_plan: [...] } for DB storage.
         if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-        const canonicalParsedJson = cloneJsonForStorage(parsedJson);
-        parsedJson = normalizeAiAnalysisContract(parsedJson);
-        parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);
-        if (
-          (!Array.isArray(parsedJson?.trade_plan) ||
-            parsedJson.trade_plan.length === 0) &&
-          rawResponse.includes('"trade_plan"')
-        ) {
-          const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
-          if (recoveredPlans.length) {
-            parsedJson.trade_plan = recoveredPlans;
-          }
-        }
-        parsedJson = ensureTradePlanCoverageBySymbol(
-          parsedJson,
-          Array.isArray(body.symbols) ? body.symbols : [contextBundle.symbol],
-        );
         console.log(
           "[ai-response] symbol=" +
             (parsedJson?.symbol || "?") +
             " plans=" +
             (Array.isArray(parsedJson?.trade_plan)
               ? parsedJson.trade_plan.length
-              : 0) +
-            " has_analysis=" +
-            !!parsedJson?.market_analysis,
+              : 0),
         );
-        if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
-          console.log(
-            "[ai-response] WARN: bare trade_plan. raw:",
-            rawResponse.slice(0, 500),
-          );
-        }
         const autoSaveResult = await autoSaveAnalyzeResult({
           mode: autoSave,
           parsedJson,
@@ -19650,32 +19627,13 @@ const appHandler = async (req, res) => {
           ? extracted.parsed
           : {};
       if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-      const canonicalParsedJson = cloneJsonForStorage(parsedJson);
-      parsedJson = normalizeAiAnalysisContract(parsedJson);
-      parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);
-      if (
-        (!Array.isArray(parsedJson?.trade_plan) ||
-          parsedJson.trade_plan.length === 0) &&
-        rawResponse.includes('"trade_plan"')
-      ) {
-        const recoveredPlans = recoverTradePlansFromRawAiText(rawResponse);
-        if (recoveredPlans.length) {
-          parsedJson.trade_plan = recoveredPlans;
-        }
-      }
-      parsedJson = ensureTradePlanCoverageBySymbol(
-        parsedJson,
-        requestedSymbols,
-      );
       console.log(
         "[ai-response] symbol=" +
           (parsedJson?.symbol || "?") +
           " plans=" +
           (Array.isArray(parsedJson?.trade_plan)
             ? parsedJson.trade_plan.length
-            : 0) +
-          " has_analysis=" +
-          !!parsedJson?.market_analysis,
+            : 0),
       );
       if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
         console.log(
