@@ -2620,6 +2620,7 @@ export default function ChartSnapshotsPage() {
   const [symbolFilterTab, setSymbolFilterTab] = useState("FAVOURITE");
   const [analysisFilesDisplay, setAnalysisFilesDisplay] = useState([]);
   const [autoSaveResult, setAutoSaveResult] = useState(null);
+  const [analyzeSessionId, setAnalyzeSessionId] = useState(null);
   const [manualAddedMode, setManualAddedMode] = useState("");
   const [addedEntities, setAddedEntities] = useState({});
   const [position, setPosition] = useState(buildDefaultPosition(null));
@@ -2799,6 +2800,7 @@ export default function ChartSnapshotsPage() {
     setSessionPrefix("");
     setAiContext(null);
     setAutoSaveResult(null);
+    setAnalyzeSessionId(null);
     if (pendingHydrateRef.current) {
       const p = pendingHydrateRef.current;
       pendingHydrateRef.current = null;
@@ -3459,6 +3461,7 @@ export default function ChartSnapshotsPage() {
       Array.isArray(files) && files.length ? files : analysisFilesDisplay,
     );
     setAutoSaveResult(null);
+    setAnalyzeSessionId(null);
     const activeSessionPrefix = sessionPrefix || makeSessionPrefix();
     if (!sessionPrefix) setSessionPrefix(activeSessionPrefix);
     try {
@@ -3623,6 +3626,7 @@ export default function ChartSnapshotsPage() {
       }
       const raw = String(out?.raw_response || "");
       setAutoSaveResult(out?.auto_save_result || null);
+      if (out?.session_id) setAnalyzeSessionId(out.session_id);
       const autoMode = String(out?.auto_save_result?.mode || "").toLowerCase();
       if (out?.auto_save_result?.saved) {
         const autoEntity = resolveCreatedId(
@@ -4033,15 +4037,17 @@ export default function ChartSnapshotsPage() {
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
           session_prefix: activeSessionPrefix || undefined,
-          sid: (() => {
-            const s = normalizeSignalSymbol(
-              payload.symbol || tvSymbol || cfg.symbol || "",
-            );
-            const p = String(activeSessionPrefix || "")
-              .trim()
-              .toUpperCase();
-            return s && p ? `${s}_${p}` : undefined;
-          })(),
+          sid:
+            analyzeSessionId ||
+            (() => {
+              const s = normalizeSignalSymbol(
+                payload.symbol || tvSymbol || cfg.symbol || "",
+              );
+              const p = String(activeSessionPrefix || "")
+                .trim()
+                .toUpperCase();
+              return s && p ? `${s}_${p}` : undefined;
+            })(),
           action: dir === "BUY" || dir === "SELL" ? dir : payload.action,
           entry:
             Number.isFinite(parseNum(activePosition.entry)) &&
@@ -4996,6 +5002,7 @@ export default function ChartSnapshotsPage() {
     setActionStatus({ action: "", type: "", text: "" });
     setSessionPrefix("");
     setAutoSaveResult(null);
+    setAnalyzeSessionId(null);
     setManualAddedMode("");
     setAddedEntities({});
     setStatus({ type: "success", text: "New analyze session started." });

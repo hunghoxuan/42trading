@@ -91,6 +91,9 @@ function buildDailyPnlMap(points = []) {
 }
 
 function mergeDailyPnlMap(base = {}, incoming = {}) {
+  const incomingKeys = Object.keys(incoming || {});
+  // If incoming is empty, discard stale cache.
+  if (!incomingKeys.length) return {};
   const out = { ...(base || {}) };
   for (const [k, v] of Object.entries(incoming || {})) {
     const d = normalizeDateKey(k);
@@ -444,9 +447,7 @@ export default function DashboardPage() {
     ...monthPoints.map((x) => Math.abs(Number(x.pnl || 0))),
   );
   const yAxisMax = Math.max(1000, Math.ceil(monthMaxAbsPnl / 100) * 100);
-  const yAxisSteps = [200, 400, 600, 800, 1000].filter(
-    (v) => v <= yAxisMax,
-  );
+  const yAxisSteps = [200, 400, 600, 800, 1000].filter((v) => v <= yAxisMax);
 
   return (
     <section className="stack-layout fadeIn">
@@ -498,9 +499,7 @@ export default function DashboardPage() {
                 <span className="minor-text" style={{ fontSize: "10px" }}>
                   TOTAL
                 </span>
-                <div style={{ fontSize: "16px" }}>
-                  {m.total_trades || 0}
-                </div>
+                <div style={{ fontSize: "16px" }}>{m.total_trades || 0}</div>
               </div>
               <div className="summary-item">
                 <span className="minor-text" style={{ fontSize: "10px" }}>
@@ -568,74 +567,149 @@ export default function DashboardPage() {
               }}
             >
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>ACCOUNT</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  ACCOUNT
+                </span>
                 <select
                   id="db-filter-account"
                   value={filters.account_id}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, account_id: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      account_id: e.target.value,
+                    }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
                   <option value="">All</option>
-                  {(f.accounts || []).map((v) => (<option key={v} value={v}>{accountNameById.get(String(v)) || v}</option>))}
+                  {(f.accounts || []).map((v) => (
+                    <option key={v} value={v}>
+                      {accountNameById.get(String(v)) || v}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>SYMBOL</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  SYMBOL
+                </span>
                 <select
                   id="db-filter-symbol"
                   value={filters.symbol}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, symbol: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, symbol: e.target.value }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
                   <option value="">All</option>
-                  {(f.symbols || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                  {(f.symbols || []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>SOURCE</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  SOURCE
+                </span>
                 <select
                   id="db-filter-source"
                   value={filters.source}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, source: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, source: e.target.value }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
                   <option value="">All</option>
-                  {(f.sources || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                  {(f.sources || []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>MODEL</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  MODEL
+                </span>
                 <select
                   id="db-filter-model"
                   value={filters.entry_model}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, entry_model: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      entry_model: e.target.value,
+                    }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
                   <option value="">All</option>
-                  {(f.entry_models || []).map((v) => (<option key={v} value={v}>{v}</option>))}
+                  {(f.entry_models || []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>TF</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  TF
+                </span>
                 <select
                   id="db-filter-tf"
                   value={filters.signal_tf}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, signal_tf: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      signal_tf: e.target.value,
+                    }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
                   <option value="">All</option>
-                  {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (<option key={v} value={v}>{formatTimeframe(v)}</option>))}
+                  {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (
+                    <option key={v} value={v}>
+                      {formatTimeframe(v)}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span className="minor-text" style={{ fontSize: 9, opacity: 0.7 }}>RANGE</span>
+                <span
+                  className="minor-text"
+                  style={{ fontSize: 9, opacity: 0.7 }}
+                >
+                  RANGE
+                </span>
                 <select
                   id="db-filter-range"
                   value={filters.range}
-                  onChange={(e) => setFilters((prev) => ({ ...prev, range: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, range: e.target.value }))
+                  }
                   style={{ fontSize: 10, padding: "4px 8px" }}
                 >
-                  {RANGE_OPTIONS.map((r) => (<option key={r.val} value={r.val}>{r.lab}</option>))}
+                  {RANGE_OPTIONS.map((r) => (
+                    <option key={r.val} value={r.val}>
+                      {r.lab}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -757,7 +831,7 @@ export default function DashboardPage() {
                 >
                   ◀
                 </button>
-                <span style={{ fontSize: 12,}}>
+                <span style={{ fontSize: 12 }}>
                   {new Date(calendarYear, calendarMonth).toLocaleString(
                     "default",
                     { month: "long", year: "numeric" },
@@ -854,8 +928,7 @@ export default function DashboardPage() {
                         <div
                           style={{
                             fontSize: 12,
-                            color:
-                              pnl != null ? "var(--text)" : "var(--muted)",
+                            color: pnl != null ? "var(--text)" : "var(--muted)",
                           }}
                         >
                           {d}
@@ -989,58 +1062,61 @@ export default function DashboardPage() {
                     alignItems: "stretch",
                   }}
                 >
-                  {(monthPoints.length ? monthPoints : [{ day: "", pnl: 0 }]).map(
-                    (p, idx) => {
-                      const hPct = Math.min(
-                        49,
-                        (Math.abs(Number(p.pnl || 0)) / yAxisMax) * 49,
-                      );
-                      const isPos = Number(p.pnl || 0) >= 0;
-                      return (
-                        <div
-                          key={`${p.day}_${idx}`}
-                          style={{
-                            position: "relative",
-                            display: "flex",
-                            justifyContent: "center",
-                          }}
-                          title={
-                            p.day
-                              ? `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: $${Number(p.pnl || 0).toFixed(2)}`
-                              : "No data"
-                          }
-                        >
-                          {p.day ? (
-                            <div
-                              style={{
-                                position: "absolute",
-                                width: "72%",
-                                height: `${hPct}%`,
-                                top: isPos ? "53%" : "55%",
-                                borderRadius: isPos ? "2px 2px 0 0" : "0 0 2px 2px",
-                                background: isPos
-                                  ? "rgba(16,185,129,0.9)"
-                                  : "rgba(239,68,68,0.9)",
-                                zIndex: 2,
-                              }}
-                            />
-                          ) : null}
-                          {p.day ? (
-                            <div
-                              style={{
-                                position: "absolute",
-                                bottom: -18,
-                                fontSize: 10,
-                                color: "var(--muted)",
-                              }}
-                            >
-                              {String(p.day).padStart(2, "0")}
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    },
-                  )}
+                  {(monthPoints.length
+                    ? monthPoints
+                    : [{ day: "", pnl: 0 }]
+                  ).map((p, idx) => {
+                    const hPct = Math.min(
+                      49,
+                      (Math.abs(Number(p.pnl || 0)) / yAxisMax) * 49,
+                    );
+                    const isPos = Number(p.pnl || 0) >= 0;
+                    return (
+                      <div
+                        key={`${p.day}_${idx}`}
+                        style={{
+                          position: "relative",
+                          display: "flex",
+                          justifyContent: "center",
+                        }}
+                        title={
+                          p.day
+                            ? `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: $${Number(p.pnl || 0).toFixed(2)}`
+                            : "No data"
+                        }
+                      >
+                        {p.day ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              width: "72%",
+                              height: `${hPct}%`,
+                              top: isPos ? "53%" : "55%",
+                              borderRadius: isPos
+                                ? "2px 2px 0 0"
+                                : "0 0 2px 2px",
+                              background: isPos
+                                ? "rgba(16,185,129,0.9)"
+                                : "rgba(239,68,68,0.9)",
+                              zIndex: 2,
+                            }}
+                          />
+                        ) : null}
+                        {p.day ? (
+                          <div
+                            style={{
+                              position: "absolute",
+                              bottom: -18,
+                              fontSize: 10,
+                              color: "var(--muted)",
+                            }}
+                          >
+                            {String(p.day).padStart(2, "0")}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

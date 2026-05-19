@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 18:57 - f7b4c702"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.19 18:57 - f7b4c702",
+); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -19291,6 +19294,7 @@ const appHandler = async (req, res) => {
         return json(res, 200, {
           ok: true,
           model: resolvedModel,
+          session_id: sessionId,
           schema_version: AI_RESPONSE_SCHEMA_VERSION,
           used_files: usedSnapshotFiles,
           used_symbols: usedSymbols,
@@ -19774,6 +19778,7 @@ const appHandler = async (req, res) => {
       return json(res, 200, {
         ok: true,
         model: resolvedModel,
+        session_id: sessionId,
         schema_version: AI_RESPONSE_SCHEMA_VERSION,
         used_files:
           imagePayload.usedFiles || snapshotFiles.map((x) => x.fileName),
