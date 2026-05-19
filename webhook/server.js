@@ -14955,16 +14955,12 @@ const appHandler = async (req, res) => {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 5000);
-      const selfRes = await fetch(
-        CFG.httpsEnabled
-          ? `https://localhost:${CFG.httpsPort}/`
-          : `http://localhost:${CFG.port}/`,
-        {
-          method: "GET",
-          signal: ctrl.signal,
-          headers: { Host: "localhost" },
-        },
-      );
+      // Use HTTP loopback — avoids TLS cert issues on self-request
+      const selfRes = await fetch(`http://127.0.0.1:${CFG.port}/`, {
+        method: "GET",
+        signal: ctrl.signal,
+        headers: { Host: "localhost" },
+      });
       clearTimeout(timer);
       const selfText = await selfRes.text();
       // HTML starts with <, JSON starts with {
