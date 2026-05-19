@@ -850,21 +850,7 @@ export const DEFAULT_CONFIG = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AI_RESPONSE_SCHEMA_VERSION = "3.0";
-export const AI_RESPONSE_SCHEMA = (() => {
-  try {
-    return {
-      analysis_data: [
-        {
-          symbol: "",
-          multi_timeframes_analysis: {},
-        },
-      ],
-      trade_plan: [TRADE_PLAN_SCHEMA],
-    };
-  } catch (e) {
-    return { analysis_data: [], trade_plan: [] };
-  }
-})();
+export const AI_RESPONSE_SCHEMA = [TRADE_PLAN_SCHEMA];
 export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
 export const SCHEMA_USER_DEFAULT = "{}";
 export const GUIDE_USER_DEFAULT = "";

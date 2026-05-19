@@ -825,21 +825,11 @@ const AI_SCHEMA_SPEC = (() => {
     const planSchema = require("../config/trade_plan_schema.json");
     return {
       version: "3.0",
-      schema: {
-        analysis_data: [
-          {
-            symbol: "",
-            multi_timeframes_analysis: {},
-          },
-        ],
-        trade_plan: [planSchema],
-      },
+      schema: [planSchema],
     };
   } catch (e) {
-    console.warn(
-      "[schema] trade_plan_schema.json not found, using empty schema",
-    );
-    return { version: "3.0", schema: { analysis_data: [], trade_plan: [] } };
+    console.warn("[schema] trade_plan_schema.json not found");
+    return { version: "3.0", schema: [{}] };
   }
 })();
 const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "3.0");
