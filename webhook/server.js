@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 07:12 - 2a8dc21e",
-); // health self-check: accepts HTML, redirect, or text/html content-type
+  "v2026.05.19 09:07 - f9059948",
+); // AI nav buttons + TradePlan RR sliders + static chart wiring + close snapshot + chart objects API
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -8888,7 +8888,7 @@ async function _mt5InitBackendInternal() {
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
               AND NOT (broker_trade_id = ANY($2::text[]))
-            RETURNING sid, broker_trade_id, execution_status, close_reason, pnl_realized
+            RETURNING sid, symbol, user_id, broker_trade_id, execution_status, close_reason, pnl_realized
           `,
             [aid, Array.from(seenTickets)],
           );
@@ -8906,12 +8906,67 @@ async function _mt5InitBackendInternal() {
               AND execution_status IN ('OPEN','PENDING')
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
-            RETURNING sid, broker_trade_id, execution_status, close_reason, pnl_realized
+            RETURNING sid, symbol, user_id, broker_trade_id, execution_status, close_reason, pnl_realized
           `,
             [aid],
           );
           closed_by_snapshot = Number(closeRes.rowCount || 0);
           await finalizeSnapshotClosures(closeRes.rows || []);
+        }
+      }
+
+      // Auto-capture chart snapshots for trades closed by this sync
+      if (closed_by_snapshot > 0) {
+        const closedRows = [];
+        // Collect rows from the inner scope — re-query to get symbol & user_id
+        try {
+          const snapshotRes = await pool.query(
+            `
+            SELECT sid, symbol, user_id
+            FROM trades
+            WHERE account_id = $1::text
+              AND execution_status IN ('CLOSED','CANCELLED')
+              AND closed_at >= NOW() - INTERVAL '5 minutes'
+              AND broker_trade_id IS NOT NULL
+              AND broker_trade_id <> ''
+              AND symbol IS NOT NULL
+              AND symbol <> ''
+            ORDER BY closed_at DESC
+            LIMIT $2::int
+          `,
+            [aid, Math.min(closed_by_snapshot + 5, 100)],
+          );
+          if (snapshotRes?.rows?.length) {
+            closedRows.push(...snapshotRes.rows);
+          }
+        } catch {
+          /* non-blocking */
+        }
+
+        if (closedRows.length) {
+          // Dedupe by sid
+          const seen = new Set();
+          const unique = closedRows.filter((r) => {
+            const sid = String(r?.sid || "").trim();
+            if (!sid || seen.has(sid)) return false;
+            seen.add(sid);
+            return true;
+          });
+          for (const row of unique) {
+            try {
+              const snapshots = await captureTradingViewSnapshotsBatch({
+                symbol: row.symbol,
+                timeframes: ["15m", "1h", "4h", "1D"],
+                theme: "dark",
+                format: "png",
+                userId: row.user_id || CFG.mt5DefaultUserId,
+              });
+              const files = snapshots.map((s) => s.file_name).filter(Boolean);
+              await persistTradeSnapshotFiles(row.sid, files);
+            } catch {
+              /* non-blocking */
+            }
+          }
         }
       }
 
@@ -21584,6 +21639,102 @@ const appHandler = async (req, res) => {
       });
       res.end(data);
       return;
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Chart-object persistence: save/load chart objects in trade metadata
+  if (
+    req.method === "POST" &&
+    /^\/v2\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-objects$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const objects = Array.isArray(payload?.objects) ? payload.objects : [];
+      const b = await mt5Backend();
+      if (!b?.query)
+        return json(res, 500, { ok: false, error: "backend unavailable" });
+      await b.query(
+        `
+        UPDATE trades
+        SET metadata = COALESCE(metadata, '{}'::jsonb)
+              || jsonb_build_object('chart_objects', $2::jsonb),
+            updated_at = NOW()
+        WHERE sid = $1
+      `,
+        [sid, JSON.stringify(objects)],
+      );
+      return json(res, 200, { ok: true, sid, objects });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/chart-objects$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      const sid = String(resolvedTrade.sid || "").trim();
+      const b = await mt5Backend();
+      if (!b?.query)
+        return json(res, 500, { ok: false, error: "backend unavailable" });
+      const metaRes = await b.query(
+        `
+        SELECT COALESCE(metadata->'chart_objects', '[]'::jsonb) AS chart_objects
+        FROM trades
+        WHERE sid = $1
+        LIMIT 1
+      `,
+        [sid],
+      );
+      const chartObjects = metaRes.rows?.[0]?.chart_objects || [];
+      return json(res, 200, {
+        ok: true,
+        sid,
+        objects: Array.isArray(chartObjects)
+          ? chartObjects
+          : typeof chartObjects === "object" && chartObjects !== null
+            ? [chartObjects]
+            : [],
+      });
     } catch (error) {
       return json(res, 400, {
         ok: false,

@@ -91,7 +91,11 @@ function calcRrByTarget(entryRaw, slRaw, targetRaw, directionRaw = "") {
   const entry = parseNum(entryRaw);
   const sl = parseNum(slRaw);
   const target = parseNum(targetRaw);
-  if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(target))
+  if (
+    !Number.isFinite(entry) ||
+    !Number.isFinite(sl) ||
+    !Number.isFinite(target)
+  )
     return "";
   const direction = String(directionRaw || "").toUpperCase();
   if (direction === "BUY" && !(sl < entry && target > entry)) return "";
@@ -102,6 +106,19 @@ function calcRrByTarget(entryRaw, slRaw, targetRaw, directionRaw = "") {
   if (risk < Math.max(0.01, Math.abs(entry) * 0.000001)) return "";
   const reward = Math.abs(target - entry);
   return String(Number((reward / risk).toFixed(2)));
+}
+
+function calcTpFromRr(entryRaw, slRaw, rrRaw, directionRaw = "") {
+  const entry = parseNum(entryRaw);
+  const sl = parseNum(slRaw);
+  const rr = parseNum(rrRaw);
+  if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(rr))
+    return null;
+  const direction = String(directionRaw || "").toUpperCase();
+  const risk = Math.abs(entry - sl);
+  if (!(risk > 0)) return null;
+  const sign = direction === "SELL" ? -1 : 1;
+  return entry + sign * (risk * rr);
 }
 
 const Row2 = memo(function Row2({ left, right }) {
@@ -248,7 +265,9 @@ const NumericNoSlider = memo(function NumericNoSlider({
         inputMode="decimal"
         min={min}
         max={max}
-        value={cleanFieldValue(valueOverride == null ? valueRaw : valueOverride)}
+        value={cleanFieldValue(
+          valueOverride == null ? valueRaw : valueOverride,
+        )}
         onChange={(e) => onUpdate(k, e.target.value)}
         disabled={isDisabled}
       />
@@ -304,9 +323,12 @@ export function TradePlanEditor({
     disabled || Boolean(busy?.save || busy?.signal || busy?.trade);
   const directionOptions = useMemo(() => ["BUY", "SELL"], []);
 
-  const update = useCallback((key, val) => {
-    if (typeof onChange === "function") onChange(key, val);
-  }, [onChange]);
+  const update = useCallback(
+    (key, val) => {
+      if (typeof onChange === "function") onChange(key, val);
+    },
+    [onChange],
+  );
   const lockedView = Boolean(viewOnly);
   useEffect(() => {
     if (lockedView) setMode("view");
@@ -339,6 +361,20 @@ export function TradePlanEditor({
   const rr3 = useMemo(
     () => calcRrByTarget(value.entry, value.sl, value.tp3, value.direction),
     [value.entry, value.sl, value.tp3, value.direction],
+  );
+
+  const handleRrChange = useCallback(
+    (key, rrVal) => {
+      const tpKey = key === "rr" ? "tp" : key === "rr2" ? "tp2" : "tp3";
+      const tp = calcTpFromRr(value.entry, value.sl, rrVal, value.direction);
+      if (tp != null && Number.isFinite(tp)) {
+        update(key, rrVal);
+        update(tpKey, formatNum3(tp));
+      } else {
+        update(key, rrVal);
+      }
+    },
+    [update, value.entry, value.sl, value.direction],
   );
 
   const idPrefix = signalId || tradeId || "tp-editor";
@@ -412,7 +448,12 @@ export function TradePlanEditor({
             </div>
           )}
 
-          <TradeFileUpload tradeId={tradeId} disabled={lockedView} showList={false} showLabel={false} />
+          <TradeFileUpload
+            tradeId={tradeId}
+            disabled={lockedView}
+            showList={false}
+            showLabel={false}
+          />
           {showActionsInView && (
             <div
               style={{
@@ -539,6 +580,8 @@ export function TradePlanEditor({
               display: "grid",
               gridTemplateColumns: "1fr",
               gap: "8px",
+              minWidth: 0,
+              overflow: "hidden",
             }}
           >
             <Row2
@@ -555,7 +598,9 @@ export function TradePlanEditor({
                   value={value.direction || "BUY"}
                   onChange={(e) => {
                     const nextDir = String(e.target.value || "");
-                    const oldDir = String(value.direction || "BUY").toUpperCase();
+                    const oldDir = String(
+                      value.direction || "BUY",
+                    ).toUpperCase();
                     if (nextDir.toUpperCase() !== oldDir) {
                       const oldTp = cleanFieldValue(value.tp);
                       const oldSl = cleanFieldValue(value.sl);
@@ -633,16 +678,13 @@ export function TradePlanEditor({
                 />
               }
               right={
-                <NumericNoSlider
+                <NumericInline
                   idPrefix={idPrefix}
                   label="RR"
                   k="rr"
                   valueRaw={value.rr}
-                  step="0.01"
-                  min="0.1"
-                  max="20"
                   controlsDisabled={controlsDisabled}
-                  onUpdate={update}
+                  onUpdate={handleRrChange}
                   disabled={tradeFieldsDisabled}
                 />
               }
@@ -660,16 +702,14 @@ export function TradePlanEditor({
                 />
               }
               right={
-                <NumericNoSlider
+                <NumericInline
                   idPrefix={idPrefix}
                   label="RR2"
                   k="rr2"
-                  valueRaw={value.rr2}
-                  readOnly
-                  valueOverride={rr2}
+                  valueRaw={value.rr2 != null ? value.rr2 : rr2}
                   controlsDisabled={controlsDisabled}
-                  onUpdate={update}
-                  disabled
+                  onUpdate={handleRrChange}
+                  disabled={tradeFieldsDisabled}
                 />
               }
             />
@@ -686,16 +726,14 @@ export function TradePlanEditor({
                 />
               }
               right={
-                <NumericNoSlider
+                <NumericInline
                   idPrefix={idPrefix}
                   label="RR3"
                   k="rr3"
-                  valueRaw={value.rr3}
-                  readOnly
-                  valueOverride={rr3}
+                  valueRaw={value.rr3 != null ? value.rr3 : rr3}
                   controlsDisabled={controlsDisabled}
-                  onUpdate={update}
-                  disabled
+                  onUpdate={handleRrChange}
+                  disabled={tradeFieldsDisabled}
                 />
               }
             />
@@ -711,25 +749,17 @@ export function TradePlanEditor({
                 gap: "4px",
               }}
             >
-              <label
-                htmlFor={`${signalId || tradeId || "tp-editor"}-note`}
-                className="minor-text"
-                style={{
-                  fontWeight: "700",
-                  fontSize: "9px",
-                  textTransform: "uppercase",
-                  color: "var(--muted-bright)",
-                  opacity: 0.8,
-                }}
-              >
-                Strategic Note
-              </label>
               <SmartContent
                 content={value.note || ""}
                 mode="editable"
                 onChange={(v) => update("note", v)}
               />
-              <TradeFileUpload tradeId={tradeId} disabled={controlsDisabled} showList={false} showLabel={false} />
+              <TradeFileUpload
+                tradeId={tradeId}
+                disabled={controlsDisabled}
+                showList={false}
+                showLabel={false}
+              />
             </div>
 
             <div

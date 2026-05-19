@@ -965,9 +965,8 @@ export default function SymbolChart({
   }, [selectedObject, sortedTfs, cleanSym, viewports, master]);
 
   const openSnapshotFileList = useCallback(async () => {
-    const attachedItems = (Array.isArray(attachedSnapshotFiles)
-      ? attachedSnapshotFiles
-      : []
+    const attachedItems = (
+      Array.isArray(attachedSnapshotFiles) ? attachedSnapshotFiles : []
     )
       .map((file) => String(file || "").trim())
       .filter(Boolean)
@@ -1384,10 +1383,7 @@ export default function SymbolChart({
         time: ctxMenu?.time || null,
         interval: ctxMenu?.interval || null,
       };
-      if (
-        typeof onQuickTradeIntent === "function" &&
-        !(hasTradePlan && hasAnalysis)
-      ) {
+      if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
       }
       const isBuy = String(side || "").toUpperCase() === "BUY";
@@ -1630,7 +1626,6 @@ export default function SymbolChart({
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontWeight: 800, fontSize: 14 }}>{symbol}</span>
 
-
           {(pendingMode || mode) === "snapshots" && (
             <button
               className="secondary-button"
@@ -1671,9 +1666,7 @@ export default function SymbolChart({
                 lineHeight: 1,
                 minWidth: 18,
                 borderRadius: 4,
-                color: isInWatchlist
-                  ? "rgba(239,68,68,0.7)"
-                  : "var(--muted)",
+                color: isInWatchlist ? "rgba(239,68,68,0.7)" : "var(--muted)",
                 borderColor: isInWatchlist
                   ? "rgba(239,68,68,0.35)"
                   : "rgba(255,255,255,0.08)",
@@ -1684,34 +1677,38 @@ export default function SymbolChart({
                   onToggleWatchlist(symbol);
                 else if (typeof onRemove === "function") onRemove(symbol);
               }}
-              title={isInWatchlist ? "Remove from watchlist" : "Add to watchlist"}
+              title={
+                isInWatchlist ? "Remove from watchlist" : "Add to watchlist"
+              }
             >
               {isInWatchlist ? "-" : "+"}
             </button>
           )}
-          {showControls && isInSelected && typeof onRemoveSelected === "function" && (
-            <button
-              className="secondary-button"
-              style={{
-                width: 18,
-                height: 18,
-                padding: 0,
-                fontSize: 10,
-                lineHeight: 1,
-                minWidth: 18,
-                borderRadius: 4,
-                color: "#fca5a5",
-                borderColor: "rgba(248,113,113,0.4)",
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemoveSelected(symbol);
-              }}
-              title="Remove from selected symbols"
-            >
-              x
-            </button>
-          )}
+          {showControls &&
+            isInSelected &&
+            typeof onRemoveSelected === "function" && (
+              <button
+                className="secondary-button"
+                style={{
+                  width: 18,
+                  height: 18,
+                  padding: 0,
+                  fontSize: 10,
+                  lineHeight: 1,
+                  minWidth: 18,
+                  borderRadius: 4,
+                  color: "#fca5a5",
+                  borderColor: "rgba(248,113,113,0.4)",
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveSelected(symbol);
+                }}
+                title="Remove from selected symbols"
+              >
+                x
+              </button>
+            )}
           {(pendingMode || mode) === "snapshots" &&
             snapshotState?.message &&
             snapshotState.stage === "error" && (
@@ -1727,7 +1724,7 @@ export default function SymbolChart({
             )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {showPerCardLayoutControls && (
+          {(showPerCardLayoutControls || mode === "cache") && (
             <select
               className="secondary-button"
               value={localBarsCount}
@@ -1791,11 +1788,15 @@ export default function SymbolChart({
                   borderRadius: 4,
                   marginRight: 8,
                   color:
-                    tvSettings.sidebar && tvSettings.toolbar && tvSettings.legend
+                    tvSettings.sidebar &&
+                    tvSettings.toolbar &&
+                    tvSettings.legend
                       ? "#60a5fa"
                       : "var(--muted)",
                   borderColor:
-                    tvSettings.sidebar && tvSettings.toolbar && tvSettings.legend
+                    tvSettings.sidebar &&
+                    tvSettings.toolbar &&
+                    tvSettings.legend
                       ? "#60a5fa66"
                       : "var(--border)",
                 }}
@@ -1847,7 +1848,7 @@ export default function SymbolChart({
             </button>
           )}
           {/* Removed redundant P1/P2/PD/KL mini-row; use Objects panel as source of truth */}
-          {showPerCardLayoutControls && (
+          {(showPerCardLayoutControls || mode === "cache") && (
             <>
               <button
                 className="secondary-button"
@@ -2107,7 +2108,11 @@ export default function SymbolChart({
                         key={`tv-${symbol}-${tf}-${liveKey}`}
                         title={`tv-${symbol}-${tf}`}
                         className="browser-chart-v1"
-                        style={{ width: "100%", height: "100%", border: "none" }}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          border: "none",
+                        }}
                         src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
                       <button
@@ -2160,8 +2165,16 @@ export default function SymbolChart({
                         onClick={() => {
                           const snap = master?.snapshots?.[tf.toLowerCase()];
                           if (snap) {
-                            const url = snap.url || `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(snap.file_name || "")}`;
-                            setSnapshotModalFiles([{ name: snap.file_name || `snapshot-${tf}`, url, size_bytes: snap.size_bytes || 0 }]);
+                            const url =
+                              snap.url ||
+                              `${window.location.origin}/v2/chart/snapshots/${encodeURIComponent(snap.file_name || "")}`;
+                            setSnapshotModalFiles([
+                              {
+                                name: snap.file_name || `snapshot-${tf}`,
+                                url,
+                                size_bytes: snap.size_bytes || 0,
+                              },
+                            ]);
                           }
                         }}
                       />
@@ -2705,11 +2718,14 @@ export default function SymbolChart({
                     typeof onPlanLevelChange,
                     "onQuickTradeIntent=",
                     typeof onQuickTradeIntent,
+                    "mode=",
+                    mode,
                   );
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("entry", p);
                     console.log("[ctxMenu] Entry → onPlanLevelChange done");
-                  } else if (typeof onQuickTradeIntent === "function") {
+                  }
+                  if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
                       side: "ENTRY",
@@ -2718,7 +2734,11 @@ export default function SymbolChart({
                       price: p,
                     });
                     console.log("[ctxMenu] Entry → onQuickTradeIntent done");
-                  } else {
+                  }
+                  if (
+                    typeof onPlanLevelChange !== "function" &&
+                    typeof onQuickTradeIntent !== "function"
+                  ) {
                     console.log("[ctxMenu] Entry → NO HANDLER available");
                   }
                   setCtxMenu(null);
@@ -2728,10 +2748,11 @@ export default function SymbolChart({
                 label: `TP @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
-                  console.log("[ctxMenu] TP clicked price=", p);
+                  console.log("[ctxMenu] TP clicked price=", p, "mode=", mode);
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("tp", p);
-                  } else if (typeof onQuickTradeIntent === "function") {
+                  }
+                  if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
                       side: "TP",
@@ -2747,10 +2768,11 @@ export default function SymbolChart({
                 label: `SL @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
-                  console.log("[ctxMenu] SL clicked price=", p);
+                  console.log("[ctxMenu] SL clicked price=", p, "mode=", mode);
                   if (typeof onPlanLevelChange === "function") {
                     onPlanLevelChange("sl", p);
-                  } else if (typeof onQuickTradeIntent === "function") {
+                  }
+                  if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
                       side: "SL",

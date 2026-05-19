@@ -174,7 +174,9 @@ async function get(path) {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+      throw new Error(
+        `Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`,
+      );
     }
   } catch (err) {
     if (err.message.includes("Server returned non-JSON")) throw err;
@@ -324,7 +326,9 @@ async function post(path, body = {}) {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+      throw new Error(
+        `Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`,
+      );
     }
   } catch (err) {
     if (err.message.includes("Server returned non-JSON")) throw err;
@@ -408,7 +412,9 @@ async function postWithTimeout(
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+      throw new Error(
+        `Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`,
+      );
     }
   } catch (err) {
     if (err.message.includes("Server returned non-JSON")) throw err;
@@ -485,7 +491,9 @@ async function put(path, body = {}) {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+      throw new Error(
+        `Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`,
+      );
     }
   } catch (err) {
     if (err.message.includes("Server returned non-JSON")) throw err;
@@ -557,7 +565,9 @@ async function del(path) {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`);
+      throw new Error(
+        `Server returned non-JSON response (${res.status}): ${text.slice(0, 100)}...`,
+      );
     }
   } catch (err) {
     if (err.message.includes("Server returned non-JSON")) throw err;
@@ -792,7 +802,9 @@ export const api = {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Upload failed - server returned non-JSON (${res.status}): ${text.slice(0, 100)}`);
+      throw new Error(
+        `Upload failed - server returned non-JSON (${res.status}): ${text.slice(0, 100)}`,
+      );
     }
     if (!res.ok || !data.ok) {
       throw new Error(data.error || `Upload failed (${res.status})`);
@@ -805,6 +817,12 @@ export const api = {
     del(
       `/v2/trades/${encodeURIComponent(tradeId)}/files/${encodeURIComponent(fileName)}`,
     ),
+  saveChartObjects: (tradeId, objects = []) =>
+    post(`/v2/trades/${encodeURIComponent(tradeId)}/chart-objects`, {
+      objects,
+    }),
+  loadChartObjects: (tradeId) =>
+    get(`/v2/trades/${encodeURIComponent(tradeId)}/chart-objects`),
   deleteTrades: (params) => post("/mt5/trades/delete", params),
   cancelTrades: (params) => post("/mt5/trades/cancel", params),
   renewTrades: (params) => post("/mt5/trades/renew", params),

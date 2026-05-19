@@ -1791,7 +1791,8 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
   // This prevents losing multi-timeframe analysis details when persisting a per-symbol view.
   if (!cloned.__analysis_full_raw) {
     cloned.__analysis_full_raw =
-      parsed.__analysis_full_raw && typeof parsed.__analysis_full_raw === "object"
+      parsed.__analysis_full_raw &&
+      typeof parsed.__analysis_full_raw === "object"
         ? parsed.__analysis_full_raw
         : parsed;
   }
@@ -2472,7 +2473,10 @@ export default function ChartSnapshotsPage() {
           { value: "openai/gpt-4o", label: "GPT-4o" },
           { value: "openai/gpt-4.1", label: "GPT-4.1" },
           { value: "openai/o3-mini", label: "o3 Mini" },
-          { value: "anthropic/claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+          {
+            value: "anthropic/claude-sonnet-4-20250514",
+            label: "Claude Sonnet 4",
+          },
           { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
           { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
           { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
@@ -5436,11 +5440,11 @@ export default function ChartSnapshotsPage() {
                 +
               </button>
               <datalist id="tv-symbol-options">
-                {[...new Set([...symbolSelectOptions, ...apiSymbolOptions])].map(
-                  (opt) => (
-                    <option key={opt} value={opt} />
-                  ),
-                )}
+                {[
+                  ...new Set([...symbolSelectOptions, ...apiSymbolOptions]),
+                ].map((opt) => (
+                  <option key={opt} value={opt} />
+                ))}
               </datalist>
             </div>
           </div>
@@ -5576,7 +5580,9 @@ export default function ChartSnapshotsPage() {
                                     if (inWatchlist) {
                                       removeFromWatchlist(s);
                                     } else {
-                                      const next = [...new Set([...watchlist, s])];
+                                      const next = [
+                                        ...new Set([...watchlist, s]),
+                                      ];
                                       saveWatchlistToDb(next).then(() =>
                                         setWatchlist(next),
                                       );
@@ -5728,11 +5734,11 @@ export default function ChartSnapshotsPage() {
                 onClick={() => {
                   setCfgField("symbol", "");
                   setSelectedSymbols([]);
-                  navigate("/ai/analyze", { replace: false });
+                  navigate("/trades", { replace: false });
                 }}
                 style={{ fontSize: 12, padding: "4px 8px" }}
               >
-                {"< Back"}
+                {"< List"}
               </button>
             )}
             <select
@@ -5795,7 +5801,18 @@ export default function ChartSnapshotsPage() {
               style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
               title={`Number of bars (${resolveLookbackBarsValue(cfg.lookbackBars, timeframe)} bars on ${String(timeframe || "15m").toUpperCase()})`}
             >
-              {["100", "300", "600", "900", "1200", "1500", "1800", "2200", "2600", "3000"].map((v) => (
+              {[
+                "100",
+                "300",
+                "600",
+                "900",
+                "1200",
+                "1500",
+                "1800",
+                "2200",
+                "2600",
+                "3000",
+              ].map((v) => (
                 <option key={v} value={v}>
                   {v} bars
                 </option>
@@ -5853,7 +5870,7 @@ export default function ChartSnapshotsPage() {
           </div>
         </div>
 
-        {!hasAnalyzeResponse && !isTradeRoute && (
+        {!hasAnalyzeResponse && (isAnalyzeRoute || isTradeRoute) && (
           <div className="fadeIn">
             <div
               className="Analyze-component"
@@ -6009,7 +6026,9 @@ export default function ChartSnapshotsPage() {
                     onChange={(e) => handleSelectTemplate(e.target.value)}
                   >
                     <option value="">New Template</option>
-                    <option value={DEFAULT_TEMPLATE_ID}>Default Template</option>
+                    <option value={DEFAULT_TEMPLATE_ID}>
+                      Default Template
+                    </option>
                     {templates.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
@@ -6093,19 +6112,77 @@ export default function ChartSnapshotsPage() {
                     <option value="signals">Auto Save: Signals</option>
                     <option value="trades">Auto Save: Trades</option>
                   </select>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={analyzing}
-                    onClick={() => analyzeSelected({ allowNoSymbol: true })}
-                    style={{
-                      height: 34,
-                      padding: "0 16px",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {analyzing ? "Analyzing..." : "Analyze"}
-                  </button>
+                  {isTradeRoute ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => navigate("/trades")}
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {"< List"}
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() =>
+                          navigate(
+                            buildAiAnalyzeRoute([
+                              paramSymbol || cfg.symbol || selectedSymbol,
+                            ]),
+                            { replace: false },
+                          )
+                        }
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Analyze
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() => navigate("/trades")}
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {"< List"}
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={analyzing}
+                        onClick={() => {
+                          const sym =
+                            paramSymbol || cfg.symbol || selectedSymbol || "";
+                          if (sym) {
+                            handleChartTrade({ symbol: sym });
+                          } else {
+                            analyzeSelected({ allowNoSymbol: true });
+                          }
+                        }}
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Trade
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -6252,7 +6329,10 @@ export default function ChartSnapshotsPage() {
                               const inWatchlist = watchlistNormSet.has(sn);
                               if (inWatchlist) {
                                 const existingRaw =
-                                  (Array.isArray(watchlist) ? watchlist : []).find(
+                                  (Array.isArray(watchlist)
+                                    ? watchlist
+                                    : []
+                                  ).find(
                                     (w) => normalizeWatchSymbol(w) === sn,
                                   ) || s;
                                 removeFromWatchlist(existingRaw);
@@ -6265,7 +6345,9 @@ export default function ChartSnapshotsPage() {
                             }}
                             onRemoveSelected={(s) => {
                               setCfg((prev) => {
-                                const prevSelected = Array.isArray(prev?.symbols)
+                                const prevSelected = Array.isArray(
+                                  prev?.symbols,
+                                )
                                   ? prev.symbols
                                   : [];
                                 const nextSelected = prevSelected.filter(
