@@ -34,6 +34,7 @@
 - [ ] [2026-05-19 06:44] [Trades/Bridge/cTrader/P0] [Author: User] Hotfix: Investigate BTCUSD sell TP mismatch where VPS TP was reported around `76271.9` but cTrader closed at `77315.00` under FIFO. Spec: `1-backlog/2026-05-19-btcusd-ctrader-tp-mismatch-auto-close.md`.
 - [ ] [2026-05-19 10:43] [Web-UI/AI/Navigation] [Author: User] Update Feature: split Analyze/Trade back actions into explicit dual buttons and enforce Buy/Sell click setting both direction + entry. Spec: `1-backlog/plan-update-feature-ai-analyze-trade-nav-and-quick-direction.md`.
 - [ ] [2026-05-19 10:43] [Web-UI/Charting/Backend] [Author: User] Extend Feature: fix editor overlap, add RR sliders, fix static chart button wiring, auto snapshot on trade close, and persist chart objects in trade metadata. Spec: `1-backlog/plan-extend-feature-trade-ui-static-chart-close-snapshot-and-objects.md`.
+- [ ] [2026-05-19 11:43] [Web-UI/AI/Regression] [Author: User] Fix Bug: restore Analyze button behavior, fix TradePlan slider clipping/overlap, and unify health page UI consistency. Spec: `1-backlog/plan-fix-bug-ai-header-and-tradeplan-layout-regression.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.

@@ -13,8 +13,8 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `UNLOCKED`
 - deploy_owner: `NONE`
-- since_utc: `2026-05-19 09:27 UTC`
-- note: `Timezone toggle + health diagnostics deployed`
+- since_utc: `2026-05-19 10:05 UTC`
+- note: `Drop signals UI/routes + Draft status + POLL exclusion + promote - DEPLOYED v2026.05.19 09:58`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,22 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-19 10:05 UTC] AGENT:Codex
+- status: HANDOFF_READY
+- branch: main
+- commit: none
+- scope: `.agents/.product/tickets/1-backlog/plan-fix-bug-ai-header-and-tradeplan-layout-regression.md`, `.agents/sync/HANDOFF_2026-05-19_AI_HEADER_TRADEPLAN_REGRESSION.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - regression provenance confirmed from commit `81bf521e` (Analyze replacement)
+  - screenshot requirements mapped to executable UI tasks
+- handoff_next: execution agent to implement ticket and run web-ui build + manual parity checks
 
 ### [2026-05-19 09:27 UTC] AGENT:Codex
 - status: DEPLOYED

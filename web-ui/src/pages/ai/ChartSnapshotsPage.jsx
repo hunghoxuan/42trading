@@ -6010,7 +6010,8 @@ export default function ChartSnapshotsPage() {
                 <div
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "auto auto 1fr 1fr 1fr auto",
+                    gridTemplateColumns:
+                      "minmax(140px, auto) auto minmax(120px, 1fr) minmax(140px, 1fr) minmax(130px, 1fr) auto",
                     gap: 8,
                     alignItems: "center",
                   }}
@@ -6112,67 +6113,36 @@ export default function ChartSnapshotsPage() {
                     <option value="signals">Auto Save: Signals</option>
                     <option value="trades">Auto Save: Trades</option>
                   </select>
-                  {isTradeRoute ? (
-                    <div style={{ display: "flex", gap: 8 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      justifyContent: "flex-end",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => navigate("/trades")}
+                      style={{
+                        height: 34,
+                        padding: "0 16px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {"< List"}
+                    </button>
+                    {!isTradeRoute ? (
                       <button
                         className="secondary-button"
                         type="button"
-                        onClick={() => navigate("/trades")}
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {"< List"}
-                      </button>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() =>
-                          navigate(
-                            buildAiAnalyzeRoute([
-                              paramSymbol || cfg.symbol || selectedSymbol,
-                            ]),
-                            { replace: false },
-                          )
-                        }
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Analyze
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => navigate("/trades")}
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {"< List"}
-                      </button>
-                      <button
-                        className="primary-button"
-                        type="button"
-                        disabled={analyzing}
                         onClick={() => {
                           const sym =
                             paramSymbol || cfg.symbol || selectedSymbol || "";
-                          if (sym) {
-                            handleChartTrade({ symbol: sym });
-                          } else {
-                            analyzeSelected({ allowNoSymbol: true });
-                          }
+                          if (sym) handleChartTrade({ symbol: sym });
                         }}
+                        disabled={analyzing || !selectedSymbol}
                         style={{
                           height: 34,
                           padding: "0 16px",
@@ -6181,8 +6151,21 @@ export default function ChartSnapshotsPage() {
                       >
                         Trade
                       </button>
-                    </div>
-                  )}
+                    ) : null}
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={analyzing}
+                      onClick={() => analyzeSelected({ allowNoSymbol: true })}
+                      style={{
+                        height: 34,
+                        padding: "0 16px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {analyzing ? "Analyzing..." : "Analyze"}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

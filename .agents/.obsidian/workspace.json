@@ -207,6 +207,7 @@
   },
   "active": "4bf2b34a6a4ef4d8",
   "lastOpenFiles": [
+    "sync/HANDOFF_2026-05-19_AI_HEADER_TRADEPLAN_REGRESSION.md",
     "sync/HANDOFF_2026-05-19_HEALTH_API_DIAGNOSTICS.md",
     "sync/HANDOFF_2026-05-19_TIMEZONE_TOGGLE_REGRESSION.md",
     "sync/HANDOFF_2026-05-19_AI_TRADE_UI_AND_SNAPSHOT_OBJECTS.md",
@@ -235,7 +236,6 @@
     "rules/memory-governance.md",
     "wiki/entry_models/index.md",
     "wiki/entry_models",
-    "rules/scripting.md",
     "raw/entry_models",
     "templates/signal_generator.prompt",
     "raw",

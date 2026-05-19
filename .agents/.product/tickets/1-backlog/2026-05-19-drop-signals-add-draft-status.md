@@ -5,7 +5,7 @@
 - Ticket Status: `Done`
 - Owner: `DeepSeek`
 - Updated: `2026-05-19 09:30 UTC`
-- Commit: `PENDING`
+- Commit: `b6265f62`
 
 ## Summary
 Drop the `signals` table and all associated UI pages, menu entries, and API routes. Replace the `+ Signal` button with a "Save as Draft" flow that creates a Trade row with `execution_status = 'Draft'`. Add a `[+ Trade]` button on Draft trades in Trade Detail to promote to `'PENDING'`. Broker POLL must never pick up Draft-status trades.

@@ -149,7 +149,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 09:58 - 81bf521e",
+  "v2026.05.19 10:44 - 1a183823",
 ); // drop signals table + Draft status + POLL exclusion + promote route
 
 const SERVER_LOG_DIR = envStr(

@@ -4,20 +4,23 @@ import { TradeFileUpload } from "./TradeFileUpload";
 
 const numericInlineRowStyle = {
   display: "grid",
-  gridTemplateColumns: "20% minmax(140px, 1fr) 40%",
+  gridTemplateColumns: "42px minmax(84px, 0.75fr) minmax(132px, 1.25fr)",
   alignItems: "center",
   gap: 8,
+  minWidth: 0,
 };
 const numericNoSliderRowStyle = {
   display: "grid",
-  gridTemplateColumns: "20% minmax(140px, 1fr)",
+  gridTemplateColumns: "42px minmax(84px, 1fr)",
   alignItems: "center",
   gap: 8,
+  minWidth: 0,
 };
 const row2Style = {
   display: "grid",
-  gridTemplateColumns: "1fr 1fr",
+  gridTemplateColumns: "repeat(auto-fit, minmax(286px, 1fr))",
   gap: 8,
+  minWidth: 0,
 };
 const labelStyle = {
   fontWeight: "700",
@@ -30,6 +33,7 @@ const numericInputStyle = {
   fontSize: "11px",
   padding: "0 6px",
   width: "100%",
+  minWidth: 0,
 };
 const stepButtonStyle = {
   width: 18,
@@ -38,12 +42,19 @@ const stepButtonStyle = {
   fontSize: 10,
   lineHeight: 1,
 };
-const sliderWrapStyle = { display: "flex", alignItems: "center", gap: 4 };
+const sliderWrapStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+  minWidth: 0,
+  paddingRight: 2,
+};
 const sliderStyle = {
   accentColor: "var(--muted)",
   height: "8px",
   margin: 0,
   flex: 1,
+  minWidth: 0,
 };
 
 function parseNum(v) {
@@ -384,12 +395,14 @@ export function TradePlanEditor({
       className={`trade-plan-editor-v5 ${className}`}
       style={{
         display: "grid",
-        gridTemplateColumns: isEditMode ? "1.2fr 1fr" : "1fr",
+        gridTemplateColumns: isEditMode
+          ? "minmax(320px, 1.2fr) minmax(260px, 1fr)"
+          : "1fr",
         gap: "12px",
         marginTop: "10px",
         paddingTop: "0",
         minWidth: 0,
-        overflow: "hidden",
+        overflow: "visible",
       }}
     >
       {!isEditMode ? (
@@ -581,7 +594,7 @@ export function TradePlanEditor({
               gridTemplateColumns: "1fr",
               gap: "8px",
               minWidth: 0,
-              overflow: "hidden",
+              overflow: "visible",
             }}
           >
             <Row2
@@ -740,7 +753,14 @@ export function TradePlanEditor({
           </div>
 
           {/* Right Column: Note & Actions */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              minWidth: 0,
+            }}
+          >
             <div
               style={{
                 flex: 1,

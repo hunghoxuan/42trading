@@ -119,17 +119,35 @@ export default function HealthPage() {
   ];
 
   return (
-    <div className="stack-layout fadeIn" style={{ maxWidth: 500 }}>
-      <h2 style={{ fontSize: 16, marginBottom: 16 }}>System Health</h2>
+    <div className="stack-layout fadeIn" style={{ maxWidth: 760, gap: 14 }}>
       <div
         style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <h2 className="page-title" style={{ margin: 0 }}>
+          System Health
+        </h2>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={fetchHealth}
+          disabled={loading}
+          style={{ height: 30, fontSize: 11, padding: "0 12px" }}
+        >
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+      <div
+        className="toolbar-panel"
+        style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: "8px 24px",
-          background: "rgba(255,255,255,0.02)",
-          borderRadius: 8,
-          padding: 16,
-          border: "1px solid var(--border)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: "0 24px",
+          padding: "10px 14px",
         }}
       >
         {items.map((item) => (
@@ -139,7 +157,8 @@ export default function HealthPage() {
               display: "flex",
               alignItems: "center",
               fontSize: 12,
-              padding: "4px 0",
+              minHeight: 30,
+              padding: "5px 0",
               borderBottom: "1px solid rgba(255,255,255,0.04)",
             }}
           >
@@ -147,14 +166,22 @@ export default function HealthPage() {
             <span className="minor-text" style={{ marginRight: 8 }}>
               {item.label}
             </span>
-            <span style={{ marginLeft: "auto", fontWeight: 500 }}>
+            <span style={{ marginLeft: "auto", fontWeight: 650 }}>
               {item.value}
             </span>
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 16 }}>
-        <div className="minor-text" style={{ fontSize: 10, textTransform: "uppercase", marginBottom: 8 }}>
+      <div className="toolbar-panel" style={{ padding: "10px 14px" }}>
+        <div
+          className="minor-text"
+          style={{
+            fontSize: 10,
+            textTransform: "uppercase",
+            marginBottom: 8,
+            fontWeight: 700,
+          }}
+        >
           Sources
         </div>
         {sourceItems.map((s) => (
@@ -164,17 +191,28 @@ export default function HealthPage() {
               display: "flex",
               alignItems: "center",
               gap: 10,
-              fontSize: 11,
+              fontSize: 12,
+              minHeight: 30,
               padding: "5px 0",
               borderBottom: "1px solid rgba(255,255,255,0.04)",
             }}
           >
-            <span style={{ color: s.dot ? "#22c55e" : "#555", fontSize: 14 }}>●</span>
+            <StatusDot ok={s.dot} />
             <span style={{ flex: 1, fontWeight: 600 }}>{s.label}</span>
-            <span style={{ color: s.status === "Enabled" ? "#22c55e" : "#666", fontSize: 10 }}>
+            <span
+              style={{
+                color: s.status === "Enabled" ? "var(--success)" : "#666",
+                fontSize: 10,
+                textTransform: "uppercase",
+                fontWeight: 700,
+              }}
+            >
               {s.status}
             </span>
-            <span className="minor-text" style={{ fontSize: 9, minWidth: 50, textAlign: "right" }}>
+            <span
+              className="minor-text"
+              style={{ fontSize: 10, minWidth: 58, textAlign: "right" }}
+            >
               {s.last}
             </span>
           </div>
@@ -296,14 +334,6 @@ export default function HealthPage() {
           ))}
         </div>
       )}
-      <button
-        type="button"
-        className="secondary-button"
-        onClick={fetchHealth}
-        style={{ marginTop: 12, fontSize: 11 }}
-      >
-        Refresh
-      </button>
     </div>
   );
 }
