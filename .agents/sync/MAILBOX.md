@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-19 17:35 UTC`
-- note: `Fix AI v3 raw_json preservation and remove current/future flattening path`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-19 17:42 UTC`
+- note: `AI v3 raw_json preservation deployed v2026.05.19 17:35 - 47f1eae2`
 
 ## Required Entry Template
 ...
@@ -52,6 +52,25 @@ Use this section for parallel-agent safety and deploy ordering.
   - key endpoint: `/v2/chart/snapshots/analyze` flow updated; AI auto-save stores direct plan object in `raw_json`
   - task-specific: Logs page now exposes `AI_RESPONSE` type filter
 - handoff_next: verify DB rows from one fresh analyze call (`raw_json` direct plan object, no wrapper)
+
+### [2026-05-19 17:42 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 190c00ff
+- scope: `webhook/server.js`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/services/TradePlanSchema.js`, `web-ui/src/utils/signalDetailUtils.jsx`, `web-ui/tests/unit/tradePlanSchema.test.mjs`, `scripts/deploy/bump_build_versions.sh`, bridge build versions
+- merge_to_main: YES (190c00ff)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.19 17:35 - 47f1eae2
+  - ea_version: v2026.05.19 17:35 - 47f1eae2
+  - result: PASS
+- verify:
+  - local: `rtk node --check webhook/server.js`, `rtk npm --prefix web-ui run test:unit`, `rtk npm --prefix web-ui run build`, `rtk bash scripts/deploy/check_build_versions.sh origin/main`
+  - deploy: VPS git ref repaired, `/opt/trading` at `190c00f`, PM2 `webhook` restarted, remote web-ui built asset `/assets/index-DIFoUoD1.js`
+  - /health: `ok:true`, `version:v2026.05.19 17:35 - 47f1eae2`, `postgres:ok`, `redis:ok`, `uiRoot:html`
+  - /ui asset: `/assets/index-DIFoUoD1.js`, `/assets/index-DpDVeVav.css`
+  - key endpoint: `/system/logs/609933` returned HTTP 200 HTML shell; Logs page route available behind UI app
+- handoff_next: none
 
 Copy and fill:
 
