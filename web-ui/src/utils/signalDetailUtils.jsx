@@ -6,6 +6,14 @@ export function asNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function pickFirstFinite(...vals) {
+  for (const v of vals) {
+    const n = asNum(v);
+    if (n != null) return n;
+  }
+  return null;
+}
+
 export function formatDetailDateTime(v) {
   return showDateTime(v);
 }
@@ -545,50 +553,66 @@ export function extractTradePlanFromTrade(trade = {}) {
   const sideRaw = String(
     trade.action || trade.side || meta.direction || plan?.direction || "",
   ).toUpperCase();
-  const entry =
-    asNum(trade.entry) ??
-    asNum(trade.target_price) ??
-    asNum(trade.entry_price) ??
-    asNum(meta?.broker_data?.entry) ??
-    asNum(raw?.entry) ??
-    asNum(raw?.entry_price) ??
-    asNum(plan?.entry) ??
-    asNum(plan?.entry_price);
-  const tp =
-    asNum(trade.tp) ??
-    asNum(meta?.broker_data?.tp) ??
-    planPrimaryTp(plan) ??
-    asNum(raw?.tp) ??
-    asNum(raw?.take_profit) ??
-    asNum(plan?.tp) ??
-    asNum(plan?.take_profit);
-  const tp1 =
-    asNum(trade.tp1) ??
-    asNum(meta?.tp1) ??
-    asNum(meta?.tp_targets?.[0]) ??
-    asNum(raw?.tp1) ??
-    planTpLevel(plan, 1) ??
-    tp;
-  const tp2 =
-    asNum(trade.tp2) ??
-    asNum(meta?.tp2) ??
-    asNum(meta?.tp_targets?.[1]) ??
-    asNum(raw?.tp2) ??
-    planTpLevel(plan, 2);
-  const tp3 =
-    asNum(trade.tp3) ??
-    asNum(meta?.tp3) ??
-    asNum(meta?.tp_targets?.[2]) ??
-    asNum(raw?.tp3) ??
-    planTpLevel(plan, 3);
-  const sl =
-    asNum(trade.sl) ??
-    asNum(meta?.broker_data?.sl) ??
-    asNum(raw?.sl) ??
-    asNum(raw?.stop_loss) ??
-    asNum(plan?.sl) ??
-    asNum(plan?.stop_loss);
+  // Prefer planned values first (raw/plan), then mutable trade fields, then broker telemetry fallback.
+  // This avoids plan editor drift when broker sync updates runtime SL/TP fields.
+  const entry = pickFirstFinite(
+    raw?.entry,
+    raw?.entry_price,
+    plan?.entry,
+    plan?.entry_price,
+    trade.entry,
+    trade.target_price,
+    trade.entry_price,
+    meta?.broker_data?.entry,
+  );
+  const tp = pickFirstFinite(
+    raw?.tp,
+    raw?.take_profit,
+    plan?.tp,
+    plan?.take_profit,
+    planPrimaryTp(plan),
+    trade.tp,
+    meta?.broker_data?.tp,
+  );
+  const tp1 = pickFirstFinite(
+    raw?.tp1,
+    planTpLevel(plan, 1),
+    trade.tp1,
+    meta?.tp1,
+    meta?.tp_targets?.[0],
+    tp,
+  );
+  const tp2 = pickFirstFinite(
+    raw?.tp2,
+    planTpLevel(plan, 2),
+    trade.tp2,
+    meta?.tp2,
+    meta?.tp_targets?.[1],
+  );
+  const tp3 = pickFirstFinite(
+    raw?.tp3,
+    planTpLevel(plan, 3),
+    trade.tp3,
+    meta?.tp3,
+    meta?.tp_targets?.[2],
+  );
+  const sl = pickFirstFinite(
+    raw?.sl,
+    raw?.stop_loss,
+    plan?.sl,
+    plan?.stop_loss,
+    trade.sl,
+    meta?.broker_data?.sl,
+  );
   const rr = asNum(trade.rr_planned) ?? calcRrFromSignal(trade);
+  const normalized = normalizeTpSlFromEntryDirection({
+    direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
+    entry,
+    tp: tp1 ?? tp,
+    sl,
+  });
+  const normalizedTpPrimary = asNum(normalized.tp);
+  const normalizedSl = asNum(normalized.sl);
 
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
@@ -613,11 +637,11 @@ export function extractTradePlanFromTrade(trade = {}) {
         raw.risk_money,
     ),
     entry: formatNum3(entry ?? NaN),
-    tp: formatNum3(tp ?? NaN),
-    tp1: formatNum3(tp1 ?? NaN),
+    tp: formatNum3((normalizedTpPrimary ?? tp1 ?? tp) ?? NaN),
+    tp1: formatNum3((normalizedTpPrimary ?? tp1 ?? tp) ?? NaN),
     tp2: formatNum3(tp2 ?? NaN),
     tp3: formatNum3(tp3 ?? NaN),
-    sl: formatNum3(sl ?? NaN),
+    sl: formatNum3((normalizedSl ?? sl) ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(trade.note || "").trim(),
     entry_model: String(

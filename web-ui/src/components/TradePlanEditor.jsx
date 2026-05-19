@@ -87,14 +87,19 @@ function priceSliderMeta(rawValue) {
   return { min: 0, max: 200000, step, value: clamped, enabled: true };
 }
 
-function calcRrByTarget(entryRaw, slRaw, targetRaw) {
+function calcRrByTarget(entryRaw, slRaw, targetRaw, directionRaw = "") {
   const entry = parseNum(entryRaw);
   const sl = parseNum(slRaw);
   const target = parseNum(targetRaw);
   if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(target))
     return "";
+  const direction = String(directionRaw || "").toUpperCase();
+  if (direction === "BUY" && !(sl < entry && target > entry)) return "";
+  if (direction === "SELL" && !(sl > entry && target < entry)) return "";
   const risk = Math.abs(entry - sl);
   if (!(risk > 0)) return "";
+  // Guard against near-zero denominator noise from runtime sync drift.
+  if (risk < Math.max(0.01, Math.abs(entry) * 0.000001)) return "";
   const reward = Math.abs(target - entry);
   return String(Number((reward / risk).toFixed(2)));
 }
@@ -328,12 +333,12 @@ export function TradePlanEditor({
     { label: "Strategy", value: value.strategy || "-" },
   ];
   const rr2 = useMemo(
-    () => calcRrByTarget(value.entry, value.sl, value.tp2),
-    [value.entry, value.sl, value.tp2],
+    () => calcRrByTarget(value.entry, value.sl, value.tp2, value.direction),
+    [value.entry, value.sl, value.tp2, value.direction],
   );
   const rr3 = useMemo(
-    () => calcRrByTarget(value.entry, value.sl, value.tp3),
-    [value.entry, value.sl, value.tp3],
+    () => calcRrByTarget(value.entry, value.sl, value.tp3, value.direction),
+    [value.entry, value.sl, value.tp3, value.direction],
   );
 
   const idPrefix = signalId || tradeId || "tp-editor";

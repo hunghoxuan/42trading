@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.18 20:23 - e56e7b53",
-); // TradeFilesTab delete + upload fix + clock toggle fix + snapshot delete support
+  "v2026.05.19 06:08 - 35de2f7a",
+); // RR2/RR3 guardrails + SL/Entry drift normalization fix
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
