@@ -14957,9 +14957,13 @@ const appHandler = async (req, res) => {
       const timer = setTimeout(() => ctrl.abort(), 5000);
       const selfRes = await fetch(
         CFG.httpsEnabled
-          ? `https://127.0.0.1:${CFG.httpsPort}/`
-          : `http://127.0.0.1:${CFG.port}/`,
-        { method: "GET", signal: ctrl.signal, rejectUnauthorized: false },
+          ? `https://localhost:${CFG.httpsPort}/`
+          : `http://localhost:${CFG.port}/`,
+        {
+          method: "GET",
+          signal: ctrl.signal,
+          headers: { Host: "localhost" },
+        },
       );
       clearTimeout(timer);
       const selfText = await selfRes.text();
