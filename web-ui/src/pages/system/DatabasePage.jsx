@@ -229,7 +229,7 @@ export default function DatabasePage() {
   const { tableName } = useParams();
   const navigate = useNavigate();
   const [tables, setTables] = useState([]);
-  const [selectedTable, setSelectedTable] = useState(tableName || "signals");
+  const [selectedTable, setSelectedTable] = useState(tableName || "trades");
   const [rows, setRows] = useState([]);
   const [schema, setSchema] = useState([]);
   const [showSchema, setShowSchema] = useState(false);

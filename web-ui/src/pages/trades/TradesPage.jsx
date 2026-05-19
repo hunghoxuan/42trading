@@ -24,6 +24,7 @@ import {
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
+  { value: "Draft", label: "DRAFT" },
   { value: "PENDING", label: "PENDING" },
   { value: "FILLED", label: "FILLED" },
   { value: "CLOSED", label: "CLOSED" },
@@ -68,6 +69,7 @@ function formatTimeframe(min) {
 
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
+  if (s === "Draft") return { cls: "DRAFT", label: "DRAFT" };
   if (s === "FILLED") return { cls: "ACTIVE", label: "FILLED" };
   if (s === "OPEN") return { cls: "ACTIVE", label: "FILLED" };
   if (s === "CLOSED" || s === "CANCELLED") return { cls: "INACTIVE", label: s };
@@ -165,7 +167,7 @@ function rangeBounds(range) {
 
 function moneyRiskReward(t) {
   const st = String(t?.execution_status || "").toUpperCase();
-  if (!["PENDING", "OPEN", "FILLED", "OPEN", "CLOSED"].includes(st))
+  if (!["Draft", "PENDING", "OPEN", "FILLED", "OPEN", "CLOSED"].includes(st))
     return { risk: null, reward: null };
   const m = t?.metadata && typeof t.metadata === "object" ? t.metadata : {};
   const risk =
@@ -174,13 +176,16 @@ function moneyRiskReward(t) {
     asNum(m.risk_money_planned);
   const rewardDirect = asNum(m.reward_money_planned);
   const rr = asNum(m.rr) ?? asNum(t?.rr_planned) ?? calcRr(t);
+  if (st === "Draft")
+    return { risk: risk ?? null, reward: rewardDirect ?? null };
   if (risk == null || rr == null) return { risk: null, reward: null };
   return { risk, reward: rewardDirect ?? risk * rr };
 }
 
 function tradeRiskSize(t) {
   const st = String(t?.execution_status || "").toUpperCase();
-  if (!["PENDING", "OPEN", "FILLED", "CLOSED"].includes(st)) return null;
+  if (!["Draft", "PENDING", "OPEN", "FILLED", "CLOSED"].includes(st))
+    return null;
   const m = t?.metadata && typeof t.metadata === "object" ? t.metadata : {};
   const direct =
     asNum(m.risk_money_actual) ??
@@ -901,25 +906,25 @@ export default function TradesPage() {
               </div>
             )}
             <label htmlFor="trades-page-size" className="sr-only">
-            Page Size
-          </label>
-          <select
-            id="trades-page-size"
-            value={filter.pageSize}
-            onChange={(e) =>
-              setFilter((f) => ({
-                ...f,
-                pageSize: Number(e.target.value),
-                page: 1,
-              }))
-            }
-          >
-            {PAGE_SIZE_OPTIONS.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+              Page Size
+            </label>
+            <select
+              id="trades-page-size"
+              value={filter.pageSize}
+              onChange={(e) =>
+                setFilter((f) => ({
+                  ...f,
+                  pageSize: Number(e.target.value),
+                  page: 1,
+                }))
+              }
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 

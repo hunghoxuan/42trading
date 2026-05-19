@@ -246,6 +246,18 @@ export default function App() {
               >
                 Closed
               </NavLink>
+              <NavLink
+                to="/trades?status=Draft"
+                className={({ isActive }) =>
+                  isActive &&
+                  location.pathname === "/trades" &&
+                  new URLSearchParams(location.search).get("status") === "Draft"
+                    ? "active"
+                    : ""
+                }
+              >
+                Draft
+              </NavLink>
             </div>
           </div>
 
