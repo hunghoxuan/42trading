@@ -18694,9 +18694,14 @@ const appHandler = async (req, res) => {
           : [];
         const out = [];
         for (const plan of plans) {
-          const entry = Number(plan?.entry ?? plan?.entry_price);
-          const sl = Number(plan?.sl ?? plan?.stop_loss);
-          const tp = Number(resolvePlanTakeProfit(plan));
+          const ep = plan?.execution_plan;
+          const entry = Number(
+            ep?.entry?.price ?? plan?.entry ?? plan?.entry_price,
+          );
+          const sl = Number(
+            ep?.stop_loss?.price ?? plan?.sl ?? plan?.stop_loss,
+          );
+          const tp = Number(ep?.tp1?.price ?? resolvePlanTakeProfit(plan));
           if (
             Number.isFinite(entry) &&
             Number.isFinite(sl) &&
@@ -19168,13 +19173,21 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
-        // Store exact AI response — no normalization, no fake plans, no recovery.
+        // Store exact AI response — no normalization.
         // If bare array [{...}], wrap as { trade_plan: [...] } for DB storage.
         if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-        parsedJson = normalizeAiAnalysisContract(parsedJson);
+        // Log raw AI response for debugging
         console.log(
-          "[ai-response] symbol=" +
-            (parsedJson?.symbol || "?") +
+          "[ai-raw] len=" +
+            rawResponse.length +
+            " start=" +
+            rawResponse.slice(0, 300),
+        );
+        console.log(
+          "[ai-parsed] type=" +
+            (Array.isArray(extracted.parsed)
+              ? "array"
+              : typeof extracted.parsed) +
             " plans=" +
             (Array.isArray(parsedJson?.trade_plan)
               ? parsedJson.trade_plan.length
@@ -19643,21 +19656,23 @@ const appHandler = async (req, res) => {
           ? extracted.parsed
           : {};
       if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-      parsedJson = normalizeAiAnalysisContract(parsedJson);
+      // Log raw AI response for debugging
       console.log(
-        "[ai-response] symbol=" +
-          (parsedJson?.symbol || "?") +
+        "[ai-raw] len=" +
+          rawResponse.length +
+          " start=" +
+          rawResponse.slice(0, 300),
+      );
+      console.log(
+        "[ai-parsed] type=" +
+          (Array.isArray(extracted.parsed)
+            ? "array"
+            : typeof extracted.parsed) +
           " plans=" +
           (Array.isArray(parsedJson?.trade_plan)
             ? parsedJson.trade_plan.length
             : 0),
       );
-      if (!parsedJson?.market_analysis && !parsedJson?.ai_full_analysis) {
-        console.log(
-          "[ai-response] WARN: bare trade_plan. raw:",
-          rawResponse.slice(0, 500),
-        );
-      }
       const autoSaveResult = await autoSaveAnalyzeResult({
         mode: autoSave,
         parsedJson,
