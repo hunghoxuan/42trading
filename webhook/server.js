@@ -18779,6 +18779,8 @@ const appHandler = async (req, res) => {
             const savedSignals = [];
             for (const pick of picks) {
               const plan = pick.plan || {};
+              const tradePlanRawJson =
+                plan && typeof plan === "object" ? { ...plan } : {};
               const planSymbol = String(pick.symbol || symbol)
                 .trim()
                 .toUpperCase();
@@ -18817,12 +18819,7 @@ const appHandler = async (req, res) => {
                 chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
                 note,
                 order_type: orderType,
-                raw_json: {
-                  ...sharedRawJson,
-                  trade_plan: plan,
-                  symbol: planSymbol,
-                  only_signal: true,
-                },
+                raw_json: tradePlanRawJson,
                 status: "NEW",
               });
               await mt5Log(
@@ -18863,6 +18860,8 @@ const appHandler = async (req, res) => {
           }
           const pick = picks[0];
           const plan = pick.plan || {};
+          const tradePlanRawJson =
+            plan && typeof plan === "object" ? { ...plan } : {};
           const action = normalizeDirectionToAction(plan?.direction);
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({
@@ -18900,7 +18899,7 @@ const appHandler = async (req, res) => {
               event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
               order_type: String(plan?.type || "limit"),
               session_prefix: reqSessionPrefix || null,
-              raw_json: sharedRawJson,
+              raw_json: tradePlanRawJson,
             },
           });
           return {
