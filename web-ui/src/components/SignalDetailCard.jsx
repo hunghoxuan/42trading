@@ -177,7 +177,9 @@ function normalizeRawPlan(p = {}) {
       chosen.tp,
   );
   const tp2 = parseNumLoose(
-    src?.execution_plan?.tp2?.price ?? src?.tp2 ?? src?.multiple_exits?.tp2?.price,
+    src?.execution_plan?.tp2?.price ??
+      src?.tp2 ??
+      src?.multiple_exits?.tp2?.price,
   );
   const tp3 = parseNumLoose(
     src?.execution_plan?.tp3?.price ??
@@ -190,12 +192,7 @@ function normalizeRawPlan(p = {}) {
     src?.execution_plan?.risk_reward ?? src?.rr ?? src?.risk_reward,
   );
   let rr = null;
-  if (
-    entry != null &&
-    sl != null &&
-    tpNum != null &&
-    entry !== sl
-  ) {
+  if (entry != null && sl != null && tpNum != null && entry !== sl) {
     rr = Math.abs(tpNum - entry) / Math.abs(entry - sl);
   }
   if (rr == null) rr = rrRaw;
@@ -218,11 +215,14 @@ function normalizeRawPlan(p = {}) {
 function isCurrentAiTradePlan(value) {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      value.execution_plan &&
-      typeof value.execution_plan === "object" &&
-      (value.direction || value.symbol || value.risk_management || value.analysis),
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    value.execution_plan &&
+    typeof value.execution_plan === "object" &&
+    (value.direction ||
+      value.symbol ||
+      value.risk_management ||
+      value.analysis),
   );
 }
 
@@ -894,6 +894,7 @@ export default function SignalDetailCard({
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length) tabs.push("info");
     if (mode === "trade") tabs.push("broker");
+    if (mode === "trade") tabs.push("aiResponse");
     if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
@@ -924,7 +925,8 @@ export default function SignalDetailCard({
       ? response.raw_json
       : {};
   const responseMetaRaw =
-    response?.metadata?.raw_json && typeof response.metadata.raw_json === "object"
+    response?.metadata?.raw_json &&
+    typeof response.metadata.raw_json === "object"
       ? response.metadata.raw_json
       : {};
   const canonicalFullRaw =
@@ -996,10 +998,10 @@ export default function SignalDetailCard({
             return normalizeRawPlan(p || {});
           })
           .filter((p) => {
-          if (!activeSymbol) return true;
-          const sym = normalizePlanSymbol(p?.symbol || "");
-          return !sym || sym === activeSymbol;
-        })
+            if (!activeSymbol) return true;
+            const sym = normalizePlanSymbol(p?.symbol || "");
+            return !sym || sym === activeSymbol;
+          })
       : [];
   const hasMeaningfulResponsePlans = responsePlans.some((p) =>
     planLooksMeaningful(p || {}),
@@ -1522,58 +1524,97 @@ export default function SignalDetailCard({
 
       {/* INFO TAB (Fields + Analysis) */}
       <div style={{ display: mainTab === "info" ? "block" : "none" }}>
-        {(mode === "trade" || (mode === "ai" && response?.hasData)) && chart?.symbol && (
-          <div style={{ marginBottom: 16 }}>
-            <Suspense fallback={<div style={{ height: 300, background: "rgba(255,255,255,0.02)", borderRadius: 8 }} />}>
-              <SymbolChart
-                symbol={chart?.symbol}
-                timeframes={effectiveTfs}
-                defaultMode="cache"
-                entryPrice={chart?.entryPrice}
-                slPrice={chart?.slPrice}
-                tpPrice={chart?.tpPrice}
-                showAnalyzeButton={false}
-                showTradeButton={false}
-                showEditButton={false}
-                showPerCardLayoutControls={true}
-                skipFetch={false}
-                hasTradePlan={Boolean(
-                  tradePlan?.value?.entry ||
-                  (Array.isArray(response?.tradePlans) && response.tradePlans.length > 0)
-                )}
-                hasAnalysis={Boolean(
-                  response?.raw && typeof response.raw === "object" && Object.keys(response.raw).length > 0
-                )}
-                analysisSnapshot={{...(response?.raw || {}), trade_plan: Array.isArray(response?.tradePlans) ? response.tradePlans : []}}
-                onPlanLevelChange={chart?.onPlanLevelChange}
-                onTradePlanGroupChange={chart?.onTradePlanGroupChange}
-                onQuickTradeIntent={(intent) => {
-                  const iSide = String(intent?.side || "BUY").toUpperCase();
-                  const iAction = String(intent?.action || "ENTRY").toUpperCase();
-                  const iPrice = Number(intent?.price);
-                  const plan = tradePlan?.value || {};
-                  if (iAction === "TP" && Number.isFinite(iPrice)) {
-                    const base = plan || {};
-                    const sideDir = String(base.direction || iSide).toUpperCase();
-                    const prices = [base.tp1, base.tp2, base.tp3].map((x) => parseFloat(x)).filter((x) => Number.isFinite(x));
-                    if (Number.isFinite(iPrice)) prices.push(iPrice);
-                    const uniq = [...new Set(prices.map((x) => Number(x.toFixed(8))))];
-                    uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
-                    tradePlan?.onChange?.("tp1", uniq[0] != null ? String(uniq[0]) : "");
-                    tradePlan?.onChange?.("tp2", uniq[1] != null ? String(uniq[1]) : "");
-                    tradePlan?.onChange?.("tp3", uniq[2] != null ? String(uniq[2]) : "");
-                    tradePlan?.onChange?.("tp", uniq[0] != null ? String(uniq[0]) : "");
-                  } else if (iAction === "SL" && Number.isFinite(iPrice)) {
-                    tradePlan?.onChange?.("sl", String(iPrice));
-                  } else if (Number.isFinite(iPrice)) {
-                    tradePlan?.onChange?.("direction", iSide);
-                    tradePlan?.onChange?.("entry", String(iPrice));
-                  }
-                }}
-              />
-            </Suspense>
-          </div>
-        )}
+        {(mode === "trade" || (mode === "ai" && response?.hasData)) &&
+          chart?.symbol && (
+            <div style={{ marginBottom: 16 }}>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      height: 300,
+                      background: "rgba(255,255,255,0.02)",
+                      borderRadius: 8,
+                    }}
+                  />
+                }
+              >
+                <SymbolChart
+                  symbol={chart?.symbol}
+                  timeframes={effectiveTfs}
+                  defaultMode="cache"
+                  entryPrice={chart?.entryPrice}
+                  slPrice={chart?.slPrice}
+                  tpPrice={chart?.tpPrice}
+                  showAnalyzeButton={false}
+                  showTradeButton={false}
+                  showEditButton={false}
+                  showPerCardLayoutControls={true}
+                  skipFetch={false}
+                  hasTradePlan={Boolean(
+                    tradePlan?.value?.entry ||
+                    (Array.isArray(response?.tradePlans) &&
+                      response.tradePlans.length > 0),
+                  )}
+                  hasAnalysis={Boolean(
+                    response?.raw &&
+                    typeof response.raw === "object" &&
+                    Object.keys(response.raw).length > 0,
+                  )}
+                  analysisSnapshot={{
+                    ...(response?.raw || {}),
+                    trade_plan: Array.isArray(response?.tradePlans)
+                      ? response.tradePlans
+                      : [],
+                  }}
+                  onPlanLevelChange={chart?.onPlanLevelChange}
+                  onTradePlanGroupChange={chart?.onTradePlanGroupChange}
+                  onQuickTradeIntent={(intent) => {
+                    const iSide = String(intent?.side || "BUY").toUpperCase();
+                    const iAction = String(
+                      intent?.action || "ENTRY",
+                    ).toUpperCase();
+                    const iPrice = Number(intent?.price);
+                    const plan = tradePlan?.value || {};
+                    if (iAction === "TP" && Number.isFinite(iPrice)) {
+                      const base = plan || {};
+                      const sideDir = String(
+                        base.direction || iSide,
+                      ).toUpperCase();
+                      const prices = [base.tp1, base.tp2, base.tp3]
+                        .map((x) => parseFloat(x))
+                        .filter((x) => Number.isFinite(x));
+                      if (Number.isFinite(iPrice)) prices.push(iPrice);
+                      const uniq = [
+                        ...new Set(prices.map((x) => Number(x.toFixed(8)))),
+                      ];
+                      uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
+                      tradePlan?.onChange?.(
+                        "tp1",
+                        uniq[0] != null ? String(uniq[0]) : "",
+                      );
+                      tradePlan?.onChange?.(
+                        "tp2",
+                        uniq[1] != null ? String(uniq[1]) : "",
+                      );
+                      tradePlan?.onChange?.(
+                        "tp3",
+                        uniq[2] != null ? String(uniq[2]) : "",
+                      );
+                      tradePlan?.onChange?.(
+                        "tp",
+                        uniq[0] != null ? String(uniq[0]) : "",
+                      );
+                    } else if (iAction === "SL" && Number.isFinite(iPrice)) {
+                      tradePlan?.onChange?.("sl", String(iPrice));
+                    } else if (Number.isFinite(iPrice)) {
+                      tradePlan?.onChange?.("direction", iSide);
+                      tradePlan?.onChange?.("entry", String(iPrice));
+                    }
+                  }}
+                />
+              </Suspense>
+            </div>
+          )}
         {(() => {
           const p =
             plans.find(
@@ -1670,9 +1711,7 @@ export default function SignalDetailCard({
               mx?.tp2?.price != null
                 ? `TP2: ${mx.tp2.price} (${mx.tp2.risk_reward ?? "-"}r)`
                 : "",
-              tp3Price != null
-                ? `TP3: ${tp3Price} (${tp3Rr ?? "-"}r)`
-                : "",
+              tp3Price != null ? `TP3: ${tp3Price} (${tp3Rr ?? "-"}r)` : "",
             ].filter(Boolean);
             const skips = Array.isArray(
               plan24?.position_management?.skips_reasons,
@@ -2276,28 +2315,6 @@ export default function SignalDetailCard({
                   );
                 })}
               </div>
-              {selectedRawData &&
-                typeof selectedRawData === "object" &&
-                Object.keys(selectedRawData).length > 0 && (
-                  <div style={{ marginTop: 18 }}>
-                    <span className="minor-text">Raw Analysis</span>
-                    <div
-                      style={{
-                        marginTop: 8,
-                        padding: 12,
-                        background: "rgba(0,0,0,0.24)",
-                        border: "1px solid rgba(255,255,255,0.06)",
-                        borderRadius: 8,
-                      }}
-                    >
-                      <SmartContent
-                        content={selectedRawData}
-                        mode="readonly"
-                        showCopy
-                      />
-                    </div>
-                  </div>
-                )}
             </div>
           );
         })()}
@@ -2531,13 +2548,17 @@ export default function SignalDetailCard({
               };
               const withTpSlots = (planDraft, newTp) => {
                 const base = planDraft || {};
-                const sideDir = String(base?.direction || side || "BUY").toUpperCase();
+                const sideDir = String(
+                  base?.direction || side || "BUY",
+                ).toUpperCase();
                 const prices = [base.tp1, base.tp2, base.tp3]
                   .map((x) => parseNumLoose(x))
                   .filter((x) => x != null);
                 const n = Number(newTp);
                 if (Number.isFinite(n)) prices.push(n);
-                const uniq = Array.from(new Set(prices.map((x) => Number(x.toFixed(8)))));
+                const uniq = Array.from(
+                  new Set(prices.map((x) => Number(x.toFixed(8)))),
+                );
                 uniq.sort((a, b) => (sideDir === "SELL" ? b - a : a - b));
                 const out = {
                   ...base,
@@ -2605,13 +2626,37 @@ export default function SignalDetailCard({
 
       {/* FILES TAB (Trades only) */}
       <div style={{ display: mainTab === "files" ? "block" : "none" }}>
-        <Suspense fallback={<div className="loading-card">Loading files...</div>}>
+        <Suspense
+          fallback={<div className="loading-card">Loading files...</div>}
+        >
           <TradeFilesTab
             tradeSid={tradePlan?.tradeId || tradePlan?.signalId || null}
             symbol={chart?.symbol || null}
             attachedFiles={chart?.attachedSnapshotFiles || []}
           />
         </Suspense>
+      </div>
+
+      {/* AI RESPONSE TAB */}
+      <div style={{ display: mainTab === "aiResponse" ? "block" : "none" }}>
+        <div
+          style={{
+            padding: 16,
+            background: "rgba(0,0,0,0.3)",
+            borderRadius: 12,
+            minHeight: "400px",
+            maxHeight: "800px",
+            overflow: "auto",
+          }}
+        >
+          {responseRowRaw &&
+          typeof responseRowRaw === "object" &&
+          Object.keys(responseRowRaw).length > 0 ? (
+            <SmartContent content={responseRowRaw} mode="readonly" showCopy />
+          ) : (
+            <div className="minor-text">No AI response stored.</div>
+          )}
+        </div>
       </div>
 
       {/* JSON TAB */}
@@ -2629,10 +2674,12 @@ export default function SignalDetailCard({
           {(
             mode === "ai"
               ? selectedPlanRaw && Object.keys(selectedPlanRaw).length > 0
-              : selectedRawData && Object.keys(selectedRawData).length > 0
+              : responseRowRaw &&
+                typeof responseRowRaw === "object" &&
+                Object.keys(responseRowRaw).length > 0
           ) ? (
             <SmartContent
-              content={mode === "ai" ? selectedPlanRaw : selectedRawData}
+              content={mode === "ai" ? selectedPlanRaw : responseRowRaw}
               mode="readonly"
               showCopy
             />
