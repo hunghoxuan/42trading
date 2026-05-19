@@ -5734,7 +5734,7 @@ export default function ChartSnapshotsPage() {
                   onClick={() => {
                     setCfgField("symbol", "");
                     setSelectedSymbols([]);
-                    navigate("/trades", { replace: false });
+                    navigate("/ai/analyze", { replace: false });
                   }}
                   style={{ fontSize: 12, padding: "4px 8px" }}
                 >
@@ -5751,7 +5751,7 @@ export default function ChartSnapshotsPage() {
                     }
                     style={{ fontSize: 12, padding: "4px 8px" }}
                   >
-                    {"< Analysis"}
+                    {"< AI"}
                   </button>
                 ) : isAnalyzeRoute ? (
                   <button
@@ -6149,53 +6149,6 @@ export default function ChartSnapshotsPage() {
                       flexWrap: "wrap",
                     }}
                   >
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => navigate("/trades")}
-                      style={{
-                        height: 34,
-                        padding: "0 16px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {"< List"}
-                    </button>
-                    {isTradeRoute ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() =>
-                          navigate(buildAiAnalyzeRoute([selectedSymbol]), {
-                            replace: false,
-                          })
-                        }
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {"< Analysis"}
-                      </button>
-                    ) : isAnalyzeRoute ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() =>
-                          navigate(buildAiTradeRoute([selectedSymbol]), {
-                            replace: false,
-                          })
-                        }
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {"< Trade"}
-                      </button>
-                    ) : null}
                     {!isTradeRoute ? (
                       <button
                         className="secondary-button"
