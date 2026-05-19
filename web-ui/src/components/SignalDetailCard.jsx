@@ -951,7 +951,12 @@ export default function SignalDetailCard({
   const responseRowRaw =
     response?.raw_json && typeof response.raw_json === "object"
       ? response.raw_json
-      : {};
+      : response?.metadata?.raw_json &&
+          typeof response.metadata.raw_json === "object"
+        ? response.metadata.raw_json
+        : response?.raw && typeof response.raw === "object"
+          ? response.raw
+          : {};
   const cleanRowJson = useMemo(() => {
     if (!responseRowRaw || typeof responseRowRaw !== "object") return {};
     const cleaned = {};
@@ -2933,41 +2938,8 @@ export default function SignalDetailCard({
               responseRowRaw &&
               typeof responseRowRaw === "object" &&
               Object.keys(responseRowRaw).length > 0;
-            const hasClean =
-              cleanRowJson &&
-              typeof cleanRowJson === "object" &&
-              Object.keys(cleanRowJson).length > 0;
             if (!hasRow) {
-              const respKeys =
-                response && typeof response === "object"
-                  ? Object.keys(response).sort()
-                  : [];
-              const rjRaw = response?.raw_json;
-              const metaRj = response?.metadata?.raw_json;
-              return (
-                <div
-                  className="minor-text"
-                  style={{ whiteSpace: "pre-wrap", fontSize: 10 }}
-                >
-                  DEBUG:
-                  <br />
-                  response keys ({respKeys.length}): {JSON.stringify(respKeys)}
-                  <br />
-                  raw_json type: {typeof rjRaw} value: {JSON.stringify(rjRaw)}
-                  <br />
-                  metadata.raw_json type: {typeof metaRj}
-                  <br />
-                  responseRowRaw: {JSON.stringify(responseRowRaw)}
-                </div>
-              );
-            }
-            if (!hasClean) {
-              return (
-                <div className="minor-text">
-                  DEBUG: cleanRowJson empty after __ filter. rowKeys=
-                  {JSON.stringify(Object.keys(responseRowJson))}
-                </div>
-              );
+              return <div className="minor-text">No AI response stored.</div>;
             }
             return (
               <SmartContent content={cleanRowJson} mode="readonly" showCopy />
