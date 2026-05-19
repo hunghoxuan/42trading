@@ -700,12 +700,7 @@ function planSkipReasons(plan = {}) {
   return text ? [{ reason: text, severity: "" }] : [];
 }
 
-const DEFAULT_TRADE_PLAN_PATHS = [
-  "trade_plan",
-  "analysis_data[].trade_plan",
-  "symbols[].trade_plan",
-  "analyses[].trade_plan",
-];
+const DEFAULT_TRADE_PLAN_PATHS = ["trade_plan", "analysis_data[].trade_plan"];
 
 function extractByRulePath(root, rulePath) {
   const pathText = String(rulePath || "").trim();
@@ -4118,6 +4113,10 @@ export default function ChartSnapshotsPage() {
     }
   };
 
+  const saveDraftFromEditor = (pos, planId = "main") => {
+    addBySelection("signal", pos, planId);
+  };
+
   const saveTemplate = async () => {
     // If overriding an existing template, keep its name for ON CONFLICT
     const existingTemplate =
@@ -5728,18 +5727,47 @@ export default function ChartSnapshotsPage() {
               </button>
             )}
             {selectedSymbol && (
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  setCfgField("symbol", "");
-                  setSelectedSymbols([]);
-                  navigate("/trades", { replace: false });
-                }}
-                style={{ fontSize: 12, padding: "4px 8px" }}
-              >
-                {"< List"}
-              </button>
+              <>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setCfgField("symbol", "");
+                    setSelectedSymbols([]);
+                    navigate("/trades", { replace: false });
+                  }}
+                  style={{ fontSize: 12, padding: "4px 8px" }}
+                >
+                  {"< List"}
+                </button>
+                {isTradeRoute ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                      navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                        replace: false,
+                      })
+                    }
+                    style={{ fontSize: 12, padding: "4px 8px" }}
+                  >
+                    {"< Analysis"}
+                  </button>
+                ) : isAnalyzeRoute ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                      navigate(buildAiTradeRoute([selectedSymbol]), {
+                        replace: false,
+                      })
+                    }
+                    style={{ fontSize: 12, padding: "4px 8px" }}
+                  >
+                    {"< Trade"}
+                  </button>
+                ) : null}
+              </>
             )}
             <select
               className="secondary-button"
@@ -6133,6 +6161,41 @@ export default function ChartSnapshotsPage() {
                     >
                       {"< List"}
                     </button>
+                    {isTradeRoute ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() =>
+                          navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                            replace: false,
+                          })
+                        }
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {"< Analysis"}
+                      </button>
+                    ) : isAnalyzeRoute ? (
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        onClick={() =>
+                          navigate(buildAiTradeRoute([selectedSymbol]), {
+                            replace: false,
+                          })
+                        }
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {"< Trade"}
+                      </button>
+                    ) : null}
                     {!isTradeRoute ? (
                       <button
                         className="secondary-button"
@@ -6640,6 +6703,7 @@ export default function ChartSnapshotsPage() {
                   : resetToDefaultBrowser,
                 resetLabel: "Back",
                 addSignalLabel: "+ Signal",
+                saveDraftLabel: "Save Draft",
                 addTradeLabel: "+ Trade",
                 onAddSignal: (pos, planId = "main") => {
                   const ent = addedEntities[planId];
@@ -6657,8 +6721,12 @@ export default function ChartSnapshotsPage() {
                   }
                   addBySelection("trade", pos, planId);
                 },
+                onSaveDraft: (pos, planId = "main") => {
+                  saveDraftFromEditor(pos, planId);
+                },
                 busy: {
                   signal: addingSignal && submittingPlanId === "main",
+                  draft: addingSignal && submittingPlanId === "main",
                   trade: addingSignal && submittingPlanId === "main",
                 },
                 submittingPlanId: submittingPlanId,

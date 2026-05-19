@@ -1,8 +1,8 @@
 {
-  "schema_version": "2.6",
+  "schema_version": "3.0",
   "enums": {
-    "htf_timeframe": ["D", "4H", "W"],
-    "ltf_timeframe": ["15m", "5m", "1m"],
+    "htf_timeframe": ["W", "D", "4H", "2H", "1H"],
+    "ltf_timeframe": ["30m", "15m", "5m", "3m", "1m"],
     "trend": ["Bullish", "Bearish", "Ranging"],
     "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
     "phase": [
@@ -18,38 +18,333 @@
     "bias": ["Long", "Short", "Neutral"],
     "direction": ["Bullish", "Bearish", "Neutral"],
     "order_side": ["BUY", "SELL"],
-    "order_type": ["Limit", "Stop Limit", "Market"],
+    "order_type": ["Limit", "Stop_Limit", "Market"],
     "profile": ["Position", "Swing", "Intraday", "Scalp"],
-    "session": ["Asian", "London", "NewYork", "Overlap"],
+    "session": [
+      "Asian",
+      "London",
+      "NewYork",
+      "London-NY_Overlap",
+      "Pre-Market",
+      "Post-Market"
+    ],
     "strategy": [
       "ICT",
-      "Price Action",
-      "Market Structure",
+      "SMC",
+      "Price_Action",
+      "Market_Structure",
       "Wyckoff",
-      "EMA Trend",
+      "VSA",
+      "EMA_Trend",
+      "MA_Cross",
+      "Trend_Following",
       "Breakout",
-      "VWAP"
+      "Range_Trading",
+      "Flag_Pennant",
+      "VWAP",
+      "AVWAP",
+      "Fibonacci",
+      "Harmonic",
+      "Candle_Pattern",
+      "Divergence",
+      "Elliott_Wave",
+      "Pivot_Points",
+      "Supply_Demand",
+      "Support_Resistance"
     ],
+    "entry_model": {
+      "ICT": [
+        "OB_Mitigation",
+        "FVG_Fill",
+        "Breaker_Block",
+        "CISD",
+        "Propulsion_Block",
+        "Mitigation_Block",
+        "Displacement_Entry",
+        "SilverBullet",
+        "MMXM",
+        "JudasSwing",
+        "TurtleSoup",
+        "PowerOf3_AMD",
+        "LondonOpen",
+        "NYOpen",
+        "AMSession",
+        "PMSession"
+      ],
+      "Fibonacci": [
+        "OTE_Fib",
+        "Golden_Pocket",
+        "Deep_Retracement_786",
+        "Fib_Extension_1618",
+        "Fib_Extension_2618",
+        "Confluence_Fib_Zone"
+      ],
+      "Wyckoff": [
+        "Wyckoff_Spring",
+        "Wyckoff_Upthrust",
+        "LPS_LastPointSupport",
+        "LPSY",
+        "SOS_SignOfStrength",
+        "Creek_Break",
+        "Ice_Break"
+      ],
+      "Harmonic": [
+        "Gartley_PRZ",
+        "Bat_PRZ",
+        "Butterfly_PRZ",
+        "Crab_PRZ",
+        "Shark_PRZ",
+        "Cypher_PRZ",
+        "ABCD_Pattern"
+      ],
+      "Candle_Pattern": [
+        "Engulfing_at_POI",
+        "PinBar_Reversal",
+        "Morning_Star",
+        "Evening_Star",
+        "InsideBar_Breakout",
+        "TweezerTop",
+        "TweezerBottom",
+        "ThreeSoldiers",
+        "ThreeCrows"
+      ],
+      "Classic_Pattern": [
+        "DoubleTop_Break",
+        "DoubleBottom_Break",
+        "HeadShoulders",
+        "Triangle_Breakout",
+        "Flag_Pennant",
+        "Channel_Break"
+      ],
+      "MA_VWAP": ["EMA_Cross", "MA_Bounce", "VWAP_Reclaim", "AVWAP_Bounce"],
+      "Divergence": ["RSI_Divergence", "MACD_Divergence", "Hidden_Divergence"],
+      "Supply_Demand": ["SD_Zone_Reaction"],
+      "Elliott_Wave": ["Elliott_Wave3", "Elliott_Wave5"],
+      "Pivot_Points": ["PivotPoint_Bounce"]
+    },
     "weight": ["High", "Medium", "Low"],
     "confidence": ["Low", "Medium", "High"],
-    "status": ["Fresh", "Tested", "Mitigated", "Broken"],
-    "risk_grade": ["A", "B", "C", "NoTrade"],
-    "skip_decision": ["Proceed", "Low_Vol", "Skip"],
-    "zone_type": [
+    "poi_freshness": ["Fresh", "Once_Tested", "Stale"],
+    "ob_freshness": ["Fresh", "Once_Mitigated"],
+    "ob_type": [
+      "Bullish_OB",
+      "Bearish_OB",
+      "Breaker",
+      "Propulsion",
+      "Mitigation"
+    ],
+    "fvg_type": ["IFVG", "BISI", "SIBI", "Regular"],
+    "liquidity_type": [
+      "BSL",
+      "SSL",
+      "EQH",
+      "EQL",
+      "PDH",
+      "PDL",
+      "PWH",
+      "PWL",
+      "PMH",
+      "PML"
+    ],
+    "poi_type": [
       "OB",
       "FVG",
       "Breaker",
-      "Void",
+      "Mitigation",
+      "SD_Zone",
+      "Fib_Level",
+      "Harmonic_PRZ",
+      "VWAP",
+      "MA_Dynamic",
+      "Pivot",
       "BSL",
       "SSL",
-      "PDH",
-      "PDL",
       "EQH",
       "EQL",
+      "PDH",
+      "PDL",
+      "PWH",
+      "PWL",
+      "PMH",
+      "PML",
       "WeeklyOpen",
       "DailyOpen",
       "MidnightOpen"
-    ]
+    ],
+    "premium_discount_position": ["Discount", "Premium", "Equilibrium"],
+    "choch_sub_type": ["Body_Break", "Wick_Break"],
+    "choch_type": ["Minor", "Major"],
+    "choch_used_as": ["Early_Entry", "Confirmation"],
+    "mss_type": ["Impulsive", "Gradual"],
+    "bos_type": ["Internal", "External"],
+    "candle_pattern": [
+      "Engulfing",
+      "Pin_Bar",
+      "Hammer",
+      "Shooting_Star",
+      "InvertedHammer",
+      "Dragonfly_Doji",
+      "Gravestone_Doji",
+      "Morning_Star",
+      "Evening_Star",
+      "Three_Soldiers",
+      "Three_Crows",
+      "Harami",
+      "Inside_Bar",
+      "Tweezer_Top",
+      "Tweezer_Bottom",
+      "Marubozu",
+      "None"
+    ],
+    "fib_level": [
+      "0.382",
+      "0.5",
+      "0.618",
+      "0.65",
+      "0.705",
+      "0.786",
+      "1.272",
+      "1.618",
+      "2.0",
+      "2.618"
+    ],
+    "harmonic_type": [
+      "Gartley",
+      "Bat",
+      "Butterfly",
+      "Crab",
+      "Shark",
+      "Cypher",
+      "ABCD",
+      "None"
+    ],
+    "divergence_indicator": ["RSI", "MACD", "OBV", "Stoch", "CCI", "None"],
+    "divergence_class": ["Regular", "Hidden"],
+    "wyckoff_phase": [
+      "Phase_A",
+      "Phase_B",
+      "Phase_C",
+      "Phase_D",
+      "Phase_E",
+      "N/A"
+    ],
+    "wyckoff_event": [
+      "Spring",
+      "Upthrust",
+      "LPS",
+      "LPSY",
+      "SOS",
+      "SOW",
+      "Creek_Break",
+      "Ice_Break",
+      "UTAD",
+      "UAD",
+      "None"
+    ],
+    "wyckoff_range_type": [
+      "Accumulation",
+      "Distribution",
+      "Re_Accumulation",
+      "Re_Distribution",
+      "N/A"
+    ],
+    "vsa_signal": [
+      "Effort_No_Result",
+      "No_Supply",
+      "No_Demand",
+      "Climactic_Action",
+      "None"
+    ],
+    "volume_level": ["High", "Normal", "Low", "N/A"],
+    "idm_type": ["Minor_Swing", "EQL", "EQH", "Retail_Stop_Zone"],
+    "entry_trigger_type": [
+      "CHoCH",
+      "MSS",
+      "Displacement",
+      "Engulfing",
+      "Pin_Bar",
+      "CISD",
+      "Inside_Bar_Break",
+      "Candle_Close",
+      "Pattern_Completion"
+    ],
+    "news_impact": ["High", "Medium", "Low", "None"],
+    "correlation_alignment": ["Confirming", "Neutral", "Conflicting"],
+    "overextension_risk": ["Low", "Medium", "High"],
+    "breakeven_condition": ["After_TP1", "At_1R", "Manual"],
+    "tp1_logic": [
+      "IDM",
+      "EQH",
+      "EQL",
+      "OB_Mitigation",
+      "FVG_Fill",
+      "Session_High_Low",
+      "Fib_0.618",
+      "Nearest_Liquidity"
+    ],
+    "tp2_logic": [
+      "HTF_POI",
+      "BSL_SSL",
+      "Swing_High_Low",
+      "Fib_1.618",
+      "Supply_Demand_Zone"
+    ],
+    "tp3_logic": [
+      "Draw_on_Liquidity",
+      "Weekly_Level",
+      "Monthly_Level",
+      "Fib_2.618",
+      "Elliott_Wave_Target"
+    ],
+    "risk_grade": ["A", "B", "C", "NoTrade"],
+    "suggested_action": [
+      "Proceed",
+      "Skip_News",
+      "Skip_Low_Confluence",
+      "Skip_Late_Entry",
+      "Skip_Spread",
+      "Skip_Counter_Trend"
+    ],
+    "zone_relevance": ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"],
+    "zone_status": ["Fresh", "Tested", "Mitigated", "Broken"]
+  },
+  "grade_criteria": {
+    "A": ">=4 confluences, HTF aligned, liquidity swept, LTF confirmed, no high news",
+    "B": "3 confluences, mostly aligned, minor gap acceptable",
+    "C": "2 confluences or counter-trend — reduce size",
+    "NoTrade": "<2 confluences, SL too tight, overextended, or high-impact news imminent"
+  },
+  "risk_by_grade": {
+    "A": "1.0-2.0%",
+    "B": "0.5-1.0%",
+    "C": "0.25-0.5%",
+    "NoTrade": "0%"
+  },
+  "scoring": {
+    "weight_points": {
+      "High": 3,
+      "Medium": 2,
+      "Low": 1
+    },
+    "gate_threshold": 0.75,
+    "min_confluence_count": 3,
+    "grade_thresholds": {
+      "A": {
+        "min_score": 85,
+        "rr_multiplier": 1.5
+      },
+      "B": {
+        "min_score": 65,
+        "rr_multiplier": 1
+      },
+      "C": {
+        "min_score": 50,
+        "rr_margin": 0.3
+      },
+      "NoTrade": {
+        "max_score": 49
+      }
+    }
   },
   "limits": {
     "max_symbols_per_response": 24,
@@ -61,5 +356,10 @@
     "max_key_events": 8,
     "max_expected_path": 5,
     "max_trade_plans": 24
+  },
+  "id_format": {
+    "htf_zone": "{TF}-{type}-{n}",
+    "ltf_zone": "{tf}-{type}-{n}",
+    "examples": ["D-OB-1", "4H-FVG-2", "D-PDH-1", "15M-OB-1", "5M-FVG-1"]
   }
 }

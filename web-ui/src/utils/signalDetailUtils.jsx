@@ -250,6 +250,9 @@ function firstTradePlan(raw = {}) {
     if (!src || typeof src !== "object") continue;
     if (src?.__raw_plan && typeof src.__raw_plan === "object")
       return src.__raw_plan;
+    // Prefer root-level trade_plan (new path) over legacy analysis_data[].trade_plan
+    if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
+      return src.trade_plan[0] || {};
     if (Array.isArray(src?.analysis_data) && src.analysis_data.length) {
       for (const entry of src.analysis_data) {
         if (Array.isArray(entry?.trade_plan) && entry.trade_plan.length) {
@@ -259,8 +262,6 @@ function firstTradePlan(raw = {}) {
         }
       }
     }
-    if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
-      return src.trade_plan[0] || {};
     if (Array.isArray(src?.tradePlan) && src.tradePlan.length)
       return src.tradePlan[0] || {};
     if (src?.trade_plan && typeof src.trade_plan === "object")
@@ -637,11 +638,11 @@ export function extractTradePlanFromTrade(trade = {}) {
         raw.risk_money,
     ),
     entry: formatNum3(entry ?? NaN),
-    tp: formatNum3((normalizedTpPrimary ?? tp1 ?? tp) ?? NaN),
-    tp1: formatNum3((normalizedTpPrimary ?? tp1 ?? tp) ?? NaN),
+    tp: formatNum3(normalizedTpPrimary ?? tp1 ?? tp ?? NaN),
+    tp1: formatNum3(normalizedTpPrimary ?? tp1 ?? tp ?? NaN),
     tp2: formatNum3(tp2 ?? NaN),
     tp3: formatNum3(tp3 ?? NaN),
-    sl: formatNum3((normalizedSl ?? sl) ?? NaN),
+    sl: formatNum3(normalizedSl ?? sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(trade.note || "").trim(),
     entry_model: String(

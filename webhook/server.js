@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 10:44 - 1a183823",
-); // drop signals table + Draft status + POLL exclusion + promote route
+  "v2026.05.19 10:45 - 1a183823",
+); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -820,8 +820,114 @@ const CFG = {
   ),
 };
 
-const AI_SCHEMA_SPEC = require("../config/ai_response_schema.json");
-const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "2.3");
+const AI_SCHEMA_SPEC = (() => {
+  try {
+    const planSchema = require("../config/trade_plan_schema.json");
+    return {
+      version: "3.0",
+      schema: {
+        analysis_data: [
+          {
+            symbol: "",
+            multi_timeframes_analysis: {
+              htf_context: [
+                {
+                  timeframe: "D|4H|W",
+                  trend: "Bullish|Bearish|Ranging",
+                  bias: "Long|Short|Neutral",
+                  phase:
+                    "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
+                  market_structure: [
+                    {
+                      step: 1,
+                      action:
+                        "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
+                      price: null,
+                      price_target: null,
+                      required_condition: "",
+                    },
+                  ],
+                },
+              ],
+              ltf_analysis: [
+                {
+                  timeframe: "15m|5m|1m",
+                  trend: "Bullish|Bearish|Ranging",
+                  structure: "BOS|CHoCH|MSB|Continuation|Ranging",
+                  phase:
+                    "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
+                  bias: "Long|Short|Neutral",
+                  market_structure: [
+                    {
+                      step: 1,
+                      action:
+                        "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
+                      price: null,
+                      price_target: null,
+                      required_condition: "",
+                    },
+                  ],
+                },
+              ],
+              draw_on_liquidity: {
+                narrative: "",
+                timeframe: "1m|5m|15m|1H|4H|D",
+                target_price: null,
+                target_type: "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL|WeeklyOpen",
+              },
+              events_patterns: [
+                {
+                  event:
+                    "BOS|CHoCH|MSB|Sweep|Breakout|Rejection|Engulfing|PinBar|Doji|EQH|EQL|BSL|SSL",
+                  price: null,
+                  time: null,
+                  timeframe: "1m|5m|15m|1H|4H|D",
+                  direction: "Bullish|Bearish|Neutral",
+                  volume: "Low|Medium|High",
+                },
+              ],
+              pd_arrays_key_levels: [
+                {
+                  timeframe: "1m|5m|15m|1H|4H|D",
+                  type: "OB|FVG|Breaker|Void|BSL|SSL|PDH|PDL|EQH|EQL|WeeklyOpen|DailyOpen|MidnightOpen|Support|Resistance|Fibonacci",
+                  direction: "Bullish|Bearish",
+                  price: null,
+                  time: null,
+                  status: "Fresh|Tested|Mitigated|Broken",
+                  relevance: "TP_Target|Entry_Boundary|DOL|Invalidation",
+                },
+              ],
+              confluence_checklist: {
+                confluence_score: 0,
+                buy: {
+                  weighted_score: 0,
+                  high_weight_passed: 0,
+                  high_weight_total: 0,
+                  passed_items: [],
+                  failed_critical: [],
+                },
+                sell: {
+                  weighted_score: 0,
+                  high_weight_passed: 0,
+                  high_weight_total: 0,
+                  passed_items: [],
+                  failed_critical: [],
+                },
+              },
+            },
+          },
+        ],
+        trade_plan: [planSchema],
+      },
+    };
+  } catch (e) {
+    console.warn(
+      "[schema] trade_plan_schema.json not found, using empty schema",
+    );
+    return { version: "3.0", schema: { analysis_data: [], trade_plan: [] } };
+  }
+})();
+const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "3.0");
 const AI_RESPONSE_SCHEMA = AI_SCHEMA_SPEC.schema || {};
 
 // Legacy checklist bank kept for reference
@@ -11210,12 +11316,7 @@ function loadResponseMappingRules() {
 }
 
 const RESPONSE_MAPPING_RULES = loadResponseMappingRules();
-const DEFAULT_TRADE_PLAN_PATHS = [
-  "trade_plan",
-  "analysis_data[].trade_plan",
-  "symbols[].trade_plan",
-  "analyses[].trade_plan",
-];
+const DEFAULT_TRADE_PLAN_PATHS = ["trade_plan", "analysis_data[].trade_plan"];
 
 function extractByRulePath(root, rulePath) {
   const pathText = String(rulePath || "").trim();

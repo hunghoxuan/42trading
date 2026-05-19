@@ -18,7 +18,7 @@ const numericNoSliderRowStyle = {
 };
 const row2Style = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(286px, 1fr))",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
   gap: 8,
   minWidth: 0,
 };

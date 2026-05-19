@@ -3,21 +3,19 @@
   "direction": "BUY|SELL",
   "order_type": "Limit|Stop_Limit|Market",
   "profile": "Position|Swing|Intraday|Scalp",
-  "timeframe": {
-    "entry_tf": "",
-    "htf_reference": ""
-  },
   "session": "Asian|London|NewYork|London-NY_Overlap|Pre-Market|Post-Market",
   "strategy": "ICT|SMC|Price_Action|Market_Structure|Wyckoff|VSA|EMA_Trend|MA_Cross|Breakout|VWAP|Supply_Demand|Fibonacci|Harmonic|Candle_Pattern|Divergence|Elliott_Wave|Pivot_Points|Support_Resistance|Range_Trading|Trend_Following",
   "entry_model": "OB_Mitigation|FVG_Fill|Breaker_Block|CISD|Propulsion_Block|Mitigation_Block|Displacement_Entry|OTE_Fib|Golden_Pocket|Deep_Retracement_786|SilverBullet|MMXM|JudasSwing|TurtleSoup|PowerOf3_AMD|LondonOpen|NYOpen|AMSession|PMSession|Wyckoff_Spring|Wyckoff_Upthrust|LPS_LastPointSupport|LPSY|SOS_SignOfStrength|Creek_Break|Ice_Break|Gartley_PRZ|Bat_PRZ|Butterfly_PRZ|Crab_PRZ|Shark_PRZ|Cypher_PRZ|ABCD_Pattern|Engulfing_at_POI|PinBar_Reversal|Morning_Star|Evening_Star|InsideBar_Breakout|TweezerTop|TweezerBottom|ThreeSoldiers|ThreeCrows|DoubleTop_Break|DoubleBottom_Break|HeadShoulders|Triangle_Breakout|Flag_Pennant|Channel_Break|EMA_Cross|MA_Bounce|VWAP_Reclaim|AVWAP_Bounce|RSI_Divergence|MACD_Divergence|Hidden_Divergence|SD_Zone_Reaction|PivotPoint_Bounce|Elliott_Wave3|Elliott_Wave5",
+  "context": {
+    "htf_bias": "Bullish|Bearish|Ranging",
+    "htf": "",
+    "entry_tf": "",
+    "ltf_structure": "Uptrend|Downtrend|Ranging|Transitional",
+    "macro": "Risk_On|Risk_Off|Neutral|News_Pending",
+    "draw_on_liquidity": "",
+    "daily_bias_note": ""
+  },
   "analysis": {
-    "context": {
-      "htf_bias": "Bullish|Bearish|Ranging",
-      "ltf_structure": "Uptrend|Downtrend|Ranging|Transitional",
-      "macro": "Risk_On|Risk_Off|Neutral|News_Pending",
-      "draw_on_liquidity": "",
-      "daily_bias_note": ""
-    },
     "htf_context": {
       "liquidity_swept": {
         "status": false,
@@ -224,7 +222,7 @@
       "note": "Trail or let run"
     }
   },
-  "risk_conclusion": {
+  "risk_management": {
     "grade": "A|B|C|NoTrade",
     "grade_criteria": {
       "A": ">=4 confluences, HTF aligned, liquidity swept, LTF confirmed, no high news",
@@ -243,7 +241,6 @@
     "estimated_entry_mins": null,
     "estimated_entry_window_mins": null,
     "max_wait_before_cancel_mins": null,
-    "decision": "Proceed|Skip_News|Skip_Low_Confluence|Skip_Late_Entry|Skip_Spread|Skip_Counter_Trend",
-    "decision_reasons": ""
+    "suggested_action": "Proceed|Skip_News|Skip_Low_Confluence|Skip_Late_Entry|Skip_Spread|Skip_Counter_Trend"
   }
 }
