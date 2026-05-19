@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 06:08 - 35de2f7a",
-); // RR2/RR3 guardrails + SL/Entry drift normalization fix
+  "v2026.05.19 07:03 - 7df24d20",
+); // health self-check: root must serve HTML (UI), not JSON
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -14950,8 +14950,25 @@ const appHandler = async (req, res) => {
         await rc.disconnect();
       }
     } catch {}
+    // Self-check: root should serve UI (HTML), not JSON API info
+    let uiRootOk = false;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const selfRes = await fetch(
+        CFG.httpsEnabled
+          ? `https://127.0.0.1:${CFG.httpsPort}/`
+          : `http://127.0.0.1:${CFG.port}/`,
+        { method: "GET", signal: ctrl.signal, rejectUnauthorized: false },
+      );
+      clearTimeout(timer);
+      const selfText = await selfRes.text();
+      // HTML starts with <, JSON starts with {
+      uiRootOk = selfText.trim().startsWith("<");
+    } catch {}
+    const overallOk = postgresOk && (redisOk || !CFG.redisEnabled) && uiRootOk;
     return json(res, 200, {
-      ok: true,
+      ok: overallOk,
       service: "telegram-trading-bot",
       version: SERVER_VERSION,
       binanceEnabled: CFG.binanceEnabled,
@@ -14962,6 +14979,7 @@ const appHandler = async (req, res) => {
       postgres: postgresOk ? "ok" : "error",
       redis: redisOk ? "ok" : CFG.redisEnabled ? "error" : "disabled",
       redisEnabled: CFG.redisEnabled || false,
+      uiRoot: uiRootOk ? "html" : "json_or_error",
       cron: global._cronStatus || "unknown",
       cronMarketDataEnabled: CFG.marketDataCronEnabled || false,
       cronAiEnabled: true,
