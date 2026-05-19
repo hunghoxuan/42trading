@@ -2938,11 +2938,26 @@ export default function SignalDetailCard({
               typeof cleanRowJson === "object" &&
               Object.keys(cleanRowJson).length > 0;
             if (!hasRow) {
+              const respKeys =
+                response && typeof response === "object"
+                  ? Object.keys(response).sort()
+                  : [];
+              const rjRaw = response?.raw_json;
+              const metaRj = response?.metadata?.raw_json;
               return (
-                <div className="minor-text">
-                  DEBUG: responseRowRaw empty. response=
-                  {response ? "object" : String(response)} raw_json=
-                  {response?.raw_json ? typeof response.raw_json : "N/A"}
+                <div
+                  className="minor-text"
+                  style={{ whiteSpace: "pre-wrap", fontSize: 10 }}
+                >
+                  DEBUG:
+                  <br />
+                  response keys ({respKeys.length}): {JSON.stringify(respKeys)}
+                  <br />
+                  raw_json type: {typeof rjRaw} value: {JSON.stringify(rjRaw)}
+                  <br />
+                  metadata.raw_json type: {typeof metaRj}
+                  <br />
+                  responseRowRaw: {JSON.stringify(responseRowRaw)}
                 </div>
               );
             }
