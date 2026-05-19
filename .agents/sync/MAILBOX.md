@@ -12,9 +12,9 @@ Use this section for parallel-agent safety and deploy ordering.
 - If deploying, acquire lock first. No lock = no deploy.
 
 - lock_status: `LOCKED`
-- deploy_owner: `codex-gpt5`
-- since_utc: `2026-05-18 19:51 UTC`
-- note: `UI path fallback hotfix deploy (/ui missing index)`
+- deploy_owner: `Codex`
+- since_utc: `2026-05-19 09:35 UTC`
+- note: `Deploy timezone toggle regression fix + health diagnostics consolidation`
 
 ## Required Entry Template
 ...
@@ -61,6 +61,86 @@ Copy and fill:
 - Agent A merge -> deploy -> verify -> post ledger.
 - Agent B must pull latest main after A deploy, then merge/deploy/verify.
 - Agent C repeats only after B posts success.
+
+### [2026-05-19 09:28 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: none
+- scope: `webhook/server.js` health diagnostics consolidation
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - `rtk node --check webhook/server.js` PASS
+  - `/health` payload extended with diagnostics block (local/public root checks + cron diagnostics + endpoint summary)
+- handoff_next: optional deploy + live `/health` verification
+
+### [2026-05-19 09:08 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: none
+- scope: `web-ui/src/App.jsx`, `.agents/.product/tickets/1-backlog/done-fix-bug-session-clock-timezone-toggle-not-switching.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - root-cause confirmed in App timezone precedence
+  - `rtk npm --prefix web-ui run build` PASS
+- handoff_next: optional UI manual click verification + deploy
+
+### [2026-05-19 08:55 UTC] AGENT:Codex
+- status: HANDOFF_READY
+- branch: main
+- commit: none
+- scope: `.agents/.product/tickets/1-backlog/plan-update-feature-ai-analyze-trade-nav-and-quick-direction.md`, `.agents/.product/tickets/1-backlog/plan-extend-feature-trade-ui-static-chart-close-snapshot-and-objects.md`, `.agents/sync/HANDOFF_2026-05-19_AI_TRADE_UI_AND_SNAPSHOT_OBJECTS.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - screenshot requirements translated into explicit execution tasks + checks
+  - handoff file prepared for next implementation agent
+- handoff_next: implementation agent should claim ownership then execute both tickets
+
+### [2026-05-19 06:32 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: none
+- scope: `web-ui/src/utils/signalDetailUtils.jsx`, `web-ui/src/components/TradePlanEditor.jsx`, `.agents/.product/tickets/1-backlog/done-fix-bug-rr2-rr3-entry-tp-sl-drift.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - screenshot issue reproduced by analysis: SELL with `SL < Entry` causes RR2/RR3 explosion
+  - web-ui build: PASS
+- handoff_next: optional deploy/validation pass on VPS
+
+### [2026-05-19 04:50 UTC] AGENT:Codex
+- status: HANDOFF_READY
+- branch: main
+- commit: none
+- scope: `.agents/.product/tickets/1-backlog/2026-05-19-btcusd-ctrader-tp-mismatch-auto-close.md`, `.agents/sync/HANDOFF_2026-05-19_BTCUSD_CTRADER_TP_MISMATCH.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - docs: ticket + handoff created from user screenshots
+  - screenshot evidence: BTCUSD sell, entry `77367.80`, broker close `77315.00`, cTrader order `OID972856345`, position `PID621844976`, label `20260411`
+- handoff_next: next agent should claim ownership before coding and investigate/fix TP mismatch per handoff doc
 
 ### [2026-05-18 19:40 UTC] AGENT:DeepSeek
 - status: DEPLOYED

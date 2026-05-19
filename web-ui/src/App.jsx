@@ -65,9 +65,9 @@ export default function App() {
 
   const displayTimezone = useMemo(() => {
     return normalizeDisplayTimezone(
-      authUser?.metadata?.settings?.display_timezone ||
+      localStorage.getItem("ui_display_timezone") ||
+        authUser?.metadata?.settings?.display_timezone ||
         authUser?.metadata?.display_timezone ||
-        localStorage.getItem("ui_display_timezone") ||
         "Local",
     );
   }, [authUser, tzUiTick]);

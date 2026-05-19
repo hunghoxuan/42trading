@@ -1,3 +1,96 @@
+# Session Log: 2026-05-19 09:28 UTC
+- **Starting Task**:
+  - Add diagnostics consolidation into `/health` API (including public root HTML/JSON check).
+- **Work Accomplished**:
+  - Extended `/health` with unified `diagnostics` block.
+  - Added robust root checks for local and `https://trade.mozasolution.com/`.
+  - Added cron diagnostics summary (runtime, queue state, tracker counts, active config counts).
+  - Added endpoint diagnostics summary metadata for related health/status endpoints.
+- **Changed Files**:
+  - `.agents/.product/tickets/1-backlog/done-update-feature-health-api-diagnostics-consolidation.md`
+  - `.agents/sync/HANDOFF_2026-05-19_HEALTH_API_DIAGNOSTICS.md`
+  - `webhook/server.js`
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+- **Deploy Status**:
+  - Not deployed in this step.
+
+# Session Log: 2026-05-19 09:08 UTC
+- **Starting Task**:
+  - Investigate and fix timezone toggle regression in SessionClockBar (UTC/Local/NY not switching).
+- **Work Accomplished**:
+  - Reviewed current timezone flow in `SessionClockBar`, `App`, and format helpers.
+  - Identified precedence bug: App display timezone preferred user metadata over localStorage, overriding click-toggle updates.
+  - Patched `App.jsx` to prioritize `localStorage ui_display_timezone` as source-of-truth.
+  - Added ticket + handoff documentation for traceability.
+- **Changed Files**:
+  - `.agents/.product/tickets/1-backlog/done-fix-bug-session-clock-timezone-toggle-not-switching.md`
+  - `.agents/sync/HANDOFF_2026-05-19_TIMEZONE_TOGGLE_REGRESSION.md`
+  - `web-ui/src/App.jsx`
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Not deployed in this step.
+
+# Session Log: 2026-05-19 08:55 UTC
+- **Starting Task**:
+  - Convert 4 screenshot requests into detailed implementation tickets and handoff package (no code execution).
+- **Work Accomplished**:
+  - Created two structured tickets:
+    1. AI analyze/trade split nav buttons + Buy/Sell quick action mapping
+    2. Trade editor overlap + RR sliders + static chart wiring + auto-close snapshot + object metadata persistence
+  - Extracted visible evidence from screenshots and embedded it in ticket problem/investigation sections.
+  - Created dedicated handoff file pointing to both tickets with execution constraints/checks.
+  - Linked tickets in backlog index.
+- **Changed Files**:
+  - `.agents/.product/tickets/1-backlog/plan-update-feature-ai-analyze-trade-nav-and-quick-direction.md`
+  - `.agents/.product/tickets/1-backlog/plan-extend-feature-trade-ui-static-chart-close-snapshot-and-objects.md`
+  - `.agents/sync/HANDOFF_2026-05-19_AI_TRADE_UI_AND_SNAPSHOT_OBJECTS.md`
+  - `.agents/.product/tickets/1-backlog/_master-backlog.md`
+- **Verification**:
+  - Manual ticket path/link consistency check.
+- **Deploy Status**:
+  - Not deployed (ticketing/handoff only).
+
+# Session Log: 2026-05-19 06:32 UTC
+- **Starting Task**:
+  - Fix bug: RR2/RR3 appears wrong and Entry/TP/SL drift suspected from broker sync overlay.
+- **Work Accomplished**:
+  - Added ticket and handoff artifact from screenshot evidence.
+  - Fixed trade-plan extraction precedence to prefer planned contract values (`raw/plan`) before runtime overlays.
+  - Enforced direction-aware TP/SL normalization before editor display to prevent SELL `SL < Entry` rendering.
+  - Added RR2/RR3 safety guard to suppress values when direction-invalid or denominator risk is near-zero.
+- **Changed Files**:
+  - `.agents/.product/tickets/1-backlog/done-fix-bug-rr2-rr3-entry-tp-sl-drift.md`
+  - `.agents/sync/HANDOFF_2026-05-19_RR2_RR3_ENTRY_SL_DRIFT.md`
+  - `web-ui/src/utils/signalDetailUtils.jsx`
+  - `web-ui/src/components/TradePlanEditor.jsx`
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+- **Deploy Status**:
+  - Not deployed in this step.
+
+# Session Log: 2026-05-19 04:50 UTC
+- **Starting Task**:
+  - Extract screenshot evidence and write a detailed handoff ticket for BTCUSD cTrader TP mismatch / unexpected broker auto-close.
+- **Work Accomplished**:
+  - Created P0 investigation ticket with screenshot field extraction, discrepancies, likely code areas, investigation checklist, validation requirements, and acceptance criteria.
+  - Created dedicated handoff note for the next agent with exact files to read, scope, non-goals, required checks, and return format.
+  - Linked ticket in backlog index and posted mailbox relay entry.
+- **Changed Files**:
+  - `.agents/.product/tickets/1-backlog/2026-05-19-btcusd-ctrader-tp-mismatch-auto-close.md`
+  - `.agents/.product/tickets/1-backlog/_master-backlog.md`
+  - `.agents/sync/HANDOFF_2026-05-19_BTCUSD_CTRADER_TP_MISMATCH.md`
+  - `.agents/sync/MAILBOX.md`
+  - `.agents/worklog.md`
+- **Technical Decisions**:
+  - Treated issue as P0 investigation because it involves live broker execution mismatch.
+  - Noted unresolved TP discrepancy: user reported `76271,9`; screenshot appears to show `76217,8`.
+- **Verification**:
+  - Documentation link/path consistency checked manually.
+- **Deploy Status**:
+  - Not deployed (documentation/handoff only).
+
 # Session Log: 2026-05-08 12:12
 - **Starting Task**: Make ticker FILLED items clickable, tighten top-bar spacing, and deploy.
 - **Work Accomplished**:

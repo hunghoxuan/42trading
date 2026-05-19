@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 09:07 - f9059948",
-); // AI nav buttons + TradePlan RR sliders + static chart wiring + close snapshot + chart objects API
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 09:21 - 81bf521e"); // AI nav buttons + TradePlan RR sliders + static chart wiring + close snapshot + chart objects API
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -6210,6 +6207,97 @@ async function handleSignal(payload) {
 // ==================== MT5 bridge (merged routes) ====================
 function mt5NowIso() {
   return new Date().toISOString();
+}
+
+async function healthFetchRootMode(url, timeoutMs = 5000, extra = {}) {
+  const out = {
+    ok: false,
+    mode: "error",
+    status: null,
+    content_type: "",
+    error: null,
+  };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      method: "GET",
+      signal: ctrl.signal,
+      redirect: "manual",
+      ...extra,
+    });
+    clearTimeout(timer);
+    const text = await res.text();
+    const ct = String(res.headers.get("content-type") || "");
+    const isHtml =
+      text.trim().startsWith("<") ||
+      ct.includes("text/html") ||
+      (res.status >= 300 && res.status < 400);
+    out.ok = isHtml;
+    out.mode = isHtml ? "html" : "json_or_other";
+    out.status = res.status;
+    out.content_type = ct;
+    return out;
+  } catch (err) {
+    out.error = err instanceof Error ? err.message : String(err || "error");
+    return out;
+  }
+}
+
+async function healthCronConfigDiagnostics() {
+  const empty = {
+    market_data_active: 0,
+    analysis_active: 0,
+    snapshots_active: 0,
+    db_error: null,
+  };
+  try {
+    const b = await mt5Backend();
+    if (!b?.query) return empty;
+    const [md, ai, snap] = await Promise.all([
+      b.query(
+        `
+        SELECT COUNT(*)::int AS n
+        FROM user_settings s
+        JOIN users u ON s.user_id = u.user_id
+        WHERE s.type='cron' AND s.name='MARKET_DATA_CRON'
+          AND UPPER(s.status)='ACTIVE'
+          AND (u.metadata->'settings'->>'data_cron')::boolean = true
+      `,
+      ),
+      b.query(
+        `
+        SELECT COUNT(*)::int AS n
+        FROM user_settings s
+        JOIN users u ON s.user_id = u.user_id
+        WHERE s.type='cron' AND s.name='ANALYSIS_CRON'
+          AND UPPER(s.status)='ACTIVE'
+          AND (u.metadata->'settings'->>'analysis_cron')::boolean = true
+      `,
+      ),
+      b.query(
+        `
+        SELECT COUNT(*)::int AS n
+        FROM user_settings s
+        JOIN users u ON s.user_id = u.user_id
+        WHERE s.type='cron' AND s.name='SNAPSHOTS_CRON'
+          AND UPPER(s.status)='ACTIVE'
+          AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
+      `,
+      ),
+    ]);
+    return {
+      market_data_active: Number(md?.rows?.[0]?.n || 0),
+      analysis_active: Number(ai?.rows?.[0]?.n || 0),
+      snapshots_active: Number(snap?.rows?.[0]?.n || 0),
+      db_error: null,
+    };
+  } catch (err) {
+    return {
+      ...empty,
+      db_error: err instanceof Error ? err.message : String(err || "error"),
+    };
+  }
 }
 
 function mt5ParsePriceOrNull(v) {
@@ -15005,28 +15093,39 @@ const appHandler = async (req, res) => {
         await rc.disconnect();
       }
     } catch {}
-    // Self-check: root should serve UI (HTML), not JSON API info
-    let uiRootOk = false;
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 5000);
-      // Use HTTP loopback — avoids TLS cert issues on self-request
-      const selfRes = await fetch(`http://127.0.0.1:${CFG.port}/`, {
-        method: "GET",
-        signal: ctrl.signal,
-        headers: { Host: "localhost" },
-        redirect: "manual",
-      });
-      clearTimeout(timer);
-      const selfText = await selfRes.text();
-      const ct = String(selfRes.headers.get("content-type") || "");
-      // OK if HTML or redirect (30x); NOT ok if JSON
-      uiRootOk =
-        selfText.trim().startsWith("<") ||
-        (selfRes.status >= 300 && selfRes.status < 400) ||
-        ct.includes("text/html");
-    } catch {}
+    const localRoot = await healthFetchRootMode(
+      `http://127.0.0.1:${CFG.port}/`,
+      5000,
+      { headers: { Host: "localhost" } },
+    );
+    const publicRoot = await healthFetchRootMode(
+      "https://trade.mozasolution.com/",
+      7000,
+    );
+    const cronConfigs = await healthCronConfigDiagnostics();
+    const uiRootOk = localRoot.ok && publicRoot.ok;
     const overallOk = postgresOk && (redisOk || !CFG.redisEnabled) && uiRootOk;
+    const cronDiag = {
+      scheduler_running: Boolean(CRON_STATE.isRunning),
+      loop_status: global._cronStatus || "unknown",
+      interval_seconds: 60,
+      queue_mode: MARKET_DATA_QUEUE ? "bullmq" : "inline_or_disabled",
+      queue_ready: Boolean(MARKET_DATA_QUEUE && MARKET_DATA_WORKER),
+      queue_enabled:
+        Boolean(CFG.marketDataCronEnabled) &&
+        Boolean(CFG.marketDataCronQueueEnabled) &&
+        Boolean(CFG.redisEnabled),
+      last_run_trackers: {
+        market_data_keys: Object.keys(CRON_STATE.lastMarketDataRun || {})
+          .length,
+        analysis_keys: Object.keys(CRON_STATE.lastAiAnalysisRun || {}).length,
+        snapshots_keys: Object.keys(CRON_STATE.lastSnapshotsRun || {}).length,
+      },
+      configs: cronConfigs,
+      recent_events_count: Array.isArray(global._cronEvents)
+        ? global._cronEvents.length
+        : 0,
+    };
     return json(res, 200, {
       ok: overallOk,
       service: "telegram-trading-bot",
@@ -15064,6 +15163,36 @@ const appHandler = async (req, res) => {
           connected: SOURCE_STATUS.binance.connected,
           enabled: CFG.binanceEnabled,
           lastActivity: SOURCE_STATUS.binance.lastActivity,
+        },
+      },
+      diagnostics: {
+        root_checks: {
+          local: localRoot,
+          public_trade_mozasolution_com: publicRoot,
+        },
+        cron: cronDiag,
+        endpoints: {
+          health: { path: "/health", auth: "none", included_in_health: true },
+          mt5Health: {
+            path: "/mt5/health",
+            auth: "none",
+            included_in_health: true,
+            summary: {
+              mt5_enabled: CFG.mt5Enabled,
+              has_tv_api_keys: CFG.mt5TvAlertApiKeys.size > 0,
+              has_ea_api_keys: CFG.mt5EaApiKeys.size > 0,
+            },
+          },
+          dashboardSummary: {
+            path: "/mt5/dashboard/summary",
+            auth: "admin_key",
+            included_in_health: false,
+          },
+          dashboardAdvanced: {
+            path: "/mt5/dashboard/advanced",
+            auth: "admin_key",
+            included_in_health: false,
+          },
         },
       },
     });
