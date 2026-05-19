@@ -393,9 +393,14 @@ function PlanHeader({
   );
   const estMinsVal = estMinsNum != null ? `${Math.round(estMinsNum)}m` : "";
   const skipDecisionVal = String(
-    riskMgmt?.suggested_action ?? riskMgmt?.skip_decision ?? plan?.skip_decision ?? "",
+    riskMgmt?.suggested_action ??
+      riskMgmt?.skip_decision ??
+      plan?.skip_decision ??
+      "",
   ).trim();
-  const riskPercentNum = parseNumLoose(riskMgmt?.risk_percent ?? plan?.risk_pct);
+  const riskPercentNum = parseNumLoose(
+    riskMgmt?.risk_percent ?? plan?.risk_pct,
+  );
   const riskPercentVal =
     riskPercentNum != null ? `${riskPercentNum.toFixed(2)}% risk` : "";
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
@@ -1343,7 +1348,9 @@ export default function SignalDetailCard({
         const match =
           item.trade_plan[selectedPlanIndex] ||
           item.trade_plan.find((p) => {
-            const sym = String(p?.symbol || "").trim().toUpperCase();
+            const sym = String(p?.symbol || "")
+              .trim()
+              .toUpperCase();
             return selectedPlanSymbol && sym === selectedPlanSymbol;
           }) ||
           item.trade_plan[0];
@@ -1351,7 +1358,13 @@ export default function SignalDetailCard({
       }
     }
     return null;
-  }, [rawData, selectedPlanFromList, selectedPlanIndex, selectedPlanSymbol, selectedRawData]);
+  }, [
+    rawData,
+    selectedPlanFromList,
+    selectedPlanIndex,
+    selectedPlanSymbol,
+    selectedRawData,
+  ]);
 
   const renderInfoValue = (value) => {
     if (value == null || value === "") return "—";
@@ -1383,7 +1396,11 @@ export default function SignalDetailCard({
             v != null &&
             v !== "" &&
             !(Array.isArray(v) && v.length === 0) &&
-            !(typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0),
+            !(
+              typeof v === "object" &&
+              !Array.isArray(v) &&
+              Object.keys(v).length === 0
+            ),
         )
       : [];
 
@@ -1625,12 +1642,12 @@ export default function SignalDetailCard({
                   />
                 }
               >
-                  <SymbolChart
-                    symbol={chart?.symbol}
-                    timeframes={effectiveTfs}
-                    defaultMode="cache"
-                    initialGridCols={2}
-                    entryPrice={chart?.entryPrice}
+                <SymbolChart
+                  symbol={chart?.symbol}
+                  timeframes={effectiveTfs}
+                  defaultMode="cache"
+                  initialGridCols={2}
+                  entryPrice={chart?.entryPrice}
                   slPrice={chart?.slPrice}
                   tpPrice={chart?.tpPrice}
                   showAnalyzeButton={false}
@@ -1666,7 +1683,8 @@ export default function SignalDetailCard({
                     if (/^TP[123]$/.test(iAction) && Number.isFinite(iPrice)) {
                       const slot = iAction.toLowerCase();
                       tradePlan?.onChange?.(slot, String(iPrice));
-                      if (slot === "tp1") tradePlan?.onChange?.("tp", String(iPrice));
+                      if (slot === "tp1")
+                        tradePlan?.onChange?.("tp", String(iPrice));
                     } else if (iAction === "TP" && Number.isFinite(iPrice)) {
                       const base = plan || {};
                       const sideDir = String(
@@ -1918,7 +1936,8 @@ export default function SignalDetailCard({
                         `Risk: ${selectedAiPlan.risk_management.risk_percent}%`,
                       selectedAiPlan.risk_management?.confidence_pct != null &&
                         `Confidence: ${selectedAiPlan.risk_management.confidence_pct}%`,
-                      selectedAiPlan.risk_management?.estimated_entry_mins != null &&
+                      selectedAiPlan.risk_management?.estimated_entry_mins !=
+                        null &&
                         `ETA: ${selectedAiPlan.risk_management.estimated_entry_mins}m`,
                       selectedAiPlan.risk_management?.suggested_action &&
                         `Action: ${selectedAiPlan.risk_management.suggested_action}`,
@@ -1980,7 +1999,10 @@ export default function SignalDetailCard({
                                   typeof v === "object" ? "1 / -1" : "auto",
                               }}
                             >
-                              <div className="minor-text" style={{ fontSize: 9 }}>
+                              <div
+                                className="minor-text"
+                                style={{ fontSize: 9 }}
+                              >
                                 {humanizeInfoKey(k)}
                               </div>
                               <div style={{ fontSize: 11, marginTop: 3 }}>
@@ -2906,13 +2928,36 @@ export default function SignalDetailCard({
             overflow: "auto",
           }}
         >
-          {cleanRowJson &&
-          typeof cleanRowJson === "object" &&
-          Object.keys(cleanRowJson).length > 0 ? (
-            <SmartContent content={cleanRowJson} mode="readonly" showCopy />
-          ) : (
-            <div className="minor-text">No AI response stored.</div>
-          )}
+          {(() => {
+            const hasRow =
+              responseRowRaw &&
+              typeof responseRowRaw === "object" &&
+              Object.keys(responseRowRaw).length > 0;
+            const hasClean =
+              cleanRowJson &&
+              typeof cleanRowJson === "object" &&
+              Object.keys(cleanRowJson).length > 0;
+            if (!hasRow) {
+              return (
+                <div className="minor-text">
+                  DEBUG: responseRowRaw empty. response=
+                  {response ? "object" : String(response)} raw_json=
+                  {response?.raw_json ? typeof response.raw_json : "N/A"}
+                </div>
+              );
+            }
+            if (!hasClean) {
+              return (
+                <div className="minor-text">
+                  DEBUG: cleanRowJson empty after __ filter. rowKeys=
+                  {JSON.stringify(Object.keys(responseRowJson))}
+                </div>
+              );
+            }
+            return (
+              <SmartContent content={cleanRowJson} mode="readonly" showCopy />
+            );
+          })()}
         </div>
       </div>
 
