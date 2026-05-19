@@ -19173,8 +19173,18 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
-        // Store exact AI response — no normalization.
-        // If bare array [{...}], wrap as { trade_plan: [...] } for DB storage.
+        // Store exact AI response.
+        // Claude returns {"0":{...}} — convert to [{...}].
+        if (
+          parsedJson &&
+          typeof parsedJson === "object" &&
+          !Array.isArray(parsedJson)
+        ) {
+          const keys = Object.keys(parsedJson);
+          if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
+            parsedJson = Object.values(parsedJson);
+          }
+        }
         if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
         // Log raw AI response for debugging
         console.log(
@@ -19184,10 +19194,8 @@ const appHandler = async (req, res) => {
             rawResponse.slice(0, 300),
         );
         console.log(
-          "[ai-parsed] type=" +
-            (Array.isArray(extracted.parsed)
-              ? "array"
-              : typeof extracted.parsed) +
+          "[ai-parsed] keys=" +
+            Object.keys(parsedJson).join(",") +
             " plans=" +
             (Array.isArray(parsedJson?.trade_plan)
               ? parsedJson.trade_plan.length
@@ -19655,6 +19663,17 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      // Claude returns {"0":{...}} — convert to [{...}].
+      if (
+        parsedJson &&
+        typeof parsedJson === "object" &&
+        !Array.isArray(parsedJson)
+      ) {
+        const keys = Object.keys(parsedJson);
+        if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
+          parsedJson = Object.values(parsedJson);
+        }
+      }
       if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
       // Log raw AI response for debugging
       console.log(
@@ -19664,10 +19683,8 @@ const appHandler = async (req, res) => {
           rawResponse.slice(0, 300),
       );
       console.log(
-        "[ai-parsed] type=" +
-          (Array.isArray(extracted.parsed)
-            ? "array"
-            : typeof extracted.parsed) +
+        "[ai-parsed] keys=" +
+          Object.keys(parsedJson).join(",") +
           " plans=" +
           (Array.isArray(parsedJson?.trade_plan)
             ? parsedJson.trade_plan.length
