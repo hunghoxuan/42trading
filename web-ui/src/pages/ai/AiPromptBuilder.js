@@ -938,12 +938,19 @@ function buildStrategyContext(strategies) {
 // output field structure. Previous version only returned enums — the AI had
 // to guess field names.
 export function buildSchemaString(userSchemaJson) {
-  var base = SCHEMA_SYSTEM || {};
+  var base = SCHEMA_SYSTEM;
   var extra = {};
   try {
     if (userSchemaJson) extra = JSON.parse(userSchemaJson);
   } catch (_) {}
   if (typeof extra !== "object" || !extra) extra = {};
+  // Keep array as array — Object.assign({}, arr) turns [{...}] into {"0":{...}}
+  if (Array.isArray(base)) {
+    if (Object.keys(extra).length) {
+      return JSON.stringify([...base, extra], null, 2);
+    }
+    return JSON.stringify(base, null, 2);
+  }
   var merged = Object.assign({}, base);
   if (Object.keys(extra).length) merged.extra = extra;
   return JSON.stringify(merged, null, 2);

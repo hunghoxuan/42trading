@@ -18689,9 +18689,12 @@ const appHandler = async (req, res) => {
         parsed = {},
         fallbackSymbol = "",
       ) => {
-        const plans = Array.isArray(parsed?.trade_plan)
-          ? parsed.trade_plan
-          : [];
+        const plans = [];
+        if (Array.isArray(parsed?.trade_plan)) {
+          plans.push(...parsed.trade_plan);
+        } else if (parsed?.execution_plan || parsed?.direction) {
+          plans.push(parsed);
+        }
         const out = [];
         for (const plan of plans) {
           const ep = plan?.execution_plan;
@@ -19173,20 +19176,11 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
-        // Store exact AI response.
-        // Claude returns {"0":{...}} — convert to [{...}].
-        if (
-          parsedJson &&
-          typeof parsedJson === "object" &&
-          !Array.isArray(parsedJson)
-        ) {
-          const keys = Object.keys(parsedJson);
-          if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
-            parsedJson = Object.values(parsedJson);
-          }
+        // AI returns [{trade_plan}]. Take first element as the plan.
+        if (Array.isArray(parsedJson) && parsedJson.length > 0) {
+          parsedJson = parsedJson[0];
         }
-        if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-        // Log raw AI response for debugging
+        // Log raw AI response
         console.log(
           "[ai-raw] len=" +
             rawResponse.length +
@@ -19195,11 +19189,9 @@ const appHandler = async (req, res) => {
         );
         console.log(
           "[ai-parsed] keys=" +
-            Object.keys(parsedJson).join(",") +
-            " plans=" +
-            (Array.isArray(parsedJson?.trade_plan)
-              ? parsedJson.trade_plan.length
-              : 0),
+            (parsedJson && typeof parsedJson === "object"
+              ? Object.keys(parsedJson).slice(0, 10).join(",")
+              : "?"),
         );
         const autoSaveResult = await autoSaveAnalyzeResult({
           mode: autoSave,
@@ -19664,19 +19656,11 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
-      // Claude returns {"0":{...}} — convert to [{...}].
-      if (
-        parsedJson &&
-        typeof parsedJson === "object" &&
-        !Array.isArray(parsedJson)
-      ) {
-        const keys = Object.keys(parsedJson);
-        if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
-          parsedJson = Object.values(parsedJson);
-        }
+      // AI returns [{trade_plan}]. Take first element as the plan.
+      if (Array.isArray(parsedJson) && parsedJson.length > 0) {
+        parsedJson = parsedJson[0];
       }
-      if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
-      // Log raw AI response for debugging
+      // Log raw AI response
       console.log(
         "[ai-raw] len=" +
           rawResponse.length +
@@ -19685,11 +19669,9 @@ const appHandler = async (req, res) => {
       );
       console.log(
         "[ai-parsed] keys=" +
-          Object.keys(parsedJson).join(",") +
-          " plans=" +
-          (Array.isArray(parsedJson?.trade_plan)
-            ? parsedJson.trade_plan.length
-            : 0),
+          (parsedJson && typeof parsedJson === "object"
+            ? Object.keys(parsedJson).slice(0, 10).join(",")
+            : "?"),
       );
       const autoSaveResult = await autoSaveAnalyzeResult({
         mode: autoSave,
