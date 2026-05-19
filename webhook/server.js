@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 18:38 - ca616aa6"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.19 18:38 - ca616aa6",
+); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -7411,8 +7414,12 @@ async function _mt5InitBackendInternal() {
     baseRaw,
     fallbackPrefix = "ID",
   ) {
-    // Standardize all system-wide identification to 9-character, prefix-free SIDs.
-    // We ignore suggested bases and prefixes to ensure total consistency.
+    // Use preferred SID if it's a valid 9-char base36 string (e.g., from analyze session).
+    const preferred =
+      baseRaw && typeof baseRaw === "string" && baseRaw.length === 9
+        ? baseRaw
+        : null;
+    if (preferred) return preferred;
     return mt5GenerateTimeSid();
   }
 
@@ -7715,7 +7722,7 @@ async function _mt5InitBackendInternal() {
         const sids = [];
         for (const row of accounts.rows || []) {
           const aid = row.account_id;
-          const tradeSid = await allocateUniqueSid(client, "trades");
+          const tradeSid = await allocateUniqueSid(client, "trades", signalId);
           const ins = await client.query(
             `
             INSERT INTO trades (
@@ -18858,8 +18865,7 @@ const appHandler = async (req, res) => {
           }
           const pick = picks[0];
           const plan = pick.plan || {};
-          const tradePlanRawJson =
-            plan && typeof plan === "object" ? { ...plan } : {};
+          const tradePlanRawJson = { ...sharedRawJson };
           const action = normalizeDirectionToAction(plan?.direction);
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({
@@ -18891,12 +18897,13 @@ const appHandler = async (req, res) => {
             note: String(
               plan?.note || parsedJson?.final_verdict?.note || "",
             ).trim(),
-            sid: normalizePublicSidBase(`${symbol}_AI`, "TRD"),
+            sid: sessionId,
             session_prefix: reqSessionPrefix || null,
             metadata: {
               event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
               order_type: String(plan?.type || "limit"),
               session_prefix: reqSessionPrefix || null,
+              analyze_session_id: sessionId,
               raw_json: tradePlanRawJson,
             },
           });
@@ -18920,7 +18927,7 @@ const appHandler = async (req, res) => {
       };
       ensureChartSnapshotDir();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      const sessionId = `ai_analyze_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      const sessionId = mt5GenerateTimeSid();
       await (
         await mt5Backend()
       ).log(sessionId, "ai", { event: "AI_ANALYSIS", payload: body }, userId);
