@@ -3,6 +3,7 @@
 ## Completed
 - [x] [2026-04-16 11:30] [Reliability] [Author: Hung] Task: Implement "Deadlock Breaker" (Stale Lock Recovery) in Postgres backend for signals locked > 5 mins.
 - [x] [2026-04-16 12:45] [Reliability] [Author: Hung] Task: Update EA status mapping (START/SUBMITTED) and increase timezone drift tolerance to 2 hours.
+- [x] [2026-05-19 09:30] [Refactor] [Author: DeepSeek] Task: Drop signals table, remove signals UI/routes, add Draft status, +Signal saves Draft trade — see `2026-05-19-drop-signals-add-draft-status.md`
 - [x] [2026-04-27 15:30] [Web-UI/Architecture] [Author: Antigravity] Task: Restore Signal Detail header density, fix Master-Detail data sync bugs, and implement mandatory Session Worklog protocol.
 
 ## High Priority (`P0` / `P1`)
@@ -30,6 +31,9 @@
 - [ ] [2026-05-17 17:15] [Trades/DB/Web-UI/Bridge/Sync] [Author: User] Feature: Multi-TP lifecycle support with `tp1/tp2/tp3` in trades table, TradePlan Editor fields, ordered TP context-menu assignment, and bridge partial-close PnL/sync semantics. Spec: `1-backlog/2026-05-17-multi-tp-trade-lifecycle.md`.
 - [ ] [2026-05-17 18:55] [Trades/DB/Web-UI/Bridge/Sync] [Author: Codex] Hotfix: Multi-TP hardening Phase-1B to fix `brokerSyncV2` runtime scope error (`hasPartial`), complete validation matrix, and redeploy with clean health/log evidence. Spec: `1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md`.
 - [ ] [2026-05-17 20:10] [Web-UI/AI/TradePlan] [Author: Codex] Hotfix: Harden trade-plan extraction to prioritize canonical `__raw_plan` over conflicting flattened fields, preserve `tp1/tp2/tp3` mapping, and keep direction/checklist metadata consistent. Spec: `1-backlog/2026-05-17-ai-trade-plan-mapping-regression-direction-tp.md`.
+- [ ] [2026-05-19 06:44] [Trades/Bridge/cTrader/P0] [Author: User] Hotfix: Investigate BTCUSD sell TP mismatch where VPS TP was reported around `76271.9` but cTrader closed at `77315.00` under FIFO. Spec: `1-backlog/2026-05-19-btcusd-ctrader-tp-mismatch-auto-close.md`.
+- [ ] [2026-05-19 10:43] [Web-UI/AI/Navigation] [Author: User] Update Feature: split Analyze/Trade back actions into explicit dual buttons and enforce Buy/Sell click setting both direction + entry. Spec: `1-backlog/plan-update-feature-ai-analyze-trade-nav-and-quick-direction.md`.
+- [ ] [2026-05-19 10:43] [Web-UI/Charting/Backend] [Author: User] Extend Feature: fix editor overlap, add RR sliders, fix static chart button wiring, auto snapshot on trade close, and persist chart objects in trade metadata. Spec: `1-backlog/plan-extend-feature-trade-ui-static-chart-close-snapshot-and-objects.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.

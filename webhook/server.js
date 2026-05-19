@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 09:21 - 81bf521e"); // AI nav buttons + TradePlan RR sliders + static chart wiring + close snapshot + chart objects API
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.19 09:58 - 81bf521e",
+); // drop signals table + Draft status + POLL exclusion + promote route
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -6617,6 +6620,8 @@ async function _mt5InitBackendInternal() {
       status TEXT NOT NULL DEFAULT 'NEW'
     );
 
+    DROP TABLE IF EXISTS signals CASCADE;
+
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
@@ -7086,7 +7091,7 @@ async function _mt5InitBackendInternal() {
       `
     ALTER TABLE trades
     ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
+    CHECK (execution_status = ANY (ARRAY['Draft','PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
   `,
     )
     .catch(() => {});
@@ -7596,6 +7601,7 @@ async function _mt5InitBackendInternal() {
             (execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
             OR (dispatch_status = 'NEW' AND execution_status = 'PENDING')
           )
+          AND execution_status <> 'Draft'
           AND (account_id = $1::TEXT OR account_id IS NULL OR account_id = '')
           ORDER BY
             CASE WHEN dispatch_status = 'NEW' THEN 1 ELSE 2 END ASC,
@@ -7713,7 +7719,7 @@ async function _mt5InitBackendInternal() {
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, estimated_bars, be_trigger,
               rr_planned, risk_money_planned, risk_pct_planned
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'NEW','PENDING',$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'NEW',$30::text,$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
           `,
             [
               tradeSid,
@@ -7763,6 +7769,7 @@ async function _mt5InitBackendInternal() {
               payload.rr_planned || null,
               payload.risk_money_planned || null,
               payload.risk_pct_planned || null,
+              payload.execution_status || "PENDING",
             ],
           );
           if ((ins.rowCount || 0) > 0) {
@@ -7809,6 +7816,7 @@ async function _mt5InitBackendInternal() {
           `
           SELECT * FROM trades
           WHERE account_id = $1
+            AND execution_status <> 'Draft'
             AND (
               execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL')
               OR dispatch_status = 'NEW'
@@ -15658,10 +15666,7 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (
-    req.method === "GET" &&
-    (url.pathname === "/v2/signals" || url.pathname === "/mt5/trades/search")
-  ) {
+  if (req.method === "GET" && url.pathname === "/mt5/trades/search") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!requireAdminKey(req, res, url)) return;
@@ -15692,7 +15697,7 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/signals/create") {
+  if (false && req.method === "POST" && url.pathname === "/v2/signals/create") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     const sess = getUiSessionFromReq(req);
@@ -15901,6 +15906,7 @@ const appHandler = async (req, res) => {
         sid: tradeSidBase,
         trade_sid: tradeSidBase,
         session_prefix: sessionPrefix || null,
+        execution_status: payload.execution_status || undefined,
         metadata: {
           event_type: "UI_CREATE_TRADE_DIRECT",
           order_type: payload.order_type || "limit",
@@ -21098,6 +21104,7 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    false &&
     req.method === "POST" &&
     /^\/v2\/signals\/[^/]+\/trade-plan\/save$/.test(url.pathname)
   ) {
@@ -21245,6 +21252,7 @@ const appHandler = async (req, res) => {
   }
 
   if (
+    false &&
     req.method === "POST" &&
     /^\/v2\/signals\/[^/]+\/trade$/.test(url.pathname)
   ) {
@@ -21585,6 +21593,69 @@ const appHandler = async (req, res) => {
         tradeId,
         "trades",
         { event_type: "TRADE_PLAN_SAVED", data: metaPatch },
+        row.user_id || userId || CFG.mt5DefaultUserId,
+      );
+      return json(res, 200, { ok: true, item: row });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Promote Draft trade to PENDING ---
+
+  if (
+    req.method === "POST" &&
+    /^\/v2\/trades\/[^/]+\/promote$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    let payload = {};
+    try {
+      payload = await readJson(req);
+    } catch {}
+    if (!requireAdminKey(req, res, url, payload)) return;
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/promote$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      if (!tradeRef)
+        return json(res, 400, {
+          ok: false,
+          error: "sid (trade_id) is required",
+        });
+      const userId = uiEffectiveUserId(req, url, payload);
+      const resolvedTrade = await mt5ResolveTradeRefV2(
+        tradeRef,
+        userId || null,
+      );
+      if (!resolvedTrade?.sid)
+        return json(res, 404, { ok: false, error: "trade not found" });
+      if (resolvedTrade.execution_status !== "Draft")
+        return json(res, 400, {
+          ok: false,
+          error: "Only Draft trades can be promoted",
+        });
+      const b = await mt5Backend();
+      const whereUser = userId ? "AND user_id = $2" : "";
+      const resUpd = await b.query(
+        `
+        UPDATE trades
+        SET execution_status = 'PENDING',
+            updated_at = NOW()
+        WHERE sid = $1
+        ${whereUser}
+        RETURNING *
+      `,
+        [resolvedTrade.sid],
+      );
+      const row = resUpd.rows?.[0];
+      if (!row) return json(res, 404, { ok: false, error: "trade not found" });
+      await mt5Log(
+        resolvedTrade.sid,
+        "trades",
+        { event_type: "TRADE_PROMOTED", from: "Draft", to: "PENDING" },
         row.user_id || userId || CFG.mt5DefaultUserId,
       );
       return json(res, 200, { ok: true, item: row });

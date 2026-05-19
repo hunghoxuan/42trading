@@ -26,6 +26,7 @@ Read in this order:
 - Script/test creation: `.agents/rules/scripting.md`
 - Memory/wiki cleanup: `.agents/rules/memory-governance.md`
 - Feature/ticket audit: `.agents/.product/tickets/feature_tracker.md`
+- Master workflow routing: `.agents/skills/unified-task-router.md`, `.agents/skills/add-Ticket.md`
 - Old session details: `.agents/worklog.md`
 
 ## Core Law

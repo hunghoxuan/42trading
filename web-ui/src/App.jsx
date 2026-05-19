@@ -8,8 +8,6 @@ import {
 } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
 const ChartSnapshotsPage = lazy(() => import("./pages/ai/ChartSnapshotsPage"));
-const SignalsPage = lazy(() => import("./pages/signals/SignalsPage"));
-const SignalDetailPage = lazy(() => import("./pages/signals/SignalDetailPage"));
 const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
 const LogsPage = lazy(() => import("./pages/system/LogsPage"));
@@ -201,12 +199,6 @@ export default function App() {
           >
             AI
           </NavLink>
-          <NavLink
-            to="/signals"
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            Signals
-          </NavLink>
           <div className="nav-dropdown">
             <NavLink
               to="/trades"
@@ -346,8 +338,6 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/signals" element={<SignalsPage />} />
-            <Route path="/signals/:signalId" element={<SignalsPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/trades/:tradeId" element={<TradesPage />} />
             <Route path="/ai" element={<Navigate to="/ai/analyze" replace />} />

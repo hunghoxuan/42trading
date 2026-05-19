@@ -23,3 +23,4 @@ Hard rules:
 - Multi-agent merge rule: before deploy, pull latest `origin/main` and merge/rebase commits from other agents, then push your final merged state, then deploy.
 - Multi-agent deploy lock + SOP rule: follow `.agents/rules/deploy.md` "Multi-Agent Commit/Merge/Deploy SOP (Mandatory, No Exceptions)".
 - Always deploy without waiting once required checks are complete.
+- Default routing rule: when user does not name a skill, use `.agents/skills/unified-task-router.md` to auto-detect intent and route workflow/ticketing/deploy/handoff.

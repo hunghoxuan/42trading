@@ -129,7 +129,7 @@ export function AdvancedOrderPanel({
       const { promise: signalPromise } = NotificationHub.track(
         "create_signal",
         { symbol: payload.symbol },
-        () => api.createSignal(payload),
+        () => api.createDraftTrade(payload),
       );
       const res = await signalPromise;
       if (res.ok) {

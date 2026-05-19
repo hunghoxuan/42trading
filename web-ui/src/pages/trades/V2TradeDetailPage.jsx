@@ -246,9 +246,14 @@ export default function TradeDetailPage() {
       String(trade?.execution_status || "").toUpperCase(),
     );
   }, [trade?.execution_status]);
+  const isDraft = useMemo(() => {
+    return String(trade?.execution_status || "").toUpperCase() === "DRAFT";
+  }, [trade?.execution_status]);
   const mergedRawJson = useMemo(() => {
     const rowRaw =
-      trade?.raw_json && typeof trade.raw_json === "object" ? trade.raw_json : {};
+      trade?.raw_json && typeof trade.raw_json === "object"
+        ? trade.raw_json
+        : {};
     const metaRaw =
       trade?.metadata?.raw_json && typeof trade.metadata.raw_json === "object"
         ? trade.metadata.raw_json
@@ -398,6 +403,26 @@ export default function TradeDetailPage() {
           </button>
         </div>
       )}
+      {trade.execution_status === "Draft" && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ background: "#4caf50", borderColor: "#4caf50" }}
+            onClick={async () => {
+              if (!confirm("Promote this draft to a live trade?")) return;
+              try {
+                await api.promoteDraftTrade(trade.sid || trade.id);
+                window.location.reload();
+              } catch (e) {
+                setError(e?.message || "Promote failed");
+              }
+            }}
+          >
+            + Trade
+          </button>
+        </div>
+      )}
       {trade.execution_status === "FILLED" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
@@ -444,7 +469,7 @@ export default function TradeDetailPage() {
               onChange: (k, v) => applyPlanChange(k, v),
               onSave: onUpdateTradePlan,
               onAddTrade: onReEntryTrade,
-              showAddSignalButton: false,
+              showSaveDraftButton: false,
               showSaveButton: !isTerminal,
               viewOnly: isTerminal,
               lockTradeFields: isLocked,

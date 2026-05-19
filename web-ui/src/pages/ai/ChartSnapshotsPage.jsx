@@ -4080,7 +4080,7 @@ export default function ChartSnapshotsPage() {
                 finalPayload?.symbol || activePosition?.symbol || "",
               ),
             },
-            () => api.createSignal(finalPayload),
+            () => api.createDraftTrade(finalPayload),
           );
           const out = await signalPromise;
           if (out && typeof out === "object") lastCreated = out;

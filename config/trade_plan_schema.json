@@ -1,0 +1,57 @@
+{
+  "symbol": "",
+  "direction": "BUY|SELL",
+  "order_type": "Limit|Stop Limit|Market",
+  "profile": "Position|Swing|Intraday|Scalp",
+  "timeframe": "",
+  "session": "Asian|London|NewYork|Overlap",
+  "strategy": "ICT|Price Action|Market Structure|Wyckoff|EMA Trend|Breakout|VWAP",
+  "entry_model": "",
+  "entry_checklists": {
+    "HTF_Liquidy_Swept": true,
+    "HTF_POI": true,
+    "MSS_Shift": true,
+    "CHoCH": true,
+    "BOS": true,
+    "OB_Reversal": true,
+    "FVG_InDiscount": true,
+    "IDM_Internal_Liquidity": true,
+    "Consolidation_range": true,
+    "Retest_to_original_consolidation": true
+  },
+  "entry_price": null,
+  "stop_loss": null,
+  "risk_reward": null,
+  "breakeven_trigger": null,
+  "multiple_exits": {
+    "tp1": {
+      "price": null,
+      "risk_reward": null,
+      "position_pct": 50,
+      "reference": ""
+    },
+    "tp2": {
+      "price": null,
+      "risk_reward": null,
+      "position_pct": 30,
+      "reference": ""
+    },
+    "tp3": {
+      "price": null,
+      "risk_reward": null,
+      "position_pct": 20,
+      "reference": ""
+    }
+  },
+  "risk_management": {
+    "grade": "A|B|C|NoTrade",
+    "risk_percent": null,
+    "confidence_pct": 0,
+    "estimate_mins_that_entry_happens": null,
+    "skip_decision": "Proceed|Low_Vol|Skip",
+    "skip_reasons": "",
+    "entry_trigger": "",
+    "mid_trade_invalidation": "",
+    "pre_entry_invalidation": ""
+  }
+}

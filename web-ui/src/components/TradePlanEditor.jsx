@@ -281,18 +281,18 @@ export function TradePlanEditor({
   value = {},
   onChange,
   onSave,
-  onAddSignal,
+  onSaveDraft,
   onAddTrade,
   onReset,
   onCancel,
   onClose,
   showSaveButton,
-  showAddSignalButton,
+  showSaveDraftButton,
   showAddTradeButton,
   showResetButton = true,
   resetLabel = "Reset",
   saveLabel,
-  addSignalLabel = "+ Signal",
+  saveDraftLabel = "Save Draft",
   addTradeLabel = "+ Trade",
   busy = {},
   disabled = false,
@@ -307,20 +307,20 @@ export function TradePlanEditor({
     typeof showSaveButton === "boolean"
       ? showSaveButton
       : Boolean(signalId || tradeId);
-  const effectiveShowAddSignal =
-    typeof showAddSignalButton === "boolean"
-      ? showAddSignalButton
+  const effectiveShowSaveDraft =
+    typeof showSaveDraftButton === "boolean"
+      ? showSaveDraftButton
       : !signalId && !tradeId;
   const effectiveShowAddTrade =
     typeof showAddTradeButton === "boolean"
       ? showAddTradeButton
       : Boolean(signalId || (!signalId && !tradeId));
   const resolvedSaveLabel =
-    saveLabel || (tradeId ? "Save Trade" : "Save Signal");
+    saveLabel || (tradeId ? "Save Trade" : "Save Draft");
 
   const tradeFieldsDisabled = disabled || Boolean(lockTradeFields);
   const controlsDisabled =
-    disabled || Boolean(busy?.save || busy?.signal || busy?.trade);
+    disabled || Boolean(busy?.save || busy?.draft || busy?.trade);
   const directionOptions = useMemo(() => ["BUY", "SELL"], []);
 
   const update = useCallback(
@@ -463,16 +463,16 @@ export function TradePlanEditor({
                 marginTop: 10,
               }}
             >
-              {effectiveShowAddSignal && (
+              {effectiveShowSaveDraft && (
                 <button
-                  className={`secondary-button ${busy?.signal ? "btn-busy" : ""}`}
+                  className={`secondary-button ${busy?.draft ? "btn-busy" : ""}`}
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onAddSignal?.(value);
+                    onSaveDraft?.(value);
                   }}
                   disabled={
-                    controlsDisabled || typeof onAddSignal !== "function"
+                    controlsDisabled || typeof onSaveDraft !== "function"
                   }
                   style={{
                     height: "24px",
@@ -480,13 +480,13 @@ export function TradePlanEditor({
                     padding: "0 10px",
                   }}
                 >
-                  {busy?.signal ? (
+                  {busy?.draft ? (
                     <div
                       className="spinner"
                       style={{ width: 12, height: 12 }}
                     />
                   ) : (
-                    addSignalLabel
+                    saveDraftLabel
                   )}
                 </button>
               )}
@@ -846,13 +846,13 @@ export function TradePlanEditor({
                   Close
                 </button>
               ) : null}
-              {effectiveShowAddSignal ? (
+              {effectiveShowSaveDraft ? (
                 <button
-                  className={`secondary-button ${busy?.signal ? "btn-busy" : ""}`}
+                  className={`secondary-button ${busy?.draft ? "btn-busy" : ""}`}
                   type="button"
-                  onClick={() => onAddSignal?.(value)}
+                  onClick={() => onSaveDraft?.(value)}
                   disabled={
-                    controlsDisabled || typeof onAddSignal !== "function"
+                    controlsDisabled || typeof onSaveDraft !== "function"
                   }
                   style={{
                     height: "26px",
@@ -861,13 +861,13 @@ export function TradePlanEditor({
                     borderRadius: "4px",
                   }}
                 >
-                  {busy?.signal ? (
+                  {busy?.draft ? (
                     <div
                       className="spinner"
                       style={{ width: 12, height: 12 }}
                     />
                   ) : (
-                    addSignalLabel
+                    saveDraftLabel
                   )}
                 </button>
               ) : null}
