@@ -19153,6 +19153,7 @@ const appHandler = async (req, res) => {
           extracted.parsed && typeof extracted.parsed === "object"
             ? extracted.parsed
             : {};
+        if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
         const canonicalParsedJson = cloneJsonForStorage(parsedJson);
         parsedJson = normalizeAiAnalysisContract(parsedJson);
         parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);
@@ -19648,6 +19649,7 @@ const appHandler = async (req, res) => {
         extracted.parsed && typeof extracted.parsed === "object"
           ? extracted.parsed
           : {};
+      if (Array.isArray(parsedJson)) parsedJson = { trade_plan: parsedJson };
       const canonicalParsedJson = cloneJsonForStorage(parsedJson);
       parsedJson = normalizeAiAnalysisContract(parsedJson);
       parsedJson = attachCanonicalAiRaw(parsedJson, canonicalParsedJson);

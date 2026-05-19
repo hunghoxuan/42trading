@@ -8,6 +8,9 @@
   - tests/checks
   - deploy status
   - build versions if changed
+  - all AI-made changes not explicitly in user spec/requirements
+  - tradeoffs AI considered
+  - anything user should be aware of
 - Use `.agents/sync/MAILBOX.md` only for agent-to-agent relay.
 - Keep sprint ownership markers. Do not steal `[DOING: other-agent]` work.
 - Put durable lessons in `.agents/wiki/`.
@@ -18,6 +21,7 @@
   - non-goals
   - checks/tests
   - output/report format
+  - assumptions/decisions not in spec + their tradeoff/risk
 - Mirror the same detailed delegation prompt at end of user-facing chat so user can copy-paste to other agent.
 - **On ticket finish**: update MAILBOX handoff section (status → DONE, add next agent relay), and include a copy-paste prompt in chat instructing the next agent what to do (read ticket, run checks, deploy, etc).
 

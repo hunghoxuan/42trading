@@ -250,9 +250,25 @@ function firstTradePlan(raw = {}) {
     if (!src || typeof src !== "object") continue;
     if (src?.__raw_plan && typeof src.__raw_plan === "object")
       return src.__raw_plan;
-    // Prefer root-level trade_plan (new path) over legacy analysis_data[].trade_plan
+    // New AI format: bare array of trade plans [{...}]
+    if (
+      Array.isArray(src) &&
+      src.length > 0 &&
+      !src.trade_plan &&
+      !src.analysis_data
+    ) {
+      const first = src[0];
+      if (
+        first &&
+        typeof first === "object" &&
+        (first.direction || first.entry_price || first.entry)
+      )
+        return first;
+    }
+    // Root-level trade_plan key (new path)
     if (Array.isArray(src?.trade_plan) && src.trade_plan.length)
       return src.trade_plan[0] || {};
+    // Legacy analysis_data[].trade_plan path
     if (Array.isArray(src?.analysis_data) && src.analysis_data.length) {
       for (const entry of src.analysis_data) {
         if (Array.isArray(entry?.trade_plan) && entry.trade_plan.length) {
