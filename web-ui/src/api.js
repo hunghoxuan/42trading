@@ -764,7 +764,7 @@ export const api = {
       if (v !== undefined && v !== null && String(v) !== "")
         q.set(k, String(v));
     });
-    return get(`/v2/signals?${q.toString()}`);
+    return get(`/v2/trades?${q.toString()}`);
   },
   trade: (signalId) => get(`/mt5/trades/${encodeURIComponent(signalId)}`),
   createTrade: (payload = {}) => post("/v2/trades/create", payload),
