@@ -149,8 +149,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 07:03 - 7df24d20",
-); // health self-check: root must serve HTML (UI), not JSON
+  "v2026.05.19 07:12 - 2a8dc21e",
+); // health self-check: accepts HTML, redirect, or text/html content-type
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -14960,11 +14960,16 @@ const appHandler = async (req, res) => {
         method: "GET",
         signal: ctrl.signal,
         headers: { Host: "localhost" },
+        redirect: "manual",
       });
       clearTimeout(timer);
       const selfText = await selfRes.text();
-      // HTML starts with <, JSON starts with {
-      uiRootOk = selfText.trim().startsWith("<");
+      const ct = String(selfRes.headers.get("content-type") || "");
+      // OK if HTML or redirect (30x); NOT ok if JSON
+      uiRootOk =
+        selfText.trim().startsWith("<") ||
+        (selfRes.status >= 300 && selfRes.status < 400) ||
+        ct.includes("text/html");
     } catch {}
     const overallOk = postgresOk && (redisOk || !CFG.redisEnabled) && uiRootOk;
     return json(res, 200, {
