@@ -6149,38 +6149,53 @@ export default function ChartSnapshotsPage() {
                       flexWrap: "wrap",
                     }}
                   >
-                    {!isTradeRoute ? (
-                      <button
-                        className="secondary-button"
-                        type="button"
-                        onClick={() => {
-                          const sym =
-                            paramSymbol || cfg.symbol || selectedSymbol || "";
-                          if (sym) handleChartTrade({ symbol: sym });
-                        }}
-                        disabled={analyzing || !selectedSymbol}
-                        style={{
-                          height: 34,
-                          padding: "0 16px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Trade
-                      </button>
-                    ) : null}
                     <button
-                      className="primary-button"
+                      className="secondary-button"
                       type="button"
-                      disabled={analyzing}
-                      onClick={() => analyzeSelected({ allowNoSymbol: true })}
+                      onClick={() => navigate("/trades")}
                       style={{
                         height: 34,
                         padding: "0 16px",
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {analyzing ? "Analyzing..." : "Analyze"}
+                      {"< List"}
                     </button>
+                    {isAnalyzeRoute && (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={analyzing || !selectedSymbol}
+                        onClick={() => analyzeSelected({ allowNoSymbol: true })}
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {analyzing ? "Analyzing..." : "Analyze"}
+                      </button>
+                    )}
+                    {isTradeRoute && (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => {
+                          const sym =
+                            paramSymbol || cfg.symbol || selectedSymbol || "";
+                          navigate(
+                            `/ai/analyze/${encodeURIComponent(sym || "")}`,
+                          );
+                        }}
+                        style={{
+                          height: 34,
+                          padding: "0 16px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Analyze
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -6395,7 +6410,7 @@ export default function ChartSnapshotsPage() {
                     onAnalyze={() => analyzeSelected()}
                     onTrade={handleChartTrade}
                     showAnalyzeButton={isAnalyzeRoute}
-                    showTradeButton={isAnalyzeRoute}
+                    showTradeButton={false}
                     showEditButton={!isTradeRoute}
                     onRemove={null}
                   />
@@ -6411,7 +6426,7 @@ export default function ChartSnapshotsPage() {
           >
             <SignalDetailCard
               mode="ai"
-              hideTabsBeforeResponse={!(isTradeRoute || hasAnalyzeResponse)}
+              hideTabsBeforeResponse={!hasAnalyzeResponse}
               chart={{
                 enabled: true,
                 symbol: normalizeSignalSymbol(
@@ -6527,7 +6542,7 @@ export default function ChartSnapshotsPage() {
               }}
               response={{
                 enabled: true,
-                hasData: hasAnalyzeResponse || isTradeRoute,
+                hasData: hasAnalyzeResponse,
                 pending: analyzing,
                 pendingText:
                   hasAnalyzeResponse || isTradeRoute
