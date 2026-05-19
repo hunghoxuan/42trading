@@ -5,7 +5,7 @@
 - Ticket Status: `Done`
 - Owner: `DeepSeek`
 - Updated: `2026-05-19 10:15 UTC`
-- Commit: `PENDING`
+- Commit: `eb328458`
 
 ## Summary
 Delete `config/ai_response_schema.json`. Build AI response schema dynamically from `config/trade_plan_schema.json` using `json_encode`. Change `trade_plan` access path from `root.analysis_data[0].trade_plan[0]` to `root.trade_plan[0]` (same level as `analysis_data`).

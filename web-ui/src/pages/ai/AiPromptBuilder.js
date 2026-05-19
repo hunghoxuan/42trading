@@ -1,4 +1,4 @@
-import AI_SCHEMA_SPEC from "../../../../config/ai_response_schema.json";
+import TRADE_PLAN_SCHEMA from "../../../../config/trade_plan_schema.json";
 import GUIDE_SYSTEM from "../../../../config/guide_system.md?raw";
 import SCHEMA_ENUMS from "../../../../config/schema_enums.json";
 import RESPONSE_MAPPING from "../../../../config/response_mapping.json";
@@ -849,13 +849,105 @@ export const DEFAULT_CONFIG = {
 //       JSON.stringify strips them — the AI receives clean JSON.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AI_RESPONSE_SCHEMA_VERSION = String(
-  AI_SCHEMA_SPEC.version || "2.3",
-);
-export const AI_RESPONSE_SCHEMA =
-  AI_SCHEMA_SPEC?.schema && typeof AI_SCHEMA_SPEC.schema === "object"
-    ? AI_SCHEMA_SPEC.schema
-    : AI_SCHEMA_SPEC || {};
+export const AI_RESPONSE_SCHEMA_VERSION = "3.0";
+export const AI_RESPONSE_SCHEMA = (() => {
+  try {
+    return {
+      analysis_data: [
+        {
+          symbol: "",
+          multi_timeframes_analysis: {
+            htf_context: [
+              {
+                timeframe: "D|4H|W",
+                trend: "Bullish|Bearish|Ranging",
+                bias: "Long|Short|Neutral",
+                phase:
+                  "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
+                market_structure: [
+                  {
+                    step: 1,
+                    action: "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
+                    price: null,
+                    price_target: null,
+                    required_condition: "",
+                  },
+                ],
+              },
+            ],
+            ltf_analysis: [
+              {
+                timeframe: "15m|5m|1m",
+                trend: "Bullish|Bearish|Ranging",
+                structure: "BOS|CHoCH|MSB|Continuation|Ranging",
+                phase:
+                  "Trending|Retracement|Reversal|Consolidation|Breakout|Breakdown|Distribution|Accumulation",
+                bias: "Long|Short|Neutral",
+                market_structure: [
+                  {
+                    step: 1,
+                    action: "Retrace|Continue|Sweep|Reverse|Break|Consolidate",
+                    price: null,
+                    price_target: null,
+                    required_condition: "",
+                  },
+                ],
+              },
+            ],
+            draw_on_liquidity: {
+              narrative: "",
+              timeframe: "1m|5m|15m|1H|4H|D",
+              target_price: null,
+              target_type: "BSL|SSL|FVG|OB|Void|PDH|PDL|EQH|EQL|WeeklyOpen",
+            },
+            events_patterns: [
+              {
+                event:
+                  "BOS|CHoCH|MSB|Sweep|Breakout|Rejection|Engulfing|PinBar|Doji|EQH|EQL|BSL|SSL",
+                price: null,
+                time: null,
+                timeframe: "1m|5m|15m|1H|4H|D",
+                direction: "Bullish|Bearish|Neutral",
+                volume: "Low|Medium|High",
+              },
+            ],
+            pd_arrays_key_levels: [
+              {
+                timeframe: "1m|5m|15m|1H|4H|D",
+                type: "OB|FVG|Breaker|Void|BSL|SSL|PDH|PDL|EQH|EQL|WeeklyOpen|DailyOpen|MidnightOpen|Support|Resistance|Fibonacci",
+                direction: "Bullish|Bearish",
+                price: null,
+                time: null,
+                status: "Fresh|Tested|Mitigated|Broken",
+                relevance: "TP_Target|Entry_Boundary|DOL|Invalidation",
+              },
+            ],
+            confluence_checklist: {
+              confluence_score: 0,
+              buy: {
+                weighted_score: 0,
+                high_weight_passed: 0,
+                high_weight_total: 0,
+                passed_items: [],
+                failed_critical: [],
+              },
+              sell: {
+                weighted_score: 0,
+                high_weight_passed: 0,
+                high_weight_total: 0,
+                passed_items: [],
+                failed_critical: [],
+              },
+            },
+          },
+        },
+      ],
+      trade_plan: [TRADE_PLAN_SCHEMA],
+    };
+  } catch (e) {
+    return { analysis_data: [], trade_plan: [] };
+  }
+})();
 export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
 export const SCHEMA_USER_DEFAULT = "{}";
 export const GUIDE_USER_DEFAULT = "";
