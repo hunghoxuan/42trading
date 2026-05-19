@@ -6149,23 +6149,11 @@ export default function ChartSnapshotsPage() {
                       flexWrap: "wrap",
                     }}
                   >
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={() => navigate("/trades")}
-                      style={{
-                        height: 34,
-                        padding: "0 16px",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {"< List"}
-                    </button>
                     {isAnalyzeRoute && (
                       <button
                         className="primary-button"
                         type="button"
-                        disabled={analyzing || !selectedSymbol}
+                        disabled={analyzing}
                         onClick={() => analyzeSelected({ allowNoSymbol: true })}
                         style={{
                           height: 34,
