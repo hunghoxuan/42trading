@@ -922,7 +922,6 @@ export default function SignalDetailCard({
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length) tabs.push("info");
     if (mode === "trade") tabs.push("broker");
-    if (mode === "trade") tabs.push("aiResponse");
     if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
@@ -1655,6 +1654,9 @@ export default function SignalDetailCard({
                   entryPrice={chart?.entryPrice}
                   slPrice={chart?.slPrice}
                   tpPrice={chart?.tpPrice}
+                  tp1Price={chart?.tp1Price}
+                  tp2Price={chart?.tp2Price}
+                  tp3Price={chart?.tp3Price}
                   showAnalyzeButton={false}
                   showTradeButton={false}
                   showEditButton={false}
@@ -2919,33 +2921,6 @@ export default function SignalDetailCard({
             attachedFiles={chart?.attachedSnapshotFiles || []}
           />
         </Suspense>
-      </div>
-
-      {/* AI RESPONSE TAB */}
-      <div style={{ display: mainTab === "aiResponse" ? "block" : "none" }}>
-        <div
-          style={{
-            padding: 16,
-            background: "rgba(0,0,0,0.3)",
-            borderRadius: 12,
-            minHeight: "400px",
-            maxHeight: "800px",
-            overflow: "auto",
-          }}
-        >
-          {(() => {
-            const hasRow =
-              responseRowRaw &&
-              typeof responseRowRaw === "object" &&
-              Object.keys(responseRowRaw).length > 0;
-            if (!hasRow) {
-              return <div className="minor-text">No AI response stored.</div>;
-            }
-            return (
-              <SmartContent content={cleanRowJson} mode="readonly" showCopy />
-            );
-          })()}
-        </div>
       </div>
 
       {/* JSON TAB */}

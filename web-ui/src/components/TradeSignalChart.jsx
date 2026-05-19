@@ -257,6 +257,9 @@ export default function TradeSignalChart({
   entryPrice = null,
   slPrice = null,
   tpPrice = null,
+  tp1Price = null,
+  tp2Price = null,
+  tp3Price = null,
   createdAt = null,
   openedAt = null,
   closedAt = null,
@@ -719,8 +722,7 @@ export default function TradeSignalChart({
                 });
               });
               if (isPrimary)
-                levelPriceMap.tp =
-                  tp1 ?? tp ?? tp2 ?? tp3 ?? levelPriceMap.tp;
+                levelPriceMap.tp = tp1 ?? tp ?? tp2 ?? tp3 ?? levelPriceMap.tp;
 
               // Entry → TP zone box: Reward zone = Green
               if (ep && tp && boxAnchorTs) {
@@ -792,6 +794,9 @@ export default function TradeSignalChart({
                 entry: entryPrice,
                 sl: slPrice,
                 tp: tpPrice,
+                tp1: tp1Price ?? tpPrice,
+                tp2: tp2Price,
+                tp3: tp3Price,
                 direction: tpPrice > entryPrice ? "BUY" : "SELL",
               };
               allPlans.push(primary);

@@ -447,6 +447,9 @@ export default function SymbolChart({
   entryPrice = null,
   tpPrice = null,
   slPrice = null,
+  tp1Price = null,
+  tp2Price = null,
+  tp3Price = null,
   createdAt = null,
   openedAt = null,
   closedAt = null,
@@ -2085,6 +2088,27 @@ export default function SymbolChart({
                             ? null
                             : overlays.plan1
                               ? tpPrice
+                              : null
+                        }
+                        tp1Price={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? tp1Price
+                              : null
+                        }
+                        tp2Price={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? tp2Price
+                              : null
+                        }
+                        tp3Price={
+                          hasTradePlan && hasAnalysis
+                            ? null
+                            : overlays.plan1
+                              ? tp3Price
                               : null
                         }
                         createdAt={createdAt}
