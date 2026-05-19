@@ -695,44 +695,26 @@ export default function TradeSignalChart({
                 });
               }
               if (isPrimary && sp) levelPriceMap.sl = sp;
-              // TP line: dotted, always GREEN
-              if (tp) {
-                const tpPct = ep ? (((tp - ep) / ep) * 100).toFixed(1) : "";
-                candleSeries.createPriceLine({
-                  price: tp,
-                  color: `rgba(38, 166, 154, ${alpha})`,
-                  lineWidth,
-                  lineStyle: 1,
-                  axisLabelVisible: true,
-                  title: `TP${pNum} +${tpPct}%`,
-                });
-                priceLinesRef.lines.push({
-                  price: tp,
-                  label: `TP${pNum}`,
-                  priceText: `${tp.toFixed(2)} (+${tpPct}%)`,
-                });
-              }
               const tpLineLevels = [
-                { key: "TP1", value: tp1 },
-                { key: "TP2", value: tp2 },
-                { key: "TP3", value: tp3 },
+                { key: "TP1", value: tp1 ?? tp, lineAlpha: alpha },
+                { key: "TP2", value: tp2, lineAlpha: alpha * 0.78 },
+                { key: "TP3", value: tp3, lineAlpha: alpha * 0.58 },
               ].filter((x) => Number.isFinite(x.value));
               tpLineLevels.forEach((lvl, idx2) => {
-                if (idx2 === 0 && tp && Number(lvl.value) === Number(tp)) return;
                 const tpPct = ep
                   ? (((Number(lvl.value) - ep) / ep) * 100).toFixed(1)
                   : "";
                 candleSeries.createPriceLine({
                   price: Number(lvl.value),
-                  color: `rgba(38, 166, 154, ${alpha})`,
+                  color: `rgba(38, 166, 154, ${Math.max(0.28, Math.min(1, lvl.lineAlpha))})`,
                   lineWidth,
                   lineStyle: 1,
                   axisLabelVisible: true,
-                  title: `${lvl.key}${pNum} +${tpPct}%`,
+                  title: `P${pNum} ${lvl.key} +${tpPct}%`,
                 });
                 priceLinesRef.lines.push({
                   price: Number(lvl.value),
-                  label: `${lvl.key}${pNum}`,
+                  label: `P${pNum} ${lvl.key}`,
                   priceText: `${Number(lvl.value).toFixed(2)} (+${tpPct}%)`,
                 });
               });

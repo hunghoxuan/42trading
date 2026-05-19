@@ -226,6 +226,12 @@ function isCurrentAiTradePlan(value) {
   );
 }
 
+function humanizeInfoKey(key) {
+  return String(key || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 function planLooksMeaningful(p = {}) {
   const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
   const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
@@ -381,13 +387,17 @@ function PlanHeader({
   const confidenceBadgeVal =
     confidenceBadgeNum != null ? `${confidenceBadgeNum.toFixed(1)}%` : "";
   const estMinsNum = parseNumLoose(
-    riskMgmt?.estimate_mins_that_entry_happens ??
+    riskMgmt?.estimated_entry_mins ??
+      riskMgmt?.estimate_mins_that_entry_happens ??
       plan?.estimate_mins_that_entry_happens,
   );
   const estMinsVal = estMinsNum != null ? `${Math.round(estMinsNum)}m` : "";
   const skipDecisionVal = String(
-    riskMgmt?.skip_decision ?? plan?.skip_decision ?? "",
+    riskMgmt?.suggested_action ?? riskMgmt?.skip_decision ?? plan?.skip_decision ?? "",
   ).trim();
+  const riskPercentNum = parseNumLoose(riskMgmt?.risk_percent ?? plan?.risk_pct);
+  const riskPercentVal =
+    riskPercentNum != null ? `${riskPercentNum.toFixed(2)}% risk` : "";
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
@@ -596,7 +606,8 @@ function PlanHeader({
           gradeVal ||
           confidenceBadgeVal ||
           estMinsVal ||
-          skipDecisionVal) && (
+          skipDecisionVal ||
+          riskPercentVal) && (
           <div
             style={{
               display: "flex",
@@ -690,6 +701,18 @@ function PlanHeader({
                 }}
               >
                 {confidenceBadgeVal}
+              </span>
+            )}
+            {riskPercentVal && (
+              <span
+                className="badge badge-mini"
+                style={{
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {riskPercentVal}
               </span>
             )}
             {estMinsVal && (
@@ -1307,6 +1330,62 @@ export default function SignalDetailCard({
     }
     return cloned;
   }, [rawData, selectedPlanIndex, selectedPlanRaw, selectedPlanSymbol]);
+  const selectedAiPlan = useMemo(() => {
+    const candidates = [
+      selectedRawData,
+      selectedPlanFromList?.__raw_plan,
+      selectedPlanFromList,
+      rawData,
+    ];
+    for (const item of candidates) {
+      if (isCurrentAiTradePlan(item)) return item;
+      if (Array.isArray(item?.trade_plan)) {
+        const match =
+          item.trade_plan[selectedPlanIndex] ||
+          item.trade_plan.find((p) => {
+            const sym = String(p?.symbol || "").trim().toUpperCase();
+            return selectedPlanSymbol && sym === selectedPlanSymbol;
+          }) ||
+          item.trade_plan[0];
+        if (isCurrentAiTradePlan(match)) return match;
+      }
+    }
+    return null;
+  }, [rawData, selectedPlanFromList, selectedPlanIndex, selectedPlanSymbol, selectedRawData]);
+
+  const renderInfoValue = (value) => {
+    if (value == null || value === "") return "—";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (Array.isArray(value)) {
+      return value
+        .map((x) =>
+          x && typeof x === "object"
+            ? Object.entries(x)
+                .map(([k, v]) => `${humanizeInfoKey(k)}: ${renderInfoValue(v)}`)
+                .join(", ")
+            : String(x),
+        )
+        .join(" | ");
+    }
+    if (typeof value === "object") {
+      return Object.entries(value)
+        .filter(([, v]) => v != null && v !== "")
+        .map(([k, v]) => `${humanizeInfoKey(k)}: ${renderInfoValue(v)}`)
+        .join(" | ");
+    }
+    return String(value);
+  };
+
+  const compactInfoEntries = (obj) =>
+    obj && typeof obj === "object"
+      ? Object.entries(obj).filter(
+          ([, v]) =>
+            v != null &&
+            v !== "" &&
+            !(Array.isArray(v) && v.length === 0) &&
+            !(typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0),
+        )
+      : [];
 
   return (
     <div className="trade-detail-content">
@@ -1546,11 +1625,12 @@ export default function SignalDetailCard({
                   />
                 }
               >
-                <SymbolChart
-                  symbol={chart?.symbol}
-                  timeframes={effectiveTfs}
-                  defaultMode="cache"
-                  entryPrice={chart?.entryPrice}
+                  <SymbolChart
+                    symbol={chart?.symbol}
+                    timeframes={effectiveTfs}
+                    defaultMode="cache"
+                    initialGridCols={2}
+                    entryPrice={chart?.entryPrice}
                   slPrice={chart?.slPrice}
                   tpPrice={chart?.tpPrice}
                   showAnalyzeButton={false}
@@ -1583,7 +1663,11 @@ export default function SignalDetailCard({
                     ).toUpperCase();
                     const iPrice = Number(intent?.price);
                     const plan = tradePlan?.value || {};
-                    if (iAction === "TP" && Number.isFinite(iPrice)) {
+                    if (/^TP[123]$/.test(iAction) && Number.isFinite(iPrice)) {
+                      const slot = iAction.toLowerCase();
+                      tradePlan?.onChange?.(slot, String(iPrice));
+                      if (slot === "tp1") tradePlan?.onChange?.("tp", String(iPrice));
+                    } else if (iAction === "TP" && Number.isFinite(iPrice)) {
                       const base = plan || {};
                       const sideDir = String(
                         base.direction || iSide,
@@ -1813,6 +1897,165 @@ export default function SignalDetailCard({
 
           return (
             <div style={{ padding: "10px 4px" }}>
+              {selectedAiPlan && (
+                <div style={{ marginBottom: 18 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      flexWrap: "wrap",
+                      marginBottom: 12,
+                    }}
+                  >
+                    {[
+                      selectedAiPlan.strategy &&
+                        `Strategy: ${selectedAiPlan.strategy}`,
+                      selectedAiPlan.entry_model &&
+                        `Entry: ${selectedAiPlan.entry_model}`,
+                      selectedAiPlan.risk_management?.grade &&
+                        `Grade: ${selectedAiPlan.risk_management.grade}`,
+                      selectedAiPlan.risk_management?.risk_percent != null &&
+                        `Risk: ${selectedAiPlan.risk_management.risk_percent}%`,
+                      selectedAiPlan.risk_management?.confidence_pct != null &&
+                        `Confidence: ${selectedAiPlan.risk_management.confidence_pct}%`,
+                      selectedAiPlan.risk_management?.estimated_entry_mins != null &&
+                        `ETA: ${selectedAiPlan.risk_management.estimated_entry_mins}m`,
+                      selectedAiPlan.risk_management?.suggested_action &&
+                        `Action: ${selectedAiPlan.risk_management.suggested_action}`,
+                    ]
+                      .filter(Boolean)
+                      .map((label) => (
+                        <span
+                          key={label}
+                          className="badge badge-mini"
+                          style={{
+                            padding: "3px 7px",
+                            fontSize: 10,
+                            border: "1px solid rgba(34,211,238,0.22)",
+                            background: "rgba(34,211,238,0.08)",
+                          }}
+                        >
+                          {label}
+                        </span>
+                      ))}
+                  </div>
+
+                  {[
+                    ["Context", selectedAiPlan.context],
+                    ["Execution", selectedAiPlan.execution_plan],
+                    ["Risk Management", selectedAiPlan.risk_management],
+                  ].map(([title, section]) => {
+                    const rows = compactInfoEntries(section);
+                    if (!rows.length) return null;
+                    return (
+                      <div key={title} style={{ marginBottom: 14 }}>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            textTransform: "uppercase",
+                            color: "var(--muted)",
+                            marginBottom: 6,
+                            borderBottom: "1px solid rgba(255,255,255,0.06)",
+                            paddingBottom: 3,
+                          }}
+                        >
+                          {title}
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+                            gap: 8,
+                          }}
+                        >
+                          {rows.map(([k, v]) => (
+                            <div
+                              key={k}
+                              style={{
+                                border: "1px solid rgba(255,255,255,0.07)",
+                                borderRadius: 6,
+                                padding: 8,
+                                background: "rgba(255,255,255,0.02)",
+                                gridColumn:
+                                  typeof v === "object" ? "1 / -1" : "auto",
+                              }}
+                            >
+                              <div className="minor-text" style={{ fontSize: 9 }}>
+                                {humanizeInfoKey(k)}
+                              </div>
+                              <div style={{ fontSize: 11, marginTop: 3 }}>
+                                {renderInfoValue(v)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {selectedAiPlan.analysis &&
+                    typeof selectedAiPlan.analysis === "object" && (
+                      <div style={{ marginBottom: 16 }}>
+                        <div
+                          style={{
+                            fontSize: 10,
+                            textTransform: "uppercase",
+                            color: "var(--muted)",
+                            marginBottom: 6,
+                            borderBottom: "1px solid rgba(255,255,255,0.06)",
+                            paddingBottom: 3,
+                          }}
+                        >
+                          Analysis
+                        </div>
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+                            gap: 8,
+                          }}
+                        >
+                          {compactInfoEntries(selectedAiPlan.analysis).map(
+                            ([groupKey, groupVal]) => (
+                              <div
+                                key={groupKey}
+                                style={{
+                                  border: "1px solid rgba(255,255,255,0.07)",
+                                  borderRadius: 6,
+                                  padding: 8,
+                                  background: "rgba(255,255,255,0.02)",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    marginBottom: 6,
+                                  }}
+                                >
+                                  {humanizeInfoKey(groupKey)}
+                                </div>
+                                {compactInfoEntries(groupVal).map(([k, v]) => (
+                                  <div key={k} style={{ marginBottom: 6 }}>
+                                    <span
+                                      className="minor-text"
+                                      style={{ fontSize: 9 }}
+                                    >
+                                      {humanizeInfoKey(k)}
+                                    </span>
+                                    <div style={{ fontSize: 11, marginTop: 1 }}>
+                                      {renderInfoValue(v)}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )}
               {/* ── AI Multi-Timeframe Analysis (at top) ── */}
               {(() => {
                 const mta =
@@ -2578,7 +2821,13 @@ export default function SignalDetailCard({
                 return out;
               };
               if (tradePlan?.onChange || planId !== "main") {
-                if (action === "TP") {
+                if (/^TP[123]$/.test(action)) {
+                  if (Number.isFinite(price)) {
+                    const slot = action.toLowerCase();
+                    applyToPlan(slot, String(price));
+                    if (slot === "tp1") applyToPlan("tp", String(price));
+                  }
+                } else if (action === "TP") {
                   if (Number.isFinite(price)) {
                     const current =
                       (planId === "main"

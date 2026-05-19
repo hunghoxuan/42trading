@@ -1386,125 +1386,6 @@ export default function SymbolChart({
       if (typeof onQuickTradeIntent === "function") {
         onQuickTradeIntent(payload);
       }
-      const isBuy = String(side || "").toUpperCase() === "BUY";
-      const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-      let createdPlanObjectId = null;
-      setAnnotations((prev) => {
-        if (hasTradePlan && hasAnalysis) {
-          const existingPlanNums = prev
-            .filter((x) => x.kind === "tradeplan")
-            .map((x) => Number(String(x.plan_id || "").replace(/^P/i, "")))
-            .filter((n) => Number.isFinite(n) && n > 0);
-          const existingMax = existingPlanNums.length
-            ? Math.max(...existingPlanNums)
-            : 0;
-          const analysisCount = Array.isArray(analysisSnapshot?.trade_plan)
-            ? analysisSnapshot.trade_plan.length
-            : 0;
-          const searchCount = Math.max(analysisCount, existingMax + 1, 2);
-          const firstMissing = Array.from(
-            { length: searchCount },
-            (_, i) => i + 1,
-          ).find((n) => !existingPlanNums.includes(n));
-          const activeNum = Number(
-            String(activePlanGroup || "P1").replace(/^P/i, ""),
-          );
-          const targetNum = Number.isFinite(firstMissing)
-            ? firstMissing
-            : Number.isFinite(activeNum) && activeNum >= 1
-              ? activeNum
-              : existingMax + 1;
-          const nextPlanId = `P${targetNum}`;
-          const defaults = defaultTpSlFromEntry(
-            usePrice,
-            isBuy ? "BUY" : "SELL",
-          );
-          const tpNum = Number(defaults.tp);
-          const slNum = Number(defaults.sl);
-          const planObjectId = `tradeplan_${nextPlanId}`;
-          createdPlanObjectId = planObjectId;
-          const existing = prev.find(
-            (x) => x.id === planObjectId && x.kind === "tradeplan",
-          );
-          const tradePlanObject = {
-            ...(existing || {}),
-            id: planObjectId,
-            kind: "tradeplan",
-            type: "TRADEPLAN",
-            label: `TradePlan ${nextPlanId}`,
-            plan_id: nextPlanId,
-            direction: isBuy ? "BUY" : "SELL",
-            entryPrice: usePrice,
-            tpPrice: Number.isFinite(tpNum) ? tpNum : null,
-            slPrice: Number.isFinite(slNum) ? slNum : null,
-            visible: existing?.visible !== false,
-            color: isBuy ? "#10b981" : "#ef4444",
-            line_width: 0.1,
-            line_style: "solid",
-            bg_color: "transparent",
-            tf: null,
-            time: Number.isFinite(Number(ctxMenu?.time))
-              ? Number(ctxMenu?.time)
-              : null,
-          };
-          if (typeof onQuickTradeIntent === "function") {
-            const syncPayload = { ...payload, plan_id: nextPlanId };
-            onQuickTradeIntent(syncPayload);
-            if (Number.isFinite(tpNum))
-              onQuickTradeIntent({
-                ...syncPayload,
-                side: "TP",
-                action: "TP",
-                price: tpNum,
-              });
-            if (Number.isFinite(slNum))
-              onQuickTradeIntent({
-                ...syncPayload,
-                side: "SL",
-                action: "SL",
-                price: slNum,
-              });
-          }
-          return [
-            ...prev.filter((x) => x.id !== planObjectId),
-            tradePlanObject,
-          ];
-        }
-        const next = [
-          ...prev,
-          {
-            ...createLineObject({
-              id,
-              type: isBuy ? "BUY" : "SELL",
-              color: isBuy ? "#10b981" : "#ef4444",
-              yRatio: Number(ctxMenu?.yRatio || 0.5),
-              ctxMenu,
-            }),
-            kind: "line",
-            visible: true,
-            tf: null,
-            price_top: usePrice,
-            price_bottom: usePrice,
-            price: usePrice,
-            time: Number.isFinite(Number(ctxMenu?.time))
-              ? Number(ctxMenu?.time)
-              : null,
-            line_style: "solid",
-            line_width: 0.1,
-            label: isBuy ? "Buy" : "Sell",
-            bg_color: "transparent",
-          },
-        ];
-        return next;
-      });
-      setSelectedObjectId(
-        hasTradePlan && hasAnalysis ? createdPlanObjectId : id,
-      );
-      try {
-        window.dispatchEvent(
-          new CustomEvent("tvbridge:advanced-trade", { detail: payload }),
-        );
-      } catch {}
       setCtxMenu(null);
     },
     [
@@ -1516,10 +1397,6 @@ export default function SymbolChart({
       activeChartId,
       master,
       activePlanGroup,
-      hasTradePlan,
-      hasAnalysis,
-      tpPrice,
-      slPrice,
     ],
   );
 
@@ -2744,26 +2621,25 @@ export default function SymbolChart({
                   setCtxMenu(null);
                 },
               },
-              {
-                label: `TP @ ${priceStr}`,
+              ...["TP1", "TP2", "TP3"].map((tpKey) => ({
+                label: `${tpKey} @ ${priceStr}`,
                 fn: () => {
                   const p = Number(ctxMenu?.price);
-                  console.log("[ctxMenu] TP clicked price=", p, "mode=", mode);
                   if (typeof onPlanLevelChange === "function") {
-                    onPlanLevelChange("tp", p);
+                    onPlanLevelChange(tpKey.toLowerCase(), p);
                   }
                   if (typeof onQuickTradeIntent === "function") {
                     onQuickTradeIntent({
                       symbol: cleanSym,
-                      side: "TP",
-                      action: "TP",
+                      side: tpKey,
+                      action: tpKey,
                       plan_id: activePlanGroup,
                       price: p,
                     });
                   }
                   setCtxMenu(null);
                 },
-              },
+              })),
               {
                 label: `SL @ ${priceStr}`,
                 fn: () => {
