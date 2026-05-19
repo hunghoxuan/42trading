@@ -655,7 +655,11 @@ function planExitConditionText(plan = {}) {
 function planOrderTypeText(plan = {}, parsed = {}) {
   return (
     String(
-      plan?.order_type || plan?.type || parsed?.order_type || parsed?.type || "limit",
+      plan?.order_type ||
+        plan?.type ||
+        parsed?.order_type ||
+        parsed?.type ||
+        "limit",
     )
       .trim()
       .toLowerCase() || "limit"
@@ -861,11 +865,14 @@ function collectTradePlansByRules(root) {
 function isCurrentAiTradePlan(value) {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      value.execution_plan &&
-      typeof value.execution_plan === "object" &&
-      (value.direction || value.symbol || value.risk_management || value.analysis),
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    value.execution_plan &&
+    typeof value.execution_plan === "object" &&
+    (value.direction ||
+      value.symbol ||
+      value.risk_management ||
+      value.analysis),
   );
 }
 
@@ -1703,7 +1710,9 @@ function extractPositionFromAnalysis(parsed) {
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type: planOrderTypeText(plan, parsed),
-    note: String(plan?.execution_plan?.tp3?.note || plan?.note || parsed?.note || "").trim(),
+    note: String(
+      plan?.execution_plan?.tp3?.note || plan?.note || parsed?.note || "",
+    ).trim(),
     tp2: Number.isFinite(planTpLevelNumber(plan, 2))
       ? formatNum3(planTpLevelNumber(plan, 2))
       : "",
@@ -1711,11 +1720,17 @@ function extractPositionFromAnalysis(parsed) {
       ? formatNum3(planTpLevelNumber(plan, 3))
       : "",
     be_trigger: Number.isFinite(
-      parseNum(plan?.execution_plan?.breakeven_trigger?.price ?? plan?.be_trigger ?? plan?.be),
+      parseNum(
+        plan?.execution_plan?.breakeven_trigger?.price ??
+          plan?.be_trigger ??
+          plan?.be,
+      ),
     )
       ? formatNum3(
           parseNum(
-            plan?.execution_plan?.breakeven_trigger?.price ?? plan?.be_trigger ?? plan?.be,
+            plan?.execution_plan?.breakeven_trigger?.price ??
+              plan?.be_trigger ??
+              plan?.be,
           ),
         )
       : "",
@@ -1803,7 +1818,9 @@ function extractPositionFromPlan(plan, parsed = {}) {
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
     rr: Number.isFinite(rr) ? formatNum3(rr) : "",
     trade_type: planOrderTypeText(item, parsed),
-    note: String(item?.execution_plan?.tp3?.note || item?.note || parsed?.note || "").trim(),
+    note: String(
+      item?.execution_plan?.tp3?.note || item?.note || parsed?.note || "",
+    ).trim(),
     tp2: Number.isFinite(planTpLevelNumber(item, 2))
       ? formatNum3(planTpLevelNumber(item, 2))
       : "",
@@ -1811,11 +1828,17 @@ function extractPositionFromPlan(plan, parsed = {}) {
       ? formatNum3(planTpLevelNumber(item, 3))
       : "",
     be_trigger: Number.isFinite(
-      parseNum(item?.execution_plan?.breakeven_trigger?.price ?? item?.be_trigger ?? item?.be),
+      parseNum(
+        item?.execution_plan?.breakeven_trigger?.price ??
+          item?.be_trigger ??
+          item?.be,
+      ),
     )
       ? formatNum3(
           parseNum(
-            item?.execution_plan?.breakeven_trigger?.price ?? item?.be_trigger ?? item?.be,
+            item?.execution_plan?.breakeven_trigger?.price ??
+              item?.be_trigger ??
+              item?.be,
           ),
         )
       : "",
@@ -1871,31 +1894,7 @@ function buildPerSymbolRawJson(parsed = {}, symbol = "", plan = null) {
     cloned.trade_plan = plans;
     return cloned;
   }
-  const exactNestedPlans = Array.isArray(parsed.analysis_data)
-    ? parsed.analysis_data
-        .flatMap((entry) =>
-          Array.isArray(entry?.trade_plan) ? entry.trade_plan : [],
-        )
-        .filter(
-          (p) =>
-            normalizeSignalSymbol(String(p?.symbol || parsed?.symbol || "")) ===
-            sym,
-        )
-    : [];
   cloned.trade_plan = selected;
-  if (exactNestedPlans.length) {
-    // Keep untouched AI plan items for audit/debug. Do not transform.
-    cloned.__ai_trade_plan_raw_exact = exactNestedPlans;
-  }
-  // Preserve full original payload for later trade history/debug screens.
-  // This prevents losing multi-timeframe analysis details when persisting a per-symbol view.
-  if (!cloned.__analysis_full_raw) {
-    cloned.__analysis_full_raw =
-      parsed.__analysis_full_raw &&
-      typeof parsed.__analysis_full_raw === "object"
-        ? parsed.__analysis_full_raw
-        : parsed;
-  }
   return cloned;
 }
 
@@ -5084,7 +5083,9 @@ export default function ChartSnapshotsPage() {
         const entry = planEntryNumber(p, effectiveParsed || {});
         const sl = planStopLossNumber(p, effectiveParsed || {});
         const tp = getPlanPrimaryTp(p);
-        const rr = parseNum(p?.execution_plan?.risk_reward ?? p?.rr ?? p?.risk_reward);
+        const rr = parseNum(
+          p?.execution_plan?.risk_reward ?? p?.rr ?? p?.risk_reward,
+        );
         const hasValidLevels = hasNumericEntrySlTp(p);
         const normalizedDecision = String(
           p?.skip_recommendation ||
@@ -5148,15 +5149,12 @@ export default function ChartSnapshotsPage() {
           trade_decision: forcedSkip
             ? "Skip"
             : String(p?.trade_decision || "").trim(),
-          entry_condition: String(
-            planEntryConditionText(p),
-          ).trim(),
-          exit_condition: String(
-            planExitConditionText(p),
-          ).trim(),
-          note: forcedSkip && !String(p?.note || "").trim()
-            ? missingReason
-            : String(p?.execution_plan?.tp3?.note || p?.note || "").trim(),
+          entry_condition: String(planEntryConditionText(p)).trim(),
+          exit_condition: String(planExitConditionText(p)).trim(),
+          note:
+            forcedSkip && !String(p?.note || "").trim()
+              ? missingReason
+              : String(p?.execution_plan?.tp3?.note || p?.note || "").trim(),
           has_valid_levels: hasValidLevels,
         };
       })
