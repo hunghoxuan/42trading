@@ -6620,8 +6620,6 @@ async function _mt5InitBackendInternal() {
       status TEXT NOT NULL DEFAULT 'NEW'
     );
 
-    DROP TABLE IF EXISTS signals CASCADE;
-
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
