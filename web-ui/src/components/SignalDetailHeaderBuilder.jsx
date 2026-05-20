@@ -10,6 +10,7 @@ export function buildDetailHeader({
   dateText = "-",
   statsText = "-",
   statusNode = null,
+  aiBadges = null,
   columns = "minmax(0, 1fr) minmax(0, 1.25fr) minmax(120px, 0.55fr)",
 }) {
   return {
@@ -20,10 +21,28 @@ export function buildDetailHeader({
       </>
     ),
     center: <>{positionText}</>,
-    rightTop: showPnl ? <span className={pnlClassName} style={{ fontWeight: 800 }}>{pnlText}</span> : <span className="minor-text">-</span>,
+    rightTop: (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          justifyContent: "flex-end",
+          flexWrap: "wrap",
+        }}
+      >
+        {aiBadges}
+        {showPnl ? (
+          <span className={pnlClassName} style={{ fontWeight: 800 }}>
+            {pnlText}
+          </span>
+        ) : (
+          <span className="minor-text">-</span>
+        )}
+      </div>
+    ),
     leftMinor: dateText,
     centerMinor: statsText,
     rightBottom: statusNode,
   };
 }
-

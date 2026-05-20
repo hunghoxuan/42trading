@@ -211,6 +211,13 @@ export default function TradeDetailPage() {
       meta.riskPct ?? meta.risk_pct ?? raw.riskPct ?? raw.risk_pct,
     );
     const reward = asNum(meta.reward_money_planned);
+    const aiStrategy = detailPlan.strategy || raw.strategy || "";
+    const aiEntry = detailPlan.entry_model || raw.entry_model || "";
+    const aiGrade = detailPlan.risk_management || "";
+    const aiRisk = asNum(detailPlan.risk_pct) || riskPct;
+    const aiConf = asNum(detailPlan.confidence_pct);
+    const aiEta = asNum(detailPlan.estimated_bars);
+    const aiAction = detailPlan.skip_recommendation || "";
     const headerMeta = buildHeaderMeta({
       statusRaw: trade.execution_status,
       pnlRaw: pnl,
@@ -228,11 +235,49 @@ export default function TradeDetailPage() {
       statusUi,
       volumeSizeRaw: asNum(meta.broker_data?.volume_size),
     });
+    const badgeS = (c) => ({
+      fontSize: 10,
+      padding: "2px 6px",
+      borderRadius: 4,
+      background: c ? c + "20" : "transparent",
+      color: c || "var(--muted)",
+      border: `1px solid ${c || "var(--border)"}`,
+      whiteSpace: "nowrap",
+    });
     return buildDetailHeader({
       side: action,
       symbol: trade.symbol || "-",
       sideClass: action === "BUY" ? "side-buy" : "side-sell",
       positionText: `${trade.entry || "-"} → ${trade.tp || "-"} / ${trade.sl || "-"}`,
+      aiBadges: (
+        <>
+          {aiStrategy && <span style={badgeS("#8b5cf6")}>{aiStrategy}</span>}
+          {aiEntry && <span style={badgeS("#6366f1")}>{aiEntry}</span>}
+          {aiGrade && (
+            <span style={badgeS(aiGrade === "A" ? "#16a34a" : "#ca8a04")}>
+              {aiGrade}
+            </span>
+          )}
+          {aiRisk != null && (
+            <span style={badgeS(aiRisk <= 1 ? "#16a34a" : "#dc2626")}>
+              {aiRisk}%
+            </span>
+          )}
+          {aiConf != null && (
+            <span style={badgeS(aiConf >= 80 ? "#16a34a" : "#dc2626")}>
+              {aiConf}%
+            </span>
+          )}
+          {aiEta != null && <span style={badgeS(null)}>{aiEta}m</span>}
+          {aiAction && (
+            <span
+              style={badgeS(aiAction === "Proceed" ? "#16a34a" : "#dc2626")}
+            >
+              {aiAction}
+            </span>
+          )}
+        </>
+      ),
       ...headerMeta,
     });
   }, [trade]);
