@@ -11,10 +11,27 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-20 15:07 UTC`
-- note: `Deploy chart refresh(force=true) + updated-time label fix`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 15:11 UTC`
+- note: `Chart refresh(force=true) + updated-time label deployed`
+
+### [2026-05-20 15:11 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 8f2d39c2
+- scope: `web-ui/src/components/charts/SymbolChart.jsx`, `web-ui/src/hooks/useChartTileData.js`, `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `web-ui/src/styles.css`, version bump files
+- merge_to_main: YES (8f2d39c2)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.20 15:07 - c7610759
+  - ea_version: v2026.05.20 15:07 - c7610759
+  - result: PASS
+- verify:
+  - VPS git HEAD: `8f2d39c`
+  - PM2: `webhook` online after restart (uptime reset observed)
+  - health endpoint: localhost HTTP redirects to HTTPS (`/health`), service responding
+- handoff_next: none
 
 ### [2026-05-20 14:20 UTC] AGENT:DeepSeek
 - status: DEPLOYED
