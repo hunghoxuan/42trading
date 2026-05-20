@@ -13509,9 +13509,52 @@ async function mt5UpdateTradeManualV2(tradeId, userId = null, payload = {}) {
   return b.updateTradeManualV2(tradeId, userId, payload);
 }
 
+// Split trace content into individual sub-events for backward-compat APIs (History tab, signal events).
+function splitTraceContent(row) {
+  const content = String(row.content || "");
+  if (!content.trim()) return [row]; // legacy metadata-only
+  const events = [];
+  const blocks = content.split(/\n(?=\[\d{4}-\d{2}-\d{2})/);
+  for (const block of blocks) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    const lines = trimmed.split("\n");
+    const header = lines[0] || "";
+    const m = header.match(/^\[([^\]]+)\]\s*(.+)/);
+    const eventTime = m ? m[1] : row.created_at;
+    const eventType = m ? m[2].trim() : (row.event_type || "EVENT");
+    const payload = {};
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line || line === "---" || line === "----------") continue;
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0) {
+        const key = line.substring(0, colonIdx).trim();
+        const val = line.substring(colonIdx + 1).trim();
+        payload[key] = val;
+      }
+    }
+    events.push({
+      ...row,
+      event_type: eventType,
+      event_time: eventTime,
+      created_at: eventTime,
+      metadata: payload,
+      payload_json: payload,
+      _from_trace: true,
+    });
+  }
+  return events;
+}
+
 async function mt5ListTradeEventsV2(tradeId, limit = 200) {
   const b = await mt5Backend();
-  return b.listLogs({ object_id: tradeId }, limit);
+  const rows = await b.listLogs({ object_id: tradeId }, limit);
+  const events = [];
+  for (const row of rows || []) {
+    events.push(...splitTraceContent(row));
+  }
+  return events.slice(0, limit);
 }
 
 async function mt5ResolveTradeRefV2(tradeRef, userId = null) {
@@ -13747,7 +13790,12 @@ async function mt5ReplaceAccountSubscriptionsV2(accountId, items) {
 
 async function mt5ListSignalEvents(signalId, limit = 200) {
   const b = await mt5Backend();
-  return b.listLogs({ object_id: signalId }, limit);
+  const rows = await b.listLogs({ object_id: signalId }, limit);
+  const events = [];
+  for (const row of rows || []) {
+    events.push(...splitTraceContent(row));
+  }
+  return events.slice(0, limit);
 }
 
 async function mt5ListActiveSignals() {
