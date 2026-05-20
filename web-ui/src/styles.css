@@ -1251,7 +1251,7 @@ button:disabled {
 }
 .snapshot-symbol-row-inline-v4 {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     gap: 8px;
     align-items: center;
     width: 100%;
@@ -1719,7 +1719,7 @@ button:disabled {
         padding: 16px;
     }
     .snapshot-symbol-row-inline-v4 {
-        flex-direction: column;
+        flex-direction: row;
         gap: 10px;
     }
     .snapshot-symbol-row-inline-v4 .panel-label {
