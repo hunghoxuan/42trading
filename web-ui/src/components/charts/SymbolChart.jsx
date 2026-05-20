@@ -535,6 +535,7 @@ export default function SymbolChart({
       } else {
         // Auto-generate tradeplan from trade fields when no saved chart_objects
         const ep = Number(entryPrice);
+        console.log("[chart-objs] auto-gen check", { tradeSid, entryPrice, tpPrice, slPrice, ep, hasObjs: objs.length });
         if (Number.isFinite(ep) && ep > 0) {
           const tp = Number(tpPrice);
           const sl = Number(slPrice);
