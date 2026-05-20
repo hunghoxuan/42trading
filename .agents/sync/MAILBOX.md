@@ -11,10 +11,27 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-20 19:03 UTC`
-- note: `deploy UI: top-line status/tooltips and remove 15b/15m chips`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 19:09 UTC`
+- note: `ui top-line badges deployed`
+
+### [2026-05-20 19:09 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 0f11c6d1
+- scope: `web-ui/src/components/SignalDetailCard.jsx`
+- merge_to_main: YES (0f11c6d1)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.20 15:35 - 8fe81d8f
+  - ea_version: v2026.05.20 15:35 - 8fe81d8f
+  - result: PASS
+- verify:
+  - VPS git HEAD: `0f11c6d`
+  - PM2 webhook: online after restart
+  - health: `https://trade.mozasolution.com/health` => `ok:true`
+- handoff_next: none
 
 ### [2026-05-20 16:44 UTC] AGENT:Codex
 - status: DEPLOYED
