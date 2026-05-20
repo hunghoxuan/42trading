@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.20 14:12 - 0e5a9adc";
+string EA_BUILD_VERSION = "v2026.05.20 14:25 - 8c3dd559";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -3782,8 +3782,48 @@ void FetchTrackedSymbols()
 
 void PushPrices()
 {
-   if(!InpPricePushEnabled || ArraySize(g_trackedSymbols) == 0)
+   if(!InpPricePushEnabled)
       return;
+
+   // Fallback: auto-detect symbols from positions + orders + chart if tracked list is empty
+   int symCount = ArraySize(g_trackedSymbols);
+   if(symCount == 0)
+   {
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong t = PositionGetTicket(i);
+         if(t > 0 && PositionSelectByTicket(t))
+         {
+            string s = PositionGetString(POSITION_SYMBOL);
+            bool exists = false;
+            for(int j = 0; j < ArraySize(g_trackedSymbols); j++) if(g_trackedSymbols[j] == s) { exists = true; break; }
+            if(!exists) { int n = ArraySize(g_trackedSymbols); ArrayResize(g_trackedSymbols, n + 1); g_trackedSymbols[n] = s; }
+         }
+      }
+      for(int i = 0; i < OrdersTotal(); i++)
+      {
+         ulong t = OrderGetTicket(i);
+         if(t > 0 && OrderSelect(t))
+         {
+            string s = OrderGetString(ORDER_SYMBOL);
+            bool exists = false;
+            for(int j = 0; j < ArraySize(g_trackedSymbols); j++) if(g_trackedSymbols[j] == s) { exists = true; break; }
+            if(!exists) { int n = ArraySize(g_trackedSymbols); ArrayResize(g_trackedSymbols, n + 1); g_trackedSymbols[n] = s; }
+         }
+      }
+      if(Symbol() != "")
+      {
+         bool exists = false;
+         for(int j = 0; j < ArraySize(g_trackedSymbols); j++) if(g_trackedSymbols[j] == Symbol()) { exists = true; break; }
+         if(!exists) { int n = ArraySize(g_trackedSymbols); ArrayResize(g_trackedSymbols, n + 1); g_trackedSymbols[n] = Symbol(); }
+      }
+   }
+
+   if(ArraySize(g_trackedSymbols) == 0)
+   {
+      g_lastPriceStatus = "IDLE";
+      return;
+   }
 
    g_lastPriceStatus = "PUSHING";
    int ts = (int)TimeCurrent();

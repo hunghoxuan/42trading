@@ -68,7 +68,7 @@ namespace cAlgo.Robots
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
-        private const string BuildVersion = "v2026.05.20 14:12 - 0e5a9adc";
+        private const string BuildVersion = "v2026.05.20 14:25 - 8c3dd559";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -1180,13 +1180,28 @@ namespace cAlgo.Robots
 
         private async Task PushPricesAsync(string accId)
         {
-            if (!PricePushEnabled || _trackedSymbols.Count == 0) return;
+            if (!PricePushEnabled) return;
+
+            // Fallback: auto-detect symbols from positions + orders + chart if tracked list is empty
+            var symbols = new List<string>(_trackedSymbols);
+            if (symbols.Count == 0)
+            {
+                foreach (var pos in Positions)
+                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !symbols.Contains(pos.SymbolName))
+                        symbols.Add(pos.SymbolName);
+                foreach (var order in PendingOrders)
+                    if (!string.IsNullOrWhiteSpace(order.SymbolName) && !symbols.Contains(order.SymbolName))
+                        symbols.Add(order.SymbolName);
+                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !symbols.Contains(Symbol.Name))
+                    symbols.Add(Symbol.Name);
+            }
+            if (symbols.Count == 0) { _priceStatus = "IDLE"; return; }
             _priceStatus = "PUSHING";
             try
             {
                 var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var priceList = new List<string>();
-                foreach (var sym in _trackedSymbols)
+                foreach (var sym in symbols)
                 {
                     try
                     {
@@ -1349,6 +1364,19 @@ namespace cAlgo.Robots
                 tl.AppendLine(string.Format("SERVER: {0} | API: {1}", _serverStatus, _apiStatus));
                 Chart.DrawStaticText("Panel_TL", tl.ToString(), VerticalAlignment.Top, HorizontalAlignment.Left, Color.Aqua);
 
+                // Top-Right: Price Push status
+                var tr = new StringBuilder();
+                var priceTimeStr = _lastPriceTime == DateTime.MinValue ? "WAITING..." : _lastPriceTime.ToString("HH:mm:ss");
+                tr.AppendLine(string.Format("PRICE: {0} cnt={1}, {2}", _priceStatus, _priceCount, priceTimeStr));
+                tr.AppendLine(string.Format("TRACK: {0} symbols", _trackedSymbols.Count));
+                tr.AppendLine(string.Format("INTV: sync={0}s price={1}s", SyncIntervalSeconds, PricePushSeconds));
+                if (_lastPriceErr != "None" && !string.IsNullOrEmpty(_lastPriceErr))
+                    tr.AppendLine("ERR: " + (_lastPriceErr.Length > 40 ? _lastPriceErr.Substring(0, 40) : _lastPriceErr));
+                Color priceColor = _priceStatus == "OK" ? Color.Lime :
+                                  (_priceStatus == "IDLE" || _priceStatus == "WAITING" ? Color.Gray :
+                                  (_priceStatus == "PUSHING" ? Color.Yellow : Color.Red));
+                Chart.DrawStaticText("Panel_TR", tr.ToString(), VerticalAlignment.Top, HorizontalAlignment.Right, priceColor);
+
                 var bl = new StringBuilder();
                 var pollTimeStr = _lastPollTime == DateTime.MinValue ? "WAITING..." : _lastPollTime.ToString("HH:mm:ss");
                 bl.AppendLine(string.Format("EVENT POLL: {0}, {1}", _pollStatus, pollTimeStr));
@@ -1372,12 +1400,6 @@ namespace cAlgo.Robots
                                  (_syncStatus == "IDLE" || _syncStatus == "WAITING" ? Color.Gray :
                                  (_syncStatus == "SYNCING" ? Color.Yellow :
                                  (_syncStatus == "PARTIAL" ? Color.Orange : Color.Red)));
-                // Append price push status
-                var priceTimeStr2 = _lastPriceTime == DateTime.MinValue ? "WAITING..." : _lastPriceTime.ToString("HH:mm:ss");
-                br.AppendLine(string.Format("PRICE: {0} cnt={1}, {2}", _priceStatus, _priceCount, priceTimeStr2));
-                if (_trackedSymbols.Count > 0) br.AppendLine(string.Format("TRACK: {0} symbols", _trackedSymbols.Count));
-                br.AppendLine(string.Format("INTV: sync={0}s price={1}s poll={2}s", SyncIntervalSeconds, PricePushSeconds, PollSeconds));
-                if (_lastPriceErr != "None") br.AppendLine("PRICE_ERR: " + (_lastPriceErr.Length > 40 ? _lastPriceErr.Substring(0, 40) : _lastPriceErr));
                 Chart.DrawStaticText("Panel_BR", br.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Right, syncColor);
             });
         }
