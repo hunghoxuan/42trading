@@ -15,8 +15,8 @@ n/a
 n/a
 
 ## Deploy / Version Status
-- SERVER_VERSION: 103:const SERVER_VERSION = envStr(
-- EA_BUILD_VERSION: v2026.05.04 14:46 - 8d1d33a
+- SERVER_VERSION: v2026.05.20 09:00 - price-stream
+- EA_BUILD_VERSION: v2026.05.20 09:00 - price-stream
 
 ## Open Risks
 - Check top open bugs and unresolved sprint TODOs.

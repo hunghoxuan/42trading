@@ -21,7 +21,11 @@ const API_KEY_NAME_OPTIONS = [
 const STANDARD_API_KEY_NAMES = API_KEY_NAME_OPTIONS.map((x) => x.value);
 
 const SYSTEM_SETTING_TYPES = new Set(["system_config", "notification_config"]);
-const SPECIAL_TABS = new Set(["PROFILE", "NOTIFICATIONS", "EXECUTION_PROFILES"]);
+const SPECIAL_TABS = new Set([
+  "PROFILE",
+  "NOTIFICATIONS",
+  "EXECUTION_PROFILES",
+]);
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const DISPLAY_TIMEZONE_OPTIONS = [
   { value: "Local", label: "Local (Browser)" },
@@ -84,7 +88,7 @@ export default function SettingsPage({
   const [settings, setSettings] = useState([]);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState("");
-  const [secretVisibility, setSecretVisibility] = useState({});
+  const [revealedValues, setRevealedValues] = useState({});
   const [newSettingForm, setNewSettingForm] = useState({
     type: "api_key",
     name: "GEMINI_API_KEY",
@@ -143,13 +147,24 @@ export default function SettingsPage({
 
   const getSettingKey = (s) =>
     `${String(s?.type || "")}::${String(s?.name || "")}`;
-  const getSecretKey = (settingKey, fieldKey) =>
+  const getRevealKey = (settingKey, fieldKey) =>
     `${String(settingKey || "")}::${String(fieldKey || "")}`;
-  const isSecretVisible = (settingKey, fieldKey) =>
-    Boolean(secretVisibility[getSecretKey(settingKey, fieldKey)]);
-  const toggleSecretVisible = (settingKey, fieldKey) => {
-    const key = getSecretKey(settingKey, fieldKey);
-    setSecretVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
+  const isRevealed = (settingKey, fieldKey) =>
+    Boolean(revealedValues[getRevealKey(settingKey, fieldKey)]);
+  const getRevealedValue = (settingKey, fieldKey) =>
+    revealedValues[getRevealKey(settingKey, fieldKey)] || "";
+  const showRevealed = (settingKey, fieldKey, plainValue) => {
+    const key = getRevealKey(settingKey, fieldKey);
+    setRevealedValues((prev) => ({ ...prev, [key]: plainValue }));
+  };
+  const hideRevealed = (settingKey, fieldKey) => {
+    const key = getRevealKey(settingKey, fieldKey);
+    setRevealedValues((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
   const maskSecretPreview = (value) => {
     const raw = String(value || "");
@@ -193,12 +208,7 @@ export default function SettingsPage({
         fieldKey,
       );
       const plain = String(out?.value || "");
-      setSettings((prev) =>
-        prev.map((x) => {
-          if (getSettingKey(x) !== settingKey) return x;
-          return { ...x, data: { ...(x.data || {}), [fieldKey]: plain } };
-        }),
-      );
+      showRevealed(settingKey, fieldKey, plain);
       return plain;
     } catch (err) {
       setSettingsMsg(err?.message || "Failed to reveal secret.");
@@ -239,7 +249,9 @@ export default function SettingsPage({
 
   function loadExecutionProfileIntoForm(profile) {
     if (!profile || typeof profile !== "object") return;
-    const sourceIds = Array.isArray(profile.source_ids) ? profile.source_ids : [];
+    const sourceIds = Array.isArray(profile.source_ids)
+      ? profile.source_ids
+      : [];
     setExecForm({
       profile_id: String(profile.profile_id || "default"),
       profile_name: String(
@@ -247,7 +259,9 @@ export default function SettingsPage({
       ),
       route: String(profile.route || "ea"),
       account_id: String(profile.account_id || ""),
-      source_ids_csv: sourceIds.length ? sourceIds.join(",") : "signal,tradingview",
+      source_ids_csv: sourceIds.length
+        ? sourceIds.join(",")
+        : "signal,tradingview",
       ctrader_mode: String(profile.ctrader_mode || "demo"),
       ctrader_account_id: String(profile.ctrader_account_id || ""),
     });
@@ -340,9 +354,11 @@ export default function SettingsPage({
           const list = Array.isArray(res?.settings) ? res.settings : [];
           const firstVisible = list.find(
             (s) =>
-              !["notification_config", "system_config", "execution_profile"].includes(
-                String(s?.type || ""),
-              ) &&
+              ![
+                "notification_config",
+                "system_config",
+                "execution_profile",
+              ].includes(String(s?.type || "")) &&
               !(
                 String(s?.type || "").toLowerCase() === "trade" &&
                 String(s?.name || "").toUpperCase() === "WATCHLIST"
@@ -715,7 +731,11 @@ export default function SettingsPage({
       : [];
     setWatchlistText(
       arr
-        .map((x) => String(x || "").trim().toUpperCase())
+        .map((x) =>
+          String(x || "")
+            .trim()
+            .toUpperCase(),
+        )
         .filter(Boolean)
         .join("\n"),
     );
@@ -1280,7 +1300,9 @@ export default function SettingsPage({
                     <div className="panel-label">WATCHLIST</div>
                     <div className="stack-layout" style={{ gap: 10 }}>
                       <label className="stack-layout" style={{ gap: 6 }}>
-                        <span className="minor-text">Symbols (one per line)</span>
+                        <span className="minor-text">
+                          Symbols (one per line)
+                        </span>
                         <textarea
                           rows={8}
                           value={watchlistText}
@@ -1288,7 +1310,13 @@ export default function SettingsPage({
                           placeholder="BTCUSD&#10;GBPJPY&#10;XAUUSD"
                         />
                       </label>
-                      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "center",
+                        }}
+                      >
                         <select
                           style={{
                             padding: "4px 8px",
@@ -1298,11 +1326,14 @@ export default function SettingsPage({
                             color: "var(--text)",
                             border: "1px solid var(--border)",
                           }}
-                          value={String(watchlistSetting.status || "ACTIVE").toUpperCase()}
+                          value={String(
+                            watchlistSetting.status || "ACTIVE",
+                          ).toUpperCase()}
                           onChange={(e) =>
                             setSettings((prev) =>
                               prev.map((s) =>
-                                getSettingKey(s) === getSettingKey(watchlistSetting)
+                                getSettingKey(s) ===
+                                getSettingKey(watchlistSetting)
                                   ? { ...s, status: e.target.value }
                                   : s,
                               ),
@@ -1332,13 +1363,15 @@ export default function SettingsPage({
                     </div>
                   </div>
                 )}
-
               </div>
             </div>
           )}
 
           {activeTab === "EXECUTION_PROFILES" && canManageExecution && (
-            <div className="fadeIn stack-layout" style={{ gap: 24, maxWidth: 860 }}>
+            <div
+              className="fadeIn stack-layout"
+              style={{ gap: 24, maxWidth: 860 }}
+            >
               <div>
                 <h3 style={{ margin: 0, textTransform: "uppercase" }}>
                   Execution Profiles
@@ -1492,7 +1525,10 @@ export default function SettingsPage({
                   </button>
                 </div>
                 {execMsg && (
-                  <div className="minor-text" style={{ color: "var(--primary)" }}>
+                  <div
+                    className="minor-text"
+                    style={{ color: "var(--primary)" }}
+                  >
                     {execMsg}
                   </div>
                 )}
@@ -1525,13 +1561,21 @@ export default function SettingsPage({
                             <strong style={{ fontSize: 13 }}>
                               {profile.profile_name || profile.profile_id}
                             </strong>
-                            <span className="minor-text" style={{ fontSize: 11 }}>
+                            <span
+                              className="minor-text"
+                              style={{ fontSize: 11 }}
+                            >
                               {String(profile.route || "").toUpperCase()} ·{" "}
                               {profile.account_id || "No account"}
                             </span>
                             {profile.route === "ctrader" && (
-                              <span className="minor-text" style={{ fontSize: 11 }}>
-                                {String(profile.ctrader_mode || "demo").toUpperCase()}
+                              <span
+                                className="minor-text"
+                                style={{ fontSize: 11 }}
+                              >
+                                {String(
+                                  profile.ctrader_mode || "demo",
+                                ).toUpperCase()}
                                 {profile.ctrader_account_id
                                   ? ` · ${profile.ctrader_account_id}`
                                   : ""}
@@ -1561,635 +1605,677 @@ export default function SettingsPage({
             ) &&
             String(selectedSetting.type || "").toLowerCase() !==
               "execution_profile" && (
-            <div className="fadeIn">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: 24,
-                }}
-              >
-                <div>
-                  <h3 style={{ margin: 0, textTransform: "uppercase" }}>
-                    {selectedSetting.name}
-                  </h3>
-                  <div className="minor-text" style={{ marginTop: 4 }}>
-                    Type: {selectedSetting.type}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <select
-                    style={{
-                      padding: "4px 8px",
-                      fontSize: 11,
-                      borderRadius: 4,
-                      background: "var(--surface)",
-                      color: "var(--text)",
-                      border: "1px solid var(--border)",
-                    }}
-                    value={String(
-                      selectedSetting.status || "INACTIVE",
-                    ).toUpperCase()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSettings((prev) =>
-                        prev.map((s) =>
-                          getSettingKey(s) === getSettingKey(selectedSetting)
-                            ? { ...s, status: val }
-                            : s,
-                        ),
-                      );
-                    }}
-                  >
-                    <option value="ACTIVE">ACTIVE</option>
-                    <option value="INACTIVE">INACTIVE</option>
-                  </select>
-
-                  {!SYSTEM_SETTING_TYPES.has(
-                    String(selectedSetting.type || ""),
-                  ) && (
-                    <button
-                      className="danger-button"
-                      onClick={() =>
-                        deleteSetting(
-                          selectedSetting.type,
-                          selectedSetting.name,
-                        )
-                      }
-                      disabled={settingsLoading}
-                    >
-                      DELETE
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {selectedSetting.type === "cron" ? (
+              <div className="fadeIn">
                 <div
-                  className="stack-layout fadeIn"
-                  style={{ gap: 20, maxWidth: 600 }}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    marginBottom: 24,
+                  }}
                 >
-                  {selectedSetting.type === "cron" &&
-                    selectedSetting.name === "MARKET_DATA_CRON" && (
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Provider</span>
-                          <select
-                            value={cronForm.provider}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                provider: e.target.value,
-                              }))
-                            }
-                          >
-                            <option value="twelvedata">Twelve Data</option>
-                          </select>
-                        </label>
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Display Timezone</span>
-                          <input
-                            value={cronForm.timezone}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                timezone: e.target.value,
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Batch Size</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={cronForm.batch_size}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                batch_size: Number(e.target.value),
-                              }))
-                            }
-                          />
-                        </label>
-                      </div>
-                    )}
-
-                  <div className="stack-layout" style={{ gap: 8 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      SYMBOLS (COMMA OR NEWLINE)
-                    </span>
-                    <textarea
-                      rows={3}
-                      value={cronForm.symbols}
-                      onChange={(e) =>
-                        setCronForm((p) => ({ ...p, symbols: e.target.value }))
-                      }
-                      placeholder="e.g. XAUUSD, EURUSD, BTCUSD"
-                    />
-                  </div>
-
-                  <div className="stack-layout" style={{ gap: 8 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      EXCLUDE SYMBOLS (COMMA OR NEWLINE)
-                    </span>
-                    <textarea
-                      rows={2}
-                      value={cronForm.exclude_symbols}
-                      onChange={(e) =>
-                        setCronForm((p) => ({
-                          ...p,
-                          exclude_symbols: e.target.value,
-                        }))
-                      }
-                      placeholder="e.g. XAUUSD (skip these)"
-                    />
-                  </div>
-
-                  <div className="stack-layout" style={{ gap: 8 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      TIMEFRAMES
-                    </span>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                      {TIMEFRAME_OPTIONS.map((tf) => (
-                        <label
-                          key={tf}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={cronForm.timeframes.includes(tf)}
-                            onChange={(e) => {
-                              const next = e.target.checked
-                                ? [...cronForm.timeframes, tf]
-                                : cronForm.timeframes.filter((x) => x !== tf);
-                              setCronForm((p) => ({ ...p, timeframes: next }));
-                            }}
-                          />
-                          <span style={{ fontSize: 13 }}>{tf}</span>
-                        </label>
-                      ))}
+                  <div>
+                    <h3 style={{ margin: 0, textTransform: "uppercase" }}>
+                      {selectedSetting.name}
+                    </h3>
+                    <div className="minor-text" style={{ marginTop: 4 }}>
+                      Type: {selectedSetting.type}
                     </div>
                   </div>
+                  <div
+                    style={{ display: "flex", gap: 12, alignItems: "center" }}
+                  >
+                    <select
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: 11,
+                        borderRadius: 4,
+                        background: "var(--surface)",
+                        color: "var(--text)",
+                        border: "1px solid var(--border)",
+                      }}
+                      value={String(
+                        selectedSetting.status || "INACTIVE",
+                      ).toUpperCase()}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSettings((prev) =>
+                          prev.map((s) =>
+                            getSettingKey(s) === getSettingKey(selectedSetting)
+                              ? { ...s, status: val }
+                              : s,
+                          ),
+                        );
+                      }}
+                    >
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="INACTIVE">INACTIVE</option>
+                    </select>
 
-                  {selectedSetting.type === "cron" &&
-                    selectedSetting.name === "ANALYSIS_CRON" && (
-                      <>
+                    {!SYSTEM_SETTING_TYPES.has(
+                      String(selectedSetting.type || ""),
+                    ) && (
+                      <button
+                        className="danger-button"
+                        onClick={() =>
+                          deleteSetting(
+                            selectedSetting.type,
+                            selectedSetting.name,
+                          )
+                        }
+                        disabled={settingsLoading}
+                      >
+                        DELETE
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {selectedSetting.type === "cron" ? (
+                  <div
+                    className="stack-layout fadeIn"
+                    style={{ gap: 20, maxWidth: 600 }}
+                  >
+                    {selectedSetting.type === "cron" &&
+                      selectedSetting.name === "MARKET_DATA_CRON" && (
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "1fr 1fr",
+                            gridTemplateColumns: "1fr 1fr 1fr",
                             gap: 12,
                           }}
                         >
-                          <label className="stack-layout" style={{ gap: 8 }}>
-                            <span
-                              className="panel-label"
-                              style={{ fontSize: 10, marginBottom: 0 }}
+                          <label className="stack-layout" style={{ gap: 6 }}>
+                            <span className="minor-text">Provider</span>
+                            <select
+                              value={cronForm.provider}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  provider: e.target.value,
+                                }))
+                              }
                             >
-                              DIRECTIONS
-                            </span>
-                            <div style={{ display: "flex", gap: 12 }}>
-                              {["BUY", "SELL"].map((direction) => (
-                                <label
-                                  key={direction}
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 6,
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={cronForm.directions.includes(
-                                      direction,
-                                    )}
-                                    onChange={(e) => {
-                                      const next = e.target.checked
-                                        ? [...cronForm.directions, direction]
-                                        : cronForm.directions.filter(
-                                            (x) => x !== direction,
-                                          );
-                                      setCronForm((p) => ({
-                                        ...p,
-                                        directions: next,
-                                      }));
-                                    }}
-                                  />
-                                  <span style={{ fontSize: 13 }}>
-                                    {direction}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
+                              <option value="twelvedata">Twelve Data</option>
+                            </select>
                           </label>
-                          <label className="stack-layout" style={{ gap: 8 }}>
-                            <span
-                              className="panel-label"
-                              style={{ fontSize: 10, marginBottom: 0 }}
-                            >
-                              ORDER TYPES
-                            </span>
-                            <div style={{ display: "flex", gap: 12 }}>
-                              {["market", "limit", "stop"].map((orderType) => (
-                                <label
-                                  key={orderType}
-                                  style={{
-                                    display: "flex",
-                                    alignItems: "center",
-                                    gap: 6,
-                                  }}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={cronForm.order_types.includes(
-                                      orderType,
-                                    )}
-                                    onChange={(e) => {
-                                      const next = e.target.checked
-                                        ? [...cronForm.order_types, orderType]
-                                        : cronForm.order_types.filter(
-                                            (x) => x !== orderType,
-                                          );
-                                      setCronForm((p) => ({
-                                        ...p,
-                                        order_types: next,
-                                      }));
-                                    }}
-                                  />
-                                  <span style={{ fontSize: 13 }}>
-                                    {orderType}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
+                          <label className="stack-layout" style={{ gap: 6 }}>
+                            <span className="minor-text">Display Timezone</span>
+                            <input
+                              value={cronForm.timezone}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  timezone: e.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="stack-layout" style={{ gap: 6 }}>
+                            <span className="minor-text">Batch Size</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max="50"
+                              value={cronForm.batch_size}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  batch_size: Number(e.target.value),
+                                }))
+                              }
+                            />
                           </label>
                         </div>
-                        <div className="stack-layout" style={{ gap: 8 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            CADENCE (MINUTES)
-                          </span>
-                          <input
-                            type="number"
-                            value={cronForm.cadence_minutes}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                cadence_minutes: Number(e.target.value),
-                              }))
-                            }
-                          />
-                        </div>
-                        <div className="stack-layout" style={{ gap: 8 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            MODEL
-                          </span>
-                          <select
-                            value={cronForm.model}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                model: e.target.value,
-                              }))
-                            }
-                          >
-                            {API_KEY_NAME_OPTIONS.map((opt) => (
-                              <option
-                                key={opt.value}
-                                value={opt.value
-                                  .replace("_API_KEY", "")
-                                  .toLowerCase()}
-                              >
-                                {opt.label.replace(" API Key", "")}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="stack-layout" style={{ gap: 8 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            PROFILE
-                          </span>
-                          <input
-                            value={cronForm.profile}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                profile: e.target.value,
-                              }))
-                            }
-                            placeholder="Optional AI/profile name"
-                          />
-                        </div>
-                        <div className="stack-layout" style={{ gap: 8 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            ENTRY MODELS (COMMA OR NEWLINE)
-                          </span>
-                          <textarea
-                            rows={3}
-                            value={cronForm.entry_models}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                entry_models: e.target.value,
-                              }))
-                            }
-                            placeholder="Order Block, FVG, ICT..."
-                          />
-                        </div>
-                        <div className="stack-layout" style={{ gap: 8 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            PROMPT
-                          </span>
-                          <textarea
-                            rows={6}
-                            value={cronForm.prompt}
-                            onChange={(e) =>
-                              setCronForm((p) => ({
-                                ...p,
-                                prompt: e.target.value,
-                              }))
-                            }
-                            placeholder="Instructions for AI setup detection..."
-                          />
-                        </div>
-                      </>
-                    )}
-                </div>
-              ) : selectedSetting.type === "api_key" ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 20,
-                  }}
-                >
-                  {Object.entries(selectedSetting.data || {}).map(
-                    ([key, val]) => {
-                      const settingKey = getSettingKey(selectedSetting);
-                      const visible = isSecretVisible(settingKey, key);
-                      return (
-                        <label
-                          key={key}
-                          className="stack-layout"
-                          style={{ gap: 6 }}
-                        >
-                          <span className="minor-text" style={{ fontSize: 11 }}>
-                            {key}
-                          </span>
-                          <div
+                      )}
+
+                    <div className="stack-layout" style={{ gap: 8 }}>
+                      <span
+                        className="panel-label"
+                        style={{ fontSize: 10, marginBottom: 0 }}
+                      >
+                        SYMBOLS (COMMA OR NEWLINE)
+                      </span>
+                      <textarea
+                        rows={3}
+                        value={cronForm.symbols}
+                        onChange={(e) =>
+                          setCronForm((p) => ({
+                            ...p,
+                            symbols: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g. XAUUSD, EURUSD, BTCUSD"
+                      />
+                    </div>
+
+                    <div className="stack-layout" style={{ gap: 8 }}>
+                      <span
+                        className="panel-label"
+                        style={{ fontSize: 10, marginBottom: 0 }}
+                      >
+                        EXCLUDE SYMBOLS (COMMA OR NEWLINE)
+                      </span>
+                      <textarea
+                        rows={2}
+                        value={cronForm.exclude_symbols}
+                        onChange={(e) =>
+                          setCronForm((p) => ({
+                            ...p,
+                            exclude_symbols: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g. XAUUSD (skip these)"
+                      />
+                    </div>
+
+                    <div className="stack-layout" style={{ gap: 8 }}>
+                      <span
+                        className="panel-label"
+                        style={{ fontSize: 10, marginBottom: 0 }}
+                      >
+                        TIMEFRAMES
+                      </span>
+                      <div
+                        style={{ display: "flex", flexWrap: "wrap", gap: 12 }}
+                      >
+                        {TIMEFRAME_OPTIONS.map((tf) => (
+                          <label
+                            key={tf}
                             style={{
                               display: "flex",
-                              gap: 8,
                               alignItems: "center",
+                              gap: 6,
+                              cursor: "pointer",
                             }}
                           >
                             <input
-                              type={visible ? "text" : "password"}
-                              value={val || ""}
+                              type="checkbox"
+                              checked={cronForm.timeframes.includes(tf)}
+                              onChange={(e) => {
+                                const next = e.target.checked
+                                  ? [...cronForm.timeframes, tf]
+                                  : cronForm.timeframes.filter((x) => x !== tf);
+                                setCronForm((p) => ({
+                                  ...p,
+                                  timeframes: next,
+                                }));
+                              }}
+                            />
+                            <span style={{ fontSize: 13 }}>{tf}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {selectedSetting.type === "cron" &&
+                      selectedSetting.name === "ANALYSIS_CRON" && (
+                        <>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <label className="stack-layout" style={{ gap: 8 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                DIRECTIONS
+                              </span>
+                              <div style={{ display: "flex", gap: 12 }}>
+                                {["BUY", "SELL"].map((direction) => (
+                                  <label
+                                    key={direction}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={cronForm.directions.includes(
+                                        direction,
+                                      )}
+                                      onChange={(e) => {
+                                        const next = e.target.checked
+                                          ? [...cronForm.directions, direction]
+                                          : cronForm.directions.filter(
+                                              (x) => x !== direction,
+                                            );
+                                        setCronForm((p) => ({
+                                          ...p,
+                                          directions: next,
+                                        }));
+                                      }}
+                                    />
+                                    <span style={{ fontSize: 13 }}>
+                                      {direction}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </label>
+                            <label className="stack-layout" style={{ gap: 8 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                ORDER TYPES
+                              </span>
+                              <div style={{ display: "flex", gap: 12 }}>
+                                {["market", "limit", "stop"].map(
+                                  (orderType) => (
+                                    <label
+                                      key={orderType}
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={cronForm.order_types.includes(
+                                          orderType,
+                                        )}
+                                        onChange={(e) => {
+                                          const next = e.target.checked
+                                            ? [
+                                                ...cronForm.order_types,
+                                                orderType,
+                                              ]
+                                            : cronForm.order_types.filter(
+                                                (x) => x !== orderType,
+                                              );
+                                          setCronForm((p) => ({
+                                            ...p,
+                                            order_types: next,
+                                          }));
+                                        }}
+                                      />
+                                      <span style={{ fontSize: 13 }}>
+                                        {orderType}
+                                      </span>
+                                    </label>
+                                  ),
+                                )}
+                              </div>
+                            </label>
+                          </div>
+                          <div className="stack-layout" style={{ gap: 8 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              CADENCE (MINUTES)
+                            </span>
+                            <input
+                              type="number"
+                              value={cronForm.cadence_minutes}
                               onChange={(e) =>
-                                updateSetting(settingKey, key, e.target.value)
+                                setCronForm((p) => ({
+                                  ...p,
+                                  cadence_minutes: Number(e.target.value),
+                                }))
                               }
                             />
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              style={{ padding: "4px 8px", fontSize: 11 }}
-                              onClick={async () => {
-                                if (!visible) {
-                                  await revealApiKeyField(selectedSetting, key);
-                                }
-                                toggleSecretVisible(settingKey, key);
-                              }}
-                              title={visible ? "Hide value" : "Show value"}
-                            >
-                              {visible ? "Hide" : "Eye"}
-                            </button>
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              style={{ padding: "4px 8px", fontSize: 11 }}
-                              onClick={async () => {
-                                const plain = await revealApiKeyField(
-                                  selectedSetting,
-                                  key,
-                                );
-                                if (!plain) {
-                                  setSettingsMsg(
-                                    `${key}: empty value, nothing copied.`,
-                                  );
-                                  return;
-                                }
-                                await copySecretToClipboard(plain, key);
-                              }}
-                              title="Copy decrypted value to clipboard"
-                            >
-                              Copy
-                            </button>
                           </div>
-                          {!visible && (
+                          <div className="stack-layout" style={{ gap: 8 }}>
                             <span
-                              className="minor-text"
-                              style={{ fontSize: 10, opacity: 0.9 }}
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
                             >
-                              {maskSecretPreview(val)}
+                              MODEL
                             </span>
-                          )}
-                        </label>
-                      );
-                    },
-                  )}
-                </div>
-              ) : String(selectedSetting.type || "").toLowerCase() === "note" ? (
-                <div className="stack-layout" style={{ gap: 10 }}>
-                  <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">Content</span>
-                    <textarea
-                      rows={20}
-                      style={{
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        padding: 16,
-                        fontFamily: "inherit",
-                      }}
-                      value={String(selectedSetting.data?.value || "")}
-                      onChange={(e) => {
-                        updateSetting(
-                          getSettingKey(selectedSetting),
-                          "value",
-                          e.target.value,
-                        );
-                      }}
-                      placeholder="Write your notes here..."
-                    />
-                  </label>
-                </div>
-              ) : String(selectedSetting.type || "").toLowerCase() ===
-                  "symbols" ||
-                String(selectedSetting.type || "").toLowerCase() === "trade" ? (
-                <div className="stack-layout" style={{ gap: 10 }}>
-                  <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">Symbols (one per line)</span>
-                    <textarea
-                      rows={15}
-                      value={symbolsDetailText}
-                      onChange={(e) => {
-                        setSymbolsDetailText(e.target.value);
-                      }}
-                      onBlur={(e) => {
-                        const text = e.target.value;
-                        const arr = text
-                          .split(/[\n,]/)
-                          .map((x) =>
-                            String(x || "")
-                              .trim()
-                              .toUpperCase(),
-                          )
-                          .filter(Boolean);
-                        setSettings((prev) =>
-                          prev.map((x) =>
-                            getSettingKey(x) === getSettingKey(selectedSetting)
-                              ? {
-                                  ...x,
-                                  data: {
-                                    ...(x.data || {}),
-                                    symbols: [...new Set(arr)],
-                                  },
-                                }
-                              : x,
-                          ),
-                        );
-                      }}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <div className="stack-layout" style={{ gap: 20 }}>
-                  <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">JSON Configuration</span>
-                    <textarea
-                      rows={20}
-                      value={jsonDetailText}
-                      onChange={(e) => setJsonDetailText(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    className="secondary-button"
-                    style={{ alignSelf: "flex-start" }}
-                    onClick={() => {
-                      try {
-                        const parsed = JSON.parse(
-                          String(jsonDetailText || "{}"),
-                        );
-                        setSettings((prev) =>
-                          prev.map((x) =>
-                            getSettingKey(x) === getSettingKey(selectedSetting)
-                              ? { ...x, data: parsed }
-                              : x,
-                          ),
-                        );
-                        setSettingsMsg("JSON applied. Click SAVE to persist.");
-                      } catch (err) {
-                        setSettingsMsg(`Invalid JSON: ${err?.message}`);
-                      }
+                            <select
+                              value={cronForm.model}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  model: e.target.value,
+                                }))
+                              }
+                            >
+                              {API_KEY_NAME_OPTIONS.map((opt) => (
+                                <option
+                                  key={opt.value}
+                                  value={opt.value
+                                    .replace("_API_KEY", "")
+                                    .toLowerCase()}
+                                >
+                                  {opt.label.replace(" API Key", "")}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="stack-layout" style={{ gap: 8 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              PROFILE
+                            </span>
+                            <input
+                              value={cronForm.profile}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  profile: e.target.value,
+                                }))
+                              }
+                              placeholder="Optional AI/profile name"
+                            />
+                          </div>
+                          <div className="stack-layout" style={{ gap: 8 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              ENTRY MODELS (COMMA OR NEWLINE)
+                            </span>
+                            <textarea
+                              rows={3}
+                              value={cronForm.entry_models}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  entry_models: e.target.value,
+                                }))
+                              }
+                              placeholder="Order Block, FVG, ICT..."
+                            />
+                          </div>
+                          <div className="stack-layout" style={{ gap: 8 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              PROMPT
+                            </span>
+                            <textarea
+                              rows={6}
+                              value={cronForm.prompt}
+                              onChange={(e) =>
+                                setCronForm((p) => ({
+                                  ...p,
+                                  prompt: e.target.value,
+                                }))
+                              }
+                              placeholder="Instructions for AI setup detection..."
+                            />
+                          </div>
+                        </>
+                      )}
+                  </div>
+                ) : selectedSetting.type === "api_key" ? (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 20,
                     }}
                   >
-                    APPLY JSON
+                    {Object.entries(selectedSetting.data || {}).map(
+                      ([key, val]) => {
+                        const settingKey = getSettingKey(selectedSetting);
+                        const visible = isRevealed(settingKey, key);
+                        return (
+                          <label
+                            key={key}
+                            className="stack-layout"
+                            style={{ gap: 6 }}
+                          >
+                            <span
+                              className="minor-text"
+                              style={{ fontSize: 11 }}
+                            >
+                              {key}
+                            </span>
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 8,
+                                alignItems: "center",
+                              }}
+                            >
+                              <input
+                                type={visible ? "text" : "password"}
+                                value={
+                                  visible
+                                    ? getRevealedValue(settingKey, key)
+                                    : val || ""
+                                }
+                                readOnly={visible}
+                                onChange={
+                                  visible
+                                    ? undefined
+                                    : (e) =>
+                                        updateSetting(
+                                          settingKey,
+                                          key,
+                                          e.target.value,
+                                        )
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                style={{ padding: "4px 8px", fontSize: 11 }}
+                                onClick={async () => {
+                                  if (!visible) {
+                                    await revealApiKeyField(
+                                      selectedSetting,
+                                      key,
+                                    );
+                                  } else {
+                                    hideRevealed(settingKey, key);
+                                  }
+                                }}
+                                title={visible ? "Hide value" : "Show value"}
+                              >
+                                {visible ? "Hide" : "Eye"}
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                style={{ padding: "4px 8px", fontSize: 11 }}
+                                onClick={async () => {
+                                  const plain = await revealApiKeyField(
+                                    selectedSetting,
+                                    key,
+                                  );
+                                  if (!plain) {
+                                    setSettingsMsg(
+                                      `${key}: empty value, nothing copied.`,
+                                    );
+                                    return;
+                                  }
+                                  await copySecretToClipboard(plain, key);
+                                }}
+                                title="Copy decrypted value to clipboard"
+                              >
+                                Copy
+                              </button>
+                            </div>
+                            {!visible && (
+                              <span
+                                className="minor-text"
+                                style={{ fontSize: 10, opacity: 0.9 }}
+                              >
+                                {maskSecretPreview(val)}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      },
+                    )}
+                  </div>
+                ) : String(selectedSetting.type || "").toLowerCase() ===
+                  "note" ? (
+                  <div className="stack-layout" style={{ gap: 10 }}>
+                    <label className="stack-layout" style={{ gap: 6 }}>
+                      <span className="minor-text">Content</span>
+                      <textarea
+                        rows={20}
+                        style={{
+                          fontSize: 14,
+                          lineHeight: 1.5,
+                          padding: 16,
+                          fontFamily: "inherit",
+                        }}
+                        value={String(selectedSetting.data?.value || "")}
+                        onChange={(e) => {
+                          updateSetting(
+                            getSettingKey(selectedSetting),
+                            "value",
+                            e.target.value,
+                          );
+                        }}
+                        placeholder="Write your notes here..."
+                      />
+                    </label>
+                  </div>
+                ) : String(selectedSetting.type || "").toLowerCase() ===
+                    "symbols" ||
+                  String(selectedSetting.type || "").toLowerCase() ===
+                    "trade" ? (
+                  <div className="stack-layout" style={{ gap: 10 }}>
+                    <label className="stack-layout" style={{ gap: 6 }}>
+                      <span className="minor-text">Symbols (one per line)</span>
+                      <textarea
+                        rows={15}
+                        value={symbolsDetailText}
+                        onChange={(e) => {
+                          setSymbolsDetailText(e.target.value);
+                        }}
+                        onBlur={(e) => {
+                          const text = e.target.value;
+                          const arr = text
+                            .split(/[\n,]/)
+                            .map((x) =>
+                              String(x || "")
+                                .trim()
+                                .toUpperCase(),
+                            )
+                            .filter(Boolean);
+                          setSettings((prev) =>
+                            prev.map((x) =>
+                              getSettingKey(x) ===
+                              getSettingKey(selectedSetting)
+                                ? {
+                                    ...x,
+                                    data: {
+                                      ...(x.data || {}),
+                                      symbols: [...new Set(arr)],
+                                    },
+                                  }
+                                : x,
+                            ),
+                          );
+                        }}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="stack-layout" style={{ gap: 20 }}>
+                    <label className="stack-layout" style={{ gap: 6 }}>
+                      <span className="minor-text">JSON Configuration</span>
+                      <textarea
+                        rows={20}
+                        value={jsonDetailText}
+                        onChange={(e) => setJsonDetailText(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      className="secondary-button"
+                      style={{ alignSelf: "flex-start" }}
+                      onClick={() => {
+                        try {
+                          const parsed = JSON.parse(
+                            String(jsonDetailText || "{}"),
+                          );
+                          setSettings((prev) =>
+                            prev.map((x) =>
+                              getSettingKey(x) ===
+                              getSettingKey(selectedSetting)
+                                ? { ...x, data: parsed }
+                                : x,
+                            ),
+                          );
+                          setSettingsMsg(
+                            "JSON applied. Click SAVE to persist.",
+                          );
+                        } catch (err) {
+                          setSettingsMsg(`Invalid JSON: ${err?.message}`);
+                        }
+                      }}
+                    >
+                      APPLY JSON
+                    </button>
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    marginTop: 32,
+                    paddingTop: 24,
+                    borderTop: "1px solid var(--border)",
+                  }}
+                >
+                  <button
+                    className="primary-button"
+                    style={{ padding: "12px 32px", fontSize: 14 }}
+                    onClick={() => {
+                      if (selectedSetting.type === "cron") {
+                        const nextData = {
+                          ...selectedSetting.data,
+                          provider: cronForm.provider,
+                          timezone: cronForm.timezone,
+                          batch_size: cronForm.batch_size,
+                          symbols: parseSymbolText(cronForm.symbols),
+                          exclude_symbols: parseSymbolText(
+                            cronForm.exclude_symbols,
+                          ),
+                          timeframes: cronForm.timeframes,
+                          cadence_minutes: cronForm.cadence_minutes,
+                          model: cronForm.model,
+                          profile: cronForm.profile,
+                          entry_models: parseTextList(cronForm.entry_models),
+                          directions: cronForm.directions,
+                          order_types: cronForm.order_types,
+                          prompt: cronForm.prompt,
+                        };
+                        saveSetting(
+                          getSettingKey(selectedSetting),
+                          nextData,
+                          selectedSetting.status,
+                        );
+                      } else {
+                        saveSetting(getSettingKey(selectedSetting));
+                      }
+                    }}
+                    disabled={settingsLoading}
+                  >
+                    {settingsLoading ? "SAVING..." : "SAVE CHANGES"}
                   </button>
                 </div>
-              )}
 
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "flex-end",
-                  marginTop: 32,
-                  paddingTop: 24,
-                  borderTop: "1px solid var(--border)",
-                }}
-              >
-                <button
-                  className="primary-button"
-                  style={{ padding: "12px 32px", fontSize: 14 }}
-                  onClick={() => {
-                    if (selectedSetting.type === "cron") {
-                      const nextData = {
-                        ...selectedSetting.data,
-                        provider: cronForm.provider,
-                        timezone: cronForm.timezone,
-                        batch_size: cronForm.batch_size,
-                        symbols: parseSymbolText(cronForm.symbols),
-                        exclude_symbols: parseSymbolText(cronForm.exclude_symbols),
-                        timeframes: cronForm.timeframes,
-                        cadence_minutes: cronForm.cadence_minutes,
-                        model: cronForm.model,
-                        profile: cronForm.profile,
-                        entry_models: parseTextList(cronForm.entry_models),
-                        directions: cronForm.directions,
-                        order_types: cronForm.order_types,
-                        prompt: cronForm.prompt,
-                      };
-                      saveSetting(
-                        getSettingKey(selectedSetting),
-                        nextData,
-                        selectedSetting.status,
-                      );
-                    } else {
-                      saveSetting(getSettingKey(selectedSetting));
-                    }
-                  }}
-                  disabled={settingsLoading}
-                >
-                  {settingsLoading ? "SAVING..." : "SAVE CHANGES"}
-                </button>
+                {settingsMsg && (
+                  <div
+                    className="minor-text"
+                    style={{ marginTop: 16, color: "var(--success)" }}
+                  >
+                    {settingsMsg}
+                  </div>
+                )}
               </div>
-
-              {settingsMsg && (
-                <div
-                  className="minor-text"
-                  style={{ marginTop: 16, color: "var(--success)" }}
-                >
-                  {settingsMsg}
-                </div>
-              )}
-            </div>
-          )}
+            )}
 
           {activeTab === "NOTIFICATIONS" && <EventsPageContent />}
 

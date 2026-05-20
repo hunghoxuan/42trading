@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.20 09:04 - 29bcc90f";
+string EA_BUILD_VERSION = "v2026.05.20 09:00 - price-stream";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -47,6 +47,11 @@ input int    InpMaxSignalAgeSeconds  = 7200; // Max Signal Age (Seconds)
 input int    InpDedupKeepSeconds     = 86400; // Duplicate Cache Duration (Seconds)
 input int    InpStopRetrySeconds     = 5;    // SL/TP Retry Interval
 input int    InpStopRetryMaxAttempts = 24;   // SL/TP Max Retries
+input int    InpSyncSeconds         = 10;   // PnL/SL/Sync Interval (seconds)
+
+//--- 6.1 PRICE STREAMING
+input bool   InpPricePushEnabled    = true; // Enable Price Push to VPS
+input int    InpPricePushSeconds    = 60;   // Price Push Interval (seconds)
 
 //--- 6. BROKER MANAGEMENT (THE HAND)
 enum ENUM_MANAGEMENT_STRATEGY {
@@ -125,6 +130,14 @@ struct SPartialTarget {
 };
 SPartialTarget g_partialTargets[];
 long      g_partialClosedTickets[];  // tickets that have had partial closes
+
+//--- 9. PRICE STREAMING
+string   g_trackedSymbols[];        // symbols for price push
+datetime g_lastTrackedFetch = 0;
+datetime g_lastPricePush = 0;
+int      g_pricePushCount = 0;
+string   g_lastPriceStatus = "IDLE";
+string   g_lastPriceErr = "";
 
 void ParsePartialTps(string sid, string rawJson, string fullResp = "")
 {
@@ -2810,8 +2823,19 @@ void OnTimer()
 
    datetime now = TimeCurrent();
 
-   // Periodic state reconciliation (PUSH ACTIVE) - every 60s
-   if(now - g_syncLastTime >= 60)
+   // --- Fetch tracked symbols (startup + every 5 min) ---
+   if(g_lastTrackedFetch == 0 || (now - g_lastTrackedFetch) >= 300)
+      FetchTrackedSymbols();
+
+   // --- Price push (every PricePushSeconds) ---
+   if(InpPricePushEnabled)
+   {
+      if(g_lastPricePush == 0 || (now - g_lastPricePush) >= InpPricePushSeconds)
+         PushPrices();
+   }
+
+   // Periodic state reconciliation (PUSH ACTIVE) - configurable interval
+   if(now - g_syncLastTime >= InpSyncSeconds)
    {
       SyncWithVps();
       g_syncLastTime = now;
@@ -3704,4 +3728,100 @@ void OnDeinit(const int reason)
    EventKillTimer();
    if(InpShowDebugPanel)
       Comment("");
+}
+
+//+------------------------------------------------------------------+
+//| Price Streaming Helpers                                          |
+//+------------------------------------------------------------------+
+void FetchTrackedSymbols()
+{
+   string url = BuildApiUrl("/v2/broker/tracked-symbols?account=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)));
+   string resp;
+   if(!HttpGet(url, resp))
+   {
+      if(g_lastTrackedFetch == 0) Print("[Price] Fetch tracked symbols failed: ", g_lastHttpError);
+      return;
+   }
+   // Parse JSON array of symbols
+   ArrayResize(g_trackedSymbols, 0);
+   int pos = StringFind(resp, "\"symbols\"");
+   if(pos >= 0)
+   {
+      pos = StringFind(resp, "[", pos);
+      if(pos >= 0)
+      {
+         int end = StringFind(resp, "]", pos);
+         if(end > pos)
+         {
+            string arr = StringSubstr(resp, pos + 1, end - pos - 1);
+            string parts[];
+            StringSplit(arr, ',', parts);
+            for(int i = 0; i < ArraySize(parts); i++)
+            {
+               StringReplace(parts[i], "\"", "");
+               StringTrimLeft(parts[i]);
+               StringTrimRight(parts[i]);
+               if(StringLen(parts[i]) > 0)
+               {
+                  int n = ArraySize(g_trackedSymbols);
+                  ArrayResize(g_trackedSymbols, n + 1);
+                  g_trackedSymbols[n] = parts[i];
+               }
+            }
+         }
+      }
+   }
+   g_lastTrackedFetch = TimeCurrent();
+   Print("[Price] Fetched ", ArraySize(g_trackedSymbols), " tracked symbols");
+}
+
+void PushPrices()
+{
+   if(!InpPricePushEnabled || ArraySize(g_trackedSymbols) == 0)
+      return;
+
+   g_lastPriceStatus = "PUSHING";
+   int ts = (int)TimeCurrent();
+   string priceList = "";
+   int priceCount = 0;
+
+   for(int i = 0; i < ArraySize(g_trackedSymbols); i++)
+   {
+      string sym = g_trackedSymbols[i];
+      double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+      double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+      if(bid <= 0 || ask <= 0)
+         continue;
+
+      if(priceCount > 0) priceList += ",";
+      priceList += "{\"s\":\"" + sym + "\",\"b\":" + DoubleToString(bid, 5) + ",\"a\":" + DoubleToString(ask, 5) + "}";
+      priceCount++;
+   }
+
+   if(priceCount == 0)
+   {
+      g_lastPriceStatus = "IDLE";
+      return;
+   }
+
+   string body = "{";
+   body += "\"source_id\":\"MT5\",\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += "\"ts\":" + IntegerToString(ts) + ",";
+   body += "\"p\":[" + priceList + "]";
+   body += "}";
+
+   string url = BuildApiUrl("/v2/broker/prices");
+   string resp;
+   if(HttpPostJsonWithResponse(url, body, resp))
+   {
+      g_pricePushCount++;
+      g_lastPriceStatus = "OK";
+      g_lastPriceErr = "";
+   }
+   else
+   {
+      g_lastPriceStatus = "FAIL";
+      g_lastPriceErr = g_lastHttpError;
+   }
+   g_lastPricePush = TimeCurrent();
 }

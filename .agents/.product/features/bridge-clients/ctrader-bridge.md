@@ -47,6 +47,11 @@ This document outlines the current capabilities and architectural features of th
     - `broker_trade_id`: The platform's internal ticket ID.
     - `entry_exec`: The actual fill price (for market) or target price (for pending).
 - **Duplicate Prevention**: Uses a local `HashSet` to ensure no signal is processed twice within a session.
+- **Immediate SL/Partial Ack**: SL changes (BE/Trail) and partial closes fire immediate `AckAsync` to VPS. See `broker_sync_audit.md`.
+
+## Live Price Streaming
+- Pushes real-time bid/ask for tracked symbols to VPS on configurable timer.
+- See: `broker_price_stream.md` for full architecture.
 
 ## UI & Debugging
 - **On-Chart Panel**: Displays real-time status of:

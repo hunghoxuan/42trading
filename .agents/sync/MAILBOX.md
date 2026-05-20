@@ -13,8 +13,8 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `LOCKED`
 - deploy_owner: `DeepSeek`
-- since_utc: `2026-05-20 09:04 UTC`
-- note: `fix cron loop stall — reset CRON_STATE.isRunning after tick`
+- since_utc: `2026-05-20 09:07 UTC`
+- note: `cron loop stall fix deployed v2026.05.20 09:04 - fbb1110b — VERIFIED: scheduler_running=false, cron=ok(6s), 2+ ticks`
 
 ## Required Entry Template
 ...

@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 09:04 - 29bcc90f"); // sync gaps filled: SL_CHANGED/PARTIAL_CLOSE ack, enhanced logging, SSE for non-status changes
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.20 09:00 - price-stream",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -22454,6 +22457,163 @@ const appHandler = async (req, res) => {
       );
       const statusCode = result?.ok ? 200 : 400;
       return json(res, statusCode, result);
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/broker/tracked-symbols") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const account = await requireV2BrokerAccount(req, res, url);
+      if (!account) return;
+      const uid = String(account.user_id || CFG.mt5DefaultUserId).trim();
+      const watchlist = (await repoGetUserWatchlist(uid).catch(() => [])) || [];
+      // Merge: positions/orders from latest sync + watchlist
+      const accMeta = account.metadata || {};
+      const posSymbols = [];
+      try {
+        const b = await mt5Backend();
+        const tradesRes = await b.listTradesV2({
+          userId: uid,
+          accountId: account.account_id,
+          pageSize: 200,
+          executionStatus: ["OPEN", "PENDING"],
+        });
+        for (const t of tradesRes.items || []) {
+          if (t.symbol && !posSymbols.includes(t.symbol.toUpperCase()))
+            posSymbols.push(t.symbol.toUpperCase());
+        }
+      } catch {}
+      const merged = [
+        ...new Set([
+          ...posSymbols,
+          ...watchlist.map((s) => String(s).toUpperCase()),
+        ]),
+      ].sort();
+      return json(res, 200, {
+        ok: true,
+        symbols: merged,
+        sources: {
+          positions: posSymbols,
+          watchlist: watchlist.map((s) => String(s).toUpperCase()),
+        },
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/broker/prices") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const prices = Array.isArray(payload.p) ? payload.p : [];
+      const ts = Number(payload.ts || Math.floor(Date.now() / 1000));
+      if (!prices.length) return json(res, 200, { ok: true, updated: 0 });
+
+      const t0 = Date.now();
+      const db = await mt5Backend();
+      const rows = [];
+      for (const p of prices) {
+        const s = String(p.s || "")
+          .trim()
+          .toUpperCase();
+        const b = Number(p.b);
+        const a = Number(p.a);
+        if (!s || !Number.isFinite(b) || !Number.isFinite(a)) continue;
+        const mid = (b + a) / 2;
+        rows.push(`('${s.replace(/'/g, "''")}', ${mid}, ${ts})`);
+      }
+      if (!rows.length) return json(res, 200, { ok: true, updated: 0 });
+
+      // 1. DB bulk update (all TFs)
+      await db.pool.query(
+        `UPDATE market_data
+         SET last_price = p.mid,
+             last_price_at = to_timestamp(p.ts)::timestamptz,
+             updated_at = NOW()
+         FROM (VALUES ${rows.join(",")}) AS p(symbol, mid, ts)
+         WHERE market_data.symbol = p.symbol`,
+      );
+
+      // 2. L1 memory patch
+      const iso = new Date(ts * 1000).toISOString();
+      for (const p of prices) {
+        const s = normalizeMarketDataSymbol(p.s);
+        if (!s) continue;
+        const b = Number(p.b);
+        const a = Number(p.a);
+        if (!Number.isFinite(b) || !Number.isFinite(a)) continue;
+        const mid = (b + a) / 2;
+        const key = marketDataCacheKey(s);
+        const root = MARKET_DATA_MEMORY_CACHE.get(key);
+        if (root && Array.isArray(root.data)) {
+          for (const tfEntry of root.data) {
+            tfEntry.last_price = mid;
+            tfEntry.last_price_at = iso;
+          }
+          root.updated_time = Math.floor(Date.now() / 1000);
+        }
+      }
+
+      // 3. Async Redis flush (fire-and-forget)
+      getRedisClient()
+        .then(async (client) => {
+          if (!client) return;
+          for (const p of prices) {
+            const s = normalizeMarketDataSymbol(p.s);
+            if (!s) continue;
+            const b = Number(p.b);
+            const a = Number(p.a);
+            if (!Number.isFinite(b) || !Number.isFinite(a)) continue;
+            const mid = (b + a) / 2;
+            const key = marketDataCacheKey(s);
+            try {
+              const raw = await client.get(key).catch(() => "");
+              let root = null;
+              if (raw) {
+                try {
+                  root = JSON.parse(raw);
+                } catch {}
+              }
+              if (root && Array.isArray(root.data)) {
+                for (const tfEntry of root.data) {
+                  tfEntry.last_price = mid;
+                  tfEntry.last_price_at = iso;
+                }
+                root.updated_time = Math.floor(Date.now() / 1000);
+                await client
+                  .setEx(key, 3600, JSON.stringify(root))
+                  .catch(() => {});
+              }
+            } catch {}
+          }
+        })
+        .catch(() => {});
+
+      // 4. SSE pulse
+      bumpPulse("global", {
+        type: "price_update",
+        symbols: prices.map((p) => String(p.s || "").toUpperCase()),
+      });
+
+      const elapsed = Date.now() - t0;
+      return json(res, 200, {
+        ok: true,
+        updated: prices.length,
+        elapsed_ms: elapsed,
+      });
     } catch (error) {
       return json(res, 400, {
         ok: false,

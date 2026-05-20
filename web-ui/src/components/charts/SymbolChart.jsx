@@ -1262,7 +1262,15 @@ export default function SymbolChart({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `TV login failed - server returned non-JSON (${res.status}): ${text.slice(0, 100)}`,
+      );
+    }
     if (!data.ok) throw new Error(data.error || "Login failed");
     return data;
   };
