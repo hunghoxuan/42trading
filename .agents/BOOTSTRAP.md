@@ -10,17 +10,17 @@ Read in this order:
 2. `.agents/BOOTSTRAP.md`
 3. `.agents/rules.md`
 4. `.agents/rules/communication.md`
-5. `.agents/rules/planning.md`
-6. `.agents/rules/safety.md`
-7. `.agents/rules/cli.md`
-8. `.agents/rules/token.md`
-9. `.agents/STATE.md`
+5. `.agents/rules/cli.md`
+6. `.agents/rules/token.md`
+7. `.agents/STATE.md`
 
 ## Read Later Only If Needed
 
 - DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`
 - UI work: `.agents/rules/ui.md`
 - Deploy/version work: `.agents/rules/deploy.md`
+- Planning-heavy work: `.agents/rules/planning.md`
+- Risky/destructive work: `.agents/rules/safety.md`
 - Test work: `.agents/rules/testing.md`
 - Handoff/delegation: `.agents/rules/handoff.md`, `.agents/sync/MAILBOX.md`
 - Script/test creation: `.agents/rules/scripting.md`
@@ -35,3 +35,4 @@ Read in this order:
 - Use `rtk` for shell.
 - Keep boot small.
 - Pull big docs only when task needs them.
+- Prefer FAST path for small changes: do not load extra rule files unless task demands them.

@@ -23,3 +23,13 @@
 - Never render credentials.
 - Time display uses `showDateTime`.
 
+## Visual Verification Policy (Token/Cost Optimized)
+
+- Default: no screenshot recapture for small UI edits.
+- Require screenshot/browser recapture only when:
+  - user explicitly asks for it, or
+  - new page/layout is introduced, or
+  - large visual refactor/high regression risk.
+- For standard edits, use:
+  - `rtk npm --prefix web-ui run build`
+  - concise manual verification notes.
