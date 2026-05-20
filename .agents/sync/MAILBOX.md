@@ -11,10 +11,28 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-20 10:00 UTC`
-- note: `AI Analysis: add Pending/Filled dynamic symbol tabs from trades`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 10:05 UTC`
+- note: `AI Analysis: Pending/Filled dynamic tabs deployed`
+
+### [2026-05-20 13:42 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: f4018f71
+- scope: `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+- merge_to_main: YES (f4018f71)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.20 13:42 - 7b0f8236
+  - ea_version: v2026.05.20 13:42 - 7b0f8236
+  - result: PASS
+  - note: Built locally then rsynced
+- verify:
+  - /health: `ok:true`, version `v2026.05.20 13:42 - 7b0f8236`
+  - UI: new asset `ChartSnapshotsPage-Cd0Z2nUr.js` (200)
+- handoff_next: none
+
 
 ### [2026-05-20 11:55 UTC] AGENT:Codex
 - status: HANDOFF_READY

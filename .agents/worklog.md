@@ -1,3 +1,9 @@
+# Session Log: 2026-05-20 13:42 UTC
+- **Starting Task**: Add Pending/Filled dynamic symbol tabs in AI Analysis.
+- **Work Accomplished**: Added Pending and Filled options after Watchlist dropdown. Fetches symbols from v2/trades API filtered by execution_status. Shows trade list below symbols with entry/tp/date.
+- **Changed Files**: `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, `.agents/sync/MAILBOX.md`, `.agents/STATE.md`
+- **Deploy Status**: Deployed v2026.05.20 13:42 - 7b0f8236 ✅
+
 # Session Log: 2026-05-20 09:28 UTC
 - **Starting Task**: Fix Settings api_key Eye/Copy showing masked value.
 - **Work Accomplished**: Replaced secretVisibility with revealedValues ephemeral map. revealApiKeyField stores decrypted value in revealedValues, never mutates settings. Input readOnly when revealed. Hide clears plain value. Copy fetches directly.
