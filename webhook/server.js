@@ -13514,7 +13514,7 @@ function splitTraceContent(row) {
   const content = String(row.content || "");
   if (!content.trim()) return [row]; // legacy metadata-only
   const events = [];
-  const blocks = content.split(/\n(?=\[\d{4}-\d{2}-\d{2})/);
+  const blocks = content.split(/(?:\n|(?<=[^\n]))(?=\[\d{4}-\d{2}-\d{2})/);
   for (const block of blocks) {
     const trimmed = block.trim();
     if (!trimmed) continue;
