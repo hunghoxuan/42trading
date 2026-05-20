@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 15:07 - c7610759"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 15:29 - 03c7703e"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -371,14 +371,16 @@ class NotificationManager {
     this.settingsCache = new Map();
     this.queue = [];
     this._pool = null;
+    this._logFn = null;     // unified log function (b.log)
     this._flushTimer = null;
     this._flushPromise = null;
     this._settingsLoaded = false;
   }
 
   /** Call after DB pool is ready, e.g. from _mt5InitBackendInternal */
-  async init(poolRef) {
+  async init(poolRef, logFn) {
     this._pool = poolRef;
+    this._logFn = logFn;
     await this.loadSettings();
     if (this._flushTimer) clearInterval(this._flushTimer);
     this._flushTimer = setInterval(() => this.flushQueue(), 1000);
@@ -473,30 +475,35 @@ class NotificationManager {
       }
     }
 
-    // 3) db_log channel → enqueue for batch trace upsert
+    // 3) db_log channel → enqueue raw metadata for unified b.log()
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
-      const subEvent = merged.message || subType || eventType;
-      const traceType = eventType; // NotificationManager eventType IS the trace category
       const objectId = payload.object_id || payload.position || payload.signal_id || (eventType === "SYSTEM_EVENT" ? "system" : eventType === "REMOTE_API_CALL" ? "api" : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC" ? "broker" : null);
-      const block = buildTraceBlock(subEvent, {
-        ...payload,
-        event: undefined,
-        event_type: undefined,
-      });
+      const objectTable = payload.object_table || eventType;
+      // Strip internal keys before storing
+      const meta = { ...payload };
+      delete meta.object_id;
+      delete meta.object_table;
+      delete meta.user_id;
+      delete meta.event;
+      delete meta.event_type;
+      delete meta.console_log;
+      delete meta.ticker;
+      delete meta.sound;
+      delete meta.notification;
+      delete meta.toast;
+      delete meta.message;
       this.queue.push({
         object_id: objectId,
-        object_table: eventType,
-        symbol: payload.symbol || null,
-        event_type: traceType,
-        content: block,
+        object_table: objectTable,
         user_id: userId,
+        meta,
       });
     }
   }
 
   /**
-   * Flush queued db_log entries to logs table in a single batch INSERT.
+   * Flush queued db_log entries via unified b.log() — single INSERT path.
    * Called automatically every 1s via setInterval.
    */
   async flushQueue() {
@@ -505,35 +512,24 @@ class NotificationManager {
 
     const batch = this.queue.splice(0, this.queue.length);
     this._flushPromise = (async () => {
-      if (!this._pool) {
+      if (!this._logFn) {
         console.warn(
-          "[NotificationManager] No pool available for db_log flush",
+          "[NotificationManager] No logFn available for db_log flush",
         );
         return;
       }
       try {
         for (const row of batch) {
-          if (!row.object_id) {
-            // Fallback: insert without trace key (no conflict possible)
-            await this._pool.query(
-              `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-              [row.object_id, row.object_table, row.symbol, row.event_type, row.content, row.user_id],
-            );
-          } else {
-            await this._pool.query(
-              `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-               ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
-               DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
-                             updated_at = NOW()`,
-              [row.object_id, row.object_table, row.symbol, row.event_type, row.content, row.user_id],
-            );
-          }
+          if (!row.object_id) continue;
+          await this._logFn(
+            row.object_id,
+            row.object_table,
+            row.meta,
+            row.user_id,
+          ).catch(() => {});
         }
       } catch (e) {
         console.warn("[NotificationManager] db_log flush error:", e.message);
-        // Re-queue on failure to avoid data loss
         this.queue.unshift(...batch);
       } finally {
         this._flushPromise = null;
@@ -1039,10 +1035,12 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
       }
     }
   }
-  // Legacy DB insert — still needed for object-scoped queries (e.g. trade detail events page)
-  const b = await mt5Backend();
-  if (b.log)
-    await b.log(objectId, objectTable, metadata, userId).catch(() => {});
+  // Fallback: for events not routed through notificationManager, still log via b.log()
+  if (!eventType) {
+    const b = await mt5Backend();
+    if (b.log)
+      await b.log(objectId, objectTable, metadata, userId).catch(() => {});
+  }
 }
 
 function json(res, statusCode, data) {
@@ -7596,7 +7594,7 @@ async function _mt5InitBackendInternal() {
   }
 
   // Initialize NotificationManager (loads notification_config from user_settings)
-  await notificationManager.init(pool);
+  await notificationManager.init(pool, MT5_BACKEND.log.bind(MT5_BACKEND));
   global.__notificationManager = notificationManager;
 
   const storage = "postgres";
@@ -7930,21 +7928,20 @@ async function _mt5InitBackendInternal() {
             created++;
             accountIds.push(aid);
             sids.push(tradeSid);
-            await client.query(
-              `INSERT INTO logs (object_id, object_table, metadata, user_id) VALUES ($1,'trades',$2,$3)`,
-              [
-                tradeSid,
-                JSON.stringify(
-                  signalId
-                    ? { event: "SIGNAL_FANOUT", signal_id: signalId }
-                    : { event: "DIRECT_TRADE_CREATE" },
-                ),
-                userId,
-              ],
-            );
           }
         }
         await client.query("COMMIT");
+        // Log fanout events AFTER commit (uses pool, not transaction client)
+        for (const sid of sids) {
+          await this.log(
+            sid,
+            "trades",
+            signalId
+              ? { event: "SIGNAL_FANOUT", signal_id: signalId }
+              : { event: "DIRECT_TRADE_CREATE" },
+            userId,
+          ).catch(() => {});
+        }
         bumpPulse(userId);
         return { created, account_ids: accountIds, sids };
       } catch (e) {

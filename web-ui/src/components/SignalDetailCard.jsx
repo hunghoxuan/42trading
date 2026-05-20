@@ -1625,30 +1625,6 @@ export default function SignalDetailCard({
       {/* Trade Plans */}
       {tradePlan?.enabled && (
         <div style={{ marginBottom: 20 }}>
-          {decisionBadges.length ? (
-            <div
-              style={{
-                display: "flex",
-                gap: 6,
-                flexWrap: "wrap",
-                marginBottom: 12,
-              }}
-            >
-              {decisionBadges.map((item) => (
-                <span
-                  key={`tp-${item.key}`}
-                  className="badge badge-mini"
-                  style={{
-                    padding: "3px 7px",
-                    fontSize: 10,
-                    ...semanticBadgeStyle(item.toneSource),
-                  }}
-                >
-                  {item.label}
-                </span>
-              ))}
-            </div>
-          ) : null}
           <div
             className="trade-plans-grid-v5"
             style={{
@@ -1669,6 +1645,25 @@ export default function SignalDetailCard({
               "BUY";
             const isSimplified = !isSelected;
             const planValue = planDrafts[planId] || p;
+            const headerPlan = {
+              ...planValue,
+              strategy:
+                planValue?.strategy || selectedAiPlan?.strategy || "",
+              entry_model:
+                planValue?.entry_model || selectedAiPlan?.entry_model || "",
+              risk_management: {
+                ...(selectedAiPlan?.risk_management || {}),
+                ...(planValue?.risk_management || {}),
+              },
+              confidence_pct:
+                planValue?.confidence_pct ??
+                selectedAiPlan?.risk_management?.confidence_pct ??
+                null,
+              estimate_mins_that_entry_happens:
+                planValue?.estimate_mins_that_entry_happens ??
+                selectedAiPlan?.risk_management?.estimated_entry_mins ??
+                null,
+            };
             return (
               <div
                 key={planId}
@@ -1690,7 +1685,7 @@ export default function SignalDetailCard({
               >
                 <PlanHeader
                   plan={{
-                    ...planValue,
+                    ...headerPlan,
                     onSelectTP: (price, rrVal) => {
                       setPlanDrafts((prev) => {
                         let next = prev[planId] || p;
