@@ -22,6 +22,9 @@ Canonical deploy policy:
 - Never deploy uncommitted changes.
 - Create explicit commits for your scope before any merge/deploy.
 - Keep commit messages scoped (one feature/fix per commit when possible).
+- Commit message must be prefixed with AI agent name.
+  - Required format: `<agent-name>: <message>`
+  - Example: `codex: fix(ui): align chart object toolbar`
 
 ### 2) Push and integrate to main source of truth
 
