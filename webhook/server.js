@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.19 20:40 - 5cc6ba1d"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.19 20:40 - 5cc6ba1d",
+); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -5614,6 +5617,19 @@ async function loadAiConfig() {
     );
     cfg[name] = String(dec?.value || "").trim();
   }
+  // Fallback to env vars for providers not yet saved in UI settings
+  if (!cfg.OPENROUTER_API_KEY)
+    cfg.OPENROUTER_API_KEY = envStr(process.env.OPENROUTER_API_KEY);
+  if (!cfg.DEEPSEEK_API_KEY)
+    cfg.DEEPSEEK_API_KEY = envStr(process.env.DEEPSEEK_API_KEY);
+  if (!cfg.ANTHROPIC_API_KEY)
+    cfg.ANTHROPIC_API_KEY = envStr(
+      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
+    );
+  if (!cfg.OPENAI_API_KEY)
+    cfg.OPENAI_API_KEY = envStr(process.env.OPENAI_API_KEY);
+  if (!cfg.GEMINI_API_KEY)
+    cfg.GEMINI_API_KEY = envStr(process.env.GEMINI_API_KEY);
   return cfg;
 }
 

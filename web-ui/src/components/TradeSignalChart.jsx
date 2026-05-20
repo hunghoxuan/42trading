@@ -794,9 +794,9 @@ export default function TradeSignalChart({
                 entry: entryPrice,
                 sl: slPrice,
                 tp: tpPrice,
-                tp1: tp1Price ?? tpPrice,
-                tp2: tp2Price,
-                tp3: tp3Price,
+                tp1: Number.isFinite(tp1Price) ? tp1Price : tpPrice,
+                tp2: Number.isFinite(tp2Price) ? tp2Price : undefined,
+                tp3: Number.isFinite(tp3Price) ? tp3Price : undefined,
                 direction: tpPrice > entryPrice ? "BUY" : "SELL",
               };
               allPlans.push(primary);

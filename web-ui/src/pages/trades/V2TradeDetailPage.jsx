@@ -489,9 +489,9 @@ export default function TradeDetailPage() {
               entryPrice: asNum(detailPlan.entry) ?? asNum(trade.entry),
               slPrice: asNum(detailPlan.sl) ?? asNum(trade.sl),
               tpPrice: asNum(detailPlan.tp) ?? asNum(trade.tp),
-              tp1Price: asNum(detailPlan.tp1),
-              tp2Price: asNum(detailPlan.tp2),
-              tp3Price: asNum(detailPlan.tp3),
+              tp1Price: asNum(detailPlan.tp1) || undefined,
+              tp2Price: asNum(detailPlan.tp2) || undefined,
+              tp3Price: asNum(detailPlan.tp3) || undefined,
               onPlanLevelChange: (levelKey, levelValue) =>
                 applyPlanChange(levelKey, formatNum3(levelValue)),
               createdAt: trade.created_at,
