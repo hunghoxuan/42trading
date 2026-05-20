@@ -522,25 +522,33 @@ export default function SymbolChart({
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
 
+
   // Load chart objects from trade metadata on mount
   useEffect(() => {
-    if (!tradeSid) return;
+    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip load"); return; }
+    console.log("[chart-objs] loading for", tradeSid);
     let cancelled = false;
     api.loadChartObjects(tradeSid).then((res) => {
       if (cancelled) return;
       const objs = Array.isArray(res?.chart_objects) ? res.chart_objects : Array.isArray(res?.objects) ? res.objects : [];
+      console.log("[chart-objs] loaded", tradeSid, objs.length, "objects", objs.slice(0,2));
       if (objs.length) setAnnotations(objs);
-    }).catch(() => {});
+    }).catch((e) => { console.error("[chart-objs] load failed", e); });
     return () => { cancelled = true; };
   }, [tradeSid]);
 
   // Persist chart objects on change (debounced 800ms)
   const saveTimerRef = useRef(null);
   useEffect(() => {
-    if (!tradeSid || !annotations.length) return;
+    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip save"); return; }
+    if (!annotations.length) { console.log("[chart-objs] empty annotations, skip save"); return; }
+    console.log("[chart-objs] scheduling save for", tradeSid, annotations.length, "objects");
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      api.saveChartObjects(tradeSid, annotations).catch(() => {});
+      console.log("[chart-objs] saving", tradeSid, annotations.length, "objects");
+      api.saveChartObjects(tradeSid, annotations).then(() => {
+        console.log("[chart-objs] saved OK", tradeSid);
+      }).catch((e) => { console.error("[chart-objs] save failed", e); });
     }, 800);
     return () => clearTimeout(saveTimerRef.current);
   }, [annotations, tradeSid]);

@@ -20,6 +20,7 @@ import {
   renderHistoryItem,
   extractTradePlanFromTrade,
   applyLinkedPlanChange,
+  formatNum3,
 } from "../../utils/signalDetailUtils";
 
 const STATUS_OPTIONS = [
@@ -1673,6 +1674,7 @@ export default function TradesPage() {
                   })()}
                   chart={{
                     enabled: true,
+                    tradeId: selectedTrade.sid || selectedTrade.id || "",
                     detailTfTab,
                     onDetailTfTabChange: setDetailTfTab,
                     iframeTitle: `trade-tv-${detailTfTab}`,
@@ -1691,7 +1693,13 @@ export default function TradesPage() {
                     tp2Price: asNum(detailPlan.tp2) || asNum(selectedTrade.tp2),
                     tp3Price: asNum(detailPlan.tp3) || asNum(selectedTrade.tp3),
                     onPlanLevelChange: (levelKey, levelValue) =>
-                      applyPlanChange(levelKey, formatNum3(levelValue)),
+                      setDetailPlan((p) =>
+                        applyLinkedPlanChange(
+                          p,
+                          levelKey,
+                          formatNum3(levelValue),
+                        ),
+                      ),
                     openedAt: selectedTrade.opened_at,
                     closedAt: selectedTrade.closed_at,
                     createdAt: selectedTrade.created_at,
