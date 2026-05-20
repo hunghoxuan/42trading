@@ -1906,6 +1906,52 @@ async function getRedisClient() {
   return REDIS_CONNECTING;
 }
 
+// ── Trade List Redis Cache (Pending / Filled) ──
+const TRADE_LIST_CACHE_TTL = 300; // 5 minutes
+
+async function invalidateTradeListCaches() {
+  if (!CFG.redisEnabled) return;
+  try {
+    const client = await getRedisClient();
+    if (client) {
+      await Promise.all([
+        client.del("trades:pending").catch(() => {}),
+        client.del("trades:filled").catch(() => {}),
+      ]);
+    }
+  } catch (err) {
+    console.warn("[TradeCache] invalidate failed:", err.message);
+  }
+}
+
+async function getTradeListFromCache(status) {
+  if (!CFG.redisEnabled) return null;
+  try {
+    const client = await getRedisClient();
+    if (!client) return null;
+    const cacheKey = status === "PENDING" ? "trades:pending" : "trades:filled";
+    const raw = await client.get(cacheKey);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+async function setTradeListCache(status, items) {
+  if (!CFG.redisEnabled) return;
+  try {
+    const client = await getRedisClient();
+    if (!client) return;
+    const cacheKey = status === "PENDING" ? "trades:pending" : "trades:filled";
+    await client
+      .set(cacheKey, JSON.stringify(Array.isArray(items) ? items : []), {
+        EX: TRADE_LIST_CACHE_TTL,
+      })
+      .catch(() => {});
+  } catch (err) {
+    console.warn("[TradeCache] set failed:", err.message);
+  }
+}
+
 async function marketDataRedisRead(symbolNorm, tfNorm, reqStart, reqEnd) {
   const client = await getRedisClient();
   if (!client) return null;
@@ -8090,6 +8136,7 @@ async function _mt5InitBackendInternal() {
           },
           res.rows[0].user_id,
         );
+        invalidateTradeListCaches().catch(() => {});
       } else {
         // Fallback log for tracking orphan/failed acks
         await this.log(payload.sid || payload.trade_id, "trades", {
@@ -8179,6 +8226,7 @@ async function _mt5InitBackendInternal() {
             },
             res.rows[0].user_id,
           );
+          invalidateTradeListCaches().catch(() => {});
         }
         return { ok: res.rowCount > 0 };
       } catch (e) {
@@ -16103,6 +16151,7 @@ const appHandler = async (req, res) => {
         },
       });
       notifyPulse(effectiveUserId, "trades");
+      invalidateTradeListCaches().catch(() => {});
       const actualSid =
         Array.isArray(fanout?.sids) && fanout.sids.length > 0
           ? fanout.sids[0]
@@ -21107,7 +21156,7 @@ const appHandler = async (req, res) => {
               };
             })
           : [];
-        return {
+        const result = {
           ok: true,
           items,
           page: Number(out?.page || page),
@@ -21118,7 +21167,34 @@ const appHandler = async (req, res) => {
             Math.ceil(total / Math.max(1, Number(out?.page_size || pageSize))),
           ),
         };
+        // Populate Redis cache for PENDING/OPEN lists
+        const execStatus = String(filters.execution_status || "").toUpperCase();
+        if ((execStatus === "PENDING" || execStatus === "OPEN") && !hasFilters) {
+          setTradeListCache(
+            execStatus === "PENDING" ? "PENDING" : "FILLED",
+            items,
+          ).catch(() => {});
+        }
+        return result;
       };
+
+      // Fast path: try Redis cache first for unfiltered PENDING/OPEN lists
+      const execStatus = String(filters.execution_status || "").toUpperCase();
+      if ((execStatus === "PENDING" || execStatus === "OPEN") && !hasFilters && page === 1) {
+        const cached = await getTradeListFromCache(
+          execStatus === "PENDING" ? "PENDING" : "FILLED",
+        );
+        if (cached && Array.isArray(cached)) {
+          return json(res, 200, {
+            ok: true,
+            items: cached,
+            page: 1,
+            pageSize: cached.length,
+            total: cached.length,
+            pages: 1,
+          });
+        }
+      }
 
       const result = cacheKey
         ? await StateRepo.get("TRADE_LIST", cacheKey, buildResponse)
@@ -21249,6 +21325,7 @@ const appHandler = async (req, res) => {
       );
       StateRepo.del("SIGNAL_DETAIL", tradeRef);
       StateRepo.del("TRADE_DETAIL", tradeRef);
+      if (out?.ok) invalidateTradeListCaches().catch(() => {});
       return json(res, out?.ok ? 200 : 400, out);
     } catch (error) {
       return json(res, 400, {
