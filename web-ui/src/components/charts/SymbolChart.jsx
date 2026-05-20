@@ -525,7 +525,8 @@ export default function SymbolChart({
 
   // Load chart objects from trade metadata on mount
     useEffect(() => {
-    if (!tradeSid) return;
+    console.log("[chart-objs] useEffect fired", { tradeSid, entryPrice, tpPrice, slPrice });
+    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip"); return; }
     let cancelled = false;
     api.loadChartObjects(tradeSid).then((res) => {
       if (cancelled) return;
