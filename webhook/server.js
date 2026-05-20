@@ -1379,6 +1379,38 @@ const StateRepo = {
       if (client) await client.del(`${bucket.prefix}:${id}`).catch(() => {});
     }
   },
+
+  // Clear ALL keys for a bucket (used when underlying data is wiped)
+  async flushBucket(bucketKey) {
+    const bucket = this.BUCKETS[bucketKey];
+    if (!bucket) return;
+    // Clear L1: iterate and delete all matching keys
+    const l1 = this.getL1Map(bucketKey);
+    if (l1 instanceof Map) {
+      for (const key of l1.keys()) {
+        if (key.startsWith(`${bucket.prefix}:`)) l1.delete(key);
+      }
+    }
+    // Clear L2: Redis SCAN + DEL (best-effort)
+    if (CFG.redisEnabled) {
+      try {
+        const client = await getRedisClient();
+        if (!client) return;
+        let cursor = "0";
+        do {
+          const [nextCursor, keys] = await client.scan(
+            cursor,
+            "MATCH",
+            `${bucket.prefix}:*`,
+            "COUNT",
+            100,
+          );
+          cursor = nextCursor;
+          if (keys.length) await client.del(keys).catch(() => {});
+        } while (cursor !== "0");
+      } catch {}
+    }
+  },
 };
 
 /**
@@ -12390,6 +12422,24 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
   }
 }
 
+// Merge live last_price into last bar's close for TV chart real-time display
+function mergeLastPriceIntoBars(result) {
+  if (!result || !Array.isArray(result.bars) || !result.bars.length) return result;
+  const lp = Number(result.last_price);
+  if (!Number.isFinite(lp) || lp <= 0) return result;
+  const lastBar = result.bars[result.bars.length - 1];
+  if (!lastBar || typeof lastBar !== "object") return result;
+  const barTime = Number(lastBar.time);
+  const lpTime = result.last_price_at
+    ? Math.floor(new Date(result.last_price_at).getTime() / 1000)
+    : 0;
+  if (lpTime > 0 && lpTime < barTime) return result;
+  const updated = { ...lastBar, close: lp };
+  if (lp > (Number(lastBar.high) || 0)) updated.high = lp;
+  if (lp < (Number(lastBar.low) || Infinity)) updated.low = lp;
+  return { ...result, bars: [...result.bars.slice(0, -1), updated] };
+}
+
 async function buildAnalysisSnapshotFromTwelve({
   userId,
   payload = {},
@@ -12426,7 +12476,7 @@ async function buildAnalysisSnapshotFromTwelve({
         cached.bar_end || cached.bars[cached.bars.length - 1].time,
       );
       if (s <= reqRange.start && e >= reqRange.end) {
-        return {
+        return mergeLastPriceIntoBars({
           ...cached,
           symbol: symbolNorm,
           symbol_norm: symbolNorm,
@@ -12436,7 +12486,7 @@ async function buildAnalysisSnapshotFromTwelve({
           bar_end: e,
           status: "ok",
           cache_source: "memory",
-        };
+        });
       }
     }
     // Fallback to DB
@@ -12453,12 +12503,12 @@ async function buildAnalysisSnapshotFromTwelve({
 
     if (dbHit && Array.isArray(dbHit.bars) && dbHit.bars.length) {
       tfCacheSet(symbolNorm, tfNorm, dbHit);
-      return {
+      return mergeLastPriceIntoBars({
         ...dbHit,
         cache_source: "db",
         symbol_norm: symbolNorm,
         tf_norm: tfNorm,
-      };
+      });
     }
   }
 
@@ -12476,7 +12526,7 @@ async function buildAnalysisSnapshotFromTwelve({
     }
     tfCacheSet(symbolNorm, tfNorm, binanceResult);
     await marketDataDbUpsert(symbolNorm, tfNorm, binanceResult).catch(() => {});
-    return binanceResult;
+    return mergeLastPriceIntoBars(binanceResult);
   }
 
   const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
@@ -12675,7 +12725,7 @@ async function buildAnalysisSnapshotFromTwelve({
     // Update Unified Cache
     tfCacheSet(symbolNorm, tfNorm, snapshot);
     await marketDataDbUpsert(symbolNorm, tfNorm, snapshot).catch(() => {});
-    return snapshot;
+    return mergeLastPriceIntoBars(snapshot);
   } catch (error) {
     const reason =
       error?.name === "AbortError"
@@ -13715,7 +13765,9 @@ async function mt5DeleteAllEvents() {
   const b = await mt5Backend();
   if (!b.deleteAllEvents) return { deleted: 0 };
   const res = await b.deleteAllEvents();
-  // Postgres returns rowCount, SQLite returns changes
+  // Invalidate caches so History tab doesn't show stale data
+  await StateRepo.flushBucket("TRADE_DETAIL");
+  await StateRepo.flushBucket("SIGNAL_DETAIL");
   return { deleted: res.rowCount ?? res.changes ?? 0 };
 }
 
@@ -22705,14 +22757,18 @@ const appHandler = async (req, res) => {
       }
       if (!rows.length) return json(res, 200, { ok: true, updated: 0 });
 
-      // 1. DB bulk update (all TFs)
+      // 1. DB bulk update — only the latest bar row per symbol+TF (current candle)
       await db.pool.query(
-        `UPDATE market_data
+        `UPDATE market_data md
          SET last_price = p.mid,
              last_price_at = to_timestamp(p.ts)::timestamptz,
              updated_at = NOW()
          FROM (VALUES ${rows.join(",")}) AS p(symbol, mid, ts)
-         WHERE market_data.symbol = p.symbol`,
+         WHERE md.symbol = p.symbol
+           AND md.bar_end = (
+             SELECT MAX(m2.bar_end) FROM market_data m2
+             WHERE m2.symbol = p.symbol AND m2.tf = md.tf
+           )`,
       );
 
       // 2. L1 memory patch

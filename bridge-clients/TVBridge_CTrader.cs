@@ -296,6 +296,8 @@ namespace cAlgo.Robots
             _isBusy = true;
             try
             {
+                _pollCount++;
+                if (_pollCount <= 3) Print("[Diag] OnTimer tick #" + _pollCount + " isBusy=" + _isBusy);
                 // Perform memory cleanup periodically
                 if (_pollCount % 10 == 0) // Every 10 polls
                 {
@@ -329,7 +331,44 @@ namespace cAlgo.Robots
                     if (_lastPriceTime == DateTime.MinValue ||
                         (DateTime.Now - _lastPriceTime).TotalSeconds >= PricePushSeconds)
                     {
-                        Task.Run(async () => await PushPricesAsync(accId));
+                        // Read prices on MAIN thread (cTrader API not thread-safe)
+                        var priceData = new List<Tuple<string, double, double>>();
+                        var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                        if (syms.Count == 0)
+                        {
+                            // Fallback auto-detect
+                            foreach (var pos in Positions)
+                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
+                                    syms.Add(pos.SymbolName);
+                            foreach (var order in PendingOrders)
+                                if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
+                                    syms.Add(order.SymbolName);
+                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
+                                syms.Add(Symbol.Name);
+                        }
+                        foreach (var sym in syms)
+                        {
+                            try
+                            {
+                                var s = Symbols.GetSymbol(sym);
+                                if (s == null) continue;
+                                double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
+                                double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
+                                if (bid > 0 && ask > 0)
+                                    priceData.Add(Tuple.Create(sym, bid, ask));
+                            }
+                            catch { }
+                        }
+                        if (priceData.Count == 0)
+                        {
+                            _priceStatus = "IDLE"; _lastPriceTime = DateTime.Now;
+                        }
+                        else
+                        {
+                            _priceStatus = "PUSHING";
+                            var pd = priceData; // capture for closure
+                            Task.Run(async () => await PushPricesAsync(accId, pd));
+                        }
                     }
                 }
 
@@ -1169,6 +1208,7 @@ namespace cAlgo.Robots
                         foreach (Match m in items)
                             _trackedSymbols.Add(m.Groups[1].Value);
                         Print("[Price] Fetched {0} tracked symbols", _trackedSymbols.Count);
+                        BeginInvokeOnMainThread(() => RefreshDebugPanel());
                     }
                 }
             }
@@ -1178,64 +1218,45 @@ namespace cAlgo.Robots
             }
         }
 
-        private async Task PushPricesAsync(string accId)
+        private async Task PushPricesAsync(string accId, List<Tuple<string, double, double>> priceData)
         {
-            if (!PricePushEnabled) return;
-
-            // Fallback: auto-detect symbols from positions + orders + chart if tracked list is empty
-            var symbols = new List<string>(_trackedSymbols);
-            if (symbols.Count == 0)
-            {
-                foreach (var pos in Positions)
-                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !symbols.Contains(pos.SymbolName))
-                        symbols.Add(pos.SymbolName);
-                foreach (var order in PendingOrders)
-                    if (!string.IsNullOrWhiteSpace(order.SymbolName) && !symbols.Contains(order.SymbolName))
-                        symbols.Add(order.SymbolName);
-                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !symbols.Contains(Symbol.Name))
-                    symbols.Add(Symbol.Name);
-            }
-            if (symbols.Count == 0) { _priceStatus = "IDLE"; return; }
             _priceStatus = "PUSHING";
             try
             {
                 var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var priceList = new List<string>();
-                foreach (var sym in symbols)
+                foreach (var p in priceData)
                 {
-                    try
-                    {
-                        var s = Symbols.GetSymbol(sym);
-                        if (s == null) continue;
-                        double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
-                        double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
-                        if (bid <= 0 || ask <= 0) continue;
-                        priceList.Add("{\"s\":\"" + sym + "\",\"b\":" + bid.ToString("F5", CultureInfo.InvariantCulture) + ",\"a\":" + ask.ToString("F5", CultureInfo.InvariantCulture) + "}");
-                    }
-                    catch { }
+                    priceList.Add("{\"s\":\"" + p.Item1 + "\",\"b\":" + p.Item2.ToString("F5", CultureInfo.InvariantCulture) + ",\"a\":" + p.Item3.ToString("F5", CultureInfo.InvariantCulture) + "}");
                 }
-                if (priceList.Count == 0) { _priceStatus = "IDLE"; return; }
 
                 var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId + "\",\"ts\":" + ts.ToString() + ",\"p\":[" + string.Join(",", priceList) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/prices", content);
 
+                _serverStatus = "OK";
                 if (response.IsSuccessStatusCode)
                 {
                     _priceCount++; _priceStatus = "OK"; _lastPriceTime = DateTime.Now; _lastPriceErr = "None";
+                    if (_priceCount == 1) Print("[Price] First push OK: {0} symbols", priceData.Count);
                 }
                 else
                 {
                     _priceStatus = "FAIL (" + (int)response.StatusCode + ")";
                     _lastPriceErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
+                    Print("[Price] Push FAILED: {0}", _lastPriceErr);
                 }
             }
             catch (Exception ex)
             {
                 _priceStatus = "ERROR";
                 _lastPriceErr = FormatServerErrorForPanel(ex.Message);
+                if (_priceCount == 0) Print("[Price] Push ERROR (first attempt): {0}", ex.Message);
             }
+            if (_lastPriceTime == DateTime.MinValue)
+                _lastPriceTime = DateTime.Now;
+            BeginInvokeOnMainThread(() => RefreshDebugPanel());
         }
 
         private string FormatServerErrorForPanel(string raw)

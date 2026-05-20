@@ -1859,6 +1859,7 @@ export default function SignalDetailCard({
                   tp1Price={chart?.tp1Price}
                   tp2Price={chart?.tp2Price}
                   tp3Price={chart?.tp3Price}
+                  tradeSid={chart?.tradeId || response?.sid || response?.id || ""}
                   showAnalyzeButton={false}
                   showTradeButton={false}
                   showEditButton={false}

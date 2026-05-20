@@ -133,6 +133,11 @@ This file tracks the status of user-facing features and links them to technical 
 - **Ticket**: [./1-backlog/2026-05-17-multi-tp-lifecycle-hardening-phase1b.md]
 - **Summary**: Close production gaps after initial rollout: fix broker sync runtime exception, enforce canonical TP contract, complete validation matrix, redeploy with clean health/log evidence.
 
+## [ ] Docker Staging Branch Deploy (Keep Main/Prod Stable)
+- **Status**: Idea
+- **Ticket**: [./0-ideas/2026-05-20-docker-staging-branch-deploy.md]
+- **Summary**: Add minimal branch->staging->verify->merge flow using isolated staging container so production remains untouched until branch is validated.
+
 ## [ ] AI Trade Plan Mapping Hardening (`__raw_plan` precedence)
 - **Status**: Planned (Hotfix)
 - **Ticket**: [./1-backlog/2026-05-17-ai-trade-plan-mapping-regression-direction-tp.md]
