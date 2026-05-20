@@ -214,13 +214,16 @@ function buildTraceBlock(subEvent, payload) {
     for (const [k, v] of Object.entries(payload)) {
       if (v === undefined || v === null) continue;
       if (k === "event" || k === "event_type") continue;
-      const val = typeof v === "object" ? JSON.stringify(v) : String(v);
+      const val =
+        typeof v === "object"
+          ? clipForLog(JSON.stringify(v), 200)
+          : clipForLog(String(v), 500);
       lines.push(`${k}: ${val}`);
     }
   } else if (payload) {
-    lines.push(`message: ${String(payload)}`);
+    lines.push(clipForLog(String(payload), 500));
   }
-  return lines.join("\n") + "\n\n";
+  return lines.join("\n");
 }
 
 // --- Trace-based logging (replaces per-event appendEventLog) ---
@@ -990,10 +993,10 @@ function mt5NormalizeSymbol(s) {
 
 async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
   // Route through NotificationManager for matching event types (handles db_log + SSE)
+  let eventType = null;
   if (notificationManager && metadata?.event) {
     const ev = String(metadata.event || "").toUpperCase();
-    let eventType = null,
-      subType = "";
+    let subType = "";
     if (
       ev === "TRADE_FILLED" ||
       ev === "TRADE_SYNC_UPDATE" ||
@@ -7593,8 +7596,36 @@ async function _mt5InitBackendInternal() {
     return mt5GenerateTimeSid();
   }
 
+  const backendLog = async (
+    objectId,
+    objectTable,
+    metadata = {},
+    userId = null,
+  ) => {
+    // Trace-based: derive trace_type (broad category), upsert by {trace_type, object_id}
+    const subEvent = String(
+      metadata.event || metadata.event_type || "INFO",
+    ).toUpperCase();
+    const traceType = deriveTraceType(subEvent);
+    const symbol = String(metadata.symbol || "").toUpperCase() || null;
+    const block = buildTraceBlock(subEvent, metadata);
+    try {
+      await pool.query(
+        `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+         ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
+         DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
+                       symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
+                       updated_at = NOW()`,
+        [objectId, objectTable, symbol, traceType, block, userId],
+      );
+    } catch (e) {
+      console.warn("[b.log] upsert error:", e.message);
+    }
+  };
+
   // Initialize NotificationManager (loads notification_config from user_settings)
-  await notificationManager.init(pool, MT5_BACKEND.log.bind(MT5_BACKEND));
+  await notificationManager.init(pool, backendLog);
   global.__notificationManager = notificationManager;
 
   const storage = "postgres";
@@ -7604,26 +7635,7 @@ async function _mt5InitBackendInternal() {
     query: (q, p) => pool.query(q, p),
     info: { url: CFG.mt5PostgresUrl.replace(/:[^:@/]+@/, ":***@") },
     async log(objectId, objectTable, metadata = {}, userId = null) {
-      // Trace-based: derive trace_type (broad category), upsert by {trace_type, object_id}
-      const subEvent = String(
-        metadata.event || metadata.event_type || "INFO",
-      ).toUpperCase();
-      const traceType = deriveTraceType(subEvent);
-      const symbol = String(metadata.symbol || "").toUpperCase() || null;
-      const block = buildTraceBlock(subEvent, metadata);
-      try {
-        await pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-           ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
-           DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
-                         symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
-                         updated_at = NOW()`,
-          [objectId, objectTable, symbol, traceType, block, userId],
-        );
-      } catch (e) {
-        console.warn("[b.log] upsert error:", e.message);
-      }
+      return backendLog(objectId, objectTable, metadata, userId);
     },
     async upsertSignal(signal) {
       const signalSid = await allocateUniqueSid(
