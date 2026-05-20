@@ -15,8 +15,8 @@ n/a
 n/a
 
 ## Deploy / Version Status
-- SERVER_VERSION: v2026.05.20 09:00 - price-stream
-- EA_BUILD_VERSION: v2026.05.20 09:00 - price-stream
+- SERVER_VERSION: v2026.05.20 09:19 - b1b00a3c
+- EA_BUILD_VERSION: v2026.05.20 09:15 - 39bcbed5
 
 ## Open Risks
 - Check top open bugs and unresolved sprint TODOs.

@@ -11,10 +11,28 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-20 09:19 UTC`
-- note: `add ticker + console_log to cron_tick SSE for UI visibility`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 09:30 UTC`
+- note: `Settings api_key Eye/Copy fix deployed`
+
+### [2026-05-20 09:28 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: b1b00a3c
+- scope: `web-ui/src/pages/settings/SettingsPage.jsx`
+- merge_to_main: YES (b1b00a3c)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.20 09:19 - b1b00a3c
+  - ea_version: v2026.05.20 09:15 - 39bcbed5
+  - result: PASS
+  - note: Built locally then rsynced (VPS OOM on vite build)
+- verify:
+  - /health: `ok:true`, version `v2026.05.20 09:19 - b1b00a3c`
+  - UI: `/ui/index.html` loads, new asset `SettingsPage-aHc19exY.js`
+  - key endpoint: N/A (UI-only change)
+- handoff_next: none
 
 ## Required Entry Template
 ...

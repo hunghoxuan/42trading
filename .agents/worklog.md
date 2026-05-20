@@ -1,3 +1,9 @@
+# Session Log: 2026-05-20 09:28 UTC
+- **Starting Task**: Fix Settings api_key Eye/Copy showing masked value.
+- **Work Accomplished**: Replaced secretVisibility with revealedValues ephemeral map. revealApiKeyField stores decrypted value in revealedValues, never mutates settings. Input readOnly when revealed. Hide clears plain value. Copy fetches directly.
+- **Changed Files**: `web-ui/src/pages/settings/SettingsPage.jsx`, `.agents/sync/MAILBOX.md`, `.agents/STATE.md`
+- **Deploy Status**: Deployed v2026.05.20 09:19 - b1b00a3c ✅
+
 # Session Log: 2026-05-19 10:05 UTC
 - **Starting Task**:
   - Convert new screenshot regressions into ticket + handoff (Analyze button regression, slider overlap/clipping, UI consistency).
