@@ -169,6 +169,19 @@ function defaultTpSlFromEntry(entry, direction) {
   };
 }
 
+function formatObjectLabel(type, rawLabel) {
+  const typeText = String(type || "").trim();
+  const labelText = String(rawLabel || "").trim();
+  if (!typeText && !labelText) return "";
+  if (!typeText) return labelText;
+  if (!labelText) return typeText;
+  const lowerType = typeText.toLowerCase();
+  const lowerLabel = labelText.toLowerCase();
+  if (lowerLabel === lowerType) return typeText;
+  if (lowerLabel.startsWith(`${lowerType} `)) return labelText;
+  return `${typeText} ${labelText}`;
+}
+
 function NumberAdjuster({
   value,
   onChange,
@@ -673,6 +686,10 @@ export default function SymbolChart({
     () => (annotations || []).find((a) => a.id === selectedObjectId) || null,
     [annotations, selectedObjectId],
   );
+  const editableAnnotations = useMemo(
+    () => (annotations || []).filter((a) => a.kind !== "tradeplan"),
+    [annotations],
+  );
   useEffect(() => {
     if (!selectedObject || selectedObject.kind !== "tradeplan") return;
     if (parentDrivenSelectionRef.current === selectedObject.id) {
@@ -769,7 +786,14 @@ export default function SymbolChart({
             bg_color: "#f59e0b",
           },
         };
-        updateSelectedObject({ type: t, ...(styleByType[t] || {}) });
+        updateSelectedObject({
+          type: t,
+          label: formatObjectLabel(t, current?.label || ""),
+          ...(styleByType[t] || {}),
+        });
+      } else if (field === "label") {
+        const nextType = String(current?.type || "line").toUpperCase();
+        updateSelectedObject({ label: formatObjectLabel(nextType, next) });
       } else {
         updateSelectedObject({ [field]: next });
       }
@@ -1960,6 +1984,41 @@ export default function SymbolChart({
                   return true;
                 });
 
+              // ANNOTATION_LINES_CONVERSION
+              const annotationLines = [];
+              for (const a of projectedAnnotations) {
+                const p = a.price ?? a.anchorPrice;
+                const c = a.color || "#60a5fa";
+                const lb = formatObjectLabel(a.type, a.label || "");
+                if (a.kind === "line" && Number.isFinite(Number(p)))
+                  annotationLines.push({
+                    price: Number(p),
+                    color: c,
+                    label: lb,
+                  });
+                else if (a.kind === "point" && Number.isFinite(Number(p)))
+                  annotationLines.push({
+                    price: Number(p),
+                    color: c,
+                    label: lb || "\u25CF",
+                  });
+                else if (a.kind === "zone") {
+                  const t = a.price_top ?? a.anchorPrice;
+                  const b = a.price_bottom ?? a.anchorPrice2;
+                  if (Number.isFinite(Number(t)))
+                    annotationLines.push({
+                      price: Number(t),
+                      color: c,
+                      label: lb ? lb + " T" : "ZT",
+                    });
+                  if (Number.isFinite(Number(b)))
+                    annotationLines.push({
+                      price: Number(b),
+                      color: c,
+                      label: lb ? lb + " B" : "ZB",
+                    });
+                }
+              }
               const isActiveTf = activeChartId === chartId;
 
               return (
@@ -2077,48 +2136,12 @@ export default function SymbolChart({
                         historicalData={barsForTf}
                         height={chartHeight}
                         analysisSnapshot={analysisSnapshot || null}
-                        entryPrice={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? entryPrice
-                              : null
-                        }
-                        slPrice={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? slPrice
-                              : null
-                        }
-                        tpPrice={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? tpPrice
-                              : null
-                        }
-                        tp1Price={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? tp1Price
-                              : null
-                        }
-                        tp2Price={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? tp2Price
-                              : null
-                        }
-                        tp3Price={
-                          hasTradePlan && hasAnalysis
-                            ? null
-                            : overlays.plan1
-                              ? tp3Price
-                              : null
-                        }
+                        entryPrice={overlays.plan1 ? entryPrice : null}
+                        slPrice={overlays.plan1 ? slPrice : null}
+                        tpPrice={overlays.plan1 ? tpPrice : null}
+                        tp1Price={overlays.plan1 ? tp1Price : null}
+                        tp2Price={overlays.plan1 ? tp2Price : null}
+                        tp3Price={overlays.plan1 ? tp3Price : null}
                         createdAt={createdAt}
                         openedAt={openedAt}
                         closedAt={closedAt}
@@ -2134,7 +2157,7 @@ export default function SymbolChart({
                           mode === "cache" ? handleCrosshairSync : undefined
                         }
                         onBarsLoaded={handleBarsLoaded}
-                        sharedLines={mode === "cache" ? [] : []}
+                        sharedLines={annotationLines}
                         onContextRequest={
                           mode === "cache" ? handleContextRequest : undefined
                         }
@@ -2295,243 +2318,7 @@ export default function SymbolChart({
                             }
                           }}
                         >
-                          {(projectedAnnotations || []).map((a) => {
-                            if (a.kind === "tradeplan") {
-                              if (a.visible === false) return null;
-                              const isSelected = selectedObjectId === a.id;
-                              const entry = toNumLoose(a.entryPrice);
-                              const tp = toNumLoose(a.tpPrice);
-                              const sl = toNumLoose(a.slPrice);
-                              const rEntry = ratioFromAnchorPriceUnclamped(
-                                entry,
-                                tfRange,
-                              );
-                              const rTp = ratioFromAnchorPriceUnclamped(
-                                tp,
-                                tfRange,
-                              );
-                              const rSl = ratioFromAnchorPriceUnclamped(
-                                sl,
-                                tfRange,
-                              );
-                              const inView = (r) =>
-                                Number.isFinite(r) && r >= 0 && r <= 1;
-                              const mkLine = (
-                                yRatio,
-                                color,
-                                label,
-                                style = "solid",
-                              ) => (
-                                <div
-                                  key={`${a.id}_${label}`}
-                                  style={{
-                                    position: "absolute",
-                                    left: 0,
-                                    right: 0,
-                                    top: `${clamp01(Number(yRatio || 0.5)) * 100}%`,
-                                    pointerEvents: "none",
-                                    zIndex: 26,
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      borderTop: `${isSelected ? 1.4 : 0.9}px ${style === "dot" ? "dotted" : "solid"} ${color}`,
-                                      boxShadow: isSelected
-                                        ? `0 0 0 1px ${color}55`
-                                        : "none",
-                                    }}
-                                  />
-                                  <span
-                                    style={{
-                                      position: "absolute",
-                                      left: 4,
-                                      top: -10,
-                                      fontSize: 9,
-                                      fontWeight: 700,
-                                      color,
-                                      background: "#0b1220",
-                                      border: `1px solid ${color}55`,
-                                      borderRadius: 4,
-                                      padding: "0 4px",
-                                      lineHeight: 1.2,
-                                    }}
-                                  >
-                                    {label}
-                                  </span>
-                                </div>
-                              );
-                              return (
-                                <>
-                                  {inView(rEntry) && inView(rTp) ? (
-                                    <div
-                                      style={{
-                                        position: "absolute",
-                                        left: 0,
-                                        right: 0,
-                                        top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rTp ?? 0.5)) * 100}%`,
-                                        height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rTp ?? 0.5)) * 100}%`,
-                                        background: "rgba(16,185,129,0.12)",
-                                        pointerEvents: "none",
-                                        zIndex: 24,
-                                      }}
-                                    />
-                                  ) : null}
-                                  {inView(rEntry) && inView(rSl) ? (
-                                    <div
-                                      style={{
-                                        position: "absolute",
-                                        left: 0,
-                                        right: 0,
-                                        top: `${Math.min(clamp01(rEntry ?? 0.5), clamp01(rSl ?? 0.5)) * 100}%`,
-                                        height: `${Math.abs(clamp01(rEntry ?? 0.5) - clamp01(rSl ?? 0.5)) * 100}%`,
-                                        background: "rgba(239,68,68,0.12)",
-                                        pointerEvents: "none",
-                                        zIndex: 24,
-                                      }}
-                                    />
-                                  ) : null}
-                                  {inView(rEntry)
-                                    ? mkLine(
-                                        rEntry ?? 0.5,
-                                        String(a.color || "#60a5fa"),
-                                        `${a.plan_id || "P1"} ${String(a.direction || "BUY").toUpperCase() === "SELL" ? "Sell" : "Buy"}`,
-                                      )
-                                    : null}
-                                  {inView(rTp)
-                                    ? mkLine(
-                                        rTp ?? 0.5,
-                                        "#10b981",
-                                        `${a.plan_id || "P1"} TP`,
-                                        "dot",
-                                      )
-                                    : null}
-                                  {inView(rSl)
-                                    ? mkLine(
-                                        rSl ?? 0.5,
-                                        "#ef4444",
-                                        `${a.plan_id || "P1"} SL`,
-                                        "dot",
-                                      )
-                                    : null}
-                                </>
-                              );
-                            }
-                            if (a.kind === "line") {
-                              if (a.visible === false) return null;
-                              const isSelected = selectedObjectId === a.id;
-                              const styleMap = {
-                                solid: "solid",
-                                dot: "dotted",
-                                dash: "dashed",
-                              };
-                              const lineStyle =
-                                styleMap[
-                                  String(a.line_style || "dash").toLowerCase()
-                                ] || "dashed";
-                              const lineWidth = Math.max(
-                                1,
-                                Math.min(10, Number(a.line_width || 2)),
-                              );
-                              const lineLabel = String(
-                                a.label || a.type || "Line",
-                              );
-                              return (
-                                <div
-                                  key={a.id}
-                                  style={{
-                                    position: "absolute",
-                                    left: 0,
-                                    right: 0,
-                                    top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                                    pointerEvents: "none",
-                                    zIndex: 26,
-                                  }}
-                                >
-                                  <div
-                                    style={{
-                                      borderTop: `${isSelected ? Math.max(1, lineWidth + 0.8) : lineWidth}px ${lineStyle} ${a.color || "#60a5fa"}`,
-                                      boxShadow: isSelected
-                                        ? `0 0 0 1px ${a.color || "#60a5fa"}55`
-                                        : "none",
-                                    }}
-                                  />
-                                  <span
-                                    style={{
-                                      position: "absolute",
-                                      right: 52,
-                                      top: -10,
-                                      fontSize: 10,
-                                      fontWeight: 700,
-                                      color: a.color || "#60a5fa",
-                                      background: "#0b1220",
-                                      border: `1px solid ${a.color || "#60a5fa"}55`,
-                                      borderRadius: 4,
-                                      padding: "0 4px",
-                                      lineHeight: 1.2,
-                                    }}
-                                  >
-                                    {lineLabel}
-                                  </span>
-                                </div>
-                              );
-                            }
-                            if (a.kind === "point") {
-                              if (a.visible === false) return null;
-                              const isSelected = selectedObjectId === a.id;
-                              return (
-                                <div
-                                  key={a.id}
-                                  style={{
-                                    position: "absolute",
-                                    left: `${clamp01(Number(a._xRatio || 0.5)) * 100}%`,
-                                    top: `${clamp01(Number(a._yRatio || 0.5)) * 100}%`,
-                                    width: isSelected ? 10 : 8,
-                                    height: isSelected ? 10 : 8,
-                                    borderRadius: "50%",
-                                    background: a.color || "#eab308",
-                                    outline: isSelected
-                                      ? "1px solid #fff"
-                                      : "none",
-                                    boxShadow: isSelected
-                                      ? `0 0 0 2px ${a.color || "#eab308"}55`
-                                      : "none",
-                                    transform: "translate(-50%, -50%)",
-                                    pointerEvents: "none",
-                                    zIndex: 26,
-                                  }}
-                                />
-                              );
-                            }
-                            if (a.kind === "zone") {
-                              if (a.visible === false) return null;
-                              const isSelected = selectedObjectId === a.id;
-                              const y1 = Number(a._y1Ratio || 0.4);
-                              const y2 = Number(a._y2Ratio || 0.6);
-                              const x1 = Number(a._x1Ratio || 0.2);
-                              const x2 = Number(a._x2Ratio || 0.8);
-                              return (
-                                <div
-                                  key={a.id}
-                                  style={{
-                                    position: "absolute",
-                                    left: `${Math.min(x1, x2) * 100}%`,
-                                    top: `${Math.min(y1, y2) * 100}%`,
-                                    width: `${Math.abs(x2 - x1) * 100}%`,
-                                    height: `${Math.abs(y2 - y1) * 100}%`,
-                                    border: `${isSelected ? 2 : Math.max(1, Math.min(10, Number(a.line_width || 2)))}px solid ${a.color || "#22c55e"}`,
-                                    background:
-                                      a.bg_color || `${a.color || "#22c55e"}22`,
-                                    boxShadow: isSelected
-                                      ? `0 0 0 1px ${a.color || "#22c55e"}66 inset`
-                                      : "none",
-                                    pointerEvents: "none",
-                                    zIndex: 26,
-                                  }}
-                                />
-                              );
-                            }
-                            return null;
-                          })}
+                          {/* All annotations now rendered via createPriceLine API */}
                         </div>
                       )}
                     </>
@@ -2750,9 +2537,6 @@ export default function SymbolChart({
             flexWrap: "wrap",
           }}
         >
-          <span className="minor-text" style={{ fontSize: 10 }}>
-            Objects ({annotations.length})
-          </span>
           <button
             className="secondary-button"
             type="button"
@@ -2764,7 +2548,7 @@ export default function SymbolChart({
           >
             Remove All
           </button>
-          {annotations.map((a) => (
+          {editableAnnotations.map((a) => (
             <span
               key={a.id}
               onClick={() => setSelectedObjectId(a.id)}
@@ -2793,9 +2577,7 @@ export default function SymbolChart({
               }}
               title={a.id}
             >
-              {a.kind === "tradeplan"
-                ? `TP ${String(a.plan_id || "P1")}`
-                : a.type}
+              {formatObjectLabel(a.type, a.label || "") || a.type}
               <button
                 type="button"
                 onClick={(e) => {
@@ -2873,7 +2655,7 @@ export default function SymbolChart({
               style={{
                 width: "100%",
                 display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(220px, 1fr))",
+                gridTemplateColumns: "repeat(6, minmax(120px, 1fr))",
                 gap: 8,
               }}
             >
@@ -2976,7 +2758,12 @@ export default function SymbolChart({
                 <>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-label`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 3",
+                    }}
                   >
                     Label
                     <input
@@ -2991,7 +2778,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-type`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 3",
+                    }}
                   >
                     Type
                     <select
@@ -3013,7 +2805,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-tf`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 2",
+                    }}
                   >
                     TF
                     <select
@@ -3034,7 +2831,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-price`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 2",
+                    }}
                   >
                     Price
                     <NumberAdjuster
@@ -3055,7 +2857,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-style`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 2",
+                    }}
                   >
                     Line Style
                     <select
@@ -3075,7 +2882,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-width`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 3",
+                    }}
                   >
                     Line Width
                     <select
@@ -3095,7 +2907,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-color`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 1",
+                    }}
                   >
                     Color
                     <input
@@ -3110,7 +2927,12 @@ export default function SymbolChart({
                   </label>
                   <label
                     htmlFor={`${symbol}-${activeChartId || cleanSym}-inspector-edit-bg`}
-                    style={{ display: "grid", gap: 4, fontSize: 10 }}
+                    style={{
+                      display: "grid",
+                      gap: 4,
+                      fontSize: 10,
+                      gridColumn: "span 1",
+                    }}
                   >
                     Background Color
                     <input
@@ -3126,14 +2948,7 @@ export default function SymbolChart({
                 </>
               )}
             </div>
-          ) : (
-            <span
-              className="minor-text"
-              style={{ fontSize: 10, opacity: 0.85 }}
-            >
-              Select object to inspect live properties
-            </span>
-          )}
+          ) : null}
         </div>
       )}
 

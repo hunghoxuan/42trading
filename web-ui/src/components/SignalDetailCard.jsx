@@ -232,6 +232,65 @@ function humanizeInfoKey(key) {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function semanticTone(value) {
+  const raw = String(value == null ? "" : value).trim().toLowerCase();
+  if (!raw) return "neutral";
+  if (
+    ["yes", "true", "proceed", "ok", "pass", "safe", "bullish", "confirming"].some(
+      (k) => raw.includes(k),
+    )
+  ) {
+    return "good";
+  }
+  if (
+    ["no", "false", "danger", "reject", "fail", "bearish", "blocked"].some(
+      (k) => raw.includes(k),
+    )
+  ) {
+    return "bad";
+  }
+  if (
+    ["warning", "warn", "caution", "medium", "review", "check"].some((k) =>
+      raw.includes(k),
+    )
+  ) {
+    return "warn";
+  }
+  if (raw === "high") return "good";
+  if (raw === "low") return "bad";
+  return "neutral";
+}
+
+function semanticBadgeStyle(value) {
+  const tone = semanticTone(value);
+  if (tone === "good") {
+    return {
+      color: "#22c55e",
+      border: "1px solid rgba(34,197,94,0.4)",
+      background: "rgba(34,197,94,0.12)",
+    };
+  }
+  if (tone === "bad") {
+    return {
+      color: "#ef4444",
+      border: "1px solid rgba(239,68,68,0.4)",
+      background: "rgba(239,68,68,0.12)",
+    };
+  }
+  if (tone === "warn") {
+    return {
+      color: "#facc15",
+      border: "1px solid rgba(250,204,21,0.45)",
+      background: "rgba(250,204,21,0.12)",
+    };
+  }
+  return {
+    color: "#f8fafc",
+    border: "1px solid rgba(248,250,252,0.26)",
+    background: "rgba(248,250,252,0.08)",
+  };
+}
+
 function planLooksMeaningful(p = {}) {
   const entry = parseNumLoose(p?.entry ?? p?.entry_price ?? p?.target_price);
   const sl = parseNumLoose(p?.sl ?? p?.stop_loss);
@@ -1408,6 +1467,56 @@ export default function SignalDetailCard({
         )
       : [];
 
+  const decisionBadges = selectedAiPlan
+    ? [
+        selectedAiPlan.strategy && {
+          key: "strategy",
+          label: `Strategy: ${selectedAiPlan.strategy}`,
+          toneSource: selectedAiPlan.strategy,
+        },
+        selectedAiPlan.entry_model && {
+          key: "entry",
+          label: `Entry: ${selectedAiPlan.entry_model}`,
+          toneSource: selectedAiPlan.entry_model,
+        },
+        selectedAiPlan.risk_management?.grade && {
+          key: "grade",
+          label: `Grade: ${selectedAiPlan.risk_management.grade}`,
+          toneSource: selectedAiPlan.risk_management.grade,
+        },
+        selectedAiPlan.risk_management?.risk_percent != null && {
+          key: "risk",
+          label: `Risk: ${selectedAiPlan.risk_management.risk_percent}%`,
+          toneSource:
+            Number(selectedAiPlan.risk_management.risk_percent) <= 2
+              ? "good"
+              : Number(selectedAiPlan.risk_management.risk_percent) <= 4
+                ? "warning"
+                : "danger",
+        },
+        selectedAiPlan.risk_management?.confidence_pct != null && {
+          key: "confidence",
+          label: `Confidence: ${selectedAiPlan.risk_management.confidence_pct}%`,
+          toneSource:
+            Number(selectedAiPlan.risk_management.confidence_pct) >= 80
+              ? "good"
+              : Number(selectedAiPlan.risk_management.confidence_pct) >= 60
+                ? "warning"
+                : "danger",
+        },
+        selectedAiPlan.risk_management?.estimated_entry_mins != null && {
+          key: "eta",
+          label: `ETA: ${selectedAiPlan.risk_management.estimated_entry_mins}m`,
+          toneSource: "normal",
+        },
+        selectedAiPlan.risk_management?.suggested_action && {
+          key: "action",
+          label: `Action: ${selectedAiPlan.risk_management.suggested_action}`,
+          toneSource: selectedAiPlan.risk_management.suggested_action,
+        },
+      ].filter(Boolean)
+    : [];
+
   return (
     <div className="trade-detail-content">
       {/* Header - hide if trade plan is showing to avoid duplication */}
@@ -1442,15 +1551,39 @@ export default function SignalDetailCard({
 
       {/* Trade Plans */}
       {tradePlan?.enabled && (
-        <div
-          className="trade-plans-grid-v5"
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))",
-            gap: 16,
-            marginBottom: 20,
-          }}
-        >
+        <div style={{ marginBottom: 20 }}>
+          {decisionBadges.length ? (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                flexWrap: "wrap",
+                marginBottom: 12,
+              }}
+            >
+              {decisionBadges.map((item) => (
+                <span
+                  key={`tp-${item.key}`}
+                  className="badge badge-mini"
+                  style={{
+                    padding: "3px 7px",
+                    fontSize: 10,
+                    ...semanticBadgeStyle(item.toneSource),
+                  }}
+                >
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div
+            className="trade-plans-grid-v5"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))",
+              gap: 16,
+            }}
+          >
           {displayPlanIds.map((planId, i) => {
             const isMain = planId === "main";
             const fallbackIdx = isMain
@@ -1593,6 +1726,7 @@ export default function SignalDetailCard({
               </div>
             );
           })}
+          </div>
         </div>
       )}
 
@@ -1932,36 +2066,17 @@ export default function SignalDetailCard({
                       marginBottom: 12,
                     }}
                   >
-                    {[
-                      selectedAiPlan.strategy &&
-                        `Strategy: ${selectedAiPlan.strategy}`,
-                      selectedAiPlan.entry_model &&
-                        `Entry: ${selectedAiPlan.entry_model}`,
-                      selectedAiPlan.risk_management?.grade &&
-                        `Grade: ${selectedAiPlan.risk_management.grade}`,
-                      selectedAiPlan.risk_management?.risk_percent != null &&
-                        `Risk: ${selectedAiPlan.risk_management.risk_percent}%`,
-                      selectedAiPlan.risk_management?.confidence_pct != null &&
-                        `Confidence: ${selectedAiPlan.risk_management.confidence_pct}%`,
-                      selectedAiPlan.risk_management?.estimated_entry_mins !=
-                        null &&
-                        `ETA: ${selectedAiPlan.risk_management.estimated_entry_mins}m`,
-                      selectedAiPlan.risk_management?.suggested_action &&
-                        `Action: ${selectedAiPlan.risk_management.suggested_action}`,
-                    ]
-                      .filter(Boolean)
-                      .map((label) => (
+                    {decisionBadges.map((item) => (
                         <span
-                          key={label}
+                          key={item.key}
                           className="badge badge-mini"
                           style={{
                             padding: "3px 7px",
                             fontSize: 10,
-                            border: "1px solid rgba(34,211,238,0.22)",
-                            background: "rgba(34,211,238,0.08)",
+                            ...semanticBadgeStyle(item.toneSource),
                           }}
                         >
-                          {label}
+                          {item.label}
                         </span>
                       ))}
                   </div>
@@ -1990,7 +2105,7 @@ export default function SignalDetailCard({
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+                            gridTemplateColumns: "repeat(5,minmax(120px,1fr))",
                             gap: 8,
                           }}
                         >
@@ -2013,7 +2128,33 @@ export default function SignalDetailCard({
                                 {humanizeInfoKey(k)}
                               </div>
                               <div style={{ fontSize: 11, marginTop: 3 }}>
-                                {renderInfoValue(v)}
+                                <span
+                                  style={{
+                                    display: "inline-block",
+                                    padding:
+                                      typeof v === "boolean" ||
+                                      ["yes", "no", "true", "false", "high", "low"].includes(
+                                        String(v).toLowerCase(),
+                                      )
+                                        ? "1px 6px"
+                                        : 0,
+                                    borderRadius:
+                                      typeof v === "boolean" ||
+                                      ["yes", "no", "true", "false", "high", "low"].includes(
+                                        String(v).toLowerCase(),
+                                      )
+                                        ? 999
+                                        : 0,
+                                    ...(typeof v === "boolean" ||
+                                    ["yes", "no", "true", "false", "high", "low"].includes(
+                                      String(v).toLowerCase(),
+                                    )
+                                      ? semanticBadgeStyle(v)
+                                      : {}),
+                                  }}
+                                >
+                                  {renderInfoValue(v)}
+                                </span>
                               </div>
                             </div>
                           ))}
@@ -2040,7 +2181,7 @@ export default function SignalDetailCard({
                         <div
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(2,minmax(0,1fr))",
+                            gridTemplateColumns: "repeat(4,minmax(140px,1fr))",
                             gap: 8,
                           }}
                         >
@@ -2073,7 +2214,33 @@ export default function SignalDetailCard({
                                       {humanizeInfoKey(k)}
                                     </span>
                                     <div style={{ fontSize: 11, marginTop: 1 }}>
-                                      {renderInfoValue(v)}
+                                      <span
+                                        style={{
+                                          display: "inline-block",
+                                          padding:
+                                            typeof v === "boolean" ||
+                                            ["yes", "no", "true", "false", "high", "low"].includes(
+                                              String(v).toLowerCase(),
+                                            )
+                                              ? "1px 6px"
+                                              : 0,
+                                          borderRadius:
+                                            typeof v === "boolean" ||
+                                            ["yes", "no", "true", "false", "high", "low"].includes(
+                                              String(v).toLowerCase(),
+                                            )
+                                              ? 999
+                                              : 0,
+                                          ...(typeof v === "boolean" ||
+                                          ["yes", "no", "true", "false", "high", "low"].includes(
+                                            String(v).toLowerCase(),
+                                          )
+                                            ? semanticBadgeStyle(v)
+                                            : {}),
+                                        }}
+                                      >
+                                        {renderInfoValue(v)}
+                                      </span>
                                     </div>
                                   </div>
                                 ))}
@@ -2374,7 +2541,16 @@ export default function SignalDetailCard({
                                   {r.l}
                                 </span>
                                 <div style={{ fontSize: 11, marginTop: 1 }}>
-                                  {r.v}
+                                  <span
+                                    style={{
+                                      display: "inline-block",
+                                      padding: "1px 6px",
+                                      borderRadius: 999,
+                                      ...semanticBadgeStyle(r.v),
+                                    }}
+                                  >
+                                    {r.v}
+                                  </span>
                                 </div>
                               </div>
                             ))}
@@ -2748,6 +2924,9 @@ export default function SignalDetailCard({
             entryPrice={selectedPlanRaw?.entry || chart?.entryPrice}
             slPrice={selectedPlanRaw?.sl || chart?.slPrice}
             tpPrice={selectedPlanRaw?.tp || chart?.tpPrice}
+            tp1Price={selectedPlanRaw?.tp1 || chart?.tp1Price || chart?.tpPrice}
+            tp2Price={selectedPlanRaw?.tp2 || chart?.tp2Price}
+            tp3Price={selectedPlanRaw?.tp3 || chart?.tp3Price}
             createdAt={chart?.createdAt}
             openedAt={chart?.openedAt}
             closedAt={chart?.closedAt}
