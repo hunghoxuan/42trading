@@ -223,7 +223,7 @@ function buildTraceBlock(subEvent, payload) {
   } else if (payload) {
     lines.push(clipForLog(String(payload), 500));
   }
-  return lines.join("\n");
+  return lines.join("\n") + "\n----------\n\n";
 }
 
 // --- Trace-based logging (replaces per-event appendEventLog) ---
@@ -245,7 +245,7 @@ function traceLog(traceType, objectId, objectTable, subEvent, payload, userId) {
       lines.push(`${k}: ${val}`);
     }
   }
-  const block = lines.join("\n") + "\n\n";
+  const block = lines.join("\n") + "\n----------\n\n";
   // Queue for async flush — batched by trace key to reduce DB writes
   if (!global.__traceQueue) global.__traceQueue = new Map();
   const key = `${traceType}\x00${objectId}`;
