@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.20 05:34 - c3c7d4c9";
+string EA_BUILD_VERSION = "v2026.05.20 06:46 - 75c369ad";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -124,6 +124,7 @@ struct SPartialTarget {
    bool   done;
 };
 SPartialTarget g_partialTargets[];
+long      g_partialClosedTickets[];  // tickets that have had partial closes
 
 void ParsePartialTps(string sid, string rawJson, string fullResp = "")
 {
@@ -751,6 +752,9 @@ void ProcessStopRetryQueue()
                " symbol=", g_stopRetrySymbol[i],
                " attempts=", g_stopRetryAttempts[i],
                " info=", info);
+         // Update ack globals with new SL/TP after successful modify
+         if(g_stopRetrySl[i] > 0) g_ackUsedSl = g_stopRetrySl[i];
+         if(g_stopRetryTp[i] > 0) g_ackUsedTp = g_stopRetryTp[i];
          RemoveStopRetryAt(i);
          continue;
       }
@@ -3206,7 +3210,44 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    }
 
    if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+   {
+      // Handle SL/TP modifications on existing positions
+      if(trans.type == TRADE_TRANSACTION_POSITION)
+      {
+         ulong posTicket = trans.position;
+         if(posTicket > 0 && PositionSelectByTicket(posTicket))
+         {
+            long magic = PositionGetInteger(POSITION_MAGIC);
+            if(magic == InpMagic)
+            {
+               string signalId = "";
+               int posIdx = -1;
+               GetSignalIdByPositionTicket(posTicket, signalId, posIdx);
+               if(StringLen(signalId) == 0)
+                  signalId = PositionGetString(POSITION_COMMENT);
+               if(StringLen(signalId) > 0)
+               {
+                  double newSl = PositionGetDouble(POSITION_SL);
+                  double newTp = PositionGetDouble(POSITION_TP);
+                  // Update the ack globals so subsequent acks carry current values
+                  if(newSl > 0) g_ackUsedSl = newSl;
+                  if(newTp > 0) g_ackUsedTp = newTp;
+                  // Update ack context
+                  g_ackSymbol = PositionGetString(POSITION_SYMBOL);
+                  ENUM_POSITION_TYPE pt = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                  g_ackAction = (pt == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+                  g_ackExecTs = TimeCurrent();
+                  g_ackFreeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+                  g_ackBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+                  g_ackEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+                  g_ackHasPnlRealized = false;
+                  Ack(signalId, "SL_CHANGED", IntegerToString((long)posTicket), "position_modified");
+               }
+            }
+         }
+      }
       return;
+   }
    if(trans.deal == 0 || !HistoryDealSelect(trans.deal))
       return;
 
@@ -3267,9 +3308,29 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    if(!(entryType == DEAL_ENTRY_OUT || entryType == DEAL_ENTRY_OUT_BY))
       return;
 
-   // Ignore partial closes: wait until position is fully gone.
+   // Partial close: ack with PARTIAL_CLOSE, keep position map alive
    if(positionTicket > 0 && PositionSelectByTicket(positionTicket))
+   {
+      // Record this ticket as having partial closes
+      if(g_partialClosedTickets.Search(positionTicket) < 0)
+      {
+         int nP = ArraySize(g_partialClosedTickets);
+         ArrayResize(g_partialClosedTickets, nP + 1);
+         g_partialClosedTickets[nP] = (long)positionTicket;
+      }
+      double pnl = HistoryDealGetDouble(trans.deal, DEAL_PROFIT)
+                    + HistoryDealGetDouble(trans.deal, DEAL_SWAP)
+                    + HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+      g_ackPnlRealized = pnl;
+      g_ackHasPnlRealized = true;
+      string reasonMsg = "partial_close reason=" + IntegerToString((int)reason)
+                         + " deal=" + IntegerToString((int)trans.deal);
+      Ack(signalId, "PARTIAL_CLOSE", IntegerToString((long)positionTicket), reasonMsg);
+      // Do NOT remove position map — position is still open
+      if(ordIdx >= 0)
+         RemoveOrderMapAt(ordIdx);
       return;
+   }
 
    string status = "FAIL";
    if(reason == DEAL_REASON_TP)
@@ -3289,6 +3350,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                       + " deal=" + IntegerToString((int)trans.deal)
                       + " order=" + IntegerToString((long)orderTicket);
    Ack(signalId, status, IntegerToString((long)positionTicket), reasonMsg);
+
+   // Cleanup partial close tracking on full close
+   int pci = g_partialClosedTickets.Search(positionTicket);
+   if(pci >= 0)
+   {
+      for(int k = pci; k < ArraySize(g_partialClosedTickets) - 1; ++k)
+         g_partialClosedTickets[k] = g_partialClosedTickets[k + 1];
+      ArrayResize(g_partialClosedTickets, ArraySize(g_partialClosedTickets) - 1);
+   }
 
    if(posIdx >= 0)
       RemovePositionMapAt(posIdx);
@@ -3348,6 +3418,8 @@ void SyncWithVps()
                }
 
                if(posCount > 0) posUpdates += ",";
+               // Track partial closes for has_partial flag
+               bool hasPart = g_partialClosedTickets.Search((long)ticket) >= 0;
                posUpdates += "{";
                posUpdates += "\"signal_id\":\"" + JsonEscape(sid) + "\",";
                posUpdates += "\"status\":\"START\",";
@@ -3363,6 +3435,8 @@ void SyncWithVps()
                posUpdates += "\"swap\":" + DoubleToString(swap, 2) + ",";
                posUpdates += "\"sl\":" + DoubleToString(sl, 5) + ",";
                posUpdates += "\"tp\":" + DoubleToString(tp, 5) + ",";
+               posUpdates += "\"remaining_volume\":" + DoubleToString(vol, 2) + ",";
+               posUpdates += "\"has_partial\":" + (hasPart ? "true" : "false") + ",";
                posUpdates += "\"opened_at\":\"" + IsoTime((datetime)PositionGetInteger(POSITION_TIME)) + "\"";
                posUpdates += "}";
                posCount++;

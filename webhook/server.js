@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 05:34 - c3c7d4c9"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 06:46 - 75c369ad"); // sync gaps filled: SL_CHANGED/PARTIAL_CLOSE ack, enhanced logging, SSE for non-status changes
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -890,7 +890,12 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
     const ev = String(metadata.event || "").toUpperCase();
     let eventType = null,
       subType = "";
-    if (ev === "TRADE_FILLED" || ev === "TRADE_SYNC_UPDATE") {
+    if (
+      ev === "TRADE_FILLED" ||
+      ev === "TRADE_SYNC_UPDATE" ||
+      ev === "SL_CHANGED" ||
+      ev === "PARTIAL_CLOSE"
+    ) {
       eventType = "TRADE_FILLED";
       subType = ev.toLowerCase();
     } else if (ev === "TRADE_CLOSED" || ev === "TRADE_CLOSE") {
@@ -8448,17 +8453,17 @@ async function _mt5InitBackendInternal() {
       let matched = 0;
       let synced = 0;
       const results = [];
-      // Batch-query old execution_statuses for change detection
+      // Batch-query old execution_statuses + sl/tp for change detection
       const oldStatusMap = new Map();
       {
         const sids = items.map((it) => it.sid).filter(Boolean);
         if (sids.length) {
           const oldRows = await pool.query(
-            `SELECT sid, execution_status FROM trades WHERE sid = ANY($1::text[])`,
+            `SELECT sid, execution_status, sl, tp, COALESCE(metadata->>'has_partial','false') AS has_partial FROM trades WHERE sid = ANY($1::text[])`,
             [sids],
           );
           for (const r of oldRows.rows || []) {
-            oldStatusMap.set(r.sid, r.execution_status);
+            oldStatusMap.set(r.sid, r);
           }
         }
       }
@@ -8800,6 +8805,7 @@ async function _mt5InitBackendInternal() {
               action: it.action,
             });
             if (tid) {
+              const oldRow = oldStatusMap.get(tid) || {};
               await this.log(
                 tid,
                 "trades",
@@ -8818,6 +8824,17 @@ async function _mt5InitBackendInternal() {
                   margin: it.margin,
                   tp_pnl: it.tp_pnl,
                   sl_pnl: it.sl_pnl,
+                  sl_before: Number.isFinite(Number(oldRow.sl))
+                    ? Number(oldRow.sl)
+                    : null,
+                  sl_after: it.sl ?? null,
+                  tp_before: Number.isFinite(Number(oldRow.tp))
+                    ? Number(oldRow.tp)
+                    : null,
+                  tp_after: it.tp ?? null,
+                  has_partial: Boolean(it.has_partial),
+                  close_reason: it.close_reason || null,
+                  entry: it.entry ?? null,
                 },
                 uid,
               );
@@ -9089,15 +9106,36 @@ async function _mt5InitBackendInternal() {
         }
       }
 
-      // Collect trade diffs for realtime UI
+      // Collect trade diffs for realtime UI (status + SL/TP/volume changes)
       const tradeUpdates = [];
       for (const it of items) {
         if (!it.sid) continue;
         const matchedResult = results.find((r) => r.sid === it.sid);
         if (!matchedResult || matchedResult.status === "Skip") continue;
-        const oldStatus = oldStatusMap.get(it.sid) || null;
+        const oldRow = oldStatusMap.get(it.sid) || {};
+        const oldStatus = oldRow.execution_status || null;
         const statusChanged = !oldStatus || oldStatus !== it.execution_status;
-        if (statusChanged) {
+        const oldSl = Number.isFinite(Number(oldRow.sl))
+          ? Number(oldRow.sl)
+          : null;
+        const newSl = it.sl ?? null;
+        const slChanged =
+          oldSl !== null &&
+          newSl !== null &&
+          Math.abs(oldSl - newSl) > 0.000001;
+        const oldTp = Number.isFinite(Number(oldRow.tp))
+          ? Number(oldRow.tp)
+          : null;
+        const newTp = it.tp ?? null;
+        const tpChanged =
+          oldTp !== null &&
+          newTp !== null &&
+          Math.abs(oldTp - newTp) > 0.000001;
+        const oldHasPartial =
+          oldRow.has_partial === "true" || oldRow.has_partial === true;
+        const partialChanged =
+          Boolean(it.has_partial) !== Boolean(oldHasPartial);
+        if (statusChanged || slChanged || tpChanged || partialChanged) {
           tradeUpdates.push({
             sid: it.sid,
             symbol: it.symbol,
@@ -9105,12 +9143,21 @@ async function _mt5InitBackendInternal() {
             broker_pnl: it.pnl,
             broker_pips: it.pips,
             execution_status: it.execution_status,
+            sl: newSl,
+            sl_before: oldSl,
+            tp: newTp,
+            tp_before: oldTp,
+            has_partial: Boolean(it.has_partial),
             last_price: it.last_price,
+            status_changed: statusChanged,
+            sl_changed: slChanged,
+            tp_changed: tpChanged,
+            partial_changed: partialChanged,
           });
         }
       }
 
-      // Emit SSE via NotificationManager (only when status changes)
+      // Emit SSE via NotificationManager (on any trade field change)
       if (tradeUpdates.length > 0) {
         notificationManager.handle("BROKER_SYNC", "sync", {
           user_id: uid,
@@ -12792,10 +12839,20 @@ function mt5NormalizeAckStatus(value) {
     CLOSED: "PLACED",
   };
   const normalized = legacyToCurrent[s] || s;
-  const allowed = ["FAIL", "START", "TP", "SL", "CANCEL", "EXPIRED", "PLACED"];
+  const allowed = [
+    "FAIL",
+    "START",
+    "TP",
+    "SL",
+    "CANCEL",
+    "EXPIRED",
+    "PLACED",
+    "SL_CHANGED",
+    "PARTIAL_CLOSE",
+  ];
   if (!allowed.includes(normalized)) {
     throw new Error(
-      "status must be one of: FAIL, START, TP, SL, CANCEL, EXPIRED, PLACED",
+      "status must be one of: FAIL, START, TP, SL, CANCEL, EXPIRED, PLACED, SL_CHANGED, PARTIAL_CLOSE",
     );
   }
   return normalized;
@@ -22870,6 +22927,41 @@ const appHandler = async (req, res) => {
           console.error(
             "[Webhook] Telegram notification failed for TP/SL:",
             telErr,
+          );
+        }
+      }
+
+      if (status === "SL_CHANGED" || status === "PARTIAL_CLOSE") {
+        try {
+          const b2 = await mt5Backend();
+          if (status === "SL_CHANGED" && Number.isFinite(slExec)) {
+            await b2.pool.query(
+              `UPDATE trades SET sl = COALESCE($2::numeric, sl), tp = COALESCE($3::numeric, tp), updated_at = NOW() WHERE sid = $1::text AND execution_status IN ('OPEN','PENDING')`,
+              [
+                signalId,
+                slExec > 0 ? slExec : null,
+                tpExec > 0 ? tpExec : null,
+              ],
+            );
+            await mt5Log(signalId, "trades", {
+              event: "SL_CHANGED",
+              sl_exec: Number.isFinite(slExec) ? slExec : null,
+              tp_exec: Number.isFinite(tpExec) ? tpExec : null,
+              ticket: payload.ticket || null,
+            });
+          }
+          if (status === "PARTIAL_CLOSE") {
+            await mt5Log(signalId, "trades", {
+              event: "PARTIAL_CLOSE",
+              pnl_realized: Number.isFinite(pnlRealized) ? pnlRealized : null,
+              ticket: payload.ticket || null,
+              note: ackNote || null,
+            });
+          }
+        } catch (e) {
+          console.error(
+            "[Webhook] SL_CHANGED/PARTIAL_CLOSE trade update failed:",
+            e,
           );
         }
       }
