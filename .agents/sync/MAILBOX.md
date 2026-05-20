@@ -11,10 +11,29 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-20 16:10 UTC`
-- note: `Trace-based logging overhaul: upsert logs by {event_type, object_id}, markdown content`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 14:20 UTC`
+- note: `Trace-based logging overhaul deployed`
+
+### [2026-05-20 14:20 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: 171b9f54
+- scope: `webhook/server.js`, `web-ui/src/pages/system/LogsPage.jsx`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`, DB migration (logs table: content, updated_at, idx_logs_trace)
+- merge_to_main: YES (171b9f54)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.20 14:12 - 0e5a9adc
+  - ea_version: v2026.05.20 14:12 - 0e5a9adc
+  - result: PASS
+  - note: VPS DB missing content/updated_at columns - added post-deploy. Web-ui rebuilt + PM2 restarted.
+- verify:
+  - VPS git HEAD: 171b9f54
+  - PM2: webhook online
+  - DB: logs table has content, updated_at columns; trace entries flowing (TRADE traces with content)
+  - UI: LogsPage rebuilt (LogsPage-BpPYsizY.js), TRACE LOG rendering
+- handoff_next: none
 
 ### [2026-05-20 14:06 UTC] AGENT:Codex
 - status: DEPLOYED
