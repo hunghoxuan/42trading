@@ -524,16 +524,44 @@ export default function SymbolChart({
 
 
   // Load chart objects from trade metadata on mount
-  useEffect(() => {
+    useEffect(() => {
     if (!tradeSid) return;
     let cancelled = false;
     api.loadChartObjects(tradeSid).then((res) => {
       if (cancelled) return;
       const objs = Array.isArray(res?.chart_objects) ? res.chart_objects : Array.isArray(res?.objects) ? res.objects : [];
-      if (objs.length) setAnnotations(objs);
+      if (objs.length) {
+        setAnnotations(objs);
+      } else {
+        // Auto-generate tradeplan from trade fields when no saved chart_objects
+        const ep = Number(entryPrice);
+        if (Number.isFinite(ep) && ep > 0) {
+          const tp = Number(tpPrice);
+          const sl = Number(slPrice);
+          const dir = Number.isFinite(tp) && tp > ep ? "BUY" : Number.isFinite(sl) && sl < ep ? "SELL" : "BUY";
+          setAnnotations([{
+            id: "tradeplan_P1",
+            kind: "tradeplan",
+            type: "TRADEPLAN",
+            label: "TradePlan P1 (auto)",
+            plan_id: "P1",
+            direction: dir,
+            entryPrice: ep,
+            tpPrice: Number.isFinite(tp) && tp > 0 ? tp : null,
+            slPrice: Number.isFinite(sl) && sl > 0 ? sl : null,
+            visible: true,
+            color: dir === "SELL" ? "#ef4444" : "#10b981",
+            line_width: 0.1,
+            line_style: "solid",
+            bg_color: "transparent",
+            tf: null,
+            time: null,
+          }]);
+        }
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [tradeSid]);
+  }, [tradeSid, entryPrice, tpPrice, slPrice]);
 
   const handleSaveObjects = useCallback(() => {
     if (!tradeSid || !annotations.length) return;
