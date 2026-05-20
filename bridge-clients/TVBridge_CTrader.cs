@@ -59,7 +59,7 @@ namespace cAlgo.Robots
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
 
-        private const string BuildVersion = "v2026.05.19 17:35 - 47f1eae2";
+        private const string BuildVersion = "v2026.05.20 06:57 - b8abad39";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -92,6 +92,7 @@ namespace cAlgo.Robots
         }
         private Dictionary<string, List<PartialTP>> _tradePartials = new Dictionary<string, List<PartialTP>>();
         private HashSet<string> _executedPartials = new HashSet<string>(); // key: ticket_partialIdx
+        private Dictionary<string, double> _partialClosedVolumes = new Dictionary<string, double>(); // ticket -> total closed volume from partials
         private Dictionary<string, string> _ticketSidMap = new Dictionary<string, string>(); // ticket -> sid backfill for empty comments
 
 
@@ -159,7 +160,13 @@ namespace cAlgo.Robots
                             var oldSL = pos.StopLoss;
                             var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
                             if (result.IsSuccessful)
+                            {
                                 Print("[BE] Moved SL from {0:F5} to {1:F5} (Entry+{2} pips) for {3} #{4}", oldSL, targetSL, BE_Offset, pos.SymbolName, pos.Id);
+                                // Immediate ack SL change to VPS
+                                var beSid = ResolveSid(pos.Id.ToString(), pos.Comment);
+                                if (!string.IsNullOrEmpty(beSid))
+                                    Task.Run(async () => await AckAsync(beSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0));
+                            }
                             else
                                 Print("[BE] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
                         }
@@ -192,7 +199,13 @@ namespace cAlgo.Robots
                             var oldSL = pos.StopLoss;
                             var result = ModifyPosition(pos, targetSL, pos.TakeProfit);
                             if (result.IsSuccessful)
+                            {
                                 Print("[Trail] Moved SL from {0:F5} to {1:F5} (trail={2} pips) for {3} #{4}", oldSL, targetSL, Trail_Start, pos.SymbolName, pos.Id);
+                                // Immediate ack SL change to VPS
+                                var trailSid = ResolveSid(pos.Id.ToString(), pos.Comment);
+                                if (!string.IsNullOrEmpty(trailSid))
+                                    Task.Run(async () => await AckAsync(trailSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0));
+                            }
                             else
                                 Print("[Trail] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
                         }
@@ -230,7 +243,15 @@ namespace cAlgo.Robots
                                 if (res.IsSuccessful)
                                 {
                                     _executedPartials.Add(pKey);
+                                    var ticketKey = pos.Id.ToString();
+                                    if (_partialClosedVolumes.ContainsKey(ticketKey))
+                                        _partialClosedVolumes[ticketKey] += volToClose;
+                                    else
+                                        _partialClosedVolumes[ticketKey] = volToClose;
                                     Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
+                                    // Immediate ack partial close to VPS
+                                    if (!string.IsNullOrEmpty(sid))
+                                        Task.Run(async () => await AckAsync(sid, "", "PARTIAL_CLOSE", pos.Id.ToString(), "", 0));
                                 }
                                 else
                                 {
@@ -308,8 +329,14 @@ namespace cAlgo.Robots
                         }
                     }
 
+                    var ticketKey = pos.Id.ToString();
+                    double partialClosedVol = 0;
+                    _partialClosedVolumes.TryGetValue(ticketKey, out partialClosedVol);
+                    double remainingVol = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits;
+                    bool hasPartial = partialClosedVol > 0;
+
                     posList.Add(string.Format(CultureInfo.InvariantCulture,
-                        "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"MARKET\",\"entry\":{5:F5},\"sl\":{6:F5},\"tp\":{7:F5},\"volume\":{8:F2},\"lots\":{9:F2},\"pnl\":{10:F2},\"pips\":{11:F2},\"commission\":{12:F2},\"swap\":{13:F2},\"margin\":{14:F2},\"tp_pnl\":{15:F2},\"sl_pnl\":{16:F2},\"label\":\"{17}\",\"status\":\"OPEN\"}}",
+                        "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"MARKET\",\"entry\":{5:F5},\"sl\":{6:F5},\"tp\":{7:F5},\"volume\":{8:F2},\"lots\":{9:F2},\"pnl\":{10:F2},\"pips\":{11:F2},\"commission\":{12:F2},\"swap\":{13:F2},\"margin\":{14:F2},\"tp_pnl\":{15:F2},\"sl_pnl\":{16:F2},\"label\":\"{17}\",\"status\":\"OPEN\",\"remaining_volume\":{18:F2},\"closed_volume_partial\":{19:F2},\"has_partial\":{20}}",
                         sid, sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(),
                         double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice,
                         pos.StopLoss ?? 0,
@@ -323,7 +350,10 @@ namespace cAlgo.Robots
                         double.IsNaN(pos.Margin) ? 0 : pos.Margin,
                         double.IsNaN(tpPnl) ? 0 : tpPnl,
                         double.IsNaN(slPnl) ? 0 : slPnl,
-                        pos.Label));
+                        pos.Label,
+                        remainingVol,
+                        partialClosedVol,
+                        hasPartial ? "true" : "false"));
                 }
 
                 var closedList = new List<string>();
