@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.20 09:19 - b1b00a3c";
+string EA_BUILD_VERSION = "v2026.05.20 13:42 - 7b0f8236";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
@@ -1354,6 +1354,7 @@ void RefreshDebugPanel()
    string mode = InpBacktestMode ? "BACKTEST" : "LIVE";
    string stPull = g_lastPullUpdate > 0 ? (" [" + TimeToString(g_lastPullUpdate, TIME_SECONDS) + "]") : "";
    string stSync = g_lastSyncUpdate > 0 ? (" [" + TimeToString(g_lastSyncUpdate, TIME_SECONDS) + "]") : "";
+   string stPrice = g_lastPricePush > 0 ? (" [" + TimeToString(g_lastPricePush, TIME_SECONDS) + "]") : "";
    string authHint = ApiKeyHint();
    int ackQ = ArraySize(g_ackQSignalId);
    int stopQ = ArraySize(g_stopRetrySignalId);
@@ -1366,6 +1367,10 @@ void RefreshDebugPanel()
       "API Key=" + ApiKeyMask() + "  AuthHint=" + authHint + "\n" +
       "PULL" + stPull + " code=" + IntegerToString(g_lastPullCode) + " :: " + g_lastPullSummary + "\n" +
       "SYNC" + stSync + " code=" + IntegerToString(g_lastSyncCode) + " :: " + g_lastSyncSummary + "\n" +
+      "PRICE" + stPrice + " cnt=" + IntegerToString(g_pricePushCount) + " sym=" + IntegerToString(ArraySize(g_trackedSymbols)) + " :: " + g_lastPriceStatus;
+   if(g_lastPriceErr != "") text += " err=" + g_lastPriceErr;
+   text += "\n" +
+      "INTV: sync=" + IntegerToString(InpSyncSeconds) + "s price=" + IntegerToString(InpPricePushSeconds) + "s poll=" + IntegerToString(InpPollSeconds) + "s\n" +
       "LAST SIGNAL: " + g_dbgLastStatus + " | " + g_dbgLastAction + " " + g_dbgLastSymbol + " | id=" + g_dbgLastSignalId + "\n" +
       "Queues: ack=" + IntegerToString(ackQ) + " stopRetry=" + IntegerToString(stopQ) + " | Terminal: pos=" + IntegerToString(posCnt) + " ord=" + IntegerToString(ordCnt);
    if(authHint != "OK")

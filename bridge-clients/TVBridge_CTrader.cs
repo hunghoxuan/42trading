@@ -68,7 +68,7 @@ namespace cAlgo.Robots
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
-        private const string BuildVersion = "v2026.05.20 09:19 - b1b00a3c";
+        private const string BuildVersion = "v2026.05.20 13:42 - 7b0f8236";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -383,25 +383,29 @@ namespace cAlgo.Robots
                         double remainingVol = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits;
                         bool hasPartial = partialClosedVol > 0;
 
-                        posList.Add(string.Format(CultureInfo.InvariantCulture,
-                            "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"MARKET\",\"entry\":{5:F5},\"sl\":{6:F5},\"tp\":{7:F5},\"volume\":{8:F2},\"lots\":{9:F2},\"pnl\":{10:F2},\"pips\":{11:F2},\"commission\":{12:F2},\"swap\":{13:F2},\"margin\":{14:F2},\"tp_pnl\":{15:F2},\"sl_pnl\":{16:F2},\"label\":\"{17}\",\"status\":\"OPEN\",\"remaining_volume\":{18:F2},\"closed_volume_partial\":{19:F2},\"has_partial\":{20}}",
-                            sid, sid, pos.Id, pos.SymbolName, pos.TradeType.ToString().ToUpper(),
-                            double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice,
-                            pos.StopLoss ?? 0,
-                            pos.TakeProfit ?? 0,
-                            double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits,
-                            double.IsNaN(lotsVal) ? 0 : lotsVal,
-                            double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit,
-                            double.IsNaN(pos.Pips) ? 0 : pos.Pips,
-                            double.IsNaN(pos.Commissions) ? 0 : pos.Commissions,
-                            double.IsNaN(pos.Swap) ? 0 : pos.Swap,
-                            double.IsNaN(pos.Margin) ? 0 : pos.Margin,
-                            double.IsNaN(tpPnl) ? 0 : tpPnl,
-                            double.IsNaN(slPnl) ? 0 : slPnl,
-                            pos.Label,
-                            remainingVol,
-                            partialClosedVol,
-                            hasPartial ? "true" : "false"));
+                        posList.Add("{\"sid\":\"" + sid + "\"" +
+                            ",\"comment\":\"" + sid + "\"" +
+                            ",\"ticket\":\"" + pos.Id + "\"" +
+                            ",\"symbol\":\"" + pos.SymbolName + "\"" +
+                            ",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\"" +
+                            ",\"type\":\"MARKET\"" +
+                            ",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"label\":\"" + pos.Label + "\"" +
+                            ",\"status\":\"OPEN\"" +
+                            ",\"remaining_volume\":" + remainingVol.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"closed_volume_partial\":" + partialClosedVol.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"has_partial\":" + (hasPartial ? "true" : "false") + "}");
                     }
 
                     closedList = new List<string>();
@@ -413,15 +417,20 @@ namespace cAlgo.Robots
                         if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
                         if (closedList.Count >= 20) break;
                         var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
-                        closedList.Add(string.Format(CultureInfo.InvariantCulture,
-                            "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"symbol_code\":\"{4}\",\"side\":\"{5}\",\"volume\":{6:F2},\"pnl\":{7:F2},\"pips\":{8:F2},\"commission\":{9:F2},\"swap\":{10:F2},\"status\":\"CLOSED\",\"closed_at\":\"{11:O}\",\"label\":\"{12}\"}}",
-                            sid2, sid2, deal.PositionId, deal.SymbolName, deal.SymbolName, deal.TradeType.ToString().ToUpper(),
-                            double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits,
-                            double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit,
-                            0.0,
-                            double.IsNaN(deal.Commissions) ? 0 : deal.Commissions,
-                            double.IsNaN(deal.Swap) ? 0 : deal.Swap,
-                            deal.ClosingTime, deal.Label));
+                        closedList.Add("{\"sid\":\"" + sid2 + "\"" +
+                            ",\"comment\":\"" + sid2 + "\"" +
+                            ",\"ticket\":\"" + deal.PositionId + "\"" +
+                            ",\"symbol\":\"" + deal.SymbolName + "\"" +
+                            ",\"symbol_code\":\"" + deal.SymbolName + "\"" +
+                            ",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\"" +
+                            ",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pips\":0.0" +
+                            ",\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"status\":\"CLOSED\"" +
+                            ",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\"" +
+                            ",\"label\":\"" + deal.Label + "\"}");
                     }
 
                     ordersList = new List<string>();
@@ -436,13 +445,23 @@ namespace cAlgo.Robots
                             if (order.TakeProfit.HasValue) { double pp = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s2.PipSize; pnlTp = pp * s2.PipValue * order.VolumeInUnits; }
                             if (order.StopLoss.HasValue) { double pp = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s2.PipSize; pnlSl = -pp * s2.PipValue * order.VolumeInUnits; }
                         }
-                        ordersList.Add(string.Format(CultureInfo.InvariantCulture,
-                            "{{\"sid\":\"{0}\",\"comment\":\"{1}\",\"ticket\":\"{2}\",\"symbol\":\"{3}\",\"side\":\"{4}\",\"type\":\"{5}\",\"target_price\":{6:F5},\"entry\":{7:F5},\"sl\":{8:F5},\"tp\":{9:F5},\"volume\":{10:F2},\"lots\":{11:F2},\"label\":\"{12}\",\"status\":\"PENDING\",\"margin\":{13:F2},\"pnl_tp\":{14:F2},\"pnl_sl\":{15:F2}}}",
-                            sid3, sid3, order.Id, order.SymbolName, order.TradeType.ToString().ToUpper(), order.OrderType.ToString().ToUpper(),
-                            order.TargetPrice, order.TargetPrice, order.StopLoss ?? 0, order.TakeProfit ?? 0,
-                            double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits,
-                            double.IsNaN(lotsVal2) ? 0 : lotsVal2,
-                            order.Label, 0.0, pnlTp, pnlSl));
+                        ordersList.Add("{\"sid\":\"" + sid3 + "\"" +
+                            ",\"comment\":\"" + sid3 + "\"" +
+                            ",\"ticket\":\"" + order.Id + "\"" +
+                            ",\"symbol\":\"" + order.SymbolName + "\"" +
+                            ",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\"" +
+                            ",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\"" +
+                            ",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"label\":\"" + order.Label + "\"" +
+                            ",\"status\":\"PENDING\"" +
+                            ",\"margin\":0.0" +
+                            ",\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
                     }
 
                     var symbolsToSync = new HashSet<string>();
@@ -456,11 +475,13 @@ namespace cAlgo.Robots
                         Symbol s3 = null;
                         try { s3 = Symbols.GetSymbol(symbolName); } catch { continue; }
                         if (s3 == null) continue;
-                        metricsList.Add(string.Format(CultureInfo.InvariantCulture,
-                            "{{\"symbol\":\"{0}\",\"pip_value\":{1:F5},\"spread\":{2:F2},\"min_vol\":{3:F2},\"step_vol\":{4:F2},\"pip_size\":{5:F8},\"digits\":{6}}}",
-                            s3.Name, double.IsNaN(s3.PipValue) ? 0 : s3.PipValue, double.IsNaN(s3.Spread) ? 0 : s3.Spread,
-                            double.IsNaN(s3.VolumeInUnitsMin) ? 0 : s3.VolumeInUnitsMin, double.IsNaN(s3.VolumeInUnitsStep) ? 0 : s3.VolumeInUnitsStep,
-                            double.IsNaN(s3.PipSize) ? 0 : s3.PipSize, s3.Digits));
+                        metricsList.Add("{\"symbol\":\"" + s3.Name + "\"" +
+                            ",\"pip_value\":" + (double.IsNaN(s3.PipValue) ? 0 : s3.PipValue).ToString("F5", CultureInfo.InvariantCulture) +
+                            ",\"spread\":" + (double.IsNaN(s3.Spread) ? 0 : s3.Spread).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"min_vol\":" + (double.IsNaN(s3.VolumeInUnitsMin) ? 0 : s3.VolumeInUnitsMin).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"step_vol\":" + (double.IsNaN(s3.VolumeInUnitsStep) ? 0 : s3.VolumeInUnitsStep).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"pip_size\":" + (double.IsNaN(s3.PipSize) ? 0 : s3.PipSize).ToString("F8", CultureInfo.InvariantCulture) +
+                            ",\"digits\":" + s3.Digits + "}");
                     }
 
                     _pollStatus = "POLLING";
@@ -478,11 +499,13 @@ namespace cAlgo.Robots
                     {
                         await PollSignalsAsync(accId);
                         if (doSync && pl != null)
-                            await SyncWithVpsAsync(accId,
-                                double.Parse(bal, CultureInfo.InvariantCulture),
-                                double.Parse(eq, CultureInfo.InvariantCulture),
-                                double.Parse(mar, CultureInfo.InvariantCulture),
-                                brk, pl, ol, cl, ati, ml);
+                        {
+                            double b, e, m;
+                            if (!double.TryParse(bal, NumberStyles.Any, CultureInfo.InvariantCulture, out b)) b = 0;
+                            if (!double.TryParse(eq, NumberStyles.Any, CultureInfo.InvariantCulture, out e)) e = 0;
+                            if (!double.TryParse(mar, NumberStyles.Any, CultureInfo.InvariantCulture, out m)) m = 0;
+                            await SyncWithVpsAsync(accId, b, e, m, brk, pl, ol, cl, ati, ml);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -1071,9 +1094,15 @@ namespace cAlgo.Robots
             _syncStatus = "SYNCING";
             try
             {
-                var payload = string.Format(CultureInfo.InvariantCulture,
-                    "{{\"source_id\":\"Ctrader\",\"account_id\":\"{0}\",\"balance\":{1:F2},\"equity\":{2:F2},\"margin\":{3:F2},\"broker_name\":\"{4}\",\"positions\":[{5}],\"orders\":[{6}],\"closed\":[{7}],\"symbol_metrics\":[{8}]}}",
-                    accId, bal, eq, marg, brokerName, string.Join(",", posList), string.Join(",", ordersList), string.Join(",", closedList), string.Join(",", metricsList));
+                var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId
+                    + "\",\"balance\":" + bal.ToString("F2", CultureInfo.InvariantCulture)
+                    + ",\"equity\":" + eq.ToString("F2", CultureInfo.InvariantCulture)
+                    + ",\"margin\":" + marg.ToString("F2", CultureInfo.InvariantCulture)
+                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
+                    + ",\"positions\":[" + string.Join(",", posList ?? new List<string>()) + "]"
+                    + ",\"orders\":[" + string.Join(",", ordersList ?? new List<string>()) + "]"
+                    + ",\"closed\":[" + string.Join(",", closedList ?? new List<string>()) + "]"
+                    + ",\"symbol_metrics\":[" + string.Join(",", metricsList ?? new List<string>()) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/sync", content);
@@ -1166,17 +1195,13 @@ namespace cAlgo.Robots
                         double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
                         double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
                         if (bid <= 0 || ask <= 0) continue;
-                        priceList.Add(string.Format(CultureInfo.InvariantCulture,
-                            "{{\"s\":\"{0}\",\"b\":{1:F5},\"a\":{2:F5}}}",
-                            sym, bid, ask));
+                        priceList.Add("{\"s\":\"" + sym + "\",\"b\":" + bid.ToString("F5", CultureInfo.InvariantCulture) + ",\"a\":" + ask.ToString("F5", CultureInfo.InvariantCulture) + "}");
                     }
                     catch { }
                 }
                 if (priceList.Count == 0) { _priceStatus = "IDLE"; return; }
 
-                var payload = string.Format(CultureInfo.InvariantCulture,
-                    "{{\"source_id\":\"Ctrader\",\"account_id\":\"{0}\",\"ts\":{1},\"p\":[{2}]}}",
-                    accId, ts, string.Join(",", priceList));
+                var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId + "\",\"ts\":" + ts.ToString() + ",\"p\":[" + string.Join(",", priceList) + "]}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/prices", content);
@@ -1301,9 +1326,12 @@ namespace cAlgo.Robots
         {
             try
             {
-                var payload = string.Format(CultureInfo.InvariantCulture,
-                    "{{\"trade_id\":\"{0}\", \"lease_token\":\"{1}\", \"execution_status\":\"{2}\", \"broker_trade_id\":\"{3}\", \"error\":\"{4}\", \"entry_exec\":{5:F5}}}",
-                    sid, token, status, ticket, err, entryExec);
+                var payload = "{\"trade_id\":\"" + sid
+                    + "\",\"lease_token\":\"" + (token ?? "") + "\""
+                    + ",\"execution_status\":\"" + status + "\""
+                    + ",\"broker_trade_id\":\"" + (ticket ?? "") + "\""
+                    + ",\"error\":\"" + (err ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
+                    + ",\"entry_exec\":" + entryExec.ToString("F5", CultureInfo.InvariantCulture) + "}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/ack", content);

@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.20 09:15 - 39bcbed5",
-); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 13:42 - 7b0f8236"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -190,6 +187,120 @@ function emitNotification(payload) {
   }
 }
 
+// --- Trace-based logging helpers ---
+function deriveTraceType(subEvent) {
+  // Group all AI_* events under AI_ANALYZE
+  if (subEvent.startsWith("AI_")) return "AI_ANALYZE";
+  // Group SIGNAL_EA_* under SIGNAL_EA
+  if (subEvent.startsWith("SIGNAL_EA_")) return "SIGNAL_EA";
+  // Group TRADE_* under TRADE
+  if (subEvent.startsWith("TRADE_")) return "TRADE";
+  // Group SIGNAL_* under SIGNAL (but not SIGNAL_EA which is caught above)
+  if (subEvent.startsWith("SIGNAL_")) return "SIGNAL";
+  // Group BROKER_*, REMOTE_API_* under SYSTEM
+  if (subEvent.startsWith("BROKER_") || subEvent.startsWith("REMOTE_API_"))
+    return "SYSTEM";
+  // Strip common suffixes to group related events
+  return subEvent.replace(
+    /_(REQUEST|RESPONSE|ERROR|CALL|FILLED|CLOSED|SYNC_UPDATE|CHANGED|ACK|ADDED|ACTIVITY|STARTED|FINISHED|SUCCESS|FAILED|PUSH|POLL|SYNC)$/,
+    "",
+  );
+}
+
+function buildTraceBlock(subEvent, payload) {
+  const now = new Date().toISOString();
+  const lines = [`[${now}] ${subEvent}`];
+  if (payload && typeof payload === "object") {
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (k === "event" || k === "event_type") continue;
+      const val = typeof v === "object" ? JSON.stringify(v) : String(v);
+      lines.push(`${k}: ${val}`);
+    }
+  } else if (payload) {
+    lines.push(`message: ${String(payload)}`);
+  }
+  return lines.join("\n") + "\n\n";
+}
+
+// --- Trace-based logging (replaces per-event appendEventLog) ---
+// Each trace is keyed by {trace_type (event_type in DB), object_id}.
+// Sub-events append markdown blocks to the same row.
+// Format per append:
+//   [UTC TIME] sub_event
+//   key1: value1
+//   key2: value2
+function traceLog(traceType, objectId, objectTable, subEvent, payload, userId) {
+  if (!traceType || !objectId) return; // need both to key a trace
+  const now = new Date().toISOString();
+  const lines = [`[${now}] ${subEvent}`];
+  if (payload && typeof payload === "object") {
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (k === "event" || k === "event_type") continue; // sub-event is the heading
+      const val = typeof v === "object" ? JSON.stringify(v) : String(v);
+      lines.push(`${k}: ${val}`);
+    }
+  }
+  const block = lines.join("\n") + "\n\n";
+  // Queue for async flush — batched by trace key to reduce DB writes
+  if (!global.__traceQueue) global.__traceQueue = new Map();
+  const key = `${traceType}\x00${objectId}`;
+  if (!global.__traceQueue.has(key)) {
+    global.__traceQueue.set(key, {
+      traceType,
+      objectId,
+      objectTable,
+      blocks: [],
+      userId,
+    });
+  }
+  const entry = global.__traceQueue.get(key);
+  entry.blocks.push(block);
+  // Schedule flush if not already scheduled
+  if (!global.__traceFlushTimer) {
+    global.__traceFlushTimer = setTimeout(() => flushTraceQueue(), 1000);
+    if (global.__traceFlushTimer.unref) global.__traceFlushTimer.unref();
+  }
+}
+
+async function flushTraceQueue() {
+  global.__traceFlushTimer = null;
+  if (!global.__traceQueue || !global.__traceQueue.size) return;
+  const batch = new Map(global.__traceQueue);
+  global.__traceQueue.clear();
+  try {
+    const b = await mt5Backend().catch(() => null);
+    if (!b || !b.pool) return;
+    for (const [, entry] of batch) {
+      const block = entry.blocks.join("");
+      if (!block) continue;
+      try {
+        await b.pool.query(
+          `INSERT INTO logs (object_id, object_table, event_type, content, user_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+           ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
+           DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
+                         updated_at = NOW()`,
+          [
+            entry.objectId,
+            entry.objectTable,
+            entry.traceType,
+            block,
+            entry.userId || null,
+          ],
+        );
+      } catch (e) {
+        console.warn("[traceLog] upsert error:", e.message);
+      }
+    }
+  } catch (e) {
+    /* backend not ready yet — drop batch */
+  }
+}
+
+// Legacy flat-file logger — now also routes to traceLog for backward compat.
+// Existing callers still work; traceLog is the new primary path.
 function appendEventLog(eventType, payload) {
   if (!SERVER_LOG_DIR) return;
   try {
@@ -362,27 +473,23 @@ class NotificationManager {
       }
     }
 
-    // 3) db_log channel → enqueue for batch INSERT
+    // 3) db_log channel → enqueue for batch trace upsert
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
-      const root = {
-        event: eventType,
-        sub_type: subType,
-        message: merged.message || "",
+      const subEvent = merged.message || subType || eventType;
+      const traceType = eventType; // NotificationManager eventType IS the trace category
+      const objectId = payload.object_id || payload.position || payload.signal_id || (eventType === "SYSTEM_EVENT" ? "system" : eventType === "REMOTE_API_CALL" ? "api" : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC" ? "broker" : null);
+      const block = buildTraceBlock(subEvent, {
         ...payload,
-      };
+        event: undefined,
+        event_type: undefined,
+      });
       this.queue.push({
-        object_id: null,
+        object_id: objectId,
         object_table: eventType,
         symbol: payload.symbol || null,
-        event_type: subType || eventType,
-        metadata: JSON.stringify({
-          status: payload.status || (payload.error ? "ERROR" : "OK"),
-          error: payload.error ? String(payload.error) : null,
-          data: root,
-          payload: payload.data || null,
-          response: null,
-        }),
+        event_type: traceType,
+        content: block,
         user_id: userId,
       });
     }
@@ -405,27 +512,25 @@ class NotificationManager {
         return;
       }
       try {
-        const placeholders = [];
-        const values = [];
-        let idx = 1;
         for (const row of batch) {
-          placeholders.push(
-            `($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}, $${idx + 5}, NOW())`,
-          );
-          values.push(
-            row.object_id,
-            row.object_table,
-            row.symbol,
-            row.event_type,
-            row.metadata,
-            row.user_id,
-          );
-          idx += 6;
+          if (!row.object_id) {
+            // Fallback: insert without trace key (no conflict possible)
+            await this._pool.query(
+              `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+              [row.object_id, row.object_table, row.symbol, row.event_type, row.content, row.user_id],
+            );
+          } else {
+            await this._pool.query(
+              `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+               ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
+               DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
+                             updated_at = NOW()`,
+              [row.object_id, row.object_table, row.symbol, row.event_type, row.content, row.user_id],
+            );
+          }
         }
-        await this._pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at) VALUES ${placeholders.join(", ")}`,
-          values,
-        );
       } catch (e) {
         console.warn("[NotificationManager] db_log flush error:", e.message);
         // Re-queue on failure to avoid data loss
@@ -907,6 +1012,9 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
     } else if (ev.startsWith("SIGNAL_")) {
       eventType = "SIGNAL_ADDED";
       subType = ev.replace("SIGNAL_", "").toLowerCase();
+    } else if (ev === "PRICE_PUSH") {
+      eventType = "BROKER_POLL";
+      subType = "price_push";
     }
     if (eventType) {
       try {
@@ -1431,7 +1539,7 @@ async function repoGetPendingSignals(userId = "all") {
         : "status IN ('NEW', 'PENDING') AND user_id = $1";
     const params = userId === "all" ? [] : [userId];
     const { rows } = await db.query(
-      `SELECT * FROM signals WHERE ${where} ORDER BY created_at DESC`,
+      `SELECT * FROM signals WHERE ${where} ORDER BY updated_at DESC, created_at DESC`,
       params,
     );
     return rows;
@@ -1453,7 +1561,7 @@ async function repoGetUserTemplates(userId) {
   return await StateRepo.get("USER_TEMPLATES", userId, async () => {
     const db = await mt5InitBackend();
     const { rows } = await db.query(
-      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY created_at DESC",
+      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY updated_at DESC, created_at DESC",
       [userId],
     );
     return rows.map((r) => ({
@@ -4776,7 +4884,7 @@ async function loadTradePlansForAiContext(userId, symbolNorm) {
        FROM signals
        WHERE user_id = $1 AND regexp_replace(upper(symbol), '[^A-Z0-9]', '', 'g') = $2
          AND status IN ('NEW','PENDING','ACTIVE')
-       ORDER BY created_at DESC
+       ORDER BY updated_at DESC, created_at DESC
        LIMIT 20`,
       [userId, symbolNorm],
     );
@@ -7452,57 +7560,26 @@ async function _mt5InitBackendInternal() {
     query: (q, p) => pool.query(q, p),
     info: { url: CFG.mt5PostgresUrl.replace(/:[^:@/]+@/, ":***@") },
     async log(objectId, objectTable, metadata = {}, userId = null) {
-      const eventType = String(
+      // Trace-based: derive trace_type (broad category), upsert by {trace_type, object_id}
+      const subEvent = String(
         metadata.event || metadata.event_type || "INFO",
       ).toUpperCase();
+      const traceType = deriveTraceType(subEvent);
       const symbol = String(metadata.symbol || "").toUpperCase() || null;
-      const normalizedMeta =
-        metadata && typeof metadata === "object"
-          ? {
-              ...metadata,
-              status: metadata.status || (metadata.error ? "ERROR" : "OK"),
-              error: metadata.error ? String(metadata.error) : null,
-            }
-          : {
-              message: String(metadata || ""),
-              status: "OK",
-              error: null,
-            };
-
-      if (eventType === "TRADE_SYNC_UPDATE") {
-        // Keep only 1 latest row per trade: delete old then insert new
+      const block = buildTraceBlock(subEvent, metadata);
+      try {
         await pool.query(
-          `DELETE FROM logs WHERE object_id = $1 AND event_type = $2`,
-          [objectId, eventType],
+          `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+           ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
+           DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
+                         symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
+                         updated_at = NOW()`,
+          [objectId, objectTable, symbol, traceType, block, userId],
         );
-        await pool.query(
-          `INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-          [
-            objectId,
-            objectTable,
-            symbol,
-            eventType,
-            JSON.stringify(normalizedMeta),
-            userId,
-          ],
-        );
-        return;
+      } catch (e) {
+        console.warn("[b.log] upsert error:", e.message);
       }
-      await pool.query(
-        `
-        INSERT INTO logs (object_id, object_table, symbol, event_type, metadata, user_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-      `,
-        [
-          objectId,
-          objectTable,
-          symbol,
-          eventType,
-          JSON.stringify(normalizedMeta),
-          userId,
-        ],
-      );
     },
     async upsertSignal(signal) {
       const signalSid = await allocateUniqueSid(
@@ -8978,7 +9055,7 @@ async function _mt5InitBackendInternal() {
               WHERE object_table = 'trades'
                 AND object_id = $1
                 AND metadata->>'event' IN ('SYNC_UPDATE', 'TRADE_SYNC_UPDATE')
-              ORDER BY created_at DESC, log_id DESC
+              ORDER BY updated_at DESC, created_at DESC, log_id DESC
               LIMIT 1
             `,
               [tradeId],
@@ -9394,7 +9471,7 @@ async function _mt5InitBackendInternal() {
       );
       params.push(safePageSize, offset);
       const res = await pool.query(
-        `SELECT * FROM trades ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        `SELECT * FROM trades ${where} ORDER BY updated_at DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params,
       );
       return {
@@ -9625,7 +9702,7 @@ async function _mt5InitBackendInternal() {
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       params.push(limit, offset);
       const res = await pool.query(
-        `SELECT * FROM logs ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        `SELECT * FROM logs ${where} ORDER BY updated_at DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params,
       );
       return res.rows;
@@ -13051,7 +13128,7 @@ async function mt5FindDuplicateSignal(payload = {}) {
       AND tp IS NOT NULL
       AND ABS(sl - $3) <= 1e-8
       AND ABS(tp - $4) <= 1e-8
-    ORDER BY created_at DESC
+    ORDER BY updated_at DESC, created_at DESC
     LIMIT 500
   `,
     [userId, symbol, sl, tp],
@@ -13375,7 +13452,7 @@ async function mt5ResolveSignalRefV2(signalRef, userId = null) {
       OR sid = $2
     )
     ${whereUser}
-    ORDER BY created_at DESC
+    ORDER BY updated_at DESC, created_at DESC
     LIMIT 1
   `,
     params,
@@ -16745,13 +16822,15 @@ const appHandler = async (req, res) => {
         fetchOffset,
       );
       let events = (rows || []).map((r) => {
+        // Trace-based: content is the primary log (markdown). metadata is legacy JSON fallback.
+        const content = String(r?.content || "");
         const payload =
           r?.metadata && typeof r.metadata === "object" ? r.metadata : {};
         const data =
           payload?.data && typeof payload.data === "object"
             ? payload.data
             : payload;
-        const symbol = String(data?.symbol || payload?.symbol || "").trim();
+        const symbol = String(data?.symbol || payload?.symbol || r?.symbol || "").trim();
         const eventType = String(
           data.event_type ||
             data.event ||
@@ -16760,6 +16839,7 @@ const appHandler = async (req, res) => {
             "LOG",
         ).trim();
         const eventTime = String(r.created_at || "");
+        const updatedAt = String(r.updated_at || r.created_at || "");
         const signalId = String(r.object_id || "");
         const ackTicket = String(
           data?.ticket ||
@@ -16774,6 +16854,8 @@ const appHandler = async (req, res) => {
           object_id: signalId,
           object_table: String(r.object_table || ""),
           created_at: eventTime,
+          updated_at: updatedAt,
+          content: content,
           metadata: payload,
           event_time: eventTime,
           event_type: eventType,
@@ -16813,7 +16895,7 @@ const appHandler = async (req, res) => {
               ev.symbol,
               ev.object_table,
               ev.event_type,
-              JSON.stringify(ev.metadata || ev.payload_json || {}),
+              ev.content || "", JSON.stringify(ev.metadata || ev.payload_json || {}),
             ]
               .join(" ")
               .toLowerCase();
@@ -17101,7 +17183,7 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const { rows } = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY created_at DESC",
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY updated_at DESC, created_at DESC",
         [CFG.mt5DefaultUserId],
       );
       const templates = rows.map((r) => ({
@@ -22602,17 +22684,98 @@ const appHandler = async (req, res) => {
         })
         .catch(() => {});
 
-      // 4. SSE pulse
-      bumpPulse("global", {
-        type: "price_update",
-        symbols: prices.map((p) => String(p.s || "").toUpperCase()),
-      });
-
+      // 4. Log event + SSE via notification manager
       const elapsed = Date.now() - t0;
+      const uid = account.user_id || CFG.mt5DefaultUserId;
+      const symbolsArr = prices.map((p) => String(p.s || "").toUpperCase());
+      await mt5Log(
+        account.account_id,
+        "accounts",
+        {
+          event: "PRICE_PUSH",
+          source_id: payload.source_id || "unknown",
+          symbol_count: prices.length,
+          symbols: symbolsArr,
+          elapsed_ms: elapsed,
+        },
+        uid,
+      );
+
+      // 5. Update account metadata with last price push info
+      try {
+        await db.pool.query(
+          `UPDATE user_accounts
+           SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = NOW()
+           WHERE account_id = $1`,
+          [
+            account.account_id,
+            JSON.stringify({
+              last_price_push_at: new Date().toISOString(),
+              last_price_push_symbols: prices.length,
+              last_price_push_source: payload.source_id || "unknown",
+              last_price_push_elapsed_ms: elapsed,
+            }),
+          ],
+        );
+      } catch (e) {
+        console.error("[broker/prices] metadata update failed:", e);
+      }
+
       return json(res, 200, {
         ok: true,
         updated: prices.length,
         elapsed_ms: elapsed,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/broker/prices/status") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const account = await requireV2BrokerAccount(req, res, url);
+      if (!account) return;
+      const db = await mt5Backend();
+      // Get latest price push log
+      const logRes = await db.pool.query(
+        `SELECT created_at, metadata
+         FROM logs
+         WHERE object_table = 'accounts'
+           AND object_id = $1
+           AND metadata->>'event' = 'PRICE_PUSH'
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1`,
+        [account.account_id],
+      );
+      // Get a sample of updated market_data rows
+      const mdRes = await db.pool.query(
+        `SELECT symbol, last_price, last_price_at, updated_at
+         FROM market_data
+         WHERE last_price_at IS NOT NULL
+         ORDER BY updated_at DESC
+         LIMIT 10`,
+      );
+      return json(res, 200, {
+        ok: true,
+        account_id: account.account_id,
+        last_push: logRes.rows?.[0]
+          ? {
+              at: logRes.rows[0].created_at,
+              metadata: logRes.rows[0].metadata,
+            }
+          : null,
+        recent_prices: (mdRes.rows || []).map((r) => ({
+          symbol: r.symbol,
+          last_price: r.last_price,
+          last_price_at: r.last_price_at,
+          updated_at: r.updated_at,
+        })),
       });
     } catch (error) {
       return json(res, 400, {
@@ -23666,6 +23829,7 @@ async function mt5CronLoop() {
         ticker: true,
         console_log: true,
         notification: false,
+        _force_ticker: true,
         metadata: {
           elapsed_sec: elapsed,
           events,
