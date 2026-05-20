@@ -11,10 +11,45 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-20 15:28 UTC`
-- note: `Deploy move badges into trade container header`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 15:41 UTC`
+- note: `hotfix deployed; webhook stable`
+
+### [2026-05-20 15:41 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 4383e2d3
+- scope: `webhook/server.js`, `bridge-clients/TVBridgeEA.mq5`, `bridge-clients/TVBridge_CTrader.cs`
+- merge_to_main: YES (8fe81d8f, 4383e2d3)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.20 15:35 - 8fe81d8f
+  - ea_version: v2026.05.20 15:35 - 8fe81d8f
+  - result: PASS
+- verify:
+  - VPS git HEAD: `4383e2d`
+  - PM2 webhook: online; restart loop resolved
+  - health: `https://trade.mozasolution.com/health` => `ok:true`, version `v2026.05.20 15:35 - 8fe81d8f`
+- handoff_next: continue pending UI requests
+
+### [2026-05-20 15:32 UTC] AGENT:Codex
+- status: DEPLOY_BLOCKED
+- branch: main
+- commit: 151cbfc2
+- scope: `web-ui/src/components/SignalDetailCard.jsx`, version bump files
+- merge_to_main: YES (151cbfc2)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.20 15:29 - 03c7703e
+  - ea_version: v2026.05.20 15:29 - 03c7703e
+  - result: FAIL
+- verify:
+  - VPS git HEAD: `151cbfc`
+  - PM2 webhook: restart loop (`↺` rapidly increasing, uptime few seconds)
+  - error: `TypeError: Cannot read properties of null (reading 'log')` at `_mt5InitBackendInternal` in `webhook/server.js`
+  - health: port 80/443 not reachable from runner and localhost checks fail while process flaps
+- handoff_next: immediate hotfix/rollback before any new deploy
 
 ### [2026-05-20 15:11 UTC] AGENT:Codex
 - status: DEPLOYED
