@@ -15,8 +15,8 @@ n/a
 n/a
 
 ## Deploy / Version Status
-- SERVER_VERSION: v2026.05.20 13:42 - 7b0f8236
-- EA_BUILD_VERSION: v2026.05.20 13:42 - 7b0f8236
+- SERVER_VERSION: v2026.05.20 14:25 - 8c3dd559
+- EA_BUILD_VERSION: v2026.05.20 14:25 - 8c3dd559
 
 ## Open Risks
 - Check top open bugs and unresolved sprint TODOs.
