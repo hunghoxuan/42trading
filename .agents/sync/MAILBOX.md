@@ -11,10 +11,27 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-20 14:00 UTC`
-- note: `Deploy UI: badges placement + object toolbar cleanup`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-20 14:06 UTC`
+- note: `UI badges/object-toolbar cleanup deployed`
+
+### [2026-05-20 14:06 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: f02024ff
+- scope: `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/components/charts/SymbolChart.jsx`, `.agents/sync/MAILBOX.md`, version bump files
+- merge_to_main: YES (f02024ff)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.20 14:01 - 16d53cc4
+  - ea_version: v2026.05.20 14:01 - 16d53cc4
+  - result: PASS
+- verify:
+  - VPS git HEAD: `f02024f`
+  - PM2: `webhook` online (uptime after restart observed)
+  - `/health`: redirect confirmed on localhost; HTTPS health probe from current environment timed out
+- handoff_next: optional follow-up health/version check from VPS shell if strict endpoint evidence is required
 
 ### [2026-05-20 13:42 UTC] AGENT:DeepSeek
 - status: DEPLOYED
