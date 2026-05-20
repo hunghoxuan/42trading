@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-19 17:42 UTC`
-- note: `AI v3 raw_json preservation deployed v2026.05.19 17:35 - 47f1eae2`
+- lock_status: `LOCKED`
+- deploy_owner: `DeepSeek`
+- since_utc: `2026-05-20 09:04 UTC`
+- note: `fix cron loop stall — reset CRON_STATE.isRunning after tick`
 
 ## Required Entry Template
 ...
