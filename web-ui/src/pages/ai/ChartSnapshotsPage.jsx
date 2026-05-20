@@ -2618,6 +2618,15 @@ export default function ChartSnapshotsPage() {
   const [watchlist, setWatchlist] = useState([]);
   const [isSymbolPanelOpen, setIsSymbolPanelOpen] = useState(true);
   const [symbolFilterTab, setSymbolFilterTab] = useState("FAVOURITE");
+  const [tradeSymbolsByStatus, setTradeSymbolsByStatus] = useState({
+    pending: [],
+    filled: [],
+  });
+  const [tradeRowsByStatus, setTradeRowsByStatus] = useState({
+    pending: [],
+    filled: [],
+  });
+  const [tradeSymbolsLoading, setTradeSymbolsLoading] = useState(false);
   const [analysisFilesDisplay, setAnalysisFilesDisplay] = useState([]);
   const [autoSaveResult, setAutoSaveResult] = useState(null);
   const [analyzeSessionId, setAnalyzeSessionId] = useState(null);
@@ -4389,6 +4398,34 @@ export default function ChartSnapshotsPage() {
     }
   };
 
+  const loadTradeSymbols = async (status) => {
+    const statusKey = status === "PENDING" ? "pending" : "filled";
+    setTradeSymbolsLoading(true);
+    try {
+      const queryStatus = status === "PENDING" ? "PENDING" : "OPEN";
+      const data = await api.v2Trades({
+        execution_status: queryStatus,
+        range: "all",
+      });
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const symbols = [
+        ...new Set(
+          items
+            .map((t) => normalizeWatchSymbol(String(t?.symbol || "")))
+            .filter(Boolean),
+        ),
+      ].sort((a, b) => a.localeCompare(b));
+      setTradeSymbolsByStatus((prev) => ({ ...prev, [statusKey]: symbols }));
+      setTradeRowsByStatus((prev) => ({ ...prev, [statusKey]: items }));
+    } catch (err) {
+      console.warn(`[tradeSymbols] Load ${status} failed:`, err.message);
+      setTradeSymbolsByStatus((prev) => ({ ...prev, [statusKey]: [] }));
+      setTradeRowsByStatus((prev) => ({ ...prev, [statusKey]: [] }));
+    } finally {
+      setTradeSymbolsLoading(false);
+    }
+  };
+
   const saveWatchlistToDb = async (nextList) => {
     try {
       await api.upsertSetting({
@@ -4555,6 +4592,15 @@ export default function ChartSnapshotsPage() {
     if (!isTradeRoute) return;
     setResponseTab("response");
   }, [isTradeRoute]);
+
+  // Fetch trade symbols when tab changes to PENDING or FILLED
+  useEffect(() => {
+    if (symbolFilterTab === "PENDING") {
+      loadTradeSymbols("PENDING");
+    } else if (symbolFilterTab === "FILLED") {
+      loadTradeSymbols("FILLED");
+    }
+  }, [symbolFilterTab]);
 
   // Infinite scroll: load more on scroll near bottom
   useEffect(() => {
@@ -5404,6 +5450,10 @@ export default function ChartSnapshotsPage() {
     switch (symbolFilterTab) {
       case "FAVOURITE":
         return favoriteSymbols;
+      case "PENDING":
+        return tradeSymbolsByStatus.pending;
+      case "FILLED":
+        return tradeSymbolsByStatus.filled;
       case "CRYPTO":
         return cryptoSymbols;
       case "FOREX":
@@ -5434,6 +5484,7 @@ export default function ChartSnapshotsPage() {
     commoditySymbols,
     indicesSymbols,
     smtSymbols,
+    tradeSymbolsByStatus,
     cfg.symbol,
   ]);
 
@@ -5483,6 +5534,8 @@ export default function ChartSnapshotsPage() {
                 }}
               >
                 <option value="FAVOURITE">Watchlist</option>
+                <option value="PENDING">Pending</option>
+                <option value="FILLED">Filled</option>
                 <option value="CRYPTO">Crypto</option>
                 <option value="FOREX">Forex</option>
                 <option value="COMMODITY">Commodity</option>
@@ -5700,6 +5753,114 @@ export default function ChartSnapshotsPage() {
               </div>
             </>
           )}
+          {/* Trades list for PENDING/FILLED tabs */}
+          {isSymbolPanelOpen &&
+            (symbolFilterTab === "PENDING" ||
+              symbolFilterTab === "FILLED") && (
+              <div
+                className="snapshot-live-card-v3"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  maxHeight: 300,
+                }}
+              >
+                <div
+                  className="minor-text"
+                  style={{
+                    padding: "4px 0",
+                    fontWeight: 700,
+                    fontSize: 11,
+                  }}
+                >
+                  {symbolFilterTab === "PENDING"
+                    ? "Pending Trades"
+                    : "Filled Trades"}{" "}
+                  (
+                  {
+                    symbolFilterTab === "PENDING"
+                      ? tradeRowsByStatus.pending.length
+                      : tradeRowsByStatus.filled.length
+                  }
+                  )
+                </div>
+                <div
+                  className="snapshot-activity-list-v4"
+                  style={{ flex: 1, overflowY: "auto" }}
+                >
+                  {tradeSymbolsLoading ? (
+                    <div className="minor-text">Loading trades...</div>
+                  ) : (symbolFilterTab === "PENDING"
+                      ? tradeRowsByStatus.pending
+                      : tradeRowsByStatus.filled
+                    ).length === 0 ? (
+                    <div className="minor-text">No trades found.</div>
+                  ) : (
+                    (symbolFilterTab === "PENDING"
+                      ? tradeRowsByStatus.pending
+                      : tradeRowsByStatus.filled
+                    ).map((t) => {
+                      const sideRaw = String(
+                        t?.action || t?.side || "",
+                      ).toUpperCase();
+                      const isBuy = sideRaw.includes("BUY");
+                      const isSell = sideRaw.includes("SELL");
+                      const sideColor = isBuy
+                        ? "#24e38f"
+                        : isSell
+                          ? "#ff5a5a"
+                          : "#c8d5e8";
+                      const entryNum = Number(t?.entry);
+                      const tpNum = Number(t?.tp);
+                      const entryTxt = Number.isFinite(entryNum)
+                        ? entryNum.toFixed(
+                            entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
+                          )
+                        : "-";
+                      const tpTxt = Number.isFinite(tpNum)
+                        ? tpNum.toFixed(
+                            tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
+                          )
+                        : "-";
+                      const ref = t?.sid || t?.id || "";
+                      return (
+                        <article
+                          key={ref || `${t?.symbol}_${t?.created_at}`}
+                          className="snapshot-activity-card-v4 compact"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => {
+                            if (ref) navigate(`/trades/${ref}`);
+                          }}
+                        >
+                          <div className="snapshot-activity-row-top">
+                            <span
+                              style={{ color: sideColor, letterSpacing: 0.2 }}
+                            >
+                              {normalizeSignalSymbol(
+                                String(t?.symbol || ""),
+                              )}
+                            </span>
+                            <span style={{ color: sideColor, fontSize: 11 }}>
+                              {sideRaw || "-"}
+                            </span>
+                          </div>
+                          <div className="snapshot-activity-row-mid">
+                            {entryTxt} → {tpTxt}
+                          </div>
+                          <div
+                            className="minor-text"
+                            style={{ fontSize: 9, opacity: 0.6 }}
+                          >
+                            {showDateTime(t?.created_at)}
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           <div
             className="snapshot-live-card-v3"
             style={{

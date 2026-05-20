@@ -11,10 +11,43 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-20 09:30 UTC`
-- note: `Settings api_key Eye/Copy fix deployed`
+- lock_status: `LOCKED`
+- deploy_owner: `DeepSeek`
+- since_utc: `2026-05-20 10:00 UTC`
+- note: `AI Analysis: add Pending/Filled dynamic symbol tabs from trades`
+
+### [2026-05-20 11:55 UTC] AGENT:Codex
+- status: HANDOFF_READY
+- branch: main
+- commit: none
+- scope: `.agents/.product/tickets/1-backlog/plan-update-feature-ai-info-density-color-coding-and-object-labeling.md`, `.agents/sync/HANDOFF_2026-05-20_AI_INFO_DENSITY_COLOR_LAYOUT_LABELS.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - planning only; no runtime/code deployment performed
+  - screenshot-driven requirements captured for screens 1-5
+- handoff_next: implementation agent for web-ui layout/color/label pass
+
+### [2026-05-20 11:45 UTC] AGENT:Codex
+- status: HANDOFF_READY
+- branch: main
+- commit: none
+- scope: `Dockerfile.webhook`, `scripts/deploy/docker_build_bundle.sh`, `scripts/deploy/docker_deploy_staging.sh`, `scripts/deploy/docker_deploy_prod.sh`, `.agents/.product/tickets/0-ideas/2026-05-20-docker-staging-branch-deploy.md`, `.agents/sync/HANDOFF_2026-05-20_DOCKER_STAGING_PLAN.md`
+- merge_to_main: NO
+- deploy:
+  - owner: none
+  - server_version: unchanged
+  - ea_version: unchanged
+  - result: NOT_DEPLOYED
+- verify:
+  - VPS disk: `8.7G total / 6.3G used / 2.5G free`
+  - `/opt/trading` size: `227M`
+  - runtime availability: `docker/podman/nerdctl/docker-compose` not installed
+- handoff_next: install container runtime on VPS, then execute staging-only Docker flow
 
 ### [2026-05-20 09:28 UTC] AGENT:DeepSeek
 - status: DEPLOYED
