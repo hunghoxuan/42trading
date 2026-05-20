@@ -2006,6 +2006,7 @@ export default function SymbolChart({
               // ANNOTATION_LINES_CONVERSION
               const annotationLines = [];
               for (const a of projectedAnnotations) {
+                if (a.visible === false) continue;
                 const p = a.price ?? a.anchorPrice;
                 const c = a.color || "#60a5fa";
                 const lb = formatObjectLabel(a.type, a.label || "");
