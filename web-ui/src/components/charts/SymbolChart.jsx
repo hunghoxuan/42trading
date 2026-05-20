@@ -2070,7 +2070,7 @@ export default function SymbolChart({
                   ) : hasBars ? (
                     <>
                       <TradeSignalChart
-                        key={`tsc-${symbol}-${tf}`}
+                        key={`tsc-${symbol}-${tf}-${tp1Price}-${tp2Price}-${tp3Price}`}
                         chartId={chartId}
                         symbol={cleanSym}
                         interval={tf}

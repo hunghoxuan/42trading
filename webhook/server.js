@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 09:15 - 39bcbed5"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 09:19 - b1b00a3c"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -23660,6 +23660,9 @@ async function mt5CronLoop() {
     if (notificationManager) {
       notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
         message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
+        ticker: true,
+        console_log: true,
+        notification: false,
         metadata: {
           elapsed_sec: elapsed,
           events,
