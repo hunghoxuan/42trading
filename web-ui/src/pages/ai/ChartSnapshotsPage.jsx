@@ -5753,42 +5753,42 @@ export default function ChartSnapshotsPage() {
               </div>
             </>
           )}
-          {/* Trades list for PENDING/FILLED tabs */}
-          {isSymbolPanelOpen &&
-            (symbolFilterTab === "PENDING" ||
+          <div
+            className="snapshot-live-card-v3"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              marginTop: "auto",
+            }}
+          >
+            {(symbolFilterTab === "PENDING" ||
               symbolFilterTab === "FILLED") && (
               <div
-                className="snapshot-live-card-v3"
+                className="minor-text"
                 style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  maxHeight: 300,
+                  padding: "4px 0",
+                  fontWeight: 700,
+                  fontSize: 11,
                 }}
               >
-                <div
-                  className="minor-text"
-                  style={{
-                    padding: "4px 0",
-                    fontWeight: 700,
-                    fontSize: 11,
-                  }}
-                >
-                  {symbolFilterTab === "PENDING"
-                    ? "Pending Trades"
-                    : "Filled Trades"}{" "}
-                  (
-                  {
-                    symbolFilterTab === "PENDING"
-                      ? tradeRowsByStatus.pending.length
-                      : tradeRowsByStatus.filled.length
-                  }
-                  )
-                </div>
-                <div
-                  className="snapshot-activity-list-v4"
-                  style={{ flex: 1, overflowY: "auto" }}
-                >
+                {symbolFilterTab === "PENDING"
+                  ? "Pending Trades"
+                  : "Filled Trades"}{" "}
+                (
+                {symbolFilterTab === "PENDING"
+                  ? tradeRowsByStatus.pending.length
+                  : tradeRowsByStatus.filled.length}
+                )
+              </div>
+            )}
+            <div
+              className="snapshot-activity-list-v4"
+              style={{ flex: 1, overflowY: "auto" }}
+            >
+              {symbolFilterTab === "PENDING" ||
+              symbolFilterTab === "FILLED" ? (
+                <>
                   {tradeSymbolsLoading ? (
                     <div className="minor-text">Loading trades...</div>
                   ) : (symbolFilterTab === "PENDING"
@@ -5835,13 +5835,18 @@ export default function ChartSnapshotsPage() {
                         >
                           <div className="snapshot-activity-row-top">
                             <span
-                              style={{ color: sideColor, letterSpacing: 0.2 }}
+                              style={{
+                                color: sideColor,
+                                letterSpacing: 0.2,
+                              }}
                             >
                               {normalizeSignalSymbol(
                                 String(t?.symbol || ""),
                               )}
                             </span>
-                            <span style={{ color: sideColor, fontSize: 11 }}>
+                            <span
+                              style={{ color: sideColor, fontSize: 11 }}
+                            >
                               {sideRaw || "-"}
                             </span>
                           </div>
@@ -5858,93 +5863,91 @@ export default function ChartSnapshotsPage() {
                       );
                     })
                   )}
-                </div>
-              </div>
-            )}
-          <div
-            className="snapshot-live-card-v3"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              marginTop: "auto",
-            }}
-          >
-            <div
-              className="snapshot-activity-list-v4"
-              style={{ flex: 1, overflowY: "auto" }}
-            >
-              {symbolActivity.loading ? (
-                <div className="minor-text">Loading...</div>
-              ) : null}
-              {!symbolActivity.loading && symbolActivity.items.length === 0 ? (
-                <div className="minor-text">No related trades/signals.</div>
-              ) : null}
-              {!symbolActivity.loading &&
-                symbolActivity.items.map((x) => {
-                  const pnlNum = Number(x?.pnl);
-                  const hasPnl = Number.isFinite(pnlNum);
-                  const isSignal =
-                    String(x?.kind || "").toUpperCase() === "SIGNAL";
-                  const sideText = String(x?.side || "").toUpperCase();
-                  const isBuy = sideText.includes("BUY");
-                  const isSell = sideText.includes("SELL");
-                  const sideColor = isBuy
-                    ? "#24e38f"
-                    : isSell
-                      ? "#ff5a5a"
-                      : "#c8d5e8";
-                  const pnlText = hasPnl
-                    ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
-                    : "0";
-                  const entryTxt = Number.isFinite(Number(x?.entry))
-                    ? Number(x.entry).toFixed(
-                        Number(x.entry) >= 100
-                          ? 1
-                          : Number(x.entry) >= 10
-                            ? 2
-                            : 4,
-                      )
-                    : "-";
-                  const tpTxt = Number.isFinite(Number(x?.tp))
-                    ? Number(x.tp).toFixed(
-                        Number(x.tp) >= 100 ? 1 : Number(x.tp) >= 10 ? 2 : 4,
-                      )
-                    : "-";
-                  return (
-                    <article
-                      key={`${x.kind}_${x.id}`}
-                      className="snapshot-activity-card-v4 compact"
-                      style={{ cursor: "pointer" }}
-                      onClick={() => {
-                        const ref = x.sid || x.id;
-                        const k = String(x.kind || "").toUpperCase();
-                        if (k === "TRADE" || k === "trade")
-                          navigate(`/trades/${ref}`);
-                        else navigate(`/signals/${ref}`);
-                      }}
-                    >
-                      <div className="snapshot-activity-row-top">
-                        <span
-                          style={{
-                            color: sideColor,
-                            letterSpacing: 0.2,
+                </>
+              ) : (
+                <>
+                  {symbolActivity.loading ? (
+                    <div className="minor-text">Loading...</div>
+                  ) : null}
+                  {!symbolActivity.loading &&
+                  symbolActivity.items.length === 0 ? (
+                    <div className="minor-text">
+                      No related trades/signals.
+                    </div>
+                  ) : null}
+                  {!symbolActivity.loading &&
+                    symbolActivity.items.map((x) => {
+                      const pnlNum = Number(x?.pnl);
+                      const hasPnl = Number.isFinite(pnlNum);
+                      const isSignal =
+                        String(x?.kind || "").toUpperCase() === "SIGNAL";
+                      const sideText = String(x?.side || "").toUpperCase();
+                      const isBuy = sideText.includes("BUY");
+                      const isSell = sideText.includes("SELL");
+                      const sideColor = isBuy
+                        ? "#24e38f"
+                        : isSell
+                          ? "#ff5a5a"
+                          : "#c8d5e8";
+                      const pnlText = hasPnl
+                        ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
+                        : "0";
+                      const entryTxt = Number.isFinite(Number(x?.entry))
+                        ? Number(x.entry).toFixed(
+                            Number(x.entry) >= 100
+                              ? 1
+                              : Number(x.entry) >= 10
+                                ? 2
+                                : 4,
+                          )
+                        : "-";
+                      const tpTxt = Number.isFinite(Number(x?.tp))
+                        ? Number(x.tp).toFixed(
+                            Number(x.tp) >= 100
+                              ? 1
+                              : Number(x.tp) >= 10
+                                ? 2
+                                : 4,
+                          )
+                        : "-";
+                      return (
+                        <article
+                          key={`${x.kind}_${x.id}`}
+                          className="snapshot-activity-card-v4 compact"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => {
+                            const ref = x.sid || x.id;
+                            const k = String(x.kind || "").toUpperCase();
+                            if (k === "TRADE" || k === "trade")
+                              navigate(`/trades/${ref}`);
+                            else navigate(`/signals/${ref}`);
                           }}
                         >
-                          {String(x.symbol || "").toUpperCase()}
-                        </span>
-                        {!isSignal ? (
-                          <span style={{ color: sideColor }}>{pnlText}</span>
-                        ) : (
-                          <span />
-                        )}
-                      </div>
-                      <div className="snapshot-activity-row-mid">
-                        {entryTxt} → {tpTxt}
-                      </div>
-                    </article>
-                  );
-                })}
+                          <div className="snapshot-activity-row-top">
+                            <span
+                              style={{
+                                color: sideColor,
+                                letterSpacing: 0.2,
+                              }}
+                            >
+                              {String(x.symbol || "").toUpperCase()}
+                            </span>
+                            {!isSignal ? (
+                              <span style={{ color: sideColor }}>
+                                {pnlText}
+                              </span>
+                            ) : (
+                              <span />
+                            )}
+                          </div>
+                          <div className="snapshot-activity-row-mid">
+                            {entryTxt} → {tpTxt}
+                          </div>
+                        </article>
+                      );
+                    })}
+                </>
+              )}
             </div>
           </div>
         </div>
