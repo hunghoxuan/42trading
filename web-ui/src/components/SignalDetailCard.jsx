@@ -654,8 +654,8 @@ function PlanHeader({
           )}
         </div>
 
-        {/* Row 2: estimate_bars / confidence_level / risk_level badges */}
-        {(estimatedBars != null || confidenceLevel || riskLevel) && (
+        {/* Row 2: confidence_level / risk_level badges */}
+        {(confidenceLevel || riskLevel) && (
           <div
             style={{
               display: "flex",
@@ -665,20 +665,6 @@ function PlanHeader({
               justifyContent: "flex-end",
             }}
           >
-            {estimatedBars != null && (
-              <span
-                className="badge badge-mini"
-                style={{
-                  background: "rgba(120,120,200,0.15)",
-                  color: "var(--muted-bright)",
-                  border: "1px solid rgba(120,120,200,0.25)",
-                  padding: "1px 5px",
-                  fontSize: "9px",
-                }}
-              >
-                ~{estimatedBars}b
-              </span>
-            )}
             {confidenceLevel && (
               <span
                 className={`badge badge-mini ${
@@ -726,7 +712,6 @@ function PlanHeader({
           riskLevel ||
           gradeVal ||
           confidenceBadgeVal ||
-          estMinsVal ||
           skipDecisionVal ||
           riskPercentVal) && (
           <div
@@ -846,20 +831,6 @@ function PlanHeader({
                 }}
               >
                 {riskPercentVal}
-              </span>
-            )}
-            {estMinsVal && (
-              <span
-                className="badge badge-mini"
-                title="Estimated time to entry"
-                style={{
-                  padding: "1px 5px",
-                  fontSize: "9px",
-                  fontWeight: 400,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {estMinsVal}
               </span>
             )}
             {skipDecisionVal && (
@@ -1542,20 +1513,29 @@ export default function SignalDetailCard({
 
   const decisionBadges = selectedAiPlan
     ? [
+        (selectedAiPlan.execution_status || selectedAiPlan.status) && {
+          key: "status",
+          label: `Status: ${String(selectedAiPlan.execution_status || selectedAiPlan.status).toUpperCase()}`,
+          toneSource: String(selectedAiPlan.execution_status || selectedAiPlan.status),
+          tooltip: "Current trade/signal execution status",
+        },
         selectedAiPlan.strategy && {
           key: "strategy",
           label: `Strategy: ${selectedAiPlan.strategy}`,
           toneSource: selectedAiPlan.strategy,
+          tooltip: "Trading strategy used for this plan",
         },
         selectedAiPlan.entry_model && {
           key: "entry",
           label: `Entry: ${selectedAiPlan.entry_model}`,
           toneSource: selectedAiPlan.entry_model,
+          tooltip: "Entry model/pattern used for trigger logic",
         },
         selectedAiPlan.risk_management?.grade && {
           key: "grade",
           label: `Grade: ${selectedAiPlan.risk_management.grade}`,
           toneSource: selectedAiPlan.risk_management.grade,
+          tooltip: "Overall quality grade of the setup",
         },
         selectedAiPlan.risk_management?.risk_percent != null && {
           key: "risk",
@@ -1566,6 +1546,7 @@ export default function SignalDetailCard({
               : Number(selectedAiPlan.risk_management.risk_percent) <= 4
                 ? "warning"
                 : "danger",
+          tooltip: "Configured risk percentage for this plan",
         },
         selectedAiPlan.risk_management?.confidence_pct != null && {
           key: "confidence",
@@ -1576,16 +1557,13 @@ export default function SignalDetailCard({
               : Number(selectedAiPlan.risk_management.confidence_pct) >= 60
                 ? "warning"
                 : "danger",
-        },
-        selectedAiPlan.risk_management?.estimated_entry_mins != null && {
-          key: "eta",
-          label: `ETA: ${selectedAiPlan.risk_management.estimated_entry_mins}m`,
-          toneSource: "normal",
+          tooltip: "Model confidence score for this setup",
         },
         selectedAiPlan.risk_management?.suggested_action && {
           key: "action",
           label: `Action: ${selectedAiPlan.risk_management.suggested_action}`,
           toneSource: selectedAiPlan.risk_management.suggested_action,
+          tooltip: "Recommended action based on risk and setup quality",
         },
       ].filter(Boolean)
     : [];
@@ -2139,6 +2117,7 @@ export default function SignalDetailCard({
                         <span
                           key={item.key}
                           className="badge badge-mini"
+                          title={item.tooltip || item.label}
                           style={{
                             padding: "3px 7px",
                             fontSize: 10,
