@@ -525,33 +525,20 @@ export default function SymbolChart({
 
   // Load chart objects from trade metadata on mount
   useEffect(() => {
-    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip load"); return; }
-    console.log("[chart-objs] loading for", tradeSid);
+    if (!tradeSid) return;
     let cancelled = false;
     api.loadChartObjects(tradeSid).then((res) => {
       if (cancelled) return;
       const objs = Array.isArray(res?.chart_objects) ? res.chart_objects : Array.isArray(res?.objects) ? res.objects : [];
-      console.log("[chart-objs] loaded", tradeSid, objs.length, "objects", objs.slice(0,2));
       if (objs.length) setAnnotations(objs);
-    }).catch((e) => { console.error("[chart-objs] load failed", e); });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [tradeSid]);
 
-  // Persist chart objects on change (debounced 800ms)
-  const saveTimerRef = useRef(null);
-  useEffect(() => {
-    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip save"); return; }
-    if (!annotations.length) { console.log("[chart-objs] empty annotations, skip save"); return; }
-    console.log("[chart-objs] scheduling save for", tradeSid, annotations.length, "objects");
-    clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      console.log("[chart-objs] saving", tradeSid, annotations.length, "objects");
-      api.saveChartObjects(tradeSid, annotations).then(() => {
-        console.log("[chart-objs] saved OK", tradeSid);
-      }).catch((e) => { console.error("[chart-objs] save failed", e); });
-    }, 800);
-    return () => clearTimeout(saveTimerRef.current);
-  }, [annotations, tradeSid]);
+  const handleSaveObjects = useCallback(() => {
+    if (!tradeSid || !annotations.length) return;
+    api.saveChartObjects(tradeSid, annotations).catch(() => {});
+  }, [tradeSid, annotations]);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
@@ -2569,17 +2556,6 @@ export default function SymbolChart({
             flexWrap: "wrap",
           }}
         >
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => {
-              setAnnotations([]);
-              setSelectedObjectId(null);
-            }}
-            style={{ fontSize: 10, padding: "2px 6px" }}
-          >
-            Remove All
-          </button>
           {editableAnnotations.map((a) => (
             <span
               key={a.id}
@@ -2682,6 +2658,10 @@ export default function SymbolChart({
               </button>
             </span>
           ))}
+          <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+            <button type="button" onClick={() => { setAnnotations([]); setSelectedObjectId(null); }} style={{ fontSize:10, padding:"3px 8px", background:"rgba(220,38,38,0.15)", color:"#dc2626", border:"1px solid rgba(220,38,38,0.3)", borderRadius:4, cursor:"pointer" }}>X</button>
+            <button type="button" onClick={handleSaveObjects} style={{ fontSize:10, padding:"3px 8px", background:"#3b82f6", color:"#fff", border:"none", borderRadius:4, cursor:"pointer" }}>Save</button>
+          </div>
           {selectedObject ? (
             <div
               style={{
