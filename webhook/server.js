@@ -7640,6 +7640,26 @@ async function _mt5InitBackendInternal() {
     ).toUpperCase();
     const traceType = deriveTraceType(subEvent);
     const symbol = String(metadata.symbol || "").toUpperCase() || null;
+
+    // TRADE_SYNC_UPDATE: only log on execution_status change (avoids 10s spam)
+    if (subEvent === "TRADE_SYNC_UPDATE") {
+      const newStatus = String(metadata.execution_status || metadata.status_raw || "");
+      if (newStatus) {
+        try {
+          const prev = await pool.query(
+            `SELECT content FROM logs WHERE object_id = $1 AND event_type = $2`,
+            [objectId, traceType],
+          );
+          const prevContent = String(prev.rows?.[0]?.content || "");
+          // Find last TRADE_SYNC_UPDATE status in content (greedy prefix to get last occurrence)
+          const lastStatusMatch = prevContent.match(/.*\[([^\]]+)\] TRADE_SYNC_UPDATE[\s\S]*?execution_status:\s*(\S+)/);
+          if (lastStatusMatch && lastStatusMatch[2] === newStatus) {
+            return; // status unchanged, skip
+          }
+        } catch { /* proceed on error */ }
+      }
+    }
+
     const block = buildTraceBlock(subEvent, metadata);
     // Also store JSON payload for backward compat (History tab, etc.)
     const normalizedMeta = metadata && typeof metadata === "object"
