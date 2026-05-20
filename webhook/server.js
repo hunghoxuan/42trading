@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 06:57 - b8abad39"); // sync gaps filled: SL_CHANGED/PARTIAL_CLOSE ack, enhanced logging, SSE for non-status changes
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 08:38 - 261ca96c"); // sync gaps filled: SL_CHANGED/PARTIAL_CLOSE ack, enhanced logging, SSE for non-status changes
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
