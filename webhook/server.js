@@ -7641,15 +7641,20 @@ async function _mt5InitBackendInternal() {
     const traceType = deriveTraceType(subEvent);
     const symbol = String(metadata.symbol || "").toUpperCase() || null;
     const block = buildTraceBlock(subEvent, metadata);
+    // Also store JSON payload for backward compat (History tab, etc.)
+    const normalizedMeta = metadata && typeof metadata === "object"
+      ? JSON.stringify({ ...metadata, event: subEvent, status: metadata.status || (metadata.error ? "ERROR" : "OK"), error: metadata.error ? String(metadata.error) : null })
+      : JSON.stringify({ event: subEvent, message: String(metadata || ""), status: "OK" });
     try {
       await pool.query(
-        `INSERT INTO logs (object_id, object_table, symbol, event_type, content, user_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+        `INSERT INTO logs (object_id, object_table, symbol, event_type, content, metadata, user_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
          ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
          DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
+                       metadata = EXCLUDED.metadata,
                        symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
                        updated_at = NOW()`,
-        [objectId, objectTable, symbol, traceType, block, userId],
+        [objectId, objectTable, symbol, traceType, block, normalizedMeta, userId],
       );
     } catch (e) {
       console.warn("[b.log] upsert error:", e.message);
