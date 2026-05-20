@@ -285,17 +285,18 @@ export function useSymbolChartData({
                   return {
                     key,
                     data: {
-                bars: Array.isArray(local.bars) ? local.bars : [],
+                      bars: Array.isArray(local.bars) ? local.bars : [],
                       bar_start: local?.bar_start || local?.bars?.[0]?.time,
                       bar_end:
                         local?.bar_end ||
                         local?.bars?.[local?.bars?.length - 1]?.time,
                       last_price: local?.last_price ?? null,
-                cache_source: local?.cache_source || "memory",
-                reason: local?.reason || "",
-              },
-            };
-          }
+                      cache_source: local?.cache_source || "memory",
+                      cached_at: local?.cached_at || local?.created_at || null,
+                      reason: local?.reason || "",
+                    },
+                  };
+                }
               }
               console.log("[ChartData] fetch tf=" + tf);
               const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount, profile), force);
@@ -307,6 +308,7 @@ export function useSymbolChartData({
                 bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
                 last_price: snap?.last_price ?? null,
                 cache_source: out?.source || "remote_api",
+                cached_at: snap?.cached_at || out?.cached_at || Date.now(),
                 reason:
                   out?.cache_debug && typeof out.cache_debug === "object"
                     ? `redis=${out.cache_debug.redis_key || "-"} ttl=${out.cache_debug.ttl_sec || "-"}s tf=${out.cache_debug.timeframe_normalized || "-"} api=${out.cache_debug.binance_interval || "-"}`
@@ -419,7 +421,12 @@ export function useSymbolChartData({
       const force = opts.force === true;
       try {
         if (mode === "cache") {
-          const out = await api.chartTwelveCandles(sym, tfKey, 300, force);
+          const out = await api.chartTwelveCandles(
+            sym,
+            tfKey,
+            barsForTf(tfKey, barsCount, profile),
+            force,
+          );
           const snap =
             out?.snapshot && typeof out.snapshot === "object"
               ? out.snapshot
@@ -430,6 +437,7 @@ export function useSymbolChartData({
             bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
             last_price: snap?.last_price ?? null,
             cache_source: out?.source || "remote_api",
+            cached_at: snap?.cached_at || out?.cached_at || Date.now(),
             reason:
               out?.cache_debug && typeof out.cache_debug === "object"
                 ? `redis=${out.cache_debug.redis_key || "-"} ttl=${out.cache_debug.ttl_sec || "-"}s tf=${out.cache_debug.timeframe_normalized || "-"} api=${out.cache_debug.binance_interval || "-"}`
@@ -462,7 +470,7 @@ export function useSymbolChartData({
         return null;
       }
     },
-    [sym, mode, skipFetch, refresh],
+    [sym, mode, skipFetch, refresh, barsCount, profile, tfs],
   );
 
   useEffect(() => {

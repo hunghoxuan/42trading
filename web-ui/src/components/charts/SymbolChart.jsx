@@ -297,6 +297,7 @@ function TfHeader({
         const bars = master?.bars?.[tf.toLowerCase()] || [];
         const count = bars.length;
         const firstBar = bars[0];
+        const lastBar = bars[count - 1];
         const startTime =
           firstBar && Number.isFinite(Number(firstBar?.time))
             ? new Date(Number(firstBar.time) * 1000).toLocaleDateString(
@@ -314,9 +315,9 @@ function TfHeader({
           <span
             className="minor-text"
             style={{ fontSize: 8, opacity: 0.5 }}
-            title={`${count} bars, starts ${showDateTime(firstBar?.time ? new Date(Number(firstBar.time) * 1000).toISOString() : null)}`}
+            title={`${count} bars | start ${showDateTime(firstBar?.time ? new Date(Number(firstBar.time) * 1000).toISOString() : null)} | end ${showDateTime(lastBar?.time ? new Date(Number(lastBar.time) * 1000).toISOString() : null)} | updated ${showDateTime(context?.cached_at)}`}
           >
-            {count}b {startTime ? `since ${startTime}` : ""}
+            {count}b {cacheTimeText ? `updated ${cacheTimeText}` : ""}
           </span>
         );
       })()}
@@ -334,7 +335,7 @@ function TfHeader({
             color: forceRefresh ? "#60a5fa" : "var(--muted)",
             borderColor: forceRefresh ? "#60a5fa66" : "var(--border)",
           }}
-          title={`Refresh ${tf} (${forceRefresh ? "force=true" : "force=false"})`}
+          title={`Refresh ${tf} (force=true)`}
         >
           ⟳
         </button>
@@ -520,6 +521,29 @@ export default function SymbolChart({
   const [annotations, setAnnotations] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
+
+  // Load chart objects from trade metadata on mount
+  useEffect(() => {
+    if (!tradeSid) return;
+    let cancelled = false;
+    api.loadChartObjects(tradeSid).then((res) => {
+      if (cancelled) return;
+      const objs = Array.isArray(res?.chart_objects) ? res.chart_objects : Array.isArray(res?.objects) ? res.objects : [];
+      if (objs.length) setAnnotations(objs);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [tradeSid]);
+
+  // Persist chart objects on change (debounced 800ms)
+  const saveTimerRef = useRef(null);
+  useEffect(() => {
+    if (!tradeSid || !annotations.length) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      api.saveChartObjects(tradeSid, annotations).catch(() => {});
+    }, 800);
+    return () => clearTimeout(saveTimerRef.current);
+  }, [annotations, tradeSid]);
   const [forceRefresh, setForceRefresh] = useState(false);
   const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
@@ -1243,9 +1267,9 @@ export default function SymbolChart({
   const handleRefreshTf = useCallback(
     (tf) => {
       if (!tf) return;
-      refreshTf?.(tf, { force: forceRefresh });
+      refreshTf?.(tf, { force: true });
     },
-    [refreshTf, forceRefresh],
+    [refreshTf],
   );
 
   const handleCrosshairSync = useCallback(
@@ -1723,16 +1747,16 @@ export default function SymbolChart({
             <button
               className="secondary-button"
               type="button"
-              onClick={() => setForceRefresh((v) => !v)}
-              title={`Force refresh flag for API calls: force=${forceRefresh ? "1" : "0"}`}
+              onClick={() => refresh({ force: true })}
+              title="Refresh charts now (force=true)"
               style={{
                 fontSize: 10,
                 fontWeight: 700,
                 padding: "3px 7px",
                 borderRadius: 4,
-                color: forceRefresh ? "#60a5fa" : "var(--muted)",
-                borderColor: forceRefresh ? "#60a5fa66" : "var(--border)",
-                background: forceRefresh ? "#60a5fa22" : "transparent",
+                color: "#60a5fa",
+                borderColor: "#60a5fa66",
+                background: "#60a5fa22",
               }}
             >
               ⟳

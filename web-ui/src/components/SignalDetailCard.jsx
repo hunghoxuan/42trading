@@ -405,6 +405,15 @@ function PlanHeader({
   volume = null,
   pnl = null,
 }) {
+  const fmtMoney = (v) => {
+    const n = parseNumLoose(v);
+    if (n == null) return "";
+    const abs = Math.abs(n).toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+    return `${n >= 0 ? "+" : "-"}$${abs}`;
+  };
   const entry = parseNumLoose(plan.entry);
   const sl = parseNumLoose(plan.sl);
   const fallbackTp =
@@ -466,6 +475,28 @@ function PlanHeader({
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
   const sourceVal = plan.source || plan.model || "";
+  const statusText = String(
+    status?.label || plan?.execution_status || plan?.status || "",
+  )
+    .trim()
+    .toUpperCase();
+  const isPendingLike =
+    statusText === "PENDING" ||
+    statusText === "DRAFT" ||
+    statusText === "PLANNED";
+  const pnlText = typeof pnl === "string" && pnl.trim() ? pnl.trim() : "";
+  const plannedWinText = fmtMoney(
+    plan?.broker_tp_pnl ??
+      plan?.tp_pnl ??
+      plan?.planned_tp_profit ??
+      plan?.planned_win,
+  );
+  const plannedLoseText = fmtMoney(
+    plan?.broker_sl_pnl ??
+      plan?.sl_pnl ??
+      plan?.planned_sl_profit ??
+      plan?.planned_lose,
+  );
   const estimatedBars =
     plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
   const confidenceLevel = (plan.confidence_level || "").toLowerCase();
@@ -574,25 +605,51 @@ function PlanHeader({
           textAlign: "right",
         }}
       >
-        {/* Row 1: status + pnl */}
+        {/* Row 1: status + pnl/planned metrics */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {status && (
+          {statusText && (
             <span
-              className={`badge ${status.cls} badge-mini`}
-              style={{ padding: "2px 6px", fontSize: "9px" }}
+              className={`badge ${status?.cls || ""} badge-mini`}
+              title="Current trade status"
+              style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}
             >
-              {status.label}
+              {statusText}
             </span>
           )}
-          {pnl && (
+          {!isPendingLike && pnlText && (
             <span
+              title="Realized/Live PnL for filled/open trade"
               style={{
-                fontSize: "11px",
-                fontWeight: 700,
+                fontSize: "10px",
+                fontWeight: 400,
                 color: "var(--foreground)",
               }}
             >
-              {pnl}
+              PnL: {pnlText}
+            </span>
+          )}
+          {isPendingLike && plannedWinText && (
+            <span
+              title="Planned take-profit outcome if TP is hit"
+              style={{
+                fontSize: "10px",
+                fontWeight: 400,
+                color: "#22c55e",
+              }}
+            >
+              Win: {plannedWinText}
+            </span>
+          )}
+          {isPendingLike && plannedLoseText && (
+            <span
+              title="Planned stop-loss outcome if SL is hit"
+              style={{
+                fontSize: "10px",
+                fontWeight: 400,
+                color: "#ef4444",
+              }}
+            >
+              Lose: {plannedLoseText}
             </span>
           )}
         </div>
@@ -685,7 +742,8 @@ function PlanHeader({
             {sourceVal && (
               <span
                 className="minor-text"
-                style={{ fontSize: "9px", fontWeight: 500, opacity: 0.7 }}
+                title="Signal source / broker feed"
+                style={{ fontSize: "9px", fontWeight: 400, opacity: 0.7 }}
               >
                 {sourceVal}
               </span>
@@ -693,9 +751,10 @@ function PlanHeader({
             {strategy && (
               <span
                 className="minor-text"
+                title="Strategy"
                 style={{
                   fontSize: "9px",
-                  fontWeight: 700,
+                  fontWeight: 400,
                   textTransform: "uppercase",
                   letterSpacing: "0.02em",
                   whiteSpace: "nowrap",
@@ -707,9 +766,10 @@ function PlanHeader({
             {entryModel && (
               <span
                 className="minor-text"
+                title="Entry model"
                 style={{
                   fontSize: "9px",
-                  fontWeight: 500,
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                 }}
               >
@@ -718,9 +778,10 @@ function PlanHeader({
             )}
             {confidenceText && (
               <span
+                title="Confidence"
                 style={{
                   fontSize: "10px",
-                  fontWeight: 700,
+                  fontWeight: 400,
                   color: "var(--accent)",
                   opacity: 0.9,
                   whiteSpace: "nowrap",
@@ -732,9 +793,11 @@ function PlanHeader({
             {riskLevel && (
               <span
                 className="badge badge-mini"
+                title="Risk level"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   textTransform: "capitalize",
                   whiteSpace: "nowrap",
                 }}
@@ -745,9 +808,11 @@ function PlanHeader({
             {gradeVal && (
               <span
                 className="badge badge-mini"
+                title="Grade"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   textTransform: "uppercase",
                   whiteSpace: "nowrap",
                 }}
@@ -758,9 +823,11 @@ function PlanHeader({
             {confidenceBadgeVal && (
               <span
                 className="badge badge-mini"
+                title="Confidence percentage"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                 }}
               >
@@ -770,9 +837,11 @@ function PlanHeader({
             {riskPercentVal && (
               <span
                 className="badge badge-mini"
+                title="Risk percent"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                 }}
               >
@@ -782,9 +851,11 @@ function PlanHeader({
             {estMinsVal && (
               <span
                 className="badge badge-mini"
+                title="Estimated time to entry"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                 }}
               >
@@ -794,9 +865,11 @@ function PlanHeader({
             {skipDecisionVal && (
               <span
                 className="badge badge-mini"
+                title="Suggested action / skip decision"
                 style={{
                   padding: "1px 5px",
                   fontSize: "9px",
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                   textTransform: "capitalize",
                 }}

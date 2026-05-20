@@ -5503,7 +5503,7 @@ export default function ChartSnapshotsPage() {
           }}
         >
           <div style={{ display: "grid", gap: 6 }}>
-            <div className="snapshot-symbol-row-inline-v4" style={{ gap: 6 }}>
+            <div>
               <button
                 className="secondary-button"
                 type="button"
@@ -5519,6 +5519,8 @@ export default function ChartSnapshotsPage() {
               >
                 {"<<"}
               </button>
+            </div>
+            <div className="snapshot-symbol-row-inline-v4" style={{ gap: 6 }}>
               <select
                 className="secondary-button"
                 value={symbolFilterTab}

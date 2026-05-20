@@ -1250,10 +1250,11 @@ button:disabled {
     align-items: center;
 }
 .snapshot-symbol-row-inline-v4 {
-    display: grid;
-    grid-template-columns: auto minmax(120px, 1fr) minmax(180px, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: 8px;
     align-items: center;
+    width: 100%;
 }
 .snapshot-symbol-select-v4 {
     width: 100%;
@@ -1718,7 +1719,7 @@ button:disabled {
         padding: 16px;
     }
     .snapshot-symbol-row-inline-v4 {
-        grid-template-columns: 1fr;
+        flex-direction: column;
         gap: 10px;
     }
     .snapshot-symbol-row-inline-v4 .panel-label {
