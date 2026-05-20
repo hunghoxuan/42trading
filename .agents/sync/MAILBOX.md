@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-20 14:06 UTC`
-- note: `UI badges/object-toolbar cleanup deployed`
+- lock_status: `LOCKED`
+- deploy_owner: `DeepSeek`
+- since_utc: `2026-05-20 16:10 UTC`
+- note: `Trace-based logging overhaul: upsert logs by {event_type, object_id}, markdown content`
 
 ### [2026-05-20 14:06 UTC] AGENT:Codex
 - status: DEPLOYED

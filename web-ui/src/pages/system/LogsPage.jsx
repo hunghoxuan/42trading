@@ -20,7 +20,15 @@ function getEventTime(ev) {
 }
 
 function getEventPayload(ev) {
+  // Trace-based: prefer content (markdown), fall back to metadata (legacy JSON)
+  if (ev?.content && String(ev.content).trim()) {
+    return { _format: "trace", _content: String(ev.content) };
+  }
   return ev?.metadata || ev?.payload_json || {};
+}
+
+function getEventUpdatedAt(ev) {
+  return ev?.updated_at || ev?.created_at || ev?.event_time || "";
 }
 
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
@@ -379,24 +387,33 @@ export default function LogsPage() {
                     <td>
                       {ev.event_type === "EA" ? (
                         <div className="cell-wrap">
-                          <span className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}>
+                          <span
+                            className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}
+                          >
                             {ev.metadata?.level || "INFO"}
                           </span>
-                          <div className="minor-text" style={{ 
-                            maxWidth: "150px", 
-                            overflow: "hidden", 
-                            textOverflow: "ellipsis", 
-                            whiteSpace: "nowrap" 
-                          }}>
+                          <div
+                            className="minor-text"
+                            style={{
+                              maxWidth: "150px",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {ev.metadata?.message}
                           </div>
                         </div>
-                      ) : (ev.status === "ERROR" || ev.error) ? (
-                        <span className="badge SL" title={ev.error || "Error"}>ERROR</span>
+                      ) : ev.status === "ERROR" || ev.error ? (
+                        <span className="badge SL" title={ev.error || "Error"}>
+                          ERROR
+                        </span>
                       ) : ev.status ? (
                         <span className="badge FILLED">{ev.status}</span>
                       ) : (
-                        <span className="badge" style={{ opacity: 0.6 }}>OK</span>
+                        <span className="badge" style={{ opacity: 0.6 }}>
+                          OK
+                        </span>
                       )}
                     </td>
                     <td>
@@ -427,29 +444,84 @@ export default function LogsPage() {
                 </div>
                 <div className="minor-text">
                   {fDateTime(getEventTime(selectedEvent))}
+                  {getEventUpdatedAt(selectedEvent) !== getEventTime(selectedEvent) && (
+                    <div style={{ fontSize: 10, opacity: 0.6 }}>
+                      updated: {fDateTime(getEventUpdatedAt(selectedEvent))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="panel" style={{ margin: 0, padding: 12 }}>
                 {(selectedEvent.error || selectedEvent.status === "ERROR") && (
-                  <div style={{ marginBottom: 12, padding: 8, background: "rgba(255,0,0,0.1)", borderRadius: 4, border: "1px solid rgba(255,0,0,0.2)" }}>
-                    <div className="minor-text" style={{ color: "var(--sl)", fontWeight: 600, marginBottom: 4 }}>ERROR DETAIL</div>
-                    <div style={{ fontSize: 12, color: "var(--sl)", wordBreak: "break-word" }}>{selectedEvent.error || "Unknown Error"}</div>
+                  <div
+                    style={{
+                      marginBottom: 12,
+                      padding: 8,
+                      background: "rgba(255,0,0,0.1)",
+                      borderRadius: 4,
+                      border: "1px solid rgba(255,0,0,0.2)",
+                    }}
+                  >
+                    <div
+                      className="minor-text"
+                      style={{
+                        color: "var(--sl)",
+                        fontWeight: 600,
+                        marginBottom: 4,
+                      }}
+                    >
+                      ERROR DETAIL
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--sl)",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {selectedEvent.error || "Unknown Error"}
+                    </div>
                   </div>
                 )}
                 <div className="panel-label" style={{ marginBottom: 8 }}>
-                  RAW JSON
+                  TRACE LOG
                 </div>
-                <pre
-                  style={{
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontSize: 12,
-                    lineHeight: 1.45,
-                  }}
-                >
-                  {JSON.stringify(getEventPayload(selectedEvent), null, 2)}
-                </pre>
+                {(() => {
+                  const p = getEventPayload(selectedEvent);
+                  if (p?._format === "trace") {
+                    return (
+                      <pre
+                        style={{
+                          margin: 0,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          fontSize: 12,
+                          lineHeight: 1.45,
+                          background: "var(--panel-bg, #111)",
+                          padding: 8,
+                          borderRadius: 4,
+                          maxHeight: "70vh",
+                          overflow: "auto",
+                        }}
+                      >
+                        {p._content}
+                      </pre>
+                    );
+                  }
+                  return (
+                    <pre
+                      style={{
+                        margin: 0,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        fontSize: 12,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {JSON.stringify(p, null, 2)}
+                    </pre>
+                  );
+                })()}
               </div>
             </div>
           ) : (
@@ -459,6 +531,6 @@ export default function LogsPage() {
           )}
         </div>
       </div>
-</section>
+    </section>
   );
 }
