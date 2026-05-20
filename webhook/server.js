@@ -147,10 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.19 20:40 - 5cc6ba1d",
-); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.20 05:34 - c3c7d4c9"); // replace ai_response_schema.json with trade_plan_schema.json, trade_plan at root level
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
