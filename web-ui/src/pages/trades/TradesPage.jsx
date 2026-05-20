@@ -1681,9 +1681,17 @@ export default function TradesPage() {
                       selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
                     live: true,
                     entryPrice:
-                      asNum(detailPlan.entry) ?? asNum(selectedTrade.entry),
-                    slPrice: asNum(detailPlan.sl) ?? asNum(selectedTrade.sl),
-                    tpPrice: asNum(detailPlan.tp) ?? asNum(selectedTrade.tp),
+                      asNum(detailPlan.entry) || asNum(selectedTrade.entry),
+                    slPrice: asNum(detailPlan.sl) || asNum(selectedTrade.sl),
+                    tpPrice: asNum(detailPlan.tp) || asNum(selectedTrade.tp),
+                    tp1Price:
+                      asNum(detailPlan.tp1) ||
+                      asNum(selectedTrade.tp1) ||
+                      asNum(selectedTrade.tp),
+                    tp2Price: asNum(detailPlan.tp2) || asNum(selectedTrade.tp2),
+                    tp3Price: asNum(detailPlan.tp3) || asNum(selectedTrade.tp3),
+                    onPlanLevelChange: (levelKey, levelValue) =>
+                      applyPlanChange(levelKey, formatNum3(levelValue)),
                     openedAt: selectedTrade.opened_at,
                     closedAt: selectedTrade.closed_at,
                     createdAt: selectedTrade.created_at,

@@ -2,6 +2,7 @@ import React from "react";
 import { showDateTime } from "./format";
 
 export function asNum(v) {
+  if (v === "" || v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
