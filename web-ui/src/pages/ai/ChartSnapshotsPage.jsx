@@ -2535,9 +2535,12 @@ export default function ChartSnapshotsPage() {
       data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
     }).then(() => {
       setActionStatus({ action: 'save', type: 'success', text: 'Saved' });
-      setTimeout(() => setActionStatus({ action: '', type: '', text: '' }), 1500);
+      showToast({ message: 'Settings saved', type: 'success' });
+      setTimeout(() => setActionStatus({ action: '', type: '', text: '' }), 2000);
     }).catch((e) => {
-      setActionStatus({ action: 'save', type: 'error', text: 'Save failed' });
+      const msg = e?.message || 'Save failed';
+      setActionStatus({ action: 'save', type: 'error', text: msg });
+      showToast({ message: msg, type: 'error' });
     });
   }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
 
@@ -6186,7 +6189,14 @@ export default function ChartSnapshotsPage() {
                 -
               </button>
             </div>
-            <div style={{ marginLeft: "auto" }}><button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button></div>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+              {actionStatus.action === "save" && actionStatus.text ? (
+                <span className={`minor-text ${actionStatus.type === "error" ? "msg-error" : "msg-success"}`} style={{ fontSize: 10 }}>
+                  {actionStatus.text}
+                </span>
+              ) : null}
+              <button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button>
+            </div>
           </div>
         </div>
 
