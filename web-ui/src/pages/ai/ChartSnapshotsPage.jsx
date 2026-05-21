@@ -3753,6 +3753,7 @@ export default function ChartSnapshotsPage() {
       const normalized = normalizeUiStatus("error", msg);
       setStatus(normalized);
       setActionMessage("analyze", normalized.type, normalized.text);
+      showToast({ message: normalized.text, type: "error" });
       if (opts.runId)
         setAutoFlowForRun(opts.runId, {
           analysis: "failed",
@@ -3839,6 +3840,7 @@ export default function ChartSnapshotsPage() {
       const normalized = normalizeUiStatus("error", msg);
       setStatus(normalized);
       setActionMessage("analyze", normalized.type, normalized.text);
+      showToast({ message: normalized.text, type: "error" });
     }
   };
 
@@ -6144,7 +6146,6 @@ export default function ChartSnapshotsPage() {
                 </option>
               ))}
             </select>
-            <div style={{ marginLeft: "auto" }}><button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button></div>
             <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, cursor:"pointer" }} title="Merge all TFs into one master snapshot">
               <input type="checkbox" checked={cfg.mergeSnapshots !== false} onChange={(e) => setCfgField("mergeSnapshots", e.target.checked)} style={{ cursor:"pointer" }} />
               Merge
@@ -6185,6 +6186,7 @@ export default function ChartSnapshotsPage() {
                 -
               </button>
             </div>
+            <div style={{ marginLeft: "auto" }}><button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button></div>
           </div>
         </div>
 
