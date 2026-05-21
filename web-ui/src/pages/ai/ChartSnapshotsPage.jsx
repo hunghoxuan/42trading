@@ -4753,7 +4753,27 @@ export default function ChartSnapshotsPage() {
 
   useEffect(() => {
     if (!effectiveParsed || typeof effectiveParsed !== "object") return;
-    setPosition(extractPositionFromAnalysis(effectiveParsed));
+    const next = extractPositionFromAnalysis(effectiveParsed);
+    const nextEntry = parseNum(next?.entry);
+    const nextSl = parseNum(next?.sl);
+    if (!(Number.isFinite(nextEntry) && nextEntry > 0) && !(Number.isFinite(nextSl) && nextSl > 0)) return;
+    setPosition((prev) => {
+      const curEntry = parseNum(prev?.entry);
+      const curSl = parseNum(prev?.sl);
+      if ((Number.isFinite(curEntry) && curEntry > 0) && (Number.isFinite(curSl) && curSl > 0) &&
+          Math.abs(curEntry - nextEntry) < 0.0001 && Math.abs(curSl - nextSl) < 0.0001) return prev;
+      return {
+        ...prev,
+        entry: Number.isFinite(nextEntry) && nextEntry > 0 ? next.entry : prev.entry,
+        tp: next.tp || prev.tp,
+        tp2: next.tp2 || prev.tp2,
+        tp3: next.tp3 || prev.tp3,
+        sl: Number.isFinite(nextSl) && nextSl > 0 ? next.sl : prev.sl,
+        direction: next.direction || prev.direction,
+        rr: next.rr || prev.rr,
+        trade_type: next.trade_type || prev.trade_type,
+      };
+    });
   }, [effectiveParsed]);
 
   useEffect(() => {
