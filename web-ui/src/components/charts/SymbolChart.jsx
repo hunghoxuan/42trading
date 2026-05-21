@@ -1879,7 +1879,7 @@ export default function SymbolChart({
               fontSize: 10,
               lineHeight: 1,
               fontWeight: 700,
-              display: showControls && showAnalyzeButton ? "block" : "none",
+              display: showAnalyzeButton ? "block" : "none",
             }}
             onClick={() => onAnalyze?.(symbol, timeframes)}
             title={analyzeLabel === ">" ? "Open symbol" : "Analyze"}
