@@ -3,8 +3,32 @@
 Canonical deploy policy:
 - Deploy source of truth is `origin/main`.
 - Never deploy local-only/unpushed commits.
-- Always deploy once required checks pass.
 - Single deploy owner lock via `.agents/sync/MAILBOX.md`.
+- Never auto-deploy branch or prod without explicit user command.
+
+## Deploy Modes (Explicit User Choice Required)
+
+### A) `deploy branch` skill (staging/isolation)
+
+- Purpose: deploy one branch to isolated staging runtime.
+- Must ask user first: `deploy branch now?`
+- Must NOT touch prod `main` runtime/process.
+- Use branch-isolated flow/script:
+  - `scripts/deploy/deploy_branch_staging.sh`
+- Verify staging only (staging port/domain health + smoke checks).
+- Report branch, PM2 process, port/domain, verify result.
+
+### B) `deploy` skill (prod/main)
+
+- Purpose: deploy production from `origin/main`.
+- Must ask user first: `deploy main/prod now?`
+- Before deploy, merge all pending branches into `main` (user-approved scope).
+- Do not skip pending-branch audit:
+  - list remote branches except `main`
+  - classify merged vs not merged into `main`
+  - present list to user
+  - merge only user-approved pending branches
+- Only after merge + checks + push, deploy prod.
 
 ## Multi-Agent Commit/Merge/Deploy SOP (Mandatory, No Exceptions)
 
@@ -36,6 +60,10 @@ Canonical deploy policy:
   - resolve conflicts
   - run required tests/smokes
   - push merged result to `origin/main`
+- For prod deploy, include pending-branch audit before final push/deploy:
+  - `git ls-remote --heads origin`
+  - compare each branch against `origin/main` merge state
+  - avoid re-merging already merged branches
 
 ### 3) Verify no missing teammate fixes before deploy
 
@@ -55,6 +83,7 @@ Canonical deploy policy:
 - Then deploy:
   - `bash scripts/deploy/check_build_versions.sh origin/main`
   - `bash scripts/deploy/deploy_webhook.sh`
+- Do not run this step unless user explicitly requested prod deploy.
 
 ### 5) Post-deploy verification and lock release
 

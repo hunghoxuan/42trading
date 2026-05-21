@@ -11,6 +11,9 @@ trigger: always_on
   - tested
   - next/risk
 - Deploy/manual-action mode: include exact commands, versions, endpoints, and checklist evidence.
+- Always ask for explicit confirmation before any deploy action:
+  - `deploy branch` (staging)
+  - `deploy` (prod/main)
 - Do not claim tests, deploys, or commits unless done.
 - If no manual action exists, do not add a manual-action section.
 - Use exact file paths, commands, versions, and endpoints.
