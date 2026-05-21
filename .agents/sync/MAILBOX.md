@@ -13,8 +13,23 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `UNLOCKED`
 - deploy_owner: `NONE`
-- since_utc: `2026-05-20 19:09 UTC`
-- note: `ui top-line badges deployed`
+- since_utc: `2026-05-21 09:25 UTC`
+- note: `save config fix, TP1 primary, merge_snapshots pass-through, plan edit no re-extract`
+
+### [2026-05-21 09:25 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: 8645b8cd
+- scope: `save config + TP1 primary + merge_snapshots + plan edit fixes`
+- merge_to_main: YES (8645b8cd)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.21 09:24 - 5ee50df2
+  - result: PASS
+- verify:
+  - /health: ok:true, version matches
+  - /ui: loads, 200
+- rollback: `git revert 8645b8cd && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-20 19:09 UTC] AGENT:Codex
 - status: DEPLOYED
