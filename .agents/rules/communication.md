@@ -32,10 +32,15 @@ trigger: always_on
   - any change from original requirement
   - deploy status
   - expected build version (if deployed)
-- Branch/commit naming and ticket traceability (mandatory):
-  - Always create branch name as: `<ticket-id>-<agent>-<summary>`
-  - Always create commit message as: `<ticket-id>-<agent>-<summary>`
-  - Every branch must map to one ticket id.
-  - Every commit must map to one ticket id.
+- Tag-based execution rule (mandatory):
+  - `FEATURE`: create branch + feature document + ticket.
+  - `BUG`, `HOTFIX`, `FIX`: code + merge directly to `main` (no new branch).
+  - `TICKET`: create ticket only (no branch).
+  - `IDEA`: create idea document only.
+  - Default tag when not specified: `TICKET`.
+- Naming and ticket traceability:
+  - Branch naming format (FEATURE only): `<ticket-id>-<agent>-<summary>`
+  - Commit naming format (when commit is made): `<ticket-id>-<agent>-<summary>`
+  - Every branch/commit must map to one ticket id.
 - Preferred summary table format:
   - `File | Now | After | Suggestion | What change | Status`

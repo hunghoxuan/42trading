@@ -17,10 +17,14 @@ This skill creates or updates a ticket and always ends with a handoff prompt for
 2. Put extracted image facts directly into the ticket (not only in chat).
 3. Be explicit and structured. Do not leave ambiguous problem statements.
 4. After ticket is complete, always write a hand-off prompt.
-5. Auto-create and use a ticket branch name format:
-   - `<ticket-id>-<agent>-<summary>`
-6. Every branch and every commit must be tied to the same ticket id.
-7. Always return ticket name in final output.
+5. Tag behavior:
+   - `FEATURE`: auto-create branch using `<ticket-id>-<agent>-<summary>`, create feature document, create ticket.
+   - `BUG`, `HOTFIX`, `FIX`: no new branch; code and merge directly to `main`.
+   - `TICKET`: create ticket only; no branch.
+   - `IDEA`: create idea document only.
+   - Default when tag not provided: `TICKET`.
+6. Every commit must be tied to a ticket id.
+7. Always return ticket name in final output (if ticket exists for this tag).
 
 ## Ticket Filename Format
 - `status-type-name.md`
@@ -92,7 +96,7 @@ Constraints:
 - preserve backward compatibility where required
 - run required checks
 - update mailbox/worklog
-- work on branch: <ticket-id>-<agent>-<summary>
+- work on branch: <ticket-id>-<agent>-<summary> (FEATURE only)
 - commit format: <ticket-id>-<agent>-<summary>
 - merge target branch: <target-branch>
 
@@ -106,7 +110,8 @@ Return:
 
 ## Output Requirements (Mandatory)
 - Always return:
-  - `Ticket Name`
-  - `Ticket Path`
-  - `Branch Name` (auto-created from ticket id + agent + summary)
+  - `Tag`
+  - `Ticket Name` (for FEATURE/TICKET/BUG/HOTFIX/FIX flows)
+  - `Ticket Path` (for FEATURE/TICKET/BUG/HOTFIX/FIX flows)
+  - `Branch Name` (FEATURE only)
   - `Short Agent Handoff Prompt` (copy-paste ready)

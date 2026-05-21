@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 14:35 UTC`
-- note: `prod deploy: multi-tradeplan card overlap fix + selection reset fix + snapshot traceability`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 14:36 UTC`
+- note: `all deploys complete`
 
 ### [2026-05-21 11:10 UTC] AGENT:DeepSeek
 - status: DEPLOYED (lock cleanup)

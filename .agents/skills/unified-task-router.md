@@ -11,6 +11,9 @@ Interpret conversation intent, route to the right workflow, keep ticket state up
 ## Intent Auto-Detect (Per Response)
 After each response/task, detect intent from user language and context:
 
+Tag default:
+- If no explicit tag from user, use `TICKET`.
+
 1. Fixing/broken/error/regression:
 - Route: `fix-bug-mode` + `add-Ticket`
 - Ticket Type: `Fix bug`
@@ -51,11 +54,17 @@ After each response/task, detect intent from user language and context:
 7. Ticket content quality:
 - Include exact evidence anchors (ids, symbols, prices, timestamps, logs, URLs, screenshots).
 - Include clear step-by-step instruction for the next agent.
-8. Branch/commit rule (mandatory):
-- Branch naming: `<ticket-id>-<agent>-<summary>`
-- Commit naming: `<ticket-id>-<agent>-<summary>`
-- Every branch and commit must be linked to a ticket id.
-9. Always return ticket name after ticket create/update.
+8. Tag behavior rule (mandatory):
+- `FEATURE`: create branch + feature document + ticket.
+- `BUG`, `HOTFIX`, `FIX`: code and merge directly to `main` (no new branch).
+- `TICKET`: create ticket only (no branch).
+- `IDEA`: create idea document only.
+- Default tag: `TICKET`.
+9. Naming/traceability:
+- Branch naming (FEATURE only): `<ticket-id>-<agent>-<summary>`
+- Commit naming (when commit exists): `<ticket-id>-<agent>-<summary>`
+- Every branch/commit must be linked to a ticket id.
+10. Always return ticket name after ticket create/update (if a ticket is part of selected tag flow).
 
 ## Deploy + Handoff Automation
 When code changed and checks passed:

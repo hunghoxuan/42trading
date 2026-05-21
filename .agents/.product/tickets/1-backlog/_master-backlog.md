@@ -35,6 +35,8 @@
 - [ ] [2026-05-19 10:43] [Web-UI/AI/Navigation] [Author: User] Update Feature: split Analyze/Trade back actions into explicit dual buttons and enforce Buy/Sell click setting both direction + entry. Spec: `1-backlog/plan-update-feature-ai-analyze-trade-nav-and-quick-direction.md`.
 - [ ] [2026-05-19 10:43] [Web-UI/Charting/Backend] [Author: User] Extend Feature: fix editor overlap, add RR sliders, fix static chart button wiring, auto snapshot on trade close, and persist chart objects in trade metadata. Spec: `1-backlog/plan-extend-feature-trade-ui-static-chart-close-snapshot-and-objects.md`.
 - [ ] [2026-05-19 11:43] [Web-UI/AI/Regression] [Author: User] Fix Bug: restore Analyze button behavior, fix TradePlan slider clipping/overlap, and unify health page UI consistency. Spec: `1-backlog/plan-fix-bug-ai-header-and-tradeplan-layout-regression.md`.
+- [ ] [2026-05-21 10:15] [Web-UI/TradePlan/Chart] [Author: User] Fix Bug: Info chart missing TP2/TP3, line labels must be exactly `Sell/SL/TP1/TP2/TP3` (remove `P1` + price-change suffix), and chart-edited SL/TP1/TP2/TP3 must persist in TradePlan Edit inputs without reverting. Spec: `1-backlog/2026-05-21-trade-info-chart-tp-lines-and-edit-revert-regression.md`.
+- [ ] [2026-05-21 10:24] [Web-UI/TradePlan/AI] [Author: User] Fix Bug: with 2+ TradePlans, card UI overlaps across cards, selecting card 2 resets to card 1, and AI response must expose snapshot references so UI can show snapshots used. Spec: `1-backlog/2026-05-21-multi-tradeplan-ui-overlap-selection-and-ai-snapshot-trace.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.
