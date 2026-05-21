@@ -2528,18 +2528,12 @@ export default function ChartSnapshotsPage() {
     }).catch(() => {});
   }, []);
 
-  // Auto-save ANALYSE_SETTINGS on change (debounced)
-  const saveCfgTimer = useRef(null);
-  useEffect(() => {
-    clearTimeout(saveCfgTimer.current);
-    saveCfgTimer.current = setTimeout(() => {
-      api.upsertSetting({
-        type: 'settings',
-        name: 'ANALYSE_SETTINGS',
-        data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
-      }).catch(() => {});
-    }, 800);
-    return () => clearTimeout(saveCfgTimer.current);
+  const saveSettings = useCallback(() => {
+    api.upsertSetting({
+      type: 'settings',
+      name: 'ANALYSE_SETTINGS',
+      data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
+    }).catch(() => {});
   }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
 
   const [templates, setTemplates] = useState(() => loadTemplates());
@@ -6145,6 +6139,7 @@ export default function ChartSnapshotsPage() {
                 </option>
               ))}
             </select>
+            <button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11, marginLeft:"auto" }}>Save</button>
             <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, cursor:"pointer" }} title="Merge all TFs into one master snapshot">
               <input type="checkbox" checked={cfg.mergeSnapshots !== false} onChange={(e) => setCfgField("mergeSnapshots", e.target.checked)} style={{ cursor:"pointer" }} />
               Merge

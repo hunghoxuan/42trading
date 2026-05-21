@@ -248,6 +248,7 @@ export function useSymbolChartData({
               ? {
                   file_name: found.file_name,
                   file_path: found.url || found.file_path,
+                  lookback_bars: found.lookback_bars || null,
                   url:
                     found.url ||
                     `/v2/chart/snapshots/${encodeURIComponent(found.file_name || "")}`,
