@@ -68,7 +68,7 @@ namespace cAlgo.Robots
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
-        private const string BuildVersion = "v2026.05.21 13:36 - 06465d80";
+        private const string BuildVersion = "v2026.05.21 14:05 - f438601f";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
