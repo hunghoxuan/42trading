@@ -581,9 +581,11 @@ function getPlanTpCandidates(plan = {}) {
 function planEntryNumber(plan = {}, parsed = {}) {
   const candidates = [
     plan?.execution_plan?.entry?.price,
+    plan?.execution_plan?.entry,
     plan?.entry,
     plan?.entry_price,
     parsed?.execution_plan?.entry?.price,
+    parsed?.execution_plan?.entry,
     parsed?.entry,
     parsed?.price,
   ];
@@ -591,15 +593,17 @@ function planEntryNumber(plan = {}, parsed = {}) {
     const n = parseNum(c);
     if (Number.isFinite(n) && n > 0) return n;
   }
-  return parseNum(plan?.entry ?? plan?.entry_price ?? parsed?.entry ?? parsed?.price);
+  return NaN;
 }
 
 function planStopLossNumber(plan = {}, parsed = {}) {
   const candidates = [
     plan?.execution_plan?.stop_loss?.price,
+    plan?.execution_plan?.stop_loss,
     plan?.sl,
     plan?.stop_loss,
     parsed?.execution_plan?.stop_loss?.price,
+    parsed?.execution_plan?.stop_loss,
     parsed?.sl,
     parsed?.stop_loss,
   ];
@@ -607,7 +611,7 @@ function planStopLossNumber(plan = {}, parsed = {}) {
     const n = parseNum(c);
     if (Number.isFinite(n) && n > 0) return n;
   }
-  return parseNum(plan?.sl ?? plan?.stop_loss ?? parsed?.sl ?? parsed?.stop_loss);
+  return NaN;
 }
 
 function planTpLevelNumber(plan = {}, level = 1) {
@@ -1702,7 +1706,13 @@ function extractPositionFromAnalysis(parsed) {
         return bc - ac;
       })[0] || {};
   const plan = bestPlan;
-  const directionRaw = String(plan.direction || parsed?.direction || "")
+  const directionRaw = String(
+    plan.direction ||
+    plan?.execution_plan?.direction ||
+    parsed?.direction ||
+    parsed?.execution_plan?.direction ||
+    ""
+  )
     .trim()
     .toUpperCase();
   const direction =
@@ -1717,6 +1727,8 @@ function extractPositionFromAnalysis(parsed) {
         : "";
   const entry = planEntryNumber(plan, parsed);
   const sl = planStopLossNumber(plan, parsed);
+  console.log('[extractPositionFromAnalysis] plan.execution_plan:', JSON.stringify(plan?.execution_plan).slice(0,200));
+  console.log('[extractPositionFromAnalysis] resolved entry:', entry, 'sl:', sl, 'direction:', direction);
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1816,7 +1828,13 @@ function hasRequiredPlanLevels(parsed) {
 
 function extractPositionFromPlan(plan, parsed = {}) {
   const item = plan && typeof plan === "object" ? plan : {};
-  const directionRaw = String(item.direction || parsed?.direction || "")
+  const directionRaw = String(
+    item.direction ||
+    item?.execution_plan?.direction ||
+    parsed?.direction ||
+    parsed?.execution_plan?.direction ||
+    ""
+  )
     .trim()
     .toUpperCase();
   const direction =
