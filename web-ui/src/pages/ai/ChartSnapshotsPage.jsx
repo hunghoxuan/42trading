@@ -1727,7 +1727,9 @@ function extractPositionFromAnalysis(parsed) {
         : "";
   const entry = planEntryNumber(plan, parsed);
   const sl = planStopLossNumber(plan, parsed);
-  console.log('[extractPositionFromAnalysis] plan.execution_plan:', JSON.stringify(plan?.execution_plan).slice(0,200));
+  console.log('[extractPositionFromAnalysis] plan keys:', JSON.stringify(Object.keys(plan || {})));
+  console.log('[extractPositionFromAnalysis] plan.execution_plan:', JSON.stringify(plan?.execution_plan || null)?.slice(0,300) || 'null');
+  console.log('[extractPositionFromAnalysis] plan.entry:', plan?.entry, 'plan.entry_price:', plan?.entry_price, 'plan.direction:', plan?.direction);
   console.log('[extractPositionFromAnalysis] resolved entry:', entry, 'sl:', sl, 'direction:', direction);
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
