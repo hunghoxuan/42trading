@@ -11,10 +11,26 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 10:02 UTC`
-- note: `smoke-then-deploy: ChartSnapshots entry/sl hydrate + TP2/TP3 wiring fix`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 15:06 UTC`
+- note: `deploy complete — ChartSnapshots entry/sl hydrate + TP2/TP3 wiring fix`
+
+### [2026-05-21 15:06 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 283bb486
+- scope: `ChartSnapshotsPage entry/sl fallback hydration from execution_plan + TP2/TP3 pass-through to chart + auto-hydrate guard`
+- merge_to_main: YES (283bb486)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 15:01 - 0f2eabf0
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 15:01 - 0f2eabf0, postgres: ok, redis: ok, mt5: connected
+  - /ui: asset `/assets/index-xhS_ZEwp.js` loaded
+  - web-ui build: PASS
+- rollback: `git revert 283bb486 0f2eabf0 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 14:31 UTC] AGENT:DeepSeek
 - status: DEPLOYED
