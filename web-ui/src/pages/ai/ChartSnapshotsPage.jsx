@@ -6133,7 +6133,7 @@ export default function ChartSnapshotsPage() {
               style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
               title="Snapshot image quality"
             >
-              {["60", "70", "80", "90", "100"].map((v) => (
+              {["40","50","60","70","80","90","100"].map((v) => (
                 <option key={v} value={v}>
                   Q{v}
                 </option>
@@ -6183,7 +6183,7 @@ export default function ChartSnapshotsPage() {
           </div>
         </div>
 
-        {!hasAnalyzeResponse && (isAnalyzeRoute || isTradeRoute) && (
+        {!hasAnalyzeResponse && isAnalyzeRoute && (
           <div className="fadeIn">
             <div
               className="Analyze-component"
