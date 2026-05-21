@@ -13,8 +13,22 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `LOCKED`
 - deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 10:45 UTC`
-- note: `Info chart TP lines + labels + drag fix`
+- since_utc: `2026-05-21 14:35 UTC`
+- note: `prod deploy: multi-tradeplan card overlap fix + selection reset fix + snapshot traceability`
+
+### [2026-05-21 11:10 UTC] AGENT:DeepSeek
+- status: DEPLOYED (lock cleanup)
+- branch: main
+- commit: 24362836
+- scope: `snapshot settings, save button, annotation fixes, info chart TP drag/labels, deploy scripts, rules`
+- merge_to_main: YES (24362836)
+- deploy:
+  - owner: DeepSeek (previous session)
+  - server_version: v2026.05.21 10:30 - 1dc5d07f
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 10:30 - 1dc5d07f
+- rollback: `git revert 24362836 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 09:58 UTC] AGENT:DeepSeek
 - status: DEPLOYED

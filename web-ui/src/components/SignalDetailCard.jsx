@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, lazy, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { TradePlanEditor } from "./TradePlanEditor";
 import {
   buildHeaderMeta,
@@ -1255,11 +1255,16 @@ export default function SignalDetailCard({
       setMainTab(availableTabs[0] || "info");
   }, [availableTabs, mainTab]);
 
+  // Only reset to main when tradePlan becomes newly enabled from a disabled state,
+  // and only if no plan is already selected (preserve user's explicit selection across renders).
+  const prevTradePlanEnabledRef = useRef(false);
   useEffect(() => {
-    if (tradePlan?.enabled) {
+    const nowEnabled = Boolean(tradePlan?.enabled);
+    if (nowEnabled && !prevTradePlanEnabledRef.current && !selectedPlanId) {
       setSelectedPlanId("main");
     }
-  }, [tradePlan?.enabled]);
+    prevTradePlanEnabledRef.current = nowEnabled;
+  }, [tradePlan?.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setPlanDrafts((prev) => {
@@ -1661,6 +1666,8 @@ export default function SignalDetailCard({
                   boxShadow: isSelected
                     ? "0 4px 12px rgba(0,0,0,0.15)"
                     : "none",
+                  overflow: "hidden",
+                  minWidth: 0,
                 }}
               >
                 <PlanHeader
@@ -1775,6 +1782,81 @@ export default function SignalDetailCard({
             );
           })}
           </div>
+
+          {/* Snapshots Used — traceability display */}
+          {(() => {
+            const used = Array.isArray(response?.snapshotsUsed) ? response.snapshotsUsed : [];
+            const submitted = Array.isArray(response?.snapshotFiles) ? response.snapshotFiles : [];
+            const snapshots = used.length ? used : submitted;
+            if (!snapshots.length) return null;
+            const label = used.length ? "Snapshots Used by AI" : "Snapshots Submitted";
+            const isFallback = !used.length && submitted.length;
+            return (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "10px 14px",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 8,
+                  border: "1px solid var(--accent-soft)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    color: "var(--accent-soft)",
+                    marginBottom: 6,
+                  }}
+                >
+                  {label}
+                  {isFallback && (
+                    <span style={{ opacity: 0.5, marginLeft: 6 }}>
+                      (AI did not return used list; showing submitted)
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {snapshots.map((name, i) => {
+                    const safeName = String(name || "").trim();
+                    if (!safeName) return null;
+                    const ext = safeName.match(/\.(png|jpe?g)$/i)?.[1] || "";
+                    const displayName = safeName.length > 50
+                      ? safeName.slice(0, 47) + "..."
+                      : safeName;
+                    return (
+                      <a
+                        key={i}
+                        href={`/v2/chart/snapshots/${encodeURIComponent(safeName)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={safeName}
+                        style={{
+                          fontSize: 11,
+                          padding: "3px 8px",
+                          borderRadius: 4,
+                          background: "rgba(255,255,255,0.06)",
+                          color: "var(--accent)",
+                          textDecoration: "none",
+                          border: "1px solid transparent",
+                          transition: "border-color 0.15s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "var(--accent)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "transparent";
+                        }}
+                      >
+                        {ext ? `📷 ` : `📄 `}{displayName}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

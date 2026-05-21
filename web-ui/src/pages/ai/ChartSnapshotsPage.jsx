@@ -6942,6 +6942,13 @@ export default function ChartSnapshotsPage() {
                       },
                     ],
                 snapshotFiles: chartFiles,
+                snapshotsUsed: Array.isArray(analysisFilesDisplay) && analysisFilesDisplay.length
+                  ? analysisFilesDisplay
+                  : Array.isArray(usedFiles) && usedFiles.length
+                    ? usedFiles
+                    : chartFiles.length
+                      ? chartFiles
+                      : [],
               }}
               tradePlan={{
                 enabled: isTradeRoute || hasAnalyzeResponse,
