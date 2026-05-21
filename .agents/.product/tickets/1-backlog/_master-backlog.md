@@ -38,6 +38,7 @@
 - [ ] [2026-05-21 10:15] [Web-UI/TradePlan/Chart] [Author: User] Fix Bug: Info chart missing TP2/TP3, line labels must be exactly `Sell/SL/TP1/TP2/TP3` (remove `P1` + price-change suffix), and chart-edited SL/TP1/TP2/TP3 must persist in TradePlan Edit inputs without reverting. Spec: `1-backlog/2026-05-21-trade-info-chart-tp-lines-and-edit-revert-regression.md`.
 - [ ] [2026-05-21 10:24] [Web-UI/TradePlan/AI] [Author: User] Fix Bug: with 2+ TradePlans, card UI overlaps across cards, selecting card 2 resets to card 1, and AI response must expose snapshot references so UI can show snapshots used. Spec: `1-backlog/2026-05-21-multi-tradeplan-ui-overlap-selection-and-ai-snapshot-trace.md`.
 - [ ] [2026-05-21 12:05] [Web-UI/AI/TradePlan/Mapping] [Author: User] Fix Bug: Json tab shows default BUY/0 tradeplan template although AI response has populated SELL execution plan and risk fields; enforce canonical payload precedence and correct field mapping. Spec: `1-backlog/2026-05-21-ai-json-tab-shows-default-zero-tradeplan-despite-valid-response.md`.
+- [ ] [2026-05-21 13:33] [Web-UI/AI/Files/Parser] [Author: User] Fix Bug: move snapshots used by AI into Files tab and investigate parsed_json missing root execution_plan even when raw_response contains populated execution plan; check max-token/max-char and parser fallback boundaries. Spec: `1-backlog/2026-05-21-ai-snapshots-files-tab-and-parsed-json-missing-execution-plan.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.

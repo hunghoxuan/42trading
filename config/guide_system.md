@@ -323,7 +323,37 @@ HARD CONSISTENCY RULES (ALL must be true):
   ✓ profile = Scalp → do not hold beyond session close.
 
 ═══════════════════════════════════════════════════════════
-STEP 10 — EXECUTION PLAN → fills execution_plan{}
+STEP 10 — RISK MANAGEMENT → fills risk_management{}
+═══════════════════════════════════════════════════════════
+
+  GRADE RULES (use min_rr from SESSION CONFIG):
+    A       = weighted_score >= 85 AND all High items passed AND rr_to_tp1 >= min_rr × 1.5
+    B       = weighted_score 65–84 AND gate passed AND rr_to_tp1 >= min_rr
+    C       = weighted_score 50–64 OR rr within 0.3 of min_rr
+    NoTrade = weighted_score < 50 OR gate failed OR rr < min_rr
+
+  RISK SIZING by grade:
+    A → risk_percent = 1.0–2.0%
+    B → risk_percent = 0.5–1.0%
+    C → risk_percent = 0.25–0.5%
+    NoTrade → risk_percent = 0
+
+  estimated_entry_mins         : estimated minutes until entry trigger fires (0 = imminent/now)
+  estimated_entry_window_mins  : how long the entry opportunity window is valid in minutes
+  max_wait_before_cancel_mins  : maximum time to wait before cancelling the order if not filled
+
+  confidence_pct: 0–100 based on weighted_score and grade alignment
+
+  suggested_action:
+    Proceed              = all gates pass, grade A or B
+    Skip_News            = high-impact news < 30 min
+    Skip_Low_Confluence  = confluence_count < 3 or weighted_score < 50
+    Skip_Late_Entry      = overextension_check.risk = High
+    Skip_Spread          = spread > max_allowed_pips
+    Skip_Counter_Trend   = trade is counter-trend AND confluence < 4
+
+═══════════════════════════════════════════════════════════
+STEP 11 — EXECUTION PLAN → fills execution_plan{}
 ═══════════════════════════════════════════════════════════
 Always populate execution_plan, even for low-confidence setups. Use risk_management fields to reflect quality — never return empty execution_plan.
 
@@ -377,48 +407,6 @@ Always populate execution_plan, even for low-confidence setups. Use risk_managem
     — TP2 and TP3 must correspond to real HTF structural levels visible on chart.
     — Do NOT fabricate TP levels — if insufficient data, use nearest confirmed liquidity.
     — All RR values must be calculated: rr = (tp_price − entry) / (entry − sl_price) for buys (reverse for sells).
-
-═══════════════════════════════════════════════════════════
-STEP 11 — RISK MANAGEMENT → fills risk_management{}
-═══════════════════════════════════════════════════════════
-
-  GRADE RULES (use min_rr from SESSION CONFIG):
-    A       = weighted_score >= 85 AND all High items passed AND rr_to_tp1 >= min_rr × 1.5
-    B       = weighted_score 65–84 AND gate passed AND rr_to_tp1 >= min_rr
-    C       = weighted_score 50–64 OR rr within 0.3 of min_rr
-    NoTrade = weighted_score < 50 OR gate failed OR rr < min_rr
-
-  RISK SIZING by grade:
-    A → risk_percent = 1.0–2.0%
-    B → risk_percent = 0.5–1.0%
-    C → risk_percent = 0.25–0.5%
-    NoTrade → risk_percent = 0
-
-  estimated_entry_mins         : estimated minutes until entry trigger fires (0 = imminent/now)
-  estimated_entry_window_mins  : how long the entry opportunity window is valid in minutes
-  max_wait_before_cancel_mins  : maximum time to wait before cancelling the order if not filled
-
-  confidence_pct: 0–100 based on weighted_score and grade alignment
-
-  suggested_action:
-    Proceed              = all gates pass, grade A or B
-    Skip_News            = high-impact news < 30 min
-    Skip_Low_Confluence  = confluence_count < 3 or weighted_score < 50
-    Skip_Late_Entry      = overextension_check.risk = High
-    Skip_Spread          = spread > max_allowed_pips
-    Skip_Counter_Trend   = trade is counter-trend AND confluence < 4
-
-═══════════════════════════════════════════════════════════
-STEP 12 — POPULATE ROOT FIELDS
-═══════════════════════════════════════════════════════════
-After all steps complete, set root-level fields:
-  symbol     : exact symbol from SESSION CONFIG
-  direction  : "BUY" or "SELL" — NEVER both in one output
-  order_type : Limit|Stop_Limit|Market (per Step 9 rules)
-  profile    : Position|Swing|Intraday|Scalp — based on estimated hold time
-  session    : Asian|London|NewYork|London-NY_Overlap|Pre-Market|Post-Market — CURRENT session
-  strategy   : from schema strategy enum — matches entry_model family
-  entry_model: exact value from entry_model enum — matches selected model in Step 9
 
 ═══════════════════════════════════════════════════════════
 GENERAL SAFETY RULES
