@@ -5292,6 +5292,8 @@ export default function ChartSnapshotsPage() {
       symbol: normalizeSignalSymbol(plan?.raw?.symbol || ""),
       entry: edit.entry ?? base.entry ?? "",
       tp: edit.tp ?? base.tp ?? "",
+      tp2: edit.tp2 ?? base.tp2 ?? "",
+      tp3: edit.tp3 ?? base.tp3 ?? "",
       sl: edit.sl ?? base.sl ?? "",
       rr: edit.rr ?? base.rr ?? "",
       trade_type: edit.trade_type ?? base.trade_type ?? "limit",
@@ -5329,6 +5331,26 @@ export default function ChartSnapshotsPage() {
     );
     if (clamped !== selectedPlanIdx) setSelectedPlanIdx(clamped);
   }, [analysisTradePlans, selectedPlanIdx]);
+
+  useEffect(() => {
+    if (!activePlan?.raw) return;
+    const parsedPlan = extractPositionFromPlan(activePlan.raw, effectiveParsed || {});
+    const nextEntry = parseNum(parsedPlan?.entry);
+    const curEntry = parseNum(position?.entry);
+    const nextSl = parseNum(parsedPlan?.sl);
+    const curSl = parseNum(position?.sl);
+    if ((!(Number.isFinite(curEntry) && curEntry > 0) && Number.isFinite(nextEntry) && nextEntry > 0) ||
+        (!(Number.isFinite(curSl) && curSl > 0) && Number.isFinite(nextSl) && nextSl > 0)) {
+      setPosition((prev) => ({
+        ...prev,
+        entry: Number.isFinite(nextEntry) && nextEntry > 0 ? parsedPlan.entry : prev.entry,
+        sl: Number.isFinite(nextSl) && nextSl > 0 ? parsedPlan.sl : prev.sl,
+        tp: parsedPlan.tp || prev.tp,
+        tp2: parsedPlan.tp2 || prev.tp2,
+        tp3: parsedPlan.tp3 || prev.tp3,
+      }));
+    }
+  }, [activePlan, effectiveParsed, position?.entry, position?.sl]);
 
   useEffect(() => {
     if (!liteChartRef.current || responseTab !== "chart") return;
@@ -6850,6 +6872,9 @@ export default function ChartSnapshotsPage() {
                       entryPrice={position.entry}
                       slPrice={position.sl}
                       tpPrice={position.tp}
+                      tp1Price={position.tp || ""}
+                      tp2Price={position.tp2 || ""}
+                      tp3Price={position.tp3 || ""}
                     />
                     <div className="minor-text" style={{ marginTop: 8 }}>
                       {barsLoading
@@ -6895,6 +6920,8 @@ export default function ChartSnapshotsPage() {
                       direction: plan.direction || plan?.raw?.direction,
                       entry:
                         getPlanPositionOverride(plan, idx).entry ||
+                        plan?.raw?.execution_plan?.entry?.price ||
+                        plan?.entry ||
                         plan?.raw?.entry_price ||
                         plan?.raw?.entry,
                       tp:
@@ -6905,12 +6932,25 @@ export default function ChartSnapshotsPage() {
                             ? formatNum3(resolved)
                             : plan?.raw?.take_profit || plan?.raw?.tp || "";
                         })(),
+                      tp2:
+                        getPlanPositionOverride(plan, idx).tp2 ||
+                        (Number.isFinite(planTpLevelNumber(plan?.raw || {}, 2))
+                          ? formatNum3(planTpLevelNumber(plan?.raw || {}, 2))
+                          : plan?.raw?.tp2 || ""),
+                      tp3:
+                        getPlanPositionOverride(plan, idx).tp3 ||
+                        (Number.isFinite(planTpLevelNumber(plan?.raw || {}, 3))
+                          ? formatNum3(planTpLevelNumber(plan?.raw || {}, 3))
+                          : plan?.raw?.tp3 || ""),
                       sl:
                         getPlanPositionOverride(plan, idx).sl ||
+                        plan?.raw?.execution_plan?.stop_loss?.price ||
+                        plan?.sl ||
                         plan?.raw?.stop_loss ||
                         plan?.raw?.sl,
                       rr:
                         getPlanPositionOverride(plan, idx).rr ||
+                        plan?.rr ||
                         plan?.raw?.risk_reward ||
                         plan?.raw?.rr,
                       trade_type:

@@ -12,9 +12,18 @@ Use this section for parallel-agent safety and deploy ordering.
 - If deploying, acquire lock first. No lock = no deploy.
 
 - lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 15:20 UTC`
-- note: `fix: callAiProvider apiKey param — use caller-validated key instead of CFG.mt5DefaultUserId`
+- deploy_owner: `Codex`
+- since_utc: `2026-05-21 10:02 UTC`
+- note: `smoke-then-deploy: ChartSnapshots entry/sl hydrate + TP2/TP3 wiring fix`
+
+### [2026-05-21 14:31 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- commit: 1047429b
+- scope: `callAiProvider apiKey param — use caller-validated key instead of CFG.mt5DefaultUserId`
+- server_version: v2026.05.21 14:30 - 1047429b
+- verify: /health ok:true, version matches, postgres: ok, redis: ok, mt5: connected
+- result: PASS
+- rollback: `git revert 4bcba94f 1047429b && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 15:12 UTC] AGENT:DeepSeek
 - status: DEPLOYED
