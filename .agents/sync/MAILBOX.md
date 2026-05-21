@@ -11,10 +11,25 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 12:14 UTC`
-- note: `deploy json-tab canonical mapping fix for 2026-05-21-ai-json-tab-shows-default-zero-tradeplan-despite-valid-response`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 13:18 UTC`
+- note: `deployed json-tab canonical mapping fix at b0761783 (health verified)`
+
+### [2026-05-21 13:18 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: b0761783
+- scope: `SignalDetailCard json-tab canonical payload precedence fix + ticket status update`
+- merge_to_main: YES (b0761783)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 13:15 - b0761783
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 13:15 - b0761783
+  - postgres: ok, redis: ok, mt5: connected
+- rollback: `git revert b0761783 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 14:45 UTC] AGENT:DeepSeek
 - status: DEPLOYED
