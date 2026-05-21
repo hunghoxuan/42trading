@@ -54,7 +54,7 @@ namespace cAlgo.Robots
         public double BE_Offset { get; set; }
 
         [Parameter("Trailing Start (Pips)", Group = "Automation", DefaultValue = 20, MinValue = 1)]
-        public doubt hle Trail_Start { get; set; }
+        public double Trail_Start { get; set; }
 
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
@@ -67,6 +67,9 @@ namespace cAlgo.Robots
 
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
+
+        [Parameter("Min Stop Distance (pips)", Group = "Safety", DefaultValue = 15, MinValue = 5)]
+        public double MinStopPips { get; set; }
 
         private const string BuildVersion = "v2026.05.20 15:35 - 8fe81d8f";
 
@@ -1012,6 +1015,35 @@ namespace cAlgo.Robots
                 }
 
                 Print("[Debug] Executing {0} {1} at {2}. SL: {3}, TP: {4}, Vol: {5}", action, symbolCode, executionPrice, sl, tp, volumeUnits);
+
+                // Pre-check: reject if SL/TP are too close to entry (broker will reject anyway)
+                if (symbol.PipSize > 0)
+                {
+                    if (sl > 0)
+                    {
+                        double slDistPips = Math.Abs(executionPrice - sl) / symbol.PipSize;
+                        if (slDistPips < MinStopPips)
+                        {
+                            var rejectMsg = string.Format("SL too close: {0:F1} pips (min {1}). E={2:F5} SL={3:F5}", slDistPips, MinStopPips, executionPrice, sl);
+                            Print("[Reject] {0}", rejectMsg);
+                            UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
+                            _ = AckAsync(id, leaseToken, "FAIL", "", rejectMsg);
+                            return;
+                        }
+                    }
+                    if (tp > 0)
+                    {
+                        double tpDistPips = Math.Abs(tp - executionPrice) / symbol.PipSize;
+                        if (tpDistPips < MinStopPips)
+                        {
+                            var rejectMsg = string.Format("TP too close: {0:F1} pips (min {1}). E={2:F5} TP={3:F5}", tpDistPips, MinStopPips, executionPrice, tp);
+                            Print("[Reject] {0}", rejectMsg);
+                            UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
+                            _ = AckAsync(id, leaseToken, "FAIL", "", rejectMsg);
+                            return;
+                        }
+                    }
+                }
 
                 // We place the order without SL/TP pips first to avoid "price as pips" bugs,
                 // then modify it with absolute prices immediately after success.
