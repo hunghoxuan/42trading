@@ -11,10 +11,26 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 15:10 UTC`
-- note: `hotfix deploy: context-menu entry sync + tp2/tp3 info chart wiring`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 15:32 UTC`
+- note: `deploy complete — context-menu entry sync + tp2/tp3 info chart wiring`
+
+### [2026-05-21 15:32 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: b9263f97
+- scope: `ChartSnapshots: robust entry/sl extraction + wire onPlanLevelChange from chart context/drag + pass tp1/tp2/tp3 into SignalDetailCard chart`
+- merge_to_main: YES (b9263f97)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 15:27 - 35d649e8
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 15:27 - 35d649e8, postgres: ok, redis: ok, mt5: connected
+  - /ui: asset `/assets/index-S1O_CKX0.js` loaded
+  - web-ui build: PASS
+- rollback: `git revert b9263f97 35d649e8 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 15:06 UTC] AGENT:Codex
 - status: DEPLOYED
