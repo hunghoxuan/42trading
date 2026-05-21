@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.21 11:13 - 3b562780"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.21 12:45 - d46d5a03"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
