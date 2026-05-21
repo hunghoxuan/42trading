@@ -4789,8 +4789,26 @@ export default function ChartSnapshotsPage() {
   }, [searchTerm]);
 
   useEffect(() => {
-    if (!effectiveParsed || typeof effectiveParsed !== "object") return;
-    setPosition(extractPositionFromAnalysis(effectiveParsed));
+    console.log(
+      "[pos-sync] effect FIRED, effectiveParsed type:",
+      typeof effectiveParsed,
+      "keys:",
+      effectiveParsed ? Object.keys(effectiveParsed).length : 0,
+    );
+    if (!effectiveParsed || typeof effectiveParsed !== "object") {
+      console.log("[pos-sync] skip: effectiveParsed null or not object");
+      return;
+    }
+    const pos = extractPositionFromAnalysis(effectiveParsed);
+    console.log(
+      "[pos-sync] setting position entry:",
+      pos?.entry,
+      "sl:",
+      pos?.sl,
+      "tp:",
+      pos?.tp,
+    );
+    setPosition(pos);
   }, [effectiveParsed]);
 
   useEffect(() => {
