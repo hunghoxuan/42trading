@@ -2521,14 +2521,18 @@ export default function ChartSnapshotsPage() {
   // Load ANALYSE_SETTINGS from user_settings on mount
   useEffect(() => {
     api.getSettings().then(res => {
-      const s = (res?.items || []).find(x => x.type === 'settings' && x.name === 'ANALYSE_SETTINGS');
+      const s = (res?.settings || []).find(x => x.type === 'settings' && x.name === 'ANALYSE_SETTINGS');
       if (s?.data && typeof s.data === 'object') {
+        console.log('[ANALYSE_SETTINGS] Loaded from DB:', s.data);
         setCfg(prev => ({ ...prev, ...s.data }));
       }
     }).catch(() => {});
   }, []);
 
   const saveSettings = useCallback(() => {
+    console.log('[ANALYSE_SETTINGS] Saving:', {
+      lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots
+    });
     api.upsertSetting({
       type: 'settings',
       name: 'ANALYSE_SETTINGS',
