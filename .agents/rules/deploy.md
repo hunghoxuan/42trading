@@ -35,7 +35,19 @@ Canonical deploy policy:
 
 ## Multi-Agent Commit/Merge/Deploy SOP (Mandatory, No Exceptions)
 
-### 0) Acquire deploy lock first
+### 0) Pre-deploy history check (mandatory)
+
+- Before lock/commit/merge/deploy, check deploy history log in `.agents/sync/MAILBOX.md` deploy ledger.
+- Compare:
+  - candidate deploy commit SHA
+  - candidate change scope/files
+- If same commit SHA and equivalent change scope already has PASS deploy entry:
+  - stop and ask user confirmation before redeploy.
+  - required question: `same commit/change already deployed. redeploy anyway?`
+- If not already deployed:
+  - continue to step 1 (lock -> commit -> merge -> deploy).
+
+### 1) Acquire deploy lock first
 
 - In `.agents/sync/MAILBOX.md`, set:
   - `lock_status: LOCKED`
@@ -44,7 +56,7 @@ Canonical deploy policy:
   - `note: <scope>`
 - If lock is already `LOCKED` by another agent, do not deploy.
 
-### 1) Commit your own work first
+### 2) Commit your own work first
 
 - Never deploy uncommitted changes.
 - Create explicit commits for your scope before any merge/deploy.
@@ -53,7 +65,7 @@ Canonical deploy policy:
   - Required format: `<agent-name>: <message>`
   - Example: `codex: fix(ui): align chart object toolbar`
 
-### 2) Push and integrate to main source of truth
+### 3) Push and integrate to main source of truth
 
 - Required sequence:
   - `rtk git fetch origin`
@@ -68,14 +80,14 @@ Canonical deploy policy:
   - compare each branch against `origin/main` merge state
   - avoid re-merging already merged branches
 
-### 3) Verify no missing teammate fixes before deploy
+### 4) Verify no missing teammate fixes before deploy
 
 - Read latest mailbox entries and list critical recent fixes.
 - For each critical fix, verify commit SHA is reachable from `HEAD`:
   - `rtk git merge-base --is-ancestor <sha> HEAD`
 - If any critical SHA is missing: stop, merge it, re-test, then continue.
 
-### 4) Version bump + deploy
+### 5) Version bump + deploy
 
 - If backend/EA/UI/scripts changed:
   - run `bash scripts/deploy/bump_build_versions.sh`
@@ -90,14 +102,15 @@ Canonical deploy policy:
 - Prod deploy promotion rule:
   - deploy commit SHA must match staging-validated SHA unless user explicitly approves exception.
 
-### 5) Post-deploy verification and lock release
+### 6) Post-deploy verification, history update, and lock release
 
 - Required verify (record actual values):
   - `/health` returns `ok:true` and expected version
   - `/ui` loads expected asset hash
   - task-specific smoke checks (example: DB search keyword regression)
-- Post ledger entry with:
+- Update deploy history log in `.agents/sync/MAILBOX.md` deploy ledger with:
   - deploy commit SHA
+  - change summary/scope (what changed)
   - version strings
   - verify evidence
   - rollback commit SHA
@@ -106,8 +119,14 @@ Canonical deploy policy:
 - Set lock back to:
   - `lock_status: UNLOCKED`
   - `deploy_owner: NONE`
+- Report to user with:
+  - already-deployed check result (yes/no)
+  - deployed commit SHA
+  - change summary
+  - verification result
+  - final lock status
 
-### 6) Failure handling
+### 7) Failure handling
 
 - If deploy or verify fails:
   - set status `DEPLOY_BLOCKED`

@@ -1,0 +1,403 @@
+{
+  "symbol": "",
+  "direction": "BUY|SELL",
+  "order_type": "Limit|Stop_Limit|Market",
+  "profile": "Position|Swing|Intraday|Scalp",
+  "session": "Asian|London|NewYork|London-NY_Overlap|Pre-Market|Post-Market",
+  "strategy": "ICT|SMC|Price_Action|Market_Structure|Wyckoff|VSA|EMA_Trend|MA_Cross|Breakout|VWAP|Supply_Demand|Fibonacci|Harmonic|Candle_Pattern|Divergence|Elliott_Wave|Pivot_Points|Support_Resistance|Range_Trading|Trend_Following",
+  "entry_model": "Sweep+MSS+OB|Sweep+MSS+IFVG|CHoCH+Retest+FVG|Sweep+SMT+MSS+BPR|Sweep+MSS+Mitigation Block|Sweep+MSS+Propulsion Block|Turtle Soup + FVG + Entry|Wyckoff Spring/UTAD + Re-entry|Sweep+MSS+Propulsion Block|Sweep+Displacement+FVG|OB_Mitigation|FVG_Fill|Breaker_Block|CISD|Propulsion_Block|Mitigation_Block|Displacement_Entry|OTE_Fib|Golden_Pocket|Deep_Retracement_786|SilverBullet|MMXM|JudasSwing|TurtleSoup|PowerOf3_AMD|LondonOpen|NYOpen|AMSession|PMSession|Wyckoff_Spring|Wyckoff_Upthrust|LPS_LastPointSupport|LPSY|SOS_SignOfStrength|Creek_Break|Ice_Break|Gartley_PRZ|Bat_PRZ|Butterfly_PRZ|Crab_PRZ|Shark_PRZ|Cypher_PRZ|ABCD_Pattern|Engulfing_at_POI|PinBar_Reversal|Morning_Star|Evening_Star|InsideBar_Breakout|TweezerTop|TweezerBottom|ThreeSoldiers|ThreeCrows|DoubleTop_Break|DoubleBottom_Break|HeadShoulders|Triangle_Breakout|Flag_Pennant|Channel_Break|EMA_Cross|MA_Bounce|VWAP_Reclaim|AVWAP_Bounce|RSI_Divergence|MACD_Divergence|Hidden_Divergence|SD_Zone_Reaction|PivotPoint_Bounce|Elliott_Wave3|Elliott_Wave5",
+  "context": {
+    "htf_bias": "Bullish|Bearish|Ranging",
+    "htf": "",
+    "entry_tf": "",
+    "ltf_structure": "Uptrend|Downtrend|Ranging|Transitional",
+    "macro": "Risk_On|Risk_Off|Neutral|News_Pending",
+    "draw_on_liquidity": "",
+    "daily_bias_note": ""
+  },
+  "analysis": {
+    "htf_context": {
+      "liquidity_swept": {
+        "status": false,
+        "type": "BSL|SSL|EQH|EQL|PDH|PDL|PWH|PWL|PMH|PML",
+        "level": null,
+        "clean_wick_close": false
+      },
+      "poi_interaction": {
+        "status": false,
+        "type": "OB|FVG|Breaker|Mitigation|SD_Zone|Fib_Level|Harmonic_PRZ|VWAP|MA_Dynamic|Pivot",
+        "zone_high": null,
+        "zone_low": null,
+        "freshness": "Fresh|Once_Tested|Stale"
+      },
+      "premium_discount": {
+        "status": false,
+        "position": "Discount|Premium|Equilibrium",
+        "aligned_with_direction": false
+      },
+      "trend_alignment": {
+        "status": false,
+        "is_with_trend": true,
+        "counter_trend_reason": ""
+      }
+    },
+    "market_structure": {
+      "choch": {
+        "status": false,
+        "sub_type": "Body_Break|Wick_Break",
+        "type": "Minor|Major",
+        "used_as": "Early_Entry|Confirmation"
+      },
+      "mss": {
+        "status": false,
+        "with_displacement": false,
+        "type": "Impulsive|Gradual"
+      },
+      "bos_confirmed": {
+        "status": false,
+        "type": "Internal|External",
+        "consecutive_count": 1
+      },
+      "no_opposing_structure": {
+        "status": false,
+        "nearest_obstacle": null,
+        "gap_pips": null
+      }
+    },
+    "poi_quality": {
+      "ob_valid": {
+        "status": false,
+        "type": "Bullish_OB|Bearish_OB|Breaker|Propulsion|Mitigation",
+        "freshness": "Fresh|Once_Mitigated"
+      },
+      "fvg_present": {
+        "status": false,
+        "type": "IFVG|BISI|SIBI|Regular",
+        "fill_pct": 0,
+        "entry_at_50pct": false
+      },
+      "candle_pattern": {
+        "status": false,
+        "type": "Engulfing|Pin_Bar|Hammer|Shooting_Star|InvertedHammer|Dragonfly_Doji|Gravestone_Doji|Morning_Star|Evening_Star|Three_Soldiers|Three_Crows|Harami|Inside_Bar|Tweezer_Top|Tweezer_Bottom|Marubozu|None",
+        "at_poi": false,
+        "tf_reference": ""
+      },
+      "fib_confluence": {
+        "status": false,
+        "level": "0.382|0.5|0.618|0.65|0.705|0.786|1.272|1.618|2.0|2.618",
+        "price": null,
+        "is_golden_pocket": false
+      },
+      "harmonic_pattern": {
+        "status": false,
+        "type": "Gartley|Bat|Butterfly|Crab|Shark|Cypher|ABCD|None",
+        "prz_high": null,
+        "prz_low": null,
+        "completion_pct": 0
+      },
+      "divergence": {
+        "status": false,
+        "indicator": "RSI|MACD|OBV|Stoch|CCI|None",
+        "class": "Regular|Hidden",
+        "tf_reference": ""
+      },
+      "wyckoff_event": {
+        "status": false,
+        "phase": "Phase_A|Phase_B|Phase_C|Phase_D|Phase_E|N/A",
+        "event": "Spring|Upthrust|LPS|LPSY|SOS|SOW|Creek_Break|Ice_Break|UTAD|UAD|None",
+        "range_type": "Accumulation|Distribution|Re_Accumulation|Re_Distribution|N/A"
+      },
+      "volume_confirmation": {
+        "status": false,
+        "on_sweep": "High|Normal|Low|N/A",
+        "on_entry_candle": "High|Normal|Low|N/A",
+        "vsa_signal": "Effort_No_Result|No_Supply|No_Demand|Climactic_Action|None"
+      },
+      "confluence_count": 0,
+      "min_required": 3
+    },
+    "ltf_trigger": {
+      "idm_cleared": {
+        "status": false,
+        "type": "Minor_Swing|EQL|EQH|Retail_Stop_Zone"
+      },
+      "entry_trigger": {
+        "status": false,
+        "type": "CHoCH|MSS|Displacement|Engulfing|Pin_Bar|CISD|Inside_Bar_Break|Candle_Close|Pattern_Completion",
+        "candle_close_price": null
+      },
+      "retest_precision": {
+        "status": false,
+        "distance_pips": null
+      }
+    },
+    "risk_filters": {
+      "news_filter": {
+        "status": false,
+        "impact": "High|Medium|Low|None",
+        "event_name": "",
+        "mins_to_news": null
+      },
+      "session_killzone": {
+        "status": false,
+        "in_killzone": false,
+        "comment": ""
+      },
+      "spread_acceptable": {
+        "status": false,
+        "current_spread_pips": null,
+        "max_allowed_pips": null
+      },
+      "correlation_check": {
+        "status": false,
+        "assets_checked": "DXY|Gold|Indices|Oil|Bonds",
+        "alignment": "Confirming|Neutral|Conflicting",
+        "comment": ""
+      },
+      "overextension_check": {
+        "status": false,
+        "distance_from_poi_pips": null,
+        "risk": "Low|Medium|High"
+      }
+    },
+    "sl_validity": {
+      "sl_behind_structure": {
+        "status": false,
+        "reference": "",
+        "invalidation_logic": ""
+      },
+      "sl_not_obvious_hunt_target": {
+        "status": false,
+        "retail_cluster_nearby": false,
+        "buffer_pips": null
+      },
+      "sl_atr_adequate": {
+        "status": false,
+        "atr_value": null,
+        "sl_vs_atr_ratio": null
+      },
+      "rr_viable_to_tp1": {
+        "status": false,
+        "rr_to_first_obstacle": null,
+        "min_required": 1.5
+      }
+    }
+  },
+  "check_lists": [
+    {
+      "checklist_question": "Have I identified the overall market trend (uptrend/downtrend/sideways)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the trade direction aligned with the higher timeframe trend?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I confirmed the entry signal on at least 2 timeframes?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is there a clear and valid support/resistance level near my entry?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the entry point at or near a key structure level (S/R, supply/demand zone)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I confirmed the candlestick pattern at the entry zone?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the price action showing a clear rejection or breakout confirmation?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the market currently NOT in a consolidation/choppy range that increases noise?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I placed a Stop Loss (SL) for this trade?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is my Stop Loss placed beyond a logical invalidation level (not arbitrary)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I defined a Take Profit (TP) target before entering?",
+      "ai_confirm": "not_sure"
+    },
+    {
+      "checklist_question": "Is the Risk/Reward Ratio (RRR) at least 1:2 or better?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is my position size calculated based on my risk percentage per trade (e.g., 1-2%)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Does the maximum loss on this trade stay within my defined daily loss limit?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is my total open risk across all trades within my portfolio risk limit?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I checked for upcoming high-impact news events (e.g., CPI, FOMC, earnings)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is this trade being entered outside of a major news release window (±15 min)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the current market session (London/NY/Asia) suitable for this instrument?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the market liquidity currently sufficient for my trade size?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the bid-ask spread within an acceptable range for this instrument?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I checked volume to confirm the move has participation/conviction?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the momentum indicator (RSI/MACD/Stoch) aligned with my trade direction?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the RSI NOT in an extreme overbought/oversold zone against my trade direction?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is there no major divergence (bullish/bearish) contradicting my entry?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the Moving Average trend aligned with my trade direction?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the price above key MAs for longs (or below for shorts)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I identified and is the trade clear of major Fibonacci confluence zones that could block price?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is there enough clear price space between entry and TP (no major obstacles)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I checked the correlation with other open trades to avoid overexposure?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is this trade NOT revenge trading after a recent loss?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Am I in a calm and focused mental state (not emotional, anxious, or tired)?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Am I following my trading plan and NOT deviating from my strategy?",
+      "ai_confirm": "not_sure"
+    },
+    {
+      "checklist_question": "Is this trade based on my system's signal and NOT on a tip, social media, or FOMO?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I already hit my daily profit target and am I trading beyond it unnecessarily?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Is the trade setup one that I have back-tested or forward-tested before?",
+      "ai_confirm": "not_sure"
+    },
+    {
+      "checklist_question": "Have I logged this trade in my trading journal with setup reasoning?",
+      "ai_confirm": "not_sure"
+    },
+    {
+      "checklist_question": "Is the swap/overnight fee acceptable if the trade holds multiple days?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I set alerts or will I be available to manage the trade if needed?",
+      "ai_confirm": "not_sure"
+    },
+    {
+      "checklist_question": "Is my internet connection stable before entering the trade?",
+      "ai_confirm": "yes|no|not_sure"
+    },
+    {
+      "checklist_question": "Have I double-checked the lot size, direction (Buy/Sell), and instrument before executing?",
+      "ai_confirm": "yes|no|not_sure"
+    }
+  ],
+  "risk_management": {
+    "grade": "A|B|C|NoTrade",
+    "risk_percent": null,
+    "confidence_pct": 0,
+    "estimated_entry_mins": null,
+    "estimated_entry_window_mins": null,
+    "max_wait_before_cancel_mins": null,
+    "suggested_action": "Proceed|Skip_News|Skip_Low_Confluence|Skip_Late_Entry|Skip_Spread|Skip_Counter_Trend"
+  },
+  "execution_plan": {
+    "pre_entry_invalidation": {
+      "note": "skip trade when price",
+      "when_price": "greater_than|less_than|equal_to",
+      "price": null
+    },
+    "entry": {
+      "price": null,
+      "reference": "",
+      "invalidation_note": ""
+    },
+    "post_entry_invalidation": {
+      "note": "close trade when price met",
+      "when_price": "greater_than|less_than|equal_to",
+      "price": null
+    },
+    "stop_loss": {
+      "price": null,
+      "reference": ""
+    },
+    "breakeven_trigger": {
+      "condition": "After_TP1|At_1R|Manual",
+      "price": null
+    },
+    "tp1": {
+      "price": null,
+      "rr": null,
+      "pct": 40,
+      "logic": "IDM|EQH|EQL|OB_Mitigation|FVG_Fill|Session_High_Low|Fib_0.618|Nearest_Liquidity",
+      "move_sl_to": null
+    },
+    "tp2": {
+      "price": null,
+      "rr": null,
+      "pct": 35,
+      "logic": "HTF_POI|BSL_SSL|Swing_High_Low|Fib_1.618|Supply_Demand_Zone",
+      "move_sl_to": null
+    },
+    "tp3": {
+      "price": null,
+      "rr": null,
+      "pct": 25,
+      "logic": "Draw_on_Liquidity|Weekly_Level|Monthly_Level|Fib_2.618|Elliott_Wave_Target",
+      "note": "Trail or let run"
+    }
+  }
+}
