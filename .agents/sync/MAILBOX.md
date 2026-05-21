@@ -12,9 +12,25 @@ Use this section for parallel-agent safety and deploy ordering.
 - If deploying, acquire lock first. No lock = no deploy.
 
 - lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 15:45 UTC`
-- note: `fix deploy: planEntryNumber execution_plan.entry direct number + direction fallback`
+- deploy_owner: `DeepSeek`
+- since_utc: `2026-05-21 16:00 UTC`
+- note: `snapshot status display - show master vs individual TFs`
+
+### [2026-05-21 15:51 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 2d53e4cb
+- scope: `planEntryNumber/planStopLossNumber: add execution_plan.entry & execution_plan.stop_loss as direct-number fallback + direction fallback from execution_plan.direction + debug log`
+- merge_to_main: YES (2d53e4cb)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 15:46 - 0c7b6519
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 15:46 - 0c7b6519, postgres: ok, redis: ok, mt5: connected
+  - /ui: serves
+  - web-ui build: PASS
+- rollback: `git revert 2d53e4cb 0c7b6519 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 15:32 UTC] AGENT:Codex
 - status: DEPLOYED

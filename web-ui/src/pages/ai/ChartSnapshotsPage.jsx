@@ -3499,22 +3499,37 @@ export default function ChartSnapshotsPage() {
           ? `📷 ${sym}: ${createdNames.length} new`
           : `📷 ${sym}: 0 new (all cached)`;
       }
-      for (const tf of tfs) {
-        const found = items.find((x) => {
-          const f = String(x?.file_name || "");
-          const base = f.replace(/\.(png|jpe?g)$/i, "");
-          return (
-            base.endsWith(`_${tf}`) || base.endsWith(`_${tf.toUpperCase()}`)
-          );
-        });
-        status[tf] = found
-          ? {
-              status: "snapshot",
-              time: new Date(
-                found.created_at || Date.now(),
-              ).toLocaleTimeString(),
-            }
-          : { status: "none" };
+      // Check for master snapshot (merge mode)
+      const masterItem = items.find((x) => {
+        const f = String(x?.file_name || "").toUpperCase();
+        return f.includes("_MASTER.");
+      });
+      if (masterItem) {
+        const masterTime = new Date(
+          masterItem.created_at || Date.now(),
+        ).toLocaleTimeString();
+        for (const tf of tfs) {
+          status[tf] = { status: "master", time: masterTime };
+        }
+        setSnapshotStatus({ ...status });
+      } else {
+        for (const tf of tfs) {
+          const found = items.find((x) => {
+            const f = String(x?.file_name || "");
+            const base = f.replace(/\.(png|jpe?g)$/i, "");
+            return (
+              base.endsWith(`_${tf}`) || base.endsWith(`_${tf.toUpperCase()}`)
+            );
+          });
+          status[tf] = found
+            ? {
+                status: "snapshot",
+                time: new Date(
+                  found.created_at || Date.now(),
+                ).toLocaleTimeString(),
+              }
+            : { status: "none" };
+        }
         setSnapshotStatus({ ...status });
       }
       // Refresh snapshot list so resolveRecentSnapshots finds new files
