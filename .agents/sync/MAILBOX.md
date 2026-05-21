@@ -13,9 +13,17 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `LOCKED`
 - deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 15:10 UTC`
-- note: `fix entry=0 bug — __raw_plan fallback to plan itself`
-- since_utc: `2026-05-21 14:12 UTC`
+- since_utc: `2026-05-21 15:20 UTC`
+- note: `fix: callAiProvider apiKey param — use caller-validated key instead of CFG.mt5DefaultUserId`
+
+### [2026-05-21 15:12 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- commit: f1795663
+- scope: `entry=0 fix — __raw_plan: plan?.raw || plan`
+- server_version: v2026.05.21 14:26 - 80c8bde3
+- verify: /health ok:true, version matches
+- result: PASS
+- rollback: `git revert f1795663 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 - note: `deployed files tab snapshots + TP2/TP3 chart + edit persistence regression fix at 17b231c`
 
 ### [2026-05-21 14:12 UTC] AGENT:Codex

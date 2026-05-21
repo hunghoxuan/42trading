@@ -5832,6 +5832,7 @@ async function callAiProvider({
   maxTokens = 32000,
   timeoutMs = 180000,
   provider: explicitProvider = "",
+  apiKey: callerApiKey = "",
 }) {
   // If explicit provider is given (for OpenRouter), use it directly
   if (explicitProvider) {
@@ -5842,7 +5843,7 @@ async function callAiProvider({
   // Claude → use Anthropic Messages API
   if (modelLower.includes("claude")) {
     trackApiCall("Claude");
-    const claudeKey = await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId);
+    const claudeKey = callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
     if (!claudeKey) throw new Error("CLAUDE_API_KEY is missing in Settings.");
     const out = await anthropicMessagesWithFallback({
       apiKey: claudeKey,
@@ -5883,15 +5884,18 @@ async function callAiProvider({
   }
 
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
-  const cfg = await loadAiConfig();
-  const apiKey =
-    provider === "deepseek"
-      ? cfg.DEEPSEEK_API_KEY
-      : provider === "openrouter"
-        ? cfg.OPENROUTER_API_KEY || ""
-        : provider === "openai"
-          ? cfg.OPENAI_API_KEY
-          : cfg.GEMINI_API_KEY;
+  let apiKey = callerApiKey || "";
+  if (!apiKey) {
+    const cfg = await loadAiConfig();
+    apiKey =
+      provider === "deepseek"
+        ? cfg.DEEPSEEK_API_KEY
+        : provider === "openrouter"
+          ? cfg.OPENROUTER_API_KEY || ""
+          : provider === "openai"
+            ? cfg.OPENAI_API_KEY
+            : cfg.GEMINI_API_KEY;
+  }
   if (!apiKey)
     throw new Error(
       `${provider.toUpperCase()}_API_KEY is missing in Settings.`,
@@ -19970,6 +19974,7 @@ const appHandler = async (req, res) => {
         messages: [{ role: "user", content }],
         maxTokens: Number(body.max_tokens || 32000),
         timeoutMs: 180000,
+        apiKey: requiredKeyValue,
       });
 
       const rawResponse = aiResult.rawText;
