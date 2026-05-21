@@ -175,24 +175,8 @@ export function formatNum3(v) {
 }
 
 export function normalizeTpSlFromEntryDirection(plan = {}) {
-  const entry = asNum(plan.entry);
-  const tp = asNum(plan.tp);
-  const sl = asNum(plan.sl);
-  const side = String(plan.direction || "").toUpperCase();
-  if (entry == null || !["BUY", "SELL"].includes(side)) {
-    return { tp: plan.tp, sl: plan.sl };
-  }
-  const isBuy = side === "BUY";
-  const defaultTp = isBuy ? entry * 1.01 : entry * 0.99;
-  const defaultSl = isBuy ? entry * 0.99 : entry * 1.01;
-  const invalidTp =
-    tp == null || tp === 0 || (isBuy ? tp <= entry : tp >= entry);
-  const invalidSl =
-    sl == null || sl === 0 || (isBuy ? sl >= entry : sl <= entry);
-  return {
-    tp: formatNum3(invalidTp ? defaultTp : tp),
-    sl: formatNum3(invalidSl ? defaultSl : sl),
-  };
+  // Just pass through - no auto-correction. Let user edit freely.
+  return { tp: plan.tp, sl: plan.sl };
 }
 
 export function applyLinkedPlanChange(prevPlan, key, rawVal) {
@@ -205,6 +189,33 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
         key === "rr" ? String(Number(val.toFixed(1))) : formatNum3(val);
     }
   }
+
+  const entry = asNum(next.entry);
+  const sl = asNum(next.sl);
+  const tp = asNum(next.tp);
+  const dir = String(next.direction || "BUY").toUpperCase();
+  const isBuy = dir === "BUY";
+
+  // Auto-update RR when Entry, SL, or TP changes
+  if (["entry", "sl", "tp"].includes(key)) {
+    if (entry != null && sl != null && tp != null && entry !== sl) {
+      const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+      if (Number.isFinite(rr)) next.rr = String(Number(rr.toFixed(1)));
+    }
+  }
+
+  // Auto-update TP when RR changes
+  if (key === "rr") {
+    const rr = asNum(next.rr);
+    if (entry != null && sl != null && rr != null && entry !== sl) {
+      const newTp = isBuy
+        ? entry + rr * Math.abs(entry - sl)
+        : entry - rr * Math.abs(entry - sl);
+      if (Number.isFinite(newTp)) next.tp = formatNum3(newTp);
+    }
+  }
+
+  // Sync tp1 ↔ tp
   const tp1Num = asNum(next.tp1);
   const tpNum = asNum(next.tp);
   if (tp1Num != null) next.tp = formatNum3(tp1Num);
