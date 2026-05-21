@@ -2517,6 +2517,31 @@ export default function ChartSnapshotsPage() {
   const location = useLocation();
   const { symbol: paramSymbol } = useParams();
   const [cfg, setCfg] = useState(DEFAULT_CONFIG);
+
+  // Load ANALYSE_SETTINGS from user_settings on mount
+  useEffect(() => {
+    api.getSettings().then(res => {
+      const s = (res?.items || []).find(x => x.type === 'settings' && x.name === 'ANALYSE_SETTINGS');
+      if (s?.data && typeof s.data === 'object') {
+        setCfg(prev => ({ ...prev, ...s.data }));
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Auto-save ANALYSE_SETTINGS on change (debounced)
+  const saveCfgTimer = useRef(null);
+  useEffect(() => {
+    clearTimeout(saveCfgTimer.current);
+    saveCfgTimer.current = setTimeout(() => {
+      api.upsertSetting({
+        type: 'settings',
+        name: 'ANALYSE_SETTINGS',
+        data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
+      }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(saveCfgTimer.current);
+  }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
+
   const [templates, setTemplates] = useState(() => loadTemplates());
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [templateName, setTemplateName] = useState("");

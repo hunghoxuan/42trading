@@ -813,6 +813,7 @@ export const DEFAULT_CONFIG = {
   risk: "1",
   lookbackBars: "300",
   snapshotQuality: "80",
+  mergeSnapshots: true,
   strategies: ["SMC", "Price Action", "Market Structure"],
   profile: "day",
   htf_tfs: [...PROFILE_PRESETS.day.htf_tfs],
