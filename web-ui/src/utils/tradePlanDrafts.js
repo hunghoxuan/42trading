@@ -31,7 +31,23 @@ export function mergePlanPreservingEdits(basePlan = {}, previousDraft = {}) {
   Object.entries(prev).forEach(([key, value]) => {
     if (value === undefined) return;
     if (editableKeys.has(key)) {
-      next[key] = value;
+      // Only preserve draft value if it is a valid non-empty entry.
+      // If the draft is empty/zero but the base has a valid value, keep the base.
+      const isNumeric = ["entry", "sl", "tp", "tp1", "tp2", "tp3"].includes(
+        key,
+      );
+      if (isNumeric) {
+        const baseVal = parseNumLoose(next[key]);
+        const draftVal = parseNumLoose(value);
+        if (draftVal != null && draftVal > 0) {
+          next[key] = value;
+        } else if (!(baseVal != null && baseVal > 0)) {
+          next[key] = value;
+        }
+        // else: keep base value (it's valid, draft is empty)
+      } else {
+        next[key] = value;
+      }
       return;
     }
 
