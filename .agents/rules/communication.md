@@ -32,5 +32,10 @@ trigger: always_on
   - any change from original requirement
   - deploy status
   - expected build version (if deployed)
+- Branch/commit naming and ticket traceability (mandatory):
+  - Always create branch name as: `<ticket-id>-<agent>-<summary>`
+  - Always create commit message as: `<ticket-id>-<agent>-<summary>`
+  - Every branch must map to one ticket id.
+  - Every commit must map to one ticket id.
 - Preferred summary table format:
   - `File | Now | After | Suggestion | What change | Status`

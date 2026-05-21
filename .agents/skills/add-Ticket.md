@@ -17,6 +17,10 @@ This skill creates or updates a ticket and always ends with a handoff prompt for
 2. Put extracted image facts directly into the ticket (not only in chat).
 3. Be explicit and structured. Do not leave ambiguous problem statements.
 4. After ticket is complete, always write a hand-off prompt.
+5. Auto-create and use a ticket branch name format:
+   - `<ticket-id>-<agent>-<summary>`
+6. Every branch and every commit must be tied to the same ticket id.
+7. Always return ticket name in final output.
 
 ## Ticket Filename Format
 - `status-type-name.md`
@@ -88,11 +92,21 @@ Constraints:
 - preserve backward compatibility where required
 - run required checks
 - update mailbox/worklog
+- work on branch: <ticket-id>-<agent>-<summary>
+- commit format: <ticket-id>-<agent>-<summary>
+- merge target branch: <target-branch>
 
 Return:
+- ticket name
 - root cause / change summary
 - files changed
 - checks run
 - deploy status
 ```
 
+## Output Requirements (Mandatory)
+- Always return:
+  - `Ticket Name`
+  - `Ticket Path`
+  - `Branch Name` (auto-created from ticket id + agent + summary)
+  - `Short Agent Handoff Prompt` (copy-paste ready)

@@ -6139,7 +6139,7 @@ export default function ChartSnapshotsPage() {
                 </option>
               ))}
             </select>
-            <button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11, marginLeft:"auto" }}>Save</button>
+            <div style={{ marginLeft: "auto" }}><button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button></div>
             <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, cursor:"pointer" }} title="Merge all TFs into one master snapshot">
               <input type="checkbox" checked={cfg.mergeSnapshots !== false} onChange={(e) => setCfgField("mergeSnapshots", e.target.checked)} style={{ cursor:"pointer" }} />
               Merge
