@@ -11,10 +11,25 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-21 14:36 UTC`
-- note: `all deploys complete`
+- lock_status: `LOCKED`
+- deploy_owner: `Codex`
+- since_utc: `2026-05-21 12:14 UTC`
+- note: `deploy json-tab canonical mapping fix for 2026-05-21-ai-json-tab-shows-default-zero-tradeplan-despite-valid-response`
+
+### [2026-05-21 14:45 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: d46d5a03
+- scope: `SignalDetailCard.jsx, ChartSnapshotsPage.jsx, config/schema_enums.json v3.1, config/guide_system.md, ticket trackers`
+- merge_to_main: YES (d46d5a03)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.21 12:45 - d46d5a03
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 12:45 - d46d5a03
+  - postgres: ok, redis: ok, mt5: connected
+- rollback: `git revert d46d5a03 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 11:14 UTC] AGENT:DeepSeek
 - status: DEPLOYED

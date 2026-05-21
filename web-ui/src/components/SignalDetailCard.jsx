@@ -1466,6 +1466,7 @@ export default function SignalDetailCard({
   const selectedAiPlan = useMemo(() => {
     const candidates = [
       selectedRawData,
+      effectiveRawSource,
       selectedPlanFromList?.__raw_plan,
       selectedPlanFromList,
       rawData,
@@ -1487,10 +1488,47 @@ export default function SignalDetailCard({
     }
     return null;
   }, [
+    effectiveRawSource,
     rawData,
     selectedPlanFromList,
     selectedPlanIndex,
     selectedPlanSymbol,
+    selectedRawData,
+  ]);
+
+  const selectedPlanJsonForDisplay = useMemo(() => {
+    if (mode !== "ai") return cleanRowJson || {};
+    if (selectedAiPlan && typeof selectedAiPlan === "object") return selectedAiPlan;
+
+    const candidates = [];
+    if (Array.isArray(selectedRawData?.trade_plan)) {
+      const picked =
+        selectedRawData.trade_plan[selectedPlanIndex] ||
+        selectedRawData.trade_plan[0];
+      if (picked && typeof picked === "object") candidates.push(picked);
+    }
+    if (
+      selectedPlanFromList?.__raw_plan &&
+      typeof selectedPlanFromList.__raw_plan === "object"
+    ) {
+      candidates.push(selectedPlanFromList.__raw_plan);
+    }
+    if (selectedPlanFromList && typeof selectedPlanFromList === "object") {
+      candidates.push(selectedPlanFromList);
+    }
+    if (selectedPlanRaw && typeof selectedPlanRaw === "object") {
+      candidates.push(selectedPlanRaw);
+    }
+    return (
+      candidates.find((x) => x && Object.keys(x).length > 0) || {}
+    );
+  }, [
+    cleanRowJson,
+    mode,
+    selectedAiPlan,
+    selectedPlanFromList,
+    selectedPlanIndex,
+    selectedPlanRaw,
     selectedRawData,
   ]);
 
@@ -3260,15 +3298,11 @@ export default function SignalDetailCard({
             overflow: "auto",
           }}
         >
-          {(
-            mode === "ai"
-              ? selectedPlanRaw && Object.keys(selectedPlanRaw).length > 0
-              : cleanRowJson &&
-                typeof cleanRowJson === "object" &&
-                Object.keys(cleanRowJson).length > 0
-          ) ? (
+          {selectedPlanJsonForDisplay &&
+          typeof selectedPlanJsonForDisplay === "object" &&
+          Object.keys(selectedPlanJsonForDisplay).length > 0 ? (
             <SmartContent
-              content={mode === "ai" ? selectedPlanRaw : cleanRowJson}
+              content={selectedPlanJsonForDisplay}
               mode="readonly"
               showCopy
             />
