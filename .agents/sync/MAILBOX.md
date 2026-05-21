@@ -30,7 +30,7 @@ Use this section for parallel-agent safety and deploy ordering.
 - verify:
   - /health: ok:true, version v2026.05.21 14:05 - f438601f, postgres: ok, redis: ok, mt5: connected
   - /ui: loads asset /assets/index-DHz91l0N.js
-  - VPS git HEAD: 17b231c
+  - VPS git HEAD: 0c8d320 (ledger-only fast-forward after deploy; runtime version remains v2026.05.21 14:05 - f438601f)
   - PM2 webhook: online pid 2559647
 - rollback: `git revert 17b231c7 f438601f && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
