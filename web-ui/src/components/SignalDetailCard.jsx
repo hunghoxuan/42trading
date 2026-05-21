@@ -236,12 +236,21 @@ function humanizeInfoKey(key) {
 }
 
 function semanticTone(value) {
-  const raw = String(value == null ? "" : value).trim().toLowerCase();
+  const raw = String(value == null ? "" : value)
+    .trim()
+    .toLowerCase();
   if (!raw) return "neutral";
   if (
-    ["yes", "true", "proceed", "ok", "pass", "safe", "bullish", "confirming"].some(
-      (k) => raw.includes(k),
-    )
+    [
+      "yes",
+      "true",
+      "proceed",
+      "ok",
+      "pass",
+      "safe",
+      "bullish",
+      "confirming",
+    ].some((k) => raw.includes(k))
   ) {
     return "good";
   }
@@ -381,12 +390,14 @@ function PlanHeader({
   const risk = entry != null && sl != null ? Math.abs(entry - sl) : null;
   const resolvedSymbol = plan.symbol || symbol;
 
+  const rrParsed = Number(String(plan.rr ?? "").replace(",", "."));
   const rrCandidate =
-    plan.rr ??
-    (entry != null && sl != null && tp != null && Math.abs(entry - sl) > 0
-      ? Math.abs(tp - entry) / Math.abs(entry - sl)
-      : null);
-  const rrNum = Number(String(rrCandidate ?? "").replace(",", "."));
+    Number.isFinite(rrParsed) && rrParsed > 0
+      ? rrParsed
+      : entry != null && sl != null && tp != null && Math.abs(entry - sl) > 0
+        ? Math.abs(tp - entry) / Math.abs(entry - sl)
+        : null;
+  const rrNum = Number.isFinite(rrCandidate) ? rrCandidate : 0;
   const rrText = Number.isFinite(rrNum) ? `${rrNum.toFixed(1)}r` : "0.0r";
   const directionColor = isBuy ? "#26a69a" : "#ef5350";
   const sideBg = isBuy ? "rgba(38,166,154,0.1)" : "rgba(239,83,80,0.1)";
@@ -1064,22 +1075,37 @@ export default function SignalDetailCard({
         rawSource.parsed_json.direction ||
         rawSource.parsed_json.symbol)
     ) {
-      return { ...rawSource.parsed_json, __analysis_full_raw: rawSource.__analysis_full_raw };
+      return {
+        ...rawSource.parsed_json,
+        __analysis_full_raw: rawSource.__analysis_full_raw,
+      };
     }
     return rawSource;
   }, [rawSource]);
   const derivedPlansFromRaw = useMemo(() => {
-    if (!effectiveRawSource || typeof effectiveRawSource !== "object") return [];
+    if (!effectiveRawSource || typeof effectiveRawSource !== "object")
+      return [];
     if (isCurrentAiTradePlan(effectiveRawSource)) {
       return [normalizeRawPlan(effectiveRawSource)];
     }
-    if (effectiveRawSource?.__raw_plan && typeof effectiveRawSource.__raw_plan === "object") {
+    if (
+      effectiveRawSource?.__raw_plan &&
+      typeof effectiveRawSource.__raw_plan === "object"
+    ) {
       return [normalizeRawPlan(effectiveRawSource.__raw_plan)];
     }
-    if (Array.isArray(effectiveRawSource.trade_plan) && effectiveRawSource.trade_plan.length) {
-      return effectiveRawSource.trade_plan.map((p) => normalizeRawPlan(p || {}));
+    if (
+      Array.isArray(effectiveRawSource.trade_plan) &&
+      effectiveRawSource.trade_plan.length
+    ) {
+      return effectiveRawSource.trade_plan.map((p) =>
+        normalizeRawPlan(p || {}),
+      );
     }
-    if (effectiveRawSource.trade_plan && typeof effectiveRawSource.trade_plan === "object") {
+    if (
+      effectiveRawSource.trade_plan &&
+      typeof effectiveRawSource.trade_plan === "object"
+    ) {
       return [normalizeRawPlan(effectiveRawSource.trade_plan)];
     }
     if (
@@ -1455,7 +1481,8 @@ export default function SignalDetailCard({
 
   const selectedPlanJsonForDisplay = useMemo(() => {
     if (mode !== "ai") return cleanRowJson || {};
-    if (selectedAiPlan && typeof selectedAiPlan === "object") return selectedAiPlan;
+    if (selectedAiPlan && typeof selectedAiPlan === "object")
+      return selectedAiPlan;
 
     const candidates = [];
     if (Array.isArray(selectedRawData?.trade_plan)) {
@@ -1476,9 +1503,7 @@ export default function SignalDetailCard({
     if (selectedPlanRaw && typeof selectedPlanRaw === "object") {
       candidates.push(selectedPlanRaw);
     }
-    return (
-      candidates.find((x) => x && Object.keys(x).length > 0) || {}
-    );
+    return candidates.find((x) => x && Object.keys(x).length > 0) || {};
   }, [
     cleanRowJson,
     mode,
@@ -1532,7 +1557,9 @@ export default function SignalDetailCard({
         (selectedAiPlan.execution_status || selectedAiPlan.status) && {
           key: "status",
           label: `Status: ${String(selectedAiPlan.execution_status || selectedAiPlan.status).toUpperCase()}`,
-          toneSource: String(selectedAiPlan.execution_status || selectedAiPlan.status),
+          toneSource: String(
+            selectedAiPlan.execution_status || selectedAiPlan.status,
+          ),
           tooltip: "Current trade/signal execution status",
         },
         selectedAiPlan.strategy && {
@@ -1627,169 +1654,171 @@ export default function SignalDetailCard({
               gap: 16,
             }}
           >
-          {displayPlanIds.map((planId, i) => {
-            const isMain = planId === "main";
-            const fallbackIdx = isMain
-              ? 0
-              : Number(String(planId).replace("suggested_", ""));
-            const p = plans[fallbackIdx] || plans[0] || {};
-            const isSelected = selectedPlanId === planId;
-            const isBuy =
-              String((planDrafts[planId] || p)?.direction).toUpperCase() ===
-              "BUY";
-            const isSimplified = !isSelected;
-            const planValue = planDrafts[planId] || p;
-            const headerPlan = {
-              ...planValue,
-              strategy:
-                planValue?.strategy || selectedAiPlan?.strategy || "",
-              entry_model:
-                planValue?.entry_model || selectedAiPlan?.entry_model || "",
-              risk_management: {
-                ...(selectedAiPlan?.risk_management || {}),
-                ...(planValue?.risk_management || {}),
-              },
-              confidence_pct:
-                planValue?.confidence_pct ??
-                selectedAiPlan?.risk_management?.confidence_pct ??
-                null,
-              estimate_mins_that_entry_happens:
-                planValue?.estimate_mins_that_entry_happens ??
-                selectedAiPlan?.risk_management?.estimated_entry_mins ??
-                null,
-            };
-            return (
-              <div
-                key={planId}
-                onClick={() => setSelectedPlanId(planId)}
-                style={{
-                  cursor: "pointer",
-                  border: isSelected
-                    ? "2px solid var(--accent)"
-                    : "1px solid var(--accent-soft)",
-                  padding: "8px 12px",
-                  borderRadius: 10,
-                  background: isSelected
-                    ? "rgba(255,255,255,0.05)"
-                    : "rgba(255,255,255,0.015)",
-                  boxShadow: isSelected
-                    ? "0 4px 12px rgba(0,0,0,0.15)"
-                    : "none",
-                  overflow: "hidden",
-                  minWidth: 0,
-                }}
-              >
-                <PlanHeader
-                  plan={{
-                    ...headerPlan,
-                    onSelectTP: (price, rrVal) => {
-                      setPlanDrafts((prev) => {
-                        let next = prev[planId] || p;
-                        next = applyLinkedPlanChange(next, "tp", price);
-                        if (rrVal)
-                          next = applyLinkedPlanChange(next, "rr", rrVal);
-                        return { ...prev, [planId]: next };
-                      });
-                      if (isMain) {
-                        tradePlan.onChange?.("tp", price);
-                        if (rrVal) tradePlan.onChange?.("rr", rrVal);
-                      }
-                    },
+            {displayPlanIds.map((planId, i) => {
+              const isMain = planId === "main";
+              const fallbackIdx = isMain
+                ? 0
+                : Number(String(planId).replace("suggested_", ""));
+              const p = plans[fallbackIdx] || plans[0] || {};
+              const isSelected = selectedPlanId === planId;
+              const isBuy =
+                String((planDrafts[planId] || p)?.direction).toUpperCase() ===
+                "BUY";
+              const isSimplified = !isSelected;
+              const planValue = planDrafts[planId] || p;
+              const headerPlan = {
+                ...planValue,
+                strategy: planValue?.strategy || selectedAiPlan?.strategy || "",
+                entry_model:
+                  planValue?.entry_model || selectedAiPlan?.entry_model || "",
+                risk_management: {
+                  ...(selectedAiPlan?.risk_management || {}),
+                  ...(planValue?.risk_management || {}),
+                },
+                confidence_pct:
+                  planValue?.confidence_pct ??
+                  selectedAiPlan?.risk_management?.confidence_pct ??
+                  null,
+                estimate_mins_that_entry_happens:
+                  planValue?.estimate_mins_that_entry_happens ??
+                  selectedAiPlan?.risk_management?.estimated_entry_mins ??
+                  null,
+              };
+              return (
+                <div
+                  key={planId}
+                  onClick={() => setSelectedPlanId(planId)}
+                  style={{
+                    cursor: "pointer",
+                    border: isSelected
+                      ? "2px solid var(--accent)"
+                      : "1px solid var(--accent-soft)",
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    background: isSelected
+                      ? "rgba(255,255,255,0.05)"
+                      : "rgba(255,255,255,0.015)",
+                    boxShadow: isSelected
+                      ? "0 4px 12px rgba(0,0,0,0.15)"
+                      : "none",
+                    overflow: "hidden",
+                    minWidth: 0,
                   }}
-                  symbol={
-                    planValue?.symbol || p?.symbol || chart?.symbol || "Plan"
-                  }
-                  isBuy={isBuy}
-                  simplified={isSimplified}
-                  status={tradePlan.status}
-                  volume={tradePlan.volume}
-                  pnl={tradePlan.pnl}
-                />
-
-                {isSelected && !tradePlan.hideEditor ? (
-                  <TradePlanEditor
-                    signalId={tradePlan.signalId || null}
-                    tradeId={tradePlan.tradeId || null}
-                    value={planValue}
-                    onChange={(k, v) => {
-                      let nextPlan = null;
-                      setPlanDrafts((prev) => {
-                        nextPlan = applyLinkedPlanChange(
-                          prev[planId] || p,
-                          k,
-                          v,
-                        );
-                        return {
-                          ...prev,
-                          [planId]: nextPlan,
-                        };
-                      });
-                      if (isMain) {
-                        tradePlan.onChange?.(k, v);
-                        if ((k === "entry" || k === "direction") && nextPlan) {
-                          if (nextPlan.tp !== undefined)
-                            tradePlan.onChange?.("tp", nextPlan.tp);
-                          if (nextPlan.sl !== undefined)
-                            tradePlan.onChange?.("sl", nextPlan.sl);
+                >
+                  <PlanHeader
+                    plan={{
+                      ...headerPlan,
+                      onSelectTP: (price, rrVal) => {
+                        setPlanDrafts((prev) => {
+                          let next = prev[planId] || p;
+                          next = applyLinkedPlanChange(next, "tp", price);
+                          if (rrVal)
+                            next = applyLinkedPlanChange(next, "rr", rrVal);
+                          return { ...prev, [planId]: next };
+                        });
+                        if (isMain) {
+                          tradePlan.onChange?.("tp", price);
+                          if (rrVal) tradePlan.onChange?.("rr", rrVal);
                         }
-                      }
+                      },
                     }}
-                    onReset={tradePlan.onReset}
-                    onCancel={tradePlan.onCancel}
-                    onClose={tradePlan.onClose}
-                    onSave={tradePlan.onSave}
-                    onAddSignal={(pos) =>
-                      tradePlan.onAddSignal?.(pos || planValue, planId)
+                    symbol={
+                      planValue?.symbol || p?.symbol || chart?.symbol || "Plan"
                     }
-                    onAddTrade={(pos) =>
-                      tradePlan.onAddTrade?.(pos || planValue, planId)
-                    }
-                    showSaveButton={tradePlan.showSaveButton}
-                    showAddSignalButton={tradePlan.showAddSignalButton}
-                    showAddTradeButton={tradePlan.showAddTradeButton}
-                    showActionsInView={mode === "ai"}
-                    addTradeLabel={tradePlan.addTradeLabel}
-                    showResetButton={tradePlan.showResetButton !== false}
-                    busy={tradePlan.busy || {}}
-                    disabled={Boolean(tradePlan.disabled)}
-                    lockTradeFields={Boolean(tradePlan.lockTradeFields)}
-                    viewOnly={Boolean(tradePlan.viewOnly)}
-                    error={tradePlan.error || ""}
+                    isBuy={isBuy}
+                    simplified={isSimplified}
+                    status={tradePlan.status}
+                    volume={tradePlan.volume}
+                    pnl={tradePlan.pnl}
                   />
-                ) : (
-                  <TradePlanEditor
-                    value={planValue}
-                    onAddSignal={(pos) =>
-                      tradePlan.onAddSignal?.(pos || planValue, planId)
-                    }
-                    onAddTrade={(pos) =>
-                      tradePlan.onAddTrade?.(pos || planValue, planId)
-                    }
-                    showSaveButton={false}
-                    showAddSignalButton={
-                      mode === "ai" && tradePlan.showAddSignalButton
-                    }
-                    showAddTradeButton={
-                      mode === "ai" && tradePlan.showAddTradeButton
-                    }
-                    showActionsInView={mode === "ai"}
-                    showResetButton={false}
-                    busy={tradePlan.busy || {}}
-                    disabled={true}
-                    viewOnly={true}
-                    lockTradeFields={true}
-                  />
-                )}
-                {isMain && tradePlan.successMessage && (
-                  <div style={{ marginTop: 8 }}>
-                    <span className="minor-text msg-success">
-                      {tradePlan.successMessage}
-                    </span>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+
+                  {isSelected && !tradePlan.hideEditor ? (
+                    <TradePlanEditor
+                      signalId={tradePlan.signalId || null}
+                      tradeId={tradePlan.tradeId || null}
+                      value={planValue}
+                      onChange={(k, v) => {
+                        let nextPlan = null;
+                        setPlanDrafts((prev) => {
+                          nextPlan = applyLinkedPlanChange(
+                            prev[planId] || p,
+                            k,
+                            v,
+                          );
+                          return {
+                            ...prev,
+                            [planId]: nextPlan,
+                          };
+                        });
+                        if (isMain) {
+                          tradePlan.onChange?.(k, v);
+                          if (
+                            (k === "entry" || k === "direction") &&
+                            nextPlan
+                          ) {
+                            if (nextPlan.tp !== undefined)
+                              tradePlan.onChange?.("tp", nextPlan.tp);
+                            if (nextPlan.sl !== undefined)
+                              tradePlan.onChange?.("sl", nextPlan.sl);
+                          }
+                        }
+                      }}
+                      onReset={tradePlan.onReset}
+                      onCancel={tradePlan.onCancel}
+                      onClose={tradePlan.onClose}
+                      onSave={tradePlan.onSave}
+                      onAddSignal={(pos) =>
+                        tradePlan.onAddSignal?.(pos || planValue, planId)
+                      }
+                      onAddTrade={(pos) =>
+                        tradePlan.onAddTrade?.(pos || planValue, planId)
+                      }
+                      showSaveButton={tradePlan.showSaveButton}
+                      showAddSignalButton={tradePlan.showAddSignalButton}
+                      showAddTradeButton={tradePlan.showAddTradeButton}
+                      showActionsInView={mode === "ai"}
+                      addTradeLabel={tradePlan.addTradeLabel}
+                      showResetButton={tradePlan.showResetButton !== false}
+                      busy={tradePlan.busy || {}}
+                      disabled={Boolean(tradePlan.disabled)}
+                      lockTradeFields={Boolean(tradePlan.lockTradeFields)}
+                      viewOnly={Boolean(tradePlan.viewOnly)}
+                      error={tradePlan.error || ""}
+                    />
+                  ) : (
+                    <TradePlanEditor
+                      value={planValue}
+                      onAddSignal={(pos) =>
+                        tradePlan.onAddSignal?.(pos || planValue, planId)
+                      }
+                      onAddTrade={(pos) =>
+                        tradePlan.onAddTrade?.(pos || planValue, planId)
+                      }
+                      showSaveButton={false}
+                      showAddSignalButton={
+                        mode === "ai" && tradePlan.showAddSignalButton
+                      }
+                      showAddTradeButton={
+                        mode === "ai" && tradePlan.showAddTradeButton
+                      }
+                      showActionsInView={mode === "ai"}
+                      showResetButton={false}
+                      busy={tradePlan.busy || {}}
+                      disabled={true}
+                      viewOnly={true}
+                      lockTradeFields={true}
+                    />
+                  )}
+                  {isMain && tradePlan.successMessage && (
+                    <div style={{ marginTop: 8 }}>
+                      <span className="minor-text msg-success">
+                        {tradePlan.successMessage}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1855,7 +1884,9 @@ export default function SignalDetailCard({
                   tp1Price={chart?.tp1Price}
                   tp2Price={chart?.tp2Price}
                   tp3Price={chart?.tp3Price}
-                  tradeSid={chart?.tradeId || response?.sid || response?.id || ""}
+                  tradeSid={
+                    chart?.tradeId || response?.sid || response?.id || ""
+                  }
                   showAnalyzeButton={false}
                   showTradeButton={false}
                   showEditButton={false}
@@ -2132,19 +2163,19 @@ export default function SignalDetailCard({
                     }}
                   >
                     {decisionBadges.map((item) => (
-                        <span
-                          key={item.key}
-                          className="badge badge-mini"
-                          title={item.tooltip || item.label}
-                          style={{
-                            padding: "3px 7px",
-                            fontSize: 10,
-                            ...semanticBadgeStyle(item.toneSource),
-                          }}
-                        >
-                          {item.label}
-                        </span>
-                      ))}
+                      <span
+                        key={item.key}
+                        className="badge badge-mini"
+                        title={item.tooltip || item.label}
+                        style={{
+                          padding: "3px 7px",
+                          fontSize: 10,
+                          ...semanticBadgeStyle(item.toneSource),
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    ))}
                   </div>
 
                   {[
@@ -2199,22 +2230,37 @@ export default function SignalDetailCard({
                                     display: "inline-block",
                                     padding:
                                       typeof v === "boolean" ||
-                                      ["yes", "no", "true", "false", "high", "low"].includes(
-                                        String(v).toLowerCase(),
-                                      )
+                                      [
+                                        "yes",
+                                        "no",
+                                        "true",
+                                        "false",
+                                        "high",
+                                        "low",
+                                      ].includes(String(v).toLowerCase())
                                         ? "1px 6px"
                                         : 0,
                                     borderRadius:
                                       typeof v === "boolean" ||
-                                      ["yes", "no", "true", "false", "high", "low"].includes(
-                                        String(v).toLowerCase(),
-                                      )
+                                      [
+                                        "yes",
+                                        "no",
+                                        "true",
+                                        "false",
+                                        "high",
+                                        "low",
+                                      ].includes(String(v).toLowerCase())
                                         ? 999
                                         : 0,
                                     ...(typeof v === "boolean" ||
-                                    ["yes", "no", "true", "false", "high", "low"].includes(
-                                      String(v).toLowerCase(),
-                                    )
+                                    [
+                                      "yes",
+                                      "no",
+                                      "true",
+                                      "false",
+                                      "high",
+                                      "low",
+                                    ].includes(String(v).toLowerCase())
                                       ? semanticBadgeStyle(v)
                                       : {}),
                                   }}
@@ -2285,22 +2331,37 @@ export default function SignalDetailCard({
                                           display: "inline-block",
                                           padding:
                                             typeof v === "boolean" ||
-                                            ["yes", "no", "true", "false", "high", "low"].includes(
-                                              String(v).toLowerCase(),
-                                            )
+                                            [
+                                              "yes",
+                                              "no",
+                                              "true",
+                                              "false",
+                                              "high",
+                                              "low",
+                                            ].includes(String(v).toLowerCase())
                                               ? "1px 6px"
                                               : 0,
                                           borderRadius:
                                             typeof v === "boolean" ||
-                                            ["yes", "no", "true", "false", "high", "low"].includes(
-                                              String(v).toLowerCase(),
-                                            )
+                                            [
+                                              "yes",
+                                              "no",
+                                              "true",
+                                              "false",
+                                              "high",
+                                              "low",
+                                            ].includes(String(v).toLowerCase())
                                               ? 999
                                               : 0,
                                           ...(typeof v === "boolean" ||
-                                          ["yes", "no", "true", "false", "high", "low"].includes(
-                                            String(v).toLowerCase(),
-                                          )
+                                          [
+                                            "yes",
+                                            "no",
+                                            "true",
+                                            "false",
+                                            "high",
+                                            "low",
+                                          ].includes(String(v).toLowerCase())
                                             ? semanticBadgeStyle(v)
                                             : {}),
                                         }}
