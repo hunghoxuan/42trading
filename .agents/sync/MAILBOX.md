@@ -11,10 +11,28 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 14:04 UTC`
-- note: `deploying files tab snapshots + TP2/TP3 chart + edit persistence regression fix`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 14:12 UTC`
+- note: `deployed files tab snapshots + TP2/TP3 chart + edit persistence regression fix at 17b231c`
+
+### [2026-05-21 14:12 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: 17b231c7
+- scope: `Files tab snapshot traceability, TP2/TP3 chart overlays, plan edit persistence, version bump`
+- merge_to_main: YES (17b231c7)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 14:05 - f438601f
+  - ea_version: v2026.05.21 14:05 - f438601f
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 14:05 - f438601f, postgres: ok, redis: ok, mt5: connected
+  - /ui: loads asset /assets/index-DHz91l0N.js
+  - VPS git HEAD: 17b231c
+  - PM2 webhook: online pid 2559647
+- rollback: `git revert 17b231c7 f438601f && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 13:42 UTC] AGENT:Codex
 - status: DEPLOYED
