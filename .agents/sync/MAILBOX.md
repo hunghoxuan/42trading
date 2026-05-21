@@ -11,10 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
-- since_utc: `2026-05-21 15:06 UTC`
-- note: `deploy complete — ChartSnapshots entry/sl hydrate + TP2/TP3 wiring fix`
+- lock_status: `LOCKED`
+- deploy_owner: `Codex`
+- since_utc: `2026-05-21 15:10 UTC`
+- note: `hotfix deploy: context-menu entry sync + tp2/tp3 info chart wiring`
 
 ### [2026-05-21 15:06 UTC] AGENT:Codex
 - status: DEPLOYED

@@ -579,22 +579,35 @@ function getPlanTpCandidates(plan = {}) {
 }
 
 function planEntryNumber(plan = {}, parsed = {}) {
-  return parseNum(
-    plan?.execution_plan?.entry?.price ??
-      plan?.entry ??
-      plan?.entry_price ??
-      parsed?.entry ??
-      parsed?.price,
-  );
+  const candidates = [
+    plan?.execution_plan?.entry?.price,
+    plan?.entry,
+    plan?.entry_price,
+    parsed?.execution_plan?.entry?.price,
+    parsed?.entry,
+    parsed?.price,
+  ];
+  for (const c of candidates) {
+    const n = parseNum(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return parseNum(plan?.entry ?? plan?.entry_price ?? parsed?.entry ?? parsed?.price);
 }
 
 function planStopLossNumber(plan = {}, parsed = {}) {
-  return parseNum(
-    plan?.execution_plan?.stop_loss?.price ??
-      plan?.sl ??
-      plan?.stop_loss ??
-      parsed?.sl,
-  );
+  const candidates = [
+    plan?.execution_plan?.stop_loss?.price,
+    plan?.sl,
+    plan?.stop_loss,
+    parsed?.execution_plan?.stop_loss?.price,
+    parsed?.sl,
+    parsed?.stop_loss,
+  ];
+  for (const c of candidates) {
+    const n = parseNum(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return parseNum(plan?.sl ?? plan?.stop_loss ?? parsed?.sl ?? parsed?.stop_loss);
 }
 
 function planTpLevelNumber(plan = {}, level = 1) {
@@ -3918,7 +3931,7 @@ export default function ChartSnapshotsPage() {
   const updatePositionField = (key, value) => {
     setPosition((prev) => {
       let normalizedValue = value;
-      if (["entry", "tp", "sl", "rr"].includes(key)) {
+      if (["entry", "tp", "tp2", "tp3", "sl", "rr"].includes(key)) {
         normalizedValue = String(value ?? "").replace(",", ".");
       }
       const next = { ...prev, [key]: normalizedValue };
@@ -3958,12 +3971,33 @@ export default function ChartSnapshotsPage() {
         const reward = Math.abs(t - e);
         if (risk > 0 && reward > 0) next.rr = formatNum3(reward / risk);
       }
-      if (["entry", "tp", "sl", "rr"].includes(key)) {
+      if (["entry", "tp", "tp2", "tp3", "sl", "rr"].includes(key)) {
         const parsed = parseNum(next[key]);
         next[key] = Number.isFinite(parsed) ? formatNum3(parsed) : "";
       }
       return next;
     });
+  };
+
+  const handlePlanLevelChange = (levelKey, price) => {
+    const n = Number(price);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const v = formatNum3(n);
+    if (levelKey === "tp1" || levelKey === "tp") {
+      updatePositionField("tp", v);
+      return;
+    }
+    if (levelKey === "tp2") {
+      updatePositionField("tp2", v);
+      return;
+    }
+    if (levelKey === "tp3") {
+      updatePositionField("tp3", v);
+      return;
+    }
+    if (levelKey === "entry" || levelKey === "sl") {
+      updatePositionField(levelKey, v);
+    }
   };
 
   const [submittingPlanId, setSubmittingPlanId] = useState(null); // track which plan is adding
@@ -6784,6 +6818,10 @@ export default function ChartSnapshotsPage() {
                 entryPrice: position.entry,
                 slPrice: position.sl,
                 tpPrice: position.tp,
+                tp1Price: position.tp || "",
+                tp2Price: position.tp2 || "",
+                tp3Price: position.tp3 || "",
+                onPlanLevelChange: handlePlanLevelChange,
                 detailTfTab: timeframe,
                 showEditButton: !(isTradeRoute || hasAnalyzeResponse),
                 showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
