@@ -22,3 +22,12 @@ trigger: always_on
   - checks to run
   - expected return format
 - If user manual action is required, include one copy-paste command block only.
+- For coding-task responses, always include:
+  - git branch
+  - what's done
+  - what's remaining
+  - any change from original requirement
+  - deploy status
+  - expected build version (if deployed)
+- Preferred summary table format:
+  - `File | Now | After | Suggestion | What change | Status`

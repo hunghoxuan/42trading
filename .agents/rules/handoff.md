@@ -22,6 +22,13 @@
   - checks/tests
   - output/report format
   - assumptions/decisions not in spec + their tradeoff/risk
+- Handoff doc mandatory header fields:
+  - git branch
+  - AI agent name
+  - what's done
+  - what's remaining
+  - continuation instructions (step-by-step)
+  - deploy status + expected build version (if deployed)
 - Mirror the same detailed delegation prompt at end of user-facing chat so user can copy-paste to other agent.
 - **On ticket finish**: update MAILBOX handoff section (status → DONE, add next agent relay), and include a copy-paste prompt in chat instructing the next agent what to do (read ticket, run checks, deploy, etc).
 
