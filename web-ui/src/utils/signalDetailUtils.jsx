@@ -209,34 +209,42 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   // Determine precision from entry value (used for all linked fields)
   const precRef = next.entry || prevPlan.entry || "";
 
-  // Auto-update RR when Entry, SL, or TP changes
-  if (["entry", "sl", "tp"].includes(key)) {
-    if (entry != null && sl != null && tp != null && entry !== sl) {
-      const rr = Math.abs(tp - entry) / Math.abs(entry - sl);
+  const tp1Num = asNum(next.tp1);
+  const tpNum = asNum(next.tp);
+  // Use tp1 as primary target; fall back to tp
+  const effectiveTp = tp1Num ?? tpNum;
+
+  // Auto-update RR when Entry, SL, or TP1/TP changes
+  if (["entry", "sl", "tp", "tp1"].includes(key)) {
+    if (entry != null && sl != null && effectiveTp != null && entry !== sl) {
+      const rr = Math.abs(effectiveTp - entry) / Math.abs(entry - sl);
       if (Number.isFinite(rr)) next.rr = String(Number(rr.toFixed(1)));
     }
   }
 
-  // Auto-update TP when RR changes
+  // Auto-update TP1 when RR changes (TP1 is primary target)
   if (key === "rr") {
     const rr = asNum(next.rr);
     if (entry != null && sl != null && rr != null && entry !== sl) {
       const newTp = isBuy
         ? entry + rr * Math.abs(entry - sl)
         : entry - rr * Math.abs(entry - sl);
-      if (Number.isFinite(newTp)) next.tp = formatNumPrec(newTp, precRef);
-      // Also sync tp1 to new TP
-      next.tp1 = next.tp;
+      if (Number.isFinite(newTp)) {
+        next.tp1 = formatNumPrec(newTp, precRef);
+        next.tp = next.tp1;
+      }
     }
   }
 
-  // Sync tp1 ↔ tp (skip if RR was just changed - already handled above)
+  // Sync tp1 → tp (TP1 is primary; tp is kept in sync for backward compat)
   if (key !== "rr") {
-    const tp1Num = asNum(next.tp1);
-    const tpNum = asNum(next.tp);
-    if (tp1Num != null) next.tp = formatNumPrec(tp1Num, precRef);
-    else if (tpNum != null && asNum(next.tp1) == null)
-      next.tp1 = formatNumPrec(tpNum, precRef);
+    const nextTp1 = asNum(next.tp1);
+    const nextTp = asNum(next.tp);
+    if (nextTp1 != null) {
+      next.tp = formatNumPrec(nextTp1, precRef);
+    } else if (nextTp != null) {
+      next.tp1 = formatNumPrec(nextTp, precRef);
+    }
   }
   return next;
 }

@@ -3,6 +3,7 @@ import { getRuntimeApiKey, setRuntimeApiKey, api } from "../../api";
 import UserDetailSection from "../../components/UserDetailSection";
 import { EventsPageContent } from "../system/EventsPage";
 import { normalizeDisplayTimezone } from "../../utils/format";
+import { showToast } from "../../components/ToastContainer";
 
 const ROUTE_OPTIONS = [
   { value: "ea", label: "EA Client (MT5)" },
@@ -466,24 +467,41 @@ export default function SettingsPage({
     dataOverride = null,
     statusOverride = null,
   ) {
+    console.log("[saveSetting] called with key:", settingKey, "dataOverride:", dataOverride, "statusOverride:", statusOverride);
     const s = settings.find((x) => getSettingKey(x) === settingKey);
-    if (!s) return;
+    if (!s) {
+      const msg = "Setting not found. Please select a setting first.";
+      console.warn("[saveSetting]", msg, "activeTab:", activeTab, "settingsKeys:", settings.map(x => getSettingKey(x)));
+      setSettingsMsg(msg);
+      return;
+    }
+    console.log("[saveSetting] found setting:", s.type, s.name, "status:", s.status);
     setSettingsLoading(true);
     setSettingsMsg("");
+    const payload = {
+      type: s.type,
+      name: s.name,
+      data: dataOverride ?? s.data,
+      status: statusOverride ?? s.status ?? "active",
+    };
+    console.log("[saveSetting] upsert payload:", JSON.stringify(payload).slice(0, 500));
     try {
-      await api.upsertSetting({
-        type: s.type,
-        name: s.name,
-        data: dataOverride || s.data,
-        status: statusOverride || s.status,
-      });
-      setSettingsMsg(`Settings for ${s.type}/${s.name} saved.`);
+      const result = await api.upsertSetting(payload);
+      console.log("[saveSetting] API result:", result);
+      const successMsg = `Settings for ${s.type}/${s.name} saved.`;
+      setSettingsMsg(successMsg);
+      showToast({ message: successMsg, type: "success" });
       await loadData();
+      console.log("[saveSetting] loadData complete");
     } catch (err) {
-      setSettingsMsg(err.message);
+      const errMsg = err?.message || String(err || "Unknown error");
+      console.error("[saveSetting] error:", errMsg, err);
+      setSettingsMsg(errMsg);
+      showToast({ message: errMsg, type: "error" });
     } finally {
       setSettingsLoading(false);
-      window.setTimeout(() => setSettingsMsg(""), 3000);
+      console.log("[saveSetting] done, settingsLoading=false");
+      window.setTimeout(() => setSettingsMsg(""), 5000);
     }
   }
 
@@ -2232,6 +2250,7 @@ export default function SettingsPage({
                     className="primary-button"
                     style={{ padding: "12px 32px", fontSize: 14 }}
                     onClick={() => {
+                      console.log("[SAVE CHANGES] clicked, selectedSetting.type:", selectedSetting?.type, "key:", getSettingKey(selectedSetting));
                       if (selectedSetting.type === "cron") {
                         const nextData = {
                           ...selectedSetting.data,

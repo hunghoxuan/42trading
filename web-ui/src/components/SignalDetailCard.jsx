@@ -100,14 +100,14 @@ function choosePrimaryTpAndRr(p = {}, ctx = {}) {
   const isBuy = direction === "BUY";
   const isSell = direction === "SELL";
   const candidates = [
-    toCandidate(p?.tp, p?.rr ?? p?.risk_reward, "tp"),
-    toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
     toCandidate(p?.tp1, p?.risk_reward, "tp1"),
     toCandidate(
       p?.multiple_exits?.tp1?.price,
       p?.multiple_exits?.tp1?.risk_reward,
       "multiple_exits.tp1",
     ),
+    toCandidate(p?.tp, p?.rr ?? p?.risk_reward, "tp"),
+    toCandidate(p?.take_profit, p?.rr ?? p?.risk_reward, "take_profit"),
     toCandidate(
       p?.multiple_exits?.tp2?.price,
       p?.multiple_exits?.tp2?.risk_reward,
@@ -187,7 +187,9 @@ function normalizeRawPlan(p = {}) {
       src?.multiple_exits?.tp3?.price ??
       src?.multiple_exits?.full_tp?.price,
   );
-  const tpNum = parseNumLoose(src?.execution_plan?.tp1?.price ?? chosen.tp);
+  const tpNum = tp1 ?? parseNumLoose(chosen.tp);
+  // Always sync tp from tp1 (TP1 is primary target)
+  const tpVal = tp1 ?? (chosen.tp ? String(parseNumLoose(chosen.tp)) : "");
   const rrRaw = parseNumLoose(
     src?.execution_plan?.risk_reward ?? src?.rr ?? src?.risk_reward,
   );
@@ -201,7 +203,7 @@ function normalizeRawPlan(p = {}) {
     ai_rr: rrRaw == null ? "" : String(rrRaw),
     direction,
     entry: entry == null ? "" : String(entry),
-    tp: tpNum == null ? chosen.tp : String(tpNum),
+    tp: tpVal,
     tp1: tp1 == null ? "" : String(tp1),
     tp2: tp2 == null ? "" : String(tp2),
     tp3: tp3 == null ? "" : String(tp3),

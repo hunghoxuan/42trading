@@ -16,6 +16,7 @@ import {
   validateTradePlan,
 } from "../../utils/signalDetailUtils";
 import { showDateTime } from "../../utils/format";
+import { showToast } from "../../components/ToastContainer";
 
 function PnlDisplay({ value }) {
   const n = asNum(value);
@@ -325,7 +326,10 @@ export default function TradeDetailPage() {
   }, [trade]);
 
   async function onUpdateTradePlan() {
-    if (!trade) return;
+    if (!trade) {
+      setError("No trade loaded.");
+      return;
+    }
     const validErr =
       validateTradePlan(detailPlan, { skipRrCheck: false }) ||
       orderTypeRuleError(
@@ -336,6 +340,7 @@ export default function TradeDetailPage() {
       );
     if (validErr) {
       setPlanError(validErr);
+      showToast({ message: validErr, type: "error" });
       return;
     }
     try {
@@ -344,7 +349,7 @@ export default function TradeDetailPage() {
         side: detailPlan.direction,
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp),
+        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
         tp1: asNum(detailPlan.tp1),
         tp2: asNum(detailPlan.tp2),
         tp3: asNum(detailPlan.tp3),
@@ -353,7 +358,7 @@ export default function TradeDetailPage() {
         note: detailPlan.note,
       };
       await api.saveTradePlan(tradeId, payload);
-      // Reload
+      // Reload trade events and trade data (but keep user-edited plan intact)
       const [evs, data] = await Promise.all([
         api.v2TradeEvents(tradeId),
         api.v2Trades({ q: tradeId }),
@@ -366,7 +371,8 @@ export default function TradeDetailPage() {
             data.items[0])) ||
         null;
       setTrade(t);
-      if (t) setDetailPlan(extractTradePlanFromTrade(t));
+      // Keep current detailPlan (user just saved it) instead of re-extracting
+      setPlanError("");
     } catch (e) {
       setError(e?.message || "Update failed");
     } finally {
@@ -394,7 +400,7 @@ export default function TradeDetailPage() {
         side: detailPlan.direction,
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp),
+        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
         tp1: asNum(detailPlan.tp1),
         tp2: asNum(detailPlan.tp2),
         tp3: asNum(detailPlan.tp3),

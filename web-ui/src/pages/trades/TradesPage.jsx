@@ -322,6 +322,7 @@ export default function TradesPage() {
   const inFlightRef = useRef(false);
   const tradeEventsInFlightRef = useRef(false);
   const selectedTradeIdRef = useRef("");
+  const planSaveGuardRef = useRef(false);
 
   const accountById = useMemo(() => {
     const map = new Map();
@@ -613,6 +614,11 @@ export default function TradesPage() {
     const ref = tradeKeyOf(selectedTrade);
     if (ref) {
       loadTradeEvents(ref);
+      // Skip re-extraction if plan was just saved (user edits are authoritative)
+      if (planSaveGuardRef.current) {
+        planSaveGuardRef.current = false;
+        return;
+      }
       setDetailPlan(extractTradePlanFromTrade(selectedTrade));
     } else {
       setTradeEvents([]);
@@ -652,16 +658,22 @@ export default function TradesPage() {
   }, [selectedTrade?.id, selectedTrade?.sid]);
 
   async function onUpdateTradePlan() {
-    if (!selectedTrade) return;
+    if (!selectedTrade) {
+      setError("No trade selected.");
+      return;
+    }
     const ref = tradeKeyOf(selectedTrade);
-    if (!ref) return;
+    if (!ref) {
+      setError("Cannot identify selected trade.");
+      return;
+    }
     try {
       setEditBusy(true);
       const payload = {
         side: detailPlan.direction,
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp),
+        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
         tp1: asNum(detailPlan.tp1),
         tp2: asNum(detailPlan.tp2),
         tp3: asNum(detailPlan.tp3),
@@ -682,6 +694,8 @@ export default function TradesPage() {
         risk_money: asNum(detailPlan.risk_money),
       };
       await api.saveTradePlan(ref, payload);
+      // Guard against re-extraction after save — keep user edits
+      planSaveGuardRef.current = true;
       await loadTrades();
       await loadTradeEvents(ref);
     } catch (e) {
@@ -701,7 +715,7 @@ export default function TradesPage() {
         side: detailPlan.direction,
         order_type: detailPlan.trade_type,
         price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp),
+        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
         tp1: asNum(detailPlan.tp1),
         tp2: asNum(detailPlan.tp2),
         tp3: asNum(detailPlan.tp3),

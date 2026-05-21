@@ -376,11 +376,13 @@ export function TradePlanEditor({
 
   const handleRrChange = useCallback(
     (key, rrVal) => {
-      const tpKey = key === "rr" ? "tp" : key === "rr2" ? "tp2" : "tp3";
+      const tpKey = key === "rr" ? "tp1" : key === "rr2" ? "tp2" : "tp3";
       const tp = calcTpFromRr(value.entry, value.sl, rrVal, value.direction);
       if (tp != null && Number.isFinite(tp)) {
         update(key, rrVal);
         update(tpKey, formatNum3(tp));
+        // Also sync tp to tp1 for backward compatibility
+        if (key === "rr") update("tp", formatNum3(tp));
       } else {
         update(key, rrVal);
       }
@@ -682,9 +684,9 @@ export function TradePlanEditor({
               left={
                 <NumericInline
                   idPrefix={idPrefix}
-                  label="TP"
-                  k="tp"
-                  valueRaw={value.tp}
+                  label="TP1"
+                  k="tp1"
+                  valueRaw={value.tp1 ?? value.tp}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={tradeFieldsDisabled}

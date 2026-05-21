@@ -18159,6 +18159,7 @@ const appHandler = async (req, res) => {
         lookbackBars: body.lookbackBars,
         format: body.format,
         quality: body.quality,
+        merge_snapshots: body.merge_snapshots,
       });
       const tradeSid = String(
         body.trade_sid || body.tradeSid || body.sid || "",
