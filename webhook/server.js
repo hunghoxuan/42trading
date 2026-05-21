@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.21 19:31 - f9debdd5"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.21 19:31 - f9debdd5",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -374,7 +377,7 @@ class NotificationManager {
     this.settingsCache = new Map();
     this.queue = [];
     this._pool = null;
-    this._logFn = null;     // unified log function (b.log)
+    this._logFn = null; // unified log function (b.log)
     this._flushTimer = null;
     this._flushPromise = null;
     this._settingsLoaded = false;
@@ -481,7 +484,17 @@ class NotificationManager {
     // 3) db_log channel → enqueue raw metadata for unified b.log()
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
-      const objectId = payload.object_id || payload.position || payload.signal_id || (eventType === "SYSTEM_EVENT" ? "system" : eventType === "REMOTE_API_CALL" ? "api" : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC" ? "broker" : null);
+      const objectId =
+        payload.object_id ||
+        payload.position ||
+        payload.signal_id ||
+        (eventType === "SYSTEM_EVENT"
+          ? "system"
+          : eventType === "REMOTE_API_CALL"
+            ? "api"
+            : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC"
+              ? "broker"
+              : null);
       const objectTable = payload.object_table || eventType;
       // Strip internal keys before storing
       const meta = { ...payload };
@@ -4213,7 +4226,10 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     ],
   });
   try {
-    const mergeSnapshots = opts.merge_snapshots !== undefined ? Boolean(opts.merge_snapshots) : ALL_SNAPSHOTS_IN_1_FILE_DEFAULT;
+    const mergeSnapshots =
+      opts.merge_snapshots !== undefined
+        ? Boolean(opts.merge_snapshots)
+        : ALL_SNAPSHOTS_IN_1_FILE_DEFAULT;
     if (mergeSnapshots) {
       const results = [];
       for (const symbol of symbols) {
@@ -5843,7 +5859,8 @@ async function callAiProvider({
   // Claude → use Anthropic Messages API
   if (modelLower.includes("claude")) {
     trackApiCall("Claude");
-    const claudeKey = callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
+    const claudeKey =
+      callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
     if (!claudeKey) throw new Error("CLAUDE_API_KEY is missing in Settings.");
     const out = await anthropicMessagesWithFallback({
       apiKey: claudeKey,
@@ -7648,7 +7665,9 @@ async function _mt5InitBackendInternal() {
 
     // TRADE_SYNC_UPDATE: only log on execution_status change (avoids 10s spam)
     if (subEvent === "TRADE_SYNC_UPDATE") {
-      const newStatus = String(metadata.execution_status || metadata.status_raw || "");
+      const newStatus = String(
+        metadata.execution_status || metadata.status_raw || "",
+      );
       if (newStatus) {
         try {
           const prev = await pool.query(
@@ -7657,19 +7676,33 @@ async function _mt5InitBackendInternal() {
           );
           const prevContent = String(prev.rows?.[0]?.content || "");
           // Find last TRADE_SYNC_UPDATE status in content (greedy prefix to get last occurrence)
-          const lastStatusMatch = prevContent.match(/.*\[([^\]]+)\] TRADE_SYNC_UPDATE[\s\S]*?execution_status:\s*(\S+)/);
+          const lastStatusMatch = prevContent.match(
+            /.*\[([^\]]+)\] TRADE_SYNC_UPDATE[\s\S]*?execution_status:\s*(\S+)/,
+          );
           if (lastStatusMatch && lastStatusMatch[2] === newStatus) {
             return; // status unchanged, skip
           }
-        } catch { /* proceed on error */ }
+        } catch {
+          /* proceed on error */
+        }
       }
     }
 
     const block = buildTraceBlock(subEvent, metadata);
     // Also store JSON payload for backward compat (History tab, etc.)
-    const normalizedMeta = metadata && typeof metadata === "object"
-      ? JSON.stringify({ ...metadata, event: subEvent, status: metadata.status || (metadata.error ? "ERROR" : "OK"), error: metadata.error ? String(metadata.error) : null })
-      : JSON.stringify({ event: subEvent, message: String(metadata || ""), status: "OK" });
+    const normalizedMeta =
+      metadata && typeof metadata === "object"
+        ? JSON.stringify({
+            ...metadata,
+            event: subEvent,
+            status: metadata.status || (metadata.error ? "ERROR" : "OK"),
+            error: metadata.error ? String(metadata.error) : null,
+          })
+        : JSON.stringify({
+            event: subEvent,
+            message: String(metadata || ""),
+            status: "OK",
+          });
     try {
       await pool.query(
         `INSERT INTO logs (object_id, object_table, symbol, event_type, content, metadata, user_id, created_at, updated_at)
@@ -7679,7 +7712,15 @@ async function _mt5InitBackendInternal() {
                        metadata = EXCLUDED.metadata,
                        symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
                        updated_at = NOW()`,
-        [objectId, objectTable, symbol, traceType, block, normalizedMeta, userId],
+        [
+          objectId,
+          objectTable,
+          symbol,
+          traceType,
+          block,
+          normalizedMeta,
+          userId,
+        ],
       );
     } catch (e) {
       console.warn("[b.log] upsert error:", e.message);
@@ -12454,7 +12495,8 @@ async function fetchBinanceBars(symbolNorm, tfNorm, bars) {
 
 // Merge live last_price into last bar's close for TV chart real-time display
 function mergeLastPriceIntoBars(result) {
-  if (!result || !Array.isArray(result.bars) || !result.bars.length) return result;
+  if (!result || !Array.isArray(result.bars) || !result.bars.length)
+    return result;
   const lp = Number(result.last_price);
   if (!Number.isFinite(lp) || lp <= 0) return result;
   const lastBar = result.bars[result.bars.length - 1];
@@ -13547,7 +13589,7 @@ function splitTraceContent(row) {
     const header = lines[0] || "";
     const m = header.match(/^\[([^\]]+)\]\s*(.+)/);
     const eventTime = m ? m[1] : row.created_at;
-    const eventType = m ? m[2].trim() : (row.event_type || "EVENT");
+    const eventType = m ? m[2].trim() : row.event_type || "EVENT";
     const payload = {};
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -17018,7 +17060,9 @@ const appHandler = async (req, res) => {
           payload?.data && typeof payload.data === "object"
             ? payload.data
             : payload;
-        const symbol = String(data?.symbol || payload?.symbol || r?.symbol || "").trim();
+        const symbol = String(
+          data?.symbol || payload?.symbol || r?.symbol || "",
+        ).trim();
         const eventType = String(
           data.event_type ||
             data.event ||
@@ -17083,7 +17127,8 @@ const appHandler = async (req, res) => {
               ev.symbol,
               ev.object_table,
               ev.event_type,
-              ev.content || "", JSON.stringify(ev.metadata || ev.payload_json || {}),
+              ev.content || "",
+              JSON.stringify(ev.metadata || ev.payload_json || {}),
             ]
               .join(" ")
               .toLowerCase();
@@ -21310,7 +21355,10 @@ const appHandler = async (req, res) => {
         };
         // Populate Redis cache for PENDING/OPEN lists
         const execStatus = String(filters.execution_status || "").toUpperCase();
-        if ((execStatus === "PENDING" || execStatus === "OPEN") && !hasFilters) {
+        if (
+          (execStatus === "PENDING" || execStatus === "OPEN") &&
+          !hasFilters
+        ) {
           setTradeListCache(
             execStatus === "PENDING" ? "PENDING" : "FILLED",
             items,
@@ -21321,7 +21369,11 @@ const appHandler = async (req, res) => {
 
       // Fast path: try Redis cache first for unfiltered PENDING/OPEN lists
       const execStatus = String(filters.execution_status || "").toUpperCase();
-      if ((execStatus === "PENDING" || execStatus === "OPEN") && !hasFilters && page === 1) {
+      if (
+        (execStatus === "PENDING" || execStatus === "OPEN") &&
+        !hasFilters &&
+        page === 1
+      ) {
         const cached = await getTradeListFromCache(
           execStatus === "PENDING" ? "PENDING" : "FILLED",
         );
@@ -23508,6 +23560,26 @@ const appHandler = async (req, res) => {
             "[Webhook] SL_CHANGED/PARTIAL_CLOSE trade update failed:",
             e,
           );
+        }
+      }
+
+      if (status === "FAIL") {
+        // Broker rejected the trade (e.g. SL/TP too close) — cancel trade with error
+        try {
+          const b2 = await mt5Backend();
+          const failReason =
+            ackErrorCombined || ackMessage || "broker rejected";
+          await b2.pool.query(
+            `UPDATE trades SET execution_status = 'CANCEL', close_reason = $2, updated_at = NOW() WHERE sid = $1::text`,
+            [signalId, failReason],
+          );
+          await mt5Log(signalId, "trades", {
+            event: "TRADE_FAILED",
+            error: failReason,
+            ticket: payload.ticket || null,
+          });
+        } catch (e) {
+          console.error("[Webhook] FAIL trade update failed:", e);
         }
       }
 

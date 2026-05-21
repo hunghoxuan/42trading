@@ -15,8 +15,8 @@ n/a
 n/a
 
 ## Deploy / Version Status
-- SERVER_VERSION: v2026.05.21 10:30 - 1dc5d07f
-- EA_BUILD_VERSION: v2026.05.21 10:30 - 1dc5d07f
+- SERVER_VERSION: v2026.05.21 18:47 - d1d485e1
+- EA_BUILD_VERSION: v2026.05.21 18:47 - d1d485e1
 
 ## Open Risks
 - Check top open bugs and unresolved sprint TODOs.
@@ -27,24 +27,27 @@ n/a
 
 ## Recent Worklog Tail
 - **Work Accomplished**:
-  - Added planned feature doc for componentized async chart tiles architecture and UX.
-  - Added detailed Deepseek implementation ticket with scope, ownership, contracts, status model, fetch-manager constraints, rollout, tests, and reviewer gate.
-  - Linked new feature/ticket in feature tracker and backlog.
-  - Added mailbox handoff entry assigning implementation to Deepseek.
+  - Fixed TradePlan form Entry=0, Direction=BUY despite valid AI JSON. Root cause: `mergePlanPreservingEdits` in `tradePlanDrafts.js` unconditionally overwrote valid base plan values with stale empty draft values for numeric editable keys.
+  - Wired TP2/TP3 to Info Chart (`tp1Price`/`tp2Price`/`tp3Price` in chart props).
+  - Wired `onPlanLevelChange` callback so right-click context menu Entry/SL/TP updates form.
+  - Hardened `planEntryNumber`/`planStopLossNumber` extraction for `execution_plan.entry.price` and `execution_plan.entry` direct-number variants.
+  - Added `execution_plan.direction` fallback to direction extraction.
+  - Created comprehensive handoff document: `.agents/sync/HANDOFF_2026-05-21_CHART_SNAPSHOT_TRADEPLAN_ENTRY_FIX.md`
 - **Changed Files**:
-  - `/Users/macmini/Trade/Bot/trading/.agents/.product/features/1-plan/chart_snapshots_componentized_async_charts.md`
-  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/2-backlog/2026-05-02-chart-snapshots-componentized-async-chart-tiles.md`
-  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/feature_tracker.md`
-  - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/2-backlog/_master-backlog.md`
-  - `/Users/macmini/Trade/Bot/trading/.agents/sync/MAILBOX.md`
-  - `/Users/macmini/Trade/Bot/trading/.agents/worklog.md`
+  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `web-ui/src/utils/tradePlanDrafts.js`
+  - `.agents/sync/MAILBOX.md`
+  - `.agents/sync/HANDOFF_2026-05-21_CHART_SNAPSHOT_TRADEPLAN_ENTRY_FIX.md`
+  - `.agents/.product/tickets/1-backlog/_master-bugs.md`
 - **Technical Decisions**:
-  - Keep API/back-end compatibility in phase-1; isolate work in UI component/hook/manager layers.
-  - Enforce request dedupe + concurrency cap for reliability under many chart tiles.
+  - `mergePlanPreservingEdits`: only preserve draft values if valid (>0); keep base otherwise.
+  - Two-tier plan state in SignalDetailCard (tradePlan.value + planDrafts) — the sync gap was in the merge function.
 - **Verification**:
-  - Manual doc integrity checks and link consistency ✅
+  - Build pass ✅
+  - Diagnostics clean ✅
+  - Deploy health: ok:true, version v2026.05.21 18:47 ✅
 - **Deploy Status**:
-  - Not deployed (planning/ticketing only).
+  - Deployed 8x (iterative debugging), final: v2026.05.21 18:47 - d1d485e1, commit 3dea4cb0
 
 # Session Log: 2026-05-02 13:22
 - **Starting Task**:

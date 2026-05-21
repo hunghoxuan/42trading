@@ -11,10 +11,18 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 16:00 UTC`
-- note: `snapshot status display - show master vs individual TFs`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 16:02 UTC`
+- note: `snapshot status display - master vs individual TFs`
+
+### [2026-05-21 16:02 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- commit: 9763b729
+- scope: `snapshot status shows master when merge ON, individual TFs when OFF`
+- server_version: v2026.05.21 19:31 - f9debdd5
+- verify: /health ok:true, version matches
+- result: PASS
 
 ### [2026-05-21 15:51 UTC] AGENT:Codex
 - status: DEPLOYED

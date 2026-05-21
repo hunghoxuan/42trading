@@ -54,7 +54,7 @@ namespace cAlgo.Robots
         public double BE_Offset { get; set; }
 
         [Parameter("Trailing Start (Pips)", Group = "Automation", DefaultValue = 20, MinValue = 1)]
-        public double Trail_Start { get; set; }
+        public doubt hle Trail_Start { get; set; }
 
         [Parameter("Trailing Step (Pips)", Group = "Automation", DefaultValue = 5, MinValue = 1)]
         public double Trail_Step { get; set; }
@@ -68,7 +68,7 @@ namespace cAlgo.Robots
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
-        private const string BuildVersion = "v2026.05.21 19:31 - f9debdd5";
+        private const string BuildVersion = "v2026.05.20 15:35 - 8fe81d8f";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -1033,15 +1033,29 @@ namespace cAlgo.Robots
                     var ticket = (res.Position != null) ? res.Position.Id.ToString() : (res.PendingOrder != null ? res.PendingOrder.Id.ToString() : "OK");
 
                     // Apply absolute SL/TP immediately after success to ensure 100% price accuracy
+                    // If broker rejects SL/TP → close position, cancel trade. No naked positions.
                     if (sl > 0 || tp > 0)
                     {
                         if (res.Position != null)
                         {
                             var mRes = ModifyPosition(res.Position, (sl > 0 ? sl : (double?)null), (tp > 0 ? tp : (double?)null));
                             if (mRes.IsSuccessful)
+                            {
                                 Print("[Order] SL/TP set SL={0} TP={1} for {2} #{3}", sl, tp, symbolCode, ticket);
+                            }
                             else
-                                Print("[Error] SL/TP Modification failed for {0} #{1}: {2} (SL={3} TP={4})", symbolCode, ticket, mRes.Error, sl, tp);
+                            {
+                                var errDetail = string.Format("SL/TP rejected: {0} (SL={1} TP={2})", mRes.Error, sl, tp);
+                                Print("[FATAL] {0} for {1} #{2}. Closing position.", errDetail, symbolCode, ticket);
+                                var closeRes = ClosePosition(res.Position);
+                                if (closeRes.IsSuccessful)
+                                    Print("[FATAL] Position closed after SL/TP failure for {0} #{1}", symbolCode, ticket);
+                                else
+                                    Print("[FATAL] Close also failed for {0} #{1}: {2}", symbolCode, ticket, closeRes.Error);
+                                UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
+                                _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                return;
+                            }
                         }
                         else if (res.PendingOrder != null)
                         {
@@ -1056,7 +1070,19 @@ namespace cAlgo.Robots
                                 tpPips = Math.Round((action == "BUY" ? (tp - res.PendingOrder.TargetPrice) : (res.PendingOrder.TargetPrice - tp)) / symbol.PipSize, 2);
                             }
                             var mRes = ModifyPendingOrder(res.PendingOrder, res.PendingOrder.TargetPrice, slPips, tpPips, res.PendingOrder.ExpirationTime);
-                            if (!mRes.IsSuccessful) Print("[Error] SL/TP Modification failed for Order {0}: {1}", ticket, mRes.Error);
+                            if (mRes.IsSuccessful)
+                            {
+                                Print("[Order] SL/TP set for pending order {0}", ticket);
+                            }
+                            else
+                            {
+                                var errDetail = string.Format("SL/TP rejected for pending order: {0}", mRes.Error);
+                                Print("[FATAL] {0}. Cancelling order.", errDetail);
+                                CancelPendingOrder(res.PendingOrder);
+                                UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
+                                _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                return;
+                            }
                         }
                     }
 
