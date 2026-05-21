@@ -15,6 +15,8 @@ export default function TradeFilesTab({
   tradeSid,
   symbol,
   attachedFiles = [],
+  snapshotsUsed = [],
+  snapshotFiles = [],
 }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -179,9 +181,79 @@ export default function TradeFilesTab({
   const preview = previewFile
     ? files.find((f) => f.name === previewFile)
     : null;
+  const usedSnapshots = Array.isArray(snapshotsUsed) ? snapshotsUsed : [];
+  const submittedSnapshots = Array.isArray(snapshotFiles) ? snapshotFiles : [];
+  const aiSnapshots = usedSnapshots.length ? usedSnapshots : submittedSnapshots;
+  const aiSnapshotsLabel = usedSnapshots.length
+    ? "Snapshots Used by AI"
+    : "Snapshots Submitted";
 
   return (
     <div style={{ padding: "8px 0" }}>
+      {aiSnapshots.length > 0 && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "10px 14px",
+            background: "rgba(255,255,255,0.03)",
+            borderRadius: 8,
+            border: "1px solid var(--accent-soft)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              color: "var(--accent-soft)",
+              marginBottom: 6,
+            }}
+          >
+            {aiSnapshotsLabel}
+            {!usedSnapshots.length && submittedSnapshots.length ? (
+              <span style={{ opacity: 0.5, marginLeft: 6 }}>
+                (AI did not return used list; showing submitted)
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {aiSnapshots.map((name, i) => {
+              const safeName = String(name || "").trim();
+              if (!safeName) return null;
+              const displayName =
+                safeName.length > 50 ? `${safeName.slice(0, 47)}...` : safeName;
+              return (
+                <a
+                  key={`${safeName}-${i}`}
+                  href={`/v2/chart/snapshots/${encodeURIComponent(safeName)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={safeName}
+                  style={{
+                    fontSize: 11,
+                    padding: "3px 8px",
+                    borderRadius: 4,
+                    background: "rgba(255,255,255,0.06)",
+                    color: "var(--accent)",
+                    textDecoration: "none",
+                    border: "1px solid transparent",
+                    transition: "border-color 0.15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = "var(--accent)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = "transparent";
+                  }}
+                >
+                  {displayName}
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div
         style={{

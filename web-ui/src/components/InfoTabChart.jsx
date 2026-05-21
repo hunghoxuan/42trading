@@ -2,7 +2,16 @@ import { useState, useEffect } from "react";
 import TradeSignalChart from "./TradeSignalChart";
 import { api } from "../api";
 
-export default function InfoTabChart({ symbol, interval = "1h", entryPrice, slPrice, tpPrice }) {
+export default function InfoTabChart({
+  symbol,
+  interval = "1h",
+  entryPrice,
+  slPrice,
+  tpPrice,
+  tp1Price = null,
+  tp2Price = null,
+  tp3Price = null,
+}) {
   const [bars, setBars] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -36,7 +45,10 @@ export default function InfoTabChart({ symbol, interval = "1h", entryPrice, slPr
           entryPrice={entryPrice}
           slPrice={slPrice}
           tpPrice={tpPrice}
-          showPrimaryPlan={false}
+          tp1Price={tp1Price ?? tpPrice}
+          tp2Price={tp2Price}
+          tp3Price={tp3Price}
+          showPrimaryPlan={true}
           showExtraPlans={false}
           showPdArrays={false}
           showKeyLevels={false}

@@ -12,6 +12,7 @@ const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
 const TradeFilesTab = lazy(() => import("./TradeFilesTab"));
 import { sortTimeframes } from "../utils/format";
+import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
 
@@ -309,53 +310,6 @@ function planLooksMeaningful(p = {}) {
     (sl != null && sl !== 0) ||
     (tp != null && tp !== 0)
   );
-}
-
-function mergePlanKeepingFresh(basePlan = {}, previousDraft = {}) {
-  const next = { ...basePlan };
-  const prev = previousDraft || {};
-  const keepFreshKeys = new Set([
-    "direction",
-    "trade_type",
-    "order_type",
-    "entry",
-    "tp",
-    "tp1",
-    "tp2",
-    "tp3",
-    "sl",
-    "rr",
-    "multiple_exits",
-  ]);
-  Object.entries(prev).forEach(([k, v]) => {
-    if (v === undefined) return;
-    const freshVal = next[k];
-    if (
-      keepFreshKeys.has(k) &&
-      freshVal !== undefined &&
-      freshVal !== null &&
-      String(freshVal).trim() !== ""
-    ) {
-      return;
-    }
-    // Keep fresh non-zero numeric-ish values from latest analysis payload.
-    if (
-      typeof freshVal !== "undefined" &&
-      freshVal !== null &&
-      String(freshVal).trim() !== ""
-    ) {
-      const freshNum = parseNumLoose(freshVal);
-      const prevNum = parseNumLoose(v);
-      if (
-        freshNum != null &&
-        (freshNum !== 0 || prevNum === 0 || prevNum == null)
-      ) {
-        return;
-      }
-    }
-    next[k] = v;
-  });
-  return next;
 }
 
 function formatCompactText(value) {
@@ -1305,7 +1259,10 @@ export default function SignalDetailCard({
               : [],
           skip_recommendation: p.skip_recommendation || p.skip || "",
         };
-        next[planId] = mergePlanKeepingFresh(normalized, prev?.[planId] || {});
+        next[planId] = mergePlanPreservingEdits(
+          normalized,
+          prev?.[planId] || {},
+        );
       });
       if (!next.main) {
         next.main = {
@@ -1834,81 +1791,6 @@ export default function SignalDetailCard({
             );
           })}
           </div>
-
-          {/* Snapshots Used — traceability display */}
-          {(() => {
-            const used = Array.isArray(response?.snapshotsUsed) ? response.snapshotsUsed : [];
-            const submitted = Array.isArray(response?.snapshotFiles) ? response.snapshotFiles : [];
-            const snapshots = used.length ? used : submitted;
-            if (!snapshots.length) return null;
-            const label = used.length ? "Snapshots Used by AI" : "Snapshots Submitted";
-            const isFallback = !used.length && submitted.length;
-            return (
-              <div
-                style={{
-                  marginTop: 12,
-                  padding: "10px 14px",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: 8,
-                  border: "1px solid var(--accent-soft)",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 11,
-                    textTransform: "uppercase",
-                    letterSpacing: 1,
-                    color: "var(--accent-soft)",
-                    marginBottom: 6,
-                  }}
-                >
-                  {label}
-                  {isFallback && (
-                    <span style={{ opacity: 0.5, marginLeft: 6 }}>
-                      (AI did not return used list; showing submitted)
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {snapshots.map((name, i) => {
-                    const safeName = String(name || "").trim();
-                    if (!safeName) return null;
-                    const ext = safeName.match(/\.(png|jpe?g)$/i)?.[1] || "";
-                    const displayName = safeName.length > 50
-                      ? safeName.slice(0, 47) + "..."
-                      : safeName;
-                    return (
-                      <a
-                        key={i}
-                        href={`/v2/chart/snapshots/${encodeURIComponent(safeName)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={safeName}
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 8px",
-                          borderRadius: 4,
-                          background: "rgba(255,255,255,0.06)",
-                          color: "var(--accent)",
-                          textDecoration: "none",
-                          border: "1px solid transparent",
-                          transition: "border-color 0.15s",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.borderColor = "var(--accent)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.borderColor = "transparent";
-                        }}
-                      >
-                        {ext ? `📷 ` : `📄 `}{displayName}
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
         </div>
       )}
 
@@ -3282,6 +3164,13 @@ export default function SignalDetailCard({
             tradeSid={tradePlan?.tradeId || tradePlan?.signalId || null}
             symbol={chart?.symbol || null}
             attachedFiles={chart?.attachedSnapshotFiles || []}
+            snapshotsUsed={response?.snapshotsUsed || []}
+            snapshotFiles={
+              response?.snapshotFiles ||
+              response?.snapshot_files ||
+              response?.metadata?.snapshot_files ||
+              []
+            }
           />
         </Suspense>
       </div>

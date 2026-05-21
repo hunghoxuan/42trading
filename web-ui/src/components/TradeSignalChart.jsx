@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
 import { asNumValue, showDateTime } from "../utils/format";
 import { chartFetchManager } from "../services/chartFetchManager";
+import { normalizePlanLinePrice } from "../utils/tradePlanDrafts";
 
 const parsePosNum = (v) => {
   const n = Number(v);
@@ -790,14 +791,19 @@ export default function TradeSignalChart({
             };
 
             if (showPrimaryPlan && entryPrice) {
+              const primaryTp = normalizePlanLinePrice(tpPrice);
+              const primaryTp1 =
+                normalizePlanLinePrice(tp1Price) ?? primaryTp;
+              const primaryTp2 = normalizePlanLinePrice(tp2Price);
+              const primaryTp3 = normalizePlanLinePrice(tp3Price);
               const primary = {
                 entry: entryPrice,
                 sl: slPrice,
-                tp: tpPrice,
-                tp1: Number.isFinite(tp1Price) ? tp1Price : tpPrice,
-                tp2: Number.isFinite(tp2Price) ? tp2Price : undefined,
-                tp3: Number.isFinite(tp3Price) ? tp3Price : undefined,
-                direction: tpPrice > entryPrice ? "BUY" : "SELL",
+                tp: primaryTp,
+                tp1: primaryTp1,
+                tp2: primaryTp2 ?? undefined,
+                tp3: primaryTp3 ?? undefined,
+                direction: primaryTp > Number(entryPrice) ? "BUY" : "SELL",
               };
               allPlans.push(primary);
             }
