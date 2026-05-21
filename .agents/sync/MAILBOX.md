@@ -11,8 +11,10 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `UNLOCKED`
-- deploy_owner: `NONE`
+- lock_status: `LOCKED`
+- deploy_owner: `DeepSeek`
+- since_utc: `2026-05-21 15:10 UTC`
+- note: `fix entry=0 bug — __raw_plan fallback to plan itself`
 - since_utc: `2026-05-21 14:12 UTC`
 - note: `deployed files tab snapshots + TP2/TP3 chart + edit persistence regression fix at 17b231c`
 

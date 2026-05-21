@@ -6882,7 +6882,7 @@ export default function ChartSnapshotsPage() {
                 ),
                 tradePlans: analysisTradePlans.length
                   ? analysisTradePlans.map((plan, idx) => ({
-                      __raw_plan: plan?.raw || {},
+                      __raw_plan: plan?.raw || plan,
                       __plan_index: idx,
                       symbol: normalizeSignalSymbol(
                         plan?.raw?.symbol ||
