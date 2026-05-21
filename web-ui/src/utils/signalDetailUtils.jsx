@@ -174,6 +174,15 @@ export function formatNum3(v) {
   return String(Number(n.toFixed(3)));
 }
 
+function formatNumPrec(v, refVal) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  const ref = refVal != null && refVal !== "" ? String(refVal) : String(v);
+  const dot = ref.indexOf(".");
+  const decimals = dot >= 0 ? Math.min(5, ref.length - dot - 1) : 0;
+  return String(Number(n.toFixed(decimals)));
+}
+
 export function normalizeTpSlFromEntryDirection(plan = {}) {
   // Just pass through - no auto-correction. Let user edit freely.
   return { tp: plan.tp, sl: plan.sl };
@@ -185,8 +194,9 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   if (["entry", "tp", "tp1", "tp2", "tp3", "sl", "rr"].includes(key)) {
     const val = asNum(next[key]);
     if (val != null) {
+      const precRef2 = prevPlan.entry || prevPlan.tp || prevPlan.sl || "";
       next[key] =
-        key === "rr" ? String(Number(val.toFixed(1))) : formatNum3(val);
+        key === "rr" ? String(Number(val.toFixed(1))) : formatNumPrec(val, precRef2);
     }
   }
 
@@ -195,6 +205,9 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
   const tp = asNum(next.tp);
   const dir = String(next.direction || "BUY").toUpperCase();
   const isBuy = dir === "BUY";
+
+  // Determine precision from entry value (used for all linked fields)
+  const precRef = next.entry || prevPlan.entry || "";
 
   // Auto-update RR when Entry, SL, or TP changes
   if (["entry", "sl", "tp"].includes(key)) {
@@ -211,16 +224,20 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
       const newTp = isBuy
         ? entry + rr * Math.abs(entry - sl)
         : entry - rr * Math.abs(entry - sl);
-      if (Number.isFinite(newTp)) next.tp = formatNum3(newTp);
+      if (Number.isFinite(newTp)) next.tp = formatNumPrec(newTp, precRef);
+      // Also sync tp1 to new TP
+      next.tp1 = next.tp;
     }
   }
 
-  // Sync tp1 ↔ tp
-  const tp1Num = asNum(next.tp1);
-  const tpNum = asNum(next.tp);
-  if (tp1Num != null) next.tp = formatNum3(tp1Num);
-  else if (tpNum != null && asNum(next.tp1) == null)
-    next.tp1 = formatNum3(tpNum);
+  // Sync tp1 ↔ tp (skip if RR was just changed - already handled above)
+  if (key !== "rr") {
+    const tp1Num = asNum(next.tp1);
+    const tpNum = asNum(next.tp);
+    if (tp1Num != null) next.tp = formatNumPrec(tp1Num, precRef);
+    else if (tpNum != null && asNum(next.tp1) == null)
+      next.tp1 = formatNumPrec(tpNum, precRef);
+  }
   return next;
 }
 
