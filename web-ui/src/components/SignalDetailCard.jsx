@@ -1100,32 +1100,46 @@ export default function SignalDetailCard({
             ? response.metadata
             : {}),
         };
+  // Unwrap API response wrapper { ok, model, parsed_json: {...} } if present
+  const effectiveRawSource = useMemo(() => {
+    if (
+      rawSource?.parsed_json &&
+      typeof rawSource.parsed_json === "object" &&
+      !Array.isArray(rawSource.parsed_json) &&
+      (rawSource.parsed_json.execution_plan ||
+        rawSource.parsed_json.direction ||
+        rawSource.parsed_json.symbol)
+    ) {
+      return { ...rawSource.parsed_json, __analysis_full_raw: rawSource.__analysis_full_raw };
+    }
+    return rawSource;
+  }, [rawSource]);
   const derivedPlansFromRaw = useMemo(() => {
-    if (!rawSource || typeof rawSource !== "object") return [];
-    if (isCurrentAiTradePlan(rawSource)) {
-      return [normalizeRawPlan(rawSource)];
+    if (!effectiveRawSource || typeof effectiveRawSource !== "object") return [];
+    if (isCurrentAiTradePlan(effectiveRawSource)) {
+      return [normalizeRawPlan(effectiveRawSource)];
     }
-    if (rawSource?.__raw_plan && typeof rawSource.__raw_plan === "object") {
-      return [normalizeRawPlan(rawSource.__raw_plan)];
+    if (effectiveRawSource?.__raw_plan && typeof effectiveRawSource.__raw_plan === "object") {
+      return [normalizeRawPlan(effectiveRawSource.__raw_plan)];
     }
-    if (Array.isArray(rawSource.trade_plan) && rawSource.trade_plan.length) {
-      return rawSource.trade_plan.map((p) => normalizeRawPlan(p || {}));
+    if (Array.isArray(effectiveRawSource.trade_plan) && effectiveRawSource.trade_plan.length) {
+      return effectiveRawSource.trade_plan.map((p) => normalizeRawPlan(p || {}));
     }
-    if (rawSource.trade_plan && typeof rawSource.trade_plan === "object") {
-      return [normalizeRawPlan(rawSource.trade_plan)];
+    if (effectiveRawSource.trade_plan && typeof effectiveRawSource.trade_plan === "object") {
+      return [normalizeRawPlan(effectiveRawSource.trade_plan)];
     }
     if (
-      rawSource.entry_price != null ||
-      rawSource.entry != null ||
-      rawSource.stop_loss != null ||
-      rawSource.sl != null ||
-      rawSource.tp != null ||
-      rawSource.multiple_exits
+      effectiveRawSource.entry_price != null ||
+      effectiveRawSource.entry != null ||
+      effectiveRawSource.stop_loss != null ||
+      effectiveRawSource.sl != null ||
+      effectiveRawSource.tp != null ||
+      effectiveRawSource.multiple_exits
     ) {
-      return [normalizeRawPlan(rawSource)];
+      return [normalizeRawPlan(effectiveRawSource)];
     }
     return [];
-  }, [rawSource]);
+  }, [effectiveRawSource]);
   const activeSymbol = normalizePlanSymbol(
     chart?.symbol || response?.symbol || tradePlan?.value?.symbol || "",
   );
@@ -1134,10 +1148,10 @@ export default function SignalDetailCard({
       ? response.tradePlans
           .map((p, idx) => {
             // Force canonical direction/TP mapping from raw payload when available.
-            if (idx === 0 && rawSource?.__raw_plan) {
+            if (idx === 0 && effectiveRawSource?.__raw_plan) {
               return normalizeRawPlan({
                 ...(p || {}),
-                __raw_plan: rawSource.__raw_plan,
+                __raw_plan: effectiveRawSource.__raw_plan,
               });
             }
             return normalizeRawPlan(p || {});

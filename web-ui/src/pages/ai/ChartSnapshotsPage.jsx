@@ -987,7 +987,20 @@ function enforceActionableTradePlans(payload = {}) {
 function normalizeAnalysisContract(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
     return parsed;
-  const out = { ...parsed };
+  // Unwrap API response wrapper: { ok, model, parsed_json: {...}, ... }
+  let unwrapped = parsed;
+  if (
+    parsed.parsed_json &&
+    typeof parsed.parsed_json === "object" &&
+    !Array.isArray(parsed.parsed_json) &&
+    (parsed.parsed_json.execution_plan ||
+      parsed.parsed_json.direction ||
+      parsed.parsed_json.symbol ||
+      Array.isArray(parsed.parsed_json.trade_plan))
+  ) {
+    unwrapped = parsed.parsed_json;
+  }
+  const out = { ...unwrapped };
   if (
     isCurrentAiTradePlan(out) ||
     (Array.isArray(out.trade_plan) && out.trade_plan.some(isCurrentAiTradePlan))
@@ -1769,7 +1782,9 @@ function hasRequiredPlanLevels(parsed) {
     ? parsed.trade_plan
     : parsed?.trade_plan && typeof parsed.trade_plan === "object"
       ? [parsed.trade_plan]
-      : [];
+      : isCurrentAiTradePlan(parsed)
+        ? [parsed]
+        : [];
   if (!plans.length) return false;
   return plans.some((p) => {
     const entry = planEntryNumber(p, parsed || {});
@@ -2271,6 +2286,10 @@ function enrichParsedAnalysis(rawText, parsed) {
     // Ensure trade_plan is an array if it's a single object
     if (res.trade_plan && !Array.isArray(res.trade_plan)) {
       res.trade_plan = [res.trade_plan];
+    }
+    // Wrap the result itself as trade_plan when it IS a trade plan (has execution_plan)
+    if (!res.trade_plan && isCurrentAiTradePlan(res)) {
+      res.trade_plan = [res];
     }
   }
 
@@ -3691,7 +3710,15 @@ export default function ChartSnapshotsPage() {
         }
       }
       setAnalysisRaw(raw);
-      let parsed = enrichParsedAnalysis(raw, tryParseJsonLoose(raw));
+      const rawParsed = tryParseJsonLoose(raw);
+      // Extract canonical parsed_json from API response wrapper when present
+      const canonicalPayload =
+        rawParsed?.parsed_json &&
+        typeof rawParsed.parsed_json === "object" &&
+        !Array.isArray(rawParsed.parsed_json)
+          ? rawParsed.parsed_json
+          : rawParsed;
+      let parsed = enrichParsedAnalysis(raw, canonicalPayload);
       if (parsed && typeof parsed === "object") {
         //         // Normalize symbol: strip exchange prefix if Claude returned KRX:122900 instead of US30
         //         const inputSymbol = String(activeSymbol || cfg.symbol || "")

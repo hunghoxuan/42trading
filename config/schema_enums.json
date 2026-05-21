@@ -1,10 +1,33 @@
 {
-  "schema_version": "3.0",
+  "schema_version": "3.1",
+  "output_format": "single JSON object matching trade_plan_schema.json",
   "enums": {
-    "htf_timeframe": ["W", "D", "4H", "2H", "1H"],
-    "ltf_timeframe": ["30m", "15m", "5m", "3m", "1m"],
-    "trend": ["Bullish", "Bearish", "Ranging"],
-    "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
+    "htf_timeframe": [
+      "W",
+      "D",
+      "4H",
+      "2H",
+      "1H"
+    ],
+    "ltf_timeframe": [
+      "30m",
+      "15m",
+      "5m",
+      "3m",
+      "1m"
+    ],
+    "trend": [
+      "Bullish",
+      "Bearish",
+      "Ranging"
+    ],
+    "structure": [
+      "BOS",
+      "CHoCH",
+      "MSB",
+      "Continuation",
+      "Ranging"
+    ],
     "phase": [
       "Trending",
       "Retracement",
@@ -15,11 +38,31 @@
       "Distribution",
       "Accumulation"
     ],
-    "bias": ["Long", "Short", "Neutral"],
-    "direction": ["Bullish", "Bearish", "Neutral"],
-    "order_side": ["BUY", "SELL"],
-    "order_type": ["Limit", "Stop_Limit", "Market"],
-    "profile": ["Position", "Swing", "Intraday", "Scalp"],
+    "bias": [
+      "Long",
+      "Short",
+      "Neutral"
+    ],
+    "direction": [
+      "Bullish",
+      "Bearish",
+      "Neutral"
+    ],
+    "order_side": [
+      "BUY",
+      "SELL"
+    ],
+    "order_type": [
+      "Limit",
+      "Stop_Limit",
+      "Market"
+    ],
+    "profile": [
+      "Position",
+      "Swing",
+      "Intraday",
+      "Scalp"
+    ],
     "session": [
       "Asian",
       "London",
@@ -27,6 +70,18 @@
       "London-NY_Overlap",
       "Pre-Market",
       "Post-Market"
+    ],
+    "ltf_structure": [
+      "Uptrend",
+      "Downtrend",
+      "Ranging",
+      "Transitional"
+    ],
+    "macro": [
+      "Risk_On",
+      "Risk_Off",
+      "Neutral",
+      "News_Pending"
     ],
     "strategy": [
       "ICT",
@@ -53,7 +108,7 @@
       "Support_Resistance"
     ],
     "entry_model": {
-      "ICT": [
+      "ICT_SMC": [
         "OB_Mitigation",
         "FVG_Fill",
         "Breaker_Block",
@@ -69,7 +124,16 @@
         "LondonOpen",
         "NYOpen",
         "AMSession",
-        "PMSession"
+        "PMSession",
+        "Sweep+MSS+OB",
+        "Sweep+MSS+IFVG",
+        "CHoCH+Retest+FVG",
+        "Sweep+SMT+MSS+BPR",
+        "Sweep+Displacement+FVG",
+        "Sweep+MSS+Mitigation Block",
+        "Sweep+MSS+Propulsion Block",
+        "Turtle Soup + FVG + Entry",
+        "Wyckoff Spring/UTAD + Re-entry"
       ],
       "Fibonacci": [
         "OTE_Fib",
@@ -116,16 +180,47 @@
         "Flag_Pennant",
         "Channel_Break"
       ],
-      "MA_VWAP": ["EMA_Cross", "MA_Bounce", "VWAP_Reclaim", "AVWAP_Bounce"],
-      "Divergence": ["RSI_Divergence", "MACD_Divergence", "Hidden_Divergence"],
-      "Supply_Demand": ["SD_Zone_Reaction"],
-      "Elliott_Wave": ["Elliott_Wave3", "Elliott_Wave5"],
-      "Pivot_Points": ["PivotPoint_Bounce"]
+      "MA_VWAP": [
+        "EMA_Cross",
+        "MA_Bounce",
+        "VWAP_Reclaim",
+        "AVWAP_Bounce"
+      ],
+      "Divergence": [
+        "RSI_Divergence",
+        "MACD_Divergence",
+        "Hidden_Divergence"
+      ],
+      "Supply_Demand": [
+        "SD_Zone_Reaction"
+      ],
+      "Elliott_Wave": [
+        "Elliott_Wave3",
+        "Elliott_Wave5"
+      ],
+      "Pivot_Points": [
+        "PivotPoint_Bounce"
+      ]
     },
-    "weight": ["High", "Medium", "Low"],
-    "confidence": ["Low", "Medium", "High"],
-    "poi_freshness": ["Fresh", "Once_Tested", "Stale"],
-    "ob_freshness": ["Fresh", "Once_Mitigated"],
+    "weight": [
+      "High",
+      "Medium",
+      "Low"
+    ],
+    "confidence": [
+      "Low",
+      "Medium",
+      "High"
+    ],
+    "poi_freshness": [
+      "Fresh",
+      "Once_Tested",
+      "Stale"
+    ],
+    "ob_freshness": [
+      "Fresh",
+      "Once_Mitigated"
+    ],
     "ob_type": [
       "Bullish_OB",
       "Bearish_OB",
@@ -133,7 +228,12 @@
       "Propulsion",
       "Mitigation"
     ],
-    "fvg_type": ["IFVG", "BISI", "SIBI", "Regular"],
+    "fvg_type": [
+      "IFVG",
+      "BISI",
+      "SIBI",
+      "Regular"
+    ],
     "liquidity_type": [
       "BSL",
       "SSL",
@@ -171,12 +271,31 @@
       "DailyOpen",
       "MidnightOpen"
     ],
-    "premium_discount_position": ["Discount", "Premium", "Equilibrium"],
-    "choch_sub_type": ["Body_Break", "Wick_Break"],
-    "choch_type": ["Minor", "Major"],
-    "choch_used_as": ["Early_Entry", "Confirmation"],
-    "mss_type": ["Impulsive", "Gradual"],
-    "bos_type": ["Internal", "External"],
+    "premium_discount_position": [
+      "Discount",
+      "Premium",
+      "Equilibrium"
+    ],
+    "choch_sub_type": [
+      "Body_Break",
+      "Wick_Break"
+    ],
+    "choch_type": [
+      "Minor",
+      "Major"
+    ],
+    "choch_used_as": [
+      "Early_Entry",
+      "Confirmation"
+    ],
+    "mss_type": [
+      "Impulsive",
+      "Gradual"
+    ],
+    "bos_type": [
+      "Internal",
+      "External"
+    ],
     "candle_pattern": [
       "Engulfing",
       "Pin_Bar",
@@ -218,8 +337,18 @@
       "ABCD",
       "None"
     ],
-    "divergence_indicator": ["RSI", "MACD", "OBV", "Stoch", "CCI", "None"],
-    "divergence_class": ["Regular", "Hidden"],
+    "divergence_indicator": [
+      "RSI",
+      "MACD",
+      "OBV",
+      "Stoch",
+      "CCI",
+      "None"
+    ],
+    "divergence_class": [
+      "Regular",
+      "Hidden"
+    ],
     "wyckoff_phase": [
       "Phase_A",
       "Phase_B",
@@ -255,8 +384,18 @@
       "Climactic_Action",
       "None"
     ],
-    "volume_level": ["High", "Normal", "Low", "N/A"],
-    "idm_type": ["Minor_Swing", "EQL", "EQH", "Retail_Stop_Zone"],
+    "volume_level": [
+      "High",
+      "Normal",
+      "Low",
+      "N/A"
+    ],
+    "idm_type": [
+      "Minor_Swing",
+      "EQL",
+      "EQH",
+      "Retail_Stop_Zone"
+    ],
     "entry_trigger_type": [
       "CHoCH",
       "MSS",
@@ -268,10 +407,34 @@
       "Candle_Close",
       "Pattern_Completion"
     ],
-    "news_impact": ["High", "Medium", "Low", "None"],
-    "correlation_alignment": ["Confirming", "Neutral", "Conflicting"],
-    "overextension_risk": ["Low", "Medium", "High"],
-    "breakeven_condition": ["After_TP1", "At_1R", "Manual"],
+    "news_impact": [
+      "High",
+      "Medium",
+      "Low",
+      "None"
+    ],
+    "assets_checked": [
+      "DXY",
+      "Gold",
+      "Indices",
+      "Oil",
+      "Bonds"
+    ],
+    "correlation_alignment": [
+      "Confirming",
+      "Neutral",
+      "Conflicting"
+    ],
+    "overextension_risk": [
+      "Low",
+      "Medium",
+      "High"
+    ],
+    "breakeven_condition": [
+      "After_TP1",
+      "At_1R",
+      "Manual"
+    ],
     "tp1_logic": [
       "IDM",
       "EQH",
@@ -296,7 +459,17 @@
       "Fib_2.618",
       "Elliott_Wave_Target"
     ],
-    "risk_grade": ["A", "B", "C", "NoTrade"],
+    "when_price": [
+      "greater_than",
+      "less_than",
+      "equal_to"
+    ],
+    "risk_grade": [
+      "A",
+      "B",
+      "C",
+      "NoTrade"
+    ],
     "suggested_action": [
       "Proceed",
       "Skip_News",
@@ -305,13 +478,28 @@
       "Skip_Spread",
       "Skip_Counter_Trend"
     ],
-    "zone_relevance": ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"],
-    "zone_status": ["Fresh", "Tested", "Mitigated", "Broken"]
+    "checklist_ai_confirm": [
+      "yes",
+      "no",
+      "not_sure"
+    ],
+    "zone_relevance": [
+      "TP_Target",
+      "Entry_Boundary",
+      "DOL",
+      "Invalidation"
+    ],
+    "zone_status": [
+      "Fresh",
+      "Tested",
+      "Mitigated",
+      "Broken"
+    ]
   },
   "grade_criteria": {
     "A": ">=4 confluences, HTF aligned, liquidity swept, LTF confirmed, no high news",
     "B": "3 confluences, mostly aligned, minor gap acceptable",
-    "C": "2 confluences or counter-trend — reduce size",
+    "C": "2 confluences or counter-trend \u2014 reduce size",
     "NoTrade": "<2 confluences, SL too tight, overextended, or high-impact news imminent"
   },
   "risk_by_grade": {
@@ -328,6 +516,7 @@
     },
     "gate_threshold": 0.75,
     "min_confluence_count": 3,
+    "min_rr_to_tp1": 1.5,
     "grade_thresholds": {
       "A": {
         "min_score": 85,
@@ -335,7 +524,7 @@
       },
       "B": {
         "min_score": 65,
-        "rr_multiplier": 1
+        "rr_multiplier": 1.0
       },
       "C": {
         "min_score": 50,
@@ -346,20 +535,81 @@
       }
     }
   },
+  "high_weight_items": [
+    "htf_context.liquidity_swept",
+    "htf_context.poi_interaction",
+    "htf_context.premium_discount",
+    "htf_context.trend_alignment",
+    "market_structure.choch",
+    "market_structure.mss",
+    "market_structure.bos_confirmed",
+    "poi_quality.ob_valid",
+    "poi_quality.fvg_present",
+    "ltf_trigger.idm_cleared",
+    "ltf_trigger.entry_trigger",
+    "risk_filters.news_filter",
+    "risk_filters.session_killzone",
+    "sl_validity.sl_behind_structure",
+    "sl_validity.rr_viable_to_tp1"
+  ],
+  "medium_weight_items": [
+    "market_structure.no_opposing_structure",
+    "poi_quality.candle_pattern",
+    "poi_quality.fib_confluence",
+    "poi_quality.harmonic_pattern",
+    "poi_quality.divergence",
+    "poi_quality.wyckoff_event",
+    "poi_quality.volume_confirmation",
+    "ltf_trigger.retest_precision",
+    "risk_filters.spread_acceptable",
+    "risk_filters.correlation_check",
+    "risk_filters.overextension_check",
+    "sl_validity.sl_not_obvious_hunt_target",
+    "sl_validity.sl_atr_adequate"
+  ],
+  "execution_plan_defaults": {
+    "tp1_pct": 40,
+    "tp2_pct": 35,
+    "tp3_pct": 25,
+    "sl_buffer_pips": "2-5",
+    "min_sl_atr_ratio": 0.3,
+    "max_sl_atr_ratio": 1.0
+  },
+  "safety_overrides": {
+    "news_block_window_mins": 30,
+    "max_spread_action": "Skip_Spread",
+    "counter_trend_min_confluences": 4,
+    "overextension_high_action": "Skip_Late_Entry",
+    "low_confluence_action": "Skip_Low_Confluence"
+  },
   "limits": {
-    "max_symbols_per_response": 24,
-    "max_htf_context_per_symbol": 6,
-    "max_ltf_analysis_per_symbol": 6,
+    "max_symbols_per_response": 1,
     "max_pd_arrays": 6,
     "max_key_levels": 6,
-    "max_reference_zones": 6,
     "max_key_events": 8,
-    "max_expected_path": 5,
-    "max_trade_plans": 24
+    "max_expected_path_steps": 5
   },
   "id_format": {
     "htf_zone": "{TF}-{type}-{n}",
     "ltf_zone": "{tf}-{type}-{n}",
-    "examples": ["D-OB-1", "4H-FVG-2", "D-PDH-1", "15M-OB-1", "5M-FVG-1"]
+    "examples": [
+      "D-OB-1",
+      "4H-FVG-2",
+      "D-PDH-1",
+      "15M-OB-1",
+      "5M-FVG-1",
+      "4H-Breaker-1"
+    ]
+  },
+  "checklist_mapping": {
+    "Q1_Q8": "Trend, Structure, S/R, Candle patterns \u2014 from htf_context + market_structure + poi_quality",
+    "Q9_Q15": "SL/TP/RR/Position sizing \u2014 from sl_validity + execution_plan",
+    "Q16_Q17": "News events \u2014 from risk_filters.news_filter",
+    "Q18_Q20": "Session, liquidity, spread \u2014 from risk_filters.session_killzone + spread_acceptable",
+    "Q21": "Volume \u2014 from poi_quality.volume_confirmation",
+    "Q22_Q26": "Indicators, MA, divergence \u2014 from poi_quality.divergence + candle_pattern",
+    "Q27_Q28": "Fibonacci, clear path to TP \u2014 from poi_quality.fib_confluence + sl_validity",
+    "Q29": "Correlation \u2014 from risk_filters.correlation_check",
+    "Q30_Q40": "Psychology and operational \u2014 default not_sure (AI cannot assess from chart)"
   }
 }
