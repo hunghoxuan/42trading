@@ -11,10 +11,26 @@ Use this section for parallel-agent safety and deploy ordering.
   4. `.agents/sync/MAILBOX.md` (current lock + latest deploy entries)
 - If deploying, acquire lock first. No lock = no deploy.
 
-- lock_status: `LOCKED`
-- deploy_owner: `Codex`
-- since_utc: `2026-05-21 13:33 UTC`
-- note: `deploy guide_system execution_plan ordering + ticket for snapshots/files parser follow-up`
+- lock_status: `UNLOCKED`
+- deploy_owner: `NONE`
+- since_utc: `2026-05-21 13:42 UTC`
+- note: `deployed guide_system execution_plan ordering at ffd3094 (health verified)`
+
+### [2026-05-21 13:42 UTC] AGENT:Codex
+- status: DEPLOYED
+- branch: main
+- commit: ffd30949
+- scope: `config/guide_system.md execution_plan ordering + snapshots/files parser follow-up ticket + version bump`
+- merge_to_main: YES (ffd30949)
+- deploy:
+  - owner: Codex
+  - server_version: v2026.05.21 13:36 - 06465d80
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 13:36 - 06465d80
+  - VPS git HEAD: ffd3094
+  - postgres: ok, redis: ok, mt5: connected
+- rollback: `git revert ffd30949 06465d80 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 13:18 UTC] AGENT:Codex
 - status: DEPLOYED
