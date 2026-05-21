@@ -1708,10 +1708,10 @@ function extractPositionFromAnalysis(parsed) {
   const plan = bestPlan;
   const directionRaw = String(
     plan.direction ||
-    plan?.execution_plan?.direction ||
-    parsed?.direction ||
-    parsed?.execution_plan?.direction ||
-    ""
+      plan?.execution_plan?.direction ||
+      parsed?.direction ||
+      parsed?.execution_plan?.direction ||
+      "",
   )
     .trim()
     .toUpperCase();
@@ -1727,10 +1727,30 @@ function extractPositionFromAnalysis(parsed) {
         : "";
   const entry = planEntryNumber(plan, parsed);
   const sl = planStopLossNumber(plan, parsed);
-  console.log('[extractPositionFromAnalysis] plan keys:', JSON.stringify(Object.keys(plan || {})));
-  console.log('[extractPositionFromAnalysis] plan.execution_plan:', JSON.stringify(plan?.execution_plan || null)?.slice(0,300) || 'null');
-  console.log('[extractPositionFromAnalysis] plan.entry:', plan?.entry, 'plan.entry_price:', plan?.entry_price, 'plan.direction:', plan?.direction);
-  console.log('[extractPositionFromAnalysis] resolved entry:', entry, 'sl:', sl, 'direction:', direction);
+  console.log(
+    "[extractPositionFromAnalysis] plan keys:",
+    JSON.stringify(Object.keys(plan || {})),
+  );
+  console.log(
+    "[extractPositionFromAnalysis] plan.execution_plan:",
+    JSON.stringify(plan?.execution_plan || null)?.slice(0, 300) || "null",
+  );
+  console.log(
+    "[extractPositionFromAnalysis] plan.entry:",
+    plan?.entry,
+    "plan.entry_price:",
+    plan?.entry_price,
+    "plan.direction:",
+    plan?.direction,
+  );
+  console.log(
+    "[extractPositionFromAnalysis] resolved entry:",
+    entry,
+    "sl:",
+    sl,
+    "direction:",
+    direction,
+  );
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1832,10 +1852,10 @@ function extractPositionFromPlan(plan, parsed = {}) {
   const item = plan && typeof plan === "object" ? plan : {};
   const directionRaw = String(
     item.direction ||
-    item?.execution_plan?.direction ||
-    parsed?.direction ||
-    parsed?.execution_plan?.direction ||
-    ""
+      item?.execution_plan?.direction ||
+      parsed?.direction ||
+      parsed?.execution_plan?.direction ||
+      "",
   )
     .trim()
     .toUpperCase();
@@ -2572,32 +2592,49 @@ export default function ChartSnapshotsPage() {
 
   // Load ANALYSE_SETTINGS from user_settings on mount
   useEffect(() => {
-    api.getSettings().then(res => {
-      const s = (res?.settings || []).find(x => x.type === 'settings' && x.name === 'ANALYSE_SETTINGS');
-      if (s?.data && typeof s.data === 'object') {
-        console.log('[ANALYSE_SETTINGS] Loaded from DB:', s.data);
-        setCfg(prev => ({ ...prev, ...s.data }));
-      }
-    }).catch(() => {});
+    api
+      .getSettings()
+      .then((res) => {
+        const s = (res?.settings || []).find(
+          (x) => x.type === "settings" && x.name === "ANALYSE_SETTINGS",
+        );
+        if (s?.data && typeof s.data === "object") {
+          console.log("[ANALYSE_SETTINGS] Loaded from DB:", s.data);
+          setCfg((prev) => ({ ...prev, ...s.data }));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const saveSettings = useCallback(() => {
-    console.log('[ANALYSE_SETTINGS] Saving:', {
-      lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots
+    console.log("[ANALYSE_SETTINGS] Saving:", {
+      lookbackBars: cfg.lookbackBars,
+      snapshotQuality: cfg.snapshotQuality,
+      mergeSnapshots: cfg.mergeSnapshots,
     });
-    api.upsertSetting({
-      type: 'settings',
-      name: 'ANALYSE_SETTINGS',
-      data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
-    }).then(() => {
-      setActionStatus({ action: 'save', type: 'success', text: 'Saved' });
-      showToast({ message: 'Settings saved', type: 'success' });
-      setTimeout(() => setActionStatus({ action: '', type: '', text: '' }), 2000);
-    }).catch((e) => {
-      const msg = e?.message || 'Save failed';
-      setActionStatus({ action: 'save', type: 'error', text: msg });
-      showToast({ message: msg, type: 'error' });
-    });
+    api
+      .upsertSetting({
+        type: "settings",
+        name: "ANALYSE_SETTINGS",
+        data: {
+          lookbackBars: cfg.lookbackBars,
+          snapshotQuality: cfg.snapshotQuality,
+          mergeSnapshots: cfg.mergeSnapshots,
+        },
+      })
+      .then(() => {
+        setActionStatus({ action: "save", type: "success", text: "Saved" });
+        showToast({ message: "Settings saved", type: "success" });
+        setTimeout(
+          () => setActionStatus({ action: "", type: "", text: "" }),
+          2000,
+        );
+      })
+      .catch((e) => {
+        const msg = e?.message || "Save failed";
+        setActionStatus({ action: "save", type: "error", text: msg });
+        showToast({ message: msg, type: "error" });
+      });
   }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
 
   const [templates, setTemplates] = useState(() => loadTemplates());
@@ -4753,39 +4790,7 @@ export default function ChartSnapshotsPage() {
 
   useEffect(() => {
     if (!effectiveParsed || typeof effectiveParsed !== "object") return;
-    const next = extractPositionFromAnalysis(effectiveParsed);
-    const nextEntry = parseNum(next?.entry);
-    const nextSl = parseNum(next?.sl);
-    console.log('[position-merge] effectiveParsed changed, next entry:', next?.entry, 'next sl:', next?.sl, 'next tp:', next?.tp);
-    if (!(Number.isFinite(nextEntry) && nextEntry > 0) && !(Number.isFinite(nextSl) && nextSl > 0)) {
-      console.log('[position-merge] skip: no valid entry or sl in extraction');
-      return;
-    }
-    setPosition((prev) => {
-      console.log('[position-merge] prev.entry:', prev?.entry, 'prev.sl:', prev?.sl, 'prev.tp:', prev?.tp);
-      const curEntry = parseNum(prev?.entry);
-      const curSl = parseNum(prev?.sl);
-      const curEntryValid = Number.isFinite(curEntry) && curEntry > 0;
-      const curSlValid = Number.isFinite(curSl) && curSl > 0;
-      const nextEntryValid = Number.isFinite(nextEntry) && nextEntry > 0;
-      const nextSlValid = Number.isFinite(nextSl) && nextSl > 0;
-      const entry = !curEntryValid && nextEntryValid ? next.entry : curEntryValid ? prev.entry : next.entry || prev.entry;
-      const sl = !curSlValid && nextSlValid ? next.sl : curSlValid ? prev.sl : next.sl || prev.sl;
-      const tp = (!curEntryValid && next.tp) || prev.tp || next.tp;
-      const direction = (!curEntryValid && next.direction) || prev.direction || next.direction;
-      console.log('[position-merge] merged entry:', entry, 'sl:', sl, 'tp:', tp, 'direction:', direction);
-      return {
-        ...prev,
-        entry,
-        sl,
-        tp,
-        tp2: next.tp2 || prev.tp2,
-        tp3: next.tp3 || prev.tp3,
-        direction,
-        rr: next.rr || prev.rr,
-        trade_type: next.trade_type || prev.trade_type,
-      };
-    });
+    setPosition(extractPositionFromAnalysis(effectiveParsed));
   }, [effectiveParsed]);
 
   useEffect(() => {
@@ -5420,16 +5425,28 @@ export default function ChartSnapshotsPage() {
 
   useEffect(() => {
     if (!activePlan?.raw) return;
-    const parsedPlan = extractPositionFromPlan(activePlan.raw, effectiveParsed || {});
+    const parsedPlan = extractPositionFromPlan(
+      activePlan.raw,
+      effectiveParsed || {},
+    );
     const nextEntry = parseNum(parsedPlan?.entry);
     const curEntry = parseNum(position?.entry);
     const nextSl = parseNum(parsedPlan?.sl);
     const curSl = parseNum(position?.sl);
-    if ((!(Number.isFinite(curEntry) && curEntry > 0) && Number.isFinite(nextEntry) && nextEntry > 0) ||
-        (!(Number.isFinite(curSl) && curSl > 0) && Number.isFinite(nextSl) && nextSl > 0)) {
+    if (
+      (!(Number.isFinite(curEntry) && curEntry > 0) &&
+        Number.isFinite(nextEntry) &&
+        nextEntry > 0) ||
+      (!(Number.isFinite(curSl) && curSl > 0) &&
+        Number.isFinite(nextSl) &&
+        nextSl > 0)
+    ) {
       setPosition((prev) => ({
         ...prev,
-        entry: Number.isFinite(nextEntry) && nextEntry > 0 ? parsedPlan.entry : prev.entry,
+        entry:
+          Number.isFinite(nextEntry) && nextEntry > 0
+            ? parsedPlan.entry
+            : prev.entry,
         sl: Number.isFinite(nextSl) && nextSl > 0 ? parsedPlan.sl : prev.sl,
         tp: parsedPlan.tp || prev.tp,
         tp2: parsedPlan.tp2 || prev.tp2,
@@ -5957,8 +5974,7 @@ export default function ChartSnapshotsPage() {
               className="snapshot-activity-list-v4"
               style={{ flex: 1, overflowY: "auto" }}
             >
-              {symbolFilterTab === "PENDING" ||
-              symbolFilterTab === "FILLED" ? (
+              {symbolFilterTab === "PENDING" || symbolFilterTab === "FILLED" ? (
                 <>
                   {tradeSymbolsLoading ? (
                     <div className="minor-text">Loading trades...</div>
@@ -5990,9 +6006,7 @@ export default function ChartSnapshotsPage() {
                           )
                         : "-";
                       const tpTxt = Number.isFinite(tpNum)
-                        ? tpNum.toFixed(
-                            tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
-                          )
+                        ? tpNum.toFixed(tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4)
                         : "-";
                       const ref = t?.sid || t?.id || "";
                       return (
@@ -6011,13 +6025,9 @@ export default function ChartSnapshotsPage() {
                                 letterSpacing: 0.2,
                               }}
                             >
-                              {normalizeSignalSymbol(
-                                String(t?.symbol || ""),
-                              )}
+                              {normalizeSignalSymbol(String(t?.symbol || ""))}
                             </span>
-                            <span
-                              style={{ color: sideColor, fontSize: 11 }}
-                            >
+                            <span style={{ color: sideColor, fontSize: 11 }}>
                               {sideRaw || "-"}
                             </span>
                           </div>
@@ -6042,9 +6052,7 @@ export default function ChartSnapshotsPage() {
                   ) : null}
                   {!symbolActivity.loading &&
                   symbolActivity.items.length === 0 ? (
-                    <div className="minor-text">
-                      No related trades/signals.
-                    </div>
+                    <div className="minor-text">No related trades/signals.</div>
                   ) : null}
                   {!symbolActivity.loading &&
                     symbolActivity.items.map((x) => {
@@ -6282,14 +6290,30 @@ export default function ChartSnapshotsPage() {
               style={{ height: "30px", padding: "0 6px", fontSize: "11px" }}
               title="Snapshot image quality"
             >
-              {["40","50","60","70","80","90","100"].map((v) => (
+              {["40", "50", "60", "70", "80", "90", "100"].map((v) => (
                 <option key={v} value={v}>
                   Q{v}
                 </option>
               ))}
             </select>
-            <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, cursor:"pointer" }} title="Merge all TFs into one master snapshot">
-              <input type="checkbox" checked={cfg.mergeSnapshots !== false} onChange={(e) => setCfgField("mergeSnapshots", e.target.checked)} style={{ cursor:"pointer" }} />
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                cursor: "pointer",
+              }}
+              title="Merge all TFs into one master snapshot"
+            >
+              <input
+                type="checkbox"
+                checked={cfg.mergeSnapshots !== false}
+                onChange={(e) =>
+                  setCfgField("mergeSnapshots", e.target.checked)
+                }
+                style={{ cursor: "pointer" }}
+              />
               Merge
             </label>
             <div style={{ display: "flex", gap: 4 }}>
@@ -6328,13 +6352,29 @@ export default function ChartSnapshotsPage() {
                 -
               </button>
             </div>
-            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <div
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
               {actionStatus.action === "save" && actionStatus.text ? (
-                <span className={`minor-text ${actionStatus.type === "error" ? "msg-error" : "msg-success"}`} style={{ fontSize: 10 }}>
+                <span
+                  className={`minor-text ${actionStatus.type === "error" ? "msg-error" : "msg-success"}`}
+                  style={{ fontSize: 10 }}
+                >
                   {actionStatus.text}
                 </span>
               ) : null}
-              <button className="secondary-button" onClick={saveSettings} style={{ height:"30px", padding:"0 8px", fontSize:11 }}>Save</button>
+              <button
+                className="secondary-button"
+                onClick={saveSettings}
+                style={{ height: "30px", padding: "0 8px", fontSize: 11 }}
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
@@ -7099,13 +7139,15 @@ export default function ChartSnapshotsPage() {
                       },
                     ],
                 snapshotFiles: chartFiles,
-                snapshotsUsed: Array.isArray(analysisFilesDisplay) && analysisFilesDisplay.length
-                  ? analysisFilesDisplay
-                  : Array.isArray(usedFiles) && usedFiles.length
-                    ? usedFiles
-                    : chartFiles.length
-                      ? chartFiles
-                      : [],
+                snapshotsUsed:
+                  Array.isArray(analysisFilesDisplay) &&
+                  analysisFilesDisplay.length
+                    ? analysisFilesDisplay
+                    : Array.isArray(usedFiles) && usedFiles.length
+                      ? usedFiles
+                      : chartFiles.length
+                        ? chartFiles
+                        : [],
               }}
               tradePlan={{
                 enabled: isTradeRoute || hasAnalyzeResponse,
