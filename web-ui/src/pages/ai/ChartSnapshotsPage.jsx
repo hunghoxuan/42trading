@@ -3359,6 +3359,7 @@ export default function ChartSnapshotsPage() {
             tfs,
             lookbackBars: resolveLookbackBarsValue(cfg.lookbackBars, timeframe),
             quality: Number(cfg.snapshotQuality || 80) || 80,
+            merge_snapshots: cfg.mergeSnapshots !== false,
           }),
       );
       const batch = await snapPromise;
@@ -3580,6 +3581,7 @@ export default function ChartSnapshotsPage() {
                     timeframe,
                   ),
                   quality: Number(cfg.snapshotQuality || 80) || 80,
+                  merge_snapshots: cfg.mergeSnapshots !== false,
                 }),
             );
             const batch = await snapPromise;
@@ -6118,6 +6120,10 @@ export default function ChartSnapshotsPage() {
                 </option>
               ))}
             </select>
+            <label style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, cursor:"pointer" }} title="Merge all TFs into one master snapshot">
+              <input type="checkbox" checked={cfg.mergeSnapshots !== false} onChange={(e) => setCfgField("mergeSnapshots", e.target.checked)} style={{ cursor:"pointer" }} />
+              Merge
+            </label>
             <div style={{ display: "flex", gap: 4 }}>
               <button
                 className="secondary-button"

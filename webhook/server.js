@@ -2,8 +2,8 @@
 
 const crypto = require("crypto");
 
-// Configuration for snapshot strategy
-const ALL_SNAPSHOTS_IN_1_FILE = true; // Set to false to revert to separate files
+// Configuration for snapshot strategy - can be overridden by request body merge_snapshots
+const ALL_SNAPSHOTS_IN_1_FILE_DEFAULT = true;
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
@@ -4213,7 +4213,8 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     ],
   });
   try {
-    if (ALL_SNAPSHOTS_IN_1_FILE) {
+    const mergeSnapshots = opts.merge_snapshots !== undefined ? Boolean(opts.merge_snapshots) : ALL_SNAPSHOTS_IN_1_FILE_DEFAULT;
+    if (mergeSnapshots) {
       const results = [];
       for (const symbol of symbols) {
         try {
