@@ -28,6 +28,9 @@ Canonical deploy policy:
   - classify merged vs not merged into `main`
   - present list to user
   - merge only user-approved pending branches
+- Required merge approval table before merge:
+  - `branch | merged? | last_commit | ahead/behind vs main | selected_for_merge`
+  - Wait for explicit user approval of merge set.
 - Only after merge + checks + push, deploy prod.
 
 ## Multi-Agent Commit/Merge/Deploy SOP (Mandatory, No Exceptions)
@@ -84,6 +87,8 @@ Canonical deploy policy:
   - `bash scripts/deploy/check_build_versions.sh origin/main`
   - `bash scripts/deploy/deploy_webhook.sh`
 - Do not run this step unless user explicitly requested prod deploy.
+- Prod deploy promotion rule:
+  - deploy commit SHA must match staging-validated SHA unless user explicitly approves exception.
 
 ### 5) Post-deploy verification and lock release
 
@@ -95,6 +100,8 @@ Canonical deploy policy:
   - deploy commit SHA
   - version strings
   - verify evidence
+  - rollback commit SHA
+  - rollback command
   - PASS/FAIL
 - Set lock back to:
   - `lock_status: UNLOCKED`
@@ -107,3 +114,17 @@ Canonical deploy policy:
   - keep lock with failing owner until rollback/fix is complete
   - post blocker + next action in mailbox
   - no next deployer may proceed
+
+## Branch Naming Rule
+
+- For coding work, create branch with agent prefix + short description:
+  - `codex/<agent>/<short-desc>`
+- Example:
+  - `codex/codex/chart-objects-save-buttons`
+
+## Staging Data Isolation Rule
+
+- Branch staging deploy must use isolated runtime data by default:
+  - separate DB/schema or dedicated staging DB
+  - separate Redis DB index or key prefix namespace
+- Shared prod-like data is allowed only with explicit user approval.
