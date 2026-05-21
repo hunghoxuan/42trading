@@ -2533,7 +2533,12 @@ export default function ChartSnapshotsPage() {
       type: 'settings',
       name: 'ANALYSE_SETTINGS',
       data: { lookbackBars: cfg.lookbackBars, snapshotQuality: cfg.snapshotQuality, mergeSnapshots: cfg.mergeSnapshots },
-    }).catch(() => {});
+    }).then(() => {
+      setActionStatus({ action: 'save', type: 'success', text: 'Saved' });
+      setTimeout(() => setActionStatus({ action: '', type: '', text: '' }), 1500);
+    }).catch((e) => {
+      setActionStatus({ action: 'save', type: 'error', text: 'Save failed' });
+    });
   }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
 
   const [templates, setTemplates] = useState(() => loadTemplates());
