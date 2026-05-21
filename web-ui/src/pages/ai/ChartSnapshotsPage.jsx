@@ -4756,19 +4756,24 @@ export default function ChartSnapshotsPage() {
     const next = extractPositionFromAnalysis(effectiveParsed);
     const nextEntry = parseNum(next?.entry);
     const nextSl = parseNum(next?.sl);
-    if (!(Number.isFinite(nextEntry) && nextEntry > 0) && !(Number.isFinite(nextSl) && nextSl > 0)) return;
+    console.log('[position-merge] effectiveParsed changed, next entry:', next?.entry, 'next sl:', next?.sl, 'next tp:', next?.tp);
+    if (!(Number.isFinite(nextEntry) && nextEntry > 0) && !(Number.isFinite(nextSl) && nextSl > 0)) {
+      console.log('[position-merge] skip: no valid entry or sl in extraction');
+      return;
+    }
     setPosition((prev) => {
+      console.log('[position-merge] prev.entry:', prev?.entry, 'prev.sl:', prev?.sl, 'prev.tp:', prev?.tp);
       const curEntry = parseNum(prev?.entry);
       const curSl = parseNum(prev?.sl);
       const curEntryValid = Number.isFinite(curEntry) && curEntry > 0;
       const curSlValid = Number.isFinite(curSl) && curSl > 0;
       const nextEntryValid = Number.isFinite(nextEntry) && nextEntry > 0;
       const nextSlValid = Number.isFinite(nextSl) && nextSl > 0;
-      // Always accept valid extraction over invalid/zero current state
       const entry = !curEntryValid && nextEntryValid ? next.entry : curEntryValid ? prev.entry : next.entry || prev.entry;
       const sl = !curSlValid && nextSlValid ? next.sl : curSlValid ? prev.sl : next.sl || prev.sl;
       const tp = (!curEntryValid && next.tp) || prev.tp || next.tp;
       const direction = (!curEntryValid && next.direction) || prev.direction || next.direction;
+      console.log('[position-merge] merged entry:', entry, 'sl:', sl, 'tp:', tp, 'direction:', direction);
       return {
         ...prev,
         entry,
