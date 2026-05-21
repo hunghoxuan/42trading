@@ -4760,16 +4760,23 @@ export default function ChartSnapshotsPage() {
     setPosition((prev) => {
       const curEntry = parseNum(prev?.entry);
       const curSl = parseNum(prev?.sl);
-      if ((Number.isFinite(curEntry) && curEntry > 0) && (Number.isFinite(curSl) && curSl > 0) &&
-          Math.abs(curEntry - nextEntry) < 0.0001 && Math.abs(curSl - nextSl) < 0.0001) return prev;
+      const curEntryValid = Number.isFinite(curEntry) && curEntry > 0;
+      const curSlValid = Number.isFinite(curSl) && curSl > 0;
+      const nextEntryValid = Number.isFinite(nextEntry) && nextEntry > 0;
+      const nextSlValid = Number.isFinite(nextSl) && nextSl > 0;
+      // Always accept valid extraction over invalid/zero current state
+      const entry = !curEntryValid && nextEntryValid ? next.entry : curEntryValid ? prev.entry : next.entry || prev.entry;
+      const sl = !curSlValid && nextSlValid ? next.sl : curSlValid ? prev.sl : next.sl || prev.sl;
+      const tp = (!curEntryValid && next.tp) || prev.tp || next.tp;
+      const direction = (!curEntryValid && next.direction) || prev.direction || next.direction;
       return {
         ...prev,
-        entry: Number.isFinite(nextEntry) && nextEntry > 0 ? next.entry : prev.entry,
-        tp: next.tp || prev.tp,
+        entry,
+        sl,
+        tp,
         tp2: next.tp2 || prev.tp2,
         tp3: next.tp3 || prev.tp3,
-        sl: Number.isFinite(nextSl) && nextSl > 0 ? next.sl : prev.sl,
-        direction: next.direction || prev.direction,
+        direction,
         rr: next.rr || prev.rr,
         trade_type: next.trade_type || prev.trade_type,
       };
