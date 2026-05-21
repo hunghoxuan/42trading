@@ -656,7 +656,6 @@ export default function TradeSignalChart({
               const isBuy =
                 dir === "BUY" ? true : dir === "SELL" ? false : inferredBuy;
               const actionLabel = isBuy ? "Buy" : "Sell";
-              const pNum = index + 1;
 
               // Standard colors
               const greenColor = "#26a69a";
@@ -672,29 +671,28 @@ export default function TradeSignalChart({
                 lineWidth,
                 lineStyle: 0,
                 axisLabelVisible: true,
-                title: `${actionLabel}${pNum}`,
+                title: actionLabel,
               });
               priceLinesRef.lines.push({
                 price: ep,
-                label: `${actionLabel}${pNum}`,
+                label: actionLabel,
                 priceText: ep.toFixed(2),
               });
               if (isPrimary) levelPriceMap.entry = ep;
               // SL line: dashed, always RED
               if (sp) {
-                const slPct = ep ? (((sp - ep) / ep) * 100).toFixed(1) : "";
                 candleSeries.createPriceLine({
                   price: sp,
                   color: `rgba(239, 83, 80, ${alpha})`,
                   lineWidth,
                   lineStyle: 2,
                   axisLabelVisible: true,
-                  title: `SL${pNum} ${slPct}%`,
+                  title: "SL",
                 });
                 priceLinesRef.lines.push({
                   price: sp,
-                  label: `SL${pNum}`,
-                  priceText: `${sp.toFixed(2)} (${slPct}%)`,
+                  label: "SL",
+                  priceText: sp.toFixed(2),
                 });
               }
               if (isPrimary && sp) levelPriceMap.sl = sp;
@@ -703,26 +701,28 @@ export default function TradeSignalChart({
                 { key: "TP2", value: tp2, lineAlpha: alpha * 0.78 },
                 { key: "TP3", value: tp3, lineAlpha: alpha * 0.58 },
               ].filter((x) => Number.isFinite(x.value));
-              tpLineLevels.forEach((lvl, idx2) => {
-                const tpPct = ep
-                  ? (((Number(lvl.value) - ep) / ep) * 100).toFixed(1)
-                  : "";
+              tpLineLevels.forEach((lvl) => {
                 candleSeries.createPriceLine({
                   price: Number(lvl.value),
                   color: `rgba(38, 166, 154, ${Math.max(0.28, Math.min(1, lvl.lineAlpha))})`,
                   lineWidth,
                   lineStyle: 1,
                   axisLabelVisible: true,
-                  title: `P${pNum} ${lvl.key} +${tpPct}%`,
+                  title: lvl.key,
                 });
                 priceLinesRef.lines.push({
                   price: Number(lvl.value),
-                  label: `P${pNum} ${lvl.key}`,
-                  priceText: `${Number(lvl.value).toFixed(2)} (+${tpPct}%)`,
+                  label: lvl.key,
+                  priceText: Number(lvl.value).toFixed(2),
                 });
               });
               if (isPrimary)
                 levelPriceMap.tp = tp1 ?? tp ?? tp2 ?? tp3 ?? levelPriceMap.tp;
+              if (isPrimary) {
+                if (Number.isFinite(tp1 ?? tp)) levelPriceMap.tp1 = tp1 ?? tp;
+                if (Number.isFinite(tp2)) levelPriceMap.tp2 = tp2;
+                if (Number.isFinite(tp3)) levelPriceMap.tp3 = tp3;
+              }
 
               // Entry → TP zone box: Reward zone = Green
               if (ep && tp && boxAnchorTs) {
@@ -833,13 +833,18 @@ export default function TradeSignalChart({
             const enableLevelDrag =
               typeof onPlanLevelChange === "function" &&
               Number.isFinite(levelPriceMap.entry) &&
-              Number.isFinite(levelPriceMap.tp) &&
+              (Number.isFinite(levelPriceMap.tp) ||
+               Number.isFinite(levelPriceMap.tp1) ||
+               Number.isFinite(levelPriceMap.tp2) ||
+               Number.isFinite(levelPriceMap.tp3)) &&
               Number.isFinite(levelPriceMap.sl);
 
             const pickNearestLevel = (mouseY) => {
               const candidates = [
                 { key: "entry", price: levelPriceMap.entry },
-                { key: "tp", price: levelPriceMap.tp },
+                { key: "tp1", price: levelPriceMap.tp1 ?? levelPriceMap.tp },
+                { key: "tp2", price: levelPriceMap.tp2 },
+                { key: "tp3", price: levelPriceMap.tp3 },
                 { key: "sl", price: levelPriceMap.sl },
               ]
                 .map((x) => ({

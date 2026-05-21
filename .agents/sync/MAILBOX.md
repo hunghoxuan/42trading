@@ -13,8 +13,36 @@ Use this section for parallel-agent safety and deploy ordering.
 
 - lock_status: `LOCKED`
 - deploy_owner: `DeepSeek`
-- since_utc: `2026-05-21 09:30 UTC`
-- note: `analyze page Save button - toast + inline status`
+- since_utc: `2026-05-21 10:45 UTC`
+- note: `Info chart TP lines + labels + drag fix`
+
+### [2026-05-21 09:58 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: d248ba6b
+- scope: `ANALYSE_SETTINGS load key items→settings`
+- merge_to_main: YES (d248ba6b)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.21 09:55 - 96275cef
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 09:55 - 96275cef
+- rollback: `git revert d248ba6b && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
+
+### [2026-05-21 09:32 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: c64997bf
+- scope: `analyze page Save button toast + inline status`
+- merge_to_main: YES (c64997bf)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.21 09:31 - 5b4fd7e7
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.21 09:31 - 5b4fd7e7
+- rollback: `git revert c64997bf && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
 
 ### [2026-05-21 09:25 UTC] AGENT:DeepSeek
 - status: DEPLOYED
