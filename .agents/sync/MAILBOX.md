@@ -16,6 +16,16 @@ Use this section for parallel-agent safety and deploy ordering.
 - since_utc: `2026-05-21 14:36 UTC`
 - note: `all deploys complete`
 
+### [2026-05-21 11:14 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: 236deb7b
+- version: v2026.05.21 11:13 - 3b562780
+- scope: multi-tradeplan card overlap fix, selection reset fix, snapshot traceability UI
+- verify: health ok, UI 200, PM2 online
+- rollback: 24362836
+- rollback_cmd: ssh root@139.59.211.192 "cd /opt/trading && git checkout 24362836 && pm2 restart webhook"
+
 ### [2026-05-21 11:10 UTC] AGENT:DeepSeek
 - status: DEPLOYED (lock cleanup)
 - branch: main
