@@ -1,4 +1,5 @@
-const DEFAULT_REMOTE_BASE = import.meta.env.VITE_API_BASE || "http://localhost";
+const ENV_API_BASE = String(import.meta.env.VITE_API_BASE || "").trim();
+const DEFAULT_REMOTE_BASE = ENV_API_BASE || "http://localhost";
 const DEFAULT_API_KEY = import.meta.env.VITE_API_KEY || "";
 const DEFAULT_API_TIMEOUT_MS = 180000;
 
@@ -21,16 +22,10 @@ function runtimeApiBase() {
     localStorage.setItem("tvbridge_api_base", apiBaseQuery);
     return apiBaseQuery;
   }
-  const { hostname, origin } = window.location;
+  const { hostname, origin, port, protocol } = window.location;
 
   // On deployed server UI, always use same-origin API to avoid stale/bad saved API URLs.
   if (hostname !== "localhost" && hostname !== "127.0.0.1") {
-    return origin;
-  }
-
-  // In Vite dev mode, Vite proxy handles forwarding to backend.
-  // Use same-origin so cookies flow correctly (same host:port to the browser).
-  if (import.meta.env.DEV) {
     return origin;
   }
 
@@ -39,11 +34,30 @@ function runtimeApiBase() {
   );
   if (apiBaseStored) return apiBaseStored;
 
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
-    return DEFAULT_REMOTE_BASE;
+  const apiBaseDefault = normalizeApiBase(DEFAULT_REMOTE_BASE);
+  // For localhost/127.0.0.1, only auto-force env-configured API base.
+  // Do not clobber an intended runtime target (e.g. VPS via query/storage)
+  // with the generic fallback "http://localhost".
+  if (
+    (hostname === "localhost" || hostname === "127.0.0.1") &&
+    ENV_API_BASE &&
+    apiBaseDefault
+  ) {
+    localStorage.setItem("tvbridge_api_base", apiBaseDefault);
+    return apiBaseDefault;
   }
-  if (port && port !== "80" && port !== "443") {
-    return `${protocol}//${hostname}`;
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    // If running on a non-standard port (e.g. backend serves UI on :3001),
+    // use same-origin so API calls hit the correct port.
+    if (port && port !== "80" && port !== "443") {
+      return origin;
+    }
+    // In Vite dev mode, proxy handles forwarding to backend.
+    if (import.meta.env.DEV) {
+      return origin;
+    }
+    return DEFAULT_REMOTE_BASE;
   }
   return origin;
 }
@@ -54,6 +68,14 @@ function runtimeApiKey() {
   if (keyFromQuery) {
     localStorage.setItem("tvbridge_api_key", keyFromQuery);
     return keyFromQuery;
+  }
+  const { hostname } = window.location;
+  if (
+    (hostname === "localhost" || hostname === "127.0.0.1") &&
+    DEFAULT_API_KEY
+  ) {
+    localStorage.setItem("tvbridge_api_key", DEFAULT_API_KEY);
+    return DEFAULT_API_KEY.trim();
   }
   return (localStorage.getItem("tvbridge_api_key") || DEFAULT_API_KEY).trim();
 }
