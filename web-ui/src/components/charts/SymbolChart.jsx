@@ -933,7 +933,10 @@ export default function SymbolChart({
       if (Number.isFinite(close)) return close;
     }
     return null;
-  }, [master?.bars]);
+  }, [JSON.stringify(master?.bars)]);
+
+  const fallbackEntryRef = useRef(chartFallbackEntry);
+  fallbackEntryRef.current = chartFallbackEntry;
 
   useEffect(() => {
     if (!(hasTradePlan && hasAnalysis)) return;
@@ -944,7 +947,7 @@ export default function SymbolChart({
         ? [analysisSnapshot.trade_plan]
         : [];
     if (!rawPlans.length) return;
-    const fallbackEntry = chartFallbackEntry;
+    const fallbackEntry = fallbackEntryRef.current;
     setAnnotations((prev) => {
       const allowedPlanIds = new Set(
         rawPlans.slice(0, 2).map((_, idx) => (idx === 0 ? "P1" : "P2")),
@@ -1009,7 +1012,7 @@ export default function SymbolChart({
       });
       return next;
     });
-  }, [hasTradePlan, hasAnalysis, analysisSnapshot, chartFallbackEntry]);
+  }, [hasTradePlan, hasAnalysis, analysisSnapshot]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];

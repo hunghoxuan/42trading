@@ -1218,7 +1218,7 @@ export default function SignalDetailCard({
         ? response.tradePlans
         : [],
     }),
-    [response?.raw, response?.tradePlans],
+    [JSON.stringify(response?.raw), JSON.stringify(response?.tradePlans)],
   );
   const displayPlanIds = useMemo(() => {
     const fromPlans = plans.map((_, i) =>
