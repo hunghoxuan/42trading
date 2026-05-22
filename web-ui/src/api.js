@@ -128,6 +128,8 @@ function isAuthFailure(status, data) {
 }
 
 function redirectToLogin() {
+  // Don't redirect on local dev — use API key auth
+  if (import.meta.env.DEV && import.meta.env.VITE_API_BASE) return;
   try {
     localStorage.removeItem("tvbridge_api_key");
   } catch {
