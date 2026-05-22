@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { api } from "../api";
 
 export default function LoginPage({ onLogin }) {
@@ -8,6 +8,7 @@ export default function LoginPage({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   async function submit(e) {
     e.preventDefault();
@@ -16,10 +17,14 @@ export default function LoginPage({ onLogin }) {
     try {
       const out = await api.login(email, password);
       onLogin?.(out?.user || null);
-      // Redirect to return_url if present
+      // Use client-side navigation to avoid full page reload
+      // (full reload would re-init React and re-check authMe, which can fail
+      //  when cookie isn't yet established on cross-origin dev setups).
+      // React Router will automatically redirect /login → /dashboard via
+      // the authenticated route's <Navigate to="/dashboard" replace />.
       const returnUrl = searchParams.get("return_url");
       if (returnUrl) {
-        window.location.assign(decodeURIComponent(returnUrl));
+        navigate(decodeURIComponent(returnUrl), { replace: true });
       }
     } catch (err) {
       setError(err?.message || "Login failed");
@@ -29,10 +34,13 @@ export default function LoginPage({ onLogin }) {
   }
 
   return (
-    <section className="panel stack-layout login-page fadeIn" style={{ maxWidth: '400px', margin: '100px auto' }}>
+    <section
+      className="panel stack-layout login-page fadeIn"
+      style={{ maxWidth: "400px", margin: "100px auto" }}
+    >
       <div className="panel-label">AUTHENTICATION</div>
       <form onSubmit={submit} className="stack-layout" style={{ gap: 20 }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           <div className="minor-text">Email Address</div>
           <input
             type="email"
@@ -41,10 +49,10 @@ export default function LoginPage({ onLogin }) {
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
             required
-            style={{ width: '100%' }}
+            style={{ width: "100%" }}
           />
         </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           <div className="minor-text">Password</div>
           <input
             type="password"
@@ -53,11 +61,16 @@ export default function LoginPage({ onLogin }) {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
             required
-            style={{ width: '100%' }}
+            style={{ width: "100%" }}
           />
         </label>
         {error ? <div className="error">{error}</div> : null}
-        <button type="submit" className="secondary-button" disabled={loading} style={{ width: '100%', padding: '12px' }}>
+        <button
+          type="submit"
+          className="secondary-button"
+          disabled={loading}
+          style={{ width: "100%", padding: "12px" }}
+        >
           {loading ? "🔐 AUTHORIZING..." : "🔐 SIGN IN"}
         </button>
       </form>

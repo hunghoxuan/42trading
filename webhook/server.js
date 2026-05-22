@@ -2905,23 +2905,32 @@ function parseCookies(req) {
   return out;
 }
 
-function setUiSessionCookie(res, token) {
+function isLocalhostOrigin(req) {
+  const origin = String(req.headers.origin || req.headers.referer || "");
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+}
+
+function setUiSessionCookie(req, res, token) {
   const ttl = Math.max(
     300,
     Number.isFinite(CFG.uiSessionTtlSeconds)
       ? CFG.uiSessionTtlSeconds
       : 60 * 60 * 24 * 7,
   );
+  // Use SameSite=None for localhost cross-origin dev (Vite on :5174 → backend on :80)
+  // Browsers allow None without Secure on localhost. Use Lax for prod (CSRF protection).
+  const sameSite = isLocalhostOrigin(req) ? "None" : "Lax";
   res.setHeader(
     "Set-Cookie",
-    `tvb_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ttl}`,
+    `tvb_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${ttl}`,
   );
 }
 
-function clearUiSessionCookie(res) {
+function clearUiSessionCookie(req, res) {
+  const sameSite = isLocalhostOrigin(req) ? "None" : "Lax";
   res.setHeader(
     "Set-Cookie",
-    "tvb_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+    `tvb_session=; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=0`,
   );
 }
 
@@ -15428,7 +15437,7 @@ const appHandler = async (req, res) => {
           error: "Invalid email or password",
         });
       const token = createUiSession(authUser);
-      setUiSessionCookie(res, token);
+      setUiSessionCookie(req, res, token);
       return json(res, 200, { ok: true, user: authUser, token });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -15439,7 +15448,7 @@ const appHandler = async (req, res) => {
   if (req.method === "POST" && url.pathname === "/auth/logout") {
     const sess = getUiSessionFromReq(req);
     if (sess.ok && sess.token) UI_SESSIONS.delete(sess.token);
-    clearUiSessionCookie(res);
+    clearUiSessionCookie(req, res);
     return json(res, 200, { ok: true });
   }
 

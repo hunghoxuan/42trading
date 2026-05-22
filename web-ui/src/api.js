@@ -1,4 +1,5 @@
-const DEFAULT_REMOTE_BASE = "http://localhost";
+const DEFAULT_REMOTE_BASE = import.meta.env.VITE_API_BASE || "http://localhost";
+const DEFAULT_API_KEY = import.meta.env.VITE_API_KEY || "";
 const DEFAULT_API_TIMEOUT_MS = 180000;
 
 function normalizeApiBase(value) {
@@ -27,6 +28,12 @@ function runtimeApiBase() {
     return origin;
   }
 
+  // In Vite dev mode, Vite proxy handles forwarding to backend.
+  // Use same-origin so cookies flow correctly (same host:port to the browser).
+  if (import.meta.env.DEV) {
+    return origin;
+  }
+
   const apiBaseStored = normalizeApiBase(
     localStorage.getItem("tvbridge_api_base"),
   );
@@ -48,7 +55,7 @@ function runtimeApiKey() {
     localStorage.setItem("tvbridge_api_key", keyFromQuery);
     return keyFromQuery;
   }
-  return (localStorage.getItem("tvbridge_api_key") || "").trim();
+  return (localStorage.getItem("tvbridge_api_key") || DEFAULT_API_KEY).trim();
 }
 
 export function getRuntimeApiKey() {
