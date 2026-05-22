@@ -1116,7 +1116,7 @@ export function buildJsonConfig(cfg) {
         strategies: cfg.strategies,
         session: cfg.session,
         min_trades: Number(cfg.min_trades || 0),
-        max_trades: Number(cfg.max_trades || 2),
+        max_trades: Number(cfg.max_trades || 4),
         min_rr: Number(tfConfig.rr),
         max_risk_pct: Number(cfg.risk),
         daily_adr_filter: true,

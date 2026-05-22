@@ -12,7 +12,11 @@ export default defineConfig({
       // Proxy API/auth/SSE paths to backend so cookies work same-origin
       "/auth": { target: API_TARGET, changeOrigin: true },
       "/health": { target: API_TARGET, changeOrigin: true },
-      "/webhook": { target: API_TARGET, changeOrigin: true },
+      "/webhook": {
+        target: API_TARGET,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/webhook/, ""),
+      },
       "/mt5": { target: API_TARGET, changeOrigin: true },
       "/v2": { target: API_TARGET, changeOrigin: true },
       "/sse": { target: API_TARGET, changeOrigin: true, ws: true },

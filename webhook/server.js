@@ -3654,7 +3654,15 @@ function resolvePlaywrightChromiumExecutablePath() {
   ).trim();
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
   try {
-    const base = "/root/.cache/ms-playwright";
+    // Resolve platform-appropriate cache dir
+    const home = process.env.HOME || process.env.USERPROFILE || "/root";
+    const cacheDirs = [
+      path.join(home, "Library", "Caches", "ms-playwright"), // macOS
+      path.join(home, ".cache", "ms-playwright"), // Linux
+      "/root/.cache/ms-playwright", // Linux root
+    ];
+    const base = cacheDirs.find((d) => fs.existsSync(d));
+    if (!base) return "";
     const entries = fs
       .readdirSync(base, { withFileTypes: true })
       .filter((d) => d.isDirectory() && /^chromium-\d+$/.test(d.name))
@@ -3666,6 +3674,24 @@ function resolvePlaywrightChromiumExecutablePath() {
       });
     for (const name of entries) {
       const candidates = [
+        path.join(
+          base,
+          name,
+          "chrome-mac-arm64",
+          "Google Chrome for Testing.app",
+          "Contents",
+          "MacOS",
+          "Google Chrome for Testing",
+        ),
+        path.join(
+          base,
+          name,
+          "chrome-mac",
+          "Google Chrome for Testing.app",
+          "Contents",
+          "MacOS",
+          "Google Chrome for Testing",
+        ),
         path.join(base, name, "chrome-linux64", "chrome"),
         path.join(base, name, "chrome-linux", "chrome"),
       ];
@@ -13716,8 +13742,12 @@ async function mt5DeleteAllEvents() {
     const walkDir = (dir) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) { walkDir(full); }
-        else if (entry.name.endsWith(".log")) { fs.unlinkSync(full); deleted++; }
+        if (entry.isDirectory()) {
+          walkDir(full);
+        } else if (entry.name.endsWith(".log")) {
+          fs.unlinkSync(full);
+          deleted++;
+        }
       }
     };
     walkDir(baseDir);
@@ -22186,7 +22216,9 @@ const appHandler = async (req, res) => {
       if (fs.existsSync(filePath)) {
         try {
           chartObjects = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        } catch { chartObjects = []; }
+        } catch {
+          chartObjects = [];
+        }
       }
       return json(res, 200, {
         ok: true,
@@ -22200,7 +22232,6 @@ const appHandler = async (req, res) => {
       });
     }
   }
-
 
   if (req.method === "POST" && url.pathname === "/v2/sources") {
     if (!CFG.mt5Enabled)

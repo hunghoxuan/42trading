@@ -13,6 +13,7 @@
   "dependencies": {
     "bullmq": "^5.76.2",
     "pg": "^8.20.0",
+    "playwright": "^1.60.0",
     "redis": "^4.7.1",
     "tesseract.js": "^7.0.0"
   },

@@ -1931,9 +1931,12 @@ export default function SymbolChart({
           Object.values(master.snapshots).some((s) =>
             String(s?.file_name).toUpperCase().includes("_MASTER"),
           );
-        const activeGridCols = isMasterSnapshot ? 1 : gridCols;
         const displayTfs =
           isMasterSnapshot && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
+        const activeGridCols = Math.max(
+          1,
+          Math.min(isMasterSnapshot ? 1 : gridCols, displayTfs.length || 1),
+        );
         return (
           <div
             style={{

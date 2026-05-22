@@ -19,3 +19,6 @@ You MUST prefix **ALL** bash commands with `rtk`.
 - **Good:** `rtk fd src/`
 
 If you are using built-in agent filesystem tools (like `view_file` or `list_dir`), you do not need RTK. This rule only applies when you execute commands in the terminal.
+
+## Localhost Restart Permission
+When working in localhost/dev environment, the agent may restart local services/processes as needed for verification without asking for extra confirmation first.

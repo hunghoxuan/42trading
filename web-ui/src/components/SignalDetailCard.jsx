@@ -235,6 +235,121 @@ function humanizeInfoKey(key) {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+function isPlainObject(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.prototype.toString.call(value) === "[object Object]"
+  );
+}
+
+function stringifyDynamicInfoValue(value, depth = 0) {
+  if (value == null || value === "") return "—";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number" || typeof value === "bigint")
+    return String(value);
+  if (typeof value === "string") return value;
+
+  if (Array.isArray(value)) {
+    const arr = value
+      .map((item) => stringifyDynamicInfoValue(item, depth + 1))
+      .filter((x) => x && x !== "—");
+    return arr.length ? arr.join(" | ") : "—";
+  }
+
+  if (isPlainObject(value)) {
+    const compact = Object.entries(value)
+      .filter(([, v]) => v != null && v !== "")
+      .map(
+        ([k, v]) =>
+          `${humanizeInfoKey(k)}: ${stringifyDynamicInfoValue(v, depth + 1)}`,
+      )
+      .join(" | ");
+    return compact || "—";
+  }
+
+  return String(value);
+}
+
+function renderDynamicInfoSection(sectionKey, sectionVal) {
+  const isObj = isPlainObject(sectionVal);
+  let sectionItems = [];
+  if (isObj) {
+    sectionItems = Object.entries(sectionVal);
+  } else if (Array.isArray(sectionVal)) {
+    sectionItems = sectionVal.map((item, idx) => [`item_${idx + 1}`, item]);
+  }
+
+  return (
+    <div key={`section_${sectionKey}`}>
+      <div
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          color: "var(--muted)",
+          marginBottom: 6,
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          paddingBottom: 3,
+        }}
+      >
+        {humanizeInfoKey(sectionKey)}
+      </div>
+
+      {!sectionItems.length ? (
+        <div
+          style={{
+            border: "1px solid rgba(255,255,255,0.07)",
+            borderRadius: 6,
+            padding: 8,
+            background: "rgba(255,255,255,0.02)",
+            fontSize: 12,
+          }}
+        >
+          {stringifyDynamicInfoValue(sectionVal)}
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 8,
+          }}
+        >
+          {sectionItems.map(([k, v], idx) => (
+            <div
+              key={`${sectionKey}_${String(k)}_${idx}`}
+              style={{
+                border: "1px solid rgba(255,255,255,0.07)",
+                borderRadius: 6,
+                padding: 8,
+                background: "rgba(255,255,255,0.02)",
+              }}
+            >
+              <div className="minor-text" style={{ fontSize: 9 }}>
+                {humanizeInfoKey(
+                  String(k).startsWith("item_") ? `Item ${idx + 1}` : k,
+                )}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  marginTop: 4,
+                  lineHeight: 1.45,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {stringifyDynamicInfoValue(v)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function semanticTone(value) {
   const raw = String(value == null ? "" : value)
     .trim()
@@ -2001,6 +2116,87 @@ export default function SignalDetailCard({
             selectedPlanId === "main"
               ? tradePlan?.value || p
               : planDrafts[selectedPlanId] || p;
+
+          const dynamicRawSource =
+            mode === "ai"
+              ? selectedPlanJsonForDisplay &&
+                typeof selectedPlanJsonForDisplay === "object" &&
+                Object.keys(selectedPlanJsonForDisplay).length
+                ? selectedPlanJsonForDisplay
+                : selectedRawData && typeof selectedRawData === "object"
+                  ? selectedRawData
+                  : rawData && typeof rawData === "object"
+                    ? rawData
+                    : {}
+              : {};
+
+          if (
+            mode === "ai" &&
+            dynamicRawSource &&
+            typeof dynamicRawSource === "object" &&
+            Object.keys(dynamicRawSource).length > 0
+          ) {
+            const primitiveRows = Object.entries(dynamicRawSource).filter(
+              ([, v]) =>
+                v != null && v !== "" && !Array.isArray(v) && !isPlainObject(v),
+            );
+            const sectionRows = Object.entries(dynamicRawSource).filter(
+              ([, v]) =>
+                v != null && v !== "" && (Array.isArray(v) || isPlainObject(v)),
+            );
+
+            return (
+              <div style={{ padding: "10px 4px", display: "grid", gap: 14 }}>
+                {primitiveRows.length ? (
+                  <div style={{ marginBottom: 4 }}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        textTransform: "uppercase",
+                        color: "var(--muted)",
+                        marginBottom: 6,
+                        borderBottom: "1px solid rgba(255,255,255,0.06)",
+                        paddingBottom: 3,
+                      }}
+                    >
+                      Summary
+                    </div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(180px, 1fr))",
+                        gap: 8,
+                      }}
+                    >
+                      {primitiveRows.map(([k, v]) => (
+                        <div
+                          key={`summary_${k}`}
+                          style={{
+                            border: "1px solid rgba(255,255,255,0.07)",
+                            borderRadius: 6,
+                            padding: 8,
+                            background: "rgba(255,255,255,0.02)",
+                          }}
+                        >
+                          <div className="minor-text" style={{ fontSize: 9 }}>
+                            {humanizeInfoKey(k)}
+                          </div>
+                          <div style={{ fontSize: 12, marginTop: 3 }}>
+                            {stringifyDynamicInfoValue(v)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {sectionRows.map((pair, idx) =>
+                  renderDynamicInfoSection(pair[0], pair[1], idx)
+                )}
+              </div>
+            );
+          }
 
           const fields = [
             {

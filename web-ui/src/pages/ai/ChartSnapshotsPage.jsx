@@ -4790,8 +4790,7 @@ export default function ChartSnapshotsPage() {
     const symbols = Array.isArray(cfg?.symbols)
       ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
       : [];
-    if (!symbols.length) return;
-    const next = buildAiAnalyzeRoute(symbols);
+    const next = symbols.length ? buildAiAnalyzeRoute(symbols) : "/ai/analyze";
     if (`${location.pathname}${location.search}` !== next) {
       navigate(next, { replace: true });
     }
@@ -6762,7 +6761,7 @@ export default function ChartSnapshotsPage() {
                 </div>
               </div>
             </div>
-            {selectedSymbols.length === 0 || selectedSymbols.length > 2 ? (
+            {selectedSymbols.length === 0 ? (
               <div
                 className="browser-grid-v1"
                 style={{
@@ -6945,7 +6944,7 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
-        {(selectedSymbols.length === 0 || selectedSymbols.length > 2) &&
+        {selectedSymbols.length > 1 &&
           !hasAnalyzeResponse &&
           !isTradeRoute &&
           selectedSymbol && (
@@ -6957,10 +6956,7 @@ export default function ChartSnapshotsPage() {
                 marginBottom: 20,
               }}
             >
-              {(selectedSymbols.length
-                ? selectedSymbols
-                : [selectedSymbol]
-              ).map((sym) => (
+              {selectedSymbols.map((sym) => (
                 <Suspense
                   key={sym}
                   fallback={
@@ -6986,331 +6982,339 @@ export default function ChartSnapshotsPage() {
             </div>
           )}
 
-        {selectedSymbol && (
-          <Suspense
-            fallback={<div className="loading-card">Loading Details...</div>}
-          >
-            <SignalDetailCard
-              mode="ai"
-              hideTabsBeforeResponse={!hasAnalyzeResponse}
-              chart={{
-                enabled: true,
-                symbol: normalizeSignalSymbol(
-                  activePlan?.symbol ||
-                    activePlan?.raw?.symbol ||
-                    selectedSymbol ||
-                    cfg.symbol ||
-                    tvSymbol ||
-                    "",
-                ),
-                interval: timeframe,
-                entryPrice: position.entry,
-                slPrice: position.sl,
-                tpPrice: position.tp,
-                tp1Price: position.tp || "",
-                tp2Price: position.tp2 || "",
-                tp3Price: position.tp3 || "",
-                onPlanLevelChange: handlePlanLevelChange,
-                detailTfTab: timeframe,
-                showEditButton: !(isTradeRoute || hasAnalyzeResponse),
-                showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
-                showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
-                profileTfs: widgetTfs,
-                initialGridCols: effectiveGridCols,
-                initialBarsCount: Number(cfg.lookbackBars || 300),
-                showPerCardLayoutControls: false,
-                onDetailTfTabChange: setSelectedEntryTf,
-                entryNode: (
-                  <div className="snapshot-live-card-v3">
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        marginBottom: 8,
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {snapshotTfs.map((tf) => {
-                        const s = barsStatus[tf] || {};
-                        const icon =
-                          s.status === "cached"
-                            ? "✅"
-                            : s.status === "loading"
-                              ? "⏳"
-                              : "❌";
-                        return (
-                          <span
-                            key={tf}
-                            className="minor-text"
-                            style={{
-                              fontSize: "10px",
-                              padding: "2px 6px",
-                              background: "rgba(255,255,255,0.05)",
-                              borderRadius: 4,
-                            }}
-                          >
-                            {icon} {tf}{" "}
-                            {s.time || (s.status === "none" ? "No cache" : "")}
-                          </span>
-                        );
-                      })}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        style={{ fontSize: "10px", padding: "2px 8px" }}
-                        onClick={() =>
-                          fetchAllBars(
-                            cfg.symbol || tvSymbol,
-                            snapshotTfs,
-                            resolveLookbackBarsValue(
-                              cfg.lookbackBars,
-                              timeframe,
-                            ),
-                          )
-                        }
+        {selectedSymbol &&
+          (selectedSymbols.length <= 1 ||
+            hasAnalyzeResponse ||
+            isTradeRoute) && (
+            <Suspense
+              fallback={<div className="loading-card">Loading Details...</div>}
+            >
+              <SignalDetailCard
+                mode="ai"
+                hideTabsBeforeResponse={!hasAnalyzeResponse}
+                chart={{
+                  enabled: true,
+                  symbol: normalizeSignalSymbol(
+                    activePlan?.symbol ||
+                      activePlan?.raw?.symbol ||
+                      selectedSymbol ||
+                      cfg.symbol ||
+                      tvSymbol ||
+                      "",
+                  ),
+                  interval: timeframe,
+                  entryPrice: position.entry,
+                  slPrice: position.sl,
+                  tpPrice: position.tp,
+                  tp1Price: position.tp || "",
+                  tp2Price: position.tp2 || "",
+                  tp3Price: position.tp3 || "",
+                  onPlanLevelChange: handlePlanLevelChange,
+                  detailTfTab: timeframe,
+                  showEditButton: !(isTradeRoute || hasAnalyzeResponse),
+                  showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
+                  showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
+                  profileTfs: widgetTfs,
+                  initialGridCols: effectiveGridCols,
+                  initialBarsCount: Number(cfg.lookbackBars || 300),
+                  showPerCardLayoutControls: false,
+                  onDetailTfTabChange: setSelectedEntryTf,
+                  entryNode: (
+                    <div className="snapshot-live-card-v3">
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          marginBottom: 8,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}
                       >
-                        📊 Cache
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        style={{ fontSize: "10px", padding: "2px 8px" }}
-                        onClick={() =>
-                          fetchAllSnapshots(
-                            cfg.symbol || tvSymbol,
-                            snapshotTfs,
-                            sessionPrefix,
-                            provider,
-                          )
-                        }
-                      >
-                        📷 Snapshot
-                      </button>
+                        {snapshotTfs.map((tf) => {
+                          const s = barsStatus[tf] || {};
+                          const icon =
+                            s.status === "cached"
+                              ? "✅"
+                              : s.status === "loading"
+                                ? "⏳"
+                                : "❌";
+                          return (
+                            <span
+                              key={tf}
+                              className="minor-text"
+                              style={{
+                                fontSize: "10px",
+                                padding: "2px 6px",
+                                background: "rgba(255,255,255,0.05)",
+                                borderRadius: 4,
+                              }}
+                            >
+                              {icon} {tf}{" "}
+                              {s.time ||
+                                (s.status === "none" ? "No cache" : "")}
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          style={{ fontSize: "10px", padding: "2px 8px" }}
+                          onClick={() =>
+                            fetchAllBars(
+                              cfg.symbol || tvSymbol,
+                              snapshotTfs,
+                              resolveLookbackBarsValue(
+                                cfg.lookbackBars,
+                                timeframe,
+                              ),
+                            )
+                          }
+                        >
+                          📊 Cache
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          style={{ fontSize: "10px", padding: "2px 8px" }}
+                          onClick={() =>
+                            fetchAllSnapshots(
+                              cfg.symbol || tvSymbol,
+                              snapshotTfs,
+                              sessionPrefix,
+                              provider,
+                            )
+                          }
+                        >
+                          📷 Snapshot
+                        </button>
+                      </div>
+                      <TradeSignalChart
+                        symbol={normalizeSignalSymbol(
+                          activePlan?.symbol || activePlan?.raw?.symbol || "",
+                        )}
+                        interval={timeframe}
+                        analysisSnapshot={effectiveChartSnapshot}
+                        entryPrice={position.entry}
+                        slPrice={position.sl}
+                        tpPrice={position.tp}
+                        tp1Price={position.tp || ""}
+                        tp2Price={position.tp2 || ""}
+                        tp3Price={position.tp3 || ""}
+                      />
+                      <div className="minor-text" style={{ marginTop: 8 }}>
+                        {barsLoading
+                          ? "Loading bars..."
+                          : currentBarsSnapshot?.normalized_symbol ||
+                            currentBarsSnapshot?.symbol ||
+                            "No bars cache yet"}
+                      </div>
                     </div>
-                    <TradeSignalChart
-                      symbol={normalizeSignalSymbol(
-                        activePlan?.symbol || activePlan?.raw?.symbol || "",
-                      )}
-                      interval={timeframe}
-                      analysisSnapshot={effectiveChartSnapshot}
-                      entryPrice={position.entry}
-                      slPrice={position.sl}
-                      tpPrice={position.tp}
-                      tp1Price={position.tp || ""}
-                      tp2Price={position.tp2 || ""}
-                      tp3Price={position.tp3 || ""}
-                    />
-                    <div className="minor-text" style={{ marginTop: 8 }}>
-                      {barsLoading
-                        ? "Loading bars..."
-                        : currentBarsSnapshot?.normalized_symbol ||
-                          currentBarsSnapshot?.symbol ||
-                          "No bars cache yet"}
-                    </div>
-                  </div>
-                ),
-              }}
-              response={{
-                enabled: true,
-                hasData: hasAnalyzeResponse,
-                pending: analyzing,
-                pendingText:
-                  hasAnalyzeResponse || isTradeRoute
-                    ? "Refreshing analysis result..."
-                    : "Analyzing screenshots...",
-                label: "Response",
-                tab: responseTab,
-                onTabChange: setResponseTab,
-                text: responseText,
-                raw: effectiveParsed || analysisRaw || analysisJson,
-                schemaVersion: String(effectiveParsed?.schema_version || ""),
-                bars: JSON.stringify(
-                  currentBarsSnapshot || { status: "no_cached_bars" },
-                  null,
-                  2,
-                ),
-                tradePlans: analysisTradePlans.length
-                  ? analysisTradePlans.map((plan, idx) => ({
-                      __raw_plan: plan?.raw || plan,
-                      __plan_index: idx,
-                      symbol: normalizeSignalSymbol(
-                        plan?.raw?.symbol ||
-                          plan.symbol ||
-                          selectedSymbol ||
-                          cfg.symbol ||
-                          tvSymbol ||
-                          "",
-                      ),
-                      direction: plan.direction || plan?.raw?.direction,
-                      entry:
-                        getPlanPositionOverride(plan, idx).entry ||
-                        plan?.raw?.execution_plan?.entry?.price ||
-                        plan?.entry ||
-                        plan?.raw?.entry_price ||
-                        plan?.raw?.entry,
-                      tp:
-                        getPlanPositionOverride(plan, idx).tp ||
-                        (() => {
-                          const resolved = getPlanPrimaryTp(plan?.raw || {});
-                          return Number.isFinite(resolved)
-                            ? formatNum3(resolved)
-                            : plan?.raw?.take_profit || plan?.raw?.tp || "";
-                        })(),
-                      tp2:
-                        getPlanPositionOverride(plan, idx).tp2 ||
-                        (Number.isFinite(planTpLevelNumber(plan?.raw || {}, 2))
-                          ? formatNum3(planTpLevelNumber(plan?.raw || {}, 2))
-                          : plan?.raw?.tp2 || ""),
-                      tp3:
-                        getPlanPositionOverride(plan, idx).tp3 ||
-                        (Number.isFinite(planTpLevelNumber(plan?.raw || {}, 3))
-                          ? formatNum3(planTpLevelNumber(plan?.raw || {}, 3))
-                          : plan?.raw?.tp3 || ""),
-                      sl:
-                        getPlanPositionOverride(plan, idx).sl ||
-                        plan?.raw?.execution_plan?.stop_loss?.price ||
-                        plan?.sl ||
-                        plan?.raw?.stop_loss ||
-                        plan?.raw?.sl,
-                      rr:
-                        getPlanPositionOverride(plan, idx).rr ||
-                        plan?.rr ||
-                        plan?.raw?.risk_reward ||
-                        plan?.raw?.rr,
-                      trade_type:
-                        getPlanPositionOverride(plan, idx).trade_type ||
-                        plan?.raw?.order_type ||
-                        plan?.raw?.type ||
-                        "limit",
-                      note:
-                        getPlanPositionOverride(plan, idx).note ||
-                        plan?.raw?.note ||
-                        "",
-                      strategy: plan?.raw?.strategy || plan.strategy || "",
-                      entry_model:
-                        plan?.raw?.entry_model ||
-                        plan?.raw?.entryModel ||
-                        plan.entryModel ||
-                        "",
-                      skip_recommendation:
-                        plan?.raw?.skip_recommendation ||
-                        plan?.raw?.position_management?.trade_decision ||
-                        plan?.raw?.trade_decision ||
-                        plan.skip_recommendation ||
-                        "",
-                      confidence_level: plan?.raw?.confidence_level || "",
-                      risk_level:
-                        plan?.raw?.risk_level || plan?.raw?.risk_tier || "",
-                      confluence_checklist:
-                        plan?.raw?.ai_full_analysis?.confluence_checklists ||
-                        plan?.raw?.confluence_checklist ||
-                        [],
-                      reasons_to_skip:
-                        plan?.raw?.reasons_to_skip ||
-                        (plan?.raw?.position_management?.skips_reasons
-                          ? [
-                              {
-                                reason:
-                                  plan.raw.position_management.skips_reasons,
-                                severity: "",
-                              },
-                            ]
-                          : plan.reasons_to_skip || []),
-                    }))
-                  : [
-                      {
-                        __plan_index: 0,
+                  ),
+                }}
+                response={{
+                  enabled: true,
+                  hasData: hasAnalyzeResponse,
+                  pending: analyzing,
+                  pendingText:
+                    hasAnalyzeResponse || isTradeRoute
+                      ? "Refreshing analysis result..."
+                      : "Analyzing screenshots...",
+                  label: "Response",
+                  tab: responseTab,
+                  onTabChange: setResponseTab,
+                  text: responseText,
+                  raw: effectiveParsed || analysisRaw || analysisJson,
+                  schemaVersion: String(effectiveParsed?.schema_version || ""),
+                  bars: JSON.stringify(
+                    currentBarsSnapshot || { status: "no_cached_bars" },
+                    null,
+                    2,
+                  ),
+                  tradePlans: analysisTradePlans.length
+                    ? analysisTradePlans.map((plan, idx) => ({
+                        __raw_plan: plan?.raw || plan,
+                        __plan_index: idx,
                         symbol: normalizeSignalSymbol(
-                          selectedSymbol || cfg.symbol || tvSymbol || "",
+                          plan?.raw?.symbol ||
+                            plan.symbol ||
+                            selectedSymbol ||
+                            cfg.symbol ||
+                            tvSymbol ||
+                            "",
                         ),
-                        direction: position.direction || "BUY",
-                        entry: position.entry || "",
-                        tp: position.tp || "",
-                        sl: position.sl || "",
-                        rr: position.rr || "",
-                        trade_type: position.trade_type || "limit",
-                        note: position.note || "",
-                      },
-                    ],
-                snapshotFiles: chartFiles,
-                snapshotsUsed:
-                  Array.isArray(analysisFilesDisplay) &&
-                  analysisFilesDisplay.length
-                    ? analysisFilesDisplay
-                    : Array.isArray(usedFiles) && usedFiles.length
-                      ? usedFiles
-                      : chartFiles.length
-                        ? chartFiles
-                        : [],
-              }}
-              tradePlan={{
-                enabled: isTradeRoute || hasAnalyzeResponse,
-                signalId: null,
-                tradeId: activeAddedTradeEntity?.id || null,
-                value: position,
-                onChange: updatePositionField,
-                showSaveButton: false,
-                showAddSignalButton:
-                  !autoSavedSignal &&
-                  !autoSavedTrades &&
-                  !manuallyAddedTrade &&
-                  !manuallyAddedSignal,
-                showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
-                showResetButton: true,
-                onReset: isTradeRoute
-                  ? () =>
-                      navigate(buildAiAnalyzeRoute([selectedSymbol]), {
-                        replace: false,
-                      })
-                  : resetToDefaultBrowser,
-                resetLabel: "Back",
-                addSignalLabel: "+ Signal",
-                saveDraftLabel: "Save Draft",
-                addTradeLabel: "+ Trade",
-                onAddSignal: (pos, planId = "main") => {
-                  const ent = addedEntities[planId];
-                  if (ent?.kind === "signal" && ent?.id) {
-                    navigate(`/signals/${ent.id}`);
-                    return;
-                  }
-                  addBySelection("signal", pos, planId);
-                },
-                onAddTrade: (pos, planId = "main") => {
-                  const ent = addedEntities[planId];
-                  if (ent?.kind === "trade" && ent?.id) {
-                    navigate(`/trades/${ent.id}`);
-                    return;
-                  }
-                  addBySelection("trade", pos, planId);
-                },
-                onSaveDraft: (pos, planId = "main") => {
-                  saveDraftFromEditor(pos, planId);
-                },
-                busy: {
-                  signal: addingSignal && submittingPlanId === "main",
-                  draft: addingSignal && submittingPlanId === "main",
-                  trade: addingSignal && submittingPlanId === "main",
-                },
-                submittingPlanId: submittingPlanId,
-                disabled: false,
-                error:
-                  !canAddSignal && (hasPositionInput || hasAnalyzeResponse)
-                    ? validatePosition(position)
-                    : "",
-                successMessage:
-                  actionStatus.action === "add" &&
-                  actionStatus.text &&
-                  actionStatus.type !== "error" &&
-                  actionStatus.type !== "warning"
-                    ? actionStatus.text
-                    : "",
-              }}
-            />
-          </Suspense>
-        )}
+                        direction: plan.direction || plan?.raw?.direction,
+                        entry:
+                          getPlanPositionOverride(plan, idx).entry ||
+                          plan?.raw?.execution_plan?.entry?.price ||
+                          plan?.entry ||
+                          plan?.raw?.entry_price ||
+                          plan?.raw?.entry,
+                        tp:
+                          getPlanPositionOverride(plan, idx).tp ||
+                          (() => {
+                            const resolved = getPlanPrimaryTp(plan?.raw || {});
+                            return Number.isFinite(resolved)
+                              ? formatNum3(resolved)
+                              : plan?.raw?.take_profit || plan?.raw?.tp || "";
+                          })(),
+                        tp2:
+                          getPlanPositionOverride(plan, idx).tp2 ||
+                          (Number.isFinite(
+                            planTpLevelNumber(plan?.raw || {}, 2),
+                          )
+                            ? formatNum3(planTpLevelNumber(plan?.raw || {}, 2))
+                            : plan?.raw?.tp2 || ""),
+                        tp3:
+                          getPlanPositionOverride(plan, idx).tp3 ||
+                          (Number.isFinite(
+                            planTpLevelNumber(plan?.raw || {}, 3),
+                          )
+                            ? formatNum3(planTpLevelNumber(plan?.raw || {}, 3))
+                            : plan?.raw?.tp3 || ""),
+                        sl:
+                          getPlanPositionOverride(plan, idx).sl ||
+                          plan?.raw?.execution_plan?.stop_loss?.price ||
+                          plan?.sl ||
+                          plan?.raw?.stop_loss ||
+                          plan?.raw?.sl,
+                        rr:
+                          getPlanPositionOverride(plan, idx).rr ||
+                          plan?.rr ||
+                          plan?.raw?.risk_reward ||
+                          plan?.raw?.rr,
+                        trade_type:
+                          getPlanPositionOverride(plan, idx).trade_type ||
+                          plan?.raw?.order_type ||
+                          plan?.raw?.type ||
+                          "limit",
+                        note:
+                          getPlanPositionOverride(plan, idx).note ||
+                          plan?.raw?.note ||
+                          "",
+                        strategy: plan?.raw?.strategy || plan.strategy || "",
+                        entry_model:
+                          plan?.raw?.entry_model ||
+                          plan?.raw?.entryModel ||
+                          plan.entryModel ||
+                          "",
+                        skip_recommendation:
+                          plan?.raw?.skip_recommendation ||
+                          plan?.raw?.position_management?.trade_decision ||
+                          plan?.raw?.trade_decision ||
+                          plan.skip_recommendation ||
+                          "",
+                        confidence_level: plan?.raw?.confidence_level || "",
+                        risk_level:
+                          plan?.raw?.risk_level || plan?.raw?.risk_tier || "",
+                        confluence_checklist:
+                          plan?.raw?.ai_full_analysis?.confluence_checklists ||
+                          plan?.raw?.confluence_checklist ||
+                          [],
+                        reasons_to_skip:
+                          plan?.raw?.reasons_to_skip ||
+                          (plan?.raw?.position_management?.skips_reasons
+                            ? [
+                                {
+                                  reason:
+                                    plan.raw.position_management.skips_reasons,
+                                  severity: "",
+                                },
+                              ]
+                            : plan.reasons_to_skip || []),
+                      }))
+                    : [
+                        {
+                          __plan_index: 0,
+                          symbol: normalizeSignalSymbol(
+                            selectedSymbol || cfg.symbol || tvSymbol || "",
+                          ),
+                          direction: position.direction || "BUY",
+                          entry: position.entry || "",
+                          tp: position.tp || "",
+                          sl: position.sl || "",
+                          rr: position.rr || "",
+                          trade_type: position.trade_type || "limit",
+                          note: position.note || "",
+                        },
+                      ],
+                  snapshotFiles: chartFiles,
+                  snapshotsUsed:
+                    Array.isArray(analysisFilesDisplay) &&
+                    analysisFilesDisplay.length
+                      ? analysisFilesDisplay
+                      : Array.isArray(usedFiles) && usedFiles.length
+                        ? usedFiles
+                        : chartFiles.length
+                          ? chartFiles
+                          : [],
+                }}
+                tradePlan={{
+                  enabled: isTradeRoute || hasAnalyzeResponse,
+                  signalId: null,
+                  tradeId: activeAddedTradeEntity?.id || null,
+                  value: position,
+                  onChange: updatePositionField,
+                  showSaveButton: false,
+                  showAddSignalButton:
+                    !autoSavedSignal &&
+                    !autoSavedTrades &&
+                    !manuallyAddedTrade &&
+                    !manuallyAddedSignal,
+                  showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
+                  showResetButton: true,
+                  onReset: isTradeRoute
+                    ? () =>
+                        navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                          replace: false,
+                        })
+                    : resetToDefaultBrowser,
+                  resetLabel: "Back",
+                  addSignalLabel: "+ Signal",
+                  saveDraftLabel: "Save Draft",
+                  addTradeLabel: "+ Trade",
+                  onAddSignal: (pos, planId = "main") => {
+                    const ent = addedEntities[planId];
+                    if (ent?.kind === "signal" && ent?.id) {
+                      navigate(`/signals/${ent.id}`);
+                      return;
+                    }
+                    addBySelection("signal", pos, planId);
+                  },
+                  onAddTrade: (pos, planId = "main") => {
+                    const ent = addedEntities[planId];
+                    if (ent?.kind === "trade" && ent?.id) {
+                      navigate(`/trades/${ent.id}`);
+                      return;
+                    }
+                    addBySelection("trade", pos, planId);
+                  },
+                  onSaveDraft: (pos, planId = "main") => {
+                    saveDraftFromEditor(pos, planId);
+                  },
+                  busy: {
+                    signal: addingSignal && submittingPlanId === "main",
+                    draft: addingSignal && submittingPlanId === "main",
+                    trade: addingSignal && submittingPlanId === "main",
+                  },
+                  submittingPlanId: submittingPlanId,
+                  disabled: false,
+                  error:
+                    !canAddSignal && (hasPositionInput || hasAnalyzeResponse)
+                      ? validatePosition(position)
+                      : "",
+                  successMessage:
+                    actionStatus.action === "add" &&
+                    actionStatus.text &&
+                    actionStatus.type !== "error" &&
+                    actionStatus.type !== "warning"
+                      ? actionStatus.text
+                      : "",
+                }}
+              />
+            </Suspense>
+          )}
         {actionStatus.action === "add" &&
         actionStatus.text &&
         (actionStatus.type === "error" || actionStatus.type === "warning") ? (
