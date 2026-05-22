@@ -1000,8 +1000,8 @@ export default function SignalDetailCard({
     chart?.enabled,
     chart?.symbol,
     response?.hasData,
-    response?.raw,
-    response?.tradePlans,
+    JSON.stringify(response?.raw),
+    JSON.stringify(response?.tradePlans),
     history?.enabled,
     metaItems,
     hideTabsBeforeResponse,
@@ -1256,7 +1256,8 @@ export default function SignalDetailCard({
   useEffect(() => {
     if (!availableTabs.includes(mainTab))
       setMainTab(availableTabs[0] || "info");
-  }, [availableTabs, mainTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTabs]);
 
   // Only reset to main when tradePlan becomes newly enabled from a disabled state,
   // and only if no plan is already selected (preserve user's explicit selection across renders).
