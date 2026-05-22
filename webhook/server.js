@@ -3072,12 +3072,12 @@ function ensureTradeFilesDir(sid, symbol = "") {
   if (safeSymbol) {
     const dir = path.join(TRADE_FILES_DIR, `${safeSid}-${safeSymbol}`);
     if (!fs.existsSync(dir)) {
-      // Migrate old folder
-      const oldDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
-      if (fs.existsSync(oldDir)) {
-        try {
-          fs.renameSync(oldDir, dir);
-        } catch {}
+      // Migrate from old or unknown folder
+      for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`]) {
+        const oldDir = path.join(TRADE_FILES_DIR, oldName);
+        if (fs.existsSync(oldDir)) {
+          try { fs.renameSync(oldDir, dir); break; } catch {}
+        }
       }
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     }
@@ -3095,8 +3095,8 @@ function ensureTradeFilesDir(sid, symbol = "") {
     if (match) return path.join(TRADE_FILES_DIR, match);
   } catch {}
 
-  // Fall back to old format
-  const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
+  // No existing folder: create with UNKNOWN suffix (will rename when symbol known)
+  const dir = path.join(TRADE_FILES_DIR, `${safeSid}-UNKNOWN`);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -5475,6 +5475,28 @@ function findRecentChartSnapshots({
 }
 
 function extractJsonFromAiText(rawText) {
+  // Repair Claude-generated JSON where check_lists/risk_management/execution_plan
+  // are placed outside the main trade plan object (after premature closing }).
+  // Claude sometimes generates an extra } inside analysis, causing depth mismatch.
+  const repairOrphanedKeys = (text) => {
+    // Claude sometimes generates an extra } before check_lists, making
+    // check_lists/risk_management/execution_plan orphans outside the main object.
+    // Pattern to fix: }}},"check_lists": → }},"check_lists":
+    const idx = text.indexOf(',"check_lists":');
+    if (idx < 0) return text;
+    // Check if we have }}} before the comma (3 braces = extra close)
+    const before = text.slice(Math.max(0, idx - 5), idx);
+    if (before.endsWith("}}}")) {
+      // Remove one extra } — 3 braces → 2 braces
+      const fixed = text.slice(0, idx - 3) + text.slice(idx - 2);
+      try {
+        JSON.parse(fixed);
+        return fixed;
+      } catch (_) {}
+    }
+    return text;
+  };
+
   const extractBalancedJsonObject = (text) => {
     const src = String(text || "");
     let start = -1;
@@ -5515,6 +5537,8 @@ function extractJsonFromAiText(rawText) {
   };
   const raw = String(rawText || "");
   let clean = raw.trim();
+  // Apply repair before any parsing — Claude sometimes generates extra braces
+  clean = repairOrphanedKeys(clean);
   if (clean.includes("```")) {
     const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match) clean = match[1];
@@ -5543,6 +5567,20 @@ function extractJsonFromAiText(rawText) {
       extractBalancedJsonObject(clean) || extractBalancedJsonObject(raw);
     if (balanced) {
       parsed = tryParse(balanced);
+      for (let i = 0; i < 2; i += 1) {
+        if (typeof parsed !== "string") break;
+        const reparsed = tryParse(parsed);
+        if (reparsed == null) break;
+        parsed = reparsed;
+      }
+    }
+  }
+  if (parsed == null) {
+    // Try repairing Claude's orphaned keys (check_lists/risk_management/execution_plan
+    // placed outside the main object after premature }} closing).
+    const repaired = repairOrphanedKeys(clean);
+    if (repaired !== clean) {
+      parsed = tryParse(repaired);
       for (let i = 0; i < 2; i += 1) {
         if (typeof parsed !== "string") break;
         const reparsed = tryParse(parsed);
@@ -21010,10 +21048,34 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "response not found" });
       const raw = fs.readFileSync(respPath, "utf8");
       const data = JSON.parse(raw);
+      // Re-parse raw_response through extractJsonFromAiText to repair
+      // Claude JSON errors (extra braces, orphaned keys).
+      let parsedJson = data.parsed_json;
+      if (data.raw_response) {
+        const extracted = extractJsonFromAiText(data.raw_response);
+        console.log(
+          "[trade-response] extracted.parsed type:",
+          typeof extracted.parsed,
+          "isArray:",
+          Array.isArray(extracted.parsed),
+        );
+        if (
+          extracted.parsed &&
+          typeof extracted.parsed === "object" &&
+          !Array.isArray(extracted.parsed)
+        ) {
+          parsedJson = extracted.parsed;
+        } else if (
+          Array.isArray(extracted.parsed) &&
+          extracted.parsed.length > 0
+        ) {
+          parsedJson = extracted.parsed[0];
+        }
+      }
       return json(res, 200, {
         ok: true,
         session_id: respRef,
-        parsed_json: data.parsed_json || null,
+        parsed_json: parsedJson || null,
         raw_response: data.raw_response || "",
         model: data.model || "",
         timestamp: data.timestamp || null,
