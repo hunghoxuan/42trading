@@ -499,8 +499,8 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
 const TRADE_FILES_DIR = path.resolve(__dirname, "trade_files");
 
 // File-based chart objects: read/write to trades/{sid}/chart_objects.json
-function chartObjectsPath(sid) {
-  const dir = ensureTradeFilesDir(sid);
+function chartObjectsPath(sid, symbol = "") {
+  const dir = ensureTradeFilesDir(sid, symbol);
   return path.join(dir, "chart_objects.json");
 }
 
@@ -3086,7 +3086,11 @@ function ensureTradeFilesDir(sid, symbol = "") {
 
 function tradeLogsDir(sid, symbol = "") {
   const dir = path.join(ensureTradeFilesDir(sid, symbol), "logs");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) {
+    const oldDir = path.join(ensureTradeFilesDir(sid, ""), "logs");
+    if (fs.existsSync(oldDir)) return oldDir;
+    fs.mkdirSync(dir, { recursive: true });
+  }
   return dir;
 }
 
@@ -19999,7 +20003,7 @@ const appHandler = async (req, res) => {
           files_count: snapshotFiles.length,
           files: snapshotFiles.map((f) => f.fileName || f),
         };
-        const logsDir = tradeLogsDir(sessionId);
+        const logsDir = tradeLogsDir(sessionId, requestedSymbol);
         fs.writeFileSync(
           path.join(logsDir, "payload.json"),
           JSON.stringify(payloadLog, null, 2),
@@ -20055,7 +20059,7 @@ const appHandler = async (req, res) => {
           raw_response: rawResponse,
           parsed_json: parsedJson,
         };
-        const logsDir = tradeLogsDir(sessionId);
+        const logsDir = tradeLogsDir(sessionId, requestedSymbol);
         fs.writeFileSync(
           path.join(logsDir, "response.json"),
           JSON.stringify(responseLog, null, 2),
