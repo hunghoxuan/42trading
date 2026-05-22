@@ -1211,6 +1211,15 @@ export default function SignalDetailCard({
       ? 0
       : Math.max(0, Number(String(selectedPlanId).replace("suggested_", "")));
   const selectedPlanFromList = plans[selectedPlanIndex] || plans[0] || {};
+  const chartAnalysisSnapshot = useMemo(
+    () => ({
+      ...(response?.raw || {}),
+      trade_plan: Array.isArray(response?.tradePlans)
+        ? response.tradePlans
+        : [],
+    }),
+    [response?.raw, response?.tradePlans],
+  );
   const displayPlanIds = useMemo(() => {
     const fromPlans = plans.map((_, i) =>
       i === 0 ? "main" : `suggested_${i}`,
@@ -1414,6 +1423,19 @@ export default function SignalDetailCard({
         return { ...base, ...draft };
       }),
     [displayPlanIds, plans, planDrafts],
+  );
+  const chart2AnalysisSnapshot = useMemo(
+    () => ({
+      ...(rawData && typeof rawData === "object" ? rawData : {}),
+      trade_plan: liveTradePlansForChart.length
+        ? liveTradePlansForChart
+        : Array.isArray(rawData?.trade_plan)
+          ? rawData.trade_plan
+          : rawData?.trade_plan && typeof rawData.trade_plan === "object"
+            ? [rawData.trade_plan]
+            : [],
+    }),
+    [rawData, liveTradePlansForChart],
   );
   const selectedPlanSymbol = String(
     selectedPlanRaw?.symbol ||
@@ -1902,12 +1924,7 @@ export default function SignalDetailCard({
                     typeof response.raw === "object" &&
                     Object.keys(response.raw).length > 0,
                   )}
-                  analysisSnapshot={{
-                    ...(response?.raw || {}),
-                    trade_plan: Array.isArray(response?.tradePlans)
-                      ? response.tradePlans
-                      : [],
-                  }}
+                  analysisSnapshot={chartAnalysisSnapshot}
                   onPlanLevelChange={chart?.onPlanLevelChange}
                   onTradePlanGroupChange={chart?.onTradePlanGroupChange}
                   onQuickTradeIntent={(intent) => {
@@ -3058,17 +3075,7 @@ export default function SignalDetailCard({
             openedAt={chart?.openedAt}
             closedAt={chart?.closedAt}
             onPlanLevelChange={chart?.onPlanLevelChange}
-            analysisSnapshot={{
-              ...(rawData && typeof rawData === "object" ? rawData : {}),
-              trade_plan: liveTradePlansForChart.length
-                ? liveTradePlansForChart
-                : Array.isArray(rawData?.trade_plan)
-                  ? rawData.trade_plan
-                  : rawData?.trade_plan &&
-                      typeof rawData.trade_plan === "object"
-                    ? [rawData.trade_plan]
-                    : [],
-            }}
+            analysisSnapshot={chart2AnalysisSnapshot}
             hasTradePlan={Boolean(
               (Array.isArray(response?.tradePlans) &&
                 response.tradePlans.length > 0) ||
