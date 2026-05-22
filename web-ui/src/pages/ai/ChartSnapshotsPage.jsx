@@ -3996,9 +3996,13 @@ export default function ChartSnapshotsPage() {
         sessionPrefix: activeSessionPrefix,
         symbols: targetSymbols,
       });
-      const expectedFilesMin =
-        Math.max(1, targetSymbols.length) *
-        Math.max(1, recent.targetTfTokens.length);
+      const isMasterFile = recent.matchedFiles.some((f) =>
+        f.toUpperCase().includes("_MASTER."),
+      );
+      const expectedFilesMin = isMasterFile
+        ? 1
+        : Math.max(1, targetSymbols.length) *
+          Math.max(1, recent.targetTfTokens.length);
       const filesForAnalyze =
         recent.matchedFiles.length >= expectedFilesMin
           ? recent.matchedFiles
