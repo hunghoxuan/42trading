@@ -18,7 +18,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:5174/webhook")]
+        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:3000/webhook")]
         public string ServerBaseUrl { get; set; }
 
         [Parameter("EA API Key", DefaultValue = "acc_fab38ed32ecde9b28b3dd33d8be10a77da6a")]
@@ -74,7 +74,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.22 14:06 - 4b1e4980";
+        private const string BuildVersion = "v2026.05.22 20:26 - bb8e8835";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";

@@ -4,10 +4,10 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.22 14:06 - 4b1e4980";
+string EA_BUILD_VERSION = "v2026.05.22 20:26 - bb8e8835";
 
 //--- 1. CONNECTION & IDENTITY
-input string InpServerBaseUrl = "https://trade.mozasolution.com/webhook"; // VPS Webhook URL
+input string InpServerBaseUrl = "http://127.0.0.1"; // Local webhook URL (server.js default PORT=80)
 input string InpEaApiKey      = "acc_fab38ed32ecde9b28b3dd33d8be10a77da6a"; // EA API Key
 input int    InpPollSeconds   = 2;           // Polling Frequency (seconds)
 input long   InpMagic         = 20260411;    // Magic Number (Unique ID for this EA)
