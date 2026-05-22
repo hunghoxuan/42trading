@@ -3311,7 +3311,9 @@ export default function ChartSnapshotsPage() {
       .map(parseSnapshotMeta)
       .filter((x) => x && x.createdAtMs > 0)
       .filter((x) => symbolTokens.has(x.symbolToken))
-      .filter((x) => targetTfTokens.includes(x.tfToken))
+      .filter(
+        (x) => x.tfToken === "MASTER" || targetTfTokens.includes(x.tfToken),
+      )
       .filter(
         (x) =>
           !activeSessionPrefix ||
@@ -3322,28 +3324,37 @@ export default function ChartSnapshotsPage() {
       .filter((x) => Math.abs(nowMs - x.createdAtMs) <= 60 * 60 * 1000)
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
 
+    const masterCandidate = candidates.find((c) => c.tfToken === "MASTER");
     const matchedFiles = [];
-    for (const reqSym of sourceSymbols) {
-      const req = String(reqSym || "")
-        .trim()
-        .toUpperCase();
-      const tokenSet = requestedTokenMap.get(req);
-      if (!tokenSet || !tokenSet.size) continue;
-      for (const tf of targetTfTokens) {
-        const hit = candidates.find(
-          (c) => c.tfToken === tf && tokenSet.has(c.symbolToken),
-        );
-        if (hit?.fileName) matchedFiles.push(hit.fileName);
+    if (masterCandidate) {
+      matchedFiles.push(masterCandidate.fileName);
+    } else {
+      for (const reqSym of sourceSymbols) {
+        const req = String(reqSym || "")
+          .trim()
+          .toUpperCase();
+        const tokenSet = requestedTokenMap.get(req);
+        if (!tokenSet || !tokenSet.size) continue;
+        for (const tf of targetTfTokens) {
+          const hit = candidates.find(
+            (c) => c.tfToken === tf && tokenSet.has(c.symbolToken),
+          );
+          if (hit?.fileName) matchedFiles.push(hit.fileName);
+        }
       }
     }
     const matchedByTf = new Map();
-    matchedFiles.forEach((f) => {
-      const meta = parseSnapshotMeta({
-        file_name: f,
-        created_at: new Date().toISOString(),
+    if (masterCandidate) {
+      targetTfTokens.forEach((tf) => matchedByTf.set(tf, true));
+    } else {
+      matchedFiles.forEach((f) => {
+        const meta = parseSnapshotMeta({
+          file_name: f,
+          created_at: new Date().toISOString(),
+        });
+        if (meta?.tfToken) matchedByTf.set(meta.tfToken, true);
       });
-      if (meta?.tfToken) matchedByTf.set(meta.tfToken, true);
-    });
+    }
     const missingTokens = targetTfTokens.filter((tf) => !matchedByTf.has(tf));
     return {
       matchedFiles,
