@@ -1,5 +1,6 @@
 webhook/.env
 .env
+!.env.local
 node_modules/
 webhook/node_modules/
 web-ui/node_modules/
