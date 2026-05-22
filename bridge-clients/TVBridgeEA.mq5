@@ -48,6 +48,8 @@ input int    InpDedupKeepSeconds     = 86400; // Duplicate Cache Duration (Secon
 input int    InpStopRetrySeconds     = 5;    // SL/TP Retry Interval
 input int    InpStopRetryMaxAttempts = 24;   // SL/TP Max Retries
 input int    InpSyncSeconds         = 10;   // PnL/SL/Sync Interval (seconds)
+input string InpOnSlTpError        = "Reject"; // Reject=close position, Continue=keep without SL/TP
+input double InpMinStopPips        = 15;   // Min SL/TP distance from entry
 
 //--- 6.1 PRICE STREAMING
 input bool   InpPricePushEnabled    = true; // Enable Price Push to VPS
@@ -2372,6 +2374,44 @@ bool ExecuteSignal(const string signalId,
    g_ackUsedSl = slUse;
    g_ackUsedTp = tpUse;
 
+   // Pre-check: reject if SL/TP too close to entry (broker will reject anyway)
+   if(InpMinStopPips > 0 && entry > 0)
+   {
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      if(point > 0)
+      {
+         double pipSize = ((int)SymbolInfoInteger(symbol, SYMBOL_DIGITS) == 3 || (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS) == 5) ? point * 10 : point;
+         if(slUse > 0)
+         {
+            double slDist = MathAbs(entry - slUse) / pipSize;
+            if(slDist < InpMinStopPips)
+            {
+               string rejectMsg = "SL too close: " + DoubleToString(slDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
+               Print("[Reject] ", rejectMsg, " for ", signalId);
+               g_dbgLastStatus = "SLTP_REJECTED";
+               g_dbgLastError = rejectMsg;
+               Ack(signalId, "FAIL", "", rejectMsg);
+               RefreshDebugPanel();
+               return false;
+            }
+         }
+         if(tpUse > 0)
+         {
+            double tpDist = MathAbs(tpUse - entry) / pipSize;
+            if(tpDist < InpMinStopPips)
+            {
+               string rejectMsg = "TP too close: " + DoubleToString(tpDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
+               Print("[Reject] ", rejectMsg, " for ", signalId);
+               g_dbgLastStatus = "SLTP_REJECTED";
+               g_dbgLastError = rejectMsg;
+               Ack(signalId, "FAIL", "", rejectMsg);
+               RefreshDebugPanel();
+               return false;
+            }
+         }
+      }
+   }
+
    bool ok = false;
    double volumeUse = volume;
    string volumeNote = "";
@@ -2663,6 +2703,26 @@ bool ExecuteSignal(const string signalId,
             Print("Post-open stops skipped/failed for ", signalId, " ", symbol, " ", action, ": ", stopInfo);
             if(StringLen(g_dbgLastError) == 0)
                g_dbgLastError = stopInfo;
+
+            // Check OnSlTpError behavior
+            string sltpMode = InpOnSlTpError;
+            StringToUpper(sltpMode);
+            if(sltpMode == "REJECT")
+            {
+               // Close position immediately, no naked positions
+               Print("[FATAL] SL/TP rejected for ", signalId, ", closing position ", IntegerToString((int)posTicket));
+               if(posTicket > 0 && PositionSelectByTicket(posTicket))
+               {
+                  if(!trade.PositionClose(posTicket))
+                     Print("[CRITICAL] Close also failed for ", signalId, " ticket=", IntegerToString((int)posTicket), " - POSITION UNPROTECTED!");
+               }
+               g_dbgLastStatus = "SLTP_REJECTED";
+               g_dbgLastError = stopInfo;
+               Ack(signalId, "FAIL", IntegerToString((int)posTicket), stopInfo);
+               RefreshDebugPanel();
+               return false;
+            }
+            // Continue: enqueue retry
             EnqueueStopRetry(signalId, posTicket, action, symbol, slUse, tpUse);
          }
          else if(StringLen(stopInfo) > 0)

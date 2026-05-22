@@ -198,28 +198,22 @@ Use these scripts:
 - `/Users/macmini/Trade/Bot/trading/scripts/install_mt5_csv_sync_launchd.sh`
 
 What sync does:
-- Download `/csv` from server
-- Save local copy: `/Users/macmini/Trade/Bot/trading/scripts/tvbridge_signals.csv`
+- Download `/csv` from signal.mozasolution.com (requires API_KEY env var)
+- Save local copy: `scripts/daemons/tvbridge_signals.csv`
 - Overwrite MT5 common file: `.../Terminal/Common/Files/tvbridge_signals.csv`
 
 Run once manually:
 
 ```bash
 cd /Users/macmini/Trade/Bot/trading
-bash scripts/mt5_csv_sync.sh
-```
-
-Run with custom env:
-
-```bash
-API_KEY="YOUR_SIGNAL_API_KEY" LIMIT=5000 bash /Users/macmini/Trade/Bot/trading/scripts/mt5_csv_sync.sh
+API_KEY="your_signal_api_key" bash scripts/daemons/mt5_csv_sync.sh
 ```
 
 Install scheduler (every 5 minutes):
 
 ```bash
 cd /Users/macmini/Trade/Bot/trading
-bash scripts/install_mt5_csv_sync_launchd.sh
+API_KEY="your_signal_api_key" bash scripts/install/install_mt5_csv_sync_launchd.sh
 ```
 
 Check scheduler status:

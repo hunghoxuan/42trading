@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_KEY="${API_KEY:-cfa824ed707c39609234b98ed2366a988f7ba2a111d9ccb38123b50485f15a87}"
+API_KEY="${API_KEY:?must set API_KEY env var for signal.mozasolution.com}"
 LIMIT="${LIMIT:-5000}"
 URL="http://signal.mozasolution.com/csv?apiKey=${API_KEY}&limit=${LIMIT}"
 MT5_COMMON_FILES="${MT5_COMMON_FILES:-${HOME}/Library/Application Support/net.metaquotes.wine.metatrader5/drive_c/users/crossover/AppData/Roaming/MetaQuotes/Terminal/Common/Files}"

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LABEL="${LABEL:-com.local.mt5csvsync}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-300}"
 SCRIPT_PATH="${SCRIPT_PATH:-${ROOT_DIR}/scripts/daemons/mt5_csv_sync.sh}"
+API_KEY="${API_KEY:?must set API_KEY env var for signal.mozasolution.com}"
 
 PLIST_DIR="${HOME}/Library/LaunchAgents"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
@@ -35,6 +36,12 @@ cat > "${PLIST_PATH}" <<EOF
 
     <key>RunAtLoad</key>
     <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>API_KEY</key>
+      <string>${API_KEY}</string>
+    </dict>
 
     <key>StartInterval</key>
     <integer>${INTERVAL_SECONDS}</integer>

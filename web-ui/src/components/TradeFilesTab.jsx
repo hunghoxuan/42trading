@@ -1,7 +1,22 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { api } from "../api";
+import { api, getRuntimeApiKey } from "../api";
 
 const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1D"];
+
+function withApiKey(urlRaw) {
+  const url = String(urlRaw || "").trim();
+  if (!url) return "";
+  const key = String(getRuntimeApiKey() || "").trim();
+  if (!key) return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    if (!u.searchParams.get("key")) u.searchParams.set("key", key);
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}key=${encodeURIComponent(key)}`;
+  }
+}
 
 function fmtSize(bytes) {
   if (!bytes || bytes === 0) return "";
@@ -45,17 +60,19 @@ export default function TradeFilesTab({
       const serverFiles = [
         ...sidFiles.map((item) => ({
           name: item.name || item.file_name || "snapshot",
-          url:
+          url: withApiKey(
             item.url ||
-            `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+              `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+          ),
           size_bytes: item.size_bytes || item.size || 0,
           source: "snapshot",
         })),
         ...uploadFiles.map((item) => ({
           name: item.name || item.file_name || "file",
-          url:
+          url: withApiKey(
             item.url ||
-            `/v2/trades/${encodeURIComponent(tradeSid)}/files/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+              `/v2/trades/${encodeURIComponent(tradeSid)}/files/${encodeURIComponent(item.file_name || item.name || "")}/content`,
+          ),
           size_bytes: item.size_bytes || item.size || 0,
           source: "upload",
         })),

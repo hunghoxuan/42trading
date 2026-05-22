@@ -18,7 +18,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        [Parameter("Server Base URL", DefaultValue = "https://trade.mozasolution.com/webhook")]
+        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:5174/webhook")]
         public string ServerBaseUrl { get; set; }
 
         [Parameter("EA API Key", DefaultValue = "acc_fab38ed32ecde9b28b3dd33d8be10a77da6a")]
@@ -70,6 +70,9 @@ namespace cAlgo.Robots
 
         [Parameter("Min Stop Distance (pips)", Group = "Safety", DefaultValue = 15, MinValue = 5)]
         public double MinStopPips { get; set; }
+
+        [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
+        public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
         private const string BuildVersion = "v2026.05.22 14:06 - 4b1e4980";
 
@@ -1078,15 +1081,26 @@ namespace cAlgo.Robots
                             else
                             {
                                 var errDetail = string.Format("SL/TP rejected: {0} (SL={1} TP={2})", mRes.Error, sl, tp);
-                                Print("[FATAL] {0} for {1} #{2}. Closing position.", errDetail, symbolCode, ticket);
-                                var closeRes = ClosePosition(res.Position);
-                                if (closeRes.IsSuccessful)
-                                    Print("[FATAL] Position closed after SL/TP failure for {0} #{1}", symbolCode, ticket);
+                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase);
+                                if (reject)
+                                {
+                                    Print("[FATAL] {0} for {1} #{2}. Closing position.", errDetail, symbolCode, ticket);
+                                    var closeRes = ClosePosition(res.Position);
+                                    if (closeRes.IsSuccessful)
+                                        Print("[FATAL] Position closed after SL/TP failure for {0} #{1}", symbolCode, ticket);
+                                    else
+                                        Print("[CRITICAL] Close also failed for {0} #{1}: {2} - POSITION UNPROTECTED!", symbolCode, ticket, closeRes.Error);
+                                    UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
+                                    _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                    return;
+                                }
                                 else
-                                    Print("[FATAL] Close also failed for {0} #{1}: {2}", symbolCode, ticket, closeRes.Error);
-                                UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
-                                _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
-                                return;
+                                {
+                                    // Continue: keep position without SL/TP
+                                    Print("[WARN] SL/TP rejected but continuing: {0} for {1} #{2}", errDetail, symbolCode, ticket);
+                                    var status = orderTypeStr == "limit" || orderTypeStr == "stop" ? "PLACED" : "START";
+                                    _ = AckAsync(id, leaseToken, status, ticket, "sl_tp_rejected: " + errDetail);
+                                }
                             }
                         }
                         else if (res.PendingOrder != null)
@@ -1109,11 +1123,20 @@ namespace cAlgo.Robots
                             else
                             {
                                 var errDetail = string.Format("SL/TP rejected for pending order: {0}", mRes.Error);
-                                Print("[FATAL] {0}. Cancelling order.", errDetail);
-                                CancelPendingOrder(res.PendingOrder);
-                                UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
-                                _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
-                                return;
+                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase);
+                                if (reject)
+                                {
+                                    Print("[FATAL] {0}. Cancelling order.", errDetail);
+                                    CancelPendingOrder(res.PendingOrder);
+                                    UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
+                                    _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                    return;
+                                }
+                                else
+                                {
+                                    Print("[WARN] SL/TP rejected for pending order but continuing: {0}", errDetail);
+                                    _ = AckAsync(id, leaseToken, "PLACED", ticket, "sl_tp_rejected: " + errDetail);
+                                }
                             }
                         }
                     }
