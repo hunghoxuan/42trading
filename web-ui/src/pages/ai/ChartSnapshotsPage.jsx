@@ -3703,6 +3703,12 @@ export default function ChartSnapshotsPage() {
       }
 
       if (Array.isArray(files) && files.length) payload.files = files;
+      console.log(
+        "[analyzeFiles] files param:",
+        files,
+        "payload.files:",
+        payload.files,
+      );
       if (!Array.isArray(payload.symbols) || !payload.symbols.length) {
         throw new Error(
           "Symbols context is empty. Select at least one symbol before Analyze.",
@@ -3996,6 +4002,14 @@ export default function ChartSnapshotsPage() {
         sessionPrefix: activeSessionPrefix,
         symbols: targetSymbols,
       });
+      console.log(
+        "[analyzeSelected] freshItems count:",
+        freshItems?.length,
+        "matchedFiles:",
+        recent.matchedFiles,
+        "targetTfTokens:",
+        recent.targetTfTokens,
+      );
       const isMasterFile = recent.matchedFiles.some((f) =>
         f.toUpperCase().includes("_MASTER."),
       );
