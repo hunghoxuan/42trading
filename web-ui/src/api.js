@@ -29,9 +29,9 @@ function runtimeApiBase() {
     return origin;
   }
 
-  const apiBaseStored = normalizeApiBase(
-    localStorage.getItem("tvbridge_api_base"),
-  );
+  const apiBaseStored = ENV_API_BASE
+    ? ""
+    : normalizeApiBase(localStorage.getItem("tvbridge_api_base"));
   if (apiBaseStored) return apiBaseStored;
 
   const apiBaseDefault = ENV_API_BASE
