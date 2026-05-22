@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.22 14:06 - 4b1e4980"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.22 14:06 - 4b1e4980",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -858,7 +861,7 @@ Respond ONLY in valid minified JSON matching schema exactly. No prose, markdown,
 All fields required. Enums must match. Use null only where price data is unavailable.
 Array limits: htf_context<=2, ltf_analysis<=2, pd_arrays<=6/tf, key_levels<=6, reference_zones<=6.
 Trade plans must be actionable and internally consistent.
-IMPORTANT: You MUST include a trade_plan array with at least 1 actionable plan (direction, entry_price, stop_loss, take_profit). Include multiple_exits when available. trade_plan is REQUIRED.
+IMPORTANT: You MUST include execution_plan with entry, stop_loss, tp1/tp2/tp3 populated. Never return empty execution_plan.
 schema_version=${AI_RESPONSE_SCHEMA_VERSION}
 SCHEMA=${JSON.stringify(AI_RESPONSE_SCHEMA)}`;
 }
@@ -3052,22 +3055,49 @@ function ensureAiContextFileDir() {
   }
 }
 
-function ensureTradeFilesDir(sid) {
+function ensureTradeFilesDir(sid, symbol = "") {
   const safeSid = String(sid || "")
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, "_");
+  const safeSymbol = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Za-z0-9]/g, "");
   if (!safeSid) return TRADE_FILES_DIR;
   if (!fs.existsSync(TRADE_FILES_DIR)) {
     fs.mkdirSync(TRADE_FILES_DIR, { recursive: true });
   }
-  const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
+  const folderName = safeSymbol
+    ? `${safeSid}-${safeSymbol}`
+    : `trade-${safeSid}`;
+  const dir = path.join(TRADE_FILES_DIR, folderName);
+  if (!fs.existsSync(dir)) {
+    // Migrate old folder if it exists
+    const oldDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
+    if (fs.existsSync(oldDir) && safeSymbol) {
+      try {
+        fs.renameSync(oldDir, dir);
+      } catch {}
+    }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+
+function tradeLogsDir(sid, symbol = "") {
+  const dir = path.join(ensureTradeFilesDir(sid, symbol), "logs");
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-function tradeSnapshotDir(sid) {
-  const dir = path.join(ensureTradeFilesDir(sid), "snapshots");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+function tradeSnapshotDir(sid, symbol = "") {
+  const dir = path.join(ensureTradeFilesDir(sid, symbol), "snapshots");
+  if (!fs.existsSync(dir)) {
+    // Try old folder format
+    const oldDir = path.join(ensureTradeFilesDir(sid, ""), "snapshots");
+    if (fs.existsSync(oldDir)) return oldDir;
+    fs.mkdirSync(dir, { recursive: true });
+  }
   return dir;
 }
 
@@ -3124,7 +3154,26 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
       } catch {}
       return { file_name: f, mtime_ms: t };
     });
-  const sorted = files
+  // Group by capture batch (files from same capture share timestamp prefix).
+  // Return only the most recent batch to avoid mixing MASTER + individual TFs.
+  const byBatch = new Map();
+  for (const f of files) {
+    // Extract batch key: first 13 chars of the timestamp token in filename
+    const m = String(f.file_name || "").match(/_(\d{8}_\d{4})/);
+    const batchKey = m ? m[1] : String(f.mtime_ms);
+    if (!byBatch.has(batchKey)) byBatch.set(batchKey, []);
+    byBatch.get(batchKey).push(f);
+  }
+  // Sort batches by max mtime (most recent first), take the first batch
+  const batches = [...byBatch.entries()]
+    .map(([key, items]) => ({
+      key,
+      items,
+      maxTime: Math.max(...items.map((x) => x.mtime_ms)),
+    }))
+    .sort((a, b) => b.maxTime - a.maxTime);
+  const latestBatch = batches[0]?.items || [];
+  const sorted = latestBatch
     .sort((a, b) => b.mtime_ms - a.mtime_ms)
     .slice(0, Math.max(1, Number(limit) || 12));
   return sorted.map((x) => x.file_name);
@@ -3150,7 +3199,7 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
     ? []
     : listLatestSnapshotFilesForSymbol(symbol, 12);
   const sourceFiles = requested.length ? requested : fallback;
-  const destDir = tradeSnapshotDir(sid);
+  const destDir = tradeSnapshotDir(sid, symbol);
   const copied = [];
   for (const fileName of sourceFiles) {
     const safe = normalizeSnapshotFileName(fileName);
@@ -3175,7 +3224,7 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   return copied;
 }
 
-async function persistTradeSnapshotFiles(tradeSid, files = []) {
+async function persistTradeSnapshotFiles(tradeSid, files = [], symbol = "") {
   const sid = String(tradeSid || "").trim();
   const safeFiles = [
     ...new Set(
@@ -3185,7 +3234,13 @@ async function persistTradeSnapshotFiles(tradeSid, files = []) {
     ),
   ];
   if (!sid || !safeFiles.length) return { updated: 0, files: safeFiles };
-  const folder = `trade-${sid}/snapshots`;
+  const safeSym = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Za-z0-9]/g, "");
+  const folder = safeSym
+    ? `${sid}-${safeSym}/snapshots`
+    : `trade-${sid}/snapshots`;
   try {
     const db = await mt5Backend();
     const fileJson = JSON.stringify(safeFiles);
@@ -5808,7 +5863,7 @@ async function callAiProvider({
       ? json.content
           .filter((x) => x?.type === "text")
           .map((x) => String(x?.text || ""))
-          .join("\n")
+          .join("")
       : String(json?.content || "");
     return { rawText, modelUsed: out.modelUsed || model, provider: "claude" };
   }
@@ -8908,38 +8963,76 @@ async function _mt5InitBackendInternal() {
             });
             if (tid) {
               const oldRow = oldStatusMap.get(tid) || {};
-              await this.log(
-                tid,
-                "trades",
-                {
-                  event: "TRADE_SYNC_UPDATE",
-                  status_raw: it.status_raw,
-                  execution_status: it.execution_status,
-                  ticket: it.ticket || null,
-                  signal_id: it.sid || null,
-                  pnl: it.pnl,
-                  pips: it.pips,
-                  lots: it.lots,
-                  commission: it.commission,
-                  swap: it.swap,
-                  volume: it.volume,
-                  margin: it.margin,
-                  tp_pnl: it.tp_pnl,
-                  sl_pnl: it.sl_pnl,
-                  sl_before: Number.isFinite(Number(oldRow.sl))
-                    ? Number(oldRow.sl)
-                    : null,
-                  sl_after: it.sl ?? null,
-                  tp_before: Number.isFinite(Number(oldRow.tp))
-                    ? Number(oldRow.tp)
-                    : null,
-                  tp_after: it.tp ?? null,
-                  has_partial: Boolean(it.has_partial),
-                  close_reason: it.close_reason || null,
-                  entry: it.entry ?? null,
-                },
-                uid,
-              );
+              // Only log TRADE_SYNC_UPDATE if something actually changed
+              const oldExecStatus = oldRow.execution_status || null;
+              const oldSl = Number.isFinite(Number(oldRow.sl))
+                ? Number(oldRow.sl)
+                : null;
+              const oldTp = Number.isFinite(Number(oldRow.tp))
+                ? Number(oldRow.tp)
+                : null;
+              const oldPnl = Number.isFinite(Number(oldRow.pnl))
+                ? Number(oldRow.pnl)
+                : null;
+              const statusChanged =
+                !oldExecStatus || oldExecStatus !== it.execution_status;
+              const slChanged =
+                oldSl !== null &&
+                it.sl != null &&
+                Math.abs(oldSl - Number(it.sl)) > 0.000001;
+              const tpChanged =
+                oldTp !== null &&
+                it.tp != null &&
+                Math.abs(oldTp - Number(it.tp)) > 0.000001;
+              const pnlChanged =
+                oldPnl !== null &&
+                Number.isFinite(Number(it.pnl)) &&
+                Math.abs(oldPnl - Number(it.pnl)) > 0.01;
+              const hasPartialChanged =
+                Boolean(it.has_partial) !==
+                Boolean(
+                  oldRow.has_partial === "true" || oldRow.has_partial === true,
+                );
+              if (
+                statusChanged ||
+                slChanged ||
+                tpChanged ||
+                pnlChanged ||
+                hasPartialChanged
+              ) {
+                await this.log(
+                  tid,
+                  "trades",
+                  {
+                    event: "TRADE_SYNC_UPDATE",
+                    status_raw: it.status_raw,
+                    execution_status: it.execution_status,
+                    ticket: it.ticket || null,
+                    signal_id: it.sid || null,
+                    pnl: it.pnl,
+                    pips: it.pips,
+                    lots: it.lots,
+                    commission: it.commission,
+                    swap: it.swap,
+                    volume: it.volume,
+                    margin: it.margin,
+                    tp_pnl: it.tp_pnl,
+                    sl_pnl: it.sl_pnl,
+                    sl_before: Number.isFinite(Number(oldRow.sl))
+                      ? Number(oldRow.sl)
+                      : null,
+                    sl_after: it.sl ?? null,
+                    tp_before: Number.isFinite(Number(oldRow.tp))
+                      ? Number(oldRow.tp)
+                      : null,
+                    tp_after: it.tp ?? null,
+                    has_partial: Boolean(it.has_partial),
+                    close_reason: it.close_reason || null,
+                    entry: it.entry ?? null,
+                  },
+                  uid,
+                );
+              }
             }
           } else if (
             it.execution_status === "OPEN" ||
@@ -14769,6 +14862,7 @@ const appHandler = async (req, res) => {
     });
     res.write(":ok\n\n"); // initial comment to establish connection
     sseRegisterClient(userId, res);
+    sseRegisterClient("*", res);
     // heartbeat every 30s
     const heartbeat = setInterval(() => {
       try {
@@ -14780,6 +14874,7 @@ const appHandler = async (req, res) => {
     req.on("close", () => {
       clearInterval(heartbeat);
       sseRemoveClient(userId, res);
+      sseRemoveClient("*", res);
     });
     return; // do not call json() — SSE is raw
   }
@@ -19418,11 +19513,13 @@ const appHandler = async (req, res) => {
           userId,
         );
         const aiJson = await aiRes.json();
+        // Claude may split long JSON across multiple text blocks.
+        // Joining with "" preserves JSON integrity (blocks are sequential fragments).
         const rawResponse = Array.isArray(aiJson?.content)
           ? aiJson.content
               .filter((x) => x?.type === "text")
               .map((x) => String(x?.text || ""))
-              .join("\n")
+              .join("")
           : String(aiJson?.content || "");
         const extracted = extractJsonFromAiText(rawResponse);
         let parsedJson =
@@ -19601,13 +19698,11 @@ const appHandler = async (req, res) => {
         .trim()
         .toUpperCase();
       // Copy snapshots to trade folder (sessionId will become trade SID)
-      const tradeSnapDir = tradeSnapshotDir(sessionId);
-      const snapFiles = listLatestSnapshotFilesForSymbol(requestedSymbol, 20);
-      for (const f of snapFiles) {
-        const srcPath = path.join(CHART_SNAPSHOT_DIR, f.file_name || f);
-        const dstPath = path.join(tradeSnapDir, f.file_name || f);
-        if (fs.existsSync(srcPath)) fs.copyFileSync(srcPath, dstPath);
-      }
+      copySnapshotsToTradeSidFolder(
+        sessionId,
+        listLatestSnapshotFilesForSymbol(requestedSymbol, 20),
+        requestedSymbol,
+      );
       const pickSnapshotFiles = (items) => {
         if (!items.length) return [];
         const maxFiles = Math.max(
@@ -19889,6 +19984,28 @@ const appHandler = async (req, res) => {
         },
         userId,
       );
+      // Save analyze payload to trade_files/trade-{sid}/logs/payload.json
+      try {
+        const payloadLog = {
+          timestamp: new Date().toISOString(),
+          session_id: sessionId,
+          model: requestModel,
+          provider: aiProviderRaw || "claude",
+          symbol: requestedSymbol,
+          symbols: requestedSymbols,
+          timeframe: body.timeframe || "",
+          timeframes: requestedTfs || [],
+          prompt_len: finalPrompt.length,
+          files_count: snapshotFiles.length,
+          files: snapshotFiles.map((f) => f.fileName || f),
+        };
+        const logsDir = tradeLogsDir(sessionId);
+        fs.writeFileSync(
+          path.join(logsDir, "payload.json"),
+          JSON.stringify(payloadLog, null, 2),
+        );
+      } catch (_) {}
+
       const aiResult = await callAiProvider({
         model: requestModel,
         provider: aiProviderRaw || "",
@@ -19928,7 +20045,24 @@ const appHandler = async (req, res) => {
       if (Array.isArray(parsedJson) && parsedJson.length > 0) {
         parsedJson = parsedJson[0];
       }
-      // Log raw AI response
+      // Save AI response to trade_files/trade-{sid}/logs/response.json
+      try {
+        const responseLog = {
+          timestamp: new Date().toISOString(),
+          session_id: sessionId,
+          model: resolvedModel || requestModel,
+          provider: aiResult.provider || aiProviderRaw || "claude",
+          raw_response: rawResponse,
+          parsed_json: parsedJson,
+        };
+        const logsDir = tradeLogsDir(sessionId);
+        fs.writeFileSync(
+          path.join(logsDir, "response.json"),
+          JSON.stringify(responseLog, null, 2),
+        );
+      } catch (_) {}
+
+      // Log raw AI response (snapshot_files mode)
       console.log(
         "[ai-raw] len=" +
           rawResponse.length +
@@ -20054,7 +20188,8 @@ const appHandler = async (req, res) => {
         auto_save_result: autoSaveResult,
         source: "remote_api",
         updated_time: Date.now(),
-        auto_refresh: 0, // Analysis doesn't need auto-refresh by default
+        auto_refresh: 0,
+        trade_sid: sessionId,
       });
     } catch (error) {
       try {
@@ -20838,6 +20973,32 @@ const appHandler = async (req, res) => {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  // GET /v2/trades/:sid/response — load saved AI analysis response (no auth needed)
+  if (
+    req.method === "GET" &&
+    url.pathname.match(/^\/v2\/trades\/([^/]+)\/response$/)
+  ) {
+    const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/response$/);
+    const respRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+    try {
+      const respPath = path.join(tradeLogsDir(respRef), "response.json");
+      if (!fs.existsSync(respPath))
+        return json(res, 404, { ok: false, error: "response not found" });
+      const raw = fs.readFileSync(respPath, "utf8");
+      const data = JSON.parse(raw);
+      return json(res, 200, {
+        ok: true,
+        session_id: respRef,
+        parsed_json: data.parsed_json || null,
+        raw_response: data.raw_response || "",
+        model: data.model || "",
+        timestamp: data.timestamp || null,
+      });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: String(e.message || e) });
     }
   }
 
@@ -24000,6 +24161,7 @@ async function mt5CronLoop() {
     if (notificationManager) {
       notificationManager.handle("SYSTEM_EVENT", "cron_tick", {
         message: `Cron OK (${elapsed}s): ${events.join("; ")}`,
+        user_id: "*",
         ticker: true,
         console_log: true,
         notification: false,
