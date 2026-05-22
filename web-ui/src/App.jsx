@@ -141,7 +141,10 @@ export default function App() {
     return <div className="loading">Loading...</div>;
   }
 
-  if (!authUser) {
+  // Local dev with env API base: skip auth, use API key directly
+  const isLocalDev = import.meta.env.DEV && import.meta.env.VITE_API_BASE;
+
+  if (!authUser && !isLocalDev) {
     return (
       <div className="app-shell">
         <main className="page-wrap">
