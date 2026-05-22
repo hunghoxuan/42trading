@@ -233,9 +233,8 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
     objectTable === "ai" ||
     objectTable === "ea_to_trade"
   ) {
-    // Trade events → trades/{sid}/logs/
-    const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`, "logs");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // Trade events → {sid}-{symbol}/logs/
+    const dir = tradeLogsDir(safeSid);
     fs.appendFileSync(path.join(dir, `${dateStr}.log`), line);
   } else if (objectTable === "ea") {
     // EA general logs → logs/EA/
@@ -13581,7 +13580,7 @@ async function mt5ListTradeEventsV2(tradeId, limit = 200) {
   const safeSid = String(tradeId || "")
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, "_");
-  const logDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`, "logs");
+  const logDir = tradeLogsDir(safeSid);
   const events = [];
   if (fs.existsSync(logDir)) {
     const files = fs
