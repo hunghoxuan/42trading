@@ -37,6 +37,7 @@ import {
   SCHEMA_USER_DEFAULT,
   getEffectiveTfConfig,
   buildPrompt,
+  buildStrategyContext,
   buildJsonConfig,
   buildSchemaString,
 } from "./AiPromptBuilder";
@@ -3745,8 +3746,11 @@ export default function ChartSnapshotsPage() {
           try {
             return await api.chartSnapshotsAnalyze(payload);
           } catch (firstErr) {
-            // If Claude file references are stale, retry without them
-            const msg = String(firstErr?.message || firstErr || "");
+            const msg = String(
+              firstErr?.message || firstErr || "",
+            ).toLowerCase();
+
+            // If Claude file references are stale, retry without them.
             if (
               msg.includes("not_found_error") ||
               msg.includes("not found") ||
@@ -3757,6 +3761,45 @@ export default function ChartSnapshotsPage() {
               payload.context_mode = "none";
               return await api.chartSnapshotsAnalyze(payload);
             }
+
+            // Local robustness: if backend reports no snapshots, pull recent snapshots and retry once.
+            if (msg.includes("no snapshots found for analysis")) {
+              try {
+                const recent = await api.chartSnapshots(80);
+                const list = Array.isArray(recent?.items)
+                  ? recent.items
+                  : Array.isArray(recent?.snapshots)
+                    ? recent.snapshots
+                    : [];
+                const wanted = new Set(
+                  activeSymbols
+                    .map((s) => normalizeWatchSymbol(s))
+                    .filter(Boolean),
+                );
+                const recentFiles = list
+                  .map((x) => String(x?.file_name || x?.name || "").trim())
+                  .filter(Boolean)
+                  .filter((f) => {
+                    const parts = f.split("_");
+                    const sym = normalizeWatchSymbol(parts[1] || "");
+                    return !wanted.size || wanted.has(sym);
+                  })
+                  .slice(
+                    0,
+                    Math.max(4, Math.min(24, activeSymbols.length * 4 || 4)),
+                  );
+                if (recentFiles.length) {
+                  payload.files = recentFiles;
+                  payload.context_files = [];
+                  payload.use_context_files = false;
+                  payload.context_mode = "none";
+                  return await api.chartSnapshotsAnalyze(payload);
+                }
+              } catch {
+                // keep original error below
+              }
+            }
+
             throw firstErr;
           }
         },
@@ -5074,25 +5117,7 @@ export default function ChartSnapshotsPage() {
           <textarea
             className="snapshot-mono-v2"
             rows={30}
-            value={(() => {
-              const ctx = [];
-              const active = cfg.strategies || [];
-              for (const s of active) {
-                const model = STRATEGY_ENTRY_MODELS[s];
-                if (!model) continue;
-                ctx.push(`### ${s}`);
-                ctx.push(model.description || "");
-                ctx.push("");
-                ctx.push("Checklist:");
-                for (const c of model.checklist || []) {
-                  ctx.push(
-                    `  - [${c.weight || "-"}] ${c.description} (${c.category || ""})`,
-                  );
-                }
-                ctx.push("");
-              }
-              return ctx.join("\n");
-            })()}
+            value={buildStrategyContext(cfg.strategies || [])}
             readOnly
           />
         </>
@@ -5432,6 +5457,12 @@ export default function ChartSnapshotsPage() {
   const selectedSymbols = Array.isArray(cfg?.symbols)
     ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
     : [];
+  const effectiveGridCols = useMemo(
+    () =>
+      masterGridCols ??
+      (selectedSymbols.length === 0 || selectedSymbols.length > 2 ? 4 : 2),
+    [masterGridCols, selectedSymbols.length],
+  );
   const watchlistNormSet = useMemo(
     () =>
       new Set(
@@ -6767,7 +6798,7 @@ export default function ChartSnapshotsPage() {
                                     symbol={sym}
                                     timeframes={browserTfs}
                                     defaultMode="live"
-                                    initialGridCols={masterGridCols}
+                                    initialGridCols={effectiveGridCols}
                                     initialBarsCount={Number(
                                       cfg.lookbackBars || 300,
                                     )}
@@ -6817,7 +6848,7 @@ export default function ChartSnapshotsPage() {
                             symbol={sym}
                             timeframes={browserTfs}
                             defaultMode="live"
-                            initialGridCols={masterGridCols}
+                            initialGridCols={effectiveGridCols}
                             initialBarsCount={Number(cfg.lookbackBars || 300)}
                             showPerCardLayoutControls={false}
                             analyzeLabel={
@@ -6906,7 +6937,7 @@ export default function ChartSnapshotsPage() {
                     symbol={sym}
                     timeframes={widgetTfs}
                     defaultMode="live"
-                    initialGridCols={masterGridCols}
+                    initialGridCols={effectiveGridCols}
                     initialBarsCount={Number(cfg.lookbackBars || 300)}
                     showPerCardLayoutControls={false}
                     onAnalyze={() => analyzeSelected()}
@@ -6952,7 +6983,7 @@ export default function ChartSnapshotsPage() {
                 showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
                 showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
                 profileTfs: widgetTfs,
-                initialGridCols: masterGridCols,
+                initialGridCols: effectiveGridCols,
                 initialBarsCount: Number(cfg.lookbackBars || 300),
                 showPerCardLayoutControls: false,
                 onDetailTfTabChange: setSelectedEntryTf,
