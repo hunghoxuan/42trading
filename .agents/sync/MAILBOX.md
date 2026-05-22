@@ -16,6 +16,21 @@ Use this section for parallel-agent safety and deploy ordering.
 - since_utc: `2026-05-21 16:02 UTC`
 - note: `snapshot status display - master vs individual TFs`
 
+### [2026-05-22 07:22 UTC] AGENT:DeepSeek
+- status: DEPLOYED
+- branch: main
+- commit: 8f2cb593
+- scope: `fix login loop on localhost: client nav (Option A) + SameSite=None for dev (Option B) + Vite proxy (Option C)`
+- merge_to_main: YES (8f2cb593)
+- deploy:
+  - owner: DeepSeek
+  - server_version: v2026.05.22 07:17 - 35dc5891
+  - result: PASS
+- verify:
+  - /health: ok:true, version v2026.05.22 07:17 - 35dc5891
+  - postgres: ok, redis: ok, mt5: connected
+- rollback: `git revert 8f2cb593 35dc5891 && git push && ssh root@139.59.211.192 "cd /opt/trading && git pull --ff-only origin main && pm2 restart webhook"`
+
 ### [2026-05-21 16:02 UTC] AGENT:DeepSeek
 - status: DEPLOYED
 - commit: 9763b729

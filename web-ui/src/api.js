@@ -24,30 +24,21 @@ function runtimeApiBase() {
   }
   const { hostname, origin, port, protocol } = window.location;
 
-  // On deployed server UI, always use same-origin API to avoid stale/bad saved API URLs.
+  // On deployed server UI, always use same-origin API
   if (hostname !== "localhost" && hostname !== "127.0.0.1") {
     return origin;
   }
 
-  const apiBaseStored = ENV_API_BASE
-    ? ""
-    : normalizeApiBase(localStorage.getItem("tvbridge_api_base"));
-  if (apiBaseStored) return apiBaseStored;
-
-  const apiBaseDefault = ENV_API_BASE
-    ? ENV_API_BASE.replace(/\/+$/, "")
-    : normalizeApiBase(DEFAULT_REMOTE_BASE);
-  // For localhost/127.0.0.1, only auto-force env-configured API base.
-  // Do not clobber an intended runtime target (e.g. VPS via query/storage)
-  // with the generic fallback "http://localhost".
-  if (
-    (hostname === "localhost" || hostname === "127.0.0.1") &&
-    ENV_API_BASE &&
-    apiBaseDefault
-  ) {
-    localStorage.setItem("tvbridge_api_base", apiBaseDefault);
-    return apiBaseDefault;
+  // Local dev: use env API base if configured
+  if (ENV_API_BASE) {
+    const base = ENV_API_BASE.replace(/\/+$/, "");
+    return base;
   }
+
+  const apiBaseStored = normalizeApiBase(
+    localStorage.getItem("tvbridge_api_base"),
+  );
+  if (apiBaseStored) return apiBaseStored;
 
   if (hostname === "localhost" || hostname === "127.0.0.1") {
     // If running on a non-standard port (e.g. backend serves UI on :3001),

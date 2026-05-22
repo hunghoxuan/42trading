@@ -785,7 +785,7 @@ export const PROFILE_PRESETS = {
     exec_tfs: ["15m"],
     conf_tfs: ["5m"],
     sessions: "Any",
-    rr: "2",
+    rr: "1.5",
   },
   scalper: {
     label: "Scalping (4h+1h / 5m / 1m)",
@@ -793,7 +793,7 @@ export const PROFILE_PRESETS = {
     exec_tfs: ["5m"],
     conf_tfs: ["1m"],
     sessions: "Any",
-    rr: "1.5",
+    rr: "1",
   },
 };
 
@@ -901,11 +901,89 @@ export function getEffectiveTfConfig(cfg) {
 // Builds the active strategy block injected into the prompt.
 // CRITICAL: includes checklist items with weights AND full entry model details —
 // not just names. Without this the AI cannot score confluence or validate triggers.
-function buildStrategyContext(strategies) {
+//
+// Source-of-truth: config/guide_strategies.md (parsed at import time).
+import strategiesRaw from "../../../../config/guide_strategies.md?raw";
+
+function parseStrategyGuide(md) {
+  const strategies = {};
+  const blocks = md.split(/\n---\n/);
+  for (const block of blocks) {
+    const lines = block.split("\n");
+    let i = 0;
+    while (i < lines.length && !lines[i].startsWith("## ")) i++;
+    if (i >= lines.length) continue;
+    const name = lines[i].slice(3).trim();
+    i++;
+    const descLines = [];
+    while (
+      i < lines.length &&
+      !lines[i].startsWith("###") &&
+      !lines[i].startsWith("---")
+    ) {
+      const t = lines[i].trim();
+      if (t && !t.startsWith(">")) descLines.push(t);
+      i++;
+    }
+    const description = descLines.join(" ");
+    const checklist = [];
+    const entryModels = [];
+    let section = null;
+    let cur = null;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.startsWith("### ")) {
+        const sec = line.slice(4).trim().toLowerCase();
+        if (sec === "checklist") {
+          section = "checklist";
+          cur = null;
+        } else if (sec.startsWith("entry model")) {
+          section = "models";
+          cur = null;
+        }
+      } else if (line.startsWith("#### ")) {
+        cur = {
+          name: line.slice(5).trim(),
+          trigger: "",
+          sl_logic: "",
+          tp_logic: "",
+          consistency_rules: "",
+        };
+        entryModels.push(cur);
+        section = "model";
+      } else if (section === "checklist") {
+        const m = line.match(/- \[(High|Medium|Low)\] \(([^)]+)\) (.+)/);
+        if (m)
+          checklist.push({
+            weight: m[1],
+            category: m[2],
+            description: m[3].trim(),
+          });
+      } else if (section === "model" && cur) {
+        const m = line.match(/- \*\*(Trigger|SL|TP|Rules):\*\* (.+)/);
+        if (m) {
+          const v = m[2].trim();
+          if (m[1] === "Trigger") cur.trigger = v;
+          else if (m[1] === "SL") cur.sl_logic = v;
+          else if (m[1] === "TP") cur.tp_logic = v;
+          else if (m[1] === "Rules") cur.consistency_rules = v;
+        }
+      }
+      i++;
+    }
+    if (name && description)
+      strategies[name] = { description, checklist, entry_models: entryModels };
+  }
+  return strategies;
+}
+
+const _strategies = parseStrategyGuide(strategiesRaw);
+
+export function buildStrategyContext(strategies) {
   return strategies
-    .filter((s) => STRATEGY_ENTRY_MODELS[s])
+    .filter((s) => _strategies[s])
     .map((s) => {
-      const data = STRATEGY_ENTRY_MODELS[s];
+      const data = _strategies[s];
 
       const checklistBlock = data.checklist
         .map(

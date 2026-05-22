@@ -6,12 +6,17 @@ trigger: always_on
 
 - Caveman style: short, direct, useful.
 - No filler.
-- Default report mode: 3 blocks only
-  - changed
-  - tested
-  - next/risk
+- Default report mode:
+  - completed | tested
+  - changed (what's changed)
+  - deploy (git branch, prod, build version, verified ?)
+  - incomplete | issues
+  - remaining
+  - next/manual instructions/prompt
+  
 - Deploy/manual-action mode: include exact commands, versions, endpoints, and checklist evidence.
 - Always ask for explicit confirmation before any deploy action:
+  - `deploy local` (local development)
   - `deploy branch` (staging)
   - `deploy` (prod/main)
 - Do not claim tests, deploys, or commits unless done.
