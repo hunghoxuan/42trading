@@ -147,7 +147,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.22 07:17 - 35dc5891"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.22 08:47 - d975dbf7"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -19820,12 +19820,17 @@ const appHandler = async (req, res) => {
             normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
           return providerOk && symbolOk;
         });
+        const symbolMatchedAnyProvider = allSnapshots.filter((x) => {
+          const parts = String(x.f || "").split("_");
+          if (parts.length < 3) return false;
+          return normalizeSymbolLoose(parts[1] || "") === requestedSymbol;
+        });
         const pool = sessionMatched.length
           ? sessionMatched
           : symbolMatched.length
             ? symbolMatched
-            : requestedSymbol
-              ? []
+            : symbolMatchedAnyProvider.length
+              ? symbolMatchedAnyProvider
               : allSnapshots;
         files = pickSnapshotFiles(pool);
       }
