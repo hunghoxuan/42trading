@@ -522,48 +522,63 @@ export default function SymbolChart({
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
 
-
-  // Load chart objects from trade metadata on mount
-    useEffect(() => {
-    console.log("[chart-objs] useEffect fired", { tradeSid, entryPrice, tpPrice, slPrice });
-    if (!tradeSid) { console.log("[chart-objs] no tradeSid, skip"); return; }
+  // Load chart objects from trade metadata when trade changes.
+  // Important: do not depend on entry/tp/sl props to avoid parent-child setState ping-pong loops.
+  useEffect(() => {
+    if (!tradeSid) return;
     let cancelled = false;
-    api.loadChartObjects(tradeSid).then((res) => {
-      if (cancelled) return;
-      const objs = Array.isArray(res?.chart_objects) ? res.chart_objects : Array.isArray(res?.objects) ? res.objects : [];
-      if (objs.length) {
-        setAnnotations(objs);
-      } else {
+    api
+      .loadChartObjects(tradeSid)
+      .then((res) => {
+        if (cancelled) return;
+        const objs = Array.isArray(res?.chart_objects)
+          ? res.chart_objects
+          : Array.isArray(res?.objects)
+            ? res.objects
+            : [];
+        if (objs.length) {
+          setAnnotations(objs);
+          return;
+        }
+
         // Auto-generate tradeplan from trade fields when no saved chart_objects
         const ep = Number(entryPrice);
-        console.log("[chart-objs] auto-gen check", { tradeSid, entryPrice, tpPrice, slPrice, ep, hasObjs: objs.length });
         if (Number.isFinite(ep) && ep > 0) {
           const tp = Number(tpPrice);
           const sl = Number(slPrice);
-          const dir = Number.isFinite(tp) && tp > ep ? "BUY" : Number.isFinite(sl) && sl < ep ? "SELL" : "BUY";
-          setAnnotations([{
-            id: "tradeplan_P1",
-            kind: "tradeplan",
-            type: "TRADEPLAN",
-            label: "TradePlan P1 (auto)",
-            plan_id: "P1",
-            direction: dir,
-            entryPrice: ep,
-            tpPrice: Number.isFinite(tp) && tp > 0 ? tp : null,
-            slPrice: Number.isFinite(sl) && sl > 0 ? sl : null,
-            visible: true,
-            color: dir === "SELL" ? "#ef4444" : "#10b981",
-            line_width: 0.1,
-            line_style: "solid",
-            bg_color: "transparent",
-            tf: null,
-            time: null,
-          }]);
+          const dir =
+            Number.isFinite(tp) && tp > ep
+              ? "BUY"
+              : Number.isFinite(sl) && sl < ep
+                ? "SELL"
+                : "BUY";
+          setAnnotations([
+            {
+              id: "tradeplan_P1",
+              kind: "tradeplan",
+              type: "TRADEPLAN",
+              label: "TradePlan P1 (auto)",
+              plan_id: "P1",
+              direction: dir,
+              entryPrice: ep,
+              tpPrice: Number.isFinite(tp) && tp > 0 ? tp : null,
+              slPrice: Number.isFinite(sl) && sl > 0 ? sl : null,
+              visible: true,
+              color: dir === "SELL" ? "#ef4444" : "#10b981",
+              line_width: 0.1,
+              line_style: "solid",
+              bg_color: "transparent",
+              tf: null,
+              time: null,
+            },
+          ]);
         }
-      }
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [tradeSid, entryPrice, tpPrice, slPrice]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tradeSid]);
 
   const handleSaveObjects = useCallback(() => {
     if (!tradeSid || !annotations.length) return;
@@ -746,8 +761,10 @@ export default function SymbolChart({
       return;
     }
     const planId = String(selectedObject.plan_id || "P1").toUpperCase();
-    if (activePlanGroup !== planId) setActivePlanGroup(planId);
-    if (typeof onTradePlanGroupChange === "function") {
+    const changed = activePlanGroup !== planId;
+    if (changed) setActivePlanGroup(planId);
+    // Prevent parent-child setState ping-pong loops.
+    if (changed && typeof onTradePlanGroupChange === "function") {
       onTradePlanGroupChange(planId);
     }
   }, [selectedObject, activePlanGroup, onTradePlanGroupChange]);
@@ -906,6 +923,18 @@ export default function SymbolChart({
     ],
   );
 
+  const chartFallbackEntry = useMemo(() => {
+    const keys = Object.keys(master?.bars || {});
+    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
+    for (const k of sorted) {
+      const bars = master?.bars?.[k] || [];
+      if (!bars.length) continue;
+      const close = Number(bars[bars.length - 1]?.close);
+      if (Number.isFinite(close)) return close;
+    }
+    return null;
+  }, [master?.bars]);
+
   useEffect(() => {
     if (!(hasTradePlan && hasAnalysis)) return;
     const rawPlans = Array.isArray(analysisSnapshot?.trade_plan)
@@ -915,18 +944,7 @@ export default function SymbolChart({
         ? [analysisSnapshot.trade_plan]
         : [];
     if (!rawPlans.length) return;
-    const keys = Object.keys(master?.bars || {});
-    const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
-    let fallbackEntry = null;
-    for (const k of sorted) {
-      const bars = master?.bars?.[k] || [];
-      if (!bars.length) continue;
-      const close = Number(bars[bars.length - 1]?.close);
-      if (Number.isFinite(close)) {
-        fallbackEntry = close;
-        break;
-      }
-    }
+    const fallbackEntry = chartFallbackEntry;
     setAnnotations((prev) => {
       const allowedPlanIds = new Set(
         rawPlans.slice(0, 2).map((_, idx) => (idx === 0 ? "P1" : "P2")),
@@ -991,7 +1009,7 @@ export default function SymbolChart({
       });
       return next;
     });
-  }, [hasTradePlan, hasAnalysis, analysisSnapshot, master]);
+  }, [hasTradePlan, hasAnalysis, analysisSnapshot, chartFallbackEntry]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
@@ -2690,8 +2708,39 @@ export default function SymbolChart({
             </span>
           ))}
           <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-            <button type="button" onClick={() => { setAnnotations([]); setSelectedObjectId(null); }} style={{ fontSize:10, padding:"3px 8px", background:"rgba(220,38,38,0.15)", color:"#dc2626", border:"1px solid rgba(220,38,38,0.3)", borderRadius:4, cursor:"pointer" }}>X</button>
-            <button type="button" onClick={handleSaveObjects} style={{ fontSize:10, padding:"3px 8px", background:"#3b82f6", color:"#fff", border:"none", borderRadius:4, cursor:"pointer" }}>Save</button>
+            <button
+              type="button"
+              onClick={() => {
+                setAnnotations([]);
+                setSelectedObjectId(null);
+              }}
+              style={{
+                fontSize: 10,
+                padding: "3px 8px",
+                background: "rgba(220,38,38,0.15)",
+                color: "#dc2626",
+                border: "1px solid rgba(220,38,38,0.3)",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}
+            >
+              X
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveObjects}
+              style={{
+                fontSize: 10,
+                padding: "3px 8px",
+                background: "#3b82f6",
+                color: "#fff",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}
+            >
+              Save
+            </button>
           </div>
           {selectedObject ? (
             <div
