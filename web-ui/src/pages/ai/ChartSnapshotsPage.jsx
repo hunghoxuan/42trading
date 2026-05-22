@@ -6733,7 +6733,7 @@ export default function ChartSnapshotsPage() {
                 </div>
               </div>
             </div>
-            {!selectedSymbols.length ? (
+            {selectedSymbols.length === 0 || selectedSymbols.length > 2 ? (
               <div
                 className="browser-grid-v1"
                 style={{
@@ -6916,17 +6916,22 @@ export default function ChartSnapshotsPage() {
           </div>
         )}
 
-        {!hasAnalyzeResponse && !isTradeRoute && selectedSymbol && (
-          <div
-            className="browser-grid-v1"
-            style={{
-              gridTemplateColumns: "1fr",
-              gap: 12,
-              marginBottom: 20,
-            }}
-          >
-            {(selectedSymbols.length ? selectedSymbols : [selectedSymbol]).map(
-              (sym) => (
+        {(selectedSymbols.length === 0 || selectedSymbols.length > 2) &&
+          !hasAnalyzeResponse &&
+          !isTradeRoute &&
+          selectedSymbol && (
+            <div
+              className="browser-grid-v1"
+              style={{
+                gridTemplateColumns: "1fr",
+                gap: 12,
+                marginBottom: 20,
+              }}
+            >
+              {(selectedSymbols.length
+                ? selectedSymbols
+                : [selectedSymbol]
+              ).map((sym) => (
                 <Suspense
                   key={sym}
                   fallback={
@@ -6948,10 +6953,9 @@ export default function ChartSnapshotsPage() {
                     onRemove={null}
                   />
                 </Suspense>
-              ),
-            )}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
 
         {selectedSymbol && (
           <Suspense
