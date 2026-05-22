@@ -1,6 +1,6 @@
 # Architecture
 
-> Updated 2026-05-05. Authoritative reference for the trading system architecture.
+> Updated 2026-05-22. Authoritative reference for the trading system architecture.
 
 ---
 
@@ -8,19 +8,23 @@
 
 ```
 trading/
-├── webhook/               ← BACKEND — Node.js API server
-│   └── server.js           ← Single monolithic file (~17k lines)
+├── webhook/               ← BACKEND — Pure API server (no UI serving)
+│   └── server.js           ← Single monolithic file
 │
 ├── web-ui/                 ← FRONTEND — React SPA
-│   └── src/
-│       ├── api.js           ← HTTP client (fetch + EventSource)
-│       ├── pages/           ← Route pages (Dashboard, AI, Trades, System...)
-│       ├── components/      ← Reusable UI widgets (charts, clock, ticker...)
-│       └── services/        ← chartFetchManager, etc.
+│   ├── src/                ← Components, pages, hooks
+│   ├── dist/               ← Built static files (from npm run build)
+│   ├── Dockerfile          ← Multi-stage: Vite build → nginx serving
+│   └── vite.config.js      ← Dev proxy to webhook
+│
+├── nginx/                  ← PRODUCTION REVERSE PROXY
+│   └── trading.conf        ← Serves UI static files + proxies API to webhook
 │
 ├── bridge-clients/         ← NATIVE BROKER BRIDGES
 │   ├── TVBridgeEA.mq5       ← MT5 Expert Advisor (MQL5)
 │   └── TVBridge_CTrader.cs  ← cTrader bridge (C#)
+│
+├── docker-compose.yml      ← ORCHESTRATION (db + webhook + web-ui)
 │
 ├── scripts/                ← OPS TOOLING
 │   ├── deploy/              ← deploy_webhook.sh, check_build_versions.sh
@@ -39,11 +43,12 @@ trading/
 
 | Directory | Role | Language | What it does |
 |-----------|------|----------|-------------|
-| **`webhook/`** | Backend API Server | Node.js | HTTP server on :443 + :80→443 redirect. REST API, SSE push, PostgreSQL queries, Claude AI, TwelveData, Redis, Cron jobs. Serves built `web-ui/dist/` as static files. |
-| **`web-ui/`** | Frontend SPA | React + Vite | All UI rendering and user interaction. `api.js` calls webhook via `fetch`. `EventSource` receives SSE. React Router handles navigation. Built to `dist/`. |
-| **`bridge-clients/`** | Broker Bridges | MQL5 / C# | Pull tasks from webhook, execute trades on brokers, push status back. Run inside MT5/cTrader platforms. |
+| **`webhook/`** | Backend API Server | Node.js | Pure REST API on `:3001`. No static file serving. PostgreSQL, Claude AI, TwelveData, Redis, Cron jobs, SSE push. |
+| **`web-ui/`** | Frontend SPA | React + Vite | UI rendering. Dev: Vite `:3000` with HMR. Prod: built `dist/` served by nginx. `api.js` calls webhook via fetch. |
+| **`nginx/`** | Reverse Proxy | nginx | Prod only. Serves `web-ui/dist/` static files, proxies API paths to webhook `:3001`. |
+| **`bridge-clients/`** | Broker Bridges | MQL5 / C# | Pull tasks from webhook, execute trades on brokers, push status back. |
 | **`scripts/`** | Ops Tooling | Bash | Deploy, build-version checks, remote smoke tests. |
-| **`.agents/`** | AI Memory | Markdown | Architecture docs, feature specs, tickets, rules, worklog. Canonical source of truth for AI agents. |
+| **`.agents/`** | AI Memory | Markdown | Architecture docs, feature specs, tickets, rules, worklog. |
 
 ---
 
@@ -63,39 +68,39 @@ trading/
         │  file upload│  quotes     │  job queue    │
         │             │             │               │
 ┌───────┴─────────────┴──────┬──────┴───────────────┴────────────────────┐
-│                            │                 VPS (port 443)             │
-│   ┌────────────────────────┴──────────────────────────┐                │
-│   │               webhook/server.js                    │                │
-│   │                                                    │                │
-│   │  ┌──────────────┐  ┌──────────┐  ┌──────────────┐ │                │
-│   │  │  HTTP Server │  │   Auth   │  │  SSE Bus     │ │                │
-│   │  │  :443 HTTPS  │  │ session  │  │ emitNotif()  │ │                │
-│   │  │  :80 → :443  │  │ cookies  │  │ /stream      │ │                │
-│   │  └──────────────┘  └──────────┘  └──────────────┘ │                │
-│   │                                                    │                │
-│   │  ┌──────────────────────────────────────────────┐  │                │
-│   │  │              Route Handlers                  │  │                │
-│   │  │                                              │  │                │
-│   │  │  /v2/signals/*       Signals CRUD            │  │                │
-│   │  │  /v2/trades/*        Trades CRUD             │  │                │
-│   │  │  /v2/chart/*         Snapshots, AI context   │  │                │
-│   │  │  /v2/ai/*            AI generate, templates  │  │                │
-│   │  │  /v2/notifications/* SSE stream, settings    │  │                │
-│   │  │  /v2/settings/*      User settings           │  │                │
-│   │  │  /v2/system/*        Cache, storage, DB      │  │                │
-│   │  │  /v2/broker/*        EA sync, cTrader bridge │  │                │
-│   │  │  /mt5/db/*           DB table browser        │  │                │
-│   │  │  /auth/*             Login, logout, users    │  │                │
-│   │  │  /*                  Static UI files (SPA)   │  │                │
-│   │  └──────────────────────────────────────────────┘  │                │
-│   │                                                    │                │
-│   │  ┌──────────────┐  ┌──────────────┐               │                │
-│   │  │  Cron Jobs   │  │  Market Data │               │                │
-│   │  │  BullMQ      │  │  TF Cache    │               │                │
-│   │  └──────────────┘  └──────────────┘               │                │
-│   └──────────────────────┬───────────────────────────┘                │
-│                          │                                              │
-└──────────────────────────┼──────────────────────────────────────────────┘
+│                                                      VPS                │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │                      nginx (port 443 HTTPS)                        │ │
+│  │                                                                    │ │
+│  │  / → serves web-ui/dist/ static files (SPA)                       │ │
+│  │  /auth/* → proxy_pass http://webhook:3001                         │ │
+│  │  /v2/*    → proxy_pass http://webhook:3001                         │ │
+│  │  /health  → proxy_pass http://webhook:3001                         │ │
+│  │  /mt5/*   → proxy_pass http://webhook:3001                         │ │
+│  │  /sse/*   → proxy_pass http://webhook:3001 (WS upgrade)           │ │
+│  │  /system/* → proxy_pass http://webhook:3001                        │ │
+│  └──────────────────────┬─────────────────────────────────────────────┘ │
+│                         │                                               │
+│  ┌──────────────────────┴─────────────────────────────────────────────┐ │
+│  │               webhook/server.js (port 3001, HTTP only)              │ │
+│  │  ┌──────────────┐  ┌──────────┐  ┌──────────────┐                 │ │
+│  │  │  HTTP Server │  │   Auth   │  │  SSE Bus     │                 │ │
+│  │  │  :3001 HTTP  │  │ session  │  │ emitNotif()  │                 │ │
+│  │  └──────────────┘  └──────────┘  └──────────────┘                 │ │
+│  │  ┌──────────────────────────────────────────────┐                 │ │
+│  │  │              Route Handlers                   │                 │ │
+│  │  │ /v2/signals/* /v2/trades/* /v2/chart/*       │                 │ │
+│  │  │ /v2/ai/* /v2/notifications/* /v2/settings/*  │                 │ │
+│  │  │ /v2/system/* /v2/broker/* /mt5/db/* /auth/*  │                 │ │
+│  │  └──────────────────────────────────────────────┘                 │ │
+│  │  ┌──────────────┐  ┌──────────────┐                               │ │
+│  │  │  Cron Jobs   │  │  Market Data │                               │ │
+│  │  │  BullMQ      │  │  TF Cache    │                               │ │
+│  │  └──────────────┘  └──────────────┘                               │ │
+│  └──────────────────────┬─────────────────────────────────────────────┘ │
+│                         │                                               │
+└─────────────────────────┼───────────────────────────────────────────────┘
                            │
           ┌────────────────┼────────────────┐
           │                │                │
@@ -250,8 +255,8 @@ Common types: `api_key`, `system_config`, `trade`, `notification`, `cron`.
 
 | Decision | Why |
 |----------|-----|
-| **Single server.js** | No microservice overhead. One process, one port (443). Simple deploy. |
-| **webhook serves UI** | Vite builds `web-ui/dist/`. webhook serves it as static files. No separate web server. |
+| **Separation of concerns** | `webhook` = pure API, `nginx` = serves UI + proxies API. Industry-standard n-tier. |
+| **nginx in front** | HTTPS termination, static file serving, API proxying. Webhook stays HTTP-only on internal port. |
 | **SSE not WebSocket** | Notifications are server→client only. SSE simpler, auto-reconnects, proxy-friendly. |
 | **Session cookies** | Simple browser auth. Mobile path: add Bearer token auth alongside. |
 | **sid-first identity** | 9-char Base36 time-sortable IDs. No prefix. Human-readable, URL-safe. |

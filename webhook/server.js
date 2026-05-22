@@ -810,17 +810,6 @@ const CFG = {
     process.env.MARKET_DATA_DEFAULT_TIMEZONE,
     "America/New_York",
   ),
-  uiDistPath: path.resolve(
-    __dirname,
-    envStr(
-      process.env.WEB_UI_DIST_PATH || process.env.WEBHOOK_UI_DIST_PATH,
-      "../web-ui/dist",
-    ),
-  ),
-  landingDistPath: path.resolve(
-    __dirname,
-    envStr(process.env.WEB_LANDING_DIST_PATH, "../web"),
-  ),
   uiAuthEnabled: asBool(process.env.UI_AUTH_ENABLED, true),
   uiBootstrapEmail: envStr(
     process.env.UI_BOOTSTRAP_EMAIL,
@@ -2996,50 +2985,6 @@ async function uiAuthChangePassword(emailRaw, currentPassword, newPassword) {
   };
   await uiWriteAuthState(next);
   return { ok: true };
-}
-
-function contentTypeByExt(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  switch (ext) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "application/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".json":
-      return "application/json; charset=utf-8";
-    case ".svg":
-      return "image/svg+xml";
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".ico":
-      return "image/x-icon";
-    case ".map":
-      return "application/json; charset=utf-8";
-    default:
-      return "application/octet-stream";
-  }
-}
-
-function serveUiFile(res, filePath, method = "GET") {
-  const body = fs.readFileSync(filePath);
-  const headers = {
-    "Content-Type": contentTypeByExt(filePath),
-    "Content-Length": body.length,
-    "Cache-Control": filePath.endsWith(".html")
-      ? "no-store"
-      : "public, max-age=86400",
-  };
-  res.writeHead(200, headers);
-  if (method === "HEAD") {
-    res.end();
-    return;
-  }
-  res.end(body);
 }
 
 function ensureChartSnapshotDir() {
@@ -6052,152 +5997,11 @@ function normalizeHostHeader(hostRaw) {
     .replace(/:\d+$/, "");
 }
 
-function isTradeHost(hostname) {
-  return (
-    hostname === "trade.mozasolution.com" ||
-    hostname === "localhost" ||
-    hostname === "127.0.0.1"
-  );
-}
-
-function isLandingHost(hostname) {
-  return hostname === "mozasolution.com" || hostname === "www.mozasolution.com";
-}
-
-function isApiPath(pathname) {
-  const p = String(pathname || "");
-  return (
-    p === "/health" ||
-    p === "/mt5/health" ||
-    p === "/csv" ||
-    p === "/auth" ||
-    p.startsWith("/auth/") ||
-    p === "/signal" ||
-    p.startsWith("/signal/") ||
-    p === "/v2" ||
-    p.startsWith("/v2/") ||
-    p.startsWith("/mt5/") ||
-    p.startsWith("/webhook") ||
-    p === "/system/storage/stats" ||
-    p === "/system/cache" ||
-    p === "/system/storage/cleanup"
-  );
-}
-
 function stripWebhookPrefix(pathname) {
   const p = String(pathname || "");
   if (p === "/webhook") return "/";
   if (p.startsWith("/webhook/")) return p.slice("/webhook".length) || "/";
   return p;
-}
-
-function tryServeLanding(url, req, res, hostname) {
-  if (!["GET", "HEAD"].includes(req.method)) return false;
-  if (!isLandingHost(hostname)) return false;
-  if (!fs.existsSync(CFG.landingDistPath)) {
-    return json(res, 404, {
-      ok: false,
-      error: `Landing dist folder not found: ${CFG.landingDistPath}`,
-    });
-  }
-
-  if (url.pathname === "/" || url.pathname === "/index.html") {
-    const indexPath = path.join(CFG.landingDistPath, "index.html");
-    if (fs.existsSync(indexPath)) {
-      serveUiFile(res, indexPath, req.method);
-      return true;
-    }
-    return json(res, 404, {
-      ok: false,
-      error: `Landing entry not found: ${indexPath}`,
-    });
-  }
-
-  if (!url.pathname.startsWith("/landing-assets/")) return false;
-  const rel = url.pathname.replace(/^\/landing-assets\/+/, "");
-  if (!rel || rel.includes(".."))
-    return json(res, 400, { ok: false, error: "Invalid landing asset path" });
-  const requested = path.join(CFG.landingDistPath, "assets", rel);
-  if (!fs.existsSync(requested) || !fs.statSync(requested).isFile()) {
-    return json(res, 404, { ok: false, error: "Landing asset not found" });
-  }
-  serveUiFile(res, requested, req.method);
-  return true;
-}
-
-function tryServeUi(url, req, res, hostname) {
-  if (!["GET", "HEAD"].includes(req.method)) return false;
-  const isTradeRootUiPath = isTradeHost(hostname) && !isApiPath(url.pathname);
-  const isUiPath =
-    url.pathname.startsWith("/ui") ||
-    (url.pathname.startsWith("/system") && !isApiPath(url.pathname)) ||
-    isTradeRootUiPath;
-  const isUiAssetPath = url.pathname.startsWith("/assets/");
-  if (!isUiPath && !isUiAssetPath) return false;
-  const uiRootCandidates = [
-    CFG.uiDistPath,
-    path.resolve(__dirname, "../web-ui"),
-    path.resolve(__dirname, "../webhook-ui/dist"),
-    path.resolve(__dirname, "../webhook-ui"),
-  ];
-  const uiRoot = uiRootCandidates.find((candidate) => {
-    try {
-      const indexPath = path.join(candidate, "index.html");
-      const assetsDir = path.join(candidate, "assets");
-      return (
-        fs.existsSync(candidate) &&
-        fs.statSync(candidate).isDirectory() &&
-        fs.existsSync(indexPath) &&
-        fs.statSync(indexPath).isFile() &&
-        fs.existsSync(assetsDir) &&
-        fs.statSync(assetsDir).isDirectory()
-      );
-    } catch {
-      return false;
-    }
-  });
-  if (!uiRoot) {
-    return json(res, 404, {
-      ok: false,
-      error: `UI dist folder not found: ${CFG.uiDistPath}`,
-    });
-  }
-
-  let rel;
-  if (isUiAssetPath) {
-    rel = url.pathname;
-  } else if (isTradeRootUiPath) {
-    rel = url.pathname;
-    if (!rel || rel === "/") rel = "/index.html";
-  } else {
-    rel = url.pathname.slice("/ui".length);
-    if (!rel || rel === "/") rel = "/index.html";
-  }
-  if (rel.includes("..")) {
-    return json(res, 400, { ok: false, error: "Invalid UI path" });
-  }
-
-  const normalizedRel = rel.replace(/^\/+/, "");
-  const requested = path.join(uiRoot, normalizedRel);
-  if (fs.existsSync(requested) && fs.statSync(requested).isFile()) {
-    serveUiFile(res, requested, req.method);
-    return true;
-  }
-
-  if (isUiAssetPath) {
-    return json(res, 404, { ok: false, error: "UI asset not found" });
-  }
-
-  // SPA fallback
-  const indexPath = path.join(uiRoot, "index.html");
-  if (fs.existsSync(indexPath)) {
-    serveUiFile(res, indexPath, req.method);
-    return true;
-  }
-  return json(res, 404, {
-    ok: false,
-    error: `UI entry not found: ${indexPath}`,
-  });
 }
 
 async function readJson(req) {
@@ -6491,41 +6295,6 @@ async function handleSignal(payload) {
 // ==================== MT5 bridge (merged routes) ====================
 function mt5NowIso() {
   return new Date().toISOString();
-}
-
-async function healthFetchRootMode(url, timeoutMs = 5000, extra = {}) {
-  const out = {
-    ok: false,
-    mode: "error",
-    status: null,
-    content_type: "",
-    error: null,
-  };
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const res = await fetch(url, {
-      method: "GET",
-      signal: ctrl.signal,
-      redirect: "manual",
-      ...extra,
-    });
-    clearTimeout(timer);
-    const text = await res.text();
-    const ct = String(res.headers.get("content-type") || "");
-    const isHtml =
-      text.trim().startsWith("<") ||
-      ct.includes("text/html") ||
-      (res.status >= 300 && res.status < 400);
-    out.ok = isHtml;
-    out.mode = isHtml ? "html" : "json_or_other";
-    out.status = res.status;
-    out.content_type = ct;
-    return out;
-  } catch (err) {
-    out.error = err instanceof Error ? err.message : String(err || "error");
-    return out;
-  }
 }
 
 async function healthCronConfigDiagnostics() {
@@ -15002,14 +14771,6 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (tryServeLanding(incomingUrl, req, res, hostname)) {
-    return;
-  }
-
-  if (tryServeUi(incomingUrl, req, res, hostname)) {
-    return;
-  }
-
   if (req.method === "GET" && url.pathname === "/auth/me") {
     try {
       const sess = getUiSessionFromReq(req);
@@ -15518,18 +15279,8 @@ const appHandler = async (req, res) => {
         await rc.disconnect();
       }
     } catch {}
-    const localRoot = await healthFetchRootMode(
-      `http://127.0.0.1:${CFG.port}/`,
-      5000,
-      { headers: { Host: "localhost" } },
-    );
-    const publicRoot = await healthFetchRootMode(
-      "https://trade.mozasolution.com/",
-      7000,
-    );
     const cronConfigs = await healthCronConfigDiagnostics();
-    const uiRootOk = localRoot.ok && publicRoot.ok;
-    const overallOk = postgresOk && (redisOk || !CFG.redisEnabled) && uiRootOk;
+    const overallOk = postgresOk && (redisOk || !CFG.redisEnabled);
     const cronDiag = {
       scheduler_running: Boolean(CRON_STATE.isRunning),
       loop_status: global._cronStatus || "unknown",
@@ -15563,7 +15314,6 @@ const appHandler = async (req, res) => {
       postgres: postgresOk ? "ok" : "error",
       redis: redisOk ? "ok" : CFG.redisEnabled ? "error" : "disabled",
       redisEnabled: CFG.redisEnabled || false,
-      uiRoot: uiRootOk ? "html" : "json_or_error",
       cron: global._cronStatus || "unknown",
       cronMarketDataEnabled: CFG.marketDataCronEnabled || false,
       cronAiEnabled: true,
@@ -15591,10 +15341,6 @@ const appHandler = async (req, res) => {
         },
       },
       diagnostics: {
-        root_checks: {
-          local: localRoot,
-          public_trade_mozasolution_com: publicRoot,
-        },
         cron: cronDiag,
         endpoints: {
           health: { path: "/health", auth: "none", included_in_health: true },
@@ -16526,30 +16272,24 @@ const appHandler = async (req, res) => {
     req.method === "GET" &&
     (url.pathname === "/v2/system/cache" || url.pathname === "/system/cache")
   ) {
-    // If browser navigation (wants HTML), fall through to static server
-    const accept = req.headers["accept"] || "";
-    if (url.pathname === "/system/cache" && accept.includes("text/html")) {
-      const indexPath = path.join(CFG.uiDistPath, "index.html");
-      return serveUiFile(res, indexPath, req.method);
-    } else {
-      if (!requireSystemRoleForUi(req, res)) return;
-      try {
-        const b = await mt5Backend();
-        const key = url.searchParams.get("key");
-        const source = url.searchParams.get("source") || "memory";
+    // API only — static UI serving removed, use nginx/Vite for frontend
+    if (!requireSystemRoleForUi(req, res)) return;
+    try {
+      const b = await mt5Backend();
+      const key = url.searchParams.get("key");
+      const source = url.searchParams.get("source") || "memory";
 
-        if (key) {
-          const detail = await b.uiGetCacheDetail(key, source);
-          return json(res, detail.ok ? 200 : 400, detail);
-        }
-
-        const items = await b.uiListCache();
-        return json(res, 200, { ok: true, items });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unknown error";
-        return json(res, 400, { ok: false, error: message });
+      if (key) {
+        const detail = await b.uiGetCacheDetail(key, source);
+        return json(res, detail.ok ? 200 : 400, detail);
       }
+
+      const items = await b.uiListCache();
+      return json(res, 200, { ok: true, items });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
     }
   }
 
