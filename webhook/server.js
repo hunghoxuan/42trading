@@ -3067,20 +3067,37 @@ function ensureTradeFilesDir(sid, symbol = "") {
   if (!fs.existsSync(TRADE_FILES_DIR)) {
     fs.mkdirSync(TRADE_FILES_DIR, { recursive: true });
   }
-  const folderName = safeSymbol
-    ? `${safeSid}-${safeSymbol}`
-    : `trade-${safeSid}`;
-  const dir = path.join(TRADE_FILES_DIR, folderName);
-  if (!fs.existsSync(dir)) {
-    // Migrate old folder if it exists
-    const oldDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
-    if (fs.existsSync(oldDir) && safeSymbol) {
-      try {
-        fs.renameSync(oldDir, dir);
-      } catch {}
+
+  // If we know the symbol, use {sid}-{symbol}
+  if (safeSymbol) {
+    const dir = path.join(TRADE_FILES_DIR, `${safeSid}-${safeSymbol}`);
+    if (!fs.existsSync(dir)) {
+      // Migrate old folder
+      const oldDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
+      if (fs.existsSync(oldDir)) {
+        try {
+          fs.renameSync(oldDir, dir);
+        } catch {}
+      }
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     }
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
   }
+
+  // No symbol: find any existing {sid}-* folder first
+  try {
+    const entries = fs.readdirSync(TRADE_FILES_DIR);
+    const match = entries.find(
+      (e) =>
+        e.startsWith(safeSid + "-") &&
+        fs.statSync(path.join(TRADE_FILES_DIR, e)).isDirectory(),
+    );
+    if (match) return path.join(TRADE_FILES_DIR, match);
+  } catch {}
+
+  // Fall back to old format
+  const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
