@@ -147,7 +147,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.22 08:47 - d975dbf7"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.22 08:47 - d975dbf7",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -187,123 +190,71 @@ function emitNotification(payload) {
   }
 }
 
-// --- Trace-based logging helpers ---
-function deriveTraceType(subEvent) {
-  // Group all AI_* events under AI_ANALYZE
-  if (subEvent.startsWith("AI_")) return "AI_ANALYZE";
-  // Group SIGNAL_EA_* under SIGNAL_EA
-  if (subEvent.startsWith("SIGNAL_EA_")) return "SIGNAL_EA";
-  // Group TRADE_* under TRADE
-  if (subEvent.startsWith("TRADE_")) return "TRADE";
-  // Group SIGNAL_* under SIGNAL (but not SIGNAL_EA which is caught above)
-  if (subEvent.startsWith("SIGNAL_")) return "SIGNAL";
-  // Group BROKER_*, REMOTE_API_* under SYSTEM
-  if (subEvent.startsWith("BROKER_") || subEvent.startsWith("REMOTE_API_"))
-    return "SYSTEM";
-  // Strip common suffixes to group related events
-  return subEvent.replace(
-    /_(REQUEST|RESPONSE|ERROR|CALL|FILLED|CLOSED|SYNC_UPDATE|CHANGED|ACK|ADDED|ACTIVITY|STARTED|FINISHED|SUCCESS|FAILED|PUSH|POLL|SYNC)$/,
-    "",
-  );
-}
+// --- File-based logging ---
+// Directory layout:
+//   trades/{sid}/logs/YYYY-MM-DD.log     (trade + AI analyze events)
+//   logs/EA/{account_id}-YYYY-MM-DD.log  (EA general logs, EA→trade updates also go to trades/{sid})
+//   logs/SYSTEM/{object_id}-YYYY-MM-DD.log (system events)
+// Format: [ISO_MS] LEVEL EVENT key="val" key=val ...
+function fileLog(objectId, objectTable, metadata = {}, userId = null) {
+  const subEvent = String(
+    metadata.event || metadata.event_type || "INFO",
+  ).toUpperCase();
+  const level = metadata.error
+    ? "ERROR"
+    : (metadata.level || "INFO").toUpperCase();
+  const iso = new Date().toISOString();
 
-function buildTraceBlock(subEvent, payload) {
-  const now = new Date().toISOString();
-  const lines = [`[${now}] ${subEvent}`];
-  if (payload && typeof payload === "object") {
-    for (const [k, v] of Object.entries(payload)) {
+  // Build key=value pairs
+  const pairs = [`object_type=${objectTable}`, `object_id=${objectId}`];
+  if (metadata && typeof metadata === "object") {
+    for (const [k, v] of Object.entries(metadata)) {
       if (v === undefined || v === null) continue;
       if (k === "event" || k === "event_type") continue;
-      const val =
-        typeof v === "object"
-          ? clipForLog(JSON.stringify(v), 200)
-          : clipForLog(String(v), 500);
-      lines.push(`${k}: ${val}`);
-    }
-  } else if (payload) {
-    lines.push(clipForLog(String(payload), 500));
-  }
-  return lines.join("\n") + "\n----------\n\n";
-}
-
-// --- Trace-based logging (replaces per-event appendEventLog) ---
-// Each trace is keyed by {trace_type (event_type in DB), object_id}.
-// Sub-events append markdown blocks to the same row.
-// Format per append:
-//   [UTC TIME] sub_event
-//   key1: value1
-//   key2: value2
-function traceLog(traceType, objectId, objectTable, subEvent, payload, userId) {
-  if (!traceType || !objectId) return; // need both to key a trace
-  const now = new Date().toISOString();
-  const lines = [`[${now}] ${subEvent}`];
-  if (payload && typeof payload === "object") {
-    for (const [k, v] of Object.entries(payload)) {
-      if (v === undefined || v === null) continue;
-      if (k === "event" || k === "event_type") continue; // sub-event is the heading
       const val = typeof v === "object" ? JSON.stringify(v) : String(v);
-      lines.push(`${k}: ${val}`);
+      // Quote values with spaces
+      pairs.push(val.includes(" ") ? `${k}="${val}"` : `${k}=${val}`);
     }
+  } else if (metadata) {
+    pairs.push(`message="${String(metadata)}"`);
   }
-  const block = lines.join("\n") + "\n----------\n\n";
-  // Queue for async flush — batched by trace key to reduce DB writes
-  if (!global.__traceQueue) global.__traceQueue = new Map();
-  const key = `${traceType}\x00${objectId}`;
-  if (!global.__traceQueue.has(key)) {
-    global.__traceQueue.set(key, {
-      traceType,
-      objectId,
-      objectTable,
-      blocks: [],
-      userId,
-    });
-  }
-  const entry = global.__traceQueue.get(key);
-  entry.blocks.push(block);
-  // Schedule flush if not already scheduled
-  if (!global.__traceFlushTimer) {
-    global.__traceFlushTimer = setTimeout(() => flushTraceQueue(), 1000);
-    if (global.__traceFlushTimer.unref) global.__traceFlushTimer.unref();
+
+  const line = `[${iso}] ${level} ${subEvent} ${pairs.join(" ")}\n`;
+
+  // Determine log path
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  const safeSid = String(objectId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+
+  if (
+    objectTable === "trades" ||
+    objectTable === "ai" ||
+    objectTable === "ea_to_trade"
+  ) {
+    // Trade events → trades/{sid}/logs/
+    const dir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`, "logs");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, `${dateStr}.log`), line);
+  } else if (objectTable === "ea") {
+    // EA general logs → logs/EA/
+    const dir = path.join(SERVER_LOG_DIR, "EA");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, `${safeSid}-${dateStr}.log`), line);
+  } else {
+    // Everything else → logs/{objectTable}/
+    const dir = path.join(SERVER_LOG_DIR, String(objectTable).toUpperCase());
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, `${safeSid || "unknown"}-${dateStr}.log`),
+      line,
+    );
   }
 }
 
-async function flushTraceQueue() {
-  global.__traceFlushTimer = null;
-  if (!global.__traceQueue || !global.__traceQueue.size) return;
-  const batch = new Map(global.__traceQueue);
-  global.__traceQueue.clear();
-  try {
-    const b = await mt5Backend().catch(() => null);
-    if (!b || !b.pool) return;
-    for (const [, entry] of batch) {
-      const block = entry.blocks.join("");
-      if (!block) continue;
-      try {
-        await b.pool.query(
-          `INSERT INTO logs (object_id, object_table, event_type, content, user_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-           ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
-           DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
-                         updated_at = NOW()`,
-          [
-            entry.objectId,
-            entry.objectTable,
-            entry.traceType,
-            block,
-            entry.userId || null,
-          ],
-        );
-      } catch (e) {
-        console.warn("[traceLog] upsert error:", e.message);
-      }
-    }
-  } catch (e) {
-    /* backend not ready yet — drop batch */
-  }
-}
-
-// Legacy flat-file logger — now also routes to traceLog for backward compat.
-// Existing callers still work; traceLog is the new primary path.
+// Legacy flat-file logger — now also routes to fileLog for backward compat.
+// Existing callers still work; fileLog is the new primary path.
 function appendEventLog(eventType, payload) {
   if (!SERVER_LOG_DIR) return;
   try {
@@ -372,22 +323,14 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 class NotificationManager {
   constructor() {
     this.settingsCache = new Map();
-    this.queue = [];
     this._pool = null;
-    this._logFn = null; // unified log function (b.log)
-    this._flushTimer = null;
-    this._flushPromise = null;
     this._settingsLoaded = false;
   }
 
   /** Call after DB pool is ready, e.g. from _mt5InitBackendInternal */
-  async init(poolRef, logFn) {
+  async init(poolRef) {
     this._pool = poolRef;
-    this._logFn = logFn;
     await this.loadSettings();
-    if (this._flushTimer) clearInterval(this._flushTimer);
-    this._flushTimer = setInterval(() => this.flushQueue(), 1000);
-    if (this._flushTimer.unref) this._flushTimer.unref();
   }
 
   /** Load notification_config rows from user_settings into cache */
@@ -478,7 +421,7 @@ class NotificationManager {
       }
     }
 
-    // 3) db_log channel → enqueue raw metadata for unified b.log()
+    // 3) db_log channel → direct file-based log
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
       const objectId =
@@ -492,62 +435,15 @@ class NotificationManager {
             : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC"
               ? "broker"
               : null);
-      const objectTable = payload.object_table || eventType;
-      // Strip internal keys before storing
-      const meta = { ...payload };
-      delete meta.object_id;
-      delete meta.object_table;
-      delete meta.user_id;
-      delete meta.event;
-      delete meta.event_type;
-      delete meta.console_log;
-      delete meta.ticker;
-      delete meta.sound;
-      delete meta.notification;
-      delete meta.toast;
-      delete meta.message;
-      this.queue.push({
-        object_id: objectId,
-        object_table: objectTable,
-        user_id: userId,
-        meta,
-      });
-    }
-  }
-
-  /**
-   * Flush queued db_log entries via unified b.log() — single INSERT path.
-   * Called automatically every 1s via setInterval.
-   */
-  async flushQueue() {
-    if (!this.queue.length) return;
-    if (this._flushPromise) return;
-
-    const batch = this.queue.splice(0, this.queue.length);
-    this._flushPromise = (async () => {
-      if (!this._logFn) {
-        console.warn(
-          "[NotificationManager] No logFn available for db_log flush",
+      if (objectId) {
+        fileLog(
+          objectId,
+          eventType,
+          { ...payload, event: merged.message || subType },
+          userId,
         );
-        return;
       }
-      try {
-        for (const row of batch) {
-          if (!row.object_id) continue;
-          await this._logFn(
-            row.object_id,
-            row.object_table,
-            row.meta,
-            row.user_id,
-          ).catch(() => {});
-        }
-      } catch (e) {
-        console.warn("[NotificationManager] db_log flush error:", e.message);
-        this.queue.unshift(...batch);
-      } finally {
-        this._flushPromise = null;
-      }
-    })();
+    }
   }
 }
 
@@ -601,6 +497,13 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   ".claude-context-files.json",
 );
 const TRADE_FILES_DIR = path.resolve(__dirname, "trade_files");
+
+// File-based chart objects: read/write to trades/{sid}/chart_objects.json
+function chartObjectsPath(sid) {
+  const dir = ensureTradeFilesDir(sid);
+  return path.join(dir, "chart_objects.json");
+}
+
 const ANTHROPIC_FILES_BETA = "files-api-2025-04-14";
 
 // Toggle: upload context files + snapshots to Claude Files API (file_id refs)
@@ -1048,12 +951,10 @@ async function mt5Log(objectId, objectTable, metadata = {}, userId = null) {
       }
     }
   }
-  // Fallback: for events not routed through notificationManager, still log via b.log()
-  if (!eventType) {
-    const b = await mt5Backend();
-    if (b.log)
-      await b.log(objectId, objectTable, metadata, userId).catch(() => {});
-  }
+  fileLog(objectId, "ea", metadata, userId);
+  // If this EA event is about a specific trade, also log to trade folder
+  const tradeSid = metadata.signal_id || metadata.trade_id;
+  if (tradeSid) fileLog(tradeSid, "ea_to_trade", metadata, userId);
 }
 
 function json(res, statusCode, data) {
@@ -7662,79 +7563,11 @@ async function _mt5InitBackendInternal() {
     metadata = {},
     userId = null,
   ) => {
-    // Trace-based: derive trace_type (broad category), upsert by {trace_type, object_id}
-    const subEvent = String(
-      metadata.event || metadata.event_type || "INFO",
-    ).toUpperCase();
-    const traceType = deriveTraceType(subEvent);
-    const symbol = String(metadata.symbol || "").toUpperCase() || null;
-
-    // TRADE_SYNC_UPDATE: only log on execution_status change (avoids 10s spam)
-    if (subEvent === "TRADE_SYNC_UPDATE") {
-      const newStatus = String(
-        metadata.execution_status || metadata.status_raw || "",
-      );
-      if (newStatus) {
-        try {
-          const prev = await pool.query(
-            `SELECT content FROM logs WHERE object_id = $1 AND event_type = $2`,
-            [objectId, traceType],
-          );
-          const prevContent = String(prev.rows?.[0]?.content || "");
-          // Find last TRADE_SYNC_UPDATE status in content (greedy prefix to get last occurrence)
-          const lastStatusMatch = prevContent.match(
-            /.*\[([^\]]+)\] TRADE_SYNC_UPDATE[\s\S]*?execution_status:\s*(\S+)/,
-          );
-          if (lastStatusMatch && lastStatusMatch[2] === newStatus) {
-            return; // status unchanged, skip
-          }
-        } catch {
-          /* proceed on error */
-        }
-      }
-    }
-
-    const block = buildTraceBlock(subEvent, metadata);
-    // Also store JSON payload for backward compat (History tab, etc.)
-    const normalizedMeta =
-      metadata && typeof metadata === "object"
-        ? JSON.stringify({
-            ...metadata,
-            event: subEvent,
-            status: metadata.status || (metadata.error ? "ERROR" : "OK"),
-            error: metadata.error ? String(metadata.error) : null,
-          })
-        : JSON.stringify({
-            event: subEvent,
-            message: String(metadata || ""),
-            status: "OK",
-          });
-    try {
-      await pool.query(
-        `INSERT INTO logs (object_id, object_table, symbol, event_type, content, metadata, user_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-         ON CONFLICT (object_id, event_type) WHERE object_id IS NOT NULL AND event_type IS NOT NULL
-         DO UPDATE SET content = COALESCE(logs.content, '') || EXCLUDED.content,
-                       metadata = EXCLUDED.metadata,
-                       symbol = COALESCE(EXCLUDED.symbol, logs.symbol),
-                       updated_at = NOW()`,
-        [
-          objectId,
-          objectTable,
-          symbol,
-          traceType,
-          block,
-          normalizedMeta,
-          userId,
-        ],
-      );
-    } catch (e) {
-      console.warn("[b.log] upsert error:", e.message);
-    }
+    fileLog(objectId, objectTable, metadata, userId);
   };
 
   // Initialize NotificationManager (loads notification_config from user_settings)
-  await notificationManager.init(pool, backendLog);
+  await notificationManager.init(pool);
   global.__notificationManager = notificationManager;
 
   const storage = "postgres";
@@ -9842,41 +9675,6 @@ async function _mt5InitBackendInternal() {
         signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
       };
     },
-    async listLogs(filters = {}, limit = 200, offset = 0) {
-      const clauses = [];
-      const params = [];
-      if (filters.user_id) {
-        params.push(filters.user_id);
-        clauses.push(`user_id = $${params.length}`);
-      }
-      if (filters.object_id) {
-        params.push(filters.object_id);
-        clauses.push(`object_id = $${params.length}`);
-      }
-      if (filters.object_table) {
-        params.push(filters.object_table);
-        clauses.push(`object_table = $${params.length}`);
-      }
-      if (filters.symbol) {
-        params.push(String(filters.symbol).toUpperCase());
-        clauses.push(`symbol = $${params.length}`);
-      }
-      if (filters.event_type) {
-        params.push(String(filters.event_type).toUpperCase());
-        clauses.push(`event_type = $${params.length}`);
-      }
-      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-      params.push(limit, offset);
-      const res = await pool.query(
-        `SELECT * FROM logs ${where} ORDER BY updated_at DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
-        params,
-      );
-      return res.rows;
-    },
-    async deleteAllEvents() {
-      return pool.query(`DELETE FROM logs`);
-    },
-
     async rotateSourceSecretV2(sourceId) {
       const sid = String(sourceId || "").trim();
       if (!sid) return null;
@@ -13582,52 +13380,55 @@ async function mt5UpdateTradeManualV2(tradeId, userId = null, payload = {}) {
   return b.updateTradeManualV2(tradeId, userId, payload);
 }
 
-// Split trace content into individual sub-events for backward-compat APIs (History tab, signal events).
-function splitTraceContent(row) {
-  const content = String(row.content || "");
-  if (!content.trim()) return [row]; // legacy metadata-only
-  const events = [];
-  const blocks = content.split(/(?:\n|(?<=[^\n]))(?=\[\d{4}-\d{2}-\d{2})/);
-  for (const block of blocks) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    const lines = trimmed.split("\n");
-    const header = lines[0] || "";
-    const m = header.match(/^\[([^\]]+)\]\s*(.+)/);
-    const eventTime = m ? m[1] : row.created_at;
-    const eventType = m ? m[2].trim() : row.event_type || "EVENT";
-    const payload = {};
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line || line === "---" || line === "----------") continue;
-      const colonIdx = line.indexOf(":");
-      if (colonIdx > 0) {
-        const key = line.substring(0, colonIdx).trim();
-        const val = line.substring(colonIdx + 1).trim();
-        payload[key] = val;
-      }
-    }
-    events.push({
-      ...row,
-      event_type: eventType,
-      event_time: eventTime,
-      created_at: eventTime,
-      metadata: payload,
-      payload_json: payload,
-      _from_trace: true,
-    });
+// Parse a single log line into an event object for backward-compat APIs.
+function parseLogLine(line, fallbackObjectId) {
+  const m = line.match(/^\[([^\]]+)\]\s+(\w+)\s+(\S+)\s+(.*)/);
+  if (!m) return null;
+  const [, ts, level, eventType, rest] = m;
+  const payload = { level };
+  const kvRe = /(\w+)=(?:"([^"]*)"|(\S+))/g;
+  let kvMatch;
+  while ((kvMatch = kvRe.exec(rest)) !== null) {
+    payload[kvMatch[1]] = kvMatch[2] !== undefined ? kvMatch[2] : kvMatch[3];
   }
-  return events;
+  return {
+    log_id: `${ts}_${eventType}`,
+    object_id: payload.object_id || fallbackObjectId,
+    event_type: eventType,
+    event_time: ts,
+    created_at: ts,
+    metadata: payload,
+    payload_json: payload,
+  };
 }
 
 async function mt5ListTradeEventsV2(tradeId, limit = 200) {
-  const b = await mt5Backend();
-  const rows = await b.listLogs({ object_id: tradeId }, limit);
+  const safeSid = String(tradeId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  const logDir = path.join(TRADE_FILES_DIR, `trade-${safeSid}`, "logs");
   const events = [];
-  for (const row of rows || []) {
-    events.push(...splitTraceContent(row));
+  if (fs.existsSync(logDir)) {
+    const files = fs
+      .readdirSync(logDir)
+      .filter((f) => f.endsWith(".log"))
+      .sort()
+      .reverse();
+    for (const file of files) {
+      if (events.length >= limit) break;
+      const lines = fs
+        .readFileSync(path.join(logDir, file), "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const line of lines.reverse()) {
+        if (events.length >= limit) break;
+        const ev = parseLogLine(line, tradeId);
+        if (ev) events.push(ev);
+      }
+    }
   }
-  return events.slice(0, limit);
+  return events;
 }
 
 async function mt5ResolveTradeRefV2(tradeRef, userId = null) {
@@ -13862,13 +13663,32 @@ async function mt5ReplaceAccountSubscriptionsV2(accountId, items) {
 }
 
 async function mt5ListSignalEvents(signalId, limit = 200) {
-  const b = await mt5Backend();
-  const rows = await b.listLogs({ object_id: signalId }, limit);
+  const safeSid = String(signalId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  const logDir = path.join(SERVER_LOG_DIR, "SIGNAL");
   const events = [];
-  for (const row of rows || []) {
-    events.push(...splitTraceContent(row));
+  if (fs.existsSync(logDir)) {
+    const files = fs
+      .readdirSync(logDir)
+      .filter((f) => f.startsWith(safeSid) && f.endsWith(".log"))
+      .sort()
+      .reverse();
+    for (const file of files) {
+      if (events.length >= limit) break;
+      const lines = fs
+        .readFileSync(path.join(logDir, file), "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const line of lines.reverse()) {
+        if (events.length >= limit) break;
+        const ev = parseLogLine(line, signalId);
+        if (ev) events.push(ev);
+      }
+    }
   }
-  return events.slice(0, limit);
+  return events;
 }
 
 async function mt5ListActiveSignals() {
@@ -13888,13 +13708,24 @@ async function mt5ListAllEvents(limit = 1000, offset = 0, filters = {}) {
 }
 
 async function mt5DeleteAllEvents() {
-  const b = await mt5Backend();
-  if (!b.deleteAllEvents) return { deleted: 0 };
-  const res = await b.deleteAllEvents();
+  // File-based logging: delete all .log files from log directories
+  let deleted = 0;
+  const dirs = [SERVER_LOG_DIR, path.join(TRADE_FILES_DIR)];
+  for (const baseDir of dirs) {
+    if (!fs.existsSync(baseDir)) continue;
+    const walkDir = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walkDir(full); }
+        else if (entry.name.endsWith(".log")) { fs.unlinkSync(full); deleted++; }
+      }
+    };
+    walkDir(baseDir);
+  }
   // Invalidate caches so History tab doesn't show stale data
   await StateRepo.flushBucket("TRADE_DETAIL");
   await StateRepo.flushBucket("SIGNAL_DETAIL");
-  return { deleted: res.rowCount ?? res.changes ?? 0 };
+  return { deleted };
 }
 
 async function mt5PruneSignals(days) {
@@ -17043,82 +16874,65 @@ const appHandler = async (req, res) => {
         .trim()
         .toLowerCase();
       const { start: rangeStart, end: rangeEnd } = mt5PeriodRange(range);
-      const hasExtraFilter = Boolean(
-        q || typeFilter || symbolFilter || (range && range !== "all"),
-      );
+      // Collect all .log files from SERVER_LOG_DIR and TRADE_FILES_DIR subdirs
+      const allLines = [];
+      const dirsToScan = [];
+      if (fs.existsSync(SERVER_LOG_DIR)) {
+        try {
+          for (const entry of fs.readdirSync(SERVER_LOG_DIR, {
+            withFileTypes: true,
+          })) {
+            if (entry.isDirectory())
+              dirsToScan.push({ root: SERVER_LOG_DIR, folder: entry.name });
+          }
+        } catch {}
+      }
+      if (fs.existsSync(TRADE_FILES_DIR)) {
+        try {
+          for (const entry of fs.readdirSync(TRADE_FILES_DIR, {
+            withFileTypes: true,
+          })) {
+            if (entry.isDirectory()) {
+              const tradeLogsDir = path.join(
+                TRADE_FILES_DIR,
+                entry.name,
+                "logs",
+              );
+              if (fs.existsSync(tradeLogsDir))
+                dirsToScan.push({ root: tradeLogsDir, folder: "trades" });
+            }
+          }
+        } catch {}
+      }
+      for (const { root, folder } of dirsToScan) {
+        if (typeFilter && folder.toLowerCase() !== typeFilter) continue;
+        try {
+          const logFiles = fs
+            .readdirSync(root)
+            .filter((f) => f.endsWith(".log"))
+            .sort()
+            .reverse();
+          for (const file of logFiles) {
+            const content = fs.readFileSync(path.join(root, file), "utf8");
+            for (const line of content.split("\n")) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              const ev = parseLogLine(trimmed);
+              if (!ev) continue;
+              if (symbolFilter) {
+                const sym = String(ev.metadata?.symbol || "").toUpperCase();
+                if (sym && sym !== symbolFilter) continue;
+              }
+              allLines.push(ev);
+            }
+          }
+        } catch {}
+      }
 
-      const b = await mt5Backend();
-      const fetchLimit = hasExtraFilter
-        ? Math.max(limit + offset, 5000)
-        : limit;
-      const fetchOffset = hasExtraFilter ? 0 : offset;
-      const rows = await b.listLogs(
-        { user_id: userId },
-        fetchLimit,
-        fetchOffset,
-      );
-      let events = (rows || []).map((r) => {
-        // Trace-based: content is the primary log (markdown). metadata is legacy JSON fallback.
-        const content = String(r?.content || "");
-        const payload =
-          r?.metadata && typeof r.metadata === "object" ? r.metadata : {};
-        const data =
-          payload?.data && typeof payload.data === "object"
-            ? payload.data
-            : payload;
-        const symbol = String(
-          data?.symbol || payload?.symbol || r?.symbol || "",
-        ).trim();
-        const eventType = String(
-          data.event_type ||
-            data.event ||
-            r.event_type ||
-            r.object_table ||
-            "LOG",
-        ).trim();
-        const eventTime = String(r.created_at || "");
-        const updatedAt = String(r.updated_at || r.created_at || "");
-        const signalId = String(r.object_id || "");
-        const ackTicket = String(
-          data?.ticket ||
-            payload?.ticket ||
-            data?.ack_ticket ||
-            payload?.ack_ticket ||
-            "",
-        );
-        return {
-          id: Number(r.log_id || 0),
-          log_id: Number(r.log_id || 0),
-          object_id: signalId,
-          object_table: String(r.object_table || ""),
-          created_at: eventTime,
-          updated_at: updatedAt,
-          content: content,
-          metadata: payload,
-          event_time: eventTime,
-          event_type: eventType,
-          signal_id: signalId,
-          ack_ticket: ackTicket,
-          symbol: symbol || "N/A",
-          payload_json: payload,
-          status: payload.status || null,
-          error: payload.error || null,
-        };
-      });
-      if (hasExtraFilter) {
+      // Apply remaining filters
+      let events = allLines;
+      if (rangeStart || rangeEnd || q) {
         events = events.filter((ev) => {
-          if (
-            symbolFilter &&
-            String(ev.symbol || "").toUpperCase() !== symbolFilter
-          )
-            return false;
-          if (
-            typeFilter &&
-            !String(ev.event_type || "")
-              .toLowerCase()
-              .includes(typeFilter)
-          )
-            return false;
           if (rangeStart || rangeEnd) {
             const ts = mt5ToMs(ev.event_time);
             if (!Number.isFinite(ts)) return false;
@@ -17128,12 +16942,7 @@ const appHandler = async (req, res) => {
           if (q) {
             const haystack = [
               ev.object_id,
-              ev.signal_id,
-              ev.ack_ticket,
-              ev.symbol,
-              ev.object_table,
               ev.event_type,
-              ev.content || "",
               JSON.stringify(ev.metadata || ev.payload_json || {}),
             ]
               .join(" ")
@@ -17142,8 +16951,29 @@ const appHandler = async (req, res) => {
           }
           return true;
         });
-        events = events.slice(offset, offset + limit);
       }
+
+      // Sort by time desc, apply offset/limit
+      events.sort((a, b) =>
+        String(b.event_time || "").localeCompare(String(a.event_time || "")),
+      );
+      events = events.slice(offset, offset + limit);
+
+      // Enrich to match old schema
+      events = events.map((ev) => ({
+        ...ev,
+        id: 0,
+        object_table: String(ev.metadata?.object_type || ev.event_type || ""),
+        content: "",
+        signal_id: ev.object_id,
+        symbol: String(ev.metadata?.symbol || "N/A"),
+        updated_at: ev.event_time,
+        ack_ticket: String(
+          ev.metadata?.ticket || ev.metadata?.ack_ticket || "",
+        ),
+        status: ev.metadata?.status || null,
+        error: ev.metadata?.error || null,
+      }));
       return json(res, 200, { ok: true, events });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -19743,6 +19573,14 @@ const appHandler = async (req, res) => {
       const requestedProvider = String(body.provider || "ICMARKETS")
         .trim()
         .toUpperCase();
+      // Copy snapshots to trade folder (sessionId will become trade SID)
+      const tradeSnapDir = tradeSnapshotDir(sessionId);
+      const snapFiles = listLatestSnapshotFilesForSymbol(requestedSymbol, 20);
+      for (const f of snapFiles) {
+        const srcPath = path.join(CHART_SNAPSHOT_DIR, f.file_name || f);
+        const dstPath = path.join(tradeSnapDir, f.file_name || f);
+        if (fs.existsSync(srcPath)) fs.copyFileSync(srcPath, dstPath);
+      }
       const pickSnapshotFiles = (items) => {
         if (!items.length) return [];
         const maxFiles = Math.max(
@@ -22283,7 +22121,7 @@ const appHandler = async (req, res) => {
     }
   }
 
-  // Chart-object persistence: save/load chart objects in trade metadata
+  // Chart-object persistence: save/load chart objects as JSON files in trade folder
   if (
     req.method === "POST" &&
     /^\/v2\/trades\/[^/]+\/chart-objects$/.test(url.pathname)
@@ -22303,25 +22141,16 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "sid (trade_id) is required",
         });
-      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
-      if (!resolvedTrade?.sid)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      const sid = String(resolvedTrade.sid || "").trim();
+      if (!/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+        const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+        if (!resolvedTrade?.sid)
+          return json(res, 404, { ok: false, error: "trade not found" });
+        tradeRef = resolvedTrade.sid;
+      }
       const objects = Array.isArray(payload?.objects) ? payload.objects : [];
-      const b = await mt5Backend();
-      if (!b?.query)
-        return json(res, 500, { ok: false, error: "backend unavailable" });
-      await b.query(
-        `
-        UPDATE trades
-        SET metadata = COALESCE(metadata, '{}'::jsonb)
-              || jsonb_build_object('chart_objects', $2::jsonb),
-            updated_at = NOW()
-        WHERE sid = $1
-      `,
-        [sid, JSON.stringify(objects)],
-      );
-      return json(res, 200, { ok: true, sid, objects });
+      const filePath = chartObjectsPath(tradeRef);
+      fs.writeFileSync(filePath, JSON.stringify(objects, null, 2));
+      return json(res, 200, { ok: true, sid: tradeRef, objects });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -22345,31 +22174,24 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "sid (trade_id) is required",
         });
-      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
-      if (!resolvedTrade?.sid)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      const sid = String(resolvedTrade.sid || "").trim();
-      const b = await mt5Backend();
-      if (!b?.query)
-        return json(res, 500, { ok: false, error: "backend unavailable" });
-      const metaRes = await b.query(
-        `
-        SELECT COALESCE(metadata->'chart_objects', '[]'::jsonb) AS chart_objects
-        FROM trades
-        WHERE sid = $1
-        LIMIT 1
-      `,
-        [sid],
-      );
-      const chartObjects = metaRes.rows?.[0]?.chart_objects || [];
+      let sid = tradeRef;
+      if (!/^[A-Za-z0-9]{9}$/.test(tradeRef)) {
+        const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
+        if (!resolvedTrade?.sid)
+          return json(res, 404, { ok: false, error: "trade not found" });
+        sid = resolvedTrade.sid;
+      }
+      const filePath = chartObjectsPath(sid);
+      let chartObjects = [];
+      if (fs.existsSync(filePath)) {
+        try {
+          chartObjects = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        } catch { chartObjects = []; }
+      }
       return json(res, 200, {
         ok: true,
         sid,
-        objects: Array.isArray(chartObjects)
-          ? chartObjects
-          : typeof chartObjects === "object" && chartObjects !== null
-            ? [chartObjects]
-            : [],
+        objects: Array.isArray(chartObjects) ? chartObjects : [],
       });
     } catch (error) {
       return json(res, 400, {
@@ -22378,6 +22200,7 @@ const appHandler = async (req, res) => {
       });
     }
   }
+
 
   if (req.method === "POST" && url.pathname === "/v2/sources") {
     if (!CFG.mt5Enabled)
@@ -22624,7 +22447,7 @@ const appHandler = async (req, res) => {
 
   if (
     (req.method === "POST" || req.method === "GET") &&
-    url.pathname === "/v2/broker/pull"
+    /^\/(webhook\/)?v2\/broker\/pull$/.test(url.pathname)
   ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -22721,7 +22544,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/broker/ack") {
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/ack$/.test(url.pathname)
+  ) {
     console.log(`[v2/broker/ack] REQUEST from ${ip}`);
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -22802,7 +22628,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/broker/heartbeat") {
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/heartbeat$/.test(url.pathname)
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
@@ -22828,7 +22657,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/broker/tracked-symbols") {
+  if (
+    req.method === "GET" &&
+    /^\/(webhook\/)?v2\/broker\/tracked-symbols$/.test(url.pathname)
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
@@ -22874,7 +22706,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/broker/prices") {
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/prices$/.test(url.pathname)
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
@@ -23020,7 +22855,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/broker/prices/status") {
+  if (
+    req.method === "GET" &&
+    /^\/(webhook\/)?v2\/broker\/prices\/status$/.test(url.pathname)
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
@@ -23070,7 +22908,10 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/v2/broker/trades/create") {
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/trades\/create$/.test(url.pathname)
+  ) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     if (!CFG.mt5V2BrokerApiEnabled)
