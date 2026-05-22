@@ -1254,8 +1254,8 @@ export default function SignalDetailCard({
   }, [hasTradePlanData]);
 
   useEffect(() => {
-    if (!availableTabs.includes(mainTab))
-      setMainTab(availableTabs[0] || "info");
+    if (!availableTabs.length) return;
+    if (!availableTabs.includes(mainTab)) setMainTab(availableTabs[0]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableTabs]);
 
