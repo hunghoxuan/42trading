@@ -1270,7 +1270,14 @@ export default function SignalDetailCard({
     prevTradePlanEnabledRef.current = nowEnabled;
   }, [tradePlan?.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const plansKey = useMemo(() => {
+    return plans
+      .map((p, i) => [i, p?.entry, p?.tp, p?.sl, p?.direction].join("|"))
+      .join("::");
+  }, [plans]);
+
   useEffect(() => {
+    if (!plans.length) return;
     setPlanDrafts((prev) => {
       const next = {};
       plans.forEach((p, i) => {
@@ -1308,13 +1315,15 @@ export default function SignalDetailCard({
       }
       return next;
     });
-  }, [plans, response?.tradePlans, tradePlan?.value]);
+  }, [plansKey, JSON.stringify(response?.tradePlans)]);
 
   useEffect(() => {
+    if (!displayPlanIds.length) return;
     if (!displayPlanIds.includes(selectedPlanId)) {
       setSelectedPlanId("main");
     }
-  }, [displayPlanIds, selectedPlanId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayPlanIds]);
 
   useEffect(() => {
     if (chart?.enabled) {
