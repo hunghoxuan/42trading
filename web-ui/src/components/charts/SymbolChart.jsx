@@ -923,20 +923,34 @@ export default function SymbolChart({
     ],
   );
 
-  const chartFallbackEntry = useMemo(() => {
-    const keys = Object.keys(master?.bars || {});
+  const fallbackEntryRef = useRef(null);
+  // Capture fallback entry once when bar data first arrives
+  if (fallbackEntryRef.current === null && master?.bars) {
+    const keys = Object.keys(master.bars);
     const sorted = keys.sort((a, b) => tfRankForLatest(a) - tfRankForLatest(b));
     for (const k of sorted) {
-      const bars = master?.bars?.[k] || [];
+      const bars = master.bars[k] || [];
       if (!bars.length) continue;
       const close = Number(bars[bars.length - 1]?.close);
-      if (Number.isFinite(close)) return close;
+      if (Number.isFinite(close)) {
+        fallbackEntryRef.current = close;
+        break;
+      }
     }
-    return null;
-  }, [JSON.stringify(master?.bars)]);
+  }
 
-  const fallbackEntryRef = useRef(chartFallbackEntry);
-  fallbackEntryRef.current = chartFallbackEntry;
+  // Stable key for trade plan changes — only the fields the effect uses
+  const tradePlanKey = useMemo(() => {
+    const plans = Array.isArray(analysisSnapshot?.trade_plan)
+      ? analysisSnapshot.trade_plan
+      : analysisSnapshot?.trade_plan &&
+          typeof analysisSnapshot.trade_plan === "object"
+        ? [analysisSnapshot.trade_plan]
+        : [];
+    return plans
+      .map((p) => [p?.entry, p?.tp, p?.sl, p?.direction].join("|"))
+      .join("::");
+  }, [analysisSnapshot?.trade_plan]);
 
   useEffect(() => {
     if (!(hasTradePlan && hasAnalysis)) return;
@@ -1012,7 +1026,7 @@ export default function SymbolChart({
       });
       return next;
     });
-  }, [hasTradePlan, hasAnalysis, analysisSnapshot]);
+  }, [hasTradePlan, hasAnalysis, tradePlanKey]);
   const selectedObjectTfPropsText = useMemo(() => {
     if (!selectedObject) return "";
     const parts = [];
