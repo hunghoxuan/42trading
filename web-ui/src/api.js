@@ -34,7 +34,9 @@ function runtimeApiBase() {
   );
   if (apiBaseStored) return apiBaseStored;
 
-  const apiBaseDefault = normalizeApiBase(DEFAULT_REMOTE_BASE);
+  const apiBaseDefault = ENV_API_BASE
+    ? ENV_API_BASE.replace(/\/+$/, "")
+    : normalizeApiBase(DEFAULT_REMOTE_BASE);
   // For localhost/127.0.0.1, only auto-force env-configured API base.
   // Do not clobber an intended runtime target (e.g. VPS via query/storage)
   // with the generic fallback "http://localhost".
