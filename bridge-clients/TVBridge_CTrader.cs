@@ -71,7 +71,7 @@ namespace cAlgo.Robots
         [Parameter("Min Stop Distance (pips)", Group = "Safety", DefaultValue = 15, MinValue = 5)]
         public double MinStopPips { get; set; }
 
-        private const string BuildVersion = "v2026.05.20 15:35 - 8fe81d8f";
+        private const string BuildVersion = "v2026.05.22 07:17 - 35dc5891";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
