@@ -193,6 +193,25 @@ function emitNotification(payload) {
 }
 
 // --- File-based logging ---
+
+// Search all trade category dirs for existing {sid}-* folder
+function findExistingTradeDir(safeSid) {
+  for (const cat of ["active", "closed", "files"]) {
+    const baseDir = TRADE_CATEGORY_DIRS[cat];
+    if (!fs.existsSync(baseDir)) continue;
+    try {
+      const entries = fs.readdirSync(baseDir);
+      const match = entries.find(
+        (e) =>
+          (e === safeSid || e.startsWith(safeSid + "-")) &&
+          fs.statSync(path.join(baseDir, e)).isDirectory(),
+      );
+      if (match) return path.join(baseDir, match);
+    } catch {}
+  }
+  return null;
+}
+
 // Directory layout:
 //   trades/{sid}/logs/YYYY-MM-DD.log     (trade + AI analyze events)
 //   logs/EA/{account_id}-YYYY-MM-DD.log  (EA general logs, EA→trade updates also go to trades/{sid})
@@ -235,10 +254,13 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
     objectTable === "ai" ||
     objectTable === "ea_to_trade"
   ) {
-    // Trade events → always write to trade_active
-    const dir = path.join(ensureTradeDir(safeSid, "", "active"), "logs");
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, `${dateStr}.log`), line);
+    // Trade events → find existing folder or skip (don't create blind)
+    const foundDir = findExistingTradeDir(safeSid);
+    if (foundDir) {
+      const dir = path.join(foundDir, "logs");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(path.join(dir, `${dateStr}.log`), line);
+    }
   } else if (objectTable === "ea") {
     // EA general logs → logs/EA/
     const dir = path.join(SERVER_LOG_DIR, "EA");
