@@ -536,6 +536,11 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
 const TRADE_FILES_DIR = path.resolve(ROOT_DIR, "trade_files");
 const TRADE_ACTIVE_DIR = path.resolve(ROOT_DIR, "trade_active");
 const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
+const BROKER_BARS_DIR = path.resolve(ROOT_DIR, "market_data");
+
+for (const d of [BROKER_BARS_DIR]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
 
 const TRADE_CATEGORY_DIRS = {
   files: TRADE_FILES_DIR,
@@ -18758,6 +18763,45 @@ const appHandler = async (req, res) => {
     }
   }
 
+  // GET /v2/market-data/broker-bars — read OHLCV bars from broker CSV
+  if (req.method === "GET" && url.pathname === "/v2/market-data/broker-bars") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
+      const tf = String(url.searchParams.get("tf") || "").trim();
+      const limit = Math.max(10, Math.min(5000, Number(url.searchParams.get("limit") || 300) || 300));
+      if (!symbol || !tf) return json(res, 400, { ok: false, error: "symbol and tf required" });
+      const csvPath = path.join(BROKER_BARS_DIR, symbol, "bars", `${tf}.csv`);
+      if (!fs.existsSync(csvPath)) {
+        return json(res, 200, { ok: true, symbol, tf, bars: [], source: "cache" });
+      }
+      const raw = fs.readFileSync(csvPath, "utf8");
+      const lines = raw.trim().split(/\r?\n/);
+      const bars = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",");
+        if (cols.length < 5) continue;
+        const t = Number(cols[0]);
+        const o = Number(cols[1]);
+        const h = Number(cols[2]);
+        const l = Number(cols[3]);
+        const c = Number(cols[4]);
+        const v = Number(cols[5]) || 0;
+        if (!Number.isFinite(t) || !Number.isFinite(o)) continue;
+        bars.push({ t: Math.floor(t), o, h, l, c, v });
+      }
+      const sliced = bars.slice(-limit);
+      return json(res, 200, { ok: true, symbol, tf, bars: sliced, source: "broker" });
+    } catch (error) {
+      return json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/v2/chart/snapshots/analyze") {
     const analyzeTraceId = genTraceId("analyze_");
     const t0a = Date.now();
@@ -23224,6 +23268,108 @@ const appHandler = async (req, res) => {
         updated: prices.length,
         elapsed_ms: elapsed,
       });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/bars$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      if (!(await requireEaKey(req, res, url, payload))) return;
+      const bars = Array.isArray(payload.bars) ? payload.bars : [];
+      if (!bars.length) return json(res, 200, { ok: true, stored: 0 });
+
+      let stored = 0;
+      for (const bar of bars) {
+        const symbol = String(bar.s || bar.symbol || "").trim().toUpperCase();
+        const tf = String(bar.tf || bar.timeframe || "").trim().toLowerCase();
+        const t = Number(bar.t);
+        const o = Number(bar.o);
+        const h = Number(bar.h);
+        const l = Number(bar.l);
+        const c = Number(bar.c);
+        const v = Number(bar.v || 0);
+
+        if (!symbol || !tf || !Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+
+        // 1. Append to CSV file
+        const csvDir = path.join(ROOT_DIR, "market_data", symbol, "bars");
+        if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
+        const csvPath = path.join(csvDir, `${tf}.csv`);
+        const isNew = !fs.existsSync(csvPath);
+        if (isNew) {
+          fs.writeFileSync(csvPath, "time,open,high,low,close,volume\n");
+        }
+
+        // Skip if duplicate (same time already in file)
+        const existing = fs.readFileSync(csvPath, "utf8");
+        if (existing.includes(`${t},`)) continue;
+
+        fs.appendFileSync(csvPath, `${t},${o},${h},${l},${c},${v}\n`);
+        stored++;
+
+        // 2. L1 memory cache merge
+        const symNorm = normalizeMarketDataSymbol(symbol);
+        const key = marketDataCacheKey(symNorm);
+        const root = MARKET_DATA_MEMORY_CACHE.get(key);
+        if (root && Array.isArray(root.data)) {
+          for (const tfEntry of root.data) {
+            if (String(tfEntry.tf || "").toLowerCase() === tf) {
+              const barsArr = Array.isArray(tfEntry.bars) ? tfEntry.bars : [];
+              const dup = barsArr.find(b => Number(b.time || b.t) === t);
+              if (!dup) {
+                barsArr.push({ time: t, open: o, high: h, low: l, close: c, volume: v });
+                // Keep max 1000
+                if (barsArr.length > 1000) barsArr.shift();
+              }
+              tfEntry.bars = barsArr;
+              tfEntry.last_price = c;
+              tfEntry.last_price_at = new Date().toISOString();
+              break;
+            }
+          }
+          root.updated_time = Math.floor(Date.now() / 1000);
+        }
+
+        // 3. Async Redis L2 merge
+        getRedisClient().then(async (client) => {
+          if (!client) return;
+          try {
+            const raw = await client.get(key).catch(() => "");
+            let redisRoot = null;
+            if (raw) { try { redisRoot = JSON.parse(raw); } catch {} }
+            if (redisRoot && Array.isArray(redisRoot.data)) {
+              for (const tfEntry of redisRoot.data) {
+                if (String(tfEntry.tf || "").toLowerCase() === tf) {
+                  const barsArr = Array.isArray(tfEntry.bars) ? tfEntry.bars : [];
+                  const dup = barsArr.find(b => Number(b.time || b.t) === t);
+                  if (!dup) {
+                    barsArr.push({ time: t, open: o, high: h, low: l, close: c, volume: v });
+                    if (barsArr.length > 1000) barsArr.shift();
+                  }
+                  tfEntry.bars = barsArr;
+                  tfEntry.last_price = c;
+                  tfEntry.last_price_at = new Date().toISOString();
+                  break;
+                }
+              }
+              redisRoot.updated_time = Math.floor(Date.now() / 1000);
+              await client.setEx(key, 3600, JSON.stringify(redisRoot)).catch(() => {});
+            }
+          } catch {}
+        }).catch(() => {});
+      }
+
+      return json(res, 200, { ok: true, stored });
     } catch (error) {
       return json(res, 400, {
         ok: false,
