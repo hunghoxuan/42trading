@@ -22,6 +22,11 @@ This file tracks the status of user-facing features and links them to technical 
 - **Feature Doc**: [../features/1-ideas/ai_chat_agent_ui.md]
 - **Summary**: Interactive streaming chat with AI models, custom widgets (TradePlan, charts), multi-turn conversation, cross-model verification, context-aware tool calling.
 
+## [x] Unified Bar Source of Truth
+- **Status**: Done
+- **Feature Doc**: [../features/web-ui/unified_bar_source_of_truth.md]
+- **Summary**: `mergeBarsIntoCSV` — single merge function for broker push + Twelve Data cron + manual pull. CSV is canonical source. Sorted by time, dedup, L1/Redis cache updated.
+
 ## [ ] Broker OHLC Bars Pipeline
 - **Status**: Backlog
 - **Tickets**:
