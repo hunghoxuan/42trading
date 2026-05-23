@@ -312,7 +312,7 @@ export default function App() {
               <NavLink to="/settings/accounts">Accounts</NavLink>
               <NavLink to="/settings/crons">Cron</NavLink>
               <NavLink to="/settings/providers">Providers</NavLink>
-              <NavLink to="/settings">Settings</NavLink>
+              <NavLink to="/settings" end>Settings</NavLink>
               <hr
                 style={{
                   border: "0",
