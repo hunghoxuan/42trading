@@ -149,7 +149,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.23 11:39 - baf9f33a"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.23 12:10 - eab7e1c7"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -20507,32 +20507,63 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         url.searchParams.get("session_prefix") || "",
       );
-      const files = fs
-        .readdirSync(CHART_SNAPSHOT_DIR, { withFileTypes: true })
-        .filter((e) => e.isFile() && /\.(png|jpe?g)$/i.test(e.name))
-        .filter(
-          (e) => !reqSessionPrefix || e.name.includes(`_${reqSessionPrefix}_`),
-        )
-        .map((e) => {
-          const full = path.join(CHART_SNAPSHOT_DIR, e.name);
+      const reqSymbol = String(
+        url.searchParams.get("symbol") || "",
+      )
+        .trim()
+        .toUpperCase();
+
+      // Scan top-level snapshots/ and per-symbol subdirectories
+      const allFiles = [];
+      const scanDir = (dir, symbolFromDir = "") => {
+        if (!fs.existsSync(dir)) return;
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!e.isFile() || !/\.(png|jpe?g)$/i.test(e.name)) continue;
+          if (
+            reqSessionPrefix &&
+            !e.name.includes(`_${reqSessionPrefix}_`)
+          )
+            continue;
+          const sym =
+            symbolFromDir ||
+            inferSymbolFromSnapshotFile(e.name) ||
+            "";
+          if (reqSymbol && sym !== reqSymbol) continue;
+          const full = path.join(dir, e.name);
           const st = fs.statSync(full);
-          return {
+          allFiles.push({
             id: e.name.replace(/\.[^.]+$/i, ""),
             file_name: e.name,
+            symbol: sym,
             created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
             size_bytes: Number(st.size || 0),
             mime_type: fileMimeByName(e.name),
-            url: `/v2/chart/snapshots/${encodeURIComponent(e.name)}`,
-          };
-        });
+            url: sym
+              ? `/v2/chart/snapshots/${encodeURIComponent(sym)}/${encodeURIComponent(e.name)}`
+              : `/v2/chart/snapshots/${encodeURIComponent(e.name)}`,
+          });
+        }
+      };
+      // Scan top-level
+      scanDir(CHART_SNAPSHOT_DIR);
+      // Scan per-symbol subdirectories
+      if (fs.existsSync(CHART_SNAPSHOT_DIR)) {
+        for (const sub of fs.readdirSync(CHART_SNAPSHOT_DIR, {
+          withFileTypes: true,
+        })) {
+          if (sub.isDirectory()) {
+            const sym = inferSymbolFromSnapshotFile(sub.name) || sub.name;
+            scanDir(path.join(CHART_SNAPSHOT_DIR, sub.name), sym);
+          }
+        }
+      }
 
-      const sorted = files
+      const sorted = allFiles
         .sort((a, b) =>
           String(b.created_at).localeCompare(String(a.created_at)),
         )
         .slice(0, limit);
-      const final = sorted;
-      return json(res, 200, { ok: true, items: final });
+      return json(res, 200, { ok: true, items: sorted });
     } catch (error) {
       return json(res, 500, {
         ok: false,
