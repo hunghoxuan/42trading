@@ -270,6 +270,7 @@ function TfHeader({
   snapshotStatus,
   onRefreshTf,
   forceRefresh,
+  isBrokerSource,
 }) {
   const snapInfo = master?.snapshots?.[tf.toLowerCase()] || null;
   const showSnapshotBadge = mode === "snapshots" && !!snapInfo?.file_name;
@@ -362,6 +363,22 @@ function TfHeader({
           }}
         >
           {htfBias.label}
+        </span>
+      )}
+      {mode === "cache" && isBrokerSource && (
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color: "#10b981",
+            background: "rgba(16,185,129,0.12)",
+            border: "1px solid rgba(16,185,129,0.3)",
+            padding: "0 4px",
+            borderRadius: 3,
+          }}
+          title="Broker bars (EA/MT5)"
+        >
+          Broker
         </span>
       )}
       {mode === "cache" && context?.cache_source && (
@@ -698,6 +715,35 @@ export default function SymbolChart({
     () => sortTimeframes(timeframes, "desc"),
     [timeframes],
   );
+
+  // Broker bars — prefer over Twelve Data when available
+  const [brokerBars, setBrokerBars] = useState({});
+  const [brokerSourceTfs, setBrokerSourceTfs] = useState(new Set());
+
+  useEffect(() => {
+    if (!cleanSym || mode === "live") return;
+    let alive = true;
+    const fetchBroker = async () => {
+      const next = {};
+      const srcTfs = new Set();
+      for (const tf of sortedTfs) {
+        try {
+          const res = await api.brokerBars(cleanSym, tf, localBarsCount || 300);
+          if (!alive) return;
+          if (res?.source === "broker" && Array.isArray(res.bars) && res.bars.length) {
+            next[tf.toLowerCase()] = res.bars;
+            srcTfs.add(tf.toLowerCase());
+          }
+        } catch {}
+      }
+      if (alive) {
+        setBrokerBars(next);
+        setBrokerSourceTfs(srcTfs);
+      }
+    };
+    fetchBroker();
+    return () => { alive = false; };
+  }, [cleanSym, sortedTfs.join(","), localBarsCount, mode]);
 
   const barsCachedAt = useMemo(() => {
     const hasBars = Object.values(master?.bars || {}).some(
@@ -1958,7 +2004,10 @@ export default function SymbolChart({
               const isLive = mode === "live";
               const context = master?.context?.[tf.toLowerCase()];
               const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
-              const barsForTf = master?.bars?.[tf.toLowerCase()] || [];
+              const barsForTf =
+                brokerBars[tf.toLowerCase()]?.length
+                  ? brokerBars[tf.toLowerCase()]
+                  : master?.bars?.[tf.toLowerCase()] || [];
               const hasBars = status !== "LOADING" && barsForTf.length > 0;
               const noData = !isLive && !hasBars && status !== "LOADING";
               const tfViewport = viewports[chartId] || null;
@@ -2145,6 +2194,7 @@ export default function SymbolChart({
                     snapshotStatus={snapshotStatus}
                     onRefreshTf={mode === "cache" ? handleRefreshTf : null}
                     forceRefresh={forceRefresh}
+                    isBrokerSource={brokerSourceTfs.has(tf.toLowerCase())}
                   />
                   {isLive ? (
                     <div style={{ position: "relative", height: chartHeight }}>

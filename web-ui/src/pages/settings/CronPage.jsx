@@ -583,7 +583,7 @@ export default function CronPage() {
               No crons configured.
             </p>
           ) : (
-            {cronSettings.map((cron) => {
+            cronSettings.map((cron) => {
               const data = cron.data || {};
               const ctLabel = CRON_TYPE_LABELS[data.cron_type] || data.cron_type || "Unknown";
               const isCronActive =
@@ -620,7 +620,7 @@ export default function CronPage() {
                   </span>
                 </button>
               );
-            })}
+            })
           )}
         </div>
 
