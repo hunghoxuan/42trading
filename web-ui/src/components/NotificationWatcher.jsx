@@ -143,7 +143,7 @@ export default function NotificationWatcher() {
         }
       } catch {}
 
-      // Right ticker: keep FILLED trades (OPEN/FILLED) from broker sync
+      // Right ticker: keep FILLED/CLOSED trades from broker sync (no OPEN +0 noise)
       const eventName = String(p.event || "").toUpperCase();
       const dataList = Array.isArray(p.data) ? p.data : [];
       if (eventName === "BROKER_SYNC" && dataList.length) {
@@ -155,15 +155,19 @@ export default function NotificationWatcher() {
           const sid = String(row?.sid || "").trim();
           if (!sid) continue;
           const status = String(row?.execution_status || "").trim().toUpperCase();
-          const isFilled = status === "OPEN" || status === "FILLED";
-          if (!isFilled) {
-            if (existing.has(sid)) { existing.delete(sid); changed = true; }
+          const isSettled = status === "FILLED" || status === "CLOSED";
+          if (!isSettled) {
+            if (existing.has(sid)) {
+              existing.delete(sid);
+              changed = true;
+            }
             continue;
           }
+          const rawPnl = row?.pnl_realized ?? row?.broker_pnl ?? row?.pnl;
           const next = {
             sid,
             symbol: String(row?.symbol || "").toUpperCase(),
-            pnl: row?.pnl_realized ?? row?.broker_pnl ?? row?.pnl ?? 0,
+            pnl: Number.isFinite(Number(rawPnl)) ? Number(rawPnl) : null,
             ts: Date.now(),
           };
           const prev = existing.get(sid);

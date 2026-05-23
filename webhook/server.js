@@ -511,6 +511,18 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   ".claude-context-files.json",
 );
 const TRADE_FILES_DIR = path.resolve(ROOT_DIR, "trade_files");
+const TRADE_ACTIVE_DIR = path.resolve(ROOT_DIR, "trade_active");
+const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
+
+const TRADE_CATEGORY_DIRS = {
+  files: TRADE_FILES_DIR,
+  active: TRADE_ACTIVE_DIR,
+  closed: TRADE_CLOSED_DIR,
+};
+
+for (const d of [TRADE_FILES_DIR, TRADE_ACTIVE_DIR, TRADE_CLOSED_DIR]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
 
 // File-based chart objects: read/write to trades/{sid}/chart_objects.json
 function chartObjectsPath(sid, symbol = "") {
@@ -3084,7 +3096,7 @@ function ensureAiContextFileDir() {
   }
 }
 
-function ensureTradeFilesDir(sid, symbol = "") {
+function ensureTradeDir(sid, symbol = "", category = "files") {
   const safeSid = String(sid || "")
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, "_");
@@ -3092,23 +3104,21 @@ function ensureTradeFilesDir(sid, symbol = "") {
     .trim()
     .toUpperCase()
     .replace(/[^A-Za-z0-9]/g, "");
-  if (!safeSid) return TRADE_FILES_DIR;
-  if (!fs.existsSync(TRADE_FILES_DIR)) {
-    fs.mkdirSync(TRADE_FILES_DIR, { recursive: true });
+  const baseDir = TRADE_CATEGORY_DIRS[category] || TRADE_FILES_DIR;
+  if (!safeSid) return baseDir;
+  if (!fs.existsSync(baseDir)) {
+    fs.mkdirSync(baseDir, { recursive: true });
   }
 
   // If we know the symbol, use {sid}-{symbol}
   if (safeSymbol) {
-    const dir = path.join(TRADE_FILES_DIR, `${safeSid}-${safeSymbol}`);
+    const dir = path.join(baseDir, `${safeSid}-${safeSymbol}`);
     if (!fs.existsSync(dir)) {
       // Migrate from old or unknown folder
       for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`]) {
-        const oldDir = path.join(TRADE_FILES_DIR, oldName);
+        const oldDir = path.join(baseDir, oldName);
         if (fs.existsSync(oldDir)) {
-          try {
-            fs.renameSync(oldDir, dir);
-            break;
-          } catch {}
+          try { fs.renameSync(oldDir, dir); break; } catch {}
         }
       }
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -3118,40 +3128,84 @@ function ensureTradeFilesDir(sid, symbol = "") {
 
   // No symbol: find any existing {sid}-* folder first
   try {
-    const entries = fs.readdirSync(TRADE_FILES_DIR);
+    const entries = fs.readdirSync(baseDir);
     const match = entries.find(
       (e) =>
         e.startsWith(safeSid + "-") &&
-        fs.statSync(path.join(TRADE_FILES_DIR, e)).isDirectory(),
+        fs.statSync(path.join(baseDir, e)).isDirectory(),
     );
-    if (match) return path.join(TRADE_FILES_DIR, match);
+    if (match) return path.join(baseDir, match);
   } catch {}
 
-  // No existing folder: create with UNKNOWN suffix (will rename when symbol known)
-  const dir = path.join(TRADE_FILES_DIR, `${safeSid}-UNKNOWN`);
+  // No existing folder: create with UNKNOWN suffix
+  const dir = path.join(baseDir, `${safeSid}-UNKNOWN`);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
+// Backward compat alias
+function ensureTradeFilesDir(sid, symbol = "") {
+  return ensureTradeDir(sid, symbol, "files");
+}
+
 function tradeLogsDir(sid, symbol = "") {
-  const dir = path.join(ensureTradeFilesDir(sid, symbol), "logs");
-  if (!fs.existsSync(dir)) {
-    const oldDir = path.join(ensureTradeFilesDir(sid, ""), "logs");
-    if (fs.existsSync(oldDir)) return oldDir;
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  const dir = path.join(resolveTradeDir(sid, symbol), "logs");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
 
 function tradeSnapshotDir(sid, symbol = "") {
-  const dir = path.join(ensureTradeFilesDir(sid, symbol), "snapshots");
-  if (!fs.existsSync(dir)) {
-    // Try old folder format
-    const oldDir = path.join(ensureTradeFilesDir(sid, ""), "snapshots");
-    if (fs.existsSync(oldDir)) return oldDir;
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  const dir = path.join(resolveTradeDir(sid, symbol), "snapshots");
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+// Search all categories for an existing trade folder
+function resolveTradeDir(sid, symbol = "") {
+  for (const cat of ["active", "closed", "files"]) {
+    const baseDir = TRADE_CATEGORY_DIRS[cat];
+    if (!fs.existsSync(baseDir)) continue;
+    try {
+      const safeSid = String(sid || "").trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+      const entries = fs.readdirSync(baseDir);
+      const match = entries.find(
+        (e) =>
+          e.startsWith(safeSid + "-") &&
+          fs.statSync(path.join(baseDir, e)).isDirectory(),
+      );
+      if (match) return path.join(baseDir, match);
+    } catch {}
+  }
+  // Not found in any category, create in files
+  return ensureTradeDir(sid, symbol, "files");
+}
+
+// Move trade folder between categories
+function moveTradeFolder(sid, fromCategory, toCategory) {
+  const fromDir = TRADE_CATEGORY_DIRS[fromCategory];
+  const toDir = TRADE_CATEGORY_DIRS[toCategory];
+  if (!fromDir || !toDir) return false;
+  if (!fs.existsSync(fromDir)) return false;
+  try {
+    const safeSid = String(sid || "").trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+    const entries = fs.readdirSync(fromDir);
+    const match = entries.find(
+      (e) =>
+        e.startsWith(safeSid + "-") &&
+        fs.statSync(path.join(fromDir, e)).isDirectory(),
+    );
+    if (!match) return false;
+    const src = path.join(fromDir, match);
+    const dst = path.join(toDir, match);
+    if (fs.existsSync(dst)) return false;
+    if (!fs.existsSync(toDir)) fs.mkdirSync(toDir, { recursive: true });
+    fs.renameSync(src, dst);
+    console.log("[trade-folder] moved", match, fromCategory, "->", toCategory);
+    return true;
+  } catch (e) {
+    console.error("[trade-folder] move error:", e.message);
+    return false;
+  }
 }
 
 function legacyTradeSnapshotDir(sid) {
@@ -7893,6 +7947,8 @@ async function _mt5InitBackendInternal() {
               : { event: "DIRECT_TRADE_CREATE" },
             userId,
           ).catch(() => {});
+          // Move folder from trade_files to trade_active
+          moveTradeFolder(sid, "files", "active");
         }
         bumpPulse(userId);
         return { created, account_ids: accountIds, sids };
@@ -8086,6 +8142,13 @@ async function _mt5InitBackendInternal() {
           res.rows[0].user_id,
         );
         invalidateTradeListCaches().catch(() => {});
+        // Migrate trade folder based on status
+        const newStatus = String(payload.execution_status || "").toUpperCase();
+        if (["PENDING", "OPEN", "FILLED"].includes(newStatus)) {
+          moveTradeFolder(payload.sid || payload.trade_id, "files", "active");
+        } else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)) {
+          moveTradeFolder(payload.sid || payload.trade_id, "active", "closed");
+        }
       } else {
         // Fallback log for tracking orphan/failed acks
         await this.log(payload.sid || payload.trade_id, "trades", {

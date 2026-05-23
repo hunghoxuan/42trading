@@ -47,10 +47,7 @@ export default function App() {
     String(authUser?.role || "").toLowerCase() === "system";
   const settingsMenuActive = useMemo(() => {
     const p = String(location?.pathname || "");
-    return (
-      p.startsWith("/settings") ||
-      p.startsWith("/profile")
-    );
+    return p.startsWith("/settings") || p.startsWith("/profile");
   }, [location?.pathname]);
   const systemMenuActive = useMemo(() => {
     const p = String(location?.pathname || "");
@@ -312,7 +309,9 @@ export default function App() {
               <NavLink to="/settings/accounts">Accounts</NavLink>
               <NavLink to="/settings/crons">Cron</NavLink>
               <NavLink to="/settings/providers">Providers</NavLink>
-              <NavLink to="/settings" end>Settings</NavLink>
+              <NavLink to="/settings" end>
+                Settings
+              </NavLink>
               <hr
                 style={{
                   border: "0",
@@ -375,6 +374,10 @@ export default function App() {
             <Route path="/ai/trade" element={<ChartSnapshotsPage />} />
             <Route path="/ai/trade/:symbol" element={<ChartSnapshotsPage />} />
             <Route
+              path="/ai/response/:symbol"
+              element={<ChartSnapshotsPage />}
+            />
+            <Route
               path="/ai/browser"
               element={<Navigate to="/ai/analyze" replace />}
             />
@@ -391,22 +394,10 @@ export default function App() {
                 />
               }
             />
-            <Route
-              path="/settings/crons"
-              element={<CronPage />}
-            />
-            <Route
-              path="/settings/providers"
-              element={<ProvidersPage />}
-            />
-            <Route
-              path="/settings/accounts"
-              element={<AccountsV2Page />}
-            />
-            <Route
-              path="/settings"
-              element={<SettingsPage />}
-            />
+            <Route path="/settings/crons" element={<CronPage />} />
+            <Route path="/settings/providers" element={<ProvidersPage />} />
+            <Route path="/settings/accounts" element={<AccountsV2Page />} />
+            <Route path="/settings" element={<SettingsPage />} />
             <Route
               path="/system/files"
               element={

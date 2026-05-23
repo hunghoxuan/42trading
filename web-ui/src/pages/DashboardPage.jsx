@@ -427,20 +427,21 @@ export default function DashboardPage() {
     ]),
   );
   const monthKeyPrefix = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-`;
-  const monthPoints = Object.values(calendarData || {})
-    .filter(
-      (x) =>
-        x &&
-        typeof x === "object" &&
-        String(x.date || "").startsWith(monthKeyPrefix),
-    )
-    .map((x) => ({
-      date: String(x.date || ""),
-      pnl: Number(x.pnl || 0),
-      day: Number(String(x.date || "").slice(8, 10)),
-    }))
-    .filter((x) => Number.isFinite(x.pnl) && Number.isFinite(x.day))
-    .sort((a, b) => a.day - b.day);
+  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const monthPoints = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(calendarYear, calendarMonth, d).getDay();
+    if (dow === 0 || dow === 6) continue; // trading days only (Mon-Fri)
+    const dateStr = `${monthKeyPrefix}${String(d).padStart(2, "0")}`;
+    const item = calendarData ? calendarData[dateStr] : null;
+    const pnl = item ? Number(item.pnl || 0) : 0;
+    monthPoints.push({
+      date: dateStr,
+      pnl: Number.isFinite(pnl) ? pnl : 0,
+      day: d,
+      hasPnl: item != null && Number.isFinite(pnl) && pnl !== 0,
+    });
+  }
   const dailyPnlTotal = monthPoints.reduce((acc, x) => acc + x.pnl, 0);
   const monthMaxAbsPnl = Math.max(
     1,
@@ -832,10 +833,11 @@ export default function DashboardPage() {
                   ◀
                 </button>
                 <span style={{ fontSize: 12 }}>
-                  {new Date(calendarYear, calendarMonth).toLocaleString(
-                    "default",
-                    { month: "long", year: "numeric" },
-                  )}
+                  {(() => {
+                    const pm = calendarMonth === 0 ? 11 : calendarMonth - 1;
+                    const py = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
+                    return `${new Date(py, pm).toLocaleString("default", { month: "short" })} — ${new Date(calendarYear, calendarMonth).toLocaleString("default", { month: "short", year: "numeric" })}`;
+                  })()}
                 </span>
                 <button
                   className="secondary-button"
@@ -850,42 +852,18 @@ export default function DashboardPage() {
                   ▶
                 </button>
               </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(7, 1fr)",
-                  gap: 3,
-                  textAlign: "center",
-                  fontSize: 11,
-                }}
-              >
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-                  <span
-                    key={d}
-                    style={{
-                      color: "var(--muted)",
-                      padding: "2px 0",
-                    }}
-                  >
-                    {d}
-                  </span>
-                ))}
-                {(() => {
-                  const firstDay = new Date(
-                    calendarYear,
-                    calendarMonth,
-                    1,
-                  ).getDay();
-                  const daysInMonth = new Date(
-                    calendarYear,
-                    calendarMonth + 1,
-                    0,
-                  ).getDate();
+              {(() => {
+                const prevMonth = calendarMonth === 0 ? 11 : calendarMonth - 1;
+                const prevYear = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
+                const renderGrid = (month, year, label) => {
+                  const firstDay = new Date(year, month, 1).getDay();
+                  const dim = new Date(year, month + 1, 0).getDate();
+                  const prefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
                   const cells = [];
                   for (let i = 0; i < firstDay; i++)
                     cells.push(<span key={"e" + i} />);
-                  for (let d = 1; d <= daysInMonth; d++) {
-                    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                  for (let d = 1; d <= dim; d++) {
+                    const dateStr = `${prefix}${String(d).padStart(2, "0")}`;
                     const item = calendarData ? calendarData[dateStr] : null;
                     const pnl = item
                       ? Number(item.pnl || item.pnl_money || 0)
@@ -894,9 +872,9 @@ export default function DashboardPage() {
                       <div
                         key={d}
                         style={{
-                          padding: "8px 4px 10px",
-                          borderRadius: 8,
-                          fontSize: 11,
+                          padding: "4px 2px 6px",
+                          borderRadius: 5,
+                          fontSize: 9,
                           border:
                             pnl != null
                               ? pnl > 0
@@ -913,7 +891,7 @@ export default function DashboardPage() {
                                   ? "linear-gradient(180deg, rgba(239,68,68,0.16), rgba(239,68,68,0.09))"
                                   : "rgba(148,163,184,0.10)"
                               : "transparent",
-                          minHeight: 52,
+                          minHeight: 34,
                           cursor: pnl != null ? "pointer" : "default",
                           display: "flex",
                           flexDirection: "column",
@@ -927,7 +905,7 @@ export default function DashboardPage() {
                       >
                         <div
                           style={{
-                            fontSize: 12,
+                            fontSize: 9,
                             color: pnl != null ? "var(--text)" : "var(--muted)",
                           }}
                         >
@@ -938,7 +916,7 @@ export default function DashboardPage() {
                             style={{
                               color:
                                 pnl > 0 ? "var(--success)" : "var(--error)",
-                              fontSize: 12,
+                              fontSize: 9,
                               letterSpacing: "0.1px",
                             }}
                           >
@@ -949,9 +927,55 @@ export default function DashboardPage() {
                       </div>,
                     );
                   }
-                  return cells;
-                })()}
-              </div>
+                  return (
+                    <div key={label}>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "var(--muted)",
+                          marginBottom: 3,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {new Date(year, month).toLocaleString("default", {
+                          month: "long",
+                          year: "numeric",
+                        })}
+                      </div>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(7, 1fr)",
+                          gap: 1,
+                          textAlign: "center",
+                          fontSize: 9,
+                        }}
+                      >
+                        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(
+                          (day) => (
+                            <span
+                              key={day}
+                              style={{
+                                color: "var(--muted)",
+                                padding: "1px 0",
+                              }}
+                            >
+                              {day}
+                            </span>
+                          ),
+                        )}
+                        {cells}
+                      </div>
+                    </div>
+                  );
+                };
+                return (
+                  <div style={{ display: "flex", gap: 16 }}>
+                    <div style={{ flex: 1 }}>{renderGrid(prevMonth, prevYear, "prev")}</div>
+                    <div style={{ flex: 1 }}>{renderGrid(calendarMonth, calendarYear, "curr")}</div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Daily PnL bar chart */}
@@ -1048,7 +1072,7 @@ export default function DashboardPage() {
                     position: "absolute",
                     left: 48,
                     right: 8,
-                    top: "50%",
+                    top: "46%",
                     borderTop: "1px solid rgba(148,163,184,0.45)",
                     zIndex: 3,
                   }}
@@ -1062,15 +1086,14 @@ export default function DashboardPage() {
                     alignItems: "stretch",
                   }}
                 >
-                  {(monthPoints.length
-                    ? monthPoints
-                    : [{ day: "", pnl: 0 }]
-                  ).map((p, idx) => {
-                    const hPct = Math.min(
-                      49,
-                      (Math.abs(Number(p.pnl || 0)) / yAxisMax) * 49,
-                    );
-                    const isPos = Number(p.pnl || 0) >= 0;
+                  {monthPoints.map((p, idx) => {
+                    const pnlNum = Number(p.pnl || 0);
+                    const absRatio = p.hasPnl
+                      ? Math.min(1, Math.abs(pnlNum) / Math.max(1, yAxisMax))
+                      : 0;
+                    const hPct = absRatio * 49;
+                    const isPos = pnlNum >= 0;
+                    const barTop = isPos ? 50 - hPct : 50;
                     return (
                       <div
                         key={`${p.day}_${idx}`}
@@ -1080,18 +1103,18 @@ export default function DashboardPage() {
                           justifyContent: "center",
                         }}
                         title={
-                          p.day
-                            ? `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: $${Number(p.pnl || 0).toFixed(2)}`
-                            : "No data"
+                          p.hasPnl
+                            ? `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: $${pnlNum.toFixed(2)}`
+                            : `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: no trades`
                         }
                       >
-                        {p.day ? (
+                        {p.hasPnl ? (
                           <div
                             style={{
                               position: "absolute",
                               width: "72%",
                               height: `${hPct}%`,
-                              top: isPos ? "43%" : "55%",
+                              top: `${barTop}%`,
                               borderRadius: isPos
                                 ? "2px 2px 0 0"
                                 : "0 0 2px 2px",
@@ -1102,18 +1125,16 @@ export default function DashboardPage() {
                             }}
                           />
                         ) : null}
-                        {p.day ? (
-                          <div
-                            style={{
-                              position: "absolute",
-                              bottom: -18,
-                              fontSize: 10,
-                              color: "var(--muted)",
-                            }}
-                          >
-                            {String(p.day).padStart(2, "0")}
-                          </div>
-                        ) : null}
+                        <div
+                          style={{
+                            position: "absolute",
+                            bottom: -18,
+                            fontSize: 10,
+                            color: "var(--muted)",
+                          }}
+                        >
+                          {String(p.day).padStart(2, "0")}
+                        </div>
                       </div>
                     );
                   })}

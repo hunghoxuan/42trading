@@ -2385,8 +2385,9 @@ function enrichParsedAnalysis(rawText, parsed) {
       res.trade_plan = [res.trade_plan];
     }
     // Wrap the result itself as trade_plan when it IS a trade plan (has execution_plan)
+    // but avoid circular reference — use a shallow copy
     if (!res.trade_plan && isCurrentAiTradePlan(res)) {
-      res.trade_plan = [res];
+      res.trade_plan = [{ ...res }];
     }
   }
 
@@ -2819,13 +2820,15 @@ export default function ChartSnapshotsPage() {
   });
   const isResultRoute =
     location.pathname.startsWith("/ai/result") ||
-    location.pathname.startsWith("/ai/trade");
+    location.pathname.startsWith("/ai/trade") ||
+    location.pathname.startsWith("/ai/response");
   const isTradeRoute = location.pathname.startsWith("/ai/trade");
-  const tradeSidFromRoute = isTradeRoute
+  const isResponseRoute = location.pathname.startsWith("/ai/response");
+  const tradeSidFromRoute = isResponseRoute
     ? String(paramSymbol || "").trim()
     : "";
 
-  // Load saved AI response when navigating to /ai/trade/{sid}
+  // Load saved AI response when navigating to /ai/response/{sid}
   useEffect(() => {
     if (!tradeSidFromRoute) return;
     const load = async () => {
@@ -2845,6 +2848,20 @@ export default function ChartSnapshotsPage() {
           setAnalysisJson(JSON.stringify(data.parsed_json, null, 2));
           setAnalysisRaw(data.raw_response || "");
           setPosition(extractPositionFromAnalysis(parsed));
+          // Set cfg.symbol so navigation buttons use the right symbol (no nav redirect)
+          const sym = normalizeWatchSymbol(data.parsed_json?.symbol || "");
+          if (sym && !cfg.symbol) {
+            setCfg((prev) => {
+              const prevSymbols = Array.isArray(prev?.symbols)
+                ? prev.symbols
+                : [];
+              return {
+                ...prev,
+                symbol: sym,
+                symbols: [sym, ...prevSymbols.filter((x) => x !== sym)],
+              };
+            });
+          }
         }
       } catch (_) {}
     };
@@ -3894,6 +3911,15 @@ export default function ChartSnapshotsPage() {
         },
       );
       out = await analyzePromise;
+      // withTimeout wraps response: { ok: true, value: actual_response }
+      const result = out?.value || out;
+
+      // Redirect IMMEDIATELY — before any state updates that might interfere
+      if (result?.trade_sid) {
+        window.location.href = `/ai/response/${encodeURIComponent(result.trade_sid)}`;
+        return result;
+      }
+
       if (opts.runId && !isCurrentFlowRun(opts.runId)) return out;
       if (out?.source || out?.updated_time) {
         setMarketMetadata({
@@ -3989,11 +4015,17 @@ export default function ChartSnapshotsPage() {
       }
       setUsedFiles(Array.isArray(out?.used_files) ? out.used_files : []);
 
+      console.log(
+        "[analyzeFiles] out keys:",
+        Object.keys(out || {}).join(", "),
+      );
+      console.log("[analyzeFiles] trade_sid:", JSON.stringify(out?.trade_sid));
       // Navigate to trade page using trade_sid from response (after all state updates)
       if (out?.trade_sid) {
-        navigate(`/ai/trade/${encodeURIComponent(out.trade_sid)}`, {
-          replace: true,
-        });
+        const target = `/ai/response/${encodeURIComponent(out.trade_sid)}`;
+        console.log("[analyzeFiles] REDIRECTING to:", target);
+        window.location.href = target;
+        return;
       }
       if (!files.length)
         setAnalysisFilesDisplay(
@@ -4855,6 +4887,13 @@ export default function ChartSnapshotsPage() {
     }
     if (paramSymbol) {
       const decoded = decodeURIComponent(paramSymbol);
+      // Response route with a SID — don't treat as symbol
+      if (
+        location.pathname.startsWith("/ai/response") &&
+        /^[A-Z0-9]{9,10}$/.test(decoded)
+      ) {
+        return;
+      }
       const slugSymbols = decoded
         .split("-")
         .map((x) => normalizeWatchSymbol(x))
@@ -4892,12 +4931,12 @@ export default function ChartSnapshotsPage() {
     navigate,
   ]);
 
-  // Reset analysis state when navigating from trade/result back to analyze
-  const prevIsTradeRef = useRef(isTradeRoute);
+  // Reset analysis state when navigating from trade/response back to analyze
+  const prevIsResultRef = useRef(isResultRoute);
   useEffect(() => {
-    const wasTrade = prevIsTradeRef.current;
-    prevIsTradeRef.current = isTradeRoute;
-    if (!isTradeRoute && wasTrade) {
+    const wasResult = prevIsResultRef.current;
+    prevIsResultRef.current = isResultRoute;
+    if (!isResultRoute && wasResult) {
       setAnalysisRaw("");
       setAnalysisJson("");
       setAnalysisParsed(null);
@@ -4906,7 +4945,22 @@ export default function ChartSnapshotsPage() {
       setUsedFiles([]);
       setAnalysisFilesDisplay([]);
     }
-  }, [isTradeRoute]);
+  }, [isResultRoute]);
+
+  // Reset form when entering trade route with a symbol (not session ID)
+  // Session IDs are 9-char uppercase alphanumeric (e.g. TFHW0MWWP).
+  // Symbols like XAUUSD, GBPJPY → fresh session, clear all previous analysis data.
+  useEffect(() => {
+    if (isTradeRoute && paramSymbol && !/^[A-Z0-9]{9}$/.test(paramSymbol)) {
+      setPosition(buildDefaultPosition(null));
+      setAnalysisRaw("");
+      setAnalysisJson("");
+      setAnalysisParsed(null);
+      setResponseTab("chart");
+      setUsedFiles([]);
+      setAnalysisFilesDisplay([]);
+    }
+  }, [isTradeRoute, paramSymbol]);
 
   useEffect(() => {
     loadWatchlist();
@@ -5583,7 +5637,20 @@ export default function ChartSnapshotsPage() {
     () => analysisTradePlans[selectedPlanIdx] || analysisTradePlans[0] || null,
     [analysisTradePlans, selectedPlanIdx],
   );
-  const selectedSymbol = String(cfg.symbol || paramSymbol || "").trim();
+  const selectedSymbolRaw = String(cfg.symbol || paramSymbol || "").trim();
+  // On trade route, extract real symbol: strip session ID prefix (TFHYJL5X8-XAUUSD → XAUUSD)
+  // or if param IS a session ID (9-10 uppercase chars), use cfg.symbol instead.
+  // On response route, param is always a SID — use cfg.symbol only.
+  const selectedSymbol = (() => {
+    if (isResponseRoute) return cfg.symbol || "";
+    if (!isTradeRoute) return selectedSymbolRaw;
+    // Strip SID- prefix
+    const stripped = selectedSymbolRaw.replace(/^[A-Z0-9]{9,10}-/, "");
+    if (stripped !== selectedSymbolRaw) return stripped;
+    // Pure session ID (no symbol suffix) → use cfg.symbol
+    if (/^[A-Z0-9]{9,10}$/.test(selectedSymbolRaw)) return cfg.symbol || "";
+    return selectedSymbolRaw;
+  })();
   const selectedSymbols = Array.isArray(cfg?.symbols)
     ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
     : [];
@@ -6264,7 +6331,14 @@ export default function ChartSnapshotsPage() {
                           : "#c8d5e8";
                       const pnlText = hasPnl
                         ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
-                        : "0";
+                        : "";
+                      const statusText = String(
+                        x?.execution_status || x?.status || "",
+                      )
+                        .trim()
+                        .toUpperCase();
+                      const canShowTradePnl =
+                        statusText === "FILLED" || statusText === "CLOSED";
                       const entryTxt = Number.isFinite(Number(x?.entry))
                         ? Number(x.entry).toFixed(
                             Number(x.entry) >= 100
@@ -6305,7 +6379,7 @@ export default function ChartSnapshotsPage() {
                             >
                               {String(x.symbol || "").toUpperCase()}
                             </span>
-                            {!isSignal ? (
+                            {!isSignal && canShowTradePnl ? (
                               <span style={{ color: sideColor }}>
                                 {pnlText}
                               </span>
@@ -6371,7 +6445,7 @@ export default function ChartSnapshotsPage() {
                 >
                   {"< List"}
                 </button>
-                {isTradeRoute ? (
+                {isTradeRoute || isResponseRoute ? (
                   <button
                     className="secondary-button"
                     type="button"

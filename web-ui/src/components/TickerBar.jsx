@@ -22,8 +22,9 @@ export default function TickerBar() {
   }, []);
 
   const formatPnl = (v) => {
-    const n = Number(v || 0);
-    return `${n >= 0 ? "+" : ""}${n.toFixed(2)}`;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n === 0) return "";
+    return `${n > 0 ? "+" : ""}${n.toFixed(2)}`;
   };
 
   const hasData = filledTrades.length > 0 || tickerMessages.length > 0;
@@ -52,9 +53,13 @@ export default function TickerBar() {
               title={`Open trade ${t.sid}`}
             >
               <span className="sym">{t.symbol || "-"}</span>
-              <span className={Number(t.pnl || 0) >= 0 ? "pnl pos" : "pnl neg"}>
-                {formatPnl(t.pnl)}
-              </span>
+              {Number.isFinite(Number(t.pnl)) && Number(t.pnl) !== 0 ? (
+                <span className={Number(t.pnl) >= 0 ? "pnl pos" : "pnl neg"}>
+                  {formatPnl(t.pnl)}
+                </span>
+              ) : (
+                <span className="pnl" />
+              )}
             </button>
           ))}
         </div>

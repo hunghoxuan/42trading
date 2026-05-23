@@ -31,5 +31,4 @@ Read on every new chat:
 - Do not break user behavior by accident.
 - Test real code changes.
 - Bump matched server/EA versions for backend, EA, UI, or script changes.
-- After any change, auto update/refresh local `web-ui` and `webhook` without asking. Only ask before prod deploy.
-- After any change, MUST auto test locally until fully fixed.
+- After any change, MUST auto test locally until fully fixed. Only ask before prod deploy.

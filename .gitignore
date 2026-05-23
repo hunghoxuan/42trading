@@ -13,6 +13,9 @@ web-ui/node_modules/
 
 webhook/.env
 webhook/node_modules/
+webhook/trade_files/
+webhook/trade_active/
+webhook/trade_closed/
 webhook/logs
 webhook/dist/
 webhook/playwright-report/

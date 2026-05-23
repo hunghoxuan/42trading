@@ -1160,8 +1160,17 @@ export default function TradesPage() {
                 {sortedRows.map((t) => {
                   const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
                   const action = String(t.action || t.side || "").toUpperCase();
-                  const pnl = Number(t.pnl_realized || t.broker_pnl || 0);
-                  const rr = Number(t.rr_planned || 0);
+                  const statusRaw =
+                    t.execution_status ||
+                    t.metadata?.broker_data?.execution_status ||
+                    t.metadata?.broker_data?.status ||
+                    "";
+                  const stRaw = String(statusRaw).toUpperCase().trim();
+                  const isFilledLike = stRaw.includes("FILLED");
+                  const isClosedLike = stRaw.includes("CLOSED");
+                  const showCompactPnl = isFilledLike || isClosedLike;
+                  const pnl = asNum(t.broker_pnl) ?? asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl) ?? asNum(t.pnl_money);
+                  const rr = asNum(t.rr_planned) ?? calcRr(t);
                   return (
                     <article
                       key={t.sid || t.id}
@@ -1205,11 +1214,15 @@ export default function TradesPage() {
                           style={{
                             fontWeight: 700,
                             fontSize: 10,
-                            color: pnl >= 0 ? "#10b981" : "#ef4444",
+                            color:
+                              pnl != null && pnl >= 0
+                                ? "#10b981"
+                                : "#ef4444",
                           }}
                         >
-                          {pnl >= 0 ? "+" : ""}
-                          {pnl.toFixed(0)}
+                          {showCompactPnl && pnl != null
+                            ? `$${pnl.toFixed(0)}`
+                            : ""}
                         </span>
                       </div>
                       <div
@@ -1223,7 +1236,9 @@ export default function TradesPage() {
                           {t.entry || "-"} → {t.tp || "-"}
                         </span>
                         <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                          {Number.isFinite(rr) ? rr.toFixed(1) + "r" : "-"}
+                          {showCompactPnl && rr != null
+                            ? rr.toFixed(1) + "R"
+                            : ""}
                         </span>
                       </div>
                     </article>

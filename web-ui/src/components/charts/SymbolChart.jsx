@@ -68,6 +68,15 @@ function liveTfToTvInterval(tf) {
   return "15";
 }
 
+function toTradingViewSymbol(symRaw) {
+  const s = String(symRaw || "").trim().toUpperCase();
+  if (!s) return "";
+  if (s.includes(":")) return s;
+  // Forex pairs are more reliable in widget embeds with explicit broker prefix.
+  if (/^[A-Z]{6}$/.test(s)) return `OANDA:${s}`;
+  return s;
+}
+
 function toTradingViewTimezone() {
   const mode = localStorage.getItem("ui_display_timezone") || "UTC";
   if (mode === "UTC") return "Etc/UTC";
@@ -2148,7 +2157,7 @@ export default function SymbolChart({
                           height: "100%",
                           border: "none",
                         }}
-                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(cleanSym)}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
                       <button
                         className="secondary-button"

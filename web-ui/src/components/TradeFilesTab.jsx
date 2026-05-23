@@ -7,12 +7,16 @@ function withApiKey(urlRaw) {
   const url = String(urlRaw || "").trim();
   if (!url) return "";
   const key = String(getRuntimeApiKey() || "").trim();
-  if (!key) return url;
   try {
     const u = new URL(url, window.location.origin);
-    if (!u.searchParams.get("key")) u.searchParams.set("key", key);
-    return `${u.pathname}${u.search}${u.hash}`;
+    const isSameOrigin = u.origin === window.location.origin;
+    if (key && isSameOrigin && !u.searchParams.get("key")) {
+      u.searchParams.set("key", key);
+    }
+    // Keep full URL so external/signed hosts are not broken.
+    return u.toString();
   } catch {
+    if (!key) return url;
     const sep = url.includes("?") ? "&" : "?";
     return `${url}${sep}key=${encodeURIComponent(key)}`;
   }
