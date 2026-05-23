@@ -1385,6 +1385,25 @@ export default function SignalDetailCard({
     prevTradePlanEnabledRef.current = nowEnabled;
   }, [tradePlan?.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Trade mode: when selected trade changes, reset draft cache first
+  // so empty fields in new trade don't inherit previous trade values.
+  const prevTradeEntityRef = useRef("");
+  useEffect(() => {
+    if (mode !== "trade") return;
+    const entityKey = String(
+      tradePlan?.tradeId || tradePlan?.signalId || response?.id || "",
+    ).trim();
+    if (!entityKey) return;
+    if (
+      prevTradeEntityRef.current &&
+      prevTradeEntityRef.current !== entityKey
+    ) {
+      setPlanDrafts({});
+      setSelectedPlanId("main");
+    }
+    prevTradeEntityRef.current = entityKey;
+  }, [mode, tradePlan?.tradeId, tradePlan?.signalId, response?.id]);
+
   const plansKey = useMemo(() => {
     return plans
       .map((p, i) => [i, p?.entry, p?.tp, p?.sl, p?.direction].join("|"))
@@ -2192,7 +2211,7 @@ export default function SignalDetailCard({
                 ) : null}
 
                 {sectionRows.map((pair, idx) =>
-                  renderDynamicInfoSection(pair[0], pair[1], idx)
+                  renderDynamicInfoSection(pair[0], pair[1], idx),
                 )}
               </div>
             );
@@ -3438,7 +3457,11 @@ export default function SignalDetailCard({
             tradeSid={tradePlan?.tradeId || tradePlan?.signalId || null}
             symbol={chart?.symbol || null}
             attachedFiles={chart?.attachedSnapshotFiles || []}
-            snapshotsUsed={response?.snapshotsUsed || []}
+            snapshotsUsed={
+              tradePlan?.tradeId || tradePlan?.signalId
+                ? []
+                : response?.snapshotsUsed || []
+            }
             snapshotFiles={
               response?.snapshotFiles ||
               response?.snapshot_files ||

@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "dev": "node --watch server.js",
     "check": "node --check server.js",
     "test:smoke": "node ../scripts/test_local_stack.mjs",
     "test:remote": "bash ../scripts/test_remote_api.sh"

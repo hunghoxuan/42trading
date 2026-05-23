@@ -322,7 +322,7 @@ export default function TradesPage() {
   const inFlightRef = useRef(false);
   const tradeEventsInFlightRef = useRef(false);
   const selectedTradeIdRef = useRef("");
-  const planSaveGuardRef = useRef(false);
+  const planSaveGuardRef = useRef("");
 
   const accountById = useMemo(() => {
     const map = new Map();
@@ -614,9 +614,10 @@ export default function TradesPage() {
     const ref = tradeKeyOf(selectedTrade);
     if (ref) {
       loadTradeEvents(ref);
-      // Skip re-extraction if plan was just saved (user edits are authoritative)
-      if (planSaveGuardRef.current) {
-        planSaveGuardRef.current = false;
+      // Skip re-extraction only for the same trade right after save
+      // (preserve user edits without leaking stale plan to other trades).
+      if (planSaveGuardRef.current === ref) {
+        planSaveGuardRef.current = "";
         return;
       }
       setDetailPlan(extractTradePlanFromTrade(selectedTrade));
@@ -694,8 +695,8 @@ export default function TradesPage() {
         risk_money: asNum(detailPlan.risk_money),
       };
       await api.saveTradePlan(ref, payload);
-      // Guard against re-extraction after save — keep user edits
-      planSaveGuardRef.current = true;
+      // Guard only this trade against immediate re-extraction after save
+      planSaveGuardRef.current = ref;
       await loadTrades();
       await loadTradeEvents(ref);
     } catch (e) {

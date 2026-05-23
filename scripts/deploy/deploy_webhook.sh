@@ -15,9 +15,9 @@ VPS_HOST="${VPS_HOST:-root@139.59.211.192}"
 VPS_APP_DIR="${VPS_APP_DIR:-/opt/trading}"
 SERVICE_MODE="${SERVICE_MODE:-pm2}"      # pm2|systemd
 SERVICE_NAME="${SERVICE_NAME:-webhook}"  # pm2 process name or systemd unit name
-HEALTH_PORT="${HEALTH_PORT:-80}"
+HEALTH_PORT="${HEALTH_PORT:-443}"
 REMOTE_HOST="${VPS_HOST#*@}"
-REMOTE_HEALTH_BASE_URL="${REMOTE_HEALTH_BASE_URL:-http://${REMOTE_HOST}:${HEALTH_PORT}}"
+REMOTE_HEALTH_BASE_URL="${REMOTE_HEALTH_BASE_URL:-https://trade.mozasolution.com}"
 
 echo "[deploy] root=${ROOT_DIR}"
 echo "[deploy] branch=${BRANCH} push_first=${PUSH_FIRST}"
@@ -65,7 +65,7 @@ if [[ -d "web-ui" ]]; then
 fi
 
 if [[ "${SERVICE_MODE}" == "pm2" ]]; then
-  pm2 restart "${SERVICE_NAME}"
+  PORT=3001 HTTPS_ENABLED=false pm2 restart "${SERVICE_NAME}" --update-env
   pm2 logs "${SERVICE_NAME}" --lines 80 --nostream || true
 elif [[ "${SERVICE_MODE}" == "systemd" ]]; then
   sudo systemctl restart "${SERVICE_NAME}"

@@ -1,0 +1,21 @@
+@echo off
+setlocal
+
+set ROOT=%~dp0..\..
+set WEBHOOK_DIR=%ROOT%\webhook
+set WEB_UI_DIR=%ROOT%\web-ui
+set VITE_PORT=3000
+set WEBHOOK_PORT=3001
+
+echo === Starting webhook on :%WEBHOOK_PORT% ===
+start "webhook" cmd /c "cd /d %WEBHOOK_DIR% && set PORT=%WEBHOOK_PORT% && node --watch server.js"
+
+timeout /t 2 /nobreak >nul
+
+echo === Starting Vite on :%VITE_PORT% ===
+start "vite" cmd /c "cd /d %WEB_UI_DIR% && set VITE_API_PROXY_TARGET=http://127.0.0.1:%WEBHOOK_PORT% && npx vite --port %VITE_PORT% --strictPort"
+
+echo.
+echo === Open http://localhost:%VITE_PORT% ===
+echo.
+pause

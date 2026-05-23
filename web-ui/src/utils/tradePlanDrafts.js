@@ -52,6 +52,22 @@ export function mergePlanPreservingEdits(basePlan = {}, previousDraft = {}) {
         }
         // else: keep base value (it's valid, draft is empty)
       } else {
+        // For direction/trade_type: only preserve draft if base is empty/invalid.
+        // Otherwise keep the base (AI response) value.
+        if (key === "direction") {
+          const baseDir = String(next[key] || "")
+            .trim()
+            .toUpperCase();
+          const draftDir = String(value || "")
+            .trim()
+            .toUpperCase();
+          if (
+            (baseDir === "BUY" || baseDir === "SELL") &&
+            baseDir !== draftDir
+          ) {
+            return; // keep AI direction, don't overwrite with old draft
+          }
+        }
         next[key] = value;
       }
       return;

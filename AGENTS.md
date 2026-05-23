@@ -1,9 +1,0 @@
-@RTK.md
-
-# Codex / Agents Entry
-
-Before any plan or code change, read:
-
-- `.agents/BOOTSTRAP.md`
-
-Then follow all routing and rule files it specifies.

@@ -332,7 +332,7 @@ export function TradePlanEditor({
   const tradeFieldsDisabled = disabled || Boolean(lockTradeFields);
   const controlsDisabled =
     disabled || Boolean(busy?.save || busy?.draft || busy?.trade);
-  const directionOptions = useMemo(() => ["BUY", "SELL"], []);
+  const directionOptions = useMemo(() => ["", "BUY", "SELL"], []);
 
   const update = useCallback(
     (key, val) => {
@@ -610,25 +610,21 @@ export function TradePlanEditor({
                     padding: "0 2px",
                     background: "rgba(255,255,255,0.05)",
                   }}
-                  value={value.direction || "BUY"}
+                  value={value.direction || ""}
                   onChange={(e) => {
-                    const nextDir = String(e.target.value || "");
-                    const oldDir = String(
-                      value.direction || "BUY",
-                    ).toUpperCase();
-                    if (nextDir.toUpperCase() !== oldDir) {
-                      const oldTp = cleanFieldValue(value.tp);
-                      const oldSl = cleanFieldValue(value.sl);
-                      update("tp", oldSl);
-                      update("sl", oldTp);
-                    }
-                    update("direction", nextDir);
+                    console.log(
+                      "[TradePlanEditor] direction onChange:",
+                      e.target.value,
+                      "prev direction:",
+                      value.direction,
+                    );
+                    update("direction", String(e.target.value || ""));
                   }}
                   disabled={tradeFieldsDisabled || controlsDisabled}
                 >
                   {directionOptions.map((x) => (
-                    <option key={x} value={x}>
-                      {x === "BUY" ? "Buy" : "Sell"}
+                    <option key={x || "_empty"} value={x}>
+                      {x === "" ? "—" : x === "BUY" ? "Buy" : "Sell"}
                     </option>
                   ))}
                 </select>

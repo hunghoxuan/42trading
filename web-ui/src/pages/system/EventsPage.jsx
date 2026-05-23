@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
-import { NotificationHub } from "../../services/NotificationHub";
 
 const SOUNDS = [
   { v: "", l: "Mute" },
@@ -164,12 +163,6 @@ function EventRow({ event, idx, toggle, setField, state }) {
           style={{ fontSize: 10, padding: "2px 5px" }}
           title="Test this event"
           onClick={() => {
-            // Emit directly to NotificationHub for instant feedback
-            if (event.hub !== false) {
-              try {
-                NotificationHub.emit(event.event, "test", { event: event.event, message: `Test: ${event.label || event.event}`, type: "info" });
-              } catch {}
-            }
             state.fire({
               event: event.event,
               message: `Test: ${event.label || event.event}`,

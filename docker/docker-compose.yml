@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: trading
+      POSTGRES_DB: trading
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  webhook:
+    build:
+      context: ..
+      dockerfile: docker/webhook/Dockerfile
+    environment:
+      PORT: "3001"
+      PG_CONNECTION_STRING: "postgres://trading:trading@db:5432/trading"
+      REDIS_URL: ""
+      UI_AUTH_ENABLED: "true"
+      UI_BOOTSTRAP_EMAIL: "admin@example.com"
+      UI_BOOTSTRAP_PASSWORD: "changeme"
+    ports:
+      - "3100:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web-ui:
+    build:
+      context: ..
+      dockerfile: docker/web-ui/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - webhook
+    restart: unless-stopped
+
+volumes:
+  pgdata:

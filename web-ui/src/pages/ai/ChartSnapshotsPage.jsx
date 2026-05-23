@@ -1726,6 +1726,16 @@ function extractPositionFromAnalysis(parsed) {
           directionRaw === "B"
         ? "BUY"
         : "";
+  if (!direction) {
+    console.warn(
+      "[extractPositionFromAnalysis] FALLBACK direction empty. plan keys:",
+      JSON.stringify(Object.keys(plan || {})),
+      "directionRaw:",
+      JSON.stringify(directionRaw),
+      "plan.direction:",
+      JSON.stringify(plan?.direction),
+    );
+  }
   const entry = planEntryNumber(plan, parsed);
   const sl = planStopLossNumber(plan, parsed);
   console.log(
@@ -1764,8 +1774,22 @@ function extractPositionFromAnalysis(parsed) {
     if (risk > 0 && reward > 0) rr = Number((reward / risk).toFixed(2));
   }
   if (!Number.isFinite(rr)) rr = Number.isFinite(rrRaw) ? rrRaw : null;
+  const finalDirection = direction || "BUY";
+  if (!direction) {
+    console.warn(
+      "[extractPositionFromAnalysis] RETURN FALLBACK — direction empty, defaulting to BUY.",
+      "plan keys:",
+      JSON.stringify(Object.keys(plan || {})),
+      "plan.direction:",
+      JSON.stringify(plan?.direction),
+      "parsed keys:",
+      JSON.stringify(Object.keys(parsed || {}).slice(0, 10)),
+      "parsed.direction:",
+      JSON.stringify(parsed?.direction),
+    );
+  }
   return {
-    direction: direction || "BUY",
+    direction: finalDirection,
     entry: Number.isFinite(entry) ? formatNum3(entry) : "",
     tp: Number.isFinite(tp) ? formatNum3(tp) : "",
     sl: Number.isFinite(sl) ? formatNum3(sl) : "",
@@ -1860,12 +1884,31 @@ function extractPositionFromPlan(plan, parsed = {}) {
   )
     .trim()
     .toUpperCase();
-  const direction =
+  let direction =
     directionRaw.includes("SELL") || directionRaw.includes("SHORT")
       ? "SELL"
       : directionRaw.includes("BUY") || directionRaw.includes("LONG")
         ? "BUY"
-        : "BUY";
+        : "";
+  if (!direction) {
+    console.warn(
+      "[extractPositionFromPlan] FALLBACK direction empty. item keys:",
+      JSON.stringify(Object.keys(item || {})),
+      "directionRaw:",
+      JSON.stringify(directionRaw),
+      "item.direction:",
+      JSON.stringify(item?.direction),
+    );
+  }
+  // Infer direction from entry/SL when not explicitly set
+  if (!direction) {
+    const e = planEntryNumber(item, parsed);
+    const sl = planStopLossNumber(item, parsed);
+    if (Number.isFinite(e) && Number.isFinite(sl)) {
+      direction = sl > e ? "SELL" : sl < e ? "BUY" : "";
+    }
+  }
+  if (!direction) direction = "BUY";
   const entry = planEntryNumber(item, parsed);
   const sl = planStopLossNumber(item, parsed);
   const planTp = getPlanPrimaryTp(item);
@@ -2778,6 +2821,35 @@ export default function ChartSnapshotsPage() {
     location.pathname.startsWith("/ai/result") ||
     location.pathname.startsWith("/ai/trade");
   const isTradeRoute = location.pathname.startsWith("/ai/trade");
+  const tradeSidFromRoute = isTradeRoute
+    ? String(paramSymbol || "").trim()
+    : "";
+
+  // Load saved AI response when navigating to /ai/trade/{sid}
+  useEffect(() => {
+    if (!tradeSidFromRoute) return;
+    const load = async () => {
+      try {
+        const base = localStorage.getItem("tvbridge_api_base") || "";
+        const res = await fetch(
+          `${base}/v2/trades/${encodeURIComponent(tradeSidFromRoute)}/response`,
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.parsed_json) {
+          const parsed = enrichParsedAnalysis(
+            data.raw_response || "",
+            data.parsed_json,
+          );
+          setAnalysisParsed(parsed);
+          setAnalysisJson(JSON.stringify(data.parsed_json, null, 2));
+          setAnalysisRaw(data.raw_response || "");
+          setPosition(extractPositionFromAnalysis(parsed));
+        }
+      } catch (_) {}
+    };
+    load();
+  }, [tradeSidFromRoute]);
   const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
@@ -3884,7 +3956,18 @@ export default function ChartSnapshotsPage() {
             "Invalid analysis response: entry, tp, sl are required in trade_plan.",
           );
         }
-        setPosition(extractPositionFromAnalysis(parsed));
+        setPosition((prev) => {
+          const next = extractPositionFromAnalysis(parsed);
+          console.log(
+            "[analyzeFiles] setPosition direction:",
+            next.direction,
+            "entry:",
+            next.entry,
+            "sl:",
+            next.sl,
+          );
+          return next;
+        });
         if (!cfg.symbol) {
           const nextSymbol = normalizeWatchSymbol(parsed?.symbol || "");
           if (nextSymbol) {
@@ -3905,6 +3988,13 @@ export default function ChartSnapshotsPage() {
         }
       }
       setUsedFiles(Array.isArray(out?.used_files) ? out.used_files : []);
+
+      // Navigate to trade page using trade_sid from response (after all state updates)
+      if (out?.trade_sid) {
+        navigate(`/ai/trade/${encodeURIComponent(out.trade_sid)}`, {
+          replace: true,
+        });
+      }
       if (!files.length)
         setAnalysisFilesDisplay(
           Array.isArray(out?.used_files) ? out.used_files : [],
@@ -4802,6 +4892,22 @@ export default function ChartSnapshotsPage() {
     navigate,
   ]);
 
+  // Reset analysis state when navigating from trade/result back to analyze
+  const prevIsTradeRef = useRef(isTradeRoute);
+  useEffect(() => {
+    const wasTrade = prevIsTradeRef.current;
+    prevIsTradeRef.current = isTradeRoute;
+    if (!isTradeRoute && wasTrade) {
+      setAnalysisRaw("");
+      setAnalysisJson("");
+      setAnalysisParsed(null);
+      setPosition(buildDefaultPosition(null));
+      setResponseTab("chart");
+      setUsedFiles([]);
+      setAnalysisFilesDisplay([]);
+    }
+  }, [isTradeRoute]);
+
   useEffect(() => {
     loadWatchlist();
     loadTemplatesFromDb();
@@ -4875,26 +4981,22 @@ export default function ChartSnapshotsPage() {
   }, [searchTerm]);
 
   useEffect(() => {
-    console.log(
-      "[pos-sync] effect FIRED, effectiveParsed type:",
-      typeof effectiveParsed,
-      "keys:",
-      effectiveParsed ? Object.keys(effectiveParsed).length : 0,
-    );
-    if (!effectiveParsed || typeof effectiveParsed !== "object") {
-      console.log("[pos-sync] skip: effectiveParsed null or not object");
-      return;
-    }
+    if (!effectiveParsed || typeof effectiveParsed !== "object") return;
     const pos = extractPositionFromAnalysis(effectiveParsed);
-    console.log(
-      "[pos-sync] setting position entry:",
-      pos?.entry,
-      "sl:",
-      pos?.sl,
-      "tp:",
-      pos?.tp,
-    );
-    setPosition(pos);
+    // Only update position if effectiveParsed has real trade data (entry/sl/direction).
+    // Skip when effectiveParsed is from bars metadata (no AI analysis) to avoid
+    // overwriting a valid SELL direction with BUY fallback.
+    const hasEntry =
+      Number.isFinite(parseNum(pos?.entry)) && parseNum(pos?.entry) > 0;
+    const hasSl = Number.isFinite(parseNum(pos?.sl)) && parseNum(pos?.sl) > 0;
+    const hasDirection = pos?.direction === "SELL" || pos?.direction === "BUY";
+    if (hasEntry || hasSl || hasDirection) {
+      setPosition((prev) => {
+        // Preserve existing direction if new position has no direction
+        const nextDir = pos.direction || prev.direction || "BUY";
+        return { ...pos, direction: nextDir };
+      });
+    }
   }, [effectiveParsed]);
 
   useEffect(() => {
