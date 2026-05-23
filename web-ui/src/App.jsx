@@ -10,6 +10,9 @@ import DashboardPage from "./pages/DashboardPage";
 const ChartSnapshotsPage = lazy(() => import("./pages/ai/ChartSnapshotsPage"));
 const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
+const ProfilePage = lazy(() => import("./pages/settings/ProfilePage"));
+const CronPage = lazy(() => import("./pages/settings/CronPage"));
+const ProvidersPage = lazy(() => import("./pages/settings/ProvidersPage"));
 const LogsPage = lazy(() => import("./pages/system/LogsPage"));
 const DatabasePage = lazy(() => import("./pages/system/DatabasePage"));
 const HealthPage = lazy(() => import("./pages/system/HealthPage"));
@@ -44,7 +47,10 @@ export default function App() {
     String(authUser?.role || "").toLowerCase() === "system";
   const settingsMenuActive = useMemo(() => {
     const p = String(location?.pathname || "");
-    return p.startsWith("/profile") || p.startsWith("/settings");
+    return (
+      p.startsWith("/settings") ||
+      p.startsWith("/profile")
+    );
   }, [location?.pathname]);
   const systemMenuActive = useMemo(() => {
     const p = String(location?.pathname || "");
@@ -302,8 +308,11 @@ export default function App() {
             </button>
             <div className="nav-dropdown-menu">
               <NavLink to="/settings/profile">Profile</NavLink>
+              <NavLink to="/settings/notifications">Notifications</NavLink>
+              <NavLink to="/settings/accounts">Accounts</NavLink>
+              <NavLink to="/settings/crons">Cron</NavLink>
+              <NavLink to="/settings/providers">Providers</NavLink>
               <NavLink to="/settings">Settings</NavLink>
-              <NavLink to="/system/accounts">Accounts</NavLink>
               <hr
                 style={{
                   border: "0",
@@ -374,24 +383,29 @@ export default function App() {
               element={<ChartSnapshotsPage />}
             />
             <Route
-              path="/settings"
+              path="/settings/profile"
               element={
-                <SettingsPage
+                <ProfilePage
                   authUser={authUser}
                   onUserUpdate={handleUserUpdate}
-                  mode="settings"
                 />
               }
             />
             <Route
-              path="/settings/profile"
-              element={
-                <SettingsPage
-                  authUser={authUser}
-                  onUserUpdate={handleUserUpdate}
-                  mode="profile"
-                />
-              }
+              path="/settings/crons"
+              element={<CronPage />}
+            />
+            <Route
+              path="/settings/providers"
+              element={<ProvidersPage />}
+            />
+            <Route
+              path="/settings/accounts"
+              element={<AccountsV2Page />}
+            />
+            <Route
+              path="/settings"
+              element={<SettingsPage />}
             />
             <Route
               path="/system/files"
