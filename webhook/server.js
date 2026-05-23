@@ -5834,7 +5834,8 @@ async function loadAiConfig() {
     const dec = decryptObject(
       row?.data && typeof row.data === "object" ? row.data : {},
     );
-    cfg[name] = String(dec?.value || "").trim();
+    // New provider schema: { models, api_key, remain_credits }
+    cfg[name] = String(dec?.api_key || dec?.value || "").trim();
   }
   // Fallback to env vars for providers not yet saved in UI settings
   if (!cfg.OPENROUTER_API_KEY)
@@ -10760,6 +10761,10 @@ async function _mt5InitBackendInternal() {
       }
     },
   };
+  // Run provider schema migration on startup
+  migrateProviderSchema().catch((err) =>
+    console.warn("[Migration] Provider schema startup migration error:", err.message),
+  );
   return MT5_BACKEND;
 }
 
@@ -12127,14 +12132,55 @@ async function loadUserApiKeysMap(userId) {
     const dec = decryptObject(
       row?.data && typeof row.data === "object" ? row.data : {},
     );
-    if (ALLOWED_AI_API_KEY_NAMES.has(name) && dec?.value) {
-      out[name] = String(dec.value || "");
+    if (ALLOWED_AI_API_KEY_NAMES.has(name)) {
+      // New provider schema: { models, api_key, remain_credits }
+      if (dec?.api_key) {
+        out[name] = String(dec.api_key || "");
+      } else if (dec?.value) {
+        // Legacy format: { value: "sk-xxx" }
+        out[name] = String(dec.value || "");
+      }
     }
     if (dec && typeof dec === "object") {
       Object.assign(out, dec);
     }
   }
   return out;
+}
+
+// ── Provider schema migration ──
+async function migrateProviderSchema() {
+  try {
+    const db = await mt5InitBackend();
+    const { rows } = await db.query(
+      "SELECT user_id, name, data FROM user_settings WHERE type = 'api_key' AND data->>'api_key' IS NULL",
+    );
+    let migrated = 0;
+    for (const row of rows || []) {
+      const dec = decryptObject(
+        row?.data && typeof row.data === "object" ? row.data : {},
+      );
+      const oldKey = String(dec?.value || dec?.api_key || "").trim();
+      const newData = {
+        models: Array.isArray(dec?.models) ? dec.models : [],
+        api_key: oldKey,
+        remain_credits: Number.isFinite(Number(dec?.remain_credits))
+          ? Number(dec.remain_credits)
+          : 0,
+      };
+      const enc = encryptObject(newData);
+      await db.query(
+        "UPDATE user_settings SET data = $1 WHERE user_id = $2 AND type = 'api_key' AND name = $3",
+        [JSON.stringify(enc), row.user_id, row.name],
+      );
+      migrated++;
+    }
+    if (migrated > 0) {
+      console.log(`[Migration] Provider schema: migrated ${migrated} api_key settings to new format`);
+    }
+  } catch (err) {
+    console.warn("[Migration] Provider schema migration failed:", err.message);
+  }
 }
 
 function isCryptoPair(symbol) {
@@ -17395,12 +17441,17 @@ const appHandler = async (req, res) => {
             d = { value: r.value };
           }
         }
-        // For api_key type, decrypt and mask the real key value for display
+        // For api_key type, decrypt and mask the api_key field for display
         if (r.type === "api_key" && d && typeof d === "object") {
           const decrypted = decryptObject(d);
-          const masked = {};
-          for (const [k, v] of Object.entries(decrypted)) {
-            masked[k] = maskApiKeyForDisplay(String(v || ""));
+          // Only mask the api_key field; models and remain_credits shown as-is
+          const masked = { ...decrypted };
+          if (masked.api_key) {
+            masked.api_key = maskApiKeyForDisplay(String(masked.api_key || ""));
+          }
+          // Legacy: mask value field if present
+          if (masked.value) {
+            masked.value = maskApiKeyForDisplay(String(masked.value || ""));
           }
           return { ...r, data: masked };
         }

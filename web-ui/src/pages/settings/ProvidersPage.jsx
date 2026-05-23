@@ -2,17 +2,56 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
 
-// ── Constants (copied from SettingsPage) ────────────────────────────────────
+// ── Provider definitions ──────────────────────────────────────────────────
 
-const API_KEY_NAME_OPTIONS = [
-  { value: "GEMINI_API_KEY", label: "Gemini API Key" },
-  { value: "OPENAI_API_KEY", label: "OpenAI API Key" },
-  { value: "DEEPSEEK_API_KEY", label: "DeepSeek API Key" },
-  { value: "CLAUDE_API_KEY", label: "Claude API Key" },
-  { value: "OPENROUTER_API_KEY", label: "OpenRouter API Key" },
-  { value: "TWELVE_DATA_API_KEY", label: "Twelve Data API Key" },
+const PROVIDERS = [
+  {
+    name: "GEMINI_API_KEY",
+    label: "Gemini",
+    models: [
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+      "gemini-2.0-flash",
+    ],
+  },
+  {
+    name: "OPENAI_API_KEY",
+    label: "OpenAI",
+    models: ["gpt-4o", "gpt-4.1", "gpt-4o-mini", "o3-mini"],
+  },
+  {
+    name: "DEEPSEEK_API_KEY",
+    label: "DeepSeek",
+    models: ["deepseek-chat", "deepseek-r1"],
+  },
+  {
+    name: "CLAUDE_API_KEY",
+    label: "Claude",
+    models: [
+      "claude-sonnet-4-0",
+      "claude-sonnet-4-20250514",
+      "claude-3.5-sonnet",
+    ],
+  },
+  {
+    name: "OPENROUTER_API_KEY",
+    label: "OpenRouter",
+    models: [
+      "openai/gpt-4o",
+      "openai/gpt-4.1",
+      "openai/o3-mini",
+      "anthropic/claude-sonnet-4-20250514",
+      "google/gemini-2.5-flash",
+      "deepseek/deepseek-chat",
+      "meta-llama/llama-4-maverick",
+    ],
+  },
+  {
+    name: "TWELVE_DATA_API_KEY",
+    label: "Twelve Data",
+    models: [],
+  },
 ];
-const STANDARD_API_KEY_NAMES = API_KEY_NAME_OPTIONS.map((x) => x.value);
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -23,6 +62,18 @@ function maskSecretPreview(value) {
   return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
 }
 
+function normalizeProviderName(raw) {
+  const s = String(raw || "").toUpperCase().replace(/\s+/g, "_");
+  // Map old names
+  if (s === "GEMINI" || s === "GOOGLE_GEMINI") return "GEMINI_API_KEY";
+  if (s === "OPENAI") return "OPENAI_API_KEY";
+  if (s === "DEEPSEEK") return "DEEPSEEK_API_KEY";
+  if (s === "CLAUDE" || s === "ANTHROPIC") return "CLAUDE_API_KEY";
+  if (s === "OPENROUTER") return "OPENROUTER_API_KEY";
+  if (s === "TWELVE_DATA" || s === "TWELVEDATA") return "TWELVE_DATA_API_KEY";
+  return s;
+}
+
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ProvidersPage() {
@@ -30,38 +81,79 @@ export default function ProvidersPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [revealedValues, setRevealedValues] = useState({});
-  const [newSettingForm, setNewSettingForm] = useState({
-    type: "api_key",
-    name: "GEMINI_API_KEY",
-    value: "",
-  });
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [saveBusyKeys, setSaveBusyKeys] = useState({});
+  const [selectedProvider, setSelectedProvider] = useState("GEMINI_API_KEY");
+  const [saveBusy, setSaveBusy] = useState(false);
 
   // ── Derived ─────────────────────────────────────────────────────────────
 
   const apiKeySettings = useMemo(
-    () => settings.filter((s) => String(s.type || "").toLowerCase() === "api_key"),
+    () =>
+      settings.filter(
+        (s) => String(s.type || "").toLowerCase() === "api_key",
+      ),
     [settings],
   );
 
+  // Build provider map from settings
+  const providerMap = useMemo(() => {
+    const map = {};
+    for (const prov of PROVIDERS) {
+      const setting = apiKeySettings.find(
+        (s) => normalizeProviderName(s.name) === prov.name,
+      );
+      const data =
+        setting?.data && typeof setting.data === "object" ? setting.data : {};
+      map[prov.name] = {
+        setting: setting || null,
+        data: {
+          models: Array.isArray(data.models) ? data.models : [],
+          api_key: String(data.api_key || data.value || ""),
+          remain_credits: Number.isFinite(Number(data.remain_credits))
+            ? Number(data.remain_credits)
+            : 0,
+        },
+        status: setting?.status || "INACTIVE",
+      };
+    }
+    return map;
+  }, [apiKeySettings]);
+
+  const currentProvider = useMemo(
+    () => providerMap[selectedProvider] || null,
+    [providerMap, selectedProvider],
+  );
+
+  const currentProvDef = useMemo(
+    () => PROVIDERS.find((p) => p.name === selectedProvider) || PROVIDERS[0],
+    [selectedProvider],
+  );
+
+  // ── Local form state for current provider ──────────────────────────────
+
+  const [form, setForm] = useState({ models: [], api_key: "", remain_credits: 0 });
+
+  useEffect(() => {
+    if (currentProvider) {
+      setForm({
+        models: [...currentProvider.data.models],
+        api_key: currentProvider.data.api_key,
+        remain_credits: currentProvider.data.remain_credits,
+      });
+    }
+  }, [selectedProvider, currentProvider?.data?.api_key]);
+
   // ── Reveal helpers ──────────────────────────────────────────────────────
 
-  const getSettingKey = (s) =>
-    `${String(s?.type || "")}::${String(s?.name || "")}`;
-  const getRevealKey = (settingKey, fieldKey) =>
-    `${String(settingKey || "")}::${String(fieldKey || "")}`;
-  const isRevealed = (settingKey, fieldKey) =>
-    Boolean(revealedValues[getRevealKey(settingKey, fieldKey)]);
-  const getRevealedValue = (settingKey, fieldKey) =>
-    revealedValues[getRevealKey(settingKey, fieldKey)] || "";
-  const showRevealed = (settingKey, fieldKey, plainValue) => {
-    const key = getRevealKey(settingKey, fieldKey);
-    setRevealedValues((prev) => ({ ...prev, [key]: plainValue }));
+  const getRevealKey = () => `api_key::${selectedProvider}::api_key`;
+  const isRevealed = () => Boolean(revealedValues[getRevealKey()]);
+  const getRevealedValue = () => revealedValues[getRevealKey()] || "";
+
+  const showRevealed = (plainValue) => {
+    setRevealedValues((prev) => ({ ...prev, [getRevealKey()]: plainValue }));
   };
-  const hideRevealed = (settingKey, fieldKey) => {
-    const key = getRevealKey(settingKey, fieldKey);
+  const hideRevealed = () => {
     setRevealedValues((prev) => {
+      const key = getRevealKey();
       if (!(key in prev)) return prev;
       const next = { ...prev };
       delete next[key];
@@ -95,16 +187,15 @@ export default function ProvidersPage() {
     }
   };
 
-  const revealApiKeyField = async (setting, fieldKey = "value") => {
-    const settingKey = getSettingKey(setting);
+  const revealApiKey = async () => {
     try {
       const out = await api.getSettingSecret(
-        setting.type,
-        setting.name,
-        fieldKey,
+        "api_key",
+        selectedProvider,
+        "api_key",
       );
       const plain = String(out?.value || "");
-      showRevealed(settingKey, fieldKey, plain);
+      showRevealed(plain);
       return plain;
     } catch (err) {
       setMsg(err?.message || "Failed to reveal secret.");
@@ -120,20 +211,7 @@ export default function ProvidersPage() {
       const res = await api.getSettings();
       if (res?.settings) {
         const list = Array.isArray(res.settings) ? res.settings : [];
-        const existingApiNames = new Set(
-          list
-            .filter((x) => String(x?.type || "").toLowerCase() === "api_key")
-            .map((x) => String(x?.name || "").toUpperCase()),
-        );
-        const missingApiRows = STANDARD_API_KEY_NAMES.filter(
-          (name) => !existingApiNames.has(name),
-        ).map((name) => ({
-          type: "api_key",
-          name,
-          status: "INACTIVE",
-          data: { value: "" },
-        }));
-        setSettings([...list, ...missingApiRows]);
+        setSettings(list);
       }
       setMsg("");
     } catch (err) {
@@ -150,203 +228,174 @@ export default function ProvidersPage() {
 
   // ── Mutations ───────────────────────────────────────────────────────────
 
-  function updateSettingField(settingKey, field, value) {
-    setSettings((prev) =>
-      prev.map((x) =>
-        getSettingKey(x) === settingKey
-          ? { ...x, data: { ...x.data, [field]: value } }
-          : x,
-      ),
-    );
-  }
+  const toggleModel = (model) => {
+    setForm((prev) => {
+      const exists = prev.models.includes(model);
+      return {
+        ...prev,
+        models: exists
+          ? prev.models.filter((m) => m !== model)
+          : [...prev.models, model],
+      };
+    });
+  };
 
-  async function saveSetting(s, statusOverride = null) {
-    const key = getSettingKey(s);
-    setSaveBusyKeys((prev) => ({ ...prev, [key]: true }));
+  async function saveProvider() {
+    setSaveBusy(true);
     setMsg("");
+    const existing = currentProvider?.setting;
     const payload = {
-      type: s.type,
-      name: s.name,
-      data: s.data,
-      status: statusOverride ?? s.status ?? "ACTIVE",
+      type: "api_key",
+      name: existing?.name || selectedProvider,
+      data: {
+        models: form.models,
+        api_key: String(form.api_key || ""),
+        remain_credits: Number(form.remain_credits || 0),
+      },
+      status: currentProvider?.status || "ACTIVE",
     };
     try {
       await api.upsertSetting(payload);
-      const successMsg = `Settings for ${s.type}/${s.name} saved.`;
-      showToast({ message: successMsg, type: "success" });
+      showToast({
+        message: `${currentProvDef.label} settings saved.`,
+        type: "success",
+      });
       await loadData();
     } catch (err) {
       const errMsg = err?.message || String(err || "Unknown error");
       setMsg(errMsg);
       showToast({ message: errMsg, type: "error" });
     } finally {
-      setSaveBusyKeys((prev) => {
-        const next = { ...prev };
-        delete next[key];
-        return next;
+      setSaveBusy(false);
+    }
+  }
+
+  async function toggleStatus() {
+    const newStatus =
+      String(currentProvider?.status || "").toUpperCase() === "ACTIVE"
+        ? "INACTIVE"
+        : "ACTIVE";
+    setSaveBusy(true);
+    try {
+      const existing = currentProvider?.setting;
+      if (existing) {
+        await api.upsertSetting({
+          type: "api_key",
+          name: existing.name,
+          data: existing.data,
+          status: newStatus,
+        });
+      }
+      showToast({
+        message: `${currentProvDef.label} ${newStatus}`,
+        type: "success",
       });
-    }
-  }
-
-  async function deleteSetting(s) {
-    if (!window.confirm(`Delete setting ${s.type}/${s.name}?`)) return;
-    setLoading(true);
-    try {
-      await api.deleteSetting(s.type, s.name);
-      setMsg(`Setting ${s.type}/${s.name} deleted.`);
       await loadData();
     } catch (err) {
-      setMsg(err?.message || "Failed to delete setting.");
+      setMsg(err?.message || "Failed to update status.");
     } finally {
-      setLoading(false);
-      window.setTimeout(() => setMsg(""), 3000);
+      setSaveBusy(false);
     }
   }
 
-  async function createSetting() {
-    const { type, name, value } = newSettingForm;
-    if (!type || !name) {
-      setMsg("Type and Name are required.");
+  async function deleteProvider() {
+    if (
+      !window.confirm(
+        `Delete ${currentProvDef.label} settings? This cannot be undone.`,
+      )
+    )
       return;
-    }
-    setLoading(true);
+    setSaveBusy(true);
     try {
-      const data = { value: String(value || "") };
-      await api.upsertSetting({ type, name, data, status: "ACTIVE" });
-      setMsg(`Setting ${type}/${name} created.`);
-      setShowAddForm(false);
-      setNewSettingForm({ type: "api_key", name: "GEMINI_API_KEY", value: "" });
+      const existing = currentProvider?.setting;
+      if (existing) {
+        await api.deleteSetting("api_key", existing.name);
+      }
+      showToast({
+        message: `${currentProvDef.label} deleted.`,
+        type: "success",
+      });
       await loadData();
     } catch (err) {
-      setMsg(err?.message || "Failed to create setting.");
+      setMsg(err?.message || "Failed to delete.");
     } finally {
-      setLoading(false);
-      window.setTimeout(() => setMsg(""), 3000);
+      setSaveBusy(false);
     }
   }
 
   // ── Render ──────────────────────────────────────────────────────────────
 
+  const visible = isRevealed();
+  const showApiKey = visible ? getRevealedValue() : form.api_key;
+
   return (
     <div className="stack-layout fadeIn">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <h1 className="page-title">Providers (API Keys)</h1>
-        <button
-          className={showAddForm ? "secondary-button active" : "primary-button"}
-          style={{ padding: "10px 20px", fontSize: 13 }}
-          onClick={() => setShowAddForm((prev) => !prev)}
-        >
-          {showAddForm ? "Cancel" : "+ Add API Key"}
-        </button>
-      </div>
+      <h1 className="page-title">Providers</h1>
 
-      {/* ── Add new form ──────────────────────────────────────────────── */}
-      {showAddForm && (
-        <div
-          className="panel stack-layout"
-          style={{ gap: 12, padding: 20 }}
-        >
-          <span className="panel-label">New API Key</span>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 12,
-            }}
-          >
-            <label className="stack-layout" style={{ gap: 4 }}>
-              <span className="minor-text">Type</span>
-              <input
-                type="text"
-                value={newSettingForm.type}
-                readOnly
-              />
-            </label>
-            <label className="stack-layout" style={{ gap: 4 }}>
-              <span className="minor-text">Name</span>
-              <select
-                value={newSettingForm.name}
-                onChange={(e) =>
-                  setNewSettingForm((prev) => ({
-                    ...prev,
-                    name: e.target.value,
-                  }))
-                }
-              >
-                {API_KEY_NAME_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="stack-layout" style={{ gap: 4 }}>
-            <span className="minor-text">Value</span>
-            <textarea
-              rows={3}
-              value={newSettingForm.value}
-              onChange={(e) =>
-                setNewSettingForm((prev) => ({
-                  ...prev,
-                  value: e.target.value,
-                }))
-              }
-              placeholder="Enter API key value..."
-            />
-          </label>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button
-              className="primary-button"
-              style={{ padding: "8px 24px", fontSize: 13 }}
-              onClick={createSetting}
-              disabled={loading}
-            >
-              {loading ? "CREATING..." : "Create"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Global message ────────────────────────────────────────────── */}
-      {msg && (
-        <div className="minor-text" style={{ color: "var(--success)" }}>
-          {msg}
-        </div>
-      )}
-
-      {/* ── Loading ───────────────────────────────────────────────────── */}
-      {loading && apiKeySettings.length === 0 && (
-        <div className="minor-text">Loading API keys...</div>
-      )}
-
-      {/* ── Grid of API key settings ──────────────────────────────────── */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: 20,
+          gridTemplateColumns: "240px 1fr",
+          gap: 24,
+          marginTop: 12,
         }}
       >
-        {apiKeySettings.map((s) => {
-          const settingKey = getSettingKey(s);
-          const isBusy = Boolean(saveBusyKeys[settingKey]);
-          const isActive =
-            String(s?.status || "").toUpperCase() === "ACTIVE";
+        {/* Left: Provider list */}
+        <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
+          <div className="panel-label" style={{ marginBottom: 8 }}>
+            PROVIDERS
+          </div>
+          {PROVIDERS.map((prov) => {
+            const info = providerMap[prov.name];
+            const isActive =
+              String(info?.status || "").toUpperCase() === "ACTIVE";
+            const hasKey = Boolean(
+              info?.data?.api_key || info?.data?.value,
+            );
+            return (
+              <button
+                key={prov.name}
+                className={`sidebar-item-v2 ${selectedProvider === prov.name ? "active" : ""}`}
+                onClick={() => setSelectedProvider(prov.name)}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "8px 12px",
+                }}
+              >
+                <span>{prov.label}</span>
+                <span
+                  style={{
+                    fontSize: 9,
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    background: hasKey
+                      ? isActive
+                        ? "rgba(34,197,94,0.2)"
+                        : "rgba(255,255,255,0.08)"
+                      : "rgba(255,255,255,0.04)",
+                    color: hasKey
+                      ? isActive
+                        ? "#22c55e"
+                        : "var(--muted)"
+                      : "var(--muted)",
+                  }}
+                >
+                  {hasKey ? (isActive ? "ACTIVE" : "SET") : "EMPTY"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-          return (
-            <div
-              key={settingKey}
-              className="panel stack-layout"
-              style={{ gap: 12, padding: 20 }}
-            >
-              {/* Header row */}
+        {/* Right: Edit form */}
+        <div className="panel stack-layout" style={{ gap: 16, padding: 24 }}>
+          {loading ? (
+            <div className="minor-text">Loading...</div>
+          ) : (
+            <>
+              {/* Header */}
               <div
                 style={{
                   display: "flex",
@@ -354,162 +403,205 @@ export default function ProvidersPage() {
                   alignItems: "center",
                 }}
               >
-                <span className="panel-label" style={{ fontSize: 14 }}>
-                  {s.name}
-                </span>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span
-                    className="minor-text"
-                    style={{
-                      color: isActive ? "var(--success)" : "var(--muted)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {isActive ? "ACTIVE" : "INACTIVE"}
+                <div>
+                  <h3 style={{ margin: 0 }}>{currentProvDef.label}</h3>
+                  <span className="minor-text" style={{ fontSize: 11 }}>
+                    {currentProvDef.name}
                   </span>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
                   <button
-                    type="button"
-                    className="secondary-button"
-                    style={{ padding: "4px 10px", fontSize: 11 }}
-                    onClick={() => {
-                      const nextStatus = isActive ? "INACTIVE" : "ACTIVE";
-                      saveSetting(
-                        { ...s, status: nextStatus },
-                        nextStatus,
-                      );
-                    }}
-                    title={isActive ? "Deactivate" : "Activate"}
+                    className={
+                      String(currentProvider?.status || "").toUpperCase() ===
+                      "ACTIVE"
+                        ? "secondary-button"
+                        : "primary-button"
+                    }
+                    style={{ padding: "6px 14px", fontSize: 12 }}
+                    onClick={toggleStatus}
+                    disabled={saveBusy}
                   >
-                    {isActive ? "Deactivate" : "Activate"}
+                    {String(currentProvider?.status || "").toUpperCase() ===
+                    "ACTIVE"
+                      ? "Deactivate"
+                      : "Activate"}
+                  </button>
+                  <button
+                    className="danger-button"
+                    style={{ padding: "6px 14px", fontSize: 12 }}
+                    onClick={deleteProvider}
+                    disabled={saveBusy || !currentProvider?.setting}
+                  >
+                    Delete
                   </button>
                 </div>
               </div>
 
-              {/* Data fields */}
-              {Object.entries(s.data || {}).map(([fieldKey, val]) => {
-                const visible = isRevealed(settingKey, fieldKey);
-                return (
-                  <label
-                    key={fieldKey}
-                    className="stack-layout"
-                    style={{ gap: 4 }}
-                  >
-                    <span className="minor-text" style={{ fontSize: 11 }}>
-                      {fieldKey}
-                    </span>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 6,
-                        alignItems: "center",
-                      }}
-                    >
-                      <input
-                        type={visible ? "text" : "password"}
-                        value={
-                          visible
-                            ? getRevealedValue(settingKey, fieldKey)
-                            : String(val || "")
-                        }
-                        readOnly={visible}
-                        onChange={
-                          visible
-                            ? undefined
-                            : (e) =>
-                                updateSettingField(
-                                  settingKey,
-                                  fieldKey,
-                                  e.target.value,
-                                )
-                        }
-                        style={{ flex: 1 }}
-                      />
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        style={{ padding: "4px 8px", fontSize: 11 }}
-                        onClick={async () => {
-                          if (!visible) {
-                            await revealApiKeyField(s, fieldKey);
-                          } else {
-                            hideRevealed(settingKey, fieldKey);
-                          }
-                        }}
-                        title={visible ? "Hide value" : "Show value"}
-                      >
-                        {visible ? "Hide" : "Eye"}
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        style={{ padding: "4px 8px", fontSize: 11 }}
-                        onClick={async () => {
-                          const plain = await revealApiKeyField(s, fieldKey);
-                          if (!plain) {
-                            setMsg(`${fieldKey}: empty value, nothing copied.`);
-                            return;
-                          }
-                          await copySecretToClipboard(plain, fieldKey);
-                        }}
-                        title="Copy decrypted value to clipboard"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    {!visible && String(val || "").length > 0 && (
-                      <span
-                        className="minor-text"
-                        style={{ fontSize: 10, opacity: 0.9 }}
-                      >
-                        {maskSecretPreview(val)}
-                      </span>
-                    )}
-                  </label>
-                );
-              })}
+              {/* Status badge */}
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <span
+                  className={`status-badge ${
+                    String(currentProvider?.status || "").toUpperCase() ===
+                    "ACTIVE"
+                      ? "ACTIVE"
+                      : "INACTIVE"
+                  }`}
+                  style={{ fontSize: 10, padding: "3px 8px" }}
+                >
+                  {currentProvider?.status || "INACTIVE"}
+                </span>
+              </div>
 
-              {/* If no data fields */}
-              {Object.keys(s.data || {}).length === 0 && (
-                <div className="minor-text">No data fields.</div>
+              {/* Models */}
+              {currentProvDef.models.length > 0 && (
+                <div className="stack-layout" style={{ gap: 8 }}>
+                  <span className="panel-label">Models</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                    }}
+                  >
+                    {currentProvDef.models.map((model) => {
+                      const selected = form.models.includes(model);
+                      return (
+                        <button
+                          key={model}
+                          type="button"
+                          className={`secondary-button snapshot-tag-v2 ${selected ? "active" : ""}`}
+                          onClick={() => toggleModel(model)}
+                          style={{
+                            fontSize: 11,
+                            padding: "4px 10px",
+                          }}
+                        >
+                          {model}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
+
+              {/* API Key */}
+              <div className="stack-layout" style={{ gap: 6 }}>
+                <span className="panel-label">API Key</span>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    type={visible ? "text" : "password"}
+                    value={showApiKey}
+                    readOnly={visible}
+                    onChange={
+                      visible
+                        ? undefined
+                        : (e) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              api_key: e.target.value,
+                            }))
+                    }
+                    style={{ flex: 1 }}
+                    placeholder="Enter API key..."
+                  />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ padding: "4px 8px", fontSize: 11 }}
+                    onClick={async () => {
+                      if (!visible) {
+                        await revealApiKey();
+                      } else {
+                        hideRevealed();
+                      }
+                    }}
+                    title={visible ? "Hide" : "Reveal"}
+                  >
+                    {visible ? "Hide" : "Eye"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{ padding: "4px 8px", fontSize: 11 }}
+                    onClick={async () => {
+                      const plain = await revealApiKey();
+                      if (plain) {
+                        await copySecretToClipboard(plain, "API Key");
+                      } else {
+                        setMsg("API Key: empty value, nothing copied.");
+                      }
+                    }}
+                    title="Copy decrypted value"
+                  >
+                    Copy
+                  </button>
+                </div>
+                {!visible && form.api_key && (
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 10, opacity: 0.9 }}
+                  >
+                    {maskSecretPreview(form.api_key)}
+                  </span>
+                )}
+              </div>
+
+              {/* Remain Credits */}
+              <div className="stack-layout" style={{ gap: 6 }}>
+                <span className="panel-label">Remain Credits</span>
+                <input
+                  type="number"
+                  min="0"
+                  value={form.remain_credits}
+                  onChange={(e) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      remain_credits: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: 160 }}
+                />
+              </div>
 
               {/* Actions */}
               <div
                 style={{
                   display: "flex",
-                  gap: 8,
                   justifyContent: "flex-end",
-                  paddingTop: 8,
+                  gap: 8,
+                  marginTop: 8,
+                  paddingTop: 16,
                   borderTop: "1px solid var(--border)",
-                  marginTop: 4,
                 }}
               >
                 <button
-                  type="button"
-                  className="danger-button"
-                  style={{ padding: "6px 16px", fontSize: 12 }}
-                  onClick={() => deleteSetting(s)}
-                >
-                  Delete
-                </button>
-                <button
-                  type="button"
                   className="primary-button"
-                  style={{ padding: "6px 24px", fontSize: 12 }}
-                  onClick={() => saveSetting(s)}
-                  disabled={isBusy}
+                  style={{ padding: "10px 32px", fontSize: 13 }}
+                  onClick={saveProvider}
+                  disabled={saveBusy}
                 >
-                  {isBusy ? "SAVING..." : "Save"}
+                  {saveBusy ? "SAVING..." : "Save"}
                 </button>
               </div>
-            </div>
-          );
-        })}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* ── Empty state ────────────────────────────────────────────────── */}
-      {!loading && apiKeySettings.length === 0 && (
-        <div className="minor-text">No API key settings found.</div>
+      {/* Global message */}
+      {msg && (
+        <div
+          className="minor-text"
+          style={{ color: "var(--success)", marginTop: 12 }}
+        >
+          {msg}
+        </div>
       )}
     </div>
   );
