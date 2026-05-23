@@ -43,8 +43,6 @@ export default function SettingsPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [jsonDetailText, setJsonDetailText] = useState("");
   const [symbolsDetailText, setSymbolsDetailText] = useState("");
-  const [watchlistText, setWatchlistText] = useState("");
-
   const [activeTab, setActiveTab] = useState("");
 
   // ── Reveal helpers ────────────────────────────────────────────────────────
@@ -269,23 +267,6 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveWatchlist() {
-    const s = settings.find(
-      (x) =>
-        String(x.type || "").toLowerCase() === "trade" &&
-        String(x.name || "").toUpperCase() === "WATCHLIST",
-    );
-    if (!s) return;
-    await saveSetting(
-      getSettingKey(s),
-      {
-        ...(s.data || {}),
-        symbols: parseSymbolText(watchlistText),
-      },
-      s.status,
-    );
-  }
-
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const selectedSetting = useMemo(
@@ -301,34 +282,6 @@ export default function SettingsPage() {
       }),
     [settings],
   );
-
-  const watchlistSetting = useMemo(
-    () =>
-      settings.find(
-        (s) =>
-          String(s.type || "").toLowerCase() === "trade" &&
-          String(s.name || "").toUpperCase() === "WATCHLIST",
-      ) || null,
-    [settings],
-  );
-
-  // ── Watchlist sync ────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const arr = Array.isArray(watchlistSetting?.data?.symbols)
-      ? watchlistSetting.data.symbols
-      : [];
-    setWatchlistText(
-      arr
-        .map((x) =>
-          String(x || "")
-            .trim()
-            .toUpperCase(),
-        )
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }, [watchlistSetting?.name, watchlistSetting?.data]);
 
   // ── Detail text sync ──────────────────────────────────────────────────────
 
@@ -482,67 +435,6 @@ export default function SettingsPage() {
           className="panel"
           style={{ margin: 0, minHeight: 600, overflowY: "auto" }}
         >
-          {/* Watchlist management (always visible at top) */}
-          {watchlistSetting && (
-            <div
-              className="fadeIn"
-              style={{
-                paddingBottom: 24,
-                marginBottom: 24,
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              <div className="panel-label">WATCHLIST</div>
-              <div className="stack-layout" style={{ gap: 10, marginTop: 12 }}>
-                <label className="stack-layout" style={{ gap: 6 }}>
-                  <span className="minor-text">Symbols (one per line)</span>
-                  <textarea
-                    rows={8}
-                    value={watchlistText}
-                    onChange={(e) => setWatchlistText(e.target.value)}
-                    placeholder={"BTCUSD\nGBPJPY\nXAUUSD"}
-                  />
-                </label>
-                <div
-                  style={{ display: "flex", gap: 12, alignItems: "center" }}
-                >
-                  <select
-                    style={{
-                      padding: "4px 8px",
-                      fontSize: 11,
-                      borderRadius: 4,
-                      background: "var(--surface)",
-                      color: "var(--text)",
-                      border: "1px solid var(--border)",
-                    }}
-                    value={String(
-                      watchlistSetting.status || "ACTIVE",
-                    ).toUpperCase()}
-                    onChange={(e) =>
-                      setSettings((prev) =>
-                        prev.map((s) =>
-                          getSettingKey(s) === getSettingKey(watchlistSetting)
-                            ? { ...s, status: e.target.value }
-                            : s,
-                        ),
-                      )
-                    }
-                  >
-                    <option value="ACTIVE">ACTIVE</option>
-                    <option value="INACTIVE">INACTIVE</option>
-                  </select>
-                  <button
-                    className="primary-button"
-                    onClick={saveWatchlist}
-                    disabled={settingsLoading}
-                  >
-                    {settingsLoading ? "SAVING..." : "SAVE WATCHLIST"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Selected setting detail */}
           {selectedSetting && (
             <div className="fadeIn">
