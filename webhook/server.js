@@ -149,7 +149,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.23 11:02 - 93d4eda0"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.23 11:39 - baf9f33a"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -19631,14 +19631,19 @@ const appHandler = async (req, res) => {
         ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
       if (!files.length) {
-        const allSnapshots = fs
-          .readdirSync(CHART_SNAPSHOT_DIR)
-          .filter((f) => /\.(png|jpg|jpeg)$/i.test(f))
-          .map((f) => {
-            const st = fs.statSync(path.join(CHART_SNAPSHOT_DIR, f));
-            return { f, t: Number(st.mtimeMs || 0) };
-          })
-          .sort((a, b) => b.t - a.t);
+        const allSnapshots = [];
+        // Scan top-level snapshots/ and per-symbol subdirectory
+        const scanDir = (dir) => {
+          if (!fs.existsSync(dir)) return;
+          for (const f of fs.readdirSync(dir)) {
+            if (!/\.(png|jpg|jpeg)$/i.test(f)) continue;
+            const st = fs.statSync(path.join(dir, f));
+            if (st.isFile()) allSnapshots.push({ f, t: Number(st.mtimeMs || 0) });
+          }
+        };
+        scanDir(CHART_SNAPSHOT_DIR);
+        if (requestedSymbol) scanDir(snapshotSymbolDir(requestedSymbol));
+        allSnapshots.sort((a, b) => b.t - a.t);
         const sessionMatched = reqSessionPrefix
           ? allSnapshots.filter((x) => x.f.includes(`_${reqSessionPrefix}_`))
           : [];
@@ -19731,8 +19736,25 @@ const appHandler = async (req, res) => {
           !/\.(png|jpg|jpeg)$/i.test(safeName)
         )
           continue;
-        const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
-        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+        // Check both top-level snapshots/ and snapshots/{SYMBOL}/ subdirectory
+        let abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+        if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+          // Try per-symbol subdirectory: snapshots/{SYMBOL}/file.jpg
+          const sym = normalizeSymbolLoose(
+            inferSymbolFromSnapshotFile(safeName),
+          );
+          if (sym) {
+            const symDir = snapshotSymbolDir(sym);
+            const symAbs = path.join(symDir, safeName);
+            if (fs.existsSync(symAbs) && fs.statSync(symAbs).isFile()) {
+              abs = symAbs;
+            } else {
+              continue;
+            }
+          } else {
+            continue;
+          }
+        }
         const mediaType = snapshotMimeByFileName(safeName);
         if (!mediaType) continue;
         snapshotFiles.push({ fileName: safeName, abs, mediaType });
