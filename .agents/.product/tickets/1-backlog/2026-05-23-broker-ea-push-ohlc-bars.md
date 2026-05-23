@@ -1,10 +1,11 @@
 # BROKER-CLIENT: EA Push OHLC Bars to Server
 
 **Ticket ID**: `BROKER-BARS-001`
-**Status**: BACKLOG
+**Status**: DONE
 **Tags**: `FEATURE`
 **Created**: 2026-05-23
 **Agent**: DeepSeek
+**Note**: cTrader is the primary bridge broker. MT5 implementation also exists.
 
 ## Scope
 
