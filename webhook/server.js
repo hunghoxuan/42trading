@@ -1707,6 +1707,59 @@ function parseTfTokenToSeconds(tfToken) {
   return 60;
 }
 
+// --- Snapshot timeframe canonicalization ---
+// Single source of truth: canonical TF token -> { seconds, label, tvInterval }
+const SNAPSHOT_TF_MAP = {
+  "1W": { seconds: 604800, label: "1W", tv: "W" },
+  "1D": { seconds: 86400,  label: "1D", tv: "D" },
+  "4H": { seconds: 14400,  label: "4h", tv: "240" },
+  "1H": { seconds: 3600,   label: "1h", tv: "60" },
+  "30m":{ seconds: 1800,   label: "30m",tv: "30" },
+  "15m":{ seconds: 900,    label: "15m",tv: "15" },
+  "5m": { seconds: 300,    label: "5m", tv: "5" },
+  "1m": { seconds: 60,     label: "1m", tv: "1" },
+};
+
+function normalizeSnapshotTfToken(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  if (!s) return "";
+  // Direct canonical matches
+  if (s === "1W" || s === "W" || s === "1WEEK" || s === "WEEK")  return "1W";
+  if (s === "1D" || s === "D" || s === "DAY" || s === "1DAY")    return "1D";
+  if (s === "4H" || s === "240" || s === "H4" || s === "4HOUR")   return "4H";
+  if (s === "1H" || s === "60" || s === "H1" || s === "1HOUR" || s === "HOUR") return "1H";
+  if (s === "30M" || s === "30" || s === "M30" || s === "30MIN")  return "30m";
+  if (s === "15M" || s === "15" || s === "M15" || s === "15MIN")  return "15m";
+  if (s === "5M" || s === "5" || s === "M5" || s === "5MIN")      return "5m";
+  if (s === "1M" || s === "1" || s === "M1" || s === "1MIN" || s === "MIN") return "1m";
+  // Numeric fallback: bare number = minutes
+  const n = Number(s);
+  if (Number.isFinite(n) && n > 0) {
+    if (n >= 10080) return "1W";
+    if (n >= 1440)  return "1D";
+    if (n >= 240)   return "4H";
+    if (n >= 60)    return "1H";
+    if (n >= 30)    return "30m";
+    if (n >= 15)    return "15m";
+    if (n >= 5)     return "5m";
+    return "1m";
+  }
+  return "";
+}
+
+function snapshotTfToSeconds(canonical) { return SNAPSHOT_TF_MAP[canonical]?.seconds || 60; }
+function snapshotTfToLabel(canonical)  { return SNAPSHOT_TF_MAP[canonical]?.label || canonical; }
+function snapshotTfToTVInterval(canonical) { return SNAPSHOT_TF_MAP[canonical]?.tv || canonical; }
+
+// Canonicalize, dedup, sort descending
+function canonicalizeTfList(tfList) {
+  const canonicals = tfList
+    .map(t => normalizeSnapshotTfToken(t))
+    .filter(Boolean);
+  return [...new Set(canonicals)]
+    .sort((a, b) => snapshotTfToSeconds(b) - snapshotTfToSeconds(a));
+}
+
 function estimateRequestedBarsRange({ tfNorm, bars, nowSec = nowUnixSec() }) {
   const sec = Math.max(60, parseTfTokenToSeconds(tfNorm));
   const count = Math.max(1, Number(bars) || 300);
@@ -4496,6 +4549,8 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
         ? Boolean(opts.merge_snapshots)
         : ALL_SNAPSHOTS_IN_1_FILE_DEFAULT;
     if (mergeSnapshots) {
+      // Deduplicate and sort timeframes: highest TF first
+      const uniqueTfs = canonicalizeTfList(timeframes);
       const results = [];
       for (const symbol of symbols) {
         try {
@@ -4503,7 +4558,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           const outFileName = `${symbol}_MASTER.${ext}`;
           const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
           // Use internal loopback to fetch the grid HTML
-          const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${symbol}?tfs=${timeframes.join(",")}&theme=${opts.theme || "dark"}`;
+          const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${symbol}?tfs=${uniqueTfs.join(",")}&theme=${opts.theme || "dark"}`;
 
           const context = await browser.newContext({
             viewport: { width: 1920, height: 1080 },
@@ -4545,8 +4600,8 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
 
           await page.screenshot({
             path: outPath,
-            type: opts.format === "png" ? "png" : "jpeg",
-            quality: opts.format === "png" ? undefined : 90,
+            type: opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
+            quality: opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
           });
           await context.close();
 
@@ -18385,53 +18440,12 @@ const appHandler = async (req, res) => {
       url.searchParams.get("timeframes") ||
       url.searchParams.get("tfs") ||
       "15,60,240,D";
-    const tfs = tfsRaw
-      .split(",")
-      .filter(Boolean)
-      .map((x) => x.trim().toUpperCase());
+    // Canonicalize, dedup, sort descending
+    const tfs = canonicalizeTfList(tfsRaw.split(",").filter(Boolean));
 
-    // Map to exact intervals that TradingView Widget expects (e.g. "5" for 5 min, "240" for 4H)
-    const tvIntervals = tfs.map((tf) => {
-      if (tf === "1M") return "1";
-      if (tf === "3M") return "3";
-      if (tf === "5M") return "5";
-      if (tf === "15M") return "15";
-      if (tf === "30M") return "30";
-      if (tf === "1H") return "60";
-      if (tf === "4H") return "240";
-      if (tf === "1D") return "D";
-      if (tf === "1W") return "W";
-      if (tf.endsWith("M") && !isNaN(tf.replace("M", "")))
-        return tf.replace("M", "");
-      return tf;
-    });
-
-    // Map standard TV intervals to clear display names for AI (e.g. "5m", "1h", "1D")
-    const displayTfs = tfs.map((tf) => {
-      if (tf === "1M") return "1m";
-      if (tf === "3M") return "3m";
-      if (tf === "5M") return "5m";
-      if (tf === "15M") return "15m";
-      if (tf === "30M") return "30m";
-      if (tf === "1H") return "1h";
-      if (tf === "4H") return "4h";
-      if (tf === "1D") return "1D";
-      if (tf === "1W") return "1W";
-
-      if (tf === "1") return "1m";
-      if (tf === "3") return "3m";
-      if (tf === "5") return "5m";
-      if (tf === "15") return "15m";
-      if (tf === "30") return "30m";
-      if (tf === "60") return "1h";
-      if (tf === "240") return "4h";
-      if (tf === "D") return "1D";
-      if (tf === "W") return "1W";
-
-      if (tf.endsWith("M") && !isNaN(tf.replace("M", "")))
-        return tf.replace("M", "m");
-      return tf;
-    });
+    // Derived mappings from single canonical source
+    const tvIntervals = tfs.map(tf => snapshotTfToTVInterval(tf));
+    const displayTfs = tfs.map(tf => snapshotTfToLabel(tf));
 
     const theme = url.searchParams.get("theme") || "dark";
     const gridStamp = new Date()
