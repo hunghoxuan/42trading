@@ -3115,8 +3115,8 @@ function ensureTradeDir(sid, symbol = "", category = "files") {
   if (safeSymbol) {
     const dir = path.join(baseDir, `${safeSid}-${safeSymbol}`);
     if (!fs.existsSync(dir)) {
-      // Migrate from old or unknown folder
-      for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`]) {
+      // Migrate from old, unknown, or sid-only folder
+      for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`, safeSid]) {
         const oldDir = path.join(baseDir, oldName);
         if (fs.existsSync(oldDir)) {
           try { fs.renameSync(oldDir, dir); break; } catch {}
@@ -3138,8 +3138,8 @@ function ensureTradeDir(sid, symbol = "", category = "files") {
     if (match) return path.join(baseDir, match);
   } catch {}
 
-  // No existing folder: create with UNKNOWN suffix
-  const dir = path.join(baseDir, `${safeSid}-UNKNOWN`);
+  // No existing folder: use sid-only name (will get {sid}-{symbol} when symbol known)
+  const dir = path.join(baseDir, safeSid);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
