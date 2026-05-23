@@ -147,11 +147,13 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 }
 
 loadEnvFile();
+// ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
+const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
 const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.22 20:26 - bb8e8835"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
-  path.join(__dirname, "logs"),
+  path.join(ROOT_DIR, "logs"),
 );
 
 // --- SSE Notification Bus ---
@@ -482,17 +484,17 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
     position: "bottom-right",
   });
 }
-const CHART_SNAPSHOT_DIR = path.resolve(__dirname, "snapshots");
+const CHART_SNAPSHOT_DIR = path.resolve(ROOT_DIR, "snapshots");
 const CHART_SNAPSHOT_CLAUDE_MAP_FILE = path.join(
   CHART_SNAPSHOT_DIR,
   ".claude-files.json",
 );
-const AI_CONTEXT_FILE_DIR = path.resolve(__dirname, "ai_context_files");
+const AI_CONTEXT_FILE_DIR = path.resolve(ROOT_DIR, "ai_context_files");
 const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   AI_CONTEXT_FILE_DIR,
   ".claude-context-files.json",
 );
-const TRADE_FILES_DIR = path.resolve(__dirname, "trade_files");
+const TRADE_FILES_DIR = path.resolve(ROOT_DIR, "trade_files");
 
 // File-based chart objects: read/write to trades/{sid}/chart_objects.json
 function chartObjectsPath(sid, symbol = "") {
@@ -2990,6 +2992,14 @@ function ensureChartSnapshotDir() {
   }
 }
 
+function snapshotSymbolDir(symbol) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym) return CHART_SNAPSHOT_DIR;
+  const dir = path.join(CHART_SNAPSHOT_DIR, sym);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 function ensureAiContextFileDir() {
   if (!fs.existsSync(AI_CONTEXT_FILE_DIR)) {
     fs.mkdirSync(AI_CONTEXT_FILE_DIR, { recursive: true });
@@ -3101,18 +3111,16 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
     .toUpperCase();
   if (!sym) return [];
 
+  const symDir = path.join(CHART_SNAPSHOT_DIR, sym);
+  if (!fs.existsSync(symDir)) return [];
+
   const files = fs
-    .readdirSync(CHART_SNAPSHOT_DIR)
+    .readdirSync(symDir)
     .filter((f) => /\.(png|jpe?g)$/i.test(f))
-    .filter((f) =>
-      String(f || "")
-        .toUpperCase()
-        .includes(sym),
-    )
     .map((f) => {
       let t = 0;
       try {
-        t = Number(fs.statSync(path.join(CHART_SNAPSHOT_DIR, f)).mtimeMs || 0);
+        t = Number(fs.statSync(path.join(symDir, f)).mtimeMs || 0);
       } catch {}
       return { file_name: f, mtime_ms: t };
     });
@@ -3163,10 +3171,11 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
   const sourceFiles = requested.length ? requested : fallback;
   const destDir = tradeSnapshotDir(sid, symbol);
   const copied = [];
+  const srcDir = snapshotSymbolDir(symbol);
   for (const fileName of sourceFiles) {
     const safe = normalizeSnapshotFileName(fileName);
     if (!safe) continue;
-    const src = path.join(CHART_SNAPSHOT_DIR, safe);
+    const src = path.join(srcDir, safe);
     if (!src || !fs.existsSync(src)) continue;
     const ext = path.extname(safe);
     const base = path.basename(safe, ext);
@@ -3634,7 +3643,7 @@ async function loginToTradingView(username, password) {
     ]);
 
     const cookies = await context.cookies();
-    const sessionPath = path.join(__dirname, "tv_session.json");
+    const sessionPath = path.join(ROOT_DIR, "tv_session.json");
     fs.writeFileSync(sessionPath, JSON.stringify(cookies));
     console.log("[tv-login] Session saved to", sessionPath);
 
@@ -3753,8 +3762,26 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
 
   // Simple naming: SYMBOL_TF.png — overwrites on re-capture
   const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
-  const outPath = path.join(CHART_SNAPSHOT_DIR, fileName);
-  const sessionPath = path.join(__dirname, "tv_session.json");
+  const outPath = path.join(snapshotSymbolDir(symbol), fileName);
+
+  // Reuse existing snapshot if it was captured within the last 60 seconds
+  // (cron takes snapshots every minute — no need to re-capture)
+  if (fs.existsSync(outPath)) {
+    try {
+      const st = fs.statSync(outPath);
+      const ageMs = Date.now() - Number(st.mtimeMs || 0);
+      const maxAge = Number(opts.maxReuseAgeMs || 60000);
+      if (ageMs < maxAge) {
+        return {
+          file_name: fileName,
+          symbol: opts.symbol,
+          timeframe: opts.timeframe || opts.tf,
+          reused: true,
+        };
+      }
+    } catch (_) {}
+  }
+  const sessionPath = path.join(ROOT_DIR, "tv_session.json");
   let savedCookies = [];
   if (fs.existsSync(sessionPath)) {
     try {
@@ -4066,7 +4093,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     format: outFormat,
     created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
     size_bytes: Number(st.size || 0),
-    url: `/v2/chart/snapshots/${encodeURIComponent(fileName)}`,
+    url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${encodeURIComponent(fileName)}`,
   };
 }
 
@@ -4183,7 +4210,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
         try {
           const ext = opts.format === "png" ? "png" : "jpg";
           const outFileName = `${symbol}_MASTER.${ext}`;
-          const outPath = path.join(CHART_SNAPSHOT_DIR, outFileName);
+          const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
           // Use internal loopback to fetch the grid HTML
           const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${symbol}?tfs=${timeframes.join(",")}&theme=${opts.theme || "dark"}`;
 
@@ -4237,7 +4264,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             timeframe: timeframes.join(","),
             status: "ok",
             file_name: outFileName,
-            url: `/v2/chart/snapshots/${outFileName}`,
+            url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
             master: true,
           });
         } catch (e) {
@@ -5339,17 +5366,10 @@ function findRecentChartSnapshots({
   const symbolRaw = String(symbol || "")
     .trim()
     .toUpperCase();
-  const providerRaw = String(provider || "")
-    .trim()
-    .toUpperCase();
-  const fullSymbol = symbolRaw.includes(":")
-    ? symbolRaw
-    : `${providerRaw}:${symbolRaw}`;
-  const symbolTokens = new Set(
-    [symbolRaw, fullSymbol]
-      .map((x) => sanitizeSnapshotFileToken(x || ""))
-      .filter(Boolean),
-  );
+  if (!symbolRaw) return { items: [], missing_timeframes: [], target_timeframes: [] };
+
+  const symDir = path.join(CHART_SNAPSHOT_DIR, symbolRaw);
+  if (!fs.existsSync(symDir)) return { items: [], missing_timeframes: [], target_timeframes: [] };
   const wanted = (
     Array.isArray(timeframes) ? timeframes : String(timeframes || "").split(",")
   )
@@ -5359,10 +5379,10 @@ function findRecentChartSnapshots({
   const prefix = sanitizeSessionPrefix(sessionPrefix || "");
   const byTf = new Map();
   const files = fs
-    .readdirSync(CHART_SNAPSHOT_DIR)
+    .readdirSync(symDir)
     .filter((f) => /\.(png|jpe?g)$/i.test(f))
     .map((f) => {
-      const abs = path.join(CHART_SNAPSHOT_DIR, f);
+      const abs = path.join(symDir, f);
       try {
         const st = fs.statSync(abs);
         if (!st.isFile()) return null;
@@ -5391,10 +5411,7 @@ function findRecentChartSnapshots({
     ).toUpperCase();
     if (!wantedSet.has(tfToken)) continue;
     if (prefix && !base.includes(`_${prefix}_`)) continue;
-    const hasSymbol = [...symbolTokens].some(
-      (token) => token && base.includes(token),
-    );
-    if (!hasSymbol) continue;
+
     if (byTf.has(tfToken)) continue;
     byTf.set(tfToken, {
       id: base,
@@ -5403,7 +5420,8 @@ function findRecentChartSnapshots({
       created_at: new Date(item.mtimeMs || nowMs).toISOString(),
       size_bytes: item.size_bytes,
       mime_type: fileMimeByName(item.file_name),
-      url: `/v2/chart/snapshots/${encodeURIComponent(item.file_name)}`,
+      url: `/v2/chart/snapshots/${encodeURIComponent(symbolRaw)}/${encodeURIComponent(item.file_name)}`,
+      symbol: symbolRaw,
       reused: true,
     });
   }
@@ -20474,7 +20492,7 @@ const appHandler = async (req, res) => {
     try {
       const sess = getUiSessionFromReq(req);
       const payload = await readJson(req).catch(() => ({}));
-      // If UI sent settings (from test button), use them directly
+      // If UI sent settings (from test button), use them as override - no force flags
       const testSettings = payload.settings
         ? {
             toast: payload.settings.toast !== false,
@@ -20484,27 +20502,34 @@ const appHandler = async (req, res) => {
             sound: payload.settings.sound || null,
           }
         : null;
+
+      const nPayload = {
+        user_id: sess.user_id,
+        page: payload.page || null,
+        event: payload.event || "system_event",
+        message: payload.message || "🧪 Test notification — all channels firing",
+        type: payload.type || "info",
+        need_refresh: payload.need_refresh || false,
+        comp_refresh: payload.comp_refresh || false,
+        action: payload.action || null,
+        position: payload.position || "bottom-right",
+      };
+
+      // Only force all when no per-event settings provided
+      if (!testSettings) {
+        nPayload._force_toast = true;
+        nPayload._force_ticker = true;
+        nPayload._force_sound = true;
+        nPayload._force_db_log = true;
+        nPayload.sound = payload.sound || null;
+        nPayload.notification = payload.notification !== false;
+      }
+
       notificationManager.handle(
         "SYSTEM_EVENT",
         payload.event || "system_event",
-        {
-          user_id: sess.user_id,
-          page: payload.page || null,
-          event: payload.event || "system_event",
-          message:
-            payload.message || "🧪 Test notification — all channels firing",
-          type: payload.type || "info",
-          notification: payload.notification !== false,
-          need_refresh: payload.need_refresh || false,
-          comp_refresh: payload.comp_refresh || false,
-          action: payload.action || null,
-          sound: payload.sound || null,
-          position: payload.position || "bottom-right",
-          _force_toast: true,
-          _force_ticker: true,
-          _force_sound: true,
-          _force_db_log: true,
-        },
+        nPayload,
+        testSettings,
       );
       return json(res, 200, {
         ok: true,
@@ -20750,14 +20775,29 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       ensureChartSnapshotDir();
-      const fileName = decodeURIComponent(
+      const rawPath = decodeURIComponent(
         url.pathname.replace("/v2/chart/snapshots/", "") || "",
       );
-      const safeName = normalizeChartFileName(fileName);
+      const parts = rawPath.split("/").filter(Boolean);
+      let safeName, abs;
+      if (parts.length >= 2) {
+        const symDir = path.join(CHART_SNAPSHOT_DIR, normalizeChartFileName(parts[0]));
+        safeName = normalizeChartFileName(parts[parts.length - 1]);
+        abs = path.join(symDir, safeName);
+      } else {
+        safeName = normalizeChartFileName(parts[0] || "");
+        if (!safeName) return json(res, 400, { ok: false, error: "Invalid file" });
+        const m = safeName.match(/^([A-Z]+)_/);
+        if (m) {
+          const guessDir = path.join(CHART_SNAPSHOT_DIR, m[1]);
+          const guess = path.join(guessDir, safeName);
+          if (fs.existsSync(guess)) { abs = guess; }
+        }
+        if (!abs) abs = path.join(CHART_SNAPSHOT_DIR, safeName);
+      }
       if (!safeName) {
         return json(res, 400, { ok: false, error: "Invalid file" });
       }
-      const abs = path.join(CHART_SNAPSHOT_DIR, safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
         return json(res, 404, { ok: false, error: "File not found" });
       }

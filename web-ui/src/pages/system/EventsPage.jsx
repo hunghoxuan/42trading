@@ -244,7 +244,7 @@ export function EventsPageContent() {
                 <th style={{ width: 60, textAlign: "center" }}>TOAST</th>
                 <th style={{ width: 60, textAlign: "center" }}>CONSOLE</th>
                 <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
-                <th style={{ width: 60, textAlign: "center" }}>DB LOG</th>
+                <th style={{ width: 60, textAlign: "center" }}>LOG</th>
                 <th style={{ width: 110 }}>SOUND</th>
                 <th style={{ width: 40 }}>TEST</th>
               </tr>
