@@ -194,6 +194,97 @@ function emitNotification(payload) {
 
 // --- File-based logging ---
 
+// --- Unified bar merge ---
+// Merges new bars into CSV (sorted by time, upsert, dedup).
+// CSV path: market_data/{SYMBOL}/bars/{TF}.csv
+// Format: time,open,high,low,close,volume
+// Also updates L1 memory cache + Redis L2.
+function mergeBarsIntoCSV(symbol, tf, newBars) {
+  if (!symbol || !tf || !newBars.length) return 0;
+  const sym = String(symbol).toUpperCase();
+  const tfKey = String(tf).toLowerCase();
+  const csvDir = path.join(ROOT_DIR, "market_data", sym, "bars");
+  if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
+  const csvPath = path.join(csvDir, tfKey + ".csv");
+
+  // Read existing bars into Map (time -> csv line)
+  const existing = new Map();
+  if (fs.existsSync(csvPath)) {
+    const lines = fs.readFileSync(csvPath, "utf8").trim().split("\n");
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split(",");
+      const t = Number(parts[0]);
+      if (Number.isFinite(t)) existing.set(t, lines[i]);
+    }
+  }
+
+  let added = 0;
+  for (const b of newBars) {
+    const t = Number(b.t || b.time);
+    const o = Number(b.o || b.open);
+    const h = Number(b.h || b.high);
+    const l = Number(b.l || b.low);
+    const c = Number(b.c || b.close);
+    const v = Number(b.v || b.volume || 0);
+    if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+    const line = t + "," + o + "," + h + "," + l + "," + c + "," + v;
+    if (!existing.has(t)) { existing.set(t, line); added++; }
+  }
+
+  if (added === 0) return 0;
+
+  // Sort by time, rewrite CSV
+  const sorted = Array.from(existing.entries()).sort((a, b) => a[0] - b[0]);
+  const csv = "time,open,high,low,close,volume\n" + sorted.map(e => e[1]).join("\n") + "\n";
+  fs.writeFileSync(csvPath, csv);
+
+  // Build merged bar objects for cache
+  const mergedBars = sorted.map(([t, line]) => {
+    const p = line.split(",");
+    return { time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) };
+  });
+  const lastBar = mergedBars[mergedBars.length - 1];
+
+  // Update L1 memory cache
+  const symNorm = normalizeMarketDataSymbol(sym);
+  const key = marketDataCacheKey(symNorm);
+  const root = MARKET_DATA_MEMORY_CACHE.get(key);
+  if (root && Array.isArray(root.data)) {
+    for (const tfEntry of root.data) {
+      if (String(tfEntry.tf || "").toLowerCase() === tfKey) {
+        tfEntry.bars = mergedBars.slice(-1000);
+        if (lastBar) { tfEntry.last_price = lastBar.close; tfEntry.last_price_at = new Date(lastBar.time * 1000).toISOString(); }
+        break;
+      }
+    }
+    root.updated_time = Math.floor(Date.now() / 1000);
+  }
+
+  // Async Redis L2
+  getRedisClient().then(async (client) => {
+    if (!client) return;
+    try {
+      const raw = await client.get(key).catch(() => "");
+      let redisRoot = null;
+      if (raw) { try { redisRoot = JSON.parse(raw); } catch {} }
+      if (redisRoot && Array.isArray(redisRoot.data)) {
+        for (const tfEntry of redisRoot.data) {
+          if (String(tfEntry.tf || "").toLowerCase() === tfKey) {
+            tfEntry.bars = mergedBars.slice(-1000);
+            if (lastBar) { tfEntry.last_price = lastBar.close; tfEntry.last_price_at = new Date(lastBar.time * 1000).toISOString(); }
+            break;
+          }
+        }
+        redisRoot.updated_time = Math.floor(Date.now() / 1000);
+        await client.setEx(key, 3600, JSON.stringify(redisRoot)).catch(() => {});
+      }
+    } catch {}
+  }).catch(() => {});
+
+  return added;
+}
+
+
 // Search all trade category dirs for existing {sid}-* folder
 function findExistingTradeDir(safeSid) {
   for (const cat of ["active", "closed", "files"]) {
@@ -1848,6 +1939,11 @@ async function marketDataDbWrite(symbolNorm, tfNorm, data) {
       lastPriceAtIso,
     ],
   );
+
+  // Also merge into CSV file (unified bar source of truth)
+  if (Array.isArray(data.bars) && data.bars.length) {
+    mergeBarsIntoCSV(symbolNorm, tfNorm, data.bars);
+  }
 }
 
 async function notifyPulse(userId, type = "general") {
@@ -5303,7 +5399,7 @@ async function ensureAiTfContext({
       timeframe: displayTfFromNorm(tfNorm),
       session_prefix: `${symbolNorm}_${displayTfFromNorm(tfNorm)}_${barEnd || "latest"}`,
       lookbackBars: bars,
-      format: "jpg",
+      format: "png",
       quality: 55,
     });
     const shotAbs = path.join(CHART_SNAPSHOT_DIR, shot.file_name);
@@ -18581,7 +18677,7 @@ const appHandler = async (req, res) => {
                 session_prefix: sessionPrefix,
                 timeframes: cached.missing_timeframes,
                 lookbackBars: bars,
-                format: body.format || "jpg",
+                format: body.format || "png",
                 quality: body.quality || 55,
                 captureConcurrency: body.captureConcurrency || 2,
               });
@@ -23013,52 +23109,31 @@ const appHandler = async (req, res) => {
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
       const payload = await readJson(req);
-      const account = await requireV2BrokerAccount(req, res, url, payload);
-      if (!account) return;
+      if (!(await requireEaKey(req, res, url, payload))) return;
       const bars = Array.isArray(payload.bars) ? payload.bars : [];
       if (!bars.length)
         return json(res, 200, { ok: true, inserted: 0 });
 
-      const db = await mt5Backend();
+      // Merge into CSV (unified source of truth) + L1/Redis cache
       let inserted = 0;
+      const symbolsSeen = new Set();
       for (const bar of bars) {
-        const symbol = normalizeMarketDataSymbol(bar.s);
+        const symbol = String(bar.s || "").trim().toUpperCase();
         const tf = String(bar.tf || "").trim();
         if (!symbol || !tf) continue;
-        const t = Number(bar.t);
-        const o = Number(bar.o);
-        const h = Number(bar.h);
-        const l = Number(bar.l);
-        const c = Number(bar.c);
-        const v = Number(bar.v);
-        if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c))
-          continue;
-        const tfNorm = normalizeMarketDataTf(tf);
-        const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
-        const barStart = t;
-        const barEnd = t + tfSec;
-        const barData = JSON.stringify({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
-        try {
-          await db.pool.query(
-            `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, last_price, last_price_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-             ON CONFLICT (symbol, tf, bar_start, bar_end) DO UPDATE SET
-               data = EXCLUDED.data,
-               last_price = COALESCE(EXCLUDED.last_price, market_data.last_price),
-               updated_at = NOW()`,
-            [symbol, tfNorm, barStart, barEnd, barData, c, new Date(t * 1000).toISOString()],
-          );
-          inserted++;
-        } catch {}
+        const n = mergeBarsIntoCSV(symbol, tf, [bar]);
+        inserted += n;
+        if (n > 0) symbolsSeen.add(symbol);
       }
 
       if (inserted > 0) {
-        await mt5Log(account.account_id, "accounts", {
+        const pushAccountId = payload.account_id || "unknown";
+        await mt5Log(pushAccountId, "accounts", {
           event: "BAR_PUSH",
           source_id: payload.source_id || "MT5",
           bar_count: inserted,
-          symbols: [...new Set(bars.map((b) => String(b.s || "").toUpperCase()))],
-        }, account.user_id || CFG.mt5DefaultUserId);
+          symbols: [...symbolsSeen],
+        }, CFG.mt5DefaultUserId);
       }
 
       return json(res, 200, { ok: true, inserted });
