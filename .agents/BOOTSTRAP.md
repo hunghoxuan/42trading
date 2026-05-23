@@ -19,6 +19,7 @@ Read in this order:
 - DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`
 - UI work: `.agents/rules/ui.md`
 - Deploy/version work: `.agents/rules/deploy.md`
+- Local dev work: `.agents/wiki/local-dev-environment.md`
 - Planning-heavy work: `.agents/rules/planning.md`
 - Risky/destructive work: `.agents/rules/safety.md`
 - Test work: `.agents/rules/testing.md`
