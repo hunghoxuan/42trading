@@ -523,7 +523,7 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
     position: "bottom-right",
   });
 }
-const CHART_SNAPSHOT_DIR = path.resolve(ROOT_DIR, "snapshots");
+const CHART_SNAPSHOT_DIR = path.resolve(ROOT_DIR, "market_data");
 const CHART_SNAPSHOT_CLAUDE_MAP_FILE = path.join(
   CHART_SNAPSHOT_DIR,
   ".claude-files.json",
