@@ -135,9 +135,12 @@ export default function NotificationWatcher() {
         playSound(sseSound);
       }
 
-      // Bridge to NotificationHub for cross-page persistence
+      // Bridge to NotificationHub for cross-page persistence (respect hub setting)
       try {
-        NotificationHub.emit(p.event, p.sub_type || "", p);
+        const shouldHub = p.hub !== false && (ns.hub !== false);
+        if (shouldHub) {
+          NotificationHub.emit(p.event, p.sub_type || "", p);
+        }
       } catch {}
 
       // Right ticker: keep FILLED trades (OPEN/FILLED) from broker sync

@@ -56,6 +56,7 @@ function useNotificationState() {
           console_log: ev.console_log ?? false,
           ticker: ev.ticker ?? false,
           db_log: ev.db_log ?? true,
+          hub: ev.hub ?? true,
           sound: ev.sound || null,
         };
       });
@@ -136,6 +137,13 @@ function EventRow({ event, idx, toggle, setField, state }) {
           onChange={() => toggle(idx, "db_log")}
         />
       </td>
+      <td style={{ textAlign: "center" }}>
+        <input
+          type="checkbox"
+          checked={event.hub !== false}
+          onChange={() => toggle(idx, "hub")}
+        />
+      </td>
       <td>
         <select
           value={event.sound || ""}
@@ -163,6 +171,7 @@ function EventRow({ event, idx, toggle, setField, state }) {
                 console_log: event.console_log === true,
                 ticker: event.ticker === true,
                 db_log: event.db_log !== false,
+                hub: event.hub !== false,
                 sound: event.sound || null,
               },
             });
@@ -245,6 +254,7 @@ export function EventsPageContent() {
                 <th style={{ width: 60, textAlign: "center" }}>CONSOLE</th>
                 <th style={{ width: 60, textAlign: "center" }}>TICKER</th>
                 <th style={{ width: 60, textAlign: "center" }}>LOG</th>
+                <th style={{ width: 60, textAlign: "center" }}>HUB</th>
                 <th style={{ width: 110 }}>SOUND</th>
                 <th style={{ width: 40 }}>TEST</th>
               </tr>

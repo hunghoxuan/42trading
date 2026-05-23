@@ -281,6 +281,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     console_log: false,
     ticker: true,
     db_log: true,
+    hub: true,
     sound: "TRADE_FILLED",
   },
   TRADE_CLOSED: {
@@ -288,6 +289,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     console_log: false,
     ticker: true,
     db_log: true,
+    hub: true,
     sound: "TRADE_CLOSED",
   },
   SIGNAL_ADDED: {
@@ -295,6 +297,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     console_log: false,
     ticker: true,
     db_log: true,
+    hub: true,
     sound: "NEW_SIGNAL",
   },
   BROKER_POLL: {
@@ -302,19 +305,22 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     console_log: false,
     ticker: false,
     db_log: true,
+    hub: true,
   },
-  BROKER_SYNC: { toast: false, console_log: false, ticker: true, db_log: true },
+  BROKER_SYNC: { toast: false, console_log: false, ticker: true, db_log: true, hub: true },
   SYSTEM_EVENT: {
     toast: false,
     console_log: true,
     ticker: false,
     db_log: true,
+    hub: false,
   },
   REMOTE_API_CALL: {
     toast: false,
     console_log: false,
     ticker: false,
     db_log: true,
+    hub: false,
   },
 };
 
@@ -383,6 +389,7 @@ class NotificationManager {
       event: evName,
       console_log: settings.console_log,
       ticker: settings.ticker,
+      hub: settings.hub !== false,
       sound: payload.sound || settings.sound || null,
       notification: payload.notification !== false,
     };
@@ -396,12 +403,12 @@ class NotificationManager {
       appendEventLog(eventType, merged);
     }
 
-    // 2) SSE delivery (toast / ticker / sound)
-    // Force flags override settings (used by test button)
+    // 2) SSE delivery (toast / ticker / sound / hub)
     const hasSSE =
       settings.toast ||
       settings.ticker ||
       settings.sound ||
+      settings.hub ||
       payload._force_toast ||
       payload._force_ticker ||
       payload._force_sound;
@@ -20578,6 +20585,10 @@ const appHandler = async (req, res) => {
               dbSettings.db_log !== undefined
                 ? dbSettings.db_log
                 : defaults.db_log,
+            hub:
+              dbSettings.hub !== undefined
+                ? dbSettings.hub
+                : defaults.hub !== false,
           };
         },
       );
