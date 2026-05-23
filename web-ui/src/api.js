@@ -929,6 +929,8 @@ export const api = {
     get(`/v2/trades/${encodeURIComponent(tradeSid)}/snapshots`),
   chartSnapshotsDelete: (payload = {}) =>
     post("/v2/chart/snapshots/delete", payload),
+  brokerBars: (symbol, tf, limit = 300) =>
+    get(`/v2/market-data/broker-bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}`),
   getSettings: () => get("/v2/settings"),
   getSettingSecret: (type, name, field = "value") =>
     get(

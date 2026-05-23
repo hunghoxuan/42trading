@@ -23008,6 +23008,68 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (req.method === "POST" && url.pathname === "/v2/broker/bars") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const bars = Array.isArray(payload.bars) ? payload.bars : [];
+      if (!bars.length)
+        return json(res, 200, { ok: true, inserted: 0 });
+
+      const db = await mt5Backend();
+      let inserted = 0;
+      for (const bar of bars) {
+        const symbol = normalizeMarketDataSymbol(bar.s);
+        const tf = String(bar.tf || "").trim();
+        if (!symbol || !tf) continue;
+        const t = Number(bar.t);
+        const o = Number(bar.o);
+        const h = Number(bar.h);
+        const l = Number(bar.l);
+        const c = Number(bar.c);
+        const v = Number(bar.v);
+        if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c))
+          continue;
+        const tfNorm = normalizeMarketDataTf(tf);
+        const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
+        const barStart = t;
+        const barEnd = t + tfSec;
+        const barData = JSON.stringify({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+        try {
+          await db.pool.query(
+            `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, last_price, last_price_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+             ON CONFLICT (symbol, tf, bar_start, bar_end) DO UPDATE SET
+               data = EXCLUDED.data,
+               last_price = COALESCE(EXCLUDED.last_price, market_data.last_price),
+               updated_at = NOW()`,
+            [symbol, tfNorm, barStart, barEnd, barData, c, new Date(t * 1000).toISOString()],
+          );
+          inserted++;
+        } catch {}
+      }
+
+      if (inserted > 0) {
+        await mt5Log(account.account_id, "accounts", {
+          event: "BAR_PUSH",
+          source_id: payload.source_id || "MT5",
+          bar_count: inserted,
+          symbols: [...new Set(bars.map((b) => String(b.s || "").toUpperCase()))],
+        }, account.user_id || CFG.mt5DefaultUserId);
+      }
+
+      return json(res, 200, { ok: true, inserted });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (
     req.method === "POST" &&
     /^\/(webhook\/)?(v2\/broker\/(sync|reconcile)|mt5\/ea\/sync-v2)$/.test(

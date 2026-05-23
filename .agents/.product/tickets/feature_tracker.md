@@ -22,6 +22,14 @@ This file tracks the status of user-facing features and links them to technical 
 - **Feature Doc**: [../features/1-ideas/ai_chat_agent_ui.md]
 - **Summary**: Interactive streaming chat with AI models, custom widgets (TradePlan, charts), multi-turn conversation, cross-model verification, context-aware tool calling.
 
+## [ ] Broker OHLC Bars Pipeline
+- **Status**: Backlog
+- **Tickets**:
+  - [./1-backlog/2026-05-23-broker-ea-push-ohlc-bars.md] — EA push bars
+  - [./1-backlog/2026-05-23-webhook-receive-broker-ohlc-bars.md] — Webhook receive + store
+  - [./1-backlog/2026-05-23-ui-info-tab-broker-static-chart.md] — UI display
+- **Summary**: EA pushes closed-candle OHLC bars to webhook → stored as CSV + Redis cache → Info tab renders static chart from broker data.
+
 ## [ ] Unified Notification Manager
 - **Status**: Plan
 - **Feature Doc**: [../features/1-plan/unified_notification_manager.md]

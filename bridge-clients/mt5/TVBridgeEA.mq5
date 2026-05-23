@@ -55,6 +55,10 @@ input double InpMinStopPips        = 15;   // Min SL/TP distance from entry
 input bool   InpPricePushEnabled    = true; // Enable Price Push to VPS
 input int    InpPricePushSeconds    = 60;   // Price Push Interval (seconds)
 
+//--- 6.2 OHLC BAR PUSHING
+input bool   InpEnableBarPush      = true; // Enable OHLC Bar Push to VPS
+input int    InpPushBarsSeconds    = 30;   // Bar Push Interval (seconds)
+
 //--- 6. BROKER MANAGEMENT (THE HAND)
 enum ENUM_MANAGEMENT_STRATEGY {
    STRATEGY_NONE,  // None
@@ -140,6 +144,12 @@ datetime g_lastPricePush = 0;
 int      g_pricePushCount = 0;
 string   g_lastPriceStatus = "IDLE";
 string   g_lastPriceErr = "";
+
+//--- 10. OHLC BAR PUSHING
+string   g_barSymbols[];            // symbols for bar push
+long     g_barLastTime[];           // last bar time per symbol
+string   g_barTf[];                 // TF per symbol
+datetime g_lastBarPush = 0;
 
 void ParsePartialTps(string sid, string rawJson, string fullResp = "")
 {
@@ -2899,6 +2909,16 @@ void OnTimer()
          PushPrices();
    }
 
+   // --- OHLC Bar push (every PushBarsSeconds) ---
+   if(InpEnableBarPush)
+   {
+      if(g_lastBarPush == 0 || (now - g_lastBarPush) >= InpPushBarsSeconds)
+      {
+         PushBars();
+         g_lastBarPush = now;
+      }
+   }
+
    // Periodic state reconciliation (PUSH ACTIVE) - configurable interval
    if(now - g_syncLastTime >= InpSyncSeconds)
    {
@@ -3929,4 +3949,109 @@ void PushPrices()
       g_lastPriceErr = g_lastHttpError;
    }
    g_lastPricePush = TimeCurrent();
+}
+
+//+------------------------------------------------------------------+
+//| OHLC Bar Push to VPS                                             |
+//+------------------------------------------------------------------+
+void PushBars()
+{
+   if(!InpEnableBarPush)
+      return;
+
+   // Use same tracked symbols as price push, or fallback to chart symbol
+   int symCount = ArraySize(g_trackedSymbols);
+   if(symCount == 0)
+   {
+      ArrayResize(g_trackedSymbols, 1);
+      g_trackedSymbols[0] = Symbol();
+      symCount = 1;
+   }
+
+   // TFs to track: 1M, 5M, 15M, 1H, 4H, 1D
+   string tfs[] = {"1", "5", "15", "60", "240", "1440"};
+   int tfCount = ArraySize(tfs);
+
+   // Ensure tracking arrays match symbol×TF size
+   int totalSlots = symCount * tfCount;
+   int currentSlots = ArraySize(g_barSymbols);
+   if(currentSlots != totalSlots)
+   {
+      ArrayResize(g_barSymbols, totalSlots);
+      ArrayResize(g_barLastTime, totalSlots);
+      ArrayResize(g_barTf, totalSlots);
+      int idx = 0;
+      for(int i = 0; i < symCount; i++)
+      {
+         for(int j = 0; j < tfCount; j++)
+         {
+            g_barSymbols[idx] = g_trackedSymbols[i];
+            g_barLastTime[idx] = 0;
+            g_barTf[idx] = tfs[j];
+            idx++;
+         }
+      }
+   }
+
+   // Collect new bars (max 10 per push)
+   string barItems = "";
+   int barCount = 0;
+
+   for(int i = 0; i < totalSlots && barCount < 10; i++)
+   {
+      MqlRates rates[];
+      int tfMinutes = (int)StringToInteger(g_barTf[i]);
+      ENUM_TIMEFRAMES tf = PERIOD_M1;
+      if(tfMinutes == 1) tf = PERIOD_M1;
+      else if(tfMinutes == 5) tf = PERIOD_M5;
+      else if(tfMinutes == 15) tf = PERIOD_M15;
+      else if(tfMinutes == 60) tf = PERIOD_H1;
+      else if(tfMinutes == 240) tf = PERIOD_H4;
+      else if(tfMinutes == 1440) tf = PERIOD_D1;
+      else continue;
+
+      if(CopyRates(g_barSymbols[i], tf, 0, 2, rates) < 1)
+         continue;
+
+      // Check if we have a new closed bar (index 1 is the just-closed candle)
+      long barTime = rates[0].time;
+      if(barTime <= g_barLastTime[i])
+         continue;
+
+      // Collect up to 1 bar per slot (index 0 = current open, index 1 = last closed)
+      // We push index 1 if available, otherwise index 0 (current partial bar as fallback)
+      int useIdx = (ArraySize(rates) >= 2) ? 1 : 0;
+      if(useIdx == 1 && rates[useIdx].time <= g_barLastTime[i])
+         useIdx = 0;
+
+      double o = rates[useIdx].open;
+      double h = rates[useIdx].high;
+      double l = rates[useIdx].low;
+      double c = rates[useIdx].close;
+      long t = rates[useIdx].time;
+      long v = rates[useIdx].tick_volume;
+
+      if(barCount > 0) barItems += ",";
+      barItems += "{\"s\":\"" + g_barSymbols[i] + "\"" +
+                  ",\"tf\":\"" + g_barTf[i] + "\"" +
+                  ",\"t\":" + IntegerToString(t) +
+                  ",\"o\":" + DoubleToString(o, 5) +
+                  ",\"h\":" + DoubleToString(h, 5) +
+                  ",\"l\":" + DoubleToString(l, 5) +
+                  ",\"c\":" + DoubleToString(c, 5) +
+                  ",\"v\":" + IntegerToString(v) + "}";
+      barCount++;
+      g_barLastTime[i] = barTime;
+   }
+
+   if(barCount == 0)
+      return;
+
+   string body = "{";
+   body += "\"source_id\":\"MT5\",";
+   body += "\"account_id\":\"" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "\",";
+   body += "\"bars\":[" + barItems + "]";
+   body += "}";
+
+   HttpPostJson(BuildApiUrl("/v2/broker/bars"), body);
 }
