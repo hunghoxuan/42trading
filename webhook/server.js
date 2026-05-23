@@ -149,7 +149,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.23 12:10 - eab7e1c7"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.23 12:10 - eab7e1c7",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -307,7 +310,13 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     db_log: true,
     hub: true,
   },
-  BROKER_SYNC: { toast: false, console_log: false, ticker: true, db_log: true, hub: true },
+  BROKER_SYNC: {
+    toast: false,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+  },
   SYSTEM_EVENT: {
     toast: false,
     console_log: true,
@@ -3000,11 +3009,73 @@ function ensureChartSnapshotDir() {
 }
 
 function snapshotSymbolDir(symbol) {
-  const sym = String(symbol || "").trim().toUpperCase();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
   if (!sym) return CHART_SNAPSHOT_DIR;
   const dir = path.join(CHART_SNAPSHOT_DIR, sym);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function inferSymbolFromSnapshotFile(fileNameRaw) {
+  const safe = String(fileNameRaw || "").trim();
+  if (!safe) return "";
+  const base = path
+    .basename(safe)
+    .replace(/\.(png|jpe?g)$/i, "")
+    .toUpperCase();
+  const parts = base.split("_").filter(Boolean);
+  if (parts.length >= 2 && parts[parts.length - 1] === "MASTER") {
+    const sub = parts.slice(0, -1);
+    const KNOWN_PROVIDERS = new Set([
+      "ICMARKETS",
+      "OANDA",
+      "FOREXCOM",
+      "EIGHTCAP",
+      "PEPPERSTONE",
+      "FXCM",
+      "BINANCE",
+      "BYBIT",
+    ]);
+    if (sub.length >= 2 && KNOWN_PROVIDERS.has(sub[0]))
+      return sub.slice(1).join("_");
+    return sub.join("_");
+  }
+  if (parts.length < 3) return parts[0] || "";
+  let symbolParts = [];
+  if (
+    parts.length >= 5 &&
+    /^\d{8}$/.test(parts[0]) &&
+    /^\d{2}$/.test(parts[1]) &&
+    /^\d{2}$/.test(parts[2])
+  ) {
+    const rest = parts.slice(3);
+    const hasDup = rest.length >= 3 && /^\d+$/.test(rest[rest.length - 1]);
+    symbolParts = rest.slice(0, hasDup ? -2 : -1);
+  } else {
+    if (parts.length === 3) {
+      symbolParts = parts.slice(0, 2);
+    } else {
+      const hasDup = parts.length >= 4 && /^\d+$/.test(parts[parts.length - 1]);
+      symbolParts = parts.slice(0, hasDup ? -3 : -2);
+    }
+  }
+  if (!symbolParts.length) return "";
+  const KNOWN_PROVIDERS = new Set([
+    "ICMARKETS",
+    "OANDA",
+    "FOREXCOM",
+    "EIGHTCAP",
+    "PEPPERSTONE",
+    "FXCM",
+    "BINANCE",
+    "BYBIT",
+  ]);
+  if (symbolParts.length >= 2 && KNOWN_PROVIDERS.has(symbolParts[0])) {
+    return symbolParts.slice(1).join("_");
+  }
+  return symbolParts.join("_");
 }
 
 function ensureAiContextFileDir() {
@@ -3034,7 +3105,10 @@ function ensureTradeFilesDir(sid, symbol = "") {
       for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`]) {
         const oldDir = path.join(TRADE_FILES_DIR, oldName);
         if (fs.existsSync(oldDir)) {
-          try { fs.renameSync(oldDir, dir); break; } catch {}
+          try {
+            fs.renameSync(oldDir, dir);
+            break;
+          } catch {}
         }
       }
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -5373,10 +5447,12 @@ function findRecentChartSnapshots({
   const symbolRaw = String(symbol || "")
     .trim()
     .toUpperCase();
-  if (!symbolRaw) return { items: [], missing_timeframes: [], target_timeframes: [] };
+  if (!symbolRaw)
+    return { items: [], missing_timeframes: [], target_timeframes: [] };
 
   const symDir = path.join(CHART_SNAPSHOT_DIR, symbolRaw);
-  if (!fs.existsSync(symDir)) return { items: [], missing_timeframes: [], target_timeframes: [] };
+  if (!fs.existsSync(symDir))
+    return { items: [], missing_timeframes: [], target_timeframes: [] };
   const wanted = (
     Array.isArray(timeframes) ? timeframes : String(timeframes || "").split(",")
   )
@@ -5503,8 +5579,6 @@ function extractJsonFromAiText(rawText) {
   };
   const raw = String(rawText || "");
   let clean = raw.trim();
-  // Apply repair before any parsing — Claude sometimes generates extra braces
-  clean = repairOrphanedKeys(clean);
   if (clean.includes("```")) {
     const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match) clean = match[1];
@@ -5513,6 +5587,8 @@ function extractJsonFromAiText(rawText) {
     .replace(/^```json/, "")
     .replace(/```$/, "")
     .trim();
+  // Apply repair after markdown strip — Claude sometimes generates extra braces
+  clean = repairOrphanedKeys(clean);
   const tryParse = (value) => {
     try {
       return JSON.parse(String(value || "").trim());
@@ -6335,30 +6411,24 @@ async function healthCronConfigDiagnostics() {
         `
         SELECT COUNT(*)::int AS n
         FROM user_settings s
-        JOIN users u ON s.user_id = u.user_id
-        WHERE s.type='cron' AND s.name='MARKET_DATA_CRON'
+        WHERE s.type='cron' AND s.data->>'cron_type'='MARKET_DATA_CRON'
           AND UPPER(s.status)='ACTIVE'
-          AND (u.metadata->'settings'->>'data_cron')::boolean = true
       `,
       ),
       b.query(
         `
         SELECT COUNT(*)::int AS n
         FROM user_settings s
-        JOIN users u ON s.user_id = u.user_id
-        WHERE s.type='cron' AND s.name='ANALYSIS_CRON'
+        WHERE s.type='cron' AND s.data->>'cron_type'='ANALYSIS_CRON'
           AND UPPER(s.status)='ACTIVE'
-          AND (u.metadata->'settings'->>'analysis_cron')::boolean = true
       `,
       ),
       b.query(
         `
         SELECT COUNT(*)::int AS n
         FROM user_settings s
-        JOIN users u ON s.user_id = u.user_id
-        WHERE s.type='cron' AND s.name='SNAPSHOTS_CRON'
+        WHERE s.type='cron' AND s.data->>'cron_type'='SNAPSHOTS_CRON'
           AND UPPER(s.status)='ACTIVE'
-          AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
       `,
       ),
     ]);
@@ -10763,7 +10833,10 @@ async function _mt5InitBackendInternal() {
   };
   // Run provider schema migration on startup
   migrateProviderSchema().catch((err) =>
-    console.warn("[Migration] Provider schema startup migration error:", err.message),
+    console.warn(
+      "[Migration] Provider schema startup migration error:",
+      err.message,
+    ),
   );
   return MT5_BACKEND;
 }
@@ -12176,7 +12249,9 @@ async function migrateProviderSchema() {
       migrated++;
     }
     if (migrated > 0) {
-      console.log(`[Migration] Provider schema: migrated ${migrated} api_key settings to new format`);
+      console.log(
+        `[Migration] Provider schema: migrated ${migrated} api_key settings to new format`,
+      );
     }
   } catch (err) {
     console.warn("[Migration] Provider schema migration failed:", err.message);
@@ -16355,8 +16430,7 @@ const appHandler = async (req, res) => {
       const items = await b.uiListCache();
       return json(res, 200, { ok: true, items });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unknown error";
+      const message = error instanceof Error ? error.message : "Unknown error";
       return json(res, 400, { ok: false, error: message });
     }
   }
@@ -17400,13 +17474,14 @@ const appHandler = async (req, res) => {
         `
         INSERT INTO user_settings (user_id, type, name, data, status)
         VALUES
-          ($1, 'cron', 'MARKET_DATA_CRON', $2::jsonb, 'INACTIVE'),
-          ($1, 'cron', 'ANALYSIS_CRON', $3::jsonb, 'INACTIVE')
+          ($1, 'cron', 'CRON_MD_DEFAULT', $2::jsonb, 'INACTIVE'),
+          ($1, 'cron', 'CRON_AI_DEFAULT', $3::jsonb, 'INACTIVE')
         ON CONFLICT (user_id, type, name) DO NOTHING
       `,
         [
           userId,
           JSON.stringify({
+            cron_type: "MARKET_DATA_CRON",
             enabled: false,
             provider: "twelvedata",
             timezone: CFG.marketDataDefaultTimezone,
@@ -17416,6 +17491,7 @@ const appHandler = async (req, res) => {
             last_sync: {},
           }),
           JSON.stringify({
+            cron_type: "ANALYSIS_CRON",
             enabled: false,
             symbols: [],
             timeframes: ["15m", "1h"],
@@ -19638,7 +19714,8 @@ const appHandler = async (req, res) => {
           for (const f of fs.readdirSync(dir)) {
             if (!/\.(png|jpg|jpeg)$/i.test(f)) continue;
             const st = fs.statSync(path.join(dir, f));
-            if (st.isFile()) allSnapshots.push({ f, t: Number(st.mtimeMs || 0) });
+            if (st.isFile())
+              allSnapshots.push({ f, t: Number(st.mtimeMs || 0) });
           }
         };
         scanDir(CHART_SNAPSHOT_DIR);
@@ -20507,9 +20584,7 @@ const appHandler = async (req, res) => {
       const reqSessionPrefix = sanitizeSessionPrefix(
         url.searchParams.get("session_prefix") || "",
       );
-      const reqSymbol = String(
-        url.searchParams.get("symbol") || "",
-      )
+      const reqSymbol = String(url.searchParams.get("symbol") || "")
         .trim()
         .toUpperCase();
 
@@ -20519,15 +20594,10 @@ const appHandler = async (req, res) => {
         if (!fs.existsSync(dir)) return;
         for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
           if (!e.isFile() || !/\.(png|jpe?g)$/i.test(e.name)) continue;
-          if (
-            reqSessionPrefix &&
-            !e.name.includes(`_${reqSessionPrefix}_`)
-          )
+          if (reqSessionPrefix && !e.name.includes(`_${reqSessionPrefix}_`))
             continue;
           const sym =
-            symbolFromDir ||
-            inferSymbolFromSnapshotFile(e.name) ||
-            "";
+            symbolFromDir || inferSymbolFromSnapshotFile(e.name) || "";
           if (reqSymbol && sym !== reqSymbol) continue;
           const full = path.join(dir, e.name);
           const st = fs.statSync(full);
@@ -20618,7 +20688,8 @@ const appHandler = async (req, res) => {
         user_id: sess.user_id,
         page: payload.page || null,
         event: payload.event || "system_event",
-        message: payload.message || "🧪 Test notification — all channels firing",
+        message:
+          payload.message || "🧪 Test notification — all channels firing",
         type: payload.type || "info",
         need_refresh: payload.need_refresh || false,
         comp_refresh: payload.comp_refresh || false,
@@ -20896,17 +20967,23 @@ const appHandler = async (req, res) => {
       const parts = rawPath.split("/").filter(Boolean);
       let safeName, abs;
       if (parts.length >= 2) {
-        const symDir = path.join(CHART_SNAPSHOT_DIR, normalizeChartFileName(parts[0]));
+        const symDir = path.join(
+          CHART_SNAPSHOT_DIR,
+          normalizeChartFileName(parts[0]),
+        );
         safeName = normalizeChartFileName(parts[parts.length - 1]);
         abs = path.join(symDir, safeName);
       } else {
         safeName = normalizeChartFileName(parts[0] || "");
-        if (!safeName) return json(res, 400, { ok: false, error: "Invalid file" });
+        if (!safeName)
+          return json(res, 400, { ok: false, error: "Invalid file" });
         const m = safeName.match(/^([A-Z]+)_/);
         if (m) {
           const guessDir = path.join(CHART_SNAPSHOT_DIR, m[1]);
           const guess = path.join(guessDir, safeName);
-          if (fs.existsSync(guess)) { abs = guess; }
+          if (fs.existsSync(guess)) {
+            abs = guess;
+          }
         }
         if (!abs) abs = path.join(CHART_SNAPSHOT_DIR, safeName);
       }
@@ -20916,7 +20993,13 @@ const appHandler = async (req, res) => {
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
         return json(res, 404, { ok: false, error: "File not found" });
       }
-      serveUiFile(res, abs, req.method);
+      const absPath = abs;
+      const ext = path.extname(absPath).toLowerCase();
+      const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+      const ct = mimeTypes[ext] || 'application/octet-stream';
+      const data = fs.readFileSync(absPath);
+      res.writeHead(200, { 'Content-Type': ct, 'Content-Length': data.length, 'Cache-Control': 'public, max-age=3600' });
+      res.end(data);
       return;
     } catch (error) {
       return json(res, 500, {
@@ -20926,7 +21009,7 @@ const appHandler = async (req, res) => {
     }
   }
 
-  // GET /v2/trades/:sid/response — load saved AI analysis response (no auth needed)
+  // GET /v2/trades/:sid/response — load saved AI analysis response
   if (
     req.method === "GET" &&
     url.pathname.match(/^\/v2\/trades\/([^/]+)\/response$/)
@@ -21069,7 +21152,13 @@ const appHandler = async (req, res) => {
       const abs = path.join(tradeSnapshotDir(sid), safeName);
       if (!fs.existsSync(abs) || !fs.statSync(abs).isFile())
         return json(res, 404, { ok: false, error: "file not found" });
-      serveUiFile(res, abs, req.method);
+      const absPath = abs;
+      const ext2 = path.extname(absPath).toLowerCase();
+      const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+      const ct2 = mimeMap[ext2] || 'application/octet-stream';
+      const buf = fs.readFileSync(absPath);
+      res.writeHead(200, { 'Content-Type': ct2, 'Content-Length': buf.length, 'Cache-Control': 'public, max-age=3600' });
+      res.end(buf);
       return;
     } catch (error) {
       return json(res, 500, {
@@ -23801,8 +23890,8 @@ const SOURCE_STATUS = {
   binance: { lastActivity: null, connected: false, enabled: false },
 };
 const CRON_STATE = {
-  lastMarketDataRun: {}, // { [userId_name_tf]: timestamp }
-  lastAiAnalysisRun: {}, // { [userId_name_tf]: timestamp }
+  lastMarketDataRun: {}, // { [userId_name]: timestamp }
+  lastAiAnalysisRun: {}, // { [userId_name]: timestamp }
   lastSnapshotsRun: {}, // { [userId_name]: timestamp }
   isRunning: false,
 };
@@ -23860,8 +23949,8 @@ async function marketDataUpdateCronState({
   const b = await mt5Backend();
   const key = `${normalizeMarketDataSymbol(symbol)}:${normalizeMarketDataTf(tf)}`;
   const res = await b.query(
-    `SELECT data FROM user_settings WHERE user_id = $1 AND type = 'cron' AND name = 'MARKET_DATA_CRON' LIMIT 1`,
-    [userId],
+    `SELECT data FROM user_settings WHERE user_id = $1 AND type = 'cron' AND name = $2 LIMIT 1`,
+    [userId, settingName],
   );
   if (!res.rows.length) return;
   const data =
@@ -23874,8 +23963,8 @@ async function marketDataUpdateCronState({
   await b.query(
     `UPDATE user_settings
         SET data = $1::jsonb, updated_at = NOW()
-      WHERE user_id = $2 AND type = 'cron' AND name = 'MARKET_DATA_CRON'`,
-    [JSON.stringify({ ...data, last_sync: sync }), userId],
+      WHERE user_id = $2 AND type = 'cron' AND name = $3`,
+    [JSON.stringify({ ...data, last_sync: sync }), userId, settingName],
   );
 }
 
@@ -23995,10 +24084,8 @@ async function mt5RunSnapshotsCron() {
   const res = await b.query(`
     SELECT s.*
     FROM user_settings s
-    JOIN users u ON s.user_id = u.user_id
-    WHERE s.type = 'cron' AND s.name = 'SNAPSHOTS_CRON'
+    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'SNAPSHOTS_CRON'
       AND UPPER(s.status) = 'ACTIVE'
-      AND (u.metadata->'settings'->>'snapshots_cron')::boolean = true
   `);
   const configs = res.rows || [];
   if (!configs.length) return null;
@@ -24026,10 +24113,10 @@ async function mt5RunSnapshotsCron() {
     );
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     if (!filteredSymbols.length || !tfs.length) continue;
-    const cadenceMin = Number(data.cadence_minutes || 60);
-    const stateKey = `${userId}_${conf.name || "default"}`;
+    const cadenceSec = Number(data.cadence_seconds || 3600);
+    const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
-    if (now - lastRun < cadenceMin * 60 * 1000 - 5000) {
+    if (now - lastRun < cadenceSec * 1000 - 5000) {
       summary.skipped++;
       continue;
     }
@@ -24162,10 +24249,8 @@ async function mt5RunMarketDataCron() {
   const res = await b.query(`
     SELECT s.*
     FROM user_settings s
-    JOIN users u ON s.user_id = u.user_id
-    WHERE s.type = 'cron' AND s.name = 'MARKET_DATA_CRON'
+    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'MARKET_DATA_CRON'
       AND UPPER(s.status) = 'ACTIVE'
-      AND (u.metadata->'settings'->>'data_cron')::boolean = true
   `);
   const configs = res.rows || [];
   if (!configs.length) return;
@@ -24187,86 +24272,90 @@ async function mt5RunMarketDataCron() {
     );
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     const timezone = marketDataCronTimezone(data);
+    if (!filteredSymbols.length || !tfs.length) continue;
+
+    // Cadence: use cadence_seconds from config, fall back to first TF period
+    const defaultCadence = tfs.length ? parseTfTokenToSeconds(tfs[0]) : 60;
+    const cadenceSec = Number(data.cadence_seconds || defaultCadence);
+    const stateKey = `${userId}_${conf.name}`;
+    const lastRun = CRON_STATE.lastMarketDataRun[stateKey] || 0;
+
+    if (now - lastRun < cadenceSec * 1000 - 5000) continue;
+
+    CRON_STATE.lastMarketDataRun[stateKey] = now;
 
     for (const tf of tfs) {
       const tfSec = parseTfTokenToSeconds(tf);
-      const stateKey = `${userId}_${conf.name}_${tf}`;
-      const lastRun = CRON_STATE.lastMarketDataRun[stateKey] || 0;
 
-      // Run if never run or if cadence passed
-      if (now - lastRun >= tfSec * 1000 - 5000) {
-        // 5s buffer
-        console.log(
-          `[Cron][MarketData] Running userId=${userId} name=${conf.name} tf=${tf} symbols=${filteredSymbols.length}`,
-        );
-        CRON_STATE.lastMarketDataRun[stateKey] = now;
+      console.log(
+        `[Cron][MarketData] Running userId=${userId} name=${conf.name} tf=${tf} symbols=${filteredSymbols.length}`,
+      );
 
-        // Batch symbols to avoid hitting Twelve Data limits
-        const batchSize =
-          Number(data.batch_size || CFG.marketDataCronBatchSize) || 8;
-        for (let i = 0; i < filteredSymbols.length; i += batchSize) {
-          const batch = filteredSymbols.slice(i, i + batchSize);
-          if (MARKET_DATA_QUEUE) {
-            const bucket = Math.floor(now / (tfSec * 1000));
-            const results = await Promise.allSettled(
-              batch.map((symbol) => {
-                const symbolNorm = normalizeMarketDataSymbol(symbol);
-                const tfNorm = normalizeMarketDataTf(tf);
-                const jobId = `market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`;
-                return MARKET_DATA_QUEUE.add(
-                  "fetch-bars",
-                  {
-                    userId,
-                    settingName: conf.name || "default",
-                    symbol,
-                    tf,
-                    timezone,
-                  },
-                  { jobId },
-                );
-              }),
-            );
-            const failed = results.filter((r) => r.status === "rejected");
-            if (failed.length) {
-              console.error(
-                `[Cron][MarketData] BullMQ add failed for ${failed.length} symbols: ${failed.map((f) => f.reason?.message || String(f.reason)).join("; ")}`,
+      // Batch symbols to avoid hitting Twelve Data limits
+      const batchSize =
+        Number(data.batch_size || CFG.marketDataCronBatchSize) || 8;
+      for (let i = 0; i < filteredSymbols.length; i += batchSize) {
+        const batch = filteredSymbols.slice(i, i + batchSize);
+        if (MARKET_DATA_QUEUE) {
+          const bucket = Math.floor(now / (tfSec * 1000));
+          const results = await Promise.allSettled(
+            batch.map((symbol) => {
+              const symbolNorm = normalizeMarketDataSymbol(symbol);
+              const tfNorm = normalizeMarketDataTf(tf);
+              const jobId = `market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`;
+              return MARKET_DATA_QUEUE.add(
+                "fetch-bars",
+                {
+                  userId,
+                  settingName: conf.name || "default",
+                  symbol,
+                  tf,
+                  timezone,
+                },
+                { jobId },
               );
-            }
-          } else {
-            await Promise.all(
-              batch.map(async (symbol) => {
-                try {
-                  await marketDataFetchJob({
-                    userId,
-                    settingName: conf.name || "default",
-                    symbol,
-                    tf,
-                    timezone,
-                  });
-                } catch (err) {
-                  console.error(
-                    `[Cron][MarketData] Failed symbol=${symbol} tf=${tf}:`,
-                    err.message,
-                  );
-                }
-              }),
+            }),
+          );
+          const failed = results.filter((r) => r.status === "rejected");
+          if (failed.length) {
+            console.error(
+              `[Cron][MarketData] BullMQ add failed for ${failed.length} symbols: ${failed.map((f) => f.reason?.message || String(f.reason)).join("; ")}`,
             );
           }
+        } else {
+          await Promise.all(
+            batch.map(async (symbol) => {
+              try {
+                await marketDataFetchJob({
+                  userId,
+                  settingName: conf.name || "default",
+                  symbol,
+                  tf,
+                  timezone,
+                });
+              } catch (err) {
+                console.error(
+                  `[Cron][MarketData] Failed symbol=${symbol} tf=${tf}:`,
+                  err.message,
+                );
+              }
+            }),
+          );
         }
-        await marketDataUpdateCronState({
-          userId,
-          settingName: conf.name || "default",
-          symbol: "_cron",
-          tf,
-          patch: {
-            timezone,
-            queued_at: new Date().toISOString(),
-            symbols_count: filteredSymbols.length,
-            batch_size: batchSize,
-            queue: MARKET_DATA_QUEUE ? "bullmq" : "inline",
-          },
-        }).catch(() => {});
       }
+      await marketDataUpdateCronState({
+        userId,
+        settingName: conf.name || "default",
+        symbol: "_cron",
+        tf,
+        patch: {
+          timezone,
+          queued_at: new Date().toISOString(),
+          symbols_count: filteredSymbols.length,
+          batch_size: batchSize,
+          queue: MARKET_DATA_QUEUE ? "bullmq" : "inline",
+        },
+      }).catch(() => {});
     }
   }
 }
@@ -24276,10 +24365,8 @@ async function mt5RunAiAnalysisCron() {
   const res = await b.query(`
     SELECT s.*
     FROM user_settings s
-    JOIN users u ON s.user_id = u.user_id
-    WHERE s.type = 'cron' AND s.name = 'ANALYSIS_CRON'
+    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'ANALYSIS_CRON'
       AND UPPER(s.status) = 'ACTIVE'
-      AND (u.metadata->'settings'->>'analysis_cron')::boolean = true
   `);
   const configs = res.rows || [];
   if (!configs.length) return;
@@ -24291,12 +24378,12 @@ async function mt5RunAiAnalysisCron() {
     const data = conf.data || {};
     const symbols = Array.isArray(data.symbols) ? data.symbols : [];
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
-    const cadenceMin = Number(data.cadence_minutes || 60);
+    const cadenceSec = Number(data.cadence_seconds || 3600);
 
     const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastAiAnalysisRun[stateKey] || 0;
 
-    if (now - lastRun >= cadenceMin * 60 * 1000 - 5000) {
+    if (now - lastRun >= cadenceSec * 1000 - 5000) {
       console.log(
         `[Cron][AiAnalysis] Running userId=${userId} name=${conf.name} symbols=${symbols.length}`,
       );
