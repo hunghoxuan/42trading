@@ -235,8 +235,9 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
     objectTable === "ai" ||
     objectTable === "ea_to_trade"
   ) {
-    // Trade events → {sid}-{symbol}/logs/
-    const dir = tradeLogsDir(safeSid);
+    // Trade events → always write to trade_active
+    const dir = path.join(ensureTradeDir(safeSid, "", "active"), "logs");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(path.join(dir, `${dateStr}.log`), line);
   } else if (objectTable === "ea") {
     // EA general logs → logs/EA/
@@ -3218,6 +3219,38 @@ function legacyTradeSnapshotDir(sid) {
   return dir;
 }
 
+async function captureStatusSnapshot(tradeSid, symbol, status) {
+  if (!tradeSid || !symbol) return;
+  const statusLower = String(status || "").toLowerCase();
+  if (!["filled", "closed"].includes(statusLower)) return;
+  try {
+    const created = await captureTradingViewSnapshotsBatch({
+      symbols: [symbol],
+      provider: "ICMARKETS",
+      tfs: ["D", "240", "15", "5"],
+      format: "png",
+      theme: "dark",
+      trade_sid: tradeSid,
+    });
+    // Rename master file to include status
+    const items = Array.isArray(created) ? created : [];
+    for (const item of items) {
+      const fn = String(item?.file_name || "");
+      if (!fn.toUpperCase().includes("_MASTER.")) continue;
+      const destDir = tradeSnapshotDir(tradeSid);
+      const ext = path.extname(fn);
+      const newName = `${tradeSid}_${statusLower}${ext}`;
+      const oldPath = path.join(destDir, fn);
+      const newPath = path.join(destDir, newName);
+      if (fs.existsSync(oldPath)) {
+        try { fs.renameSync(oldPath, newPath); } catch {}
+      }
+    }
+  } catch (e) {
+    console.error("[status-snapshot] error:", e.message);
+  }
+}
+
 function migrateLegacyTradeSnapshots(sid) {
   const legacyDir = legacyTradeSnapshotDir(sid);
   if (!legacyDir || !fs.existsSync(legacyDir)) return { copied: 0 };
@@ -3879,8 +3912,8 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     50,
     Math.min(Number(opts.lookbackBars || 300) || 300, 5000),
   );
-  const outFormatRaw = String(opts.format || "jpg").toLowerCase();
-  const outFormat = outFormatRaw === "png" ? "png" : "jpg";
+  const outFormatRaw = String(opts.format || "png").toLowerCase();
+  const outFormat = outFormatRaw === "jpg" || outFormatRaw === "jpeg" ? "jpg" : "png";
   const jpgQuality = Math.max(
     20,
     Math.min(Number(opts.quality || 55) || 55, 95),
@@ -4343,7 +4376,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
       const results = [];
       for (const symbol of symbols) {
         try {
-          const ext = opts.format === "png" ? "png" : "jpg";
+          const ext = opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
           const outFileName = `${symbol}_MASTER.${ext}`;
           const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
           // Use internal loopback to fetch the grid HTML
@@ -8144,10 +8177,17 @@ async function _mt5InitBackendInternal() {
         invalidateTradeListCaches().catch(() => {});
         // Migrate trade folder based on status
         const newStatus = String(payload.execution_status || "").toUpperCase();
+        const tradeSid = payload.sid || payload.trade_id;
         if (["PENDING", "OPEN", "FILLED"].includes(newStatus)) {
-          moveTradeFolder(payload.sid || payload.trade_id, "files", "active");
+          moveTradeFolder(tradeSid, "files", "active");
         } else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)) {
-          moveTradeFolder(payload.sid || payload.trade_id, "active", "closed");
+          moveTradeFolder(tradeSid, "active", "closed");
+        }
+        // Auto-capture master snapshot on FILLED/CLOSED
+        if (["FILLED", "CLOSED"].includes(newStatus)) {
+          captureStatusSnapshot(tradeSid, res.rows[0]?.symbol, newStatus).catch(
+            () => {},
+          );
         }
       } else {
         // Fallback log for tracking orphan/failed acks
