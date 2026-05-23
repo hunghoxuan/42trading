@@ -40,4 +40,4 @@ Extend MT5 EA (`TVBridgeEA.mq5`) to push OHLC bars to webhook server after each 
 
 ## Files
 
-- `bridge-clients/mt5/TVBridgeEA.mq5`
+- `bridge-clients/TVBridgeEA.mq5`

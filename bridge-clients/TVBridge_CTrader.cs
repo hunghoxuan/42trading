@@ -65,6 +65,12 @@ namespace cAlgo.Robots
         [Parameter("Price Push Interval (sec)", Group = "Price Stream", DefaultValue = 60, MinValue = 15)]
         public int PricePushSeconds { get; set; }
 
+        [Parameter("Bar Push Enabled", Group = "Price Stream", DefaultValue = true)]
+        public bool BarPushEnabled { get; set; }
+
+        [Parameter("Bar Push Interval (sec)", Group = "Price Stream", DefaultValue = 30, MinValue = 15)]
+        public int BarPushSeconds { get; set; }
+
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
@@ -116,6 +122,13 @@ namespace cAlgo.Robots
 
         private List<string> _trackedSymbols = new List<string>(); // price push symbol list
         private DateTime _lastTrackedFetch = DateTime.MinValue;
+
+        // Bar push tracking
+        private DateTime _lastBarTime = DateTime.MinValue;
+        private string _barStatus = "IDLE";
+        private string _lastBarErr = "None";
+        private int _barCount = 0;
+        private Dictionary<string, long> _barLastTime = new Dictionary<string, long>(); // key: "SYMBOL_TF" -> unix time
 
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -374,6 +387,35 @@ namespace cAlgo.Robots
                             _priceStatus = "PUSHING";
                             var pd = priceData; // capture for closure
                             Task.Run(async () => await PushPricesAsync(accId, pd));
+                        }
+                    }
+                }
+
+                // --- OHLC Bar push (every BarPushSeconds) ---
+                if (BarPushEnabled)
+                {
+                    if (_lastBarTime == DateTime.MinValue ||
+                        (DateTime.Now - _lastBarTime).TotalSeconds >= BarPushSeconds)
+                    {
+                        _barStatus = "PUSHING";
+                        var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                        if (syms.Count == 0)
+                        {
+                            foreach (var pos in Positions)
+                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
+                                    syms.Add(pos.SymbolName);
+                            foreach (var order in PendingOrders)
+                                if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
+                                    syms.Add(order.SymbolName);
+                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
+                                syms.Add(Symbol.Name);
+                        }
+                        if (syms.Count > 0)
+                            Task.Run(async () => await PushBarsAsync(accId, syms));
+                        else
+                        {
+                            _barStatus = "IDLE";
+                            _lastBarTime = DateTime.Now;
                         }
                     }
                 }
@@ -1339,6 +1381,98 @@ namespace cAlgo.Robots
                 _lastPriceTime = DateTime.Now;
             BeginInvokeOnMainThread(() => RefreshDebugPanel());
         }
+
+        private async Task PushBarsAsync(string accId, List<string> symbols)
+        {
+            _barStatus = "PUSHING";
+            try
+            {
+                string[] tfs = { "1", "5", "15", "60", "240", "1440" };
+                var barList = new List<string>();
+                int newBars = 0;
+
+                foreach (var sym in symbols)
+                {
+                    foreach (var tfStr in tfs)
+                    {
+                        try
+                        {
+                            TimeFrame tf;
+                            switch (tfStr)
+                            {
+                                case "1": tf = TimeFrame.Minute; break;
+                                case "5": tf = TimeFrame.Minute5; break;
+                                case "15": tf = TimeFrame.Minute15; break;
+                                case "60": tf = TimeFrame.Hour; break;
+                                case "240": tf = TimeFrame.Hour4; break;
+                                case "1440": tf = TimeFrame.Daily; break;
+                                default: continue;
+                            }
+
+                            var bars = MarketData.GetBars(tf, sym);
+                            if (bars == null || bars.Count < 1) continue;
+
+                            var lastBar = bars.LastBar;
+                            long barTime = ToUnixTime(lastBar.OpenTime);
+
+                            string key = sym + "_" + tfStr;
+                            long lastKnown;
+                            if (_barLastTime.TryGetValue(key, out lastKnown) && barTime <= lastKnown)
+                                continue;
+
+                            _barLastTime[key] = barTime;
+
+                            barList.Add(
+                                "{\"s\":\"" + sym + "\"" +
+                                ",\"tf\":\"" + tfStr + "\"" +
+                                ",\"t\":" + barTime.ToString() +
+                                ",\"o\":" + lastBar.Open.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"h\":" + lastBar.High.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"l\":" + lastBar.Low.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"c\":" + lastBar.Close.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"v\":" + lastBar.TickVolume.ToString() + "}"
+                            );
+                            newBars++;
+                            if (newBars >= 10) break;
+                        }
+                        catch { }
+                    }
+                    if (newBars >= 10) break;
+                }
+
+                if (newBars == 0)
+                {
+                    _barStatus = "IDLE"; _lastBarTime = DateTime.Now; _lastBarErr = "None";
+                    return;
+                }
+
+                var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId + "\",\"bars\":[" + string.Join(",", barList) + "]}";
+                var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                content.Headers.Add("x-api-key", EaApiKey);
+                var response = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/bars", content);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    _barCount += newBars; _barStatus = "OK"; _lastBarTime = DateTime.Now; _lastBarErr = "None";
+                    if (_barCount <= newBars) Print("[Bar] First push OK: {0} bars from {1} symbols", newBars, symbols.Count);
+                }
+                else
+                {
+                    _barStatus = "FAIL (" + (int)response.StatusCode + ")";
+                    _lastBarErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
+                    Print("[Bar] Push FAILED: {0}", _lastBarErr);
+                }
+            }
+            catch (Exception ex)
+            {
+                _barStatus = "ERROR";
+                _lastBarErr = FormatServerErrorForPanel(ex.Message);
+                if (_barCount == 0) Print("[Bar] Push ERROR: {0}", ex.Message);
+            }
+            if (_lastBarTime == DateTime.MinValue) _lastBarTime = DateTime.Now;
+        }
+
+        private long ToUnixTime(DateTime dt) { return new DateTimeOffset(dt).ToUnixTimeSeconds(); }
 
         private string FormatServerErrorForPanel(string raw)
         {
