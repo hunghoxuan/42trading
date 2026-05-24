@@ -1035,7 +1035,8 @@ namespace cAlgo.Robots
                 if (string.IsNullOrEmpty(volStr)) volStr = GetJsonValue(json, "volume");
                 double signalRiskPct = ParseDouble(volStr);
 
-                double riskMoneyRaw = ParseDouble(GetJsonValue(json, "risk_money"));
+                double riskMoneyRaw = ParseDouble(GetJsonValue(json, "risk_money_planned"));
+                if (riskMoneyRaw <= 0) riskMoneyRaw = ParseDouble(GetJsonValue(json, "risk_money"));
                 double requestedRiskMoney = 0;
 
                 if (riskMoneyRaw > 0)
@@ -1299,7 +1300,8 @@ namespace cAlgo.Robots
                     }
 
                     UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
-                    _ = AckAsync(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)));
+                    double lots = symbol.VolumeInUnitsToQuantity(volumeUnits);
+                    _ = AckAsync(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)), finalRiskMoney, lots);
                 }
                 else
                 {
@@ -1895,7 +1897,7 @@ namespace cAlgo.Robots
             }
         }
 
-        private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0)
+        private async Task AckAsync(string sid, string token, string status, string ticket, string err, double entryExec = 0, double riskMoneyPlanned = 0, double volumeLots = 0)
         {
             try
             {
@@ -1904,7 +1906,9 @@ namespace cAlgo.Robots
                     + ",\"execution_status\":\"" + status + "\""
                     + ",\"broker_trade_id\":\"" + (ticket ?? "") + "\""
                     + ",\"error\":\"" + (err ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
-                    + ",\"entry_exec\":" + entryExec.ToString("F5", CultureInfo.InvariantCulture) + "}";
+                    + ",\"entry_exec\":" + entryExec.ToString("F5", CultureInfo.InvariantCulture)
+                    + ",\"risk_money_planned\":" + riskMoneyPlanned.ToString("F2", CultureInfo.InvariantCulture)
+                    + ",\"volume\":" + volumeLots.ToString("F2", CultureInfo.InvariantCulture) + "}";
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 content.Headers.Add("x-api-key", EaApiKey);
                 await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/ack", content);
