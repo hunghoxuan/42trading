@@ -239,6 +239,28 @@ function resolveBrokerCsvPath(symbol, tf) {
   return primary ? path.join(baseDir, `${primary}.csv`) : "";
 }
 
+// ── Metadata sidecar (replaces market_data.metadata column) ──
+function resolveMetadataPath(symbol, tf) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym) return "";
+  const tfKey = normalizeCsvTfKey(tf);
+  const dir = path.join(ROOT_DIR, "market_data", sym, "metadata");
+  return path.join(dir, `${tfKey}.json`);
+}
+function readMarketDataMetadata(symbol, tf) {
+  const p = resolveMetadataPath(symbol, tf);
+  if (!p || !fs.existsSync(p)) return null;
+  try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; }
+}
+function writeMarketDataMetadata(symbol, tf, metadata) {
+  if (!metadata || typeof metadata !== "object") return;
+  const p = resolveMetadataPath(symbol, tf);
+  if (!p) return;
+  const dir = path.dirname(p);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  try { fs.writeFileSync(p, JSON.stringify(metadata)); } catch {}
+}
+
 function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
   const sym = String(symbol || "").trim().toUpperCase();
   const tfKey = normalizeCsvTfKey(tf);
@@ -1997,88 +2019,36 @@ function marketDataMemoryRead(symbolNorm, tfNorm, reqStart, reqEnd) {
   return null;
 }
 
-async function marketDataDbRead(symbolNorm, tfNorm, reqStart, reqEnd) {
-  const db = await mt5InitBackend();
-  const res = await Promise.race([
-    db.query(
-      `SELECT symbol, tf as timeframe, bar_start, bar_end, data, metadata, last_price, last_price_at
-       FROM market_data
-       WHERE symbol = $1 AND tf = $2 AND bar_start <= $3 AND bar_end >= $4
-       ORDER BY bar_end DESC
-       LIMIT 1`,
-      [symbolNorm, tfNorm, reqStart, reqEnd],
-    ),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("marketDataDbRead timeout")), 10000),
-    ),
-  ]);
-  if (!res.rows?.length) return null;
-  const row = res.rows[0];
-  let bars = [];
-  try {
-    bars = typeof row.data === "string" ? JSON.parse(row.data) : row.data || [];
-  } catch (e) {}
+function marketDataFileRead(symbolNorm, tfNorm, reqStart, reqEnd) {
+  const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 1000);
+  if (!bars.length) return null;
+  const barStart = bars[0].time;
+  const barEnd = bars[bars.length - 1].time;
+  if (barStart > reqEnd || barEnd < reqStart) return null;
+  const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
   return {
-    symbol: row.symbol,
-    timeframe: row.timeframe,
-    bar_start: row.bar_start,
-    bar_end: row.bar_end,
+    symbol: symbolNorm,
+    timeframe: tfNorm,
+    bar_start: barStart,
+    bar_end: barEnd + tfSec,
     bars,
-    metadata: row.metadata,
-    last_price:
-      row.last_price === null || row.last_price === undefined
-        ? null
-        : Number(row.last_price),
-    last_price_at: row.last_price_at || null,
+    metadata: readMarketDataMetadata(symbolNorm, tfNorm),
+    last_price: bars[bars.length - 1].close,
+    last_price_at: null,
   };
 }
 
-async function marketDataDbWrite(symbolNorm, tfNorm, data) {
-  const db = await mt5InitBackend();
-  const barsStr = JSON.stringify(data.bars || []);
-  const lastBar =
-    Array.isArray(data.bars) && data.bars.length
-      ? data.bars[data.bars.length - 1]
-      : null;
-  const lastPrice = Number(data.last_price ?? lastBar?.close);
-  const lastPriceAtSec = Number(data.last_price_at_sec ?? lastBar?.time);
-  const lastPriceAtIso = Number.isFinite(lastPriceAtSec)
-    ? new Date(lastPriceAtSec * 1000).toISOString()
-    : null;
-  const metadata =
-    data.metadata && typeof data.metadata === "object"
-      ? { ...data.metadata }
-      : {};
-  if (Number.isFinite(lastPrice)) metadata.last_price = lastPrice;
-  if (lastPriceAtIso) metadata.last_price_at = lastPriceAtIso;
-  const metaStr = Object.keys(metadata).length
-    ? JSON.stringify(metadata)
-    : null;
-  await db.query(
-    `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, metadata, last_price, last_price_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-     ON CONFLICT (symbol, tf, bar_start, bar_end) DO UPDATE SET
-       data = EXCLUDED.data,
-       metadata = COALESCE(EXCLUDED.metadata, market_data.metadata),
-       last_price = COALESCE(EXCLUDED.last_price, market_data.last_price),
-       last_price_at = COALESCE(EXCLUDED.last_price_at, market_data.last_price_at),
-       updated_at = NOW()`,
-    [
-      symbolNorm,
-      tfNorm,
-      data.bar_start,
-      data.bar_end,
-      barsStr,
-      metaStr,
-      Number.isFinite(lastPrice) ? lastPrice : null,
-      lastPriceAtIso,
-    ],
-  );
-
-  // Also merge into CSV file (unified bar source of truth)
+function marketDataFileWrite(symbolNorm, tfNorm, data) {
+  // Merge bars into CSV (deduplicates by time)
   if (Array.isArray(data.bars) && data.bars.length) {
     mergeBarsIntoCSV(symbolNorm, tfNorm, data.bars);
   }
+  // Write metadata sidecar
+  if (data.metadata && typeof data.metadata === "object") {
+    writeMarketDataMetadata(symbolNorm, tfNorm, data.metadata);
+  }
+  // Update L1 memory cache
+  marketDataMemoryWrite(symbolNorm, tfNorm, data);
 }
 
 async function notifyPulse(userId, type = "general") {
@@ -2278,159 +2248,32 @@ async function marketDataRedisWrite(symbolNorm, tfNorm, snapshot) {
   await client.setEx(key, ttl, JSON.stringify(root)).catch(() => {});
 }
 
-async function marketDataDbRead(symbolNorm, tfNorm, reqStart, reqEnd) {
-  const db = await mt5InitBackend();
-  const res = await Promise.race([
-    db.query(
-      `SELECT data
-       FROM market_data
-      WHERE symbol = $1
-        AND tf = $2
-        AND NOT (bar_end < $3 OR bar_start > $4)
-      ORDER BY bar_start ASC`,
-      [symbolNorm, tfNorm, reqStart, reqEnd],
-    ),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("marketDataDbRead timeout")), 10000),
-    ),
-  ]);
 
-  if (!res.rows.length) return null;
 
-  // Merge all found rows
-  const dedup = new Map();
-  let firstSl = null;
-  let firstTp = null;
-
-  res.rows.forEach((row) => {
-    const snap = deserializeSnapshotFromDb(row.data);
-    if (!snap) return;
-    if (firstSl === null) firstSl = snap.sl;
-    if (firstTp === null) firstTp = snap.tp;
-    snap.bars.forEach((b) => dedup.set(b.time, b));
-  });
-
-  const mergedBars = [...dedup.values()].sort((a, b) => a.time - b.time);
-  if (!mergedBars.length) return null;
-
-  return {
-    symbol_norm: symbolNorm,
-    tf_norm: tfNorm,
-    bar_start: mergedBars[0].time,
-    bar_end: mergedBars[mergedBars.length - 1].time + tfSec,
-    bars: mergedBars,
-    sl: firstSl,
-    tp: firstTp,
-    timezone: "UTC",
-    gap_candidates: detectMarketDataGapCandidates(mergedBars, tfNorm).slice(
-      0,
-      20,
-    ),
-  };
-}
-
-async function marketDataDbUpsert(symbolNorm, tfNorm, snapshot) {
+async function marketDataFileUpsert(symbolNorm, tfNorm, snapshot) {
   const bars = normalizeMarketDataBars(snapshot?.bars);
   if (!bars.length) return;
 
-  const db = await mt5InitBackend();
-  const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
-  const maxBars = Math.max(
-    50,
-    Math.min(1000, Number(CFG.marketDataChunkMaxBars) || 500),
-  );
+  // Merge bars into CSV (deduplicates by time, updates L1 + Redis cache)
+  mergeBarsIntoCSV(symbolNorm, tfNorm, bars);
 
-  // 1. Fetch existing overlapping or adjacent data to merge
-  // We expand the range slightly to catch nearby segments
-  const s = bars[0].time;
-  const e = bars[bars.length - 1].time;
-  const expand = tfSec * maxBars;
-
-  const existing = await db.query(
-    `SELECT id, data FROM market_data
-      WHERE symbol = $1 AND tf = $2
-        AND NOT (bar_end < $3 OR bar_start > $4)`,
-    [symbolNorm, tfNorm, s - expand, e + expand],
-  );
-
-  const dedup = new Map();
-  // Add existing bars
-  existing.rows.forEach((row) => {
-    const snap = deserializeSnapshotFromDb(row.data);
-    if (snap?.bars) snap.bars.forEach((b) => dedup.set(b.time, b));
-  });
-  // Add new bars
-  bars.forEach((b) => dedup.set(b.time, b));
-
-  const mergedBars = [...dedup.values()].sort((a, b) => a.time - b.time);
-  const chunks = [];
-  for (let i = 0; i < mergedBars.length; i += maxBars) {
-    const chunkBars = mergedBars.slice(i, i + maxBars);
-    if (!chunkBars.length) continue;
-    const chunkSnapshot = {
-      provider: snapshot.provider || "unknown",
-      sl: snapshot.sl,
-      tp: snapshot.tp,
-      bars: chunkBars,
-    };
-    chunks.push({
-      bar_start: chunkBars[0].time,
-      bar_end: chunkBars[chunkBars.length - 1].time + tfSec,
-      data: serializeSnapshotForDb(chunkSnapshot),
-    });
-  }
-
-  // 2. Replace old overlapping chunks with deterministic max-size chunks.
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    if (existing.rows.length > 0) {
-      const ids = existing.rows.map((r) => r.id);
-      await client.query("DELETE FROM market_data WHERE id = ANY($1)", [ids]);
-    }
-    for (const chunk of chunks) {
-      const chunkLastBar = chunkBarsForLastPrice(chunk.data);
-      await client.query(
-        `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, last_price, last_price_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-         ON CONFLICT (symbol, tf, bar_start, bar_end)
-         DO UPDATE SET data = EXCLUDED.data, last_price = EXCLUDED.last_price, last_price_at = EXCLUDED.last_price_at, updated_at = NOW()`,
-        [
-          symbolNorm,
-          tfNorm,
-          chunk.bar_start,
-          chunk.bar_end,
-          chunk.data,
-          chunkLastBar?.close ?? null,
-          chunkLastBar?.time
-            ? new Date(Number(chunkLastBar.time) * 1000).toISOString()
-            : null,
-        ],
-      );
-    }
-    await client.query("COMMIT");
-    await marketDataUpdateCronState({
-      userId: snapshot.user_id || CFG.mt5DefaultUserId,
-      settingName: snapshot.setting_name || "default",
-      symbol: symbolNorm,
-      tf: tfNorm,
-      patch: {
-        last_success_at: new Date().toISOString(),
-        last_bar_start: mergedBars[mergedBars.length - 1]?.time || null,
-        chunk_count: chunks.length,
-        bar_count: mergedBars.length,
-        gap_candidates: detectMarketDataGapCandidates(mergedBars, tfNorm).slice(
-          0,
-          20,
-        ),
-      },
-    }).catch(() => {});
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  // Update cron state (keeps tracking for monitoring)
+  await marketDataUpdateCronState({
+    userId: snapshot.user_id || CFG.mt5DefaultUserId,
+    settingName: snapshot.setting_name || "default",
+    symbol: symbolNorm,
+    tf: tfNorm,
+    patch: {
+      last_success_at: new Date().toISOString(),
+      last_bar_start: bars[bars.length - 1]?.time || null,
+      chunk_count: 1,
+      bar_count: bars.length,
+      gap_candidates: detectMarketDataGapCandidates(bars, tfNorm).slice(
+        0,
+        20,
+      ),
+    },
+  }).catch(() => {});
 }
 
 function normalizeEmail(emailRaw) {
@@ -12812,7 +12655,7 @@ async function buildAnalysisSnapshotFromTwelve({
       gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(0, 20),
     };
     tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
-    await marketDataDbUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
+    await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
     return mergeLastPriceIntoBars(brokerSnapshot);
   }
 
@@ -12849,15 +12692,15 @@ async function buildAnalysisSnapshotFromTwelve({
         });
       }
     }
-    // Fallback to DB
-    console.log(`[twelve] DB_READ sym=${symbolNorm} tf=${tfNorm}`);
-    const dbHit = await marketDataDbRead(
+    // Fallback to CSV files
+    console.log(`[twelve] FILE_READ sym=${symbolNorm} tf=${tfNorm}`);
+    const dbHit = await marketDataFileRead(
       symbolNorm,
       tfNorm,
       reqRange.start,
       reqRange.end,
     ).catch((e) => {
-      console.error(`[twelve] DB_ERROR: ${e.message}`);
+      console.error(`[twelve] FILE_ERROR: ${e.message}`);
       return null;
     });
 
@@ -12885,7 +12728,7 @@ async function buildAnalysisSnapshotFromTwelve({
       });
     }
     tfCacheSet(symbolNorm, tfNorm, binanceResult);
-    await marketDataDbUpsert(symbolNorm, tfNorm, binanceResult).catch(() => {});
+    await marketDataFileUpsert(symbolNorm, tfNorm, binanceResult).catch(() => {});
     return mergeLastPriceIntoBars(binanceResult);
   }
 
@@ -13084,7 +12927,7 @@ async function buildAnalysisSnapshotFromTwelve({
 
     // Update Unified Cache
     tfCacheSet(symbolNorm, tfNorm, snapshot);
-    await marketDataDbUpsert(symbolNorm, tfNorm, snapshot).catch(() => {});
+    await marketDataFileUpsert(symbolNorm, tfNorm, snapshot).catch(() => {});
     return mergeLastPriceIntoBars(snapshot);
   } catch (error) {
     const reason =
@@ -18368,13 +18211,13 @@ const appHandler = async (req, res) => {
           if (barStart && barEnd) {
             const symbolNorm = normalizeMarketDataSymbol(body.symbol);
             const tfNorm = normalizeMarketDataTf(body.timeframe);
-            await marketDataDbWrite(symbolNorm, tfNorm, {
+            await marketDataFileWrite(symbolNorm, tfNorm, {
               bar_start: barStart,
               bar_end: barEnd,
               bars: bars,
               metadata: analysisResult,
             }).catch((e) =>
-              console.error("[ai-gen] DB Write Failed:", e.message),
+              console.error("[ai-gen] File Write Failed:", e.message),
             );
           }
         }
@@ -20279,24 +20122,19 @@ const appHandler = async (req, res) => {
         try {
           const symbol = String(body.symbol || "").trim();
           if (symbol) {
-            const db = await mt5InitBackend();
-            const { rows } = await db.query(
-              `SELECT symbol, tf, bar_start, bar_end, data FROM market_data
-               WHERE symbol = $1 ORDER BY tf, bar_end DESC LIMIT 20`,
-              [symbol],
-            );
+            const symbolNorm = normalizeMarketDataSymbol(symbol);
+            const commonTfs = ["1", "5", "15", "60", "240", "1440", "1w"];
+            const rows = [];
+            for (const tfRaw of commonTfs) {
+              const tfNorm = normalizeMarketDataTf(tfRaw);
+              const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 300);
+              if (bars.length) {
+                const lastBar = bars[bars.length - 1];
+                rows.push({ tf: tfNorm, bar_count: bars.length, last_price: lastBar.close });
+              }
+            }
             if (rows.length) {
-              const barLines = rows.map((r) => {
-                const bars =
-                  typeof r.data === "string"
-                    ? JSON.parse(r.data)
-                    : r.data?.bars || [];
-                const lastBar = Array.isArray(bars)
-                  ? bars[bars.length - 1]
-                  : null;
-                const lastPrice = lastBar?.c ?? lastBar?.close ?? null;
-                return `${r.tf}: ${bars.length} bars, latest close=${lastPrice}`;
-              });
+              const barLines = rows.map((r) => `${r.tf}: ${r.bar_count} bars, latest close=${r.last_price}`);
               finalPrompt += `\n\n## MARKET DATA (text-only model — chart images not visible)\nSymbol: ${symbol}\n${barLines.join("\n")}`;
             }
           }
@@ -20482,13 +20320,13 @@ const appHandler = async (req, res) => {
             bars[bars.length - 1].time || bars[bars.length - 1].bar_end,
           );
           if (barStart && barEnd) {
-            await marketDataDbWrite(symbolNorm, tfNorm, {
+            await marketDataFileWrite(symbolNorm, tfNorm, {
               bar_start: barStart,
               bar_end: barEnd,
               bars: bars,
               metadata: parsedJson,
             }).catch((e) =>
-              console.error("[snapshot-analyze] DB Write Failed:", e.message),
+              console.error("[snapshot-analyze] File Write Failed:", e.message),
             );
           }
         } catch (e) {
@@ -23281,7 +23119,6 @@ const appHandler = async (req, res) => {
 
       // Canonical TF order
       const TFS = ["1", "5", "15", "60", "240", "1440"];
-      const db = await mt5Backend();
       const items = [];
 
       for (const sym of resolvedSymbols) {
@@ -23290,22 +23127,16 @@ const appHandler = async (req, res) => {
         const barsInfo = [];
         for (const tf of TFS) {
           const tfNorm = normalizeMarketDataTf(tf);
-          const cov = await db.pool.query(
-            `SELECT COUNT(*) as bars_number,
-                    MIN(bar_start) as start,
-                    MAX(bar_start) as end
-             FROM market_data
-             WHERE symbol = $1 AND tf = $2`,
-            [symbolNorm, tfNorm],
-          );
-          const row = cov.rows?.[0] || {};
-          const existing = Number(row.bars_number) || 0;
+          const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 1000);
+          const existing = bars.length;
+          const barStart = bars.length ? bars[0].time : null;
+          const barEnd = bars.length ? bars[bars.length - 1].time : null;
           barsInfo.push({
             tf,
             existing_bars: existing,
             bars_number: Math.max(existing, 500),
-            start: row.start ? Number(row.start) : null,
-            end: row.end ? Number(row.end) : null,
+            start: barStart,
+            end: barEnd,
           });
         }
         items.push({ symbol: symbolNorm, bars_info: barsInfo });
@@ -23371,27 +23202,15 @@ const appHandler = async (req, res) => {
           }
 
           itemReceived++;
-          const barStart = t;
-          const barEnd = t + tfSec;
-          const barData = JSON.stringify({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
 
-          try {
-            const ins = await db.pool.query(
-              `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, last_price, last_price_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-               ON CONFLICT (symbol, tf, bar_start, bar_end) DO NOTHING
-               RETURNING id`,
-              [sym, tf, barStart, barEnd, barData, c, new Date(t * 1000).toISOString()],
-            );
-            if ((ins.rowCount || 0) > 0) {
-              itemInserted++;
-            } else {
-              itemDuplicated++;
-            }
-            if (!latestTs || t > latestTs) latestTs = t;
-          } catch {
-            itemRejected++;
+          // Merge into CSV (deduplicates by time)
+          const added = mergeBarsIntoCSV(sym, tf, [{ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 }]);
+          if (added > 0) {
+            itemInserted++;
+          } else {
+            itemDuplicated++;
           }
+          if (!latestTs || t > latestTs) latestTs = t;
         }
 
         totalReceived += itemReceived;
@@ -23602,8 +23421,7 @@ const appHandler = async (req, res) => {
       if (!prices.length) return json(res, 200, { ok: true, updated: 0 });
 
       const t0 = Date.now();
-      const db = await mt5Backend();
-      const rows = [];
+      const validPrices = [];
       for (const p of prices) {
         const s = String(p.s || "")
           .trim()
@@ -23612,25 +23430,11 @@ const appHandler = async (req, res) => {
         const a = Number(p.a);
         if (!s || !Number.isFinite(b) || !Number.isFinite(a)) continue;
         const mid = (b + a) / 2;
-        rows.push(`('${s.replace(/'/g, "''")}', ${mid}, ${ts})`);
+        validPrices.push({ s: normalizeMarketDataSymbol(s), mid, ts });
       }
-      if (!rows.length) return json(res, 200, { ok: true, updated: 0 });
+      if (!validPrices.length) return json(res, 200, { ok: true, updated: 0 });
 
-      // 1. DB bulk update — only the latest bar row per symbol+TF (current candle)
-      await db.pool.query(
-        `UPDATE market_data md
-         SET last_price = p.mid,
-             last_price_at = to_timestamp(p.ts)::timestamptz,
-             updated_at = NOW()
-         FROM (VALUES ${rows.join(",")}) AS p(symbol, mid, ts)
-         WHERE md.symbol = p.symbol
-           AND md.bar_end = (
-             SELECT MAX(m2.bar_end) FROM market_data m2
-             WHERE m2.symbol = p.symbol AND m2.tf = md.tf
-           )`,
-      );
-
-      // 2. L1 memory patch
+      // L1 memory patch
       const iso = new Date(ts * 1000).toISOString();
       for (const p of prices) {
         const s = normalizeMarketDataSymbol(p.s);

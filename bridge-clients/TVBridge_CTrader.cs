@@ -1621,12 +1621,14 @@ namespace cAlgo.Robots
                 {
                     var items = new List<string>();
                     int totalBars = 0;
+                    bool isFirstSync = _incrementalSyncCount == 0;
+                    int maxBars = isFirstSync ? 10000 : IncrementalBarsMaxPerPost;
 
                     foreach (var sym in symbols)
                     {
                         foreach (var tfStr in tfs)
                         {
-                            if (totalBars >= IncrementalBarsMaxPerPost) break;
+                            if (totalBars >= maxBars) break;
                             try
                             {
                                 // Parse remote end from coverage
@@ -1701,16 +1703,26 @@ namespace cAlgo.Robots
                                 long fetchStart = remoteEnd > 0 ? remoteEnd + tfSec : latestTime - 500 * tfSec;
                                 if (fetchStart >= latestTime) continue;
 
-                                // Compute needed bars: target - existing, capped at time-based max
                                 int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
-                                int countNeeded = Math.Max(1, targetBars - existingBars);
-                                int needed = Math.Min(timeNeeded, countNeeded);
-                                if (needed > 200) needed = 200;
+
+                                // Compute needed bars. First sync: full backfill (0→500). After: 1 new bar per TF.
+                                int needed;
+                                if (existingBars == 0)
+                                {
+                                    // First backfill: push all available bars up to target
+                                    needed = Math.Min(timeNeeded, targetBars);
+                                    if (needed > 500) needed = 500;
+                                }
+                                else
+                                {
+                                    // Incremental: only push the latest closed bar
+                                    needed = 1;
+                                }
                                 if (needed < 1) continue;
 
                                 var barArr = new List<string>();
                                 int sent = 0;
-                                for (int i = bars.Count - 1; i >= 0 && sent < needed && (totalBars + sent) < IncrementalBarsMaxPerPost; i--)
+                                for (int i = bars.Count - 1; i >= 0 && sent < needed && (totalBars + sent) < maxBars; i--)
                                 {
                                     var b = bars[i];
                                     long bt = ToUnixTime(b.OpenTime);
@@ -1734,7 +1746,7 @@ namespace cAlgo.Robots
                             }
                             catch { }
                         }
-                        if (totalBars >= IncrementalBarsMaxPerPost) break;
+                        if (totalBars >= maxBars) break;
                     }
                     return Tuple.Create(items, totalBars);
                 });

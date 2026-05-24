@@ -4137,10 +4137,12 @@ void SyncBarsIncremental()
    int totalInserted = 0;
    int totalDuplicated = 0;
    string syncItems = "";
+   bool isFirstSync = (g_incrementalSyncCount == 0);
+   int maxBars = isFirstSync ? 10000 : InpIncrementalBarsMaxPerPost;
 
    // Parse each symbol from items array
    int itemPos = 0;
-   while(itemPos >= 0 && totalBars < InpIncrementalBarsMaxPerPost)
+   while(itemPos >= 0 && totalBars < maxBars)
    {
       itemPos = StringFind(itemsArr, "\"symbol\"", itemPos);
       if(itemPos < 0) break;
@@ -4156,7 +4158,7 @@ void SyncBarsIncremental()
       if(infoStart < 0) { itemPos = symEnd + 1; continue; }
 
       // For each TF, check end and fetch missing bars
-      for(int t = 0; t < tfCount && totalBars < InpIncrementalBarsMaxPerPost; t++)
+      for(int t = 0; t < tfCount && totalBars < maxBars; t++)
       {
          // Find tf entry in bars_info
          string tfKey = "\"tf\":\"" + tfs[t] + "\"";
@@ -4201,9 +4203,18 @@ void SyncBarsIncremental()
          if(fetchStart >= latestTime)
             continue; // up to date
 
-         // Fetch missing bars
-         int needed = (int)((latestTime - fetchStart) / tfSec) + 1;
-         if(needed > 200) needed = 200;
+         // Compute needed bars. First sync: full backfill. After: 1 new bar per TF.
+         int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
+         int needed;
+         if(g_incrementalSyncCount == 0)
+         {
+            needed = timeNeeded;
+            if(needed > 500) needed = 500;
+         }
+         else
+         {
+            needed = 1;
+         }
          if(needed < 1) continue;
 
          MqlRates rates[];
@@ -4213,7 +4224,7 @@ void SyncBarsIncremental()
          // Build bars array for this symbol+TF
          string barArr = "";
          int barSent = 0;
-         for(int b = 0; b < copied && (totalBars + barSent) < InpIncrementalBarsMaxPerPost; b++)
+         for(int b = 0; b < copied && (totalBars + barSent) < maxBars; b++)
          {
             if(rates[b].time < fetchStart) continue;
             if(rates[b].time >= latestTime) continue; // exclude current open bar
