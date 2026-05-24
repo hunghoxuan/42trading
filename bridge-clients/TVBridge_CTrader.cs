@@ -89,7 +89,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.24 13:35 - sync-all-tfs";
+        private const string BuildVersion = "v2026.05.24 13:40 - backfill-until-target";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -1705,17 +1705,15 @@ namespace cAlgo.Robots
 
                                 int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
 
-                                // Compute needed bars. First sync: full backfill (0→500). After: 1 new bar per TF.
+                                // Compute needed bars. Backfill until target reached, then incremental 1 bar.
                                 int needed;
-                                if (existingBars == 0)
+                                if (existingBars < targetBars)
                                 {
-                                    // First backfill: push all available bars up to target
-                                    needed = Math.Min(timeNeeded, targetBars);
+                                    needed = Math.Min(timeNeeded, targetBars - existingBars);
                                     if (needed > 500) needed = 500;
                                 }
                                 else
                                 {
-                                    // Incremental: only push the latest closed bar
                                     needed = 1;
                                 }
                                 if (needed < 1) continue;

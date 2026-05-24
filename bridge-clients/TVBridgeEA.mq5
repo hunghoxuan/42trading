@@ -4203,12 +4203,13 @@ void SyncBarsIncremental()
          if(fetchStart >= latestTime)
             continue; // up to date
 
-         // Compute needed bars. First sync: full backfill. After: 1 new bar per TF.
+         // Compute needed bars. Backfill until target reached, then incremental 1 bar.
          int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
          int needed;
-         if(g_incrementalSyncCount == 0)
+         int existingForTf = (int)JsonGetNumber(itemsArr, "existing_bars", 0); // approximate
+         if(existingForTf < 500)
          {
-            needed = timeNeeded;
+            needed = MathMin(timeNeeded, 500 - existingForTf);
             if(needed > 500) needed = 500;
          }
          else
