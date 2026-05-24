@@ -4,7 +4,7 @@
 #include <Trade/Trade.mqh>
 
 // Bump this on every code update so running build is obvious on chart/logs.
-string EA_BUILD_VERSION = "v2026.05.24 10:18 - c0543ba3";
+string EA_BUILD_VERSION = "v2026.05.24 13:05 - first-full-sync";
 
 //--- 1. CONNECTION & IDENTITY
 input string InpServerBaseUrl = "http://127.0.0.1"; // Local webhook URL (server.js default PORT=80)

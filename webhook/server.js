@@ -23100,13 +23100,15 @@ const appHandler = async (req, res) => {
         const wl = (await repoGetUserWatchlist(uid).catch(() => [])) || [];
         resolvedSymbols = wl.map((s) => String(s).toUpperCase());
       } else {
-        // "all" mode — get distinct symbols from market_data
+        // "all" mode — get distinct symbols from market_data directories
         mode = "all";
-        const db = await mt5Backend();
-        const allRes = await db.pool.query(
-          `SELECT DISTINCT symbol FROM market_data ORDER BY symbol`,
-        );
-        resolvedSymbols = (allRes.rows || []).map((r) => String(r.symbol).toUpperCase());
+        const marketDataDir = path.join(ROOT_DIR, "market_data");
+        const dirSymbols = fs.existsSync(marketDataDir)
+          ? fs.readdirSync(marketDataDir, { withFileTypes: true })
+              .filter((d) => d.isDirectory())
+              .map((d) => d.name.toUpperCase())
+          : [];
+        resolvedSymbols = [...new Set(dirSymbols)].sort();
       }
 
       if (!resolvedSymbols.length) {
@@ -23421,19 +23423,6 @@ const appHandler = async (req, res) => {
       if (!prices.length) return json(res, 200, { ok: true, updated: 0 });
 
       const t0 = Date.now();
-      const validPrices = [];
-      for (const p of prices) {
-        const s = String(p.s || "")
-          .trim()
-          .toUpperCase();
-        const b = Number(p.b);
-        const a = Number(p.a);
-        if (!s || !Number.isFinite(b) || !Number.isFinite(a)) continue;
-        const mid = (b + a) / 2;
-        validPrices.push({ s: normalizeMarketDataSymbol(s), mid, ts });
-      }
-      if (!validPrices.length) return json(res, 200, { ok: true, updated: 0 });
-
       // L1 memory patch
       const iso = new Date(ts * 1000).toISOString();
       for (const p of prices) {
@@ -23508,7 +23497,8 @@ const appHandler = async (req, res) => {
 
       // 5. Update account metadata with last price push info
       try {
-        await db.pool.query(
+        const backend = await mt5Backend();
+        await backend.pool.query(
           `UPDATE user_accounts
            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
                updated_at = NOW()
@@ -23663,14 +23653,25 @@ const appHandler = async (req, res) => {
          LIMIT 1`,
         [account.account_id],
       );
-      // Get a sample of updated market_data rows
-      const mdRes = await db.pool.query(
-        `SELECT symbol, last_price, last_price_at, updated_at
-         FROM market_data
-         WHERE last_price_at IS NOT NULL
-         ORDER BY updated_at DESC
-         LIMIT 10`,
-      );
+      // Get a sample of updated prices from memory cache
+      const recentPrices = [];
+      for (const [key, root] of MARKET_DATA_MEMORY_CACHE) {
+        if (!root || typeof root !== "object" || !Array.isArray(root.data)) continue;
+        for (const tfEntry of root.data) {
+          if (tfEntry.last_price_at) {
+            recentPrices.push({
+              symbol: root.symbol || key,
+              last_price: tfEntry.last_price,
+              last_price_at: tfEntry.last_price_at,
+              updated_at: tfEntry.updated_time
+                ? new Date(tfEntry.updated_time * 1000).toISOString()
+                : null,
+            });
+          }
+        }
+      }
+      recentPrices.sort((a, b) => (b.last_price_at || "").localeCompare(a.last_price_at || ""));
+      const topPrices = recentPrices.slice(0, 10);
       return json(res, 200, {
         ok: true,
         account_id: account.account_id,
@@ -23680,12 +23681,7 @@ const appHandler = async (req, res) => {
               metadata: logRes.rows[0].metadata,
             }
           : null,
-        recent_prices: (mdRes.rows || []).map((r) => ({
-          symbol: r.symbol,
-          last_price: r.last_price,
-          last_price_at: r.last_price_at,
-          updated_at: r.updated_at,
-        })),
+        recent_prices: topPrices,
       });
     } catch (error) {
       return json(res, 400, {
