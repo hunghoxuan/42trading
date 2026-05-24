@@ -32,6 +32,24 @@ function parseSnapshotBars(snapshot) {
     .sort((a, b) => a.time - b.time);
 }
 
+// Guard against malformed bars from any source (historical prop, snapshot, TwelveData).
+// lightweight-charts requires valid time on every bar; invalid time causes crash.
+function ensureValidBars(bars, minBars) {
+  if (!Array.isArray(bars)) return [];
+  const clean = bars.filter((b) => {
+    if (b == null || typeof b !== "object") return false;
+    const t = b?.time;
+    if (t == null) return false;
+    if (typeof t === "number" && Number.isFinite(t) && t > 0) return true;
+    if (typeof t === "object" && t !== null) {
+      return Number.isFinite(Number(t.year)) && Number.isFinite(Number(t.month)) && Number.isFinite(Number(t.day));
+    }
+    return false;
+  });
+  const min = Number.isFinite(minBars) && minBars > 1 ? minBars : 2;
+  return clean.length >= min ? clean : [];
+}
+
 function parsePdZoneBounds(item) {
   const localAsNum = (v) => {
     const n = Number(v);
@@ -552,16 +570,26 @@ export default function TradeSignalChart({
             } // end cache-check else
           }
 
+          // Validate bar data before passing to lightweight-charts.
+          // Malformed time values (undefined/null/non-finite) crash the chart.
+          candles = ensureValidBars(candles);
+
           if (!candles.length) {
             console.warn(
-              "No snapshot/Twelve bars available for this symbol/timeframe.",
+              "No valid snapshot/Twelve bars available for this symbol/timeframe.",
             );
             setLoading(false);
             return;
           }
 
           if (isMounted) {
-            candleSeries.setData(candles);
+            try {
+              candleSeries.setData(candles);
+            } catch (e) {
+              console.error("Chart setData failed:", e?.message || e);
+              setLoading(false);
+              return;
+            }
             if (typeof onBarsLoaded === "function") {
               onBarsLoaded(interval, candles.length);
             }
@@ -1174,18 +1202,24 @@ export default function TradeSignalChart({
 
     if (!syncedCrosshair.active || !syncedCrosshair.time) {
       suppressCrosshairSyncRef.current = true;
-      chartRef.current.clearCrosshairPosition();
+      try { chartRef.current.clearCrosshairPosition(); } catch {}
       return;
     }
 
     if (!Number.isFinite(Number(syncedCrosshair.price))) return;
 
     suppressCrosshairSyncRef.current = true;
-    chartRef.current.setCrosshairPosition(
-      Number(syncedCrosshair.price),
-      syncedCrosshair.time,
-      seriesRef.current,
-    );
+    try {
+      if (seriesRef.current) {
+        chartRef.current.setCrosshairPosition(
+          Number(syncedCrosshair.price),
+          syncedCrosshair.time,
+          seriesRef.current,
+        );
+      }
+    } catch {
+      // chart may be in a torn-down state during rapid re-renders
+    }
   }, [chartId, syncedCrosshair]);
 
   return (

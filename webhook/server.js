@@ -23299,9 +23299,11 @@ const appHandler = async (req, res) => {
             [symbolNorm, tfNorm],
           );
           const row = cov.rows?.[0] || {};
+          const existing = Number(row.bars_number) || 0;
           barsInfo.push({
             tf,
-            bars_number: Number(row.bars_number) || 0,
+            existing_bars: existing,
+            bars_number: Math.max(existing, 500),
             start: row.start ? Number(row.start) : null,
             end: row.end ? Number(row.end) : null,
           });

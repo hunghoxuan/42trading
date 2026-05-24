@@ -1632,26 +1632,49 @@ namespace cAlgo.Robots
                                 // Parse remote end from coverage
                                 var symUpper = sym.ToUpper();
                                 long remoteEnd = 0;
-                                var endPattern = "\"symbol\":\"" + symUpper + "\"";
-                                var symIdx = covJson.IndexOf(endPattern, StringComparison.OrdinalIgnoreCase);
-                                if (symIdx < 0) symIdx = covJson.IndexOf("\"symbol\":\"" + symUpper, StringComparison.OrdinalIgnoreCase);
+                                int existingBars = 0, targetBars = 500;
+                                var symPattern = "\"symbol\":\"" + symUpper + "\"";
+                                var symIdx = covJson.IndexOf(symPattern, StringComparison.OrdinalIgnoreCase);
                                 if (symIdx >= 0)
                                 {
                                     var tfPattern = "\"tf\":\"" + tfStr + "\"";
                                     var tfIdx = covJson.IndexOf(tfPattern, symIdx);
                                     if (tfIdx >= 0)
                                     {
+                                        // Parse existing_bars
+                                        var ebIdx = covJson.IndexOf("\"existing_bars\"", tfIdx);
+                                        if (ebIdx >= 0)
+                                        {
+                                            var colIdx = covJson.IndexOf(':', ebIdx);
+                                            if (colIdx >= 0)
+                                            {
+                                                var ns = colIdx + 1;
+                                                while (ns < covJson.Length && (covJson[ns] == ' ' || covJson[ns] == '"')) ns++;
+                                                int.TryParse(new string(covJson.Skip(ns).TakeWhile(c => char.IsDigit(c)).ToArray()), out existingBars);
+                                            }
+                                        }
+                                        // Parse bars_number (target)
+                                        var bnIdx = covJson.IndexOf("\"bars_number\"", tfIdx);
+                                        if (bnIdx >= 0)
+                                        {
+                                            var colIdx2 = covJson.IndexOf(':', bnIdx);
+                                            if (colIdx2 >= 0)
+                                            {
+                                                var ns2 = colIdx2 + 1;
+                                                while (ns2 < covJson.Length && (covJson[ns2] == ' ' || covJson[ns2] == '"')) ns2++;
+                                                int.TryParse(new string(covJson.Skip(ns2).TakeWhile(c => char.IsDigit(c)).ToArray()), out targetBars);
+                                            }
+                                        }
+                                        // Parse end
                                         var endIdx = covJson.IndexOf("\"end\"", tfIdx);
                                         if (endIdx >= 0)
                                         {
-                                            var colonIdx = covJson.IndexOf(':', endIdx);
-                                            if (colonIdx >= 0)
+                                            var colIdx3 = covJson.IndexOf(':', endIdx);
+                                            if (colIdx3 >= 0)
                                             {
-                                                var numStart = colonIdx + 1;
-                                                while (numStart < covJson.Length && (covJson[numStart] == ' ' || covJson[numStart] == '"')) numStart++;
-                                                long.TryParse(
-                                                    new string(covJson.Skip(numStart).TakeWhile(c => char.IsDigit(c)).ToArray()),
-                                                    out remoteEnd);
+                                                var ns3 = colIdx3 + 1;
+                                                while (ns3 < covJson.Length && (covJson[ns3] == ' ' || covJson[ns3] == '"' || covJson[ns3] == 'n')) ns3++;
+                                                long.TryParse(new string(covJson.Skip(ns3).TakeWhile(c => char.IsDigit(c)).ToArray()), out remoteEnd);
                                             }
                                         }
                                     }
@@ -1678,7 +1701,10 @@ namespace cAlgo.Robots
                                 long fetchStart = remoteEnd > 0 ? remoteEnd + tfSec : latestTime - 500 * tfSec;
                                 if (fetchStart >= latestTime) continue;
 
-                                int needed = (int)((latestTime - fetchStart) / tfSec) + 1;
+                                // Compute needed bars: target - existing, capped at time-based max
+                                int timeNeeded = (int)((latestTime - fetchStart) / tfSec) + 1;
+                                int countNeeded = Math.Max(1, targetBars - existingBars);
+                                int needed = Math.Min(timeNeeded, countNeeded);
                                 if (needed > 200) needed = 200;
                                 if (needed < 1) continue;
 
