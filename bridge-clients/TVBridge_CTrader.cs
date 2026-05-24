@@ -1602,7 +1602,7 @@ namespace cAlgo.Robots
             try
             {
                 // 1. Get coverage from webhook
-                var covUrl = ServerBaseUrl.TrimEnd('/') + "/v2/broker/symbols?symbols=" + string.Join(",", symbols.Take(10));
+                var covUrl = ServerBaseUrl.TrimEnd('/') + "/v2/broker/symbols?symbols=" + string.Join(",", symbols);
                 var covRequest = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, covUrl);
                 covRequest.Headers.Add("x-api-key", EaApiKey);
                 var covResponse = await _httpClient.SendAsync(covRequest);

@@ -23115,7 +23115,7 @@ const appHandler = async (req, res) => {
         return json(res, 200, { ok: true, mode, filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" }, items: [] });
       }
 
-      const TFS = ["1", "5", "15", "60", "240", "1d"];
+      const TFS = ["1", "5", "15", "60", "240", "1440"];
       const items = [];
       for (const sym of resolvedSymbols) {
         const barsInfo = [];
