@@ -89,7 +89,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.24 13:05 - first-full-sync";
+        private const string BuildVersion = "v2026.05.24 13:35 - sync-all-tfs";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
