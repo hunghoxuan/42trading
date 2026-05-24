@@ -202,7 +202,7 @@ function emitNotification(payload) {
 function normalizeCsvTfKey(tf) {
   const raw = String(tf || "").trim().toLowerCase();
   if (!raw) return "";
-  if (raw === "d" || raw === "1d" || raw === "day" || raw === "1440" || raw === "1day") return "1d";
+  if (raw === "d" || raw === "1d" || raw === "day" || raw === "1440" || raw === "1day") return "1440";
   if (raw === "w" || raw === "1w" || raw === "week") return "1w";
   if (raw === "4h" || raw === "240") return "240";
   if (raw === "1h" || raw === "60" || raw === "60m" || raw === "60min") return "60";
@@ -216,7 +216,7 @@ function csvTfAliases(tf) {
   const key = normalizeCsvTfKey(tf);
   if (!key) return [];
   const out = new Set([key]);
-  if (key === "1d") out.add("d");
+  if (key === "1440") out.add("1d");
   if (key === "1w") out.add("w");
   if (key === "240") out.add("4h");
   if (key === "60") out.add("1h");
