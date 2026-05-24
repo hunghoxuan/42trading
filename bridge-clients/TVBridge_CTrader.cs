@@ -71,6 +71,15 @@ namespace cAlgo.Robots
         [Parameter("Bar Push Interval (sec)", Group = "Price Stream", DefaultValue = 30, MinValue = 15)]
         public int BarPushSeconds { get; set; }
 
+        [Parameter("Incremental Bars Sync", Group = "Bar Sync", DefaultValue = true)]
+        public bool EnableIncrementalBars { get; set; }
+
+        [Parameter("Incremental Sync Interval (sec)", Group = "Bar Sync", DefaultValue = 120, MinValue = 30)]
+        public int IncrementalBarsSeconds { get; set; }
+
+        [Parameter("Max Bars Per Post", Group = "Bar Sync", DefaultValue = 200, MinValue = 10)]
+        public int IncrementalBarsMaxPerPost { get; set; }
+
         [Parameter("Sync Interval (sec)", Group = "Sync", DefaultValue = 10, MinValue = 5)]
         public int SyncIntervalSeconds { get; set; }
 
@@ -131,6 +140,13 @@ namespace cAlgo.Robots
         private string _lastBarErr = "None";
         private int _barCount = 0;
         private Dictionary<string, long> _barLastTime = new Dictionary<string, long>(); // key: "SYMBOL_TF" -> unix time
+
+        // Incremental bars sync tracking
+        private DateTime _lastIncrementalSync = DateTime.MinValue;
+        private string _incrementalStatus = "IDLE";
+        private string _lastIncrementalErr = "None";
+        private int _incrementalSyncCount = 0;
+        private int _incrementalTotalInserted = 0;
 
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -490,6 +506,27 @@ namespace cAlgo.Robots
                             _barStatus = "IDLE";
                             _lastBarTime = DateTime.Now;
                         }
+                    }
+                }
+
+                // --- Incremental bars sync (every IncrementalBarsSeconds) ---
+                if (EnableIncrementalBars)
+                {
+                    if (_lastIncrementalSync == DateTime.MinValue ||
+                        (DateTime.Now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds)
+                    {
+                        var incSyms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                        if (incSyms.Count == 0)
+                        {
+                            foreach (var pos in Positions)
+                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !incSyms.Contains(pos.SymbolName))
+                                    incSyms.Add(pos.SymbolName);
+                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !incSyms.Contains(Symbol.Name))
+                                incSyms.Add(Symbol.Name);
+                        }
+                        if (incSyms.Count > 0)
+                            Task.Run(async () => await SyncBarsIncrementalAsync(accId, incSyms));
+                        _lastIncrementalSync = DateTime.Now;
                     }
                 }
 
@@ -1558,6 +1595,169 @@ namespace cAlgo.Robots
             if (_lastBarTime == DateTime.MinValue) _lastBarTime = DateTime.Now;
         }
 
+        private async Task SyncBarsIncrementalAsync(string accId, List<string> symbols)
+        {
+            if (!EnableIncrementalBars) return;
+            _incrementalStatus = "FETCHING";
+            try
+            {
+                // 1. Get coverage from webhook
+                var covUrl = ServerBaseUrl.TrimEnd('/') + "/v2/broker/symbols?symbols=" + string.Join(",", symbols.Take(10));
+                var covRequest = new HttpRequestMessage(System.Net.Http.HttpMethod.Get, covUrl);
+                covRequest.Headers.Add("x-api-key", EaApiKey);
+                var covResponse = await _httpClient.SendAsync(covRequest);
+                if (!covResponse.IsSuccessStatusCode)
+                {
+                    _incrementalStatus = "COV_FAIL";
+                    _lastIncrementalErr = "HTTP " + (int)covResponse.StatusCode;
+                    return;
+                }
+                var covJson = await covResponse.Content.ReadAsStringAsync();
+
+                // 2. Fetch bars from broker for each symbol+TF with gaps
+                string[] tfs = { "1", "5", "15", "60", "240", "1440" };
+
+                var syncBuild = await RunOnMainThreadAsync(() =>
+                {
+                    var items = new List<string>();
+                    int totalBars = 0;
+
+                    foreach (var sym in symbols)
+                    {
+                        foreach (var tfStr in tfs)
+                        {
+                            if (totalBars >= IncrementalBarsMaxPerPost) break;
+                            try
+                            {
+                                // Parse remote end from coverage
+                                var symUpper = sym.ToUpper();
+                                long remoteEnd = 0;
+                                var endPattern = "\"symbol\":\"" + symUpper + "\"";
+                                var symIdx = covJson.IndexOf(endPattern, StringComparison.OrdinalIgnoreCase);
+                                if (symIdx < 0) symIdx = covJson.IndexOf("\"symbol\":\"" + symUpper, StringComparison.OrdinalIgnoreCase);
+                                if (symIdx >= 0)
+                                {
+                                    var tfPattern = "\"tf\":\"" + tfStr + "\"";
+                                    var tfIdx = covJson.IndexOf(tfPattern, symIdx);
+                                    if (tfIdx >= 0)
+                                    {
+                                        var endIdx = covJson.IndexOf("\"end\"", tfIdx);
+                                        if (endIdx >= 0)
+                                        {
+                                            var colonIdx = covJson.IndexOf(':', endIdx);
+                                            if (colonIdx >= 0)
+                                            {
+                                                var numStart = colonIdx + 1;
+                                                while (numStart < covJson.Length && (covJson[numStart] == ' ' || covJson[numStart] == '"')) numStart++;
+                                                long.TryParse(
+                                                    new string(covJson.Skip(numStart).TakeWhile(c => char.IsDigit(c)).ToArray()),
+                                                    out remoteEnd);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                TimeFrame tf;
+                                switch (tfStr)
+                                {
+                                    case "1": tf = TimeFrame.Minute; break;
+                                    case "5": tf = TimeFrame.Minute5; break;
+                                    case "15": tf = TimeFrame.Minute15; break;
+                                    case "60": tf = TimeFrame.Hour; break;
+                                    case "240": tf = TimeFrame.Hour4; break;
+                                    case "1440": tf = TimeFrame.Daily; break;
+                                    default: continue;
+                                }
+
+                                var bars = MarketData.GetBars(tf, sym);
+                                if (bars == null || bars.Count < 1) continue;
+                                var latestBar = bars.LastBar;
+                                long latestTime = ToUnixTime(latestBar.OpenTime);
+                                int tfSec = int.Parse(tfStr) * 60;
+
+                                long fetchStart = remoteEnd > 0 ? remoteEnd + tfSec : latestTime - 500 * tfSec;
+                                if (fetchStart >= latestTime) continue;
+
+                                int needed = (int)((latestTime - fetchStart) / tfSec) + 1;
+                                if (needed > 200) needed = 200;
+                                if (needed < 1) continue;
+
+                                var barArr = new List<string>();
+                                int sent = 0;
+                                for (int i = bars.Count - 1; i >= 0 && sent < needed && (totalBars + sent) < IncrementalBarsMaxPerPost; i--)
+                                {
+                                    var b = bars[i];
+                                    long bt = ToUnixTime(b.OpenTime);
+                                    if (bt < fetchStart) break;
+                                    if (bt >= latestTime) continue;
+                                    barArr.Add(
+                                        "{\"time\":" + bt.ToString() +
+                                        ",\"open\":" + b.Open.ToString("F5", CultureInfo.InvariantCulture) +
+                                        ",\"high\":" + b.High.ToString("F5", CultureInfo.InvariantCulture) +
+                                        ",\"low\":" + b.Low.ToString("F5", CultureInfo.InvariantCulture) +
+                                        ",\"close\":" + b.Close.ToString("F5", CultureInfo.InvariantCulture) +
+                                        ",\"volume\":" + b.TickVolume.ToString() + "}");
+                                    sent++;
+                                }
+                                if (sent > 0)
+                                {
+                                    barArr.Reverse();
+                                    items.Add("{\"symbol\":\"" + symUpper + "\",\"tf\":\"" + tfStr + "\",\"bars\":[" + string.Join(",", barArr) + "]}");
+                                    totalBars += sent;
+                                }
+                            }
+                            catch { }
+                        }
+                        if (totalBars >= IncrementalBarsMaxPerPost) break;
+                    }
+                    return Tuple.Create(items, totalBars);
+                });
+
+                var syncItems = syncBuild.Item1;
+                var totalBars = syncBuild.Item2;
+
+                if (totalBars == 0)
+                {
+                    _incrementalStatus = "UP_TO_DATE"; _lastIncrementalErr = "None";
+                    return;
+                }
+
+                // 3. POST to prices-sync
+                _incrementalStatus = "POSTING";
+                var payload = "{\"source_id\":\"Ctrader\",\"account_id\":\"" + accId
+                    + "\",\"sync_mode\":\"incremental\",\"items\":[" + string.Join(",", syncItems) + "]}";
+                var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                content.Headers.Add("x-api-key", EaApiKey);
+                var postResponse = await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/prices-sync", content);
+
+                if (postResponse.IsSuccessStatusCode)
+                {
+                    var respJson = await postResponse.Content.ReadAsStringAsync();
+                    int inserted = 0, duplicated = 0;
+                    var insMatch = Regex.Match(respJson, "\"inserted\"\\s*:\\s*(\\d+)");
+                    var dupMatch = Regex.Match(respJson, "\"duplicated\"\\s*:\\s*(\\d+)");
+                    if (insMatch.Success) int.TryParse(insMatch.Groups[1].Value, out inserted);
+                    if (dupMatch.Success) int.TryParse(dupMatch.Groups[1].Value, out duplicated);
+                    _incrementalSyncCount++;
+                    _incrementalTotalInserted += inserted;
+                    _incrementalStatus = "OK"; _lastIncrementalErr = "None";
+                    SafePrint("[IncBars] sync={0} bars={1} ins={2} dup={3}", _incrementalSyncCount, totalBars, inserted, duplicated);
+                }
+                else
+                {
+                    _incrementalStatus = "POST_FAIL";
+                    _lastIncrementalErr = FormatServerErrorForPanel(await postResponse.Content.ReadAsStringAsync());
+                    SafePrint("[IncBars] POST failed: {0}", _lastIncrementalErr);
+                }
+            }
+            catch (Exception ex)
+            {
+                _incrementalStatus = "ERROR";
+                _lastIncrementalErr = FormatServerErrorForPanel(ex.Message);
+                if (_incrementalSyncCount == 0) SafePrint("[IncBars] ERROR: {0}", ex.Message);
+            }
+        }
+
         private long ToUnixTime(DateTime dt) { return new DateTimeOffset(dt).ToUnixTimeSeconds(); }
 
         private string FormatServerErrorForPanel(string raw)
@@ -1694,6 +1894,12 @@ namespace cAlgo.Robots
                 tr.AppendLine(string.Format("INTV: sync={0}s price={1}s", SyncIntervalSeconds, PricePushSeconds));
                 if (_lastPriceErr != "None" && !string.IsNullOrEmpty(_lastPriceErr))
                     tr.AppendLine("ERR: " + (_lastPriceErr.Length > 40 ? _lastPriceErr.Substring(0, 40) : _lastPriceErr));
+                // Show incremental sync status
+                if (EnableIncrementalBars)
+                {
+                    var incTimeStr = _lastIncrementalSync == DateTime.MinValue ? "WAITING..." : _lastIncrementalSync.ToString("HH:mm:ss");
+                    tr.AppendLine(string.Format("INCSYNC: {0} cnt={1} ins={2}, {3}", _incrementalStatus, _incrementalSyncCount, _incrementalTotalInserted, incTimeStr));
+                }
                 Color priceColor = _priceStatus == "OK" ? Color.Lime :
                                   (_priceStatus == "IDLE" || _priceStatus == "WAITING" ? Color.Gray :
                                   (_priceStatus == "PUSHING" ? Color.Yellow : Color.Red));
