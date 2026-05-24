@@ -7938,6 +7938,7 @@ async function _mt5InitBackendInternal() {
             price: row.entry,
             sl: row.sl,
             tp: row.tp,
+            risk_money_planned: row.risk_money_planned,
             sid: row.sid,
             ticket: row.broker_trade_id,
             raw_json: row.raw_json,
@@ -8230,6 +8231,7 @@ async function _mt5InitBackendInternal() {
              entry_exec = $3,
              pnl_realized = CASE WHEN $10 = TRUE THEN $4 ELSE pnl_realized END,
              volume = COALESCE($11, volume),
+             risk_money_planned = COALESCE($15, risk_money_planned),
              order_type = COALESCE($13, order_type),
              metadata = CASE
                WHEN $12::jsonb = '{}'::jsonb THEN metadata
@@ -8255,6 +8257,7 @@ async function _mt5InitBackendInternal() {
           JSON.stringify(telemetryMeta),
           payload.order_type || null,
           payload.release_only === true,
+          asNum(payload.risk_money_planned),
         ],
       );
       if (res.rowCount > 0) {
