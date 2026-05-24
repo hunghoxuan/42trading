@@ -34,18 +34,34 @@ function parseSnapshotBars(snapshot) {
 
 // Guard against malformed bars from any source (historical prop, snapshot, TwelveData).
 // lightweight-charts requires valid time on every bar; invalid time causes crash.
+// Also normalizes broker bar field names ({t,o,h,l,c} -> {time,open,high,low,close}).
 function ensureValidBars(bars, minBars) {
   if (!Array.isArray(bars)) return [];
-  const clean = bars.filter((b) => {
-    if (b == null || typeof b !== "object") return false;
-    const t = b?.time;
-    if (t == null) return false;
-    if (typeof t === "number" && Number.isFinite(t) && t > 0) return true;
-    if (typeof t === "object" && t !== null) {
-      return Number.isFinite(Number(t.year)) && Number.isFinite(Number(t.month)) && Number.isFinite(Number(t.day));
+  const clean = [];
+  for (const b of bars) {
+    if (b == null || typeof b !== "object") continue;
+    const rawTime = b?.time ?? b?.t;
+    const rawOpen = b?.open ?? b?.o;
+    const rawHigh = b?.high ?? b?.h;
+    const rawLow = b?.low ?? b?.l;
+    const rawClose = b?.close ?? b?.c;
+    const t = Number(rawTime);
+    const o = Number(rawOpen);
+    const h = Number(rawHigh);
+    const l = Number(rawLow);
+    const c = Number(rawClose);
+    if (!Number.isFinite(t) || t <= 0) {
+      // check for BusinessDay object
+      if (typeof rawTime === "object" && rawTime !== null) {
+        if (Number.isFinite(Number(rawTime.year)) && Number.isFinite(Number(rawTime.month)) && Number.isFinite(Number(rawTime.day))) {
+          clean.push({ time: rawTime, open: o, high: h, low: l, close: c });
+        }
+      }
+      continue;
     }
-    return false;
-  });
+    if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+    clean.push({ time: t, open: o, high: h, low: l, close: c });
+  }
   const min = Number.isFinite(minBars) && minBars > 1 ? minBars : 2;
   return clean.length >= min ? clean : [];
 }
@@ -525,48 +541,10 @@ export default function TradeSignalChart({
               hasSnapshotBars = true;
               setDataSource("cache");
             } else {
-              // Try Twelve Data on-demand (for old trades without stored snapshot)
-              try {
-                // FALLBACK: 'ENTRY' is not a real timeframe for API. Use signal interval or '15m'
-                const apiTf =
-                  String(interval).toUpperCase() === "ENTRY" ? "15m" : interval;
-                // NORMALIZE SYMBOL: Twelve Data usually wants BTCUSD not BTC/USD
-                const apiSym = String(symbol || "").replace(/[\/\s:]/g, "");
-
-                if (!apiSym) {
-                  setLoading(false);
-                  return;
-                }
-                const r = await fetch(
-                  `/v2/chart/twelve/candles?symbol=${encodeURIComponent(apiSym)}&timeframe=${encodeURIComponent(apiTf || "15m")}&bars=300`,
-                  {
-                    credentials: "include",
-                    cache: "no-store",
-                  },
-                );
-                const text = await r.text();
-                let j;
-                try {
-                  j = JSON.parse(text);
-                } catch {
-                  j = { ok: false };
-                }
-                const snap =
-                  j?.snapshot && typeof j.snapshot === "object"
-                    ? j.snapshot
-                    : null;
-                const bars = parseSnapshotBars(snap);
-                if (r.ok && bars.length > 0) {
-                  // Merge: keep original snapshot analysis (plans, levels) but use new bars
-                  snapshot = { ...snapshot, ...(snap || {}) };
-                  snapshotBars = bars;
-                  hasSnapshotBars = true;
-                  candles = bars;
-                  setDataSource("twelve");
-                }
-              } catch (err) {
-                console.error("Twelve fetch failed for", apiSym, err);
-              }
+              // No cached data available. Don't auto-call TwelveData —
+              // user must click Refresh button in Info tab to fetch.
+              setLoading(false);
+              return;
             } // end cache-check else
           }
 

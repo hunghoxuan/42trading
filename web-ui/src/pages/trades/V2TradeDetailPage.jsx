@@ -99,21 +99,25 @@ function orderTypeRuleError(direction, orderType, entry, lastPrice) {
 
 export default function TradeDetailPage() {
   const { tradeId } = useParams();
+  const EMPTY_DETAIL_PLAN = useMemo(
+    () => ({
+      direction: "BUY",
+      trade_type: "limit",
+      entry: "",
+      tp: "",
+      sl: "",
+      rr: "",
+      note: "",
+    }),
+    [],
+  );
   const [trade, setTrade] = useState(null);
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [planError, setPlanError] = useState("");
   const [detailTfTab, setDetailTfTab] = useState("ENTRY");
-  const [detailPlan, setDetailPlan] = useState({
-    direction: "BUY",
-    trade_type: "limit",
-    entry: "",
-    tp: "",
-    sl: "",
-    rr: "",
-    note: "",
-  });
+  const [detailPlan, setDetailPlan] = useState(EMPTY_DETAIL_PLAN);
 
   const lastPrice = useMemo(() => {
     const p = asNum(
@@ -156,31 +160,44 @@ export default function TradeDetailPage() {
       return (
         items.find((x) => String(x?.sid || "").trim() === id) ||
         items.find((x) => String(x?.id || "").trim() === id) ||
-        items[0] ||
         null
       );
     };
+    let cancelled = false;
+    const requestTradeId = String(tradeId || "").trim();
     async function loadData() {
       try {
+        setError("");
+        setPlanError("");
         setLoading(true);
+        setTrade(null);
+        setDetailPlan(EMPTY_DETAIL_PLAN);
         const [evs, data] = await Promise.all([
-          api.v2TradeEvents(tradeId),
-          api.v2Trades({ q: tradeId }),
+          api.v2TradeEvents(requestTradeId),
+          api.v2Trades({ q: requestTradeId }),
         ]);
+        if (cancelled) return;
         setEvents(Array.isArray(evs?.items) ? evs.items : []);
-        const t = pickExactTrade(data?.items || [], tradeId);
+        const t = pickExactTrade(data?.items || [], requestTradeId);
         setTrade(t);
         if (t) {
           setDetailPlan(extractTradePlanFromTrade(t));
+        } else {
+          setError(`Trade not found for id: ${requestTradeId}`);
+          setDetailPlan(EMPTY_DETAIL_PLAN);
         }
       } catch (e) {
+        if (cancelled) return;
         setError(e?.message || "Load failed");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     loadData();
-  }, [tradeId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [tradeId, EMPTY_DETAIL_PLAN]);
 
   const header = useMemo(() => {
     if (!trade) return null;
@@ -584,7 +601,7 @@ export default function TradeDetailPage() {
               },
               {
                 label: "Source",
-                value: trade.source_id || trade.source || "-",
+                value: detailPlan.source || trade.source_id || trade.source || "-",
               },
               {
                 label: "Profile",

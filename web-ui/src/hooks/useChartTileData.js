@@ -160,7 +160,6 @@ export function useSymbolChartData({
       if (!sym) throw new Error("Symbol required");
       const entries = {};
       const force = opts.force === true;
-      console.log("[ChartData] fetchAll sym=" + sym + " tfs=" + tfs.join(",") + " mode=" + mode + " force=" + force);
 
       if (mode === "snapshots") {
         // Snapshot mode is a viewer. Capture is explicit via the Snapshots button.
@@ -207,12 +206,6 @@ export function useSymbolChartData({
           const f = String(x?.file_name || "").toUpperCase();
           return symbolTokens.some((tok) => f.includes(tok));
         });
-        console.log(
-          "[ChartData] snapshots matching symbol=" +
-            sym +
-            " count=" +
-            matchingItems.length,
-        );
         const usedFiles = new Set();
         for (const tf of tfs) {
           const key = tfNorm(tf);
@@ -269,9 +262,6 @@ export function useSymbolChartData({
           };
           if (found) {
             usedFiles.add(String(found.file_name || ""));
-            console.log(
-              "[ChartData] snapshot match tf=" + tf + " file=" + found.file_name,
-            );
           }
         }
       } else {
@@ -299,9 +289,7 @@ export function useSymbolChartData({
                   };
                 }
               }
-              console.log("[ChartData] fetch tf=" + tf);
               const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount, profile), force);
-              console.log("[ChartData] twelve tf=" + tf + " ok=" + out?.ok + " bars=" + (out?.snapshot?.bars?.length || 0));
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
               const tfData = {
                 bars: Array.isArray(snap?.bars) ? snap.bars : [],
@@ -323,7 +311,6 @@ export function useSymbolChartData({
                 data: tfData,
               };
             } catch (e) {
-              console.warn("[ChartData] twelve tf=" + tf + " error=" + (e?.message || String(e)));
               return { key, data: { bars: [] } };
             }
           }),
@@ -369,8 +356,6 @@ export function useSymbolChartData({
       setStatus("LOADING");
       setError(null);
       if (mode === "snapshots") setSnapMsg("Fetching...");
-      // Note: keep existing data visible during re-fetch (don't clear setData)
-      console.log("[ChartData] refresh symbol=" + sym + " mode=" + mode + " tfs=" + tfs.join(","));
 
       try {
         const result = await fetchAll(opts);
@@ -405,7 +390,6 @@ export function useSymbolChartData({
         const msg = String(err?.message || err || "Failed");
         setError(msg);
         if (mode === "snapshots") setSnapMsg(msg);
-        console.warn("[ChartData] refresh error:", err?.message || err);
         return null;
       }
     },
@@ -467,7 +451,6 @@ export function useSymbolChartData({
         // snapshot mode: fallback to full refresh currently
         return refresh({ force });
       } catch (err) {
-        console.warn("[ChartData] refreshTf error:", err?.message || err);
         return null;
       }
     },
@@ -507,9 +490,9 @@ export function useSymbolChartData({
       setData(cachedData);
       setStatus(allCached ? "READY" : "STALE");
     }
-    if (!allCached) {
-      setStatus(anyCached ? "STALE" : "LOADING");
-      refresh({ force: forceRefresh === true }).catch(() => null);
+    // Never auto-call TwelveData. Only refresh button triggers API.
+    if (!allCached && !anyCached) {
+      setStatus("IDLE");
     }
     return () => {
       mountedRef.current = false;

@@ -250,9 +250,48 @@ export default function TradeFilesTab({
         >
           {loading ? "..." : "Refresh"}
         </button>
+        <div
+          onDrop={handleDrop}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onClick={() => tradeSid && inputRef.current?.click()}
+          style={{
+            border: `1px dashed ${dragOver ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: 6,
+            padding: "4px 8px",
+            textAlign: "center",
+            cursor: tradeSid ? "pointer" : "not-allowed",
+            background: dragOver
+              ? "rgba(34,211,238,0.08)"
+              : "rgba(255,255,255,0.02)",
+            opacity: uploading ? 0.65 : 1,
+            minWidth: 220,
+            maxWidth: 280,
+            marginLeft: "auto",
+          }}
+        >
+          <span className="minor-text" style={{ fontSize: 10 }}>
+            {!tradeSid
+              ? "Save trade first"
+              : uploading
+                ? "Uploading..."
+                : "Drop files / click upload"}
+          </span>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            disabled={!tradeSid}
+            onChange={(e) => uploadFiles(e.target.files)}
+            style={{ display: "none" }}
+          />
+        </div>
         <button
           className="primary-button"
-          style={{ fontSize: 10, padding: "4px 12px", marginLeft: "auto" }}
+          style={{ fontSize: 10, padding: "4px 12px" }}
           onClick={takeSnapshots}
           disabled={capturing || !symbol}
         >
@@ -268,44 +307,6 @@ export default function TradeFilesTab({
           {error}
         </div>
       )}
-
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onClick={() => tradeSid && inputRef.current?.click()}
-        style={{
-          border: `1px dashed ${dragOver ? "var(--accent)" : "var(--border)"}`,
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 12,
-          textAlign: "center",
-          cursor: tradeSid ? "pointer" : "not-allowed",
-          background: dragOver
-            ? "rgba(34,211,238,0.08)"
-            : "rgba(255,255,255,0.02)",
-          opacity: uploading ? 0.65 : 1,
-        }}
-      >
-        <span className="minor-text" style={{ fontSize: 11 }}>
-          {!tradeSid
-            ? "Save trade plan first to enable uploads"
-            : uploading
-              ? "Uploading..."
-              : "Drop files here or click to upload"}
-        </span>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          disabled={!tradeSid}
-          onChange={(e) => uploadFiles(e.target.files)}
-          style={{ display: "none" }}
-        />
-      </div>
 
       {/* Delete All + count */}
       {files.length > 0 && (

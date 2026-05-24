@@ -63,8 +63,8 @@ function liveTfToTvInterval(tf) {
   if (t === "15M") return "15";
   if (t === "1H") return "60";
   if (t === "4H") return "240";
-  if (t === "D") return "D";
-  if (t === "W") return "W";
+  if (t === "D" || t === "1D" || t === "DAY") return "D";
+  if (t === "W" || t === "1W" || t === "WEEK") return "W";
   return "15";
 }
 
@@ -72,7 +72,11 @@ function toTradingViewSymbol(symRaw) {
   const s = String(symRaw || "").trim().toUpperCase();
   if (!s) return "";
   if (s.includes(":")) return s;
-  // Forex pairs are more reliable in widget embeds with explicit broker prefix.
+  // Metals → OANDA (XAUUSD, XAGUSD)
+  if (s.startsWith("XAU") || s.startsWith("XAG")) return `OANDA:${s}`;
+  // Crypto pairs → BINANCE (ADAUSD, BTCUSDT, ...)
+  if (s.endsWith("USD") || s.endsWith("USDT")) return `BINANCE:${s}`;
+  // Forex/indices → OANDA prefix
   if (/^[A-Z]{6}$/.test(s)) return `OANDA:${s}`;
   return s;
 }
@@ -661,16 +665,6 @@ export default function SymbolChart({
       setLocalBarsCount(Number(initialBarsCount));
     }
   }, [initialBarsCount]);
-
-  // Re-fetch when bars count changes (skip initial)
-  const barsInitRef = useRef(true);
-  useEffect(() => {
-    if (barsInitRef.current) {
-      barsInitRef.current = false;
-      return;
-    }
-    if (mode !== "live") refresh({ force: true });
-  }, [localBarsCount]);
 
   useEffect(() => {
     if (!rootRef.current) return;
@@ -2004,10 +1998,13 @@ export default function SymbolChart({
               const isLive = mode === "live";
               const context = master?.context?.[tf.toLowerCase()];
               const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+              // Prefer master.bars (updated by refresh) over brokerBars (fetched once on mount)
               const barsForTf =
-                brokerBars[tf.toLowerCase()]?.length
-                  ? brokerBars[tf.toLowerCase()]
-                  : master?.bars?.[tf.toLowerCase()] || [];
+                master?.bars?.[tf.toLowerCase()]?.length
+                  ? master.bars[tf.toLowerCase()]
+                  : brokerBars[tf.toLowerCase()]?.length
+                    ? brokerBars[tf.toLowerCase()]
+                    : [];
               const hasBars = status !== "LOADING" && barsForTf.length > 0;
               const noData = !isLive && !hasBars && status !== "LOADING";
               const tfViewport = viewports[chartId] || null;

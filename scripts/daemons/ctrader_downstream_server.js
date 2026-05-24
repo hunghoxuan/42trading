@@ -294,6 +294,112 @@ async function placeOrder(reqBody = {}) {
   };
 }
 
+const TF_MAP = { "1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1D": 1440, "1d": 1440, "1W": 10080, "1w": 10080 };
+
+async function fetchBars(reqBody = {}) {
+  const accountId = String(reqBody.account_id || CFG.accountId || "").trim();
+  if (!accountId) throw new Error("account_id required");
+
+  const symbols = Array.isArray(reqBody.symbols) && reqBody.symbols.length
+    ? reqBody.symbols
+    : reqBody.symbol ? [reqBody.symbol] : [];
+  if (!symbols.length) throw new Error("symbols required");
+
+  const tfsRaw = Array.isArray(reqBody.timeframes) && reqBody.timeframes.length
+    ? reqBody.timeframes
+    : reqBody.timeframe ? [reqBody.timeframe] : ["1m", "5m", "15m", "1h", "4h", "1D"];
+
+  const barCount = Math.max(10, Math.min(5000, Number(reqBody.bars || reqBody.bar_count || 500)));
+  const webhookUrl = envStr(reqBody.webhook_url || process.env.WEBHOOK_URL || "http://127.0.0.1:3001");
+  const webhookKey = envStr(reqBody.webhook_key || process.env.WEBHOOK_API_KEY || "");
+
+  const { conn: connRef } = await ensureAuthorized(accountId);
+  const symCache = await loadSymbols(accountId);
+  const toMs = Math.floor(Date.now());
+
+  const results = [];
+  let totalBars = 0;
+
+  for (const symRaw of symbols) {
+    const symObj = await resolveSymbolId(accountId, symRaw).catch(() => null);
+    if (!symObj) {
+      results.push({ symbol: symRaw, error: "symbol_not_found" });
+      continue;
+    }
+    const symName = String(symObj.symbolName || symRaw).toUpperCase();
+
+    for (const tfRaw of tfsRaw) {
+      const tfMin = TF_MAP[String(tfRaw).toLowerCase()] || TF_MAP[String(tfRaw).toLowerCase() + "m"] || 60;
+      const tfSec = tfMin * 60;
+      const fromMs = toMs - barCount * tfSec * 1000;
+
+      try {
+        const res = await connRef.sendCommand("ProtoOAGetTrendbarsReq", {
+          ctidTraderAccountId: Number(accountId),
+          symbolId: Number(symObj.symbolId),
+          period: tfMin,
+          from: fromMs,
+          to: toMs,
+        });
+
+        const bars = Array.isArray(res?.trendbar) ? res.trendbar : [];
+        if (!bars.length) {
+          results.push({ symbol: symName, tf: tfRaw, bars: 0 });
+          continue;
+        }
+
+        // Convert to webhook format
+        const barItems = bars.map((b) => ({
+          time: Math.floor(Number(b.timestamp || b.utcTimestampInMinutes || 0) * 60),
+          open: Number(b.open || 0),
+          high: Number(b.high || 0),
+          low: Number(b.low || 0),
+          close: Number(b.close || 0),
+          volume: Number(b.volume || 0),
+        })).filter((b) => Number.isFinite(b.time) && b.time > 0);
+
+        // Push to webhook
+        if (webhookUrl && barItems.length) {
+          const syncPayload = {
+            source_id: "Ctrader",
+            account_id: accountId,
+            sync_mode: "historical",
+            items: [{
+              symbol: symName,
+              tf: String(tfRaw),
+              bars: barItems,
+            }],
+          };
+          try {
+            const pushRes = await fetch(`${webhookUrl.replace(/\/+$/, "")}/v2/broker/prices-sync`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                ...(webhookKey ? { "x-api-key": webhookKey } : {}),
+              },
+              body: JSON.stringify(syncPayload),
+              signal: AbortSignal.timeout(30000),
+            });
+            if (!pushRes.ok) {
+              const errText = await pushRes.text().catch(() => "");
+              console.error(`[${TAG}] push failed for ${symName}/${tfRaw}: ${pushRes.status} ${errText.slice(0, 200)}`);
+            }
+          } catch (e) {
+            console.error(`[${TAG}] push error for ${symName}/${tfRaw}: ${e.message}`);
+          }
+        }
+
+        totalBars += barItems.length;
+        results.push({ symbol: symName, tf: tfRaw, bars: barItems.length });
+      } catch (e) {
+        results.push({ symbol: symName, tf: tfRaw, error: e?.description || e?.message || String(e) });
+      }
+    }
+  }
+
+  return { ok: true, total_bars: totalBars, results };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/health") {
@@ -339,6 +445,23 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const out = await placeOrder(body);
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error?.description || error?.message || String(error);
+      return json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/fetch-bars") {
+    if (!requireApiKey(req)) return json(res, 401, { ok: false, error: "invalid api key" });
+    let body = {};
+    try {
+      body = await readBody(req);
+    } catch (error) {
+      return json(res, 400, { ok: false, error: `invalid json: ${error.message}` });
+    }
+    try {
+      const out = await fetchBars(body);
       return json(res, 200, out);
     } catch (error) {
       const message = error?.description || error?.message || String(error);

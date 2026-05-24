@@ -638,6 +638,33 @@ export function extractTradePlanFromTrade(trade = {}) {
   const sideRaw = String(
     trade.action || trade.side || meta.direction || plan?.direction || "",
   ).toUpperCase();
+  const resolveSource = () => {
+    const rawSource = String(
+      trade.source || trade.source_id || meta.source || raw.source || "",
+    )
+      .trim()
+      .toLowerCase();
+    if (!rawSource) return "manual";
+    if (rawSource.startsWith("ai_") || rawSource === "ai") return rawSource;
+    if (
+      rawSource.includes("claude") ||
+      rawSource.includes("gpt") ||
+      rawSource.includes("gemini") ||
+      rawSource.includes("deepseek")
+    ) {
+      return rawSource.startsWith("ai_") ? rawSource : `ai_${rawSource}`;
+    }
+    return "manual";
+  };
+  const source = resolveSource();
+  const sourceId = String(trade.source_id || meta.source_id || raw.source_id || "")
+    .trim();
+  const rawEntryModel = String(
+    raw.entry_model || plan.entry_model || meta.entry_model || trade.entry_model || "",
+  ).trim();
+  const looksLikeBrokerAccount = /^[A-Z0-9_]{8,}$/.test(rawEntryModel);
+  const entryModel =
+    source === "manual" && looksLikeBrokerAccount ? "" : rawEntryModel;
   // Prefer planned values first (raw/plan), then mutable trade fields, then broker telemetry fallback.
   // This avoids plan editor drift when broker sync updates runtime SL/TP fields.
   const entry = pickFirstFinite(
@@ -735,13 +762,9 @@ export function extractTradePlanFromTrade(trade = {}) {
     sl: formatNum3(normalizedSl ?? sl ?? NaN),
     rr: formatNum3(rr ?? NaN),
     note: String(plan?.execution_plan?.tp3?.note || trade.note || "").trim(),
-    entry_model: String(
-      trade.entry_model ||
-        meta.entry_model ||
-        raw.entry_model ||
-        plan.entry_model ||
-        "",
-    ),
+    entry_model: entryModel,
+    source,
+    source_id: sourceId,
     strategy: String(
       trade.strategy || meta.strategy || raw.strategy || plan.strategy || "",
     ),

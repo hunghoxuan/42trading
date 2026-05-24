@@ -68,17 +68,32 @@ const DEFAULT_CRYPTO_SYMBOLS = [
   "SOLUSD",
   "XRPUSD",
   "LINKUSD",
-  "NEARUSD",
-  "BCHUSD",
-  "LTCUSD",
-  "DOGEUSD",
-  "HBARUSD",
-  "AVAXUSD",
   "ADAUSD",
+  "DOGEUSD",
   "DOTUSD",
-  "1000XSHIBUSD",
+  "LTCUSD",
+  "BCHUSD",
+  "AVAXUSD",
+  "UNIUSD",
+  "AAVEUSD",
+  "ATOMUSD",
+  "FILUSD",
+  "ALGOUSD",
+  "VETUSD",
+  "ICPUSD",
+  "NEARUSD",
+  "HBARUSD",
   "XLMUSD",
+  "TRXUSD",
   "XTZUSD",
+  "SANDUSD",
+  "MANAUSD",
+  "AXSUSD",
+  "GALAUSD",
+  "GRTUSD",
+  "THETAUSD",
+  "MATICUSD",
+  "ETCUSD",
 ];
 const DEFAULT_FOREX_SYMBOLS = [
   "EURUSD",
@@ -105,22 +120,116 @@ const DEFAULT_FOREX_SYMBOLS = [
   "AUDUSD",
   "NZDUSD",
   "NZDJPY",
+  "USDMXN",
+  "USDZAR",
+  "USDCNH",
+  "USDINR",
+  "USDBRL",
+  "EURHUF",
+  "EURSEK",
+  "EURNOK",
+  "EURDKK",
+  "EURPLN",
+  "USDTRY",
+  "EURTRY",
+  "USDNOK",
+  "USDSEK",
+  "USDDKK",
+  "USDHUF",
+  "USDPLN",
+  "USDRUB",
+  "CHFJPY",
+  "CADJPY",
+  "NZDCHF",
+  "NZDCAD",
+  "EURHKD",
+  "USDHKD",
+  "USDSGD",
+  "EURSGD",
+  "SGDJPY",
+  "GBPCHF",
+  "EURCHF",
+  "GBPSGD",
+  "CHFSGD",
+  "AUDNZD",
+  "EURAUD",
+  "EURCAD",
+  "EURNZD",
+  "GBPAUD",
+  "GBPCAD",
+  "GBPNZD",
+  "AUDCHF",
+  "AUDCAD",
+  "NZDCAD",
+  "NZDCHF",
+  "CADCHF",
+  "CADJPY",
+  "CHFJPY",
+  "SGDJPY",
+  "NOKJPY",
+  "SEKJPY",
+  "USDMXN",
+  "USDZAR",
+  "USDCNH",
+  "USDINR",
+  "USDBRL",
+  "EURHUF",
+  "EURSEK",
+  "EURNOK",
+  "EURDKK",
+  "EURPLN",
+  "EURCZK",
+  "EURRON",
+  "USDTRY",
+  "EURTRY",
+  "USDNOK",
+  "USDSEK",
+  "USDDKK",
+  "USDHUF",
+  "USDPLN",
+  "USDCZK",
+  "USDRON",
+  "USDRUB",
+  "USDILS",
+  "USDTHB",
+  "USDPHP",
+  "USDIDR",
+  "USDMYR",
+  "USDKRW",
+  "USDTWD",
+  "EURHKD",
+  "USDHKD",
+  "USDSGD",
+  "EURSGD",
 ];
 const DEFAULT_COMMODITY_SYMBOLS = [
   "XAUGBP",
   "XAUUSD",
   "XAUEUR",
   "XAUJPY",
+  "XAUAUD",
   "XAGUSD",
+  "XAGEUR",
   "XTIUSD",
   "XPTUSD",
   "XNGUSD",
   "XBRUSD",
+  "XPDUSD",
+  "COPPER",
+  "COFFEE",
+  "CORN",
+  "WHEAT",
+  "SOYBEAN",
+  "SUGAR",
+  "COTTON",
+  "COCOA",
 ];
 const DEFAULT_INDICES_SYMBOLS = [
   "US500",
   "US30",
   "USTEC",
+  "NAS100",
+  "SPX500",
   "UK100",
   "TECDE30",
   "DE40",
@@ -131,6 +240,14 @@ const DEFAULT_INDICES_SYMBOLS = [
   "AUS200",
   "CHINA50",
   "JP225",
+  "HK50",
+  "EU50",
+  "FRA40",
+  "SPA35",
+  "ITA40",
+  "NETH25",
+  "USDX",
+  "VIX",
 ];
 
 const DEFAULT_SMT_GROUPS = [
@@ -163,7 +280,6 @@ const CRYPTO_PREFIXES = new Set([
   "MATIC",
   "TRX",
   "AVAX",
-  "SHIB",
   "UNI",
   "ATOM",
   "ETC",
@@ -171,7 +287,6 @@ const CRYPTO_PREFIXES = new Set([
   "ALGO",
   "VET",
   "ICP",
-  "FTM",
   "GRT",
   "SAND",
   "MANA",
@@ -181,6 +296,8 @@ const CRYPTO_PREFIXES = new Set([
   "HBAR",
   "XLM",
   "XTZ",
+  "AAVE",
+  "THETA",
 ]);
 const FOREX_PAIRS = new Set([
   "EURUSD",
@@ -227,8 +344,44 @@ const FOREX_PAIRS = new Set([
   "EURSGD",
   "EURHKD",
   "USDHKD",
+  "USDMXN",
+  "USDZAR",
+  "USDCNH",
+  "USDINR",
+  "USDBRL",
+  "EURHUF",
+  "EURSEK",
+  "EURNOK",
+  "EURDKK",
+  "EURPLN",
+  "EURCZK",
+  "EURRON",
+  "USDTRY",
+  "EURTRY",
+  "USDNOK",
+  "USDSEK",
+  "USDDKK",
+  "USDHUF",
+  "USDPLN",
+  "USDCZK",
+  "USDRON",
+  "USDRUB",
+  "USDILS",
+  "USDTHB",
+  "USDPHP",
+  "USDIDR",
+  "USDMYR",
+  "USDKRW",
+  "USDTWD",
+  "CADCHF",
+  "NZDCHF",
+  "NZDCAD",
+  "GBPSGD",
+  "CHFSGD",
+  "NOKJPY",
+  "SEKJPY",
 ]);
-const COMMODITY_PREFIXES = new Set(["XAU", "XAG", "XTI", "XBR", "XNG", "XPT"]);
+const COMMODITY_PREFIXES = new Set(["XAU", "XAG", "XTI", "XBR", "XNG", "XPT", "XPD", "COP"]);
 const INDICES_SET = new Set([
   "US500",
   "US30",
@@ -245,6 +398,14 @@ const INDICES_SET = new Set([
   "JP225",
   "NAS100",
   "SPX500",
+  "HK50",
+  "EU50",
+  "FRA40",
+  "SPA35",
+  "ITA40",
+  "NETH25",
+  "USDX",
+  "VIX",
 ]);
 
 const classifySymbol = (s) => {
@@ -2616,6 +2777,9 @@ function buildDefaultPosition(seedEntry = null) {
       rr: Number.isFinite(rrNum) ? formatNum3(rrNum) : "2",
       trade_type: "limit",
       note: "",
+      strategy: "Price action",
+      entry_model: "Price",
+      source: "manual",
     };
   }
   return {
@@ -2626,6 +2790,9 @@ function buildDefaultPosition(seedEntry = null) {
     rr: "",
     trade_type: "limit",
     note: "",
+    strategy: "Price action",
+    entry_model: "Price",
+    source: "manual",
   };
 }
 
@@ -5835,11 +6002,18 @@ export default function ChartSnapshotsPage() {
   const allSymbols = useMemo(() => {
     return [
       ...new Set(
-        [...DEFAULT_WATCHLIST, ...favoriteSymbols]
+        [
+          ...DEFAULT_WATCHLIST,
+          ...favoriteSymbols,
+          ...DEFAULT_CRYPTO_SYMBOLS,
+          ...DEFAULT_FOREX_SYMBOLS,
+          ...DEFAULT_COMMODITY_SYMBOLS,
+          ...DEFAULT_INDICES_SYMBOLS,
+        ]
           .map(normalizeWatchSymbol)
           .filter(Boolean),
       ),
-    ];
+    ].sort();
   }, [favoriteSymbols]);
 
   const cryptoSymbols = useMemo(() => {
@@ -5983,6 +6157,7 @@ export default function ChartSnapshotsPage() {
                 }}
               >
                 <option value="FAVOURITE">Watchlist</option>
+                <option value="ALL">All</option>
                 <option value="PENDING">Pending</option>
                 <option value="FILLED">Filled</option>
                 <option value="CRYPTO">Crypto</option>
@@ -6070,6 +6245,10 @@ export default function ChartSnapshotsPage() {
                               className={`secondary-button snapshot-tag-v2 ${currentGroupActive ? "active" : ""}`}
                               onClick={() => {
                                 const next = [...new Set(group.symbols)];
+                                const route = isTradeRoute
+                                  ? buildAiTradeRoute([next[0]])
+                                  : buildAiAnalyzeRoute([next[0]]);
+                                navigate(route, { replace: false });
                                 setCfg((prev) => ({
                                   ...prev,
                                   symbols: next,
@@ -6128,22 +6307,39 @@ export default function ChartSnapshotsPage() {
                             type="button"
                             className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
                             onClick={() => {
-                              setCfg((prev) => {
-                                const prevSelected = Array.isArray(
-                                  prev?.symbols,
-                                )
-                                  ? prev.symbols
-                                  : [];
-                                const exists = prevSelected.includes(s);
-                                const nextSelected = exists
-                                  ? prevSelected.filter((x) => x !== s)
-                                  : [...prevSelected, s];
-                                return {
+                              if (isTradeRoute) {
+                                // Trade route: single symbol only, no toggle
+                                setCfg((prev) => ({
                                   ...prev,
-                                  symbols: nextSelected,
-                                  symbol: nextSelected[0] || "",
-                                };
-                              });
+                                  symbols: [s],
+                                  symbol: s,
+                                }));
+                                navigate(buildAiTradeRoute([s]), {
+                                  replace: false,
+                                });
+                              } else {
+                                setCfg((prev) => {
+                                  const prevSelected = Array.isArray(
+                                    prev?.symbols,
+                                  )
+                                    ? prev.symbols
+                                    : [];
+                                  const exists = prevSelected.includes(s);
+                                  const nextSelected = exists
+                                    ? prevSelected.filter((x) => x !== s)
+                                    : [...prevSelected, s];
+                                  if (!exists) {
+                                    navigate(buildAiAnalyzeRoute([s]), {
+                                      replace: false,
+                                    });
+                                  }
+                                  return {
+                                    ...prev,
+                                    symbols: nextSelected,
+                                    symbol: nextSelected[0] || "",
+                                  };
+                                });
+                              }
                             }}
                           >
                             {s}
@@ -7166,8 +7362,9 @@ export default function ChartSnapshotsPage() {
               fallback={<div className="loading-card">Loading Details...</div>}
             >
               <SignalDetailCard
+                key={selectedSymbol}
                 mode="ai"
-                hideTabsBeforeResponse={!hasAnalyzeResponse}
+                hideTabsBeforeResponse={!hasAnalyzeResponse && !isTradeRoute}
                 chart={{
                   enabled: true,
                   symbol: normalizeSignalSymbol(
@@ -7291,7 +7488,7 @@ export default function ChartSnapshotsPage() {
                 }}
                 response={{
                   enabled: true,
-                  hasData: hasAnalyzeResponse,
+                  hasData: hasAnalyzeResponse || isTradeRoute,
                   pending: analyzing,
                   pendingText:
                     hasAnalyzeResponse || isTradeRoute

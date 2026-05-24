@@ -319,7 +319,7 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
     const v = Number(b.v || b.volume || 0);
     if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
     const line = t + "," + o + "," + h + "," + l + "," + c + "," + v;
-    if (!existing.has(t)) { existing.set(t, line); added++; }
+    existing.set(t, line); added++;
   }
 
   if (added === 0) return 0;
@@ -12629,34 +12629,37 @@ async function buildAnalysisSnapshotFromTwelve({
 
   // Prefer locally persisted broker bars when available (market_data/{SYMBOL}/bars/{TF}.csv)
   // so static charts can render from broker-fed data without external API dependency.
-  const brokerBars = readBrokerBarsFromCsv(symbolNorm, tfNorm, outputsize);
-  if (brokerBars.length) {
-    const barStart = brokerBars[0]?.time || null;
-    const barEnd = brokerBars.length
-      ? Number(brokerBars[brokerBars.length - 1].time) + Math.max(60, parseTfTokenToSeconds(tfNorm))
-      : null;
-    const brokerSnapshot = {
-      provider: "broker_csv",
-      status: "ok",
-      timezone: "UTC",
-      symbol: String(symbol || "").toUpperCase(),
-      symbol_norm: symbolNorm,
-      timeframe: String(timeframe || ""),
-      tf_norm: tfNorm,
-      fetched_at: new Date().toISOString(),
-      bar_start: barStart,
-      bar_end: barEnd,
-      last_price: brokerBars.length ? brokerBars[brokerBars.length - 1].close : null,
-      last_price_at: brokerBars.length
-        ? new Date(Number(brokerBars[brokerBars.length - 1].time) * 1000).toISOString()
-        : null,
-      bars: brokerBars,
-      cache_source: "broker_csv",
-      gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(0, 20),
-    };
-    tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
-    await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
-    return mergeLastPriceIntoBars(brokerSnapshot);
+  // BUT: on force refresh, skip broker CSV and go through full API pipeline to get fresh data.
+  if (!forceRefresh) {
+    const brokerBars = readBrokerBarsFromCsv(symbolNorm, tfNorm, outputsize);
+    if (brokerBars.length) {
+      const barStart = brokerBars[0]?.time || null;
+      const barEnd = brokerBars.length
+        ? Number(brokerBars[brokerBars.length - 1].time) + Math.max(60, parseTfTokenToSeconds(tfNorm))
+        : null;
+      const brokerSnapshot = {
+        provider: "broker_csv",
+        status: "ok",
+        timezone: "UTC",
+        symbol: String(symbol || "").toUpperCase(),
+        symbol_norm: symbolNorm,
+        timeframe: String(timeframe || ""),
+        tf_norm: tfNorm,
+        fetched_at: new Date().toISOString(),
+        bar_start: barStart,
+        bar_end: barEnd,
+        last_price: brokerBars.length ? brokerBars[brokerBars.length - 1].close : null,
+        last_price_at: brokerBars.length
+          ? new Date(Number(brokerBars[brokerBars.length - 1].time) * 1000).toISOString()
+          : null,
+        bars: brokerBars,
+        cache_source: "broker_csv",
+        gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(0, 20),
+      };
+      tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
+      await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
+      return mergeLastPriceIntoBars(brokerSnapshot);
+    }
   }
 
   const tid = traceId || genTraceId("twelve_");
@@ -24863,6 +24866,7 @@ async function mt5RunMarketDataCron() {
       }).catch(() => {});
     }
   }
+  return { queued: 1 };
 }
 
 async function mt5RunAiAnalysisCron() {
@@ -24912,6 +24916,7 @@ async function mt5RunAiAnalysisCron() {
       }
     }
   }
+  return { triggered: 0 };
 }
 
 start().catch((err) => {

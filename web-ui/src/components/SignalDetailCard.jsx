@@ -556,7 +556,7 @@ function PlanHeader({
   const partials = Array.isArray(plan.partial_tps) ? plan.partial_tps : [];
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
-  const sourceVal = plan.source || plan.model || "";
+  const sourceVal = plan.source_id || plan.source || plan.model || "";
   const statusText = String(
     status?.label || plan?.execution_status || plan?.status || "",
   )
@@ -788,8 +788,6 @@ function PlanHeader({
 
         {/* Row 3: source | strategy | entry_model | confidence | risk — one row */}
         {(sourceVal ||
-          strategy ||
-          entryModel ||
           confidenceText ||
           riskLevel ||
           gradeVal ||
@@ -813,34 +811,6 @@ function PlanHeader({
                 style={{ fontSize: "9px", fontWeight: 400, opacity: 0.7 }}
               >
                 {sourceVal}
-              </span>
-            )}
-            {strategy && (
-              <span
-                className="minor-text"
-                title="Strategy"
-                style={{
-                  fontSize: "9px",
-                  fontWeight: 400,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.02em",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {strategy}
-              </span>
-            )}
-            {entryModel && (
-              <span
-                className="minor-text"
-                title="Entry model"
-                style={{
-                  fontSize: "9px",
-                  fontWeight: 400,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {entryModel}
               </span>
             )}
             {confidenceText && (
@@ -1105,7 +1075,7 @@ export default function SignalDetailCard({
     const trulyHasData = hasRaw || hasPlans;
 
     if (chart?.enabled) tabs.push("chart");
-    if (trulyHasData || metaItems?.length) tabs.push("info");
+    if (trulyHasData || metaItems?.length || tradePlan?.enabled) tabs.push("info");
     if (mode === "trade") tabs.push("broker");
     if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
@@ -1120,6 +1090,7 @@ export default function SignalDetailCard({
     history?.enabled,
     metaItems,
     hideTabsBeforeResponse,
+    tradePlan?.enabled,
   ]);
 
   const [mainTab, setMainTab] = useState("chart");
@@ -1277,6 +1248,8 @@ export default function SignalDetailCard({
             rr: tradePlan?.value?.rr,
             strategy: tradePlan?.value?.strategy,
             entryModel: tradePlan?.value?.entry_model,
+            source_id: tradePlan?.value?.source_id,
+            source: tradePlan?.value?.source,
             confidence: tradePlan?.value?.confidence_pct,
             risk_management: tradePlan?.value?.risk_management,
             entry_condition: tradePlan?.value?.entry_condition,
@@ -1308,6 +1281,8 @@ export default function SignalDetailCard({
                 rr: tradePlan?.value?.rr,
                 strategy: tradePlan?.value?.strategy,
                 entryModel: tradePlan?.value?.entry_model,
+                source_id: tradePlan?.value?.source_id,
+                source: tradePlan?.value?.source,
                 confidence: tradePlan?.value?.confidence_pct,
                 risk_management: tradePlan?.value?.risk_management,
                 entry_condition: tradePlan?.value?.entry_condition,
@@ -1436,10 +1411,17 @@ export default function SignalDetailCard({
               : [],
           skip_recommendation: p.skip_recommendation || p.skip || "",
         };
-        next[planId] = mergePlanPreservingEdits(
-          normalized,
-          prev?.[planId] || {},
-        );
+        // Trade detail page is single-source-of-truth from selected trade row.
+        // Never preserve prior trade drafts here, otherwise values can bleed
+        // across trade navigation (A -> B -> A) and appear swapped/stale.
+        if (mode === "trade") {
+          next[planId] = normalized;
+        } else {
+          next[planId] = mergePlanPreservingEdits(
+            normalized,
+            prev?.[planId] || {},
+          );
+        }
       });
       if (!next.main) {
         next.main = {

@@ -24,14 +24,14 @@ const row2Style = {
 };
 const labelStyle = {
   fontWeight: "700",
-  fontSize: "9px",
+  fontSize: "8px",
   textTransform: "uppercase",
   color: "var(--muted-bright)",
 };
 const numericInputStyle = {
-  height: "22px",
-  fontSize: "11px",
-  padding: "0 6px",
+  height: "20px",
+  fontSize: "10px",
+  padding: "0 5px",
   width: "100%",
   minWidth: 0,
 };
@@ -55,6 +55,25 @@ const sliderStyle = {
   margin: 0,
   flex: 1,
   minWidth: 0,
+};
+const selectInlineRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "42px minmax(84px, 0.75fr) minmax(132px, 1.25fr)",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
+};
+const selectSpacerStyle = {
+  height: 18,
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 999,
+  opacity: 0.35,
+};
+const labelColorByKey = (k) => {
+  const key = String(k || "").toLowerCase();
+  if (key === "sl") return "#b91c1c"; // dark red
+  if (["tp1", "tp2", "tp3"].includes(key)) return "#166534"; // dark green
+  return "var(--muted-bright)";
 };
 
 function parseNum(v) {
@@ -187,7 +206,11 @@ const NumericInline = memo(function NumericInline({
       <label
         htmlFor={fieldId}
         className="minor-text"
-        style={{ ...labelStyle, opacity: disabled ? 0.4 : 0.8 }}
+        style={{
+          ...labelStyle,
+          color: labelColorByKey(k),
+          opacity: disabled ? 0.4 : 0.9,
+        }}
       >
         {label}
       </label>
@@ -601,54 +624,77 @@ export function TradePlanEditor({
           >
             <Row2
               left={
-                <select
-                  id={`${signalId || tradeId || "tp-editor"}-direction`}
-                  name="direction"
-                  style={{
-                    height: "24px",
-                    fontSize: "11px",
-                    padding: "0 2px",
-                    background: "rgba(255,255,255,0.05)",
-                  }}
-                  value={value.direction || ""}
-                  onChange={(e) => {
-                    console.log(
-                      "[TradePlanEditor] direction onChange:",
-                      e.target.value,
-                      "prev direction:",
-                      value.direction,
-                    );
-                    update("direction", String(e.target.value || ""));
-                  }}
-                  disabled={tradeFieldsDisabled || controlsDisabled}
-                >
-                  {directionOptions.map((x) => (
-                    <option key={x || "_empty"} value={x}>
-                      {x === "" ? "—" : x === "BUY" ? "Buy" : "Sell"}
-                    </option>
-                  ))}
-                </select>
+                <div style={selectInlineRowStyle}>
+                  <label
+                    htmlFor={`${signalId || tradeId || "tp-editor"}-direction`}
+                    className="minor-text"
+                    style={{
+                      ...labelStyle,
+                      opacity: tradeFieldsDisabled ? 0.4 : 0.8,
+                    }}
+                  >
+                    Side
+                  </label>
+                  <select
+                    id={`${signalId || tradeId || "tp-editor"}-direction`}
+                    name="direction"
+                    style={{
+                      ...numericInputStyle,
+                      height: "20px",
+                      fontSize: "10px",
+                      padding: "0 4px",
+                      background: "rgba(255,255,255,0.05)",
+                    }}
+                    value={value.direction || ""}
+                    onChange={(e) => {
+                      update("direction", String(e.target.value || ""));
+                    }}
+                    disabled={tradeFieldsDisabled || controlsDisabled}
+                  >
+                    {directionOptions.map((x) => (
+                      <option key={x || "_empty"} value={x}>
+                        {x === "" ? "—" : x === "BUY" ? "Buy" : "Sell"}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    id={`${signalId || tradeId || "tp-editor"}-trade_type`}
+                    name="trade_type"
+                    style={{
+                      ...numericInputStyle,
+                      height: "20px",
+                      fontSize: "10px",
+                      padding: "0 4px",
+                      background: "rgba(255,255,255,0.05)",
+                    }}
+                    value={value.trade_type || "limit"}
+                    onChange={(e) =>
+                      update("trade_type", String(e.target.value || "limit"))
+                    }
+                    disabled={tradeFieldsDisabled || controlsDisabled}
+                  >
+                    <option value="limit">limit</option>
+                    <option value="market">market</option>
+                    <option value="stop">stop</option>
+                  </select>
+                </div>
               }
               right={
-                <select
-                  id={`${signalId || tradeId || "tp-editor"}-trade_type`}
-                  name="trade_type"
-                  style={{
-                    height: "24px",
-                    fontSize: "11px",
-                    padding: "0 2px",
-                    background: "rgba(255,255,255,0.05)",
-                  }}
-                  value={value.trade_type || "limit"}
-                  onChange={(e) =>
-                    update("trade_type", String(e.target.value || "limit"))
-                  }
-                  disabled={tradeFieldsDisabled || controlsDisabled}
-                >
-                  <option value="limit">limit</option>
-                  <option value="market">market</option>
-                  <option value="stop">stop</option>
-                </select>
+                <div style={selectInlineRowStyle}>
+                  <label className="minor-text" style={{ ...labelStyle, opacity: 0 }}>
+                    .
+                  </label>
+                  <div
+                    style={{
+                      ...numericInputStyle,
+                      height: "20px",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      borderRadius: 999,
+                      opacity: 0.15,
+                    }}
+                  />
+                  <div style={selectSpacerStyle} />
+                </div>
               }
             />
 
@@ -767,16 +813,62 @@ export function TradePlanEditor({
                 gap: "4px",
               }}
             >
+              {/* Meta fields moved to note area */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr 1fr",
+                  gap: 6,
+                  minWidth: 0,
+                  marginBottom: 4,
+                }}
+              >
+                <input
+                  type="text"
+                  placeholder="Strategy"
+                  style={{
+                    height: 22,
+                    fontSize: 10,
+                    padding: "0 4px",
+                    background: "rgba(255,255,255,0.05)",
+                  }}
+                  value={value.strategy || ""}
+                  onChange={(e) => update("strategy", e.target.value)}
+                  disabled={tradeFieldsDisabled || controlsDisabled}
+                />
+                <input
+                  type="text"
+                  placeholder="Entry model"
+                  style={{
+                    height: 22,
+                    fontSize: 10,
+                    padding: "0 4px",
+                    background: "rgba(255,255,255,0.05)",
+                  }}
+                  value={value.entry_model || ""}
+                  onChange={(e) => update("entry_model", e.target.value)}
+                  disabled={tradeFieldsDisabled || controlsDisabled}
+                />
+                <input
+                  type="text"
+                  placeholder="Source ID"
+                  style={{
+                    height: 22,
+                    fontSize: 10,
+                    padding: "0 4px",
+                    background: "rgba(255,255,255,0.05)",
+                  }}
+                  value={value.source_id || ""}
+                  onChange={(e) => {
+                    update("source_id", e.target.value);
+                  }}
+                  disabled={tradeFieldsDisabled || controlsDisabled}
+                />
+              </div>
               <SmartContent
                 content={value.note || ""}
                 mode="editable"
                 onChange={(v) => update("note", v)}
-              />
-              <TradeFileUpload
-                tradeId={tradeId}
-                disabled={controlsDisabled}
-                showList={false}
-                showLabel={false}
               />
             </div>
 
