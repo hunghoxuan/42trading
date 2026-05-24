@@ -149,10 +149,7 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
-const SERVER_VERSION = envStr(
-  process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.24 10:27 - 096d3ba4",
-); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.24 20:32 - c61346bd"); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
