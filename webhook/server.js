@@ -151,7 +151,7 @@ loadEnvFile();
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.23 12:10 - eab7e1c7",
+  "v2026.05.24 10:27 - 096d3ba4",
 ); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
