@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { SmartContent } from "./SmartContent";
 import { TradeFileUpload } from "./TradeFileUpload";
+import { normalizeOrderTypeValue } from "../utils/signalDetailUtils";
 
 const numericInlineRowStyle = {
   display: "grid",
@@ -71,9 +71,15 @@ const selectSpacerStyle = {
 };
 const labelColorByKey = (k) => {
   const key = String(k || "").toLowerCase();
-  if (key === "sl") return "#b91c1c"; // dark red
-  if (["tp1", "tp2", "tp3"].includes(key)) return "#166534"; // dark green
+  if (key === "sl") return "#ef5350";
+  if (["tp1", "tp2", "tp3"].includes(key)) return "#26a69a";
   return "var(--muted-bright)";
+};
+const sliderAccentByKey = (k) => {
+  const key = String(k || "").toLowerCase();
+  if (key === "sl") return "#ef5350";
+  if (["tp1", "tp2", "tp3"].includes(key)) return "#26a69a";
+  return "var(--muted)";
 };
 
 function parseNum(v) {
@@ -183,6 +189,7 @@ const NumericInline = memo(function NumericInline({
     [k, sliderOverride, valueRaw],
   );
   const isDisabled = disabled || controlsDisabled;
+  const toneColor = labelColorByKey(k);
   const sliderDisabled = disabled
     ? true
     : sliderOverride
@@ -217,7 +224,7 @@ const NumericInline = memo(function NumericInline({
       <input
         id={fieldId}
         name={k}
-        style={numericInputStyle}
+        style={{ ...numericInputStyle, color: toneColor }}
         type="number"
         step={step}
         inputMode="decimal"
@@ -246,7 +253,7 @@ const NumericInline = memo(function NumericInline({
           max={sliderMeta.max}
           step={sliderMeta.step}
           value={sliderOverride ? Number(valueRaw) || 2 : sliderMeta.value}
-          style={sliderStyle}
+          style={{ ...sliderStyle, accentColor: sliderAccentByKey(k) }}
           disabled={sliderDisabled}
           onChange={(e) => onUpdate(k, formatNum3(Number(e.target.value)))}
         />
@@ -332,6 +339,7 @@ export function TradePlanEditor({
   disabled = false,
   viewOnly = false,
   lockTradeFields = false,
+  lockMode = "none",
   showActionsInView = false,
   error = "",
   className = "",
@@ -352,7 +360,15 @@ export function TradePlanEditor({
   const resolvedSaveLabel =
     saveLabel || (tradeId ? "Save Trade" : "Save Draft");
 
-  const tradeFieldsDisabled = disabled || Boolean(lockTradeFields);
+  const normalizedLockMode =
+    lockMode === "core" || lockMode === "all"
+      ? lockMode
+      : lockTradeFields
+        ? "all"
+        : "none";
+  const coreFieldsDisabled =
+    disabled || normalizedLockMode === "core" || normalizedLockMode === "all";
+  const tradeFieldsDisabled = disabled || normalizedLockMode === "all";
   const controlsDisabled =
     disabled || Boolean(busy?.save || busy?.draft || busy?.trade);
   const directionOptions = useMemo(() => ["", "BUY", "SELL"], []);
@@ -630,7 +646,7 @@ export function TradePlanEditor({
                     className="minor-text"
                     style={{
                       ...labelStyle,
-                      opacity: tradeFieldsDisabled ? 0.4 : 0.8,
+                      opacity: coreFieldsDisabled ? 0.4 : 0.8,
                     }}
                   >
                     Side
@@ -649,7 +665,7 @@ export function TradePlanEditor({
                     onChange={(e) => {
                       update("direction", String(e.target.value || ""));
                     }}
-                    disabled={tradeFieldsDisabled || controlsDisabled}
+                    disabled={coreFieldsDisabled || controlsDisabled}
                   >
                     {directionOptions.map((x) => (
                       <option key={x || "_empty"} value={x}>
@@ -667,11 +683,14 @@ export function TradePlanEditor({
                       padding: "0 4px",
                       background: "rgba(255,255,255,0.05)",
                     }}
-                    value={value.trade_type || "limit"}
+                    value={normalizeOrderTypeValue(value.trade_type, "limit")}
                     onChange={(e) =>
-                      update("trade_type", String(e.target.value || "limit"))
+                      update(
+                        "trade_type",
+                        normalizeOrderTypeValue(e.target.value, "limit"),
+                      )
                     }
-                    disabled={tradeFieldsDisabled || controlsDisabled}
+                    disabled={coreFieldsDisabled || controlsDisabled}
                   >
                     <option value="limit">limit</option>
                     <option value="market">market</option>
@@ -707,7 +726,7 @@ export function TradePlanEditor({
                   valueRaw={value.entry}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
-                  disabled={tradeFieldsDisabled}
+                  disabled={coreFieldsDisabled}
                 />
               }
               right={
@@ -865,10 +884,24 @@ export function TradePlanEditor({
                   disabled={tradeFieldsDisabled || controlsDisabled}
                 />
               </div>
-              <SmartContent
-                content={value.note || ""}
-                mode="editable"
-                onChange={(v) => update("note", v)}
+              <textarea
+                value={value.note || ""}
+                onChange={(e) => update("note", e.target.value)}
+                disabled={tradeFieldsDisabled || controlsDisabled}
+                placeholder="Click to edit..."
+                style={{
+                  width: "100%",
+                  minHeight: 64,
+                  maxHeight: 96,
+                  resize: "vertical",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "rgba(255,255,255,0.03)",
+                  color: "var(--foreground)",
+                  fontSize: 12,
+                  lineHeight: 1.35,
+                  padding: "8px 10px",
+                }}
               />
             </div>
 

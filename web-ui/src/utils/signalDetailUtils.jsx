@@ -7,6 +7,25 @@ export function asNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+export function normalizeOrderTypeValue(raw, fallback = "limit") {
+  const fb = String(fallback || "limit")
+    .trim()
+    .toLowerCase();
+  const text = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (!text) return ["limit", "market", "stop"].includes(fb) ? fb : "limit";
+  if (text === "limit" || text === "market" || text === "stop") return text;
+  if (text.endsWith(" limit") || text.startsWith("limit ")) return "limit";
+  if (text.endsWith(" market") || text.startsWith("market ")) return "market";
+  if (text.endsWith(" stop") || text.startsWith("stop ")) return "stop";
+  if (text.includes("limit")) return "limit";
+  if (text.includes("market")) return "market";
+  if (text.includes("stop")) return "stop";
+  return ["limit", "market", "stop"].includes(fb) ? fb : "limit";
+}
+
 function pickFirstFinite(...vals) {
   for (const v of vals) {
     const n = asNum(v);
@@ -733,9 +752,10 @@ export function extractTradePlanFromTrade(trade = {}) {
 
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
-    trade_type: String(
-      meta.trade_type || meta.order_type || raw.order_type || "limit",
-    ).toLowerCase(),
+    trade_type: normalizeOrderTypeValue(
+      trade.order_type || meta.trade_type || meta.order_type || raw.order_type,
+      "limit",
+    ),
     risk_pct: asNum(
       trade.risk_pct_planned ??
         plan?.risk_management?.risk_percent ??
@@ -891,8 +911,9 @@ export function extractTradePlanFromTrade(trade = {}) {
         "",
     ),
     ai_full_analysis: plan.ai_full_analysis || raw.ai_full_analysis || {},
-    order_type: String(
-      plan.order_type || raw.order_type || meta.order_type || "limit",
+    order_type: normalizeOrderTypeValue(
+      plan.order_type || raw.order_type || meta.order_type,
+      "limit",
     ),
   };
 }

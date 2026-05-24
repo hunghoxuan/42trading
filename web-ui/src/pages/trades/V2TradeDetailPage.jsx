@@ -13,6 +13,7 @@ import {
   buildHeaderMeta,
   renderHistoryItem,
   extractTradePlanFromTrade,
+  normalizeOrderTypeValue,
   validateTradePlan,
 } from "../../utils/signalDetailUtils";
 import { showDateTime } from "../../utils/format";
@@ -62,6 +63,10 @@ function formatNum3(v) {
   if (!Number.isFinite(n)) return "";
   return String(Number(n.toFixed(3)));
 }
+function asFiniteOrNull(v) {
+  const n = asNum(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 function inferDirection(entry, tp, sl, fallback = "BUY") {
   if (Number.isFinite(entry) && Number.isFinite(tp) && Number.isFinite(sl)) {
@@ -69,16 +74,6 @@ function inferDirection(entry, tp, sl, fallback = "BUY") {
     if (tp < entry && sl > entry) return "SELL";
   }
   return String(fallback || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
-}
-
-function deriveOrderType(direction, entry, lastPrice, fallback = "limit") {
-  if (!Number.isFinite(entry) || !Number.isFinite(lastPrice))
-    return String(fallback || "limit").toLowerCase();
-  const eps = Math.max(Math.abs(lastPrice) * 0.00002, 0.00001);
-  if (Math.abs(entry - lastPrice) <= eps) return "market";
-  if (String(direction).toUpperCase() === "BUY")
-    return entry < lastPrice ? "limit" : "stop";
-  return entry > lastPrice ? "limit" : "stop";
 }
 
 function orderTypeRuleError(direction, orderType, entry, lastPrice) {
@@ -140,12 +135,9 @@ export default function TradeDetailPage() {
             : "BUY";
       }
 
-      const nextEntry = asNum(next.entry);
-      next.trade_type = deriveOrderType(
-        next.direction || prev.direction || "BUY",
-        nextEntry,
-        lastPrice,
-        next.trade_type || prev.trade_type || "limit",
+      next.trade_type = normalizeOrderTypeValue(
+        key === "trade_type" ? rawValue : next.trade_type || prev.trade_type,
+        "limit",
       );
 
       setPlanError("");
@@ -365,13 +357,16 @@ export default function TradeDetailPage() {
       const payload = {
         side: detailPlan.direction,
         order_type: detailPlan.trade_type,
-        price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
-        tp1: asNum(detailPlan.tp1),
-        tp2: asNum(detailPlan.tp2),
-        tp3: asNum(detailPlan.tp3),
-        sl: asNum(detailPlan.sl),
-        rr: asNum(detailPlan.rr),
+        price: asFiniteOrNull(detailPlan.entry),
+        tp: asFiniteOrNull(detailPlan.tp1 ?? detailPlan.tp),
+        tp1: asFiniteOrNull(detailPlan.tp1),
+        tp2: asFiniteOrNull(detailPlan.tp2),
+        tp3: asFiniteOrNull(detailPlan.tp3),
+        sl: asFiniteOrNull(detailPlan.sl),
+        rr: asFiniteOrNull(detailPlan.rr),
+        strategy: detailPlan.strategy,
+        entry_model: detailPlan.entry_model,
+        source_id: detailPlan.source_id,
         note: detailPlan.note,
       };
       await api.saveTradePlan(tradeId, payload);
@@ -384,10 +379,9 @@ export default function TradeDetailPage() {
       const t =
         (Array.isArray(data?.items) &&
           (data.items.find((x) => String(x?.sid || "") === String(tradeId)) ||
-            data.items.find((x) => String(x?.id || "") === String(tradeId)) ||
-            data.items[0])) ||
+            data.items.find((x) => String(x?.id || "") === String(tradeId)))) ||
         null;
-      setTrade(t);
+      if (t) setTrade(t);
       // Keep current detailPlan (user just saved it) instead of re-extracting
       setPlanError("");
     } catch (e) {
@@ -541,6 +535,12 @@ export default function TradeDetailPage() {
               showSaveButton: !isTerminal,
               viewOnly: isTerminal,
               lockTradeFields: isLocked,
+              lockMode: (() => {
+                const st = String(trade.execution_status || "").toUpperCase();
+                if (st === "CLOSED" || st === "CANCELLED") return "all";
+                if (st === "FILLED") return "core";
+                return "none";
+              })(),
               error: planError,
               status: statusUi(trade.execution_status),
               volume: `${trade.volume ?? "-"} lots`,

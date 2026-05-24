@@ -557,6 +557,10 @@ function PlanHeader({
   const strategy = plan.strategy || "";
   const entryModel = plan.entry_model || plan.entryModel || "";
   const sourceVal = plan.source_id || plan.source || plan.model || "";
+  const sidVal = String(plan.sid || plan.signal_id || "").trim();
+  const brokerIdVal = String(
+    plan.broker_trade_id || plan.ticket || plan.broker_id || "",
+  ).trim();
   const statusText = String(
     status?.label || plan?.execution_status || plan?.status || "",
   )
@@ -656,8 +660,8 @@ function PlanHeader({
               letterSpacing: "0.01em",
               opacity: 0.9,
             }}
-          >
-            {plan.entry || "-"} →{" "}
+            >
+              {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>
               {plan.tp || fallbackTp || "-"}
             </span>{" "}
@@ -736,6 +740,20 @@ function PlanHeader({
           )}
         </div>
 
+        {(sidVal || brokerIdVal) && (
+          <div
+            style={{
+              fontSize: "10px",
+              color: "var(--muted)",
+              opacity: 0.9,
+            }}
+          >
+            {sidVal ? `SID: ${sidVal}` : ""}
+            {sidVal && brokerIdVal ? " · " : ""}
+            {brokerIdVal ? `Broker ID: ${brokerIdVal}` : ""}
+          </div>
+        )}
+
         {/* Row 2: confidence_level / risk_level badges */}
         {(confidenceLevel || riskLevel) && (
           <div
@@ -787,13 +805,13 @@ function PlanHeader({
         )}
 
         {/* Row 3: source | strategy | entry_model | confidence | risk — one row */}
-        {(sourceVal ||
-          confidenceText ||
+        {(confidenceText ||
           riskLevel ||
           gradeVal ||
           confidenceBadgeVal ||
           skipDecisionVal ||
-          riskPercentVal) && (
+          riskPercentVal ||
+          statusText) && (
           <div
             style={{
               display: "flex",
@@ -804,15 +822,6 @@ function PlanHeader({
               overflow: "hidden",
             }}
           >
-            {sourceVal && (
-              <span
-                className="minor-text"
-                title="Signal source / broker feed"
-                style={{ fontSize: "9px", fontWeight: 400, opacity: 0.7 }}
-              >
-                {sourceVal}
-              </span>
-            )}
             {confidenceText && (
               <span
                 title="Confidence"
@@ -898,6 +907,15 @@ function PlanHeader({
                 }}
               >
                 {skipDecisionVal}
+              </span>
+            )}
+            {statusText && (
+              <span
+                className={`badge ${status?.cls || ""} badge-mini`}
+                title="Current trade status"
+                style={{ padding: "1px 5px", fontSize: "9px", fontWeight: 400 }}
+              >
+                {statusText}
               </span>
             )}
           </div>
@@ -1246,10 +1264,15 @@ export default function SignalDetailCard({
             tp2: tradePlan?.value?.tp2,
             tp3: tradePlan?.value?.tp3,
             rr: tradePlan?.value?.rr,
+            trade_type: tradePlan?.value?.trade_type,
+            order_type: tradePlan?.value?.trade_type,
             strategy: tradePlan?.value?.strategy,
             entryModel: tradePlan?.value?.entry_model,
             source_id: tradePlan?.value?.source_id,
             source: tradePlan?.value?.source,
+            sid: response?.sid || response?.id || tradePlan?.tradeId || "",
+            broker_trade_id:
+              response?.broker_trade_id || response?.ticket || "",
             confidence: tradePlan?.value?.confidence_pct,
             risk_management: tradePlan?.value?.risk_management,
             entry_condition: tradePlan?.value?.entry_condition,
@@ -1279,10 +1302,15 @@ export default function SignalDetailCard({
                 tp2: tradePlan?.value?.tp2,
                 tp3: tradePlan?.value?.tp3,
                 rr: tradePlan?.value?.rr,
+                trade_type: tradePlan?.value?.trade_type,
+                order_type: tradePlan?.value?.trade_type,
                 strategy: tradePlan?.value?.strategy,
                 entryModel: tradePlan?.value?.entry_model,
                 source_id: tradePlan?.value?.source_id,
                 source: tradePlan?.value?.source,
+                sid: response?.sid || response?.id || tradePlan?.tradeId || "",
+                broker_trade_id:
+                  response?.broker_trade_id || response?.ticket || "",
                 confidence: tradePlan?.value?.confidence_pct,
                 risk_management: tradePlan?.value?.risk_management,
                 entry_condition: tradePlan?.value?.entry_condition,

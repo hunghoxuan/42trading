@@ -6395,7 +6395,7 @@ function normalizeSignal(payload) {
   const tradeId = normalizePublicSidBase(tradeIdRaw, "TRD");
   const timeframe = String(payload.timeframe || payload.tf || "n/a");
   const orderTypeRaw = envStr(payload.order_type ?? payload.orderType);
-  const orderType = orderTypeRaw ? mt5NormalizeOrderType(payload) : "market";
+  const orderType = orderTypeRaw ? mt5NormalizeOrderType(payload) : "limit";
   const chartTf = envStr(
     payload.chart_tf ?? payload.chartTf ?? payload.timeframe ?? payload.tf,
   );
@@ -8679,8 +8679,7 @@ async function _mt5InitBackendInternal() {
               volume: volumeVal,
               symbol,
               action,
-              order_type:
-                orderTypeRaw || (executionStatus === "OPEN" ? "MARKET" : null),
+              order_type: orderTypeRaw || null,
               entry,
               sl,
               tp,
@@ -8715,8 +8714,6 @@ async function _mt5InitBackendInternal() {
             if (symbol) prev.symbol = symbol;
             if (action) prev.action = action;
             if (orderTypeRaw) prev.order_type = orderTypeRaw;
-            else if (!prev.order_type && executionStatus === "OPEN")
-              prev.order_type = "MARKET";
             if (entry !== null) prev.entry = entry;
             if (sl !== null) prev.sl = sl;
             if (tp !== null) prev.tp = tp;
@@ -8763,6 +8760,7 @@ async function _mt5InitBackendInternal() {
                 ? [it.ticket]
                 : [];
           const syncMeta = JSON.stringify({
+            order_type: mt5NormalizeOrderTypeValue(it.order_type, "limit"),
             broker_data: {
               ...it, // Spread all processed fields (pips, lots, commission, etc.)
               position_id: ticketCandidates[0] || null,
@@ -11089,12 +11087,37 @@ function mt5NormalizeVolume(payload) {
   return n;
 }
 
-function mt5NormalizeOrderType(payload) {
-  const raw = String(payload.order_type ?? payload.orderType ?? "")
+function mt5NormalizeOrderTypeValue(rawInput, fallback = "limit") {
+  const fallbackNorm = String(fallback || "limit")
     .trim()
     .toLowerCase();
-  if (!raw) return "limit";
+  const raw = String(rawInput ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  if (!raw)
+    return ["limit", "stop", "market"].includes(fallbackNorm)
+      ? fallbackNorm
+      : "limit";
   if (raw === "limit" || raw === "stop" || raw === "market") return raw;
+  if (raw.endsWith(" limit") || raw.startsWith("limit ")) return "limit";
+  if (raw.endsWith(" stop") || raw.startsWith("stop ")) return "stop";
+  if (raw.endsWith(" market") || raw.startsWith("market ")) return "market";
+  if (raw.includes("limit")) return "limit";
+  if (raw.includes("stop")) return "stop";
+  if (raw.includes("market")) return "market";
+  return ["limit", "stop", "market"].includes(fallbackNorm)
+    ? fallbackNorm
+    : "limit";
+}
+
+function mt5NormalizeOrderType(payload) {
+  const normalized = mt5NormalizeOrderTypeValue(
+    payload.order_type ?? payload.orderType,
+    "limit",
+  );
+  if (normalized === "limit" || normalized === "stop" || normalized === "market")
+    return normalized;
   throw new Error("order_type must be one of: limit, stop, market");
 }
 
@@ -14235,8 +14258,9 @@ function mt5FilterRows(rows, opts = {}) {
     const rs = mt5CanonicalStoredStatus(r.status);
     if (userId && String(r.user_id || "") !== userId) return false;
     if (symbol && String(r.symbol || "").toUpperCase() !== symbol) return false;
-    if (source && mt5StrategyFromRow(r) !== source) return false;
-    if (entryModel && mt5EntryModelFromRow(r) !== entryModel) return false;
+    if (source && mt5SourceIdFromRow(r) !== source) return false;
+    if (entryModel && mt5EntryModelLabelFromRow(r) !== entryModel)
+      return false;
     if (
       chartTf &&
       String(
@@ -14588,6 +14612,66 @@ function mt5StrategyFromRow(row) {
       raw.entry_model ||
       raw.entryModel,
   );
+}
+
+function mt5StrategyLabelFromRow(row) {
+  const raw = row?.raw_json || {};
+  return envStr(row?.strategy || raw?.strategy);
+}
+
+function mt5SourceIdFromRow(row) {
+  const raw = row?.raw_json || {};
+  return envStr(row?.source_id || raw?.source_id || row?.source || raw?.source);
+}
+
+function mt5EntryModelLabelFromRow(row) {
+  const raw = row?.raw_json || {};
+  const firstPlan = Array.isArray(raw?.trade_plan)
+    ? raw.trade_plan[0] || {}
+    : raw?.trade_plan && typeof raw.trade_plan === "object"
+      ? raw.trade_plan
+      : {};
+  const firstAnalysisPlan = Array.isArray(raw?.analysis_data)
+    ? raw.analysis_data.find(
+        (x) => Array.isArray(x?.trade_plan) && x.trade_plan.length > 0,
+      )?.trade_plan?.[0] || {}
+    : {};
+  const metadataPlan =
+    row?.metadata?.trade_plan && typeof row.metadata.trade_plan === "object"
+      ? row.metadata.trade_plan
+      : {};
+  const candidate = envStr(
+    firstPlan?.entry_model ||
+      firstAnalysisPlan?.entry_model ||
+      metadataPlan?.entry_model ||
+      raw?.entry_model ||
+      raw?.entryModel ||
+      row?.entry_model,
+  );
+  // Avoid provider ids in this card (ai_claude, ai_gpt4o, ...).
+  if (/^ai[_-]/i.test(candidate)) return "";
+  return candidate;
+}
+
+function mt5OrderTypeFromRow(row) {
+  const raw = row?.raw_json || {};
+  const metadata = row?.metadata || {};
+  const firstPlan = Array.isArray(raw?.trade_plan)
+    ? raw.trade_plan[0] || {}
+    : raw?.trade_plan && typeof raw.trade_plan === "object"
+      ? raw.trade_plan
+      : {};
+  const orderTypeRaw = envStr(
+    row?.order_type ||
+      metadata?.order_type ||
+      raw?.order_type ||
+      raw?.orderType ||
+      firstPlan?.order_type,
+    "LIMIT",
+  ).toLowerCase();
+  if (orderTypeRaw.includes("market")) return "market";
+  if (orderTypeRaw.includes("stop")) return "stop";
+  return "limit";
 }
 
 function mt5ComputeTradeMetrics(rows) {
@@ -15986,12 +16070,17 @@ const appHandler = async (req, res) => {
           symbols,
           sources: [
             ...new Set(
-              allRows.map((r) => mt5StrategyFromRow(r)).filter(Boolean),
+              allRows.map((r) => mt5SourceIdFromRow(r)).filter(Boolean),
+            ),
+          ].sort(),
+          strategies: [
+            ...new Set(
+              allRows.map((r) => mt5StrategyLabelFromRow(r)).filter(Boolean),
             ),
           ].sort(),
           entry_models: [
             ...new Set(
-              allRows.map((r) => mt5EntryModelFromRow(r)).filter(Boolean),
+              allRows.map((r) => mt5EntryModelLabelFromRow(r)).filter(Boolean),
             ),
           ].sort(),
           chart_tfs: [
@@ -16039,7 +16128,12 @@ const appHandler = async (req, res) => {
           ),
           entry_models: mt5ComputeTopWinrateRows(
             selectedRows,
-            (r) => mt5EntryModelFromRow(r),
+            (r) => mt5EntryModelLabelFromRow(r),
+            { limit: 100, includeDirection: false },
+          ),
+          strategies: mt5ComputeTopWinrateRows(
+            selectedRows,
+            (r) => mt5StrategyLabelFromRow(r),
             { limit: 100, includeDirection: false },
           ),
           accounts: mt5ComputeTopWinrateRows(
@@ -16049,16 +16143,14 @@ const appHandler = async (req, res) => {
           ),
           sources: mt5ComputeTopWinrateRows(
             selectedRows,
-            (r) => mt5StrategyFromRow(r),
+            (r) => mt5SourceIdFromRow(r),
             { limit: 100, includeDirection: false },
           ),
           directional: mt5ComputeTopWinrateRows(
             selectedRows,
             (r) => {
               const dir = String(r.action || r.side || "BUY").toLowerCase();
-              const typeRaw = String(
-                r.metadata?.type || r.raw_json?.type || r.order_type || "LIMIT",
-              ).toLowerCase();
+              const typeRaw = mt5OrderTypeFromRow(r);
               const capitalize = (s) =>
                 s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
               return `${capitalize(dir)} ${capitalize(typeRaw)}`;
@@ -19435,7 +19527,7 @@ const appHandler = async (req, res) => {
             session_prefix: reqSessionPrefix || null,
             metadata: {
               event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
-              order_type: String(plan?.type || "limit"),
+              order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
               session_prefix: reqSessionPrefix || null,
               analyze_session_id: sessionId,
               raw_json: tradePlanRawJson,
@@ -21674,6 +21766,13 @@ const appHandler = async (req, res) => {
                 "";
               return {
                 ...item,
+                metadata: {
+                  ...metadata,
+                  order_type: mt5NormalizeOrderTypeValue(
+                    item?.order_type || metadata?.order_type,
+                    "limit",
+                  ),
+                },
                 entry_model: mt5NormalizeEntryModel(rawEntryModel, {
                   fallback: item?.source_id || "manual",
                 }),
@@ -22245,6 +22344,12 @@ const appHandler = async (req, res) => {
       if (!resolvedTrade?.sid)
         return json(res, 404, { ok: false, error: "trade not found" });
       const tradeId = String(resolvedTrade.sid || "").trim();
+      const currentStatus = String(
+        resolvedTrade.execution_status || "",
+      ).toUpperCase();
+      const lockCore = currentStatus === "FILLED";
+      const lockAll =
+        currentStatus === "CLOSED" || currentStatus === "CANCELLED";
       const sideRaw = String(payload.direction || payload.side || "")
         .trim()
         .toUpperCase();
@@ -22258,36 +22363,51 @@ const appHandler = async (req, res) => {
       const tpNorm = mt5NormalizeTpFields(payload, side);
       const tp = asNum(tpNorm.tp, NaN);
       const rr = asNum(payload.rr, NaN);
+      const confidencePct = asNum(payload.confidence_pct, NaN);
+      const estimatedBars = asNum(payload.estimated_bars, NaN);
+      const beTrigger = asNum(payload.be_trigger, NaN);
       const tradeType = String(
         payload.trade_type || payload.order_type || "limit",
       )
         .trim()
         .toLowerCase();
       const note = String(payload.note || "").trim();
+      const strategy = String(payload.strategy || "").trim();
+      const entryModel = String(payload.entry_model || "").trim();
+      const sourceId = String(payload.source_id || "").trim();
+      const editableSide = lockCore || lockAll ? null : side;
+      const editableEntry = lockCore || lockAll ? NaN : entry;
+      const editableTradeType = lockCore || lockAll ? "" : tradeType;
+      const editableSl = lockAll ? NaN : sl;
+      const editableTp = lockAll ? NaN : tpNorm.tp;
+      const editableTp1 = lockAll ? NaN : tpNorm.tp1;
+      const editableTp2 = lockAll ? NaN : tpNorm.tp2;
+      const editableTp3 = lockAll ? NaN : tpNorm.tp3;
+      const editableRr = lockAll ? NaN : rr;
       const metaPatch = {
-        order_type: ["limit", "market", "stop"].includes(tradeType)
-          ? tradeType
+        order_type: ["limit", "market", "stop"].includes(editableTradeType)
+          ? editableTradeType
           : "limit",
-        rr_planned: Number.isFinite(rr) ? rr : null,
+        rr_planned: Number.isFinite(editableRr) ? editableRr : null,
         trade_plan: {
-          direction: side || null,
+          direction: editableSide || null,
           order_type:
-            tradeType === "stop"
+            editableTradeType === "stop"
               ? "Stop Limit"
-              : tradeType === "market"
+              : editableTradeType === "market"
                 ? "Market"
                 : "Limit",
-          entry: Number.isFinite(entry) ? entry : null,
-          entry_price: Number.isFinite(entry) ? entry : null,
-          sl: Number.isFinite(sl) ? sl : null,
-          stop_loss: Number.isFinite(sl) ? sl : null,
-          tp: Number.isFinite(tp) ? tp : null,
-          tp1: Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
-          tp2: Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
-          tp3: Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
-          take_profit: Number.isFinite(tp) ? tp : null,
-          rr: Number.isFinite(rr) ? rr : null,
-          risk_reward: Number.isFinite(rr) ? rr : null,
+          entry: Number.isFinite(editableEntry) ? editableEntry : null,
+          entry_price: Number.isFinite(editableEntry) ? editableEntry : null,
+          sl: Number.isFinite(editableSl) ? editableSl : null,
+          stop_loss: Number.isFinite(editableSl) ? editableSl : null,
+          tp: Number.isFinite(editableTp) ? editableTp : null,
+          tp1: Number.isFinite(editableTp1) ? editableTp1 : null,
+          tp2: Number.isFinite(editableTp2) ? editableTp2 : null,
+          tp3: Number.isFinite(editableTp3) ? editableTp3 : null,
+          take_profit: Number.isFinite(editableTp) ? editableTp : null,
+          rr: Number.isFinite(editableRr) ? editableRr : null,
+          risk_reward: Number.isFinite(editableRr) ? editableRr : null,
           note: note || null,
         },
         tp_targets: tpNorm.tp_targets,
@@ -22304,21 +22424,27 @@ const appHandler = async (req, res) => {
       if (payload.confluence_checklist)
         metaPatch.confluence_checklist = payload.confluence_checklist;
       const params = [
-        side,
-        Number.isFinite(entry) ? entry : null,
-        Number.isFinite(sl) ? sl : null,
-        Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
-        Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
-        Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
-        Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
+        editableSide,
+        Number.isFinite(editableEntry) ? editableEntry : null,
+        Number.isFinite(editableSl) ? editableSl : null,
+        Number.isFinite(editableTp) ? editableTp : null,
+        Number.isFinite(editableTp1) ? editableTp1 : null,
+        Number.isFinite(editableTp2) ? editableTp2 : null,
+        Number.isFinite(editableTp3) ? editableTp3 : null,
         note || null,
         JSON.stringify(metaPatch || {}),
         tradeId,
         userId || null,
-        asNum(payload.confidence_pct),
-        asNum(payload.estimated_bars),
+        Number.isFinite(confidencePct) ? confidencePct : null,
+        Number.isFinite(estimatedBars) ? estimatedBars : null,
         payload.profile || null,
-        asNum(payload.be_trigger),
+        Number.isFinite(beTrigger) ? beTrigger : null,
+        strategy || null,
+        entryModel || null,
+        sourceId || null,
+        ["limit", "market", "stop"].includes(editableTradeType)
+          ? editableTradeType
+          : null,
       ];
       const whereUser = userId ? "AND user_id = $11" : "";
       const resUpd = await (
@@ -22328,8 +22454,8 @@ const appHandler = async (req, res) => {
         UPDATE trades
         SET action = COALESCE($1, action),
             entry = COALESCE($2, entry),
-            sl = $3,
-            tp = $4,
+            sl = COALESCE($3, sl),
+            tp = COALESCE($4, tp),
             tp1 = COALESCE($5, tp1),
             tp2 = COALESCE($6, tp2),
             tp3 = COALESCE($7, tp3),
@@ -22339,10 +22465,11 @@ const appHandler = async (req, res) => {
             estimated_bars = COALESCE($13, estimated_bars),
             profile = COALESCE($14, profile),
             be_trigger = COALESCE($15::numeric, be_trigger),
-            execution_status = CASE
-              WHEN execution_status IN ('OPEN', 'PENDING') THEN 'PENDING_MOD'
-              ELSE execution_status
-            END,
+            strategy = COALESCE($16, strategy),
+            entry_model = COALESCE($17, entry_model),
+            source_id = COALESCE($18, source_id),
+            order_type = COALESCE($19, order_type),
+            execution_status = execution_status,
             updated_at = NOW()
         WHERE sid = $10
           ${whereUser}
@@ -22995,8 +23122,9 @@ const appHandler = async (req, res) => {
             symbol: t.symbol,
             action: t.action ?? t.side ?? null,
             entry: t.entry ?? t.intent_entry ?? null,
-            order_type: String(
-              t.order_type || t.metadata?.order_type || "limit",
+            order_type: mt5NormalizeOrderTypeValue(
+              t.order_type || t.metadata?.order_type,
+              "limit",
             ),
             sl: t.sl ?? t.intent_sl ?? null,
             tp: t.tp ?? t.intent_tp ?? null,

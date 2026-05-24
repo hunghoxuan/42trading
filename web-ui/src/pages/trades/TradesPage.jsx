@@ -126,7 +126,12 @@ function tradeKeyOf(t) {
 }
 
 function auditTimestampRaw(t) {
-  return t?.updated_at || t?.created_at || t?.closed_at || t?.opened_at || null;
+  return t?.created_at || t?.opened_at || t?.closed_at || t?.updated_at || null;
+}
+
+function asFiniteOrNull(v) {
+  const n = asNum(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function rangeBounds(range) {
@@ -670,29 +675,35 @@ export default function TradesPage() {
     }
     try {
       setEditBusy(true);
+      const status = String(selectedTrade.execution_status || "").toUpperCase();
+      const lockCore = status === "FILLED";
+      const lockAll = status === "CLOSED" || status === "CANCELLED";
       const payload = {
-        side: detailPlan.direction,
-        order_type: detailPlan.trade_type,
-        price: asNum(detailPlan.entry),
-        tp: asNum(detailPlan.tp1 ?? detailPlan.tp),
-        tp1: asNum(detailPlan.tp1),
-        tp2: asNum(detailPlan.tp2),
-        tp3: asNum(detailPlan.tp3),
-        sl: asNum(detailPlan.sl),
-        rr: asNum(detailPlan.rr),
+        side: lockCore || lockAll ? null : detailPlan.direction,
+        order_type: lockCore || lockAll ? null : detailPlan.trade_type,
+        price: lockCore || lockAll ? null : asFiniteOrNull(detailPlan.entry),
+        tp: lockAll ? null : asFiniteOrNull(detailPlan.tp1 ?? detailPlan.tp),
+        tp1: lockAll ? null : asFiniteOrNull(detailPlan.tp1),
+        tp2: lockAll ? null : asFiniteOrNull(detailPlan.tp2),
+        tp3: lockAll ? null : asFiniteOrNull(detailPlan.tp3),
+        sl: lockAll ? null : asFiniteOrNull(detailPlan.sl),
+        rr: lockAll ? null : asFiniteOrNull(detailPlan.rr),
+        strategy: detailPlan.strategy,
+        entry_model: detailPlan.entry_model,
+        source_id: detailPlan.source_id,
         note: detailPlan.note,
-        confidence_pct: asNum(detailPlan.confidence_pct),
+        confidence_pct: asFiniteOrNull(detailPlan.confidence_pct),
         invalidation: detailPlan.invalidation,
-        estimated_bars: asNum(detailPlan.estimated_bars),
+        estimated_bars: asFiniteOrNull(detailPlan.estimated_bars),
         profile: detailPlan.profile,
         exit_condition: detailPlan.exit_condition,
         entry_condition: detailPlan.entry_condition,
         risk_management: detailPlan.risk_management,
         skip_recommendation: detailPlan.skip_recommendation,
         confluence_checklist: detailPlan.confluence_checklist,
-        be_trigger: asNum(detailPlan.be_trigger),
-        risk_pct: asNum(detailPlan.risk_pct),
-        risk_money: asNum(detailPlan.risk_money),
+        be_trigger: asFiniteOrNull(detailPlan.be_trigger),
+        risk_pct: asFiniteOrNull(detailPlan.risk_pct),
+        risk_money: asFiniteOrNull(detailPlan.risk_money),
       };
       await api.saveTradePlan(ref, payload);
       // Guard only this trade against immediate re-extraction after save
@@ -1364,8 +1375,8 @@ export default function TradesPage() {
                               side={action}
                               symbol={t.symbol}
                               orderType={
-                                t.metadata?.order_type ||
                                 t.order_type ||
+                                t.metadata?.order_type ||
                                 "limit"
                               }
                               entry={t.entry || "-"}
@@ -1561,6 +1572,14 @@ export default function TradesPage() {
                         selectedTrade.execution_status || "",
                       ).toUpperCase(),
                     ),
+                    lockMode: (() => {
+                      const st = String(
+                        selectedTrade.execution_status || "",
+                      ).toUpperCase();
+                      if (st === "CLOSED" || st === "CANCELLED") return "all";
+                      if (st === "FILLED") return "core";
+                      return "none";
+                    })(),
                     saveLabel: "Save",
                     showResetButton: true,
                     resetLabel: "Reset",

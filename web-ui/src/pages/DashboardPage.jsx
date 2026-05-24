@@ -413,8 +413,10 @@ export default function DashboardPage() {
   const periodTotals = data.period_totals || {};
   const top = data.top_winrate || {
     symbols: [],
+    directional: [],
+    sources: [],
     entry_models: [],
-    accounts: [],
+    strategies: [],
   };
   const f = data.filters || {};
   const accountRows = Array.isArray(data.accounts_summary)
@@ -1157,12 +1159,17 @@ export default function DashboardPage() {
               rows={Array.isArray(top.symbols) ? top.symbols : []}
             />
             <TableBlock
+              title="Strategy"
+              noun="Strategies"
+              rows={Array.isArray(top.strategies) ? top.strategies : []}
+            />
+            <TableBlock
               title="Entry Model"
               noun="Models"
               rows={Array.isArray(top.entry_models) ? top.entry_models : []}
             />
             <TableBlock
-              title="Sources"
+              title="Source ID"
               noun="Sources"
               rows={Array.isArray(top.sources) ? top.sources : []}
             />
@@ -1170,52 +1177,6 @@ export default function DashboardPage() {
               title="Order Type"
               noun="Order Type"
               rows={Array.isArray(top.directional) ? top.directional : []}
-            />
-            <TableBlock
-              title="Accounts"
-              noun="Accounts"
-              rows={Array.isArray(top.accounts) ? top.accounts : []}
-              nameFormatter={(id) => {
-                const acc = accounts.find((a) => a.account_id === id);
-                if (!acc) return id;
-                const lastSync = acc.updated_at || acc.created_at;
-                const lastSyncDate = lastSync ? new Date(lastSync) : null;
-                const diffMin = lastSyncDate
-                  ? (new Date() - lastSyncDate) / 60000
-                  : 999;
-                const isOnline = diffMin < 5;
-                const isIdle = diffMin >= 5 && diffMin < 60;
-                const statusCls = isOnline
-                  ? "online"
-                  : isIdle
-                    ? "idle"
-                    : "offline";
-                return (
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <span
-                      className={`status-dot ${statusCls}`}
-                      style={{
-                        width: 7,
-                        height: 7,
-                        flexShrink: 0,
-                        borderRadius: "50%",
-                      }}
-                      title={`Last synced: ${lastSyncDate ? showDateTime(lastSyncDate) : "Never"}`}
-                    />
-                    <span
-                      style={{
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {acc.name || id}
-                    </span>
-                  </div>
-                );
-              }}
             />
           </div>
         </div>
