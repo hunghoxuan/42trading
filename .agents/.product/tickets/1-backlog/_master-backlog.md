@@ -1,6 +1,8 @@
 # Backlog
 
 ## Completed
+- [x] [2026-05-23] [Feature] [Author: DeepSeek] Multi-Cron Support + Snapshot Improvements — see `2026-05-23-multi-cron-support-and-snapshot-improvements.md`
+- [ ] [2026-05-23] [Webhook/Snapshots] [Author: Codex] Fix Bug: MASTER snapshot duplicates timeframe aliases (`D`/`1D`, `240`/`4H`) and can sort incorrectly due to non-canonical dedup/sort path. Spec: `1-backlog/2026-05-23-master-snapshot-timeframe-canonicalization-dedup-sort-fix.md`.
 - [x] [2026-04-16 11:30] [Reliability] [Author: Hung] Task: Implement "Deadlock Breaker" (Stale Lock Recovery) in Postgres backend for signals locked > 5 mins.
 - [x] [2026-04-16 12:45] [Reliability] [Author: Hung] Task: Update EA status mapping (START/SUBMITTED) and increase timezone drift tolerance to 2 hours.
 - [x] [2026-05-19 09:30] [Refactor] [Author: DeepSeek] Task: Drop signals table, remove signals UI/routes, add Draft status, +Signal saves Draft trade — see `2026-05-19-drop-signals-add-draft-status.md`
@@ -40,6 +42,9 @@
 - [ ] [2026-05-21 12:05] [Web-UI/AI/TradePlan/Mapping] [Author: User] Fix Bug: Json tab shows default BUY/0 tradeplan template although AI response has populated SELL execution plan and risk fields; enforce canonical payload precedence and correct field mapping. Spec: `1-backlog/2026-05-21-ai-json-tab-shows-default-zero-tradeplan-despite-valid-response.md`.
 - [ ] [2026-05-21 13:33] [Web-UI/AI/Files/Parser] [Author: User] Fix Bug: move snapshots used by AI into Files tab and investigate parsed_json missing root execution_plan even when raw_response contains populated execution plan; check max-token/max-char and parser fallback boundaries. Spec: `1-backlog/2026-05-21-ai-snapshots-files-tab-and-parsed-json-missing-execution-plan.md`.
 - [ ] [2026-05-21 13:48] [Web-UI/TradeDetail/Chart/Files] [Author: User] Fix Bug: move snapshots-used UI into Files tab, render TP2/TP3 on Info chart (not TP1-only), and prevent SL/TP/RR edits from resetting back to original values. Spec: `1-backlog/2026-05-21-files-tab-snapshots-and-info-chart-tp23-reset-regression.md`.
+- [ ] [2026-05-24 11:16] [Webhook/API/Bars] [Author: User] New Feature: add getSymbols coverage API with `symbol|symbols|group|all` filters and per-symbol/per-TF `bars_number,start,end` metadata for incremental sync planning. Spec: `1-backlog/2026-05-24-webhook-getsymbols-bars-coverage-api.md`.
+- [ ] [2026-05-24 11:16] [Webhook/API/Bars] [Author: User] Update Feature: refactor prices sync POST contract for incremental multi-symbol/multi-TF upsert with duplicate accounting and per-item summary aligned to coverage API. Spec: `1-backlog/2026-05-24-webhook-prices-sync-incremental-contract.md`.
+- [ ] [2026-05-24 11:16] [BrokerClient/Sync/Bars] [Author: User] Update Feature: broker client incremental bulk bars sync loop (GET coverage -> compute missing -> POST remaining bars), including all-symbol/all-TF mode, batching, retry, and telemetry. Spec: `1-backlog/2026-05-24-broker-client-incremental-bulk-bars-sync.md`.
 
 ## Low Priority (`P2`)
 - [ ] [2026-04-14 15:00] [Architecture] [Author: User] Feature: Define HTF1-priority trend/bias direction policy.

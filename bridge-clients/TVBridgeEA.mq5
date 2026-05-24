@@ -59,6 +59,11 @@ input int    InpPricePushSeconds    = 60;   // Price Push Interval (seconds)
 input bool   InpEnableBarPush      = true; // Enable OHLC Bar Push to VPS
 input int    InpPushBarsSeconds    = 30;   // Bar Push Interval (seconds)
 
+//--- 6.3 INCREMENTAL BARS SYNC (Ticket 3)
+input bool   InpEnableIncrementalBars = true; // Enable coverage-driven incremental bars sync
+input int    InpIncrementalBarsSeconds = 120; // Incremental sync interval (seconds)
+input int    InpIncrementalBarsMaxPerPost = 200; // Max bars per POST
+
 //--- 6. BROKER MANAGEMENT (THE HAND)
 enum ENUM_MANAGEMENT_STRATEGY {
    STRATEGY_NONE,  // None
@@ -150,6 +155,13 @@ string   g_barSymbols[];            // symbols for bar push
 long     g_barLastTime[];           // last bar time per symbol
 string   g_barTf[];                 // TF per symbol
 datetime g_lastBarPush = 0;
+
+//--- 11. INCREMENTAL BARS SYNC
+datetime g_lastIncrementalSync = 0;
+int      g_incrementalSyncCount = 0;
+int      g_incrementalTotalInserted = 0;
+int      g_incrementalTotalDuplicated = 0;
+string   g_lastIncrementalStatus = "IDLE";
 
 void ParsePartialTps(string sid, string rawJson, string fullResp = "")
 {
@@ -356,6 +368,26 @@ double JsonGetNumber(const string json, const string key, const double fallback=
    }
    if(e <= s) return fallback;
    return StringToDouble(StringSubstr(json, s, e - s));
+}
+
+string JsonGetArray(const string json, const string key)
+{
+   string needle = "\"" + key + "\"\s*:\s*\[";
+   int arrStart = StringFind(json, "\"" + key + "\"");
+   if(arrStart < 0) return "";
+   int colon = StringFind(json, ":", arrStart);
+   if(colon < 0) return "";
+   int bracket = StringFind(json, "[", colon);
+   if(bracket < 0) return "";
+   // Find matching closing bracket
+   int depth = 0;
+   for(int i = bracket; i < StringLen(json); i++)
+   {
+      int ch = StringGetCharacter(json, i);
+      if(ch == '[') depth++;
+      else if(ch == ']') { depth--; if(depth == 0) return StringSubstr(json, bracket + 1, i - bracket - 1); }
+   }
+   return "";
 }
 
 string JsonExtractFirstArrayObject(const string json, const string key)
@@ -2919,6 +2951,16 @@ void OnTimer()
       }
    }
 
+   // --- Incremental bars sync (every IncrementalBarsSeconds) ---
+   if(InpEnableIncrementalBars)
+   {
+      if(g_lastIncrementalSync == 0 || (now - g_lastIncrementalSync) >= InpIncrementalBarsSeconds)
+      {
+         SyncBarsIncremental();
+         g_lastIncrementalSync = now;
+      }
+   }
+
    // Periodic state reconciliation (PUSH ACTIVE) - configurable interval
    if(now - g_syncLastTime >= InpSyncSeconds)
    {
@@ -4054,4 +4096,180 @@ void PushBars()
    body += "}";
 
    HttpPostJson(BuildApiUrl("/v2/broker/bars"), body);
+}
+
+//+------------------------------------------------------------------+
+//| Incremental Bars Sync (Ticket 3) — coverage-driven              |
+//+------------------------------------------------------------------+
+void SyncBarsIncremental()
+{
+   if(!InpEnableIncrementalBars)
+      return;
+
+   g_lastIncrementalStatus = "FETCHING";
+   int accountId = (int)AccountInfoInteger(ACCOUNT_LOGIN);
+
+   // 1. Get coverage from webhook for all symbols
+   string covUrl = BuildApiUrl("/v2/broker/symbols");
+   string covResp;
+   if(!HttpGet(covUrl, covResp))
+   {
+      g_lastIncrementalStatus = "COV_FAIL";
+      Print("[IncBars] Coverage fetch failed: ", g_lastHttpError);
+      return;
+   }
+
+   // 2. Parse coverage response
+   string itemsArr = JsonGetArray(covResp, "items");
+   if(StringLen(itemsArr) == 0)
+   {
+      g_lastIncrementalStatus = "NO_COV";
+      return;
+   }
+
+   // TFs to sync
+   string tfs[] = {"1", "5", "15", "60", "240", "1440"};
+   int tfCounts[] = {1, 5, 15, 60, 240, 1440};
+   int tfCount = ArraySize(tfs);
+
+   // 3. Build items payload
+   int totalBars = 0;
+   int totalInserted = 0;
+   int totalDuplicated = 0;
+   string syncItems = "";
+
+   // Parse each symbol from items array
+   int itemPos = 0;
+   while(itemPos >= 0 && totalBars < InpIncrementalBarsMaxPerPost)
+   {
+      itemPos = StringFind(itemsArr, "\"symbol\"", itemPos);
+      if(itemPos < 0) break;
+
+      // Extract symbol name
+      int symStart = StringFind(itemsArr, "\"", StringFind(itemsArr, "\"symbol\"", itemPos) + 9) + 1;
+      int symEnd = StringFind(itemsArr, "\"", symStart);
+      if(symStart <= 0 || symEnd <= symStart) { itemPos++; continue; }
+      string sym = StringSubstr(itemsArr, symStart, symEnd - symStart);
+
+      // Find bars_info for this symbol
+      int infoStart = StringFind(itemsArr, "bars_info", symEnd);
+      if(infoStart < 0) { itemPos = symEnd + 1; continue; }
+
+      // For each TF, check end and fetch missing bars
+      for(int t = 0; t < tfCount && totalBars < InpIncrementalBarsMaxPerPost; t++)
+      {
+         // Find tf entry in bars_info
+         string tfKey = "\"tf\":\"" + tfs[t] + "\"";
+         int tfPos = StringFind(itemsArr, tfKey, infoStart);
+         if(tfPos < 0) continue;
+
+         // Extract end timestamp
+         int endPos = StringFind(itemsArr, "\"end\"", tfPos);
+         if(endPos < 0) continue;
+
+         long remoteEnd = 0;
+         int endValStart = StringFind(itemsArr, ":", endPos) + 1;
+         if(endValStart > 0)
+         {
+            string endStr = StringSubstr(itemsArr, endValStart, 20);
+            StringReplace(endStr, " ", ""); StringReplace(endStr, ",", ""); StringReplace(endStr, "}", "");
+            StringReplace(endStr, "null", "0");
+            remoteEnd = StringToInteger(endStr);
+         }
+
+         // Compute TF step
+         int tfMin = tfCounts[t];
+         ENUM_TIMEFRAMES tf = PERIOD_M1;
+         if(tfMin == 1) tf = PERIOD_M1;
+         else if(tfMin == 5) tf = PERIOD_M5;
+         else if(tfMin == 15) tf = PERIOD_M15;
+         else if(tfMin == 60) tf = PERIOD_H1;
+         else if(tfMin == 240) tf = PERIOD_H4;
+         else if(tfMin == 1440) tf = PERIOD_D1;
+         else continue;
+
+         // Get latest bar from broker
+         MqlRates latest[];
+         if(CopyRates(sym, tf, 0, 1, latest) < 1)
+            continue;
+
+         long latestTime = latest[0].time;
+         int tfSec = tfMin * 60;
+
+         // Compute start for missing bars
+         long fetchStart = (remoteEnd > 0) ? (remoteEnd + tfSec) : (latestTime - 500 * tfSec);
+         if(fetchStart >= latestTime)
+            continue; // up to date
+
+         // Fetch missing bars
+         int needed = (int)((latestTime - fetchStart) / tfSec) + 1;
+         if(needed > 200) needed = 200;
+         if(needed < 1) continue;
+
+         MqlRates rates[];
+         int copied = CopyRates(sym, tf, fetchStart, needed, rates);
+         if(copied < 1) continue;
+
+         // Build bars array for this symbol+TF
+         string barArr = "";
+         int barSent = 0;
+         for(int b = 0; b < copied && (totalBars + barSent) < InpIncrementalBarsMaxPerPost; b++)
+         {
+            if(rates[b].time < fetchStart) continue;
+            if(rates[b].time >= latestTime) continue; // exclude current open bar
+
+            if(barSent > 0) barArr += ",";
+            barArr += "{\"time\":" + IntegerToString(rates[b].time) +
+                      ",\"open\":" + DoubleToString(rates[b].open, 5) +
+                      ",\"high\":" + DoubleToString(rates[b].high, 5) +
+                      ",\"low\":" + DoubleToString(rates[b].low, 5) +
+                      ",\"close\":" + DoubleToString(rates[b].close, 5) +
+                      ",\"volume\":" + IntegerToString((int)rates[b].tick_volume) + "}";
+            barSent++;
+         }
+
+         if(barSent > 0)
+         {
+            if(StringLen(syncItems) > 0) syncItems += ",";
+            syncItems += "{\"symbol\":\"" + sym + "\",\"tf\":\"" + tfs[t] + "\",\"bars\":[" + barArr + "]}";
+            totalBars += barSent;
+         }
+      }
+      itemPos = symEnd + 1;
+   }
+
+   if(totalBars == 0)
+   {
+      g_lastIncrementalStatus = "UP_TO_DATE";
+      return;
+   }
+
+   // 4. POST to prices-sync
+   g_lastIncrementalStatus = "POSTING";
+   string body = "{";
+   body += "\"source_id\":\"MT5\",";
+   body += "\"account_id\":\"" + IntegerToString(accountId) + "\",";
+   body += "\"sync_mode\":\"incremental\",";
+   body += "\"items\":[" + syncItems + "]";
+   body += "}";
+
+   string resp;
+   if(HttpPostJsonWithResponse(BuildApiUrl("/v2/broker/prices-sync"), body, resp))
+   {
+      // JsonGetNumber searches the whole response, works for nested keys
+      int inserted = (int)JsonGetNumber(resp, "inserted", 0);
+      int duplicated = (int)JsonGetNumber(resp, "duplicated", 0);
+      totalInserted = inserted;
+      totalDuplicated = duplicated;
+      g_incrementalTotalInserted += inserted;
+      g_incrementalTotalDuplicated += duplicated;
+      g_incrementalSyncCount++;
+      g_lastIncrementalStatus = "OK";
+      Print("[IncBars] sync=", g_incrementalSyncCount, " bars=", totalBars, " ins=", inserted, " dup=", duplicated);
+   }
+   else
+   {
+      g_lastIncrementalStatus = "POST_FAIL";
+      Print("[IncBars] POST failed: ", g_lastHttpError);
+   }
 }

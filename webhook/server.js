@@ -23236,6 +23236,195 @@ const appHandler = async (req, res) => {
     }
   }
 
+  // --- Ticket 1: Coverage API (GET /v2/broker/symbols) ---
+  if (req.method === "GET" && url.pathname === "/v2/broker/symbols") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const symbolParam = (url.searchParams.get("symbol") || "").trim().toUpperCase();
+      const symbolsParam = (url.searchParams.get("symbols") || "").trim().toUpperCase();
+      const groupParam = (url.searchParams.get("group") || "").trim().toLowerCase();
+
+      // Resolve filter mode
+      let mode = "all";
+      let resolvedSymbols = [];
+      if (symbolsParam) {
+        mode = "symbols";
+        resolvedSymbols = symbolsParam.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (symbolParam) {
+        mode = "symbol";
+        resolvedSymbols = [symbolParam];
+      } else if (groupParam === "watchlist") {
+        mode = "group";
+        const account = await requireV2BrokerAccount(req, res, url);
+        if (!account) return;
+        const uid = String(account.user_id || CFG.mt5DefaultUserId).trim();
+        const wl = (await repoGetUserWatchlist(uid).catch(() => [])) || [];
+        resolvedSymbols = wl.map((s) => String(s).toUpperCase());
+      } else {
+        // "all" mode — get distinct symbols from market_data
+        mode = "all";
+        const db = await mt5Backend();
+        const allRes = await db.pool.query(
+          `SELECT DISTINCT symbol FROM market_data ORDER BY symbol`,
+        );
+        resolvedSymbols = (allRes.rows || []).map((r) => String(r.symbol).toUpperCase());
+      }
+
+      if (!resolvedSymbols.length) {
+        return json(res, 200, {
+          ok: true, mode,
+          filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" },
+          items: [],
+        });
+      }
+
+      // Canonical TF order
+      const TFS = ["1", "5", "15", "60", "240", "1440"];
+      const db = await mt5Backend();
+      const items = [];
+
+      for (const sym of resolvedSymbols) {
+        const symbolNorm = normalizeMarketDataSymbol(sym);
+        if (!symbolNorm) continue;
+        const barsInfo = [];
+        for (const tf of TFS) {
+          const tfNorm = normalizeMarketDataTf(tf);
+          const cov = await db.pool.query(
+            `SELECT COUNT(*) as bars_number,
+                    MIN(bar_start) as start,
+                    MAX(bar_start) as end
+             FROM market_data
+             WHERE symbol = $1 AND tf = $2`,
+            [symbolNorm, tfNorm],
+          );
+          const row = cov.rows?.[0] || {};
+          barsInfo.push({
+            tf,
+            bars_number: Number(row.bars_number) || 0,
+            start: row.start ? Number(row.start) : null,
+            end: row.end ? Number(row.end) : null,
+          });
+        }
+        items.push({ symbol: symbolNorm, bars_info: barsInfo });
+      }
+
+      return json(res, 200, {
+        ok: true, mode,
+        filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" },
+        items,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Ticket 2: Incremental prices sync (POST /v2/broker/prices-sync) ---
+  if (req.method === "POST" && url.pathname === "/v2/broker/prices-sync") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (!items.length)
+        return json(res, 200, { ok: true, sync_id: genTraceId("sync_"), summary: { items: 0, received: 0, inserted: 0, duplicated: 0, rejected: 0 }, results: [] });
+
+      const syncId = genTraceId("sync_");
+      const db = await mt5Backend();
+      let totalReceived = 0, totalInserted = 0, totalDuplicated = 0, totalRejected = 0;
+      const results = [];
+
+      for (const item of items) {
+        const sym = normalizeMarketDataSymbol(item.symbol);
+        const tfRaw = String(item.tf || "").trim();
+        const tf = normalizeMarketDataTf(tfRaw);
+        const bars = Array.isArray(item.bars) ? item.bars : [];
+        if (!sym || !tf) {
+          results.push({ symbol: item.symbol, tf: item.tf, received: 0, inserted: 0, duplicated: 0, rejected: bars.length, reject_reason: "invalid_symbol_or_tf" });
+          totalRejected += bars.length;
+          continue;
+        }
+
+        let itemReceived = 0, itemInserted = 0, itemDuplicated = 0, itemRejected = 0;
+        let latestTs = null;
+        const tfSec = Math.max(60, parseTfTokenToSeconds(tf));
+
+        for (const bar of bars) {
+          const t = Number(bar.time ?? bar.t);
+          const o = Number(bar.open ?? bar.o);
+          const h = Number(bar.high ?? bar.h);
+          const l = Number(bar.low ?? bar.l);
+          const c = Number(bar.close ?? bar.c);
+          const v = Number(bar.volume ?? bar.v);
+
+          if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) {
+            itemRejected++;
+            continue;
+          }
+
+          itemReceived++;
+          const barStart = t;
+          const barEnd = t + tfSec;
+          const barData = JSON.stringify({ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+
+          try {
+            const ins = await db.pool.query(
+              `INSERT INTO market_data (symbol, tf, bar_start, bar_end, data, last_price, last_price_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+               ON CONFLICT (symbol, tf, bar_start, bar_end) DO NOTHING
+               RETURNING id`,
+              [sym, tf, barStart, barEnd, barData, c, new Date(t * 1000).toISOString()],
+            );
+            if ((ins.rowCount || 0) > 0) {
+              itemInserted++;
+            } else {
+              itemDuplicated++;
+            }
+            if (!latestTs || t > latestTs) latestTs = t;
+          } catch {
+            itemRejected++;
+          }
+        }
+
+        totalReceived += itemReceived;
+        totalInserted += itemInserted;
+        totalDuplicated += itemDuplicated;
+        totalRejected += itemRejected;
+        results.push({
+          symbol: sym, tf,
+          received: itemReceived, inserted: itemInserted, duplicated: itemDuplicated, rejected: itemRejected,
+          latest_timestamp_after_sync: latestTs,
+        });
+      }
+
+      if (totalInserted > 0) {
+        await mt5Log(account.account_id, "accounts", {
+          event: "PRICES_SYNC",
+          sync_id: syncId,
+          source_id: payload.source_id || "unknown",
+          inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected,
+        }, account.user_id || CFG.mt5DefaultUserId);
+      }
+
+      return json(res, 200, {
+        ok: true, sync_id: syncId,
+        summary: { items: items.length, received: totalReceived, inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected },
+        results,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/v2/broker/bars") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });

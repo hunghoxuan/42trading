@@ -80,7 +80,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.24 10:18 - c0543ba3";
+        private const string BuildVersion = "v2026.05.24 11:47 - threadsafe-io";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -102,6 +102,8 @@ namespace cAlgo.Robots
         private int _priceCount = 0;
         private int _consecutiveErrors = 0;
         private DateTime _lastErrorClearTime = DateTime.Now;
+        private DateTime _lastTimerTickSeen = DateTime.MinValue;
+        private DateTime _lastTickFallbackKick = DateTime.MinValue;
 
         // REGISTRY: Tracks all processed signals to prevent duplicates
         private HashSet<string> _processedSignalIds = new HashSet<string>();
@@ -133,6 +135,7 @@ namespace cAlgo.Robots
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         private bool _isBusy = false;
+        private CancellationTokenSource _watchdogCts;
 
         private string ResolveSid(string ticket, string commentSid)
         {
@@ -146,18 +149,87 @@ namespace cAlgo.Robots
             return "";
         }
 
+        private void SafePrint(string format, params object[] args)
+        {
+            BeginInvokeOnMainThread(() => Print(format, args));
+        }
+
+        private Task<T> RunOnMainThreadAsync<T>(Func<T> fn)
+        {
+            var tcs = new TaskCompletionSource<T>();
+            BeginInvokeOnMainThread(() =>
+            {
+                try { tcs.SetResult(fn()); }
+                catch (Exception ex) { tcs.SetException(ex); }
+            });
+            return tcs.Task;
+        }
+
         protected override void OnStart()
         {
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            _serverStatus = "BOOTING";
+            _apiStatus = "BOOTING";
+            _pollStatus = "STARTING";
+            _syncStatus = "STARTING";
             Timer.Start(PollSeconds);
+            _lastTimerTickSeen = DateTime.Now;
+            StartTimerWatchdog();
+            BeginInvokeOnMainThread(() => OnTimer());
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
         }
 
+        private void StartTimerWatchdog()
+        {
+            _watchdogCts = new CancellationTokenSource();
+            var ct = _watchdogCts.Token;
+            Task.Run(async () =>
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, PollSeconds)), ct);
+                        if (ct.IsCancellationRequested) break;
+                        var now = DateTime.Now;
+                        var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
+                        if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
+                            (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+                        {
+                            _lastTickFallbackKick = now;
+                            BeginInvokeOnMainThread(() =>
+                            {
+                                if (_pollCount <= 6) Print("[Diag] Watchdog kick (timer stale >= {0}s)", timerStaleSeconds);
+                                OnTimer();
+                            });
+                        }
+                    }
+                    catch (TaskCanceledException) { break; }
+                    catch (Exception ex)
+                    {
+                        if (_pollCount <= 6) Print("[Diag] Watchdog error: {0}", ex.Message);
+                    }
+                }
+            }, ct);
+        }
+
         protected override void OnTick()
         {
-            if (SelectedStrategy == ManagementStrategy.None) return;
-            ManagePositions();
+            if (SelectedStrategy != ManagementStrategy.None)
+                ManagePositions();
+
+            // cTrader timer can occasionally stall on some instances.
+            // Fallback: if no timer tick was seen recently, kick one bridge cycle from OnTick.
+            var now = DateTime.Now;
+            var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
+            if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
+                (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+            {
+                _lastTickFallbackKick = now;
+                if (_pollCount <= 3) Print("[Diag] OnTick fallback kick (timer stale for >= {0}s)", timerStaleSeconds);
+                BeginInvokeOnMainThread(() => OnTimer());
+            }
         }
 
         private void ManagePositions()
@@ -311,6 +383,7 @@ namespace cAlgo.Robots
 
         protected override void OnTimer()
         {
+            _lastTimerTickSeen = DateTime.Now;
             if (_isBusy) return;
             _isBusy = true;
             try
@@ -425,7 +498,6 @@ namespace cAlgo.Robots
                 var doSync = _lastSyncTime == DateTime.MinValue ||
                     (now - _lastSyncTime).TotalSeconds >= SyncIntervalSeconds;
                 // Always pull signals on PollSeconds cadence
-                var doPoll = true;
 
                 string balance = null, equity = null, margin = null, brokerName = null;
                 List<string> posList = null, ordersList = null, closedList = null, metricsList = null;
@@ -619,6 +691,12 @@ namespace cAlgo.Robots
             }
         }
 
+        protected override void OnStop()
+        {
+            try { _watchdogCts?.Cancel(); } catch { }
+            try { _watchdogCts?.Dispose(); } catch { }
+        }
+
         private async Task PollSignalsAsync(string accountId)
         {
             _pollCount++;
@@ -646,7 +724,7 @@ namespace cAlgo.Robots
                         {
                             _consecutiveErrors = 0;
                             _lastErrorClearTime = DateTime.Now;
-                            Print("[Recovery] Error counter reset after successful poll");
+                            SafePrint("[Recovery] Error counter reset after successful poll");
                         }
 
                         var json = await response.Content.ReadAsStringAsync();
@@ -661,7 +739,7 @@ namespace cAlgo.Robots
 
                         // Increment error counter for non-successful responses
                         _consecutiveErrors++;
-                        Print("[Error] Poll failed: {0} (consecutive errors: {1})", _lastPollErr, _consecutiveErrors);
+                        SafePrint("[Error] Poll failed: {0} (consecutive errors: {1})", _lastPollErr, _consecutiveErrors);
                     }
                 }
             }
@@ -674,7 +752,7 @@ namespace cAlgo.Robots
 
                 // Increment error counter for exceptions
                 _consecutiveErrors++;
-                Print("[Error] Poll exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
+                SafePrint("[Error] Poll exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
         }
 
@@ -1281,7 +1359,7 @@ namespace cAlgo.Robots
                     {
                         _consecutiveErrors = 0;
                         _lastErrorClearTime = DateTime.Now;
-                        Print("[Recovery] Error counter reset after successful sync");
+                        SafePrint("[Recovery] Error counter reset after successful sync");
                     }
 
                     var json = await response.Content.ReadAsStringAsync();
@@ -1296,7 +1374,7 @@ namespace cAlgo.Robots
 
                     // Increment error counter for failed sync
                     _consecutiveErrors++;
-                    Print("[Error] Sync failed: {0} (consecutive errors: {1})", _lastSyncErr, _consecutiveErrors);
+                    SafePrint("[Error] Sync failed: {0} (consecutive errors: {1})", _lastSyncErr, _consecutiveErrors);
                 }
             }
             catch (Exception ex)
@@ -1308,7 +1386,7 @@ namespace cAlgo.Robots
 
                 // Increment error counter for sync exceptions
                 _consecutiveErrors++;
-                Print("[Error] Sync exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
+                SafePrint("[Error] Sync exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
         }
 
@@ -1330,14 +1408,14 @@ namespace cAlgo.Robots
                         _trackedSymbols.Clear();
                         foreach (Match m in items)
                             _trackedSymbols.Add(m.Groups[1].Value);
-                        Print("[Price] Fetched {0} tracked symbols", _trackedSymbols.Count);
+                        SafePrint("[Price] Fetched {0} tracked symbols", _trackedSymbols.Count);
                         BeginInvokeOnMainThread(() => RefreshDebugPanel());
                     }
                 }
             }
             catch (Exception ex)
             {
-                Print("[Price] Fetch tracked symbols failed: {0}", ex.Message);
+                SafePrint("[Price] Fetch tracked symbols failed: {0}", ex.Message);
             }
         }
 
@@ -1362,20 +1440,20 @@ namespace cAlgo.Robots
                 if (response.IsSuccessStatusCode)
                 {
                     _priceCount++; _priceStatus = "OK"; _lastPriceTime = DateTime.Now; _lastPriceErr = "None";
-                    if (_priceCount == 1) Print("[Price] First push OK: {0} symbols", priceData.Count);
+                    if (_priceCount == 1) SafePrint("[Price] First push OK: {0} symbols", priceData.Count);
                 }
                 else
                 {
                     _priceStatus = "FAIL (" + (int)response.StatusCode + ")";
                     _lastPriceErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
-                    Print("[Price] Push FAILED: {0}", _lastPriceErr);
+                    SafePrint("[Price] Push FAILED: {0}", _lastPriceErr);
                 }
             }
             catch (Exception ex)
             {
                 _priceStatus = "ERROR";
                 _lastPriceErr = FormatServerErrorForPanel(ex.Message);
-                if (_priceCount == 0) Print("[Price] Push ERROR (first attempt): {0}", ex.Message);
+                if (_priceCount == 0) SafePrint("[Price] Push ERROR (first attempt): {0}", ex.Message);
             }
             if (_lastPriceTime == DateTime.MinValue)
                 _lastPriceTime = DateTime.Now;
@@ -1391,54 +1469,62 @@ namespace cAlgo.Robots
                 var barList = new List<string>();
                 int newBars = 0;
 
-                foreach (var sym in symbols)
+                var barBuild = await RunOnMainThreadAsync(() =>
                 {
-                    foreach (var tfStr in tfs)
+                    var localBars = new List<string>();
+                    var localNewBars = 0;
+                    foreach (var sym in symbols)
                     {
-                        try
+                        foreach (var tfStr in tfs)
                         {
-                            TimeFrame tf;
-                            switch (tfStr)
+                            try
                             {
-                                case "1": tf = TimeFrame.Minute; break;
-                                case "5": tf = TimeFrame.Minute5; break;
-                                case "15": tf = TimeFrame.Minute15; break;
-                                case "60": tf = TimeFrame.Hour; break;
-                                case "240": tf = TimeFrame.Hour4; break;
-                                case "1440": tf = TimeFrame.Daily; break;
-                                default: continue;
+                                TimeFrame tf;
+                                switch (tfStr)
+                                {
+                                    case "1": tf = TimeFrame.Minute; break;
+                                    case "5": tf = TimeFrame.Minute5; break;
+                                    case "15": tf = TimeFrame.Minute15; break;
+                                    case "60": tf = TimeFrame.Hour; break;
+                                    case "240": tf = TimeFrame.Hour4; break;
+                                    case "1440": tf = TimeFrame.Daily; break;
+                                    default: continue;
+                                }
+
+                                var bars = MarketData.GetBars(tf, sym);
+                                if (bars == null || bars.Count < 1) continue;
+
+                                var lastBar = bars.LastBar;
+                                long barTime = ToUnixTime(lastBar.OpenTime);
+
+                                string key = sym + "_" + tfStr;
+                                long lastKnown;
+                                if (_barLastTime.TryGetValue(key, out lastKnown) && barTime <= lastKnown)
+                                    continue;
+
+                                _barLastTime[key] = barTime;
+
+                                localBars.Add(
+                                    "{\"s\":\"" + sym + "\"" +
+                                    ",\"tf\":\"" + tfStr + "\"" +
+                                    ",\"t\":" + barTime.ToString() +
+                                    ",\"o\":" + lastBar.Open.ToString("F5", CultureInfo.InvariantCulture) +
+                                    ",\"h\":" + lastBar.High.ToString("F5", CultureInfo.InvariantCulture) +
+                                    ",\"l\":" + lastBar.Low.ToString("F5", CultureInfo.InvariantCulture) +
+                                    ",\"c\":" + lastBar.Close.ToString("F5", CultureInfo.InvariantCulture) +
+                                    ",\"v\":" + lastBar.TickVolume.ToString() + "}"
+                                );
+                                localNewBars++;
+                                if (localNewBars >= 10) break;
                             }
-
-                            var bars = MarketData.GetBars(tf, sym);
-                            if (bars == null || bars.Count < 1) continue;
-
-                            var lastBar = bars.LastBar;
-                            long barTime = ToUnixTime(lastBar.OpenTime);
-
-                            string key = sym + "_" + tfStr;
-                            long lastKnown;
-                            if (_barLastTime.TryGetValue(key, out lastKnown) && barTime <= lastKnown)
-                                continue;
-
-                            _barLastTime[key] = barTime;
-
-                            barList.Add(
-                                "{\"s\":\"" + sym + "\"" +
-                                ",\"tf\":\"" + tfStr + "\"" +
-                                ",\"t\":" + barTime.ToString() +
-                                ",\"o\":" + lastBar.Open.ToString("F5", CultureInfo.InvariantCulture) +
-                                ",\"h\":" + lastBar.High.ToString("F5", CultureInfo.InvariantCulture) +
-                                ",\"l\":" + lastBar.Low.ToString("F5", CultureInfo.InvariantCulture) +
-                                ",\"c\":" + lastBar.Close.ToString("F5", CultureInfo.InvariantCulture) +
-                                ",\"v\":" + lastBar.TickVolume.ToString() + "}"
-                            );
-                            newBars++;
-                            if (newBars >= 10) break;
+                            catch { }
                         }
-                        catch { }
+                        if (localNewBars >= 10) break;
                     }
-                    if (newBars >= 10) break;
-                }
+                    return Tuple.Create(localBars, localNewBars);
+                });
+                barList = barBuild.Item1;
+                newBars = barBuild.Item2;
 
                 if (newBars == 0)
                 {
@@ -1454,20 +1540,20 @@ namespace cAlgo.Robots
                 if (response.IsSuccessStatusCode)
                 {
                     _barCount += newBars; _barStatus = "OK"; _lastBarTime = DateTime.Now; _lastBarErr = "None";
-                    if (_barCount <= newBars) Print("[Bar] First push OK: {0} bars from {1} symbols", newBars, symbols.Count);
+                    if (_barCount <= newBars) SafePrint("[Bar] First push OK: {0} bars from {1} symbols", newBars, symbols.Count);
                 }
                 else
                 {
                     _barStatus = "FAIL (" + (int)response.StatusCode + ")";
                     _lastBarErr = FormatServerErrorForPanel(await response.Content.ReadAsStringAsync());
-                    Print("[Bar] Push FAILED: {0}", _lastBarErr);
+                    SafePrint("[Bar] Push FAILED: {0}", _lastBarErr);
                 }
             }
             catch (Exception ex)
             {
                 _barStatus = "ERROR";
                 _lastBarErr = FormatServerErrorForPanel(ex.Message);
-                if (_barCount == 0) Print("[Bar] Push ERROR: {0}", ex.Message);
+                if (_barCount == 0) SafePrint("[Bar] Push ERROR: {0}", ex.Message);
             }
             if (_lastBarTime == DateTime.MinValue) _lastBarTime = DateTime.Now;
         }
