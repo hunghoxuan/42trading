@@ -202,7 +202,7 @@ function emitNotification(payload) {
 function normalizeCsvTfKey(tf) {
   const raw = String(tf || "").trim().toLowerCase();
   if (!raw) return "";
-  if (raw === "d" || raw === "1d" || raw === "day") return "1d";
+  if (raw === "d" || raw === "1d" || raw === "day" || raw === "1440" || raw === "1day") return "1d";
   if (raw === "w" || raw === "1w" || raw === "week") return "1w";
   if (raw === "4h" || raw === "240") return "240";
   if (raw === "1h" || raw === "60" || raw === "60m" || raw === "60min") return "60";
@@ -23083,7 +23083,6 @@ const appHandler = async (req, res) => {
       const symbolsParam = (url.searchParams.get("symbols") || "").trim().toUpperCase();
       const groupParam = (url.searchParams.get("group") || "").trim().toLowerCase();
 
-      // Resolve filter mode
       let mode = "all";
       let resolvedSymbols = [];
       if (symbolsParam) {
@@ -23100,60 +23099,42 @@ const appHandler = async (req, res) => {
         const wl = (await repoGetUserWatchlist(uid).catch(() => [])) || [];
         resolvedSymbols = wl.map((s) => String(s).toUpperCase());
       } else {
-        // "all" mode — get distinct symbols from market_data directories
         mode = "all";
-        const marketDataDir = path.join(ROOT_DIR, "market_data");
-        const dirSymbols = fs.existsSync(marketDataDir)
-          ? fs.readdirSync(marketDataDir, { withFileTypes: true })
-              .filter((d) => d.isDirectory())
-              .map((d) => d.name.toUpperCase())
-          : [];
-        resolvedSymbols = [...new Set(dirSymbols)].sort();
+        const dataDir = path.join(ROOT_DIR, "market_data");
+        if (fs.existsSync(dataDir)) {
+          resolvedSymbols = fs
+            .readdirSync(dataDir)
+            .filter((d) => fs.statSync(path.join(dataDir, d)).isDirectory())
+            .filter((d) => fs.existsSync(path.join(dataDir, d, "bars")))
+            .map((d) => d.toUpperCase())
+            .sort();
+        }
       }
 
       if (!resolvedSymbols.length) {
-        return json(res, 200, {
-          ok: true, mode,
-          filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" },
-          items: [],
-        });
+        return json(res, 200, { ok: true, mode, filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" }, items: [] });
       }
 
-      // Canonical TF order
-      const TFS = ["1", "5", "15", "60", "240", "1440"];
+      const TFS = ["1", "5", "15", "60", "240", "1d"];
       const items = [];
-
       for (const sym of resolvedSymbols) {
-        const symbolNorm = normalizeMarketDataSymbol(sym);
-        if (!symbolNorm) continue;
         const barsInfo = [];
         for (const tf of TFS) {
-          const tfNorm = normalizeMarketDataTf(tf);
-          const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 1000);
+          const bars = readBrokerBarsFromCsv(sym, tf, 0);
           const existing = bars.length;
-          const barStart = bars.length ? bars[0].time : null;
-          const barEnd = bars.length ? bars[bars.length - 1].time : null;
           barsInfo.push({
             tf,
             existing_bars: existing,
             bars_number: Math.max(existing, 500),
-            start: barStart,
-            end: barEnd,
+            start: existing > 0 ? bars[0].time : null,
+            end: existing > 0 ? bars[existing - 1].time : null,
           });
         }
-        items.push({ symbol: symbolNorm, bars_info: barsInfo });
+        items.push({ symbol: sym, bars_info: barsInfo });
       }
-
-      return json(res, 200, {
-        ok: true, mode,
-        filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" },
-        items,
-      });
+      return json(res, 200, { ok: true, mode, filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" }, items });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -23165,30 +23146,25 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       const account = await requireV2BrokerAccount(req, res, url, payload);
       if (!account) return;
-
       const items = Array.isArray(payload.items) ? payload.items : [];
-      if (!items.length)
-        return json(res, 200, { ok: true, sync_id: genTraceId("sync_"), summary: { items: 0, received: 0, inserted: 0, duplicated: 0, rejected: 0 }, results: [] });
+      if (!items.length) return json(res, 200, { ok: true, sync_id: genTraceId("sync_"), summary: { items: 0, received: 0, inserted: 0, duplicated: 0, rejected: 0 }, results: [] });
 
       const syncId = genTraceId("sync_");
-      const db = await mt5Backend();
       let totalReceived = 0, totalInserted = 0, totalDuplicated = 0, totalRejected = 0;
       const results = [];
 
       for (const item of items) {
         const sym = normalizeMarketDataSymbol(item.symbol);
-        const tfRaw = String(item.tf || "").trim();
-        const tf = normalizeMarketDataTf(tfRaw);
+        const tf = String(item.tf || "").trim();
         const bars = Array.isArray(item.bars) ? item.bars : [];
         if (!sym || !tf) {
-          results.push({ symbol: item.symbol, tf: item.tf, received: 0, inserted: 0, duplicated: 0, rejected: bars.length, reject_reason: "invalid_symbol_or_tf" });
+          results.push({ symbol: item.symbol, tf, received: 0, inserted: 0, duplicated: 0, rejected: bars.length, reject_reason: "invalid_symbol_or_tf" });
           totalRejected += bars.length;
           continue;
         }
 
-        let itemReceived = 0, itemInserted = 0, itemDuplicated = 0, itemRejected = 0;
-        let latestTs = null;
-        const tfSec = Math.max(60, parseTfTokenToSeconds(tf));
+        const normalizedBars = [];
+        let itemReceived = 0, itemInserted = 0, itemDuplicated = 0, itemRejected = 0, latestTs = null;
 
         for (const bar of bars) {
           const t = Number(bar.time ?? bar.t);
@@ -23197,23 +23173,19 @@ const appHandler = async (req, res) => {
           const l = Number(bar.low ?? bar.l);
           const c = Number(bar.close ?? bar.c);
           const v = Number(bar.volume ?? bar.v);
-
           if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) {
             itemRejected++;
             continue;
           }
-
           itemReceived++;
-
-          // Merge into CSV (deduplicates by time)
-          const added = mergeBarsIntoCSV(sym, tf, [{ time: t, open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 }]);
-          if (added > 0) {
-            itemInserted++;
-          } else {
-            itemDuplicated++;
-          }
+          normalizedBars.push({ time: Math.floor(t), open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
           if (!latestTs || t > latestTs) latestTs = t;
         }
+
+        // mergeBarsIntoCSV returns count of NEW bars inserted (deduplicates by time)
+        const added = mergeBarsIntoCSV(sym, tf, normalizedBars);
+        itemInserted = added;
+        itemDuplicated = normalizedBars.length - added;
 
         totalReceived += itemReceived;
         totalInserted += itemInserted;
@@ -23228,23 +23200,14 @@ const appHandler = async (req, res) => {
 
       if (totalInserted > 0) {
         await mt5Log(account.account_id, "accounts", {
-          event: "PRICES_SYNC",
-          sync_id: syncId,
-          source_id: payload.source_id || "unknown",
+          event: "PRICES_SYNC", sync_id: syncId, source_id: payload.source_id || "unknown",
           inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected,
         }, account.user_id || CFG.mt5DefaultUserId);
       }
 
-      return json(res, 200, {
-        ok: true, sync_id: syncId,
-        summary: { items: items.length, received: totalReceived, inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected },
-        results,
-      });
+      return json(res, 200, { ok: true, sync_id: syncId, summary: { items: items.length, received: totalReceived, inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected }, results });
     } catch (error) {
-      return json(res, 400, {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
 
