@@ -1260,7 +1260,7 @@ namespace cAlgo.Robots
                     + "\",\"balance\":" + bal.ToString("F2", CultureInfo.InvariantCulture)
                     + ",\"equity\":" + eq.ToString("F2", CultureInfo.InvariantCulture)
                     + ",\"margin\":" + marg.ToString("F2", CultureInfo.InvariantCulture)
-                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
+                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\"" + ",\"build_version\":\"" + BuildVersion + "\""
                     + ",\"positions\":[" + string.Join(",", posList ?? new List<string>()) + "]"
                     + ",\"orders\":[" + string.Join(",", ordersList ?? new List<string>()) + "]"
                     + ",\"closed\":[" + string.Join(",", closedList ?? new List<string>()) + "]"

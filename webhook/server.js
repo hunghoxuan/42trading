@@ -199,13 +199,82 @@ function emitNotification(payload) {
 // CSV path: market_data/{SYMBOL}/bars/{TF}.csv
 // Format: time,open,high,low,close,volume
 // Also updates L1 memory cache + Redis L2.
+function normalizeCsvTfKey(tf) {
+  const raw = String(tf || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "d" || raw === "1d" || raw === "day") return "1d";
+  if (raw === "w" || raw === "1w" || raw === "week") return "1w";
+  if (raw === "4h" || raw === "240") return "240";
+  if (raw === "1h" || raw === "60" || raw === "60m" || raw === "60min") return "60";
+  if (raw === "15m" || raw === "15" || raw === "15min") return "15";
+  if (raw === "5m" || raw === "5" || raw === "5min") return "5";
+  if (raw === "1m" || raw === "1" || raw === "1min") return "1";
+  return raw;
+}
+
+function csvTfAliases(tf) {
+  const key = normalizeCsvTfKey(tf);
+  if (!key) return [];
+  const out = new Set([key]);
+  if (key === "1d") out.add("d");
+  if (key === "1w") out.add("w");
+  if (key === "240") out.add("4h");
+  if (key === "60") out.add("1h");
+  if (key === "15") out.add("15m");
+  if (key === "5") out.add("5m");
+  if (key === "1") out.add("1m");
+  return [...out];
+}
+
+function resolveBrokerCsvPath(symbol, tf) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym) return "";
+  const baseDir = path.join(ROOT_DIR, "market_data", sym, "bars");
+  const aliases = csvTfAliases(tf);
+  for (const alias of aliases) {
+    const p = path.join(baseDir, `${alias}.csv`);
+    if (fs.existsSync(p)) return p;
+  }
+  const primary = aliases[0] || normalizeCsvTfKey(tf);
+  return primary ? path.join(baseDir, `${primary}.csv`) : "";
+}
+
+function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  const tfKey = normalizeCsvTfKey(tf);
+  if (!sym || !tfKey) return [];
+  const csvPath = resolveBrokerCsvPath(sym, tfKey);
+  if (!csvPath || !fs.existsSync(csvPath)) return [];
+  try {
+    const raw = fs.readFileSync(csvPath, "utf8");
+    const lines = raw.trim().split(/\r?\n/);
+    const rows = [];
+    for (let i = 1; i < lines.length; i += 1) {
+      const cols = String(lines[i] || "").split(",");
+      if (cols.length < 5) continue;
+      const t = Number(cols[0]);
+      const o = Number(cols[1]);
+      const h = Number(cols[2]);
+      const l = Number(cols[3]);
+      const c = Number(cols[4]);
+      const v = Number(cols[5]) || 0;
+      if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+      rows.push({ time: Math.floor(t), open: o, high: h, low: l, close: c, volume: v });
+    }
+    rows.sort((a, b) => a.time - b.time);
+    return rows.slice(-Math.max(50, Math.min(Number(limit) || 300, 5000)));
+  } catch {
+    return [];
+  }
+}
+
 function mergeBarsIntoCSV(symbol, tf, newBars) {
   if (!symbol || !tf || !newBars.length) return 0;
   const sym = String(symbol).toUpperCase();
-  const tfKey = String(tf).toLowerCase();
+  const tfKey = normalizeCsvTfKey(tf);
   const csvDir = path.join(ROOT_DIR, "market_data", sym, "bars");
   if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
-  const csvPath = path.join(csvDir, tfKey + ".csv");
+  const csvPath = resolveBrokerCsvPath(sym, tfKey);
 
   // Read existing bars into Map (time -> csv line)
   const existing = new Map();
@@ -930,6 +999,7 @@ const CFG = {
   redisEnabled: asBool(process.env.REDIS_ENABLED, true),
   redisUrl: envStr(process.env.REDIS_URL, "redis://127.0.0.1:6379"),
   marketDataCronEnabled: asBool(process.env.MARKET_DATA_CRON_ENABLED, true),
+  snapshotsCronEnabled: asBool(process.env.SNAPSHOTS_CRON_ENABLED, true),
   marketDataCronQueueEnabled: asBool(
     process.env.MARKET_DATA_CRON_QUEUE_ENABLED,
     true,
@@ -1616,11 +1686,23 @@ async function repoGetPendingSignals(userId = "all") {
         ? "status IN ('NEW', 'PENDING')"
         : "status IN ('NEW', 'PENDING') AND user_id = $1";
     const params = userId === "all" ? [] : [userId];
-    const { rows } = await db.query(
-      `SELECT * FROM signals WHERE ${where} ORDER BY updated_at DESC, created_at DESC`,
-      params,
-    );
-    return rows;
+    try {
+      const { rows } = await db.query(
+        `SELECT * FROM signals WHERE ${where} ORDER BY updated_at DESC, created_at DESC`,
+        params,
+      );
+      return rows;
+    } catch (err) {
+      // Backward-compat: some DBs do not have signals.updated_at.
+      if (String(err?.code || "") === "42703") {
+        const { rows } = await db.query(
+          `SELECT * FROM signals WHERE ${where} ORDER BY created_at DESC`,
+          params,
+        );
+        return rows;
+      }
+      throw err;
+    }
   });
 }
 
@@ -4607,7 +4689,7 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
 
           results.push({
             symbol,
-            timeframe: timeframes.join(","),
+            timeframe: uniqueTfs.join(","),
             status: "ok",
             file_name: outFileName,
             url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
@@ -8520,6 +8602,9 @@ async function _mt5InitBackendInternal() {
         leverage: Number(payload.leverage || existingMeta.leverage || 0),
         broker_name: String(
           payload.broker_name || existingMeta.broker_name || "",
+        ),
+        build_version: String(
+          payload.build_version || existingMeta.build_version || "",
         ),
         symbol_metrics: (() => {
           const incoming = Array.isArray(payload.symbol_metrics)
@@ -12698,6 +12783,38 @@ async function buildAnalysisSnapshotFromTwelve({
   const symbolNorm = normalizeMarketDataSymbol(symbol);
   const tfNorm = normalizeMarketDataTf(timeframe);
   const reqRange = estimateRequestedBarsRange({ tfNorm, bars: outputsize });
+
+  // Prefer locally persisted broker bars when available (market_data/{SYMBOL}/bars/{TF}.csv)
+  // so static charts can render from broker-fed data without external API dependency.
+  const brokerBars = readBrokerBarsFromCsv(symbolNorm, tfNorm, outputsize);
+  if (brokerBars.length) {
+    const barStart = brokerBars[0]?.time || null;
+    const barEnd = brokerBars.length
+      ? Number(brokerBars[brokerBars.length - 1].time) + Math.max(60, parseTfTokenToSeconds(tfNorm))
+      : null;
+    const brokerSnapshot = {
+      provider: "broker_csv",
+      status: "ok",
+      timezone: "UTC",
+      symbol: String(symbol || "").toUpperCase(),
+      symbol_norm: symbolNorm,
+      timeframe: String(timeframe || ""),
+      tf_norm: tfNorm,
+      fetched_at: new Date().toISOString(),
+      bar_start: barStart,
+      bar_end: barEnd,
+      last_price: brokerBars.length ? brokerBars[brokerBars.length - 1].close : null,
+      last_price_at: brokerBars.length
+        ? new Date(Number(brokerBars[brokerBars.length - 1].time) * 1000).toISOString()
+        : null,
+      bars: brokerBars,
+      cache_source: "broker_csv",
+      gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(0, 20),
+    };
+    tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
+    await marketDataDbUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
+    return mergeLastPriceIntoBars(brokerSnapshot);
+  }
 
   const tid = traceId || genTraceId("twelve_");
   console.log(
@@ -18883,7 +19000,8 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
-      const tf = String(url.searchParams.get("tf") || "").trim();
+      const tfInput = String(url.searchParams.get("tf") || "").trim();
+      const tf = normalizeCsvTfKey(tfInput);
       const limit = Math.max(10, Math.min(5000, Number(url.searchParams.get("limit") || 300) || 300));
       if (!symbol || !tf) return json(res, 400, { ok: false, error: "symbol and tf required" });
       const csvPath = path.join(BROKER_BARS_DIR, symbol, "bars", `${tf}.csv`);
@@ -24502,6 +24620,9 @@ function initMarketDataQueue() {
 }
 
 async function mt5RunSnapshotsCron() {
+  if (!asBool(process.env.SNAPSHOTS_CRON_ENABLED ?? "true", true)) {
+    return null;
+  }
   const b = await mt5Backend();
   const res = await b.query(`
     SELECT s.*
@@ -24617,7 +24738,7 @@ async function mt5CronLoop() {
       }
     };
 
-    await Promise.all([
+    const cronTasks = [
       runOne(
         "marketData",
         mt5RunMarketDataCron,
@@ -24628,8 +24749,16 @@ async function mt5CronLoop() {
         mt5RunAiAnalysisCron,
         (r) => `${r.triggered || 0} trig`,
       ),
-      runOne("snapshots", mt5RunSnapshotsCron, (r) => `${r.captured || 0} img`),
-    ]);
+    ];
+    if (CFG.snapshotsCronEnabled) {
+      cronTasks.push(
+        runOne("snapshots", mt5RunSnapshotsCron, (r) => `${r.captured || 0} img`),
+      );
+    } else {
+      global._cronDetails.snapshots = "disabled";
+      events.push("snapshots: disabled");
+    }
+    await Promise.all(cronTasks);
 
     const elapsed = Math.round((Date.now() - startMs) / 1000);
     global._cronStatus = `ok (${elapsed}s)`;

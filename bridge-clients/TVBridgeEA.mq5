@@ -3740,7 +3740,7 @@ void SyncWithVps()
    body += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + ",";
    body += "\"margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN), 2) + ",";
    body += "\"free_margin\":" + DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2) + ",";
-   body += "\"broker_name\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
+   body += "\"broker_name\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\"" + ",\"build_version\":\"" + EA_BUILD_VERSION + "\",";
    body += "\"leverage\":" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LEVERAGE)) + ",";
    body += "\"positions\":[" + posUpdates + "],";
    body += "\"orders\":[" + ordUpdates + "],";
