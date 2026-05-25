@@ -68,17 +68,33 @@ function liveTfToTvInterval(tf) {
   return "15";
 }
 
-function toTradingViewSymbol(symRaw) {
+function toTradingViewSymbol(symRaw, provider = "") {
   const s = String(symRaw || "").trim().toUpperCase();
   if (!s) return "";
   if (s.includes(":")) return s;
-  // Metals → OANDA (XAUUSD, XAGUSD)
-  if (s.startsWith("XAU") || s.startsWith("XAG")) return `OANDA:${s}`;
-  // Crypto pairs → BINANCE (ADAUSD, BTCUSDT, ...)
-  if (s.endsWith("USD") || s.endsWith("USDT")) return `BINANCE:${s}`;
-  // Forex/indices → OANDA prefix
-  if (/^[A-Z]{6}$/.test(s)) return `OANDA:${s}`;
-  return s;
+
+  const p = String(provider || "").toUpperCase();
+  const isCrypto = s.endsWith("USD") || s.endsWith("USDT");
+  const isMetal = s.startsWith("XAU") || s.startsWith("XAG");
+  const isForex = /^[A-Z]{6}$/.test(s);
+
+  // Provider-specific prefix
+  if (p === "BINANCE") {
+    const binSym = isCrypto && !s.endsWith("USDT") ? s.replace(/USD$/, "USDT") : s;
+    return `BINANCE:${binSym}`;
+  }
+  if (p === "OANDA") return `OANDA:${s}`;
+  if (p === "ICMARKETS") {
+    // ICMarkets: metals via OANDA, crypto via BINANCE, forex via OANDA
+    if (isMetal || isForex) return `OANDA:${s}`;
+    if (isCrypto || s.endsWith("USDT")) return `BINANCE:${s.replace(/USD$/, "USDT")}`;
+    return `OANDA:${s}`;
+  }
+
+  // Fallback: metals+forex via OANDA, crypto via BINANCE
+  if (isMetal || isForex) return `OANDA:${s}`;
+  if (isCrypto) return `BINANCE:${s.replace(/USD$/, "USDT")}`;
+  return `OANDA:${s}`;
 }
 
 function toTradingViewTimezone() {
@@ -2204,7 +2220,7 @@ export default function SymbolChart({
                           height: "100%",
                           border: "none",
                         }}
-                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
                       <button
                         className="secondary-button"

@@ -507,11 +507,24 @@ export function extractTradePlanFromSignal(signal = {}) {
         raw.volume ??
         0.01,
     ),
-    risk_money: asNum(
+    risk_money_planned: asNum(
       signal.risk_money_planned ??
-        effectivePlan?.risk_money ??
+        effectivePlan?.risk_money_planned ??
+        raw.risk_money_planned ??
+        raw.riskMoneyPlanned ??
         raw.risk_money ??
         raw.riskMoney ??
+        effectivePlan?.risk_money ??
+        effectivePlan.riskMoney,
+    ),
+    risk_money: asNum(
+      signal.risk_money_planned ??
+        effectivePlan?.risk_money_planned ??
+        raw.risk_money_planned ??
+        raw.riskMoneyPlanned ??
+        raw.risk_money ??
+        raw.riskMoney ??
+        effectivePlan?.risk_money ??
         effectivePlan.riskMoney,
     ),
     entry: formatNum3(entry ?? NaN),
@@ -767,10 +780,25 @@ export function extractTradePlanFromTrade(trade = {}) {
         meta.volumePct ??
         0.01,
     ),
-    risk_money: asNum(
+    risk_money_planned: asNum(
       trade.risk_money_planned ??
+        meta.risk_money_planned ??
+        meta.riskMoneyPlanned ??
         meta.risk_money ??
         meta.riskMoney ??
+        raw.risk_money_planned ??
+        raw.riskMoneyPlanned ??
+        raw.riskMoney ??
+        raw.risk_money,
+    ),
+    risk_money: asNum(
+      trade.risk_money_planned ??
+        meta.risk_money_planned ??
+        meta.riskMoneyPlanned ??
+        meta.risk_money ??
+        meta.riskMoney ??
+        raw.risk_money_planned ??
+        raw.riskMoneyPlanned ??
         raw.riskMoney ??
         raw.risk_money,
     ),

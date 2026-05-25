@@ -562,10 +562,19 @@ function PlanHeader({
     plan.broker_trade_id || plan.ticket || plan.broker_id || "",
   ).trim();
   const statusText = String(
-    status?.label || plan?.execution_status || plan?.status || "",
+    status?.label || status || plan?.execution_status || plan?.status || "",
   )
     .trim()
     .toUpperCase();
+  const statusCls = (() => {
+    const s = String(statusText || "").toUpperCase();
+    if (status && typeof status === "object" && status.cls) return status.cls;
+    if (s === "FILLED" || s === "OPEN") return "ACTIVE";
+    if (s === "CLOSED" || s === "CANCELLED") return "INACTIVE";
+    if (s === "ERROR" || s === "FAIL") return "FAIL";
+    if (s === "PENDING" || s === "NEW" || s === "DRAFT") return "OTHER";
+    return "OTHER";
+  })();
   const isPendingLike =
     statusText === "PENDING" ||
     statusText === "DRAFT" ||
@@ -691,17 +700,8 @@ function PlanHeader({
           textAlign: "right",
         }}
       >
-        {/* Row 1: status + pnl/planned metrics */}
+        {/* Row 1: pnl/planned metrics */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {statusText && (
-            <span
-              className={`badge ${status?.cls || ""} badge-mini`}
-              title="Current trade status"
-              style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}
-            >
-              {statusText}
-            </span>
-          )}
           {!isPendingLike && pnlText && (
             <span
               title="Realized/Live PnL for filled/open trade"
@@ -740,17 +740,35 @@ function PlanHeader({
           )}
         </div>
 
-        {(sidVal || brokerIdVal) && (
+        {(sidVal || brokerIdVal || statusText) && (
           <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              justifyContent: "flex-end",
               fontSize: "10px",
               color: "var(--muted)",
               opacity: 0.9,
             }}
           >
-            {sidVal ? `SID: ${sidVal}` : ""}
-            {sidVal && brokerIdVal ? " · " : ""}
-            {brokerIdVal ? `Broker ID: ${brokerIdVal}` : ""}
+            {(sidVal || brokerIdVal) && (
+              <span>
+                {sidVal ? `SID: ${sidVal}` : ""}
+                {sidVal && brokerIdVal ? "  " : ""}
+                {brokerIdVal ? `BrokerID: ${brokerIdVal}` : ""}
+              </span>
+            )}
+            {statusText && <span>|</span>}
+            {statusText && (
+              <span
+                className={`badge ${statusCls} badge-mini`}
+                title="Current trade status"
+                style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}
+              >
+                {statusText}
+              </span>
+            )}
           </div>
         )}
 
@@ -810,8 +828,7 @@ function PlanHeader({
           gradeVal ||
           confidenceBadgeVal ||
           skipDecisionVal ||
-          riskPercentVal ||
-          statusText) && (
+          riskPercentVal) && (
           <div
             style={{
               display: "flex",
@@ -907,15 +924,6 @@ function PlanHeader({
                 }}
               >
                 {skipDecisionVal}
-              </span>
-            )}
-            {statusText && (
-              <span
-                className={`badge ${status?.cls || ""} badge-mini`}
-                title="Current trade status"
-                style={{ padding: "1px 5px", fontSize: "9px", fontWeight: 400 }}
-              >
-                {statusText}
               </span>
             )}
           </div>
@@ -1274,6 +1282,10 @@ export default function SignalDetailCard({
             broker_trade_id:
               response?.broker_trade_id || response?.ticket || "",
             confidence: tradePlan?.value?.confidence_pct,
+            risk_money_planned:
+              tradePlan?.value?.risk_money_planned ??
+              tradePlan?.value?.risk_money,
+            risk_money: tradePlan?.value?.risk_money,
             risk_management: tradePlan?.value?.risk_management,
             entry_condition: tradePlan?.value?.entry_condition,
             exit_condition: tradePlan?.value?.exit_condition,
@@ -1308,6 +1320,10 @@ export default function SignalDetailCard({
                 entryModel: tradePlan?.value?.entry_model,
                 source_id: tradePlan?.value?.source_id,
                 source: tradePlan?.value?.source,
+                risk_money_planned:
+                  tradePlan?.value?.risk_money_planned ??
+                  tradePlan?.value?.risk_money,
+                risk_money: tradePlan?.value?.risk_money,
                 sid: response?.sid || response?.id || tradePlan?.tradeId || "",
                 broker_trade_id:
                   response?.broker_trade_id || response?.ticket || "",
@@ -1844,6 +1860,17 @@ export default function SignalDetailCard({
               const planValue = planDrafts[planId] || p;
               const headerPlan = {
                 ...planValue,
+                sid:
+                  planValue?.sid || tradePlan?.sid || tradePlan?.tradeId || "",
+                broker_trade_id:
+                  planValue?.broker_trade_id ||
+                  tradePlan?.broker_trade_id ||
+                  tradePlan?.brokerId ||
+                  "",
+                execution_status:
+                  planValue?.execution_status ||
+                  tradePlan?.execution_status ||
+                  "",
                 strategy: planValue?.strategy || selectedAiPlan?.strategy || "",
                 entry_model:
                   planValue?.entry_model || selectedAiPlan?.entry_model || "",
@@ -1903,7 +1930,7 @@ export default function SignalDetailCard({
                     }
                     isBuy={isBuy}
                     simplified={isSimplified}
-                    status={tradePlan.status}
+                    status={tradePlan.statusUi || tradePlan.status}
                     volume={tradePlan.volume}
                     pnl={tradePlan.pnl}
                   />
@@ -1940,6 +1967,8 @@ export default function SignalDetailCard({
                         }
                       }}
                       onReset={tradePlan.onReset}
+                      onGoTrade={tradePlan.onGoTrade}
+                      onGoAnalyze={tradePlan.onGoAnalyze}
                       onCancel={tradePlan.onCancel}
                       onClose={tradePlan.onClose}
                       onSave={tradePlan.onSave}

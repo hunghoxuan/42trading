@@ -228,6 +228,9 @@ export default function TradeDetailPage() {
     const aiConf = asNum(detailPlan.confidence_pct);
     const aiEta = asNum(detailPlan.estimated_bars);
     const aiAction = detailPlan.skip_recommendation || "";
+    const sidText = String(trade.sid || trade.signal_sid || "-").trim() || "-";
+    const brokerIdText = brokerTicketOf(trade);
+    const currentStatus = statusUi(trade.execution_status);
     const headerMeta = buildHeaderMeta({
       statusRaw: trade.execution_status,
       pnlRaw: pnl,
@@ -260,33 +263,59 @@ export default function TradeDetailPage() {
       sideClass: action === "BUY" ? "side-buy" : "side-sell",
       positionText: `${trade.entry || "-"} → ${trade.tp || "-"} / ${trade.sl || "-"}`,
       aiBadges: (
-        <>
-          {aiStrategy && <span style={badgeS("#8b5cf6")}>{aiStrategy}</span>}
-          {aiEntry && <span style={badgeS("#6366f1")}>{aiEntry}</span>}
-          {aiGrade && (
-            <span style={badgeS(aiGrade === "A" ? "#16a34a" : "#ca8a04")}>
-              {aiGrade}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 4,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 10,
+              color: "var(--muted)",
+              opacity: 0.95,
+            }}
+          >
+            <span>{`SID: ${sidText}`}</span>
+            <span>{`BrokerID: ${brokerIdText}`}</span>
+            <span>|</span>
+            <span className={`badge ${currentStatus.cls}`} style={{ cursor: "default" }}>
+              {currentStatus.label}
             </span>
-          )}
-          {aiRisk != null && (
-            <span style={badgeS(aiRisk <= 1 ? "#16a34a" : "#dc2626")}>
-              {aiRisk}%
-            </span>
-          )}
-          {aiConf != null && (
-            <span style={badgeS(aiConf >= 80 ? "#16a34a" : "#dc2626")}>
-              {aiConf}%
-            </span>
-          )}
-          {aiEta != null && <span style={badgeS(null)}>{aiEta}m</span>}
-          {aiAction && (
-            <span
-              style={badgeS(aiAction === "Proceed" ? "#16a34a" : "#dc2626")}
-            >
-              {aiAction}
-            </span>
-          )}
-        </>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {aiStrategy && <span style={badgeS("#8b5cf6")}>{aiStrategy}</span>}
+            {aiEntry && <span style={badgeS("#6366f1")}>{aiEntry}</span>}
+            {aiGrade && (
+              <span style={badgeS(aiGrade === "A" ? "#16a34a" : "#ca8a04")}>
+                {aiGrade}
+              </span>
+            )}
+            {aiRisk != null && (
+              <span style={badgeS(aiRisk <= 1 ? "#16a34a" : "#dc2626")}>
+                {aiRisk}%
+              </span>
+            )}
+            {aiConf != null && (
+              <span style={badgeS(aiConf >= 80 ? "#16a34a" : "#dc2626")}>
+                {aiConf}%
+              </span>
+            )}
+            {aiEta != null && <span style={badgeS(null)}>{aiEta}m</span>}
+            {aiAction && (
+              <span
+                style={badgeS(aiAction === "Proceed" ? "#16a34a" : "#dc2626")}
+              >
+                {aiAction}
+              </span>
+            )}
+          </div>
+        </div>
       ),
       ...headerMeta,
     });
@@ -368,6 +397,12 @@ export default function TradeDetailPage() {
         entry_model: detailPlan.entry_model,
         source_id: detailPlan.source_id,
         note: detailPlan.note,
+        risk_money: asFiniteOrNull(
+          detailPlan.risk_money_planned ?? detailPlan.risk_money,
+        ),
+        risk_money_planned: asFiniteOrNull(
+          detailPlan.risk_money_planned ?? detailPlan.risk_money,
+        ),
       };
       await api.saveTradePlan(tradeId, payload);
       // Reload trade events and trade data (but keep user-edited plan intact)

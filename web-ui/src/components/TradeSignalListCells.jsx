@@ -26,6 +26,10 @@ export function SymbolEntryCell({
   sl = "-",
   rr = null,
   status = "PENDING",
+  pnl = null,
+  tpPnl = null,
+  slPnl = null,
+  showRightPnl = false,
 }) {
   const sideUp = String(side || "-").toUpperCase();
   const sideCls = sideUp === "BUY" ? "side-buy" : "side-sell";
@@ -41,6 +45,13 @@ export function SymbolEntryCell({
         ? "status-solid"
         : "status-blur";
   const rrNum = num(rr);
+  const pnlNum = num(pnl);
+  const tpPnlNum = num(tpPnl);
+  const slPnlNum = num(slPnl);
+  const showLivePnl =
+    ["OPEN", "FILLED", "PARTIAL", "START", "CLOSED", "TP", "SL"].includes(st) &&
+    pnlNum != null;
+  const showProjected = !showLivePnl && (tpPnlNum != null || slPnlNum != null);
 
   return (
     <div className="cell-wrap">
@@ -59,52 +70,60 @@ export function SymbolEntryCell({
           {orderType || "limit"}
         </span>
       </div>
-      <div className="cell-minor">
-        {entry} → <span style={{ color: "var(--accent)" }}>{tp}</span> / {sl}{" "}
-        {rrNum != null ? `${rrNum.toFixed(1)}r` : "-"}
+      <div
+        className="cell-minor"
+        style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
+      >
+        <span>
+          {entry} → <span style={{ color: "var(--accent)" }}>{tp}</span> / {sl}{" "}
+          {rrNum != null ? `${rrNum.toFixed(1)}r` : "-"}
+        </span>
+        {showRightPnl && (
+          <span style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+            {showLivePnl ? (
+              <span className={pnlNum < 0 ? "money-neg" : "money-pos"}>
+                {pnlNum < 0 ? "-" : "+"}${Math.abs(pnlNum).toFixed(2)}
+              </span>
+            ) : showProjected ? (
+              <>
+                {tpPnlNum != null ? (
+                  <span className="money-pos">
+                    +${Math.abs(tpPnlNum).toFixed(1)}
+                  </span>
+                ) : (
+                  "-"
+                )}
+                {" / "}
+                {slPnlNum != null ? (
+                  <span className="money-neg">
+                    -${Math.abs(slPnlNum).toFixed(1)}
+                  </span>
+                ) : (
+                  "-"
+                )}
+              </>
+            ) : (
+              "-"
+            )}
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
 export function PositionAuditCell({
-  source = "-",
-  strategy = "-",
   timeText = "-",
   sid = "-",
   brokerId = "-",
-  confidence = null,
-  riskManagement = null,
-  riskPct = null,
 }) {
-  const sourceStrategy = [source, strategy]
-    .filter((x) => x && x !== "-")
-    .join(" | ");
-  const confidenceText = confidence != null ? `${confidence}%` : null;
-  const riskText = riskManagement != null ? `Risk: ${riskManagement}` : null;
-  const metaLine = [
-    sid,
-    brokerId && brokerId !== "-" ? brokerId : null,
-    riskPct != null ? `${(Number(riskPct) * 100).toFixed(2)}%` : null,
-    confidenceText,
-    riskText,
-  ]
+  const metaLine = [sid, brokerId && brokerId !== "-" ? brokerId : null]
     .filter(Boolean)
     .join(" | ");
 
   return (
     <div className="cell-wrap">
-      <div className="cell-major">
-        {sourceStrategy || "-"}{" "}
-        {timeText !== "-" && (
-          <span
-            className="minor-text"
-            style={{ fontSize: 11, opacity: 0.8, marginLeft: 4 }}
-          >
-            {timeText}
-          </span>
-        )}
-      </div>
+      <div className="cell-major">{timeText || "-"}</div>
       <div className="cell-minor" style={{ opacity: 0.7 }}>
         {metaLine}
       </div>
@@ -174,33 +193,15 @@ export function StatusPnlCell({
         {!hideStatus && statusNode}
         {shouldShowLiveMetrics && (
           <>
-            {brokerPips != null && (
-              <div
-                className={"minor-text" + flashed("broker_pips")}
-                style={{ fontSize: "10px", opacity: 0.5, fontWeight: 400 }}
-              >
-                {Math.round(num(brokerPips))} pips
-              </div>
-            )}
             {pnlNum != null && (
               <div
                 className={`${pnlNum < 0 ? "money-neg" : "money-pos"}${flashed("broker_pnl")}${flashed("pnl_realized")}`}
                 style={{ fontSize: "12px", fontWeight: 400, opacity: 0.75 }}
               >
-                ${Math.abs(pnlNum).toFixed(2)}
+                {pnlNum < 0 ? "-" : "+"}${Math.abs(pnlNum).toFixed(2)}
               </div>
             )}
           </>
-        )}
-        {shouldShowProjectedMetrics && (
-          <div
-            className="minor-text"
-            style={{ fontSize: "10px", opacity: 0.7, fontWeight: 500 }}
-          >
-            {num(brokerLots) != null && `${num(brokerLots).toFixed(2)} lots`}
-            {num(brokerVolume) != null && ` (${num(brokerVolume).toLocaleString()} units)`}
-            {num(brokerLots) == null && num(brokerVolume) == null && margin != null && margin > 0 && `Risk: $${num(margin).toFixed(2)}`}
-          </div>
         )}
       </div>
       {isFinished ? (
@@ -231,7 +232,7 @@ export function StatusPnlCell({
             "-"
           )}
         </div>
-      ) : (showFilledDetails || isPending) && !hidePnl ? (
+      ) : (showFilledDetails || isPending || isActive) && !hidePnl ? (
         <div
           className="cell-minor"
           style={{

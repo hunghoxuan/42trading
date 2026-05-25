@@ -325,6 +325,8 @@ export function TradePlanEditor({
   onSaveDraft,
   onAddTrade,
   onReset,
+  onGoTrade,
+  onGoAnalyze,
   onCancel,
   onClose,
   showSaveButton,
@@ -359,6 +361,12 @@ export function TradePlanEditor({
       : Boolean(signalId || (!signalId && !tradeId));
   const resolvedSaveLabel =
     saveLabel || (tradeId ? "Save Trade" : "Save Draft");
+  const isTradeSaveAction =
+    Boolean(tradeId) ||
+    String(resolvedSaveLabel || "")
+      .trim()
+      .toLowerCase()
+      .includes("save trade");
 
   const normalizedLockMode =
     lockMode === "core" || lockMode === "all"
@@ -700,17 +708,33 @@ export function TradePlanEditor({
               }
               right={
                 <div style={selectInlineRowStyle}>
-                  <label className="minor-text" style={{ ...labelStyle, opacity: 0 }}>
-                    .
-                  </label>
-                  <div
+                  <label
+                    htmlFor={`${signalId || tradeId || "tp-editor"}-risk_money_planned`}
+                    className="minor-text"
                     style={{
-                      ...numericInputStyle,
-                      height: "20px",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: 999,
-                      opacity: 0.15,
+                      ...labelStyle,
+                      opacity: tradeFieldsDisabled ? 0.4 : 0.9,
                     }}
+                  >
+                    Risk
+                  </label>
+                  <input
+                    id={`${signalId || tradeId || "tp-editor"}-risk_money_planned`}
+                    name="risk_money_planned"
+                    style={numericInputStyle}
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={cleanFieldValue(
+                      value.risk_money_actual ??
+                        value.risk_money_planned ??
+                        value.risk_money ??
+                        "",
+                    )}
+                    onChange={(e) =>
+                      update("risk_money_planned", e.target.value)
+                    }
+                    disabled={tradeFieldsDisabled || controlsDisabled}
                   />
                   <div style={selectSpacerStyle} />
                 </div>
@@ -915,6 +939,42 @@ export function TradePlanEditor({
               }}
             >
               {showResetButton ? (
+                <>
+                  {typeof onGoTrade === "function" ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={onGoTrade}
+                      disabled={controlsDisabled}
+                      style={{
+                        height: "26px",
+                        fontSize: "11px",
+                        padding: "0 10px",
+                        borderRadius: "4px",
+                      }}
+                    >
+                      Trade &gt;
+                    </button>
+                  ) : null}
+                  {typeof onGoAnalyze === "function" ? (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={onGoAnalyze}
+                      disabled={controlsDisabled}
+                      style={{
+                        height: "26px",
+                        fontSize: "11px",
+                        padding: "0 10px",
+                        borderRadius: "4px",
+                      }}
+                    >
+                      Analyze &gt;
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+              {showResetButton ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -932,7 +992,7 @@ export function TradePlanEditor({
               ) : null}
               {effectiveShowSave ? (
                 <button
-                  className={`secondary-button ${busy?.save ? "btn-busy" : ""}`}
+                  className={`${isTradeSaveAction ? "primary-button" : "secondary-button"} ${busy?.save ? "btn-busy" : ""}`}
                   type="button"
                   onClick={onSave}
                   disabled={controlsDisabled || typeof onSave !== "function"}

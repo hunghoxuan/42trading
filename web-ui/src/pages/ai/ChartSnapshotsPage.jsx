@@ -1986,6 +1986,21 @@ function extractPositionFromAnalysis(parsed) {
     risk_pct: Number.isFinite(planRiskPctNumber(plan))
       ? planRiskPctNumber(plan)
       : "",
+    risk_money: Number.isFinite(
+      parseNum(
+        plan?.risk_money_planned ??
+          plan?.risk_money ??
+          parsed?.risk_money_planned ??
+          parsed?.risk_money,
+      ),
+    )
+      ? parseNum(
+          plan?.risk_money_planned ??
+            plan?.risk_money ??
+            parsed?.risk_money_planned ??
+            parsed?.risk_money,
+        )
+      : "",
     estimated_bars: Number.isFinite(planEstimatedBarsNumber(plan))
       ? planEstimatedBarsNumber(plan)
       : "",
@@ -2120,6 +2135,21 @@ function extractPositionFromPlan(plan, parsed = {}) {
       : "",
     risk_pct: Number.isFinite(planRiskPctNumber(item))
       ? planRiskPctNumber(item)
+      : "",
+    risk_money: Number.isFinite(
+      parseNum(
+        item?.risk_money_planned ??
+          item?.risk_money ??
+          parsed?.risk_money_planned ??
+          parsed?.risk_money,
+      ),
+    )
+      ? parseNum(
+          item?.risk_money_planned ??
+            item?.risk_money ??
+            parsed?.risk_money_planned ??
+            parsed?.risk_money,
+        )
       : "",
     estimated_bars: Number.isFinite(planEstimatedBarsNumber(item))
       ? planEstimatedBarsNumber(item)
@@ -2775,10 +2805,13 @@ function buildDefaultPosition(seedEntry = null) {
       tp: formatNum3(tpNum),
       sl: formatNum3(slNum),
       rr: Number.isFinite(rrNum) ? formatNum3(rrNum) : "2",
+      risk_money: "50",
+      risk_money_planned: "50",
       trade_type: "limit",
       note: "",
-      strategy: "Price action",
-      entry_model: "Price",
+      strategy: "PA",
+      entry_model: "S/R",
+      source_id: "manual",
       source: "manual",
     };
   }
@@ -2788,10 +2821,13 @@ function buildDefaultPosition(seedEntry = null) {
     tp: "0",
     sl: "0",
     rr: "",
+    risk_money: "50",
+    risk_money_planned: "50",
     trade_type: "limit",
     note: "",
-    strategy: "Price action",
-    entry_model: "Price",
+    strategy: "PA",
+    entry_model: "S/R",
+    source_id: "manual",
     source: "manual",
   };
 }
@@ -4512,13 +4548,20 @@ export default function ChartSnapshotsPage() {
           tp,
           tf: timeframe,
           model: analysisSource,
-          entry_model: analysisSource,
+          entry_model: String(activePosition.entry_model || "S/R").trim(),
           order_type: String(
             activePosition.trade_type || "limit",
           ).toLowerCase(),
           note: activePosition.note || "",
-          source: analysisSource,
-          strategy: cfg.strategies.join("+") || "ai",
+          source:
+            String(activePosition.source_id || activePosition.source || "manual")
+              .trim()
+              .toLowerCase() || "manual",
+          source_id:
+            String(activePosition.source_id || activePosition.source || "manual")
+              .trim()
+              .toLowerCase() || "manual",
+          strategy: String(activePosition.strategy || "PA").trim() || "PA",
           rr: parseNum(activePosition.rr),
         });
       }
@@ -4574,6 +4617,22 @@ export default function ChartSnapshotsPage() {
           source:
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
+          source_id:
+            String(
+              activePosition.source_id ||
+                payload.source_id ||
+                payload.source ||
+                "manual",
+            )
+              .trim()
+              .toLowerCase() || "manual",
+          strategy:
+            String(activePosition.strategy || payload.strategy || "PA").trim() ||
+            "PA",
+          entry_model:
+            String(
+              activePosition.entry_model || payload.entry_model || "S/R",
+            ).trim() || "S/R",
           session_prefix: activeSessionPrefix || undefined,
           sid:
             analyzeSessionId ||
@@ -4651,6 +4710,18 @@ export default function ChartSnapshotsPage() {
             parseNum(activePosition.rr) !== null
               ? parseNum(activePosition.rr)
               : payload.rr,
+          risk_money: Number.isFinite(parseNum(activePosition.risk_money_planned))
+            ? parseNum(activePosition.risk_money_planned)
+            : Number.isFinite(parseNum(activePosition.risk_money))
+              ? parseNum(activePosition.risk_money)
+              : 50,
+          risk_money_planned: Number.isFinite(
+            parseNum(activePosition.risk_money_planned),
+          )
+            ? parseNum(activePosition.risk_money_planned)
+            : Number.isFinite(parseNum(activePosition.risk_money))
+              ? parseNum(activePosition.risk_money)
+              : 50,
           order_type: String(
             activePosition.trade_type || payload.order_type || "limit",
           ).toLowerCase(),
@@ -4711,6 +4782,18 @@ export default function ChartSnapshotsPage() {
           );
           const out = await tradePromise;
           if (out && typeof out === "object") lastCreated = out;
+        } else if (mode === "draft_trade") {
+          const { promise: draftTradePromise } = NotificationHub.track(
+            "create_draft_trade",
+            {
+              symbol: String(
+                finalPayload?.symbol || activePosition?.symbol || "",
+              ),
+            },
+            () => api.createDraftTrade(finalPayload),
+          );
+          const out = await draftTradePromise;
+          if (out && typeof out === "object") lastCreated = out;
         } else {
           const { promise: signalPromise } = NotificationHub.track(
             "create_signal",
@@ -4735,7 +4818,9 @@ export default function ChartSnapshotsPage() {
       const msg =
         mode === "trade"
           ? `Added ${createdCount} trade request(s).`
-          : `Added ${createdCount} signal(s) only.`;
+          : mode === "draft_trade"
+            ? `Saved ${createdCount} draft trade(s).`
+            : `Added ${createdCount} signal(s) only.`;
       setManualAddedMode(mode);
       setStatus({ type: "success", text: msg });
       setActionMessage("add", "success", msg);
@@ -4758,7 +4843,7 @@ export default function ChartSnapshotsPage() {
   };
 
   const saveDraftFromEditor = (pos, planId = "main") => {
-    addBySelection("signal", pos, planId);
+    addBySelection("draft_trade", pos, planId);
   };
 
   const saveTemplate = async () => {
@@ -5254,6 +5339,15 @@ export default function ChartSnapshotsPage() {
             entry: x?.entry,
             tp: x?.tp,
             sl: x?.sl,
+            rr: x?.rr_planned ?? x?.rr ?? null,
+            pnl:
+              x?.broker_pnl ??
+              x?.pnl_realized ??
+              x?.net_pnl ??
+              x?.pnl ??
+              null,
+            tp_pnl: x?.broker_tp_pnl ?? x?.tp_pnl ?? null,
+            sl_pnl: x?.broker_sl_pnl ?? x?.sl_pnl ?? null,
             updatedAt: x?.updated_at || x?.created_at,
             id: x?.sid || x?.id,
             sid: x?.sid || null,
@@ -6466,36 +6560,106 @@ export default function ChartSnapshotsPage() {
                         ? tpNum.toFixed(tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4)
                         : "-";
                       const ref = t?.sid || t?.id || "";
+                      const pnlNum =
+                        Number(t?.broker_pnl ?? t?.pnl_realized ?? t?.pnl);
+                      const hasPnl = Number.isFinite(pnlNum);
+                      const tpPnlNum = Number(t?.broker_tp_pnl ?? t?.tp_pnl);
+                      const slPnlNum = Number(t?.broker_sl_pnl ?? t?.sl_pnl);
+                      const hasPlanPnl =
+                        Number.isFinite(tpPnlNum) || Number.isFinite(slPnlNum);
+                      const rrNum = Number(t?.rr_planned ?? t?.rr);
+                      const rrText = Number.isFinite(rrNum)
+                        ? `${rrNum.toFixed(1)}R`
+                        : "";
+                      const pnlText = hasPnl
+                        ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
+                        : hasPlanPnl
+                          ? `${Number.isFinite(tpPnlNum) ? `+${Math.abs(tpPnlNum).toFixed(0)}` : "-"} / ${Number.isFinite(slPnlNum) ? `-${Math.abs(slPnlNum).toFixed(0)}` : "-"}`
+                          : "";
                       return (
                         <article
                           key={ref || `${t?.symbol}_${t?.created_at}`}
                           className="snapshot-activity-card-v4 compact"
-                          style={{ cursor: "pointer" }}
+                          style={{
+                            cursor: "pointer",
+                            padding: "4px 6px",
+                            marginBottom: 3,
+                            borderRadius: 6,
+                            fontSize: 10,
+                          }}
                           onClick={() => {
                             if (ref) navigate(`/trades/${ref}`);
                           }}
                         >
-                          <div className="snapshot-activity-row-top">
+                          <div
+                            className="snapshot-activity-row-top"
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                          >
                             <span
                               style={{
                                 color: sideColor,
                                 letterSpacing: 0.2,
+                                fontWeight: 700,
+                                fontSize: 10,
                               }}
                             >
                               {normalizeSignalSymbol(String(t?.symbol || ""))}
                             </span>
-                            <span style={{ color: sideColor, fontSize: 11 }}>
-                              {sideRaw || "-"}
+                            <span
+                              style={{
+                                fontWeight: 700,
+                                fontSize: 10,
+                                color:
+                                  hasPnl && pnlNum >= 0 ? "#10b981" : "#ef4444",
+                                opacity: hasPnl ? 1 : 0.72,
+                              }}
+                            >
+                              {hasPnl ? (
+                                pnlText
+                              ) : hasPlanPnl ? (
+                                <>
+                                  <span style={{ color: "#10b981" }}>
+                                    {Number.isFinite(tpPnlNum)
+                                      ? `+${Math.abs(tpPnlNum).toFixed(0)}`
+                                      : "-"}
+                                  </span>
+                                  <span
+                                    style={{
+                                      color: "var(--muted)",
+                                      margin: "0 3px",
+                                    }}
+                                  >
+                                    /
+                                  </span>
+                                  <span style={{ color: "#ef4444" }}>
+                                    {Number.isFinite(slPnlNum)
+                                      ? `-${Math.abs(slPnlNum).toFixed(0)}`
+                                      : "-"}
+                                  </span>
+                                </>
+                              ) : (
+                                ""
+                              )}
                             </span>
                           </div>
-                          <div className="snapshot-activity-row-mid">
-                            {entryTxt} → {tpTxt}
-                          </div>
                           <div
-                            className="minor-text"
-                            style={{ fontSize: 9, opacity: 0.6 }}
+                            className="snapshot-activity-row-mid"
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginTop: 2,
+                            }}
                           >
-                            {showDateTime(t?.created_at)}
+                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                              {entryTxt} → {tpTxt}
+                            </span>
+                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                              {hasPnl ? rrText : ""}
+                            </span>
                           </div>
                         </article>
                       );
@@ -6526,15 +6690,18 @@ export default function ChartSnapshotsPage() {
                           ? "#ff5a5a"
                           : "#c8d5e8";
                       const pnlText = hasPnl
-                        ? `${pnlNum > 0 ? "+" : ""}${Math.round(pnlNum)}`
+                        ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
                         : "";
                       const statusText = String(
                         x?.execution_status || x?.status || "",
                       )
                         .trim()
                         .toUpperCase();
-                      const canShowTradePnl =
-                        statusText === "FILLED" || statusText === "CLOSED";
+                      const tpPnlNum = Number(x?.tp_pnl ?? x?.broker_tp_pnl);
+                      const slPnlNum = Number(x?.sl_pnl ?? x?.broker_sl_pnl);
+                      const hasPlanPnl =
+                        Number.isFinite(tpPnlNum) || Number.isFinite(slPnlNum);
+                      const canShowTradePnl = hasPnl || hasPlanPnl;
                       const entryTxt = Number.isFinite(Number(x?.entry))
                         ? Number(x.entry).toFixed(
                             Number(x.entry) >= 100
@@ -6553,11 +6720,21 @@ export default function ChartSnapshotsPage() {
                                 : 4,
                           )
                         : "-";
+                      const rrNum = Number(x?.rr_planned ?? x?.rr);
+                      const rrText = Number.isFinite(rrNum)
+                        ? `${rrNum.toFixed(1)}R`
+                        : "";
                       return (
                         <article
                           key={`${x.kind}_${x.id}`}
                           className="snapshot-activity-card-v4 compact"
-                          style={{ cursor: "pointer" }}
+                          style={{
+                            cursor: "pointer",
+                            padding: "4px 6px",
+                            marginBottom: 3,
+                            borderRadius: 6,
+                            fontSize: 10,
+                          }}
                           onClick={() => {
                             const ref = x.sid || x.id;
                             const k = String(x.kind || "").toUpperCase();
@@ -6566,25 +6743,58 @@ export default function ChartSnapshotsPage() {
                             else navigate(`/signals/${ref}`);
                           }}
                         >
-                          <div className="snapshot-activity-row-top">
+                          <div
+                            className="snapshot-activity-row-top"
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                            }}
+                          >
                             <span
                               style={{
                                 color: sideColor,
                                 letterSpacing: 0.2,
+                                fontWeight: 700,
+                                fontSize: 10,
                               }}
                             >
                               {String(x.symbol || "").toUpperCase()}
                             </span>
-                            {!isSignal && canShowTradePnl ? (
-                              <span style={{ color: sideColor }}>
-                                {pnlText}
+                            {canShowTradePnl ? (
+                              <span
+                                style={{
+                                  fontWeight: 700,
+                                  fontSize: 10,
+                                  color:
+                                    hasPnl && pnlNum >= 0
+                                      ? "#10b981"
+                                      : "#ef4444",
+                                  opacity: hasPnl ? 1 : 0.72,
+                                }}
+                              >
+                                {hasPnl
+                                  ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
+                                  : `${Number.isFinite(tpPnlNum) ? `+${Math.abs(tpPnlNum).toFixed(0)}` : "-"} / ${Number.isFinite(slPnlNum) ? `-${Math.abs(slPnlNum).toFixed(0)}` : "-"}`}
                               </span>
                             ) : (
                               <span />
                             )}
                           </div>
-                          <div className="snapshot-activity-row-mid">
-                            {entryTxt} → {tpTxt}
+                          <div
+                            className="snapshot-activity-row-mid"
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginTop: 2,
+                            }}
+                          >
+                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                              {entryTxt} → {tpTxt}
+                            </span>
+                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
+                              {hasPnl ? rrText : ""}
+                            </span>
                           </div>
                         </article>
                       );
@@ -7636,6 +7846,7 @@ export default function ChartSnapshotsPage() {
                     !manuallyAddedTrade &&
                     !manuallyAddedSignal,
                   showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
+                  showSaveDraftButton: isTradeRoute,
                   showResetButton: true,
                   onReset: isTradeRoute
                     ? () =>

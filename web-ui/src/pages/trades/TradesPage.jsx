@@ -179,7 +179,9 @@ function moneyRiskReward(t) {
   const risk =
     asNum(m.risk_money_actual) ??
     asNum(m.risk_money) ??
-    asNum(m.risk_money_planned);
+    asNum(m.risk_money_planned) ??
+    asNum(t?.risk_money_planned) ??
+    asNum(t?.risk_money);
   const rewardDirect = asNum(m.reward_money_planned);
   const rr = asNum(m.rr) ?? asNum(t?.rr_planned) ?? calcRr(t);
   if (st === "Draft")
@@ -196,7 +198,9 @@ function tradeRiskSize(t) {
   const direct =
     asNum(m.risk_money_actual) ??
     asNum(m.risk_money) ??
-    asNum(m.risk_money_planned);
+    asNum(m.risk_money_planned) ??
+    asNum(t?.risk_money_planned) ??
+    asNum(t?.risk_money);
   if (direct != null) return direct;
   const entry = asNum(t?.entry);
   const sl = asNum(t?.sl);
@@ -500,6 +504,10 @@ export default function TradesPage() {
           createForm.risk_money === ""
             ? undefined
             : Number(createForm.risk_money),
+        risk_money_planned:
+          createForm.risk_money === ""
+            ? undefined
+            : Number(createForm.risk_money),
         price: createForm.price === "" ? undefined : Number(createForm.price),
         sl: createForm.sl === "" ? undefined : Number(createForm.sl),
         tp: createForm.tp === "" ? undefined : Number(createForm.tp),
@@ -583,30 +591,26 @@ export default function TradesPage() {
 
   // Select trade from URL param on load
   useEffect(() => {
-    if (tradeId && rows.length > 0) {
-      const found = rows.find(
-        (r) => tradeKeyOf(r) === tradeId || String(r.id) === String(tradeId),
-      );
-      if (found) {
-        setSelectedTrade(found);
-        selectedTradeIdRef.current = tradeId;
-      } else {
-        // Trade not in filtered list — try direct lookup (e.g. PENDING trade with FILLED filter)
-        api
-          .v2Trades({ q: tradeId })
-          .then((data) => {
-            const t =
-              Array.isArray(data?.items) && data.items.length
-                ? data.items[0]
-                : null;
-            if (t) {
-              setSelectedTrade(t);
-              selectedTradeIdRef.current = tradeId;
-            }
-          })
-          .catch(() => {});
-      }
+    if (!tradeId) return;
+    const found = rows.find(
+      (r) => tradeKeyOf(r) === tradeId || String(r.id) === String(tradeId),
+    );
+    if (found) {
+      setSelectedTrade(found);
+      selectedTradeIdRef.current = tradeId;
     }
+    // Always refresh trade detail by SID to avoid stale cached row shape.
+    api
+      .v2Trades({ q: tradeId })
+      .then((data) => {
+        const t =
+          Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
+        if (t) {
+          setSelectedTrade(t);
+          selectedTradeIdRef.current = tradeId;
+        }
+      })
+      .catch(() => {});
   }, [tradeId, rows.length]);
 
   useEffect(() => {
@@ -638,7 +642,7 @@ export default function TradesPage() {
         note: "",
       });
     }
-  }, [selectedTrade?.id, selectedTrade?.sid]);
+  }, [selectedTrade]);
   useEffect(() => {
     if (!selectedTrade) {
       setEditForm({ execution_status: "PENDING", pnl_realized: "0" });
@@ -703,7 +707,12 @@ export default function TradesPage() {
         confluence_checklist: detailPlan.confluence_checklist,
         be_trigger: asFiniteOrNull(detailPlan.be_trigger),
         risk_pct: asFiniteOrNull(detailPlan.risk_pct),
-        risk_money: asFiniteOrNull(detailPlan.risk_money),
+        risk_money: asFiniteOrNull(
+          detailPlan.risk_money_planned ?? detailPlan.risk_money,
+        ),
+        risk_money_planned: asFiniteOrNull(
+          detailPlan.risk_money_planned ?? detailPlan.risk_money,
+        ),
       };
       await api.saveTradePlan(ref, payload);
       // Guard only this trade against immediate re-extraction after save
@@ -1177,10 +1186,22 @@ export default function TradesPage() {
                     t.metadata?.broker_data?.status ||
                     "";
                   const stRaw = String(statusRaw).toUpperCase().trim();
-                  const isFilledLike = stRaw.includes("FILLED");
-                  const isClosedLike = stRaw.includes("CLOSED");
-                  const showCompactPnl = isFilledLike || isClosedLike;
                   const pnl = asNum(t.broker_pnl) ?? asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl) ?? asNum(t.pnl_money);
+                  const tpPnl = asNum(
+                    stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                      ? t.entry_exec || t.entry
+                      : t.broker_tp_pnl,
+                  );
+                  const slPnl = asNum(
+                    stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                      ? t.last_price || t.tp
+                      : t.broker_sl_pnl,
+                  );
+                  const showCompactPnl =
+                    (pnl != null &&
+                      !["PENDING", "NEW", "PLACED"].includes(stRaw)) ||
+                    (["PENDING", "NEW", "PLACED"].includes(stRaw) &&
+                      (tpPnl != null || slPnl != null));
                   const rr = asNum(t.rr_planned) ?? calcRr(t);
                   return (
                     <article
@@ -1231,9 +1252,35 @@ export default function TradesPage() {
                                 : "#ef4444",
                           }}
                         >
-                          {showCompactPnl && pnl != null
-                            ? `$${pnl.toFixed(0)}`
-                            : ""}
+                          {showCompactPnl ? (
+                            ["PENDING", "NEW", "PLACED"].includes(stRaw) ? (
+                              <span style={{ opacity: 0.72 }}>
+                                {tpPnl != null ? (
+                                  <span style={{ color: "#10b981" }}>
+                                    +{Math.abs(tpPnl).toFixed(0)}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "var(--muted)" }}>-</span>
+                                )}
+                                <span style={{ color: "var(--muted)", margin: "0 3px" }}>
+                                  /
+                                </span>
+                                {slPnl != null ? (
+                                  <span style={{ color: "#ef4444" }}>
+                                    -{Math.abs(slPnl).toFixed(0)}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "var(--muted)" }}>-</span>
+                                )}
+                              </span>
+                            ) : pnl != null ? (
+                              `${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(0)}`
+                            ) : (
+                              ""
+                            )
+                          ) : (
+                            ""
+                          )}
                         </span>
                       </div>
                       <div
@@ -1384,6 +1431,22 @@ export default function TradesPage() {
                               sl={t.sl || "-"}
                               rr={rrDisplay}
                               status={t.execution_status}
+                              pnl={pnl}
+                              tpPnl={
+                                stRaw === "CLOSED" ||
+                                stRaw === "TP" ||
+                                stRaw === "SL"
+                                  ? t.entry_exec || t.entry
+                                  : t.broker_tp_pnl
+                              }
+                              slPnl={
+                                stRaw === "CLOSED" ||
+                                stRaw === "TP" ||
+                                stRaw === "SL"
+                                  ? t.last_price || t.tp
+                                  : t.broker_sl_pnl
+                              }
+                              showRightPnl={listMode === "compact"}
                             />
                           </td>
                           <td>
@@ -1553,6 +1616,14 @@ export default function TradesPage() {
                     hideEditor: false,
                     mode: "trade",
                     tradeId: selectedTrade.sid || selectedTrade.id,
+                    sid: selectedTrade.sid || selectedTrade.signal_sid || "",
+                    broker_trade_id:
+                      selectedTrade.broker_trade_id ||
+                      selectedTrade.ticket ||
+                      selectedTrade.broker_id ||
+                      "",
+                    execution_status: selectedTrade.execution_status || "",
+                    statusUi: statusUi(selectedTrade.execution_status),
                     value: detailPlan,
                     onChange: (k, v) =>
                       setDetailPlan((p) => applyLinkedPlanChange(p, k, v)),
@@ -1560,6 +1631,18 @@ export default function TradesPage() {
                     onReset: () =>
                       selectedTrade &&
                       setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
+                    onGoTrade: () =>
+                      navigate(
+                        `/ai/trade/${encodeURIComponent(
+                          String(selectedTrade.symbol || "").toUpperCase(),
+                        )}`,
+                      ),
+                    onGoAnalyze: () =>
+                      navigate(
+                        `/ai/analyze/${encodeURIComponent(
+                          String(selectedTrade.symbol || "").toUpperCase(),
+                        )}`,
+                      ),
                     onAddTrade: onReEntryTrade,
                     showAddSignalButton: false,
                     showSaveButton: !["TP", "SL", "FAIL", "EXPIRED"].includes(
@@ -1710,14 +1793,31 @@ export default function TradesPage() {
                       positionText: `${selectedTrade.entry || "-"} → ${selectedTrade.tp || "-"} / ${selectedTrade.sl || "-"}`,
                       ...headerMeta,
                       statusNode: (
-                        <span
-                          className={`badge ${status.cls}`}
-                          style={{ cursor: "pointer" }}
-                          title="Edit trade status / PnL"
-                          onClick={() => openTradeEditModal(selectedTrade)}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "flex-end",
+                            gap: 6,
+                            fontSize: 10,
+                            color: "var(--muted)",
+                          }}
                         >
-                          {status.label}
-                        </span>
+                          <span>
+                            {`SID: ${String(selectedTrade.sid || selectedTrade.signal_sid || "-").trim() || "-"}`}
+                            {"  "}
+                            {`BrokerID: ${String(selectedTrade.broker_trade_id || selectedTrade.ticket || selectedTrade.broker_id || "-").trim() || "-"}`}
+                          </span>
+                          <span>|</span>
+                          <span
+                            className={`badge ${status.cls}`}
+                            style={{ cursor: "pointer" }}
+                            title="Edit trade status / PnL"
+                            onClick={() => openTradeEditModal(selectedTrade)}
+                          >
+                            {status.label}
+                          </span>
+                        </div>
                       ),
                     });
                   })()}
