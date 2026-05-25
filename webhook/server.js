@@ -7683,8 +7683,8 @@ async function _mt5InitBackendInternal() {
         WHEN COALESCE(NULLIF(${legacy}, ''), '') <> ''
              AND ${legacy} !~* '${UUID_REGEX_SQL}'
              AND length(${legacy}) <= 24 THEN ${legacy}
-        ELSE gen_sid('${prefix}', 8)
-      END
+      ELSE mt5GenerateTimeSid()
+END
       WHERE sid IS NULL OR sid = ''
     `,
       )
@@ -7748,7 +7748,7 @@ async function _mt5InitBackendInternal() {
     let nextUserId = "";
     for (let i = 0; i < 8; i += 1) {
       const genRes = await pool
-        .query(`SELECT gen_sid('USR', 8) AS v`)
+        .query(`SELECT 'USR' || mt5GenerateTimeSid() AS v`)
         .catch(() => ({ rows: [] }));
       const candidate = String(genRes.rows?.[0]?.v || "").trim();
       if (!candidate) continue;
