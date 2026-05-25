@@ -8199,8 +8199,8 @@ async function _mt5InitBackendInternal() {
             )
             AND (
               $3::text IS NULL
-              OR ($3 = 'OPEN' AND execution_status NOT IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL'))
-              OR ($3 <> 'OPEN' AND execution_status = CASE $3
+              OR ($3 = 'FILLED' AND execution_status NOT IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL'))
+              OR ($3 <> 'FILLED' AND execution_status = CASE $3
                     WHEN 'MODIFY' THEN 'PENDING_MOD'
                     WHEN 'CLOSE' THEN 'PENDING_CLOSE'
                     WHEN 'CANCEL' THEN 'PENDING_CANCEL'
@@ -8316,7 +8316,7 @@ async function _mt5InitBackendInternal() {
                WHEN $12::jsonb = '{}'::jsonb THEN metadata
                ELSE COALESCE(metadata, '{}'::jsonb) || $12::jsonb
              END,
-             opened_at = COALESCE($5, opened_at, CASE WHEN $1 = 'OPEN' THEN $6 ELSE NULL END),
+             opened_at = COALESCE($5, opened_at, CASE WHEN $1 = 'FILLED' THEN $6 ELSE NULL END),
              closed_at = COALESCE($7, CASE WHEN $1 = 'CLOSED' THEN $6 ELSE NULL END),
              updated_at = $6
          WHERE sid = $8 AND account_id = $9 RETURNING user_id, opened_at, closed_at
@@ -8700,7 +8700,7 @@ async function _mt5InitBackendInternal() {
             Number.isFinite(Number(raw.realized_pnl_total ?? NaN));
 
           if (["START", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
-            executionStatus = "OPEN";
+            executionStatus = "FILLED";
           } else if (
             ["PLACED", "NEW", "PENDING", "SUBMITTED", "PARTIAL"].includes(s)
           ) {
@@ -8724,7 +8724,7 @@ async function _mt5InitBackendInternal() {
             Number.isFinite(remainingVolume) &&
             remainingVolume > 0
           ) {
-            executionStatus = "OPEN";
+            executionStatus = "FILLED";
           }
           const commission = Number(raw.commission ?? 0);
           const swap = Number(raw.swap ?? 0);
@@ -8868,7 +8868,7 @@ async function _mt5InitBackendInternal() {
                 `
               UPDATE trades
               SET broker_trade_id = NULL,
-                  execution_status = CASE WHEN execution_status = 'OPEN' THEN 'PENDING' ELSE execution_status END,
+                  execution_status = CASE WHEN execution_status = 'FILLED' THEN 'PENDING' ELSE execution_status END,
                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
                   updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
               WHERE account_id = $1
