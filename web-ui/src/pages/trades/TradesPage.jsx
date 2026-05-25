@@ -27,7 +27,7 @@ const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
   { value: "Draft", label: "DRAFT" },
   { value: "PENDING", label: "PENDING" },
-  { value: "FILLED", label: "FILLED" },
+  { value: "OPEN", label: "FILLED / OPEN" },
   { value: "CLOSED", label: "CLOSED" },
   { value: "CANCELLED", label: "CANCELLED" },
   { value: "ERROR", label: "ERROR" },
@@ -377,9 +377,6 @@ export default function TradesPage() {
       const b = rangeBounds(queryApi.range);
       queryApi.created_from = b.from || "";
       queryApi.created_to = b.to || "";
-      if (String(queryApi.execution_status || "").toUpperCase() === "FILLED") {
-        queryApi.execution_status = "OPEN";
-      }
       const data = await api.v2Trades(queryApi);
       const itemsRaw = data.items || [];
       const statusOrder = (x) => {
@@ -680,7 +677,7 @@ export default function TradesPage() {
     try {
       setEditBusy(true);
       const status = String(selectedTrade.execution_status || "").toUpperCase();
-      const lockCore = status === "FILLED";
+      const lockCore = status === "FILLED" || status === "OPEN";
       const lockAll = status === "CLOSED" || status === "CANCELLED";
       const payload = {
         side: lockCore || lockAll ? null : detailPlan.direction,
@@ -1660,7 +1657,7 @@ export default function TradesPage() {
                         selectedTrade.execution_status || "",
                       ).toUpperCase();
                       if (st === "CLOSED" || st === "CANCELLED") return "all";
-                      if (st === "FILLED") return "core";
+                      if (st === "FILLED" || st === "OPEN") return "core";
                       return "none";
                     })(),
                     saveLabel: "Save",
@@ -1693,9 +1690,11 @@ export default function TradesPage() {
                           }
                         : null,
                     onClose:
-                      String(
-                        selectedTrade.execution_status || "",
-                      ).toUpperCase() === "FILLED"
+                      ["FILLED", "OPEN"].includes(
+                        String(
+                          selectedTrade.execution_status || "",
+                        ).toUpperCase(),
+                      )
                         ? async () => {
                             if (!confirm("Close this trade?")) return;
                             try {
@@ -1707,10 +1706,11 @@ export default function TradesPage() {
                                     sid: selectedTrade.sid || selectedTrade.id,
                                   },
                                   () =>
-                                    api.v2UpdateTrade(
-                                      selectedTrade.sid || selectedTrade.id,
-                                      { execution_status: "CLOSED" },
-                                    ),
+                                    api.v2TradesBulkAction("close_all", {
+                                      sids: [
+                                        selectedTrade.sid || selectedTrade.id,
+                                      ],
+                                    }),
                                 );
                               await closePromise;
                               await loadTrades();

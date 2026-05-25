@@ -3,7 +3,20 @@ import { showDateTime } from "./format";
 
 export function asNum(v) {
   if (v === "" || v === null || v === undefined) return null;
-  const n = Number(v);
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const raw = String(v).trim();
+  if (!raw) return null;
+  let normalized = raw;
+  if (normalized.includes(",") && normalized.includes(".")) {
+    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+      normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(/,/g, ".");
+  }
+  const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
 
