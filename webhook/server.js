@@ -9866,6 +9866,18 @@ async function _mt5InitBackendInternal() {
       if ((res.rowCount || 0) === 0)
         return { ok: false, error: "trade not found" };
       const row = res.rows[0];
+
+      // Archive bars + snapshots on CLOSED/CANCELLED/REJECTED
+      const newStatus = String(row.execution_status || "").toUpperCase();
+      if (["CLOSED", "CANCELLED", "REJECTED"].includes(newStatus)) {
+        const tradeSymbol = await pool.query(
+          "SELECT symbol FROM trades WHERE sid = $1 LIMIT 1",
+          [row.sid],
+        ).then(r => r.rows[0]?.symbol || "").catch(() => "");
+        archiveTradeStats(row.sid, tradeSymbol);
+        moveTradeFolder(row.sid, "active", "closed");
+      }
+
       await this.log(
         row.sid,
         "trades",
@@ -9988,6 +10000,14 @@ async function _mt5InitBackendInternal() {
         params,
       );
       const rows = res.rows || [];
+      // Archive for close_all
+      if (act === "close_all" && preCloseRows) {
+        for (const r of rows) {
+          const sym = r.symbol || preCloseRows.find(p => p.sid === r.sid)?.symbol || "";
+          archiveTradeStats(r.sid, sym);
+          moveTradeFolder(r.sid, "active", "closed");
+        }
+      }
       return {
         ok: true,
         updated: Number(res.rowCount || 0),
