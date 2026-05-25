@@ -7524,15 +7524,7 @@ async function _mt5InitBackendInternal() {
       `SELECT 1`
     )
     .catch(() => {});
-  await pool
-    .query(
-      `
-    ALTER TABLE trades
-    ADD CONSTRAINT trades_close_reason_check
-    CHECK (close_reason IS NULL OR close_reason = ANY (ARRAY['TP','SL','MANUAL','CANCEL','EXPIRED','FAIL','SNAPSHOT']))
-  `,
-    )
-    .catch(() => {});
+  // trades_close_reason_check removed
   await pool
     .query(`ALTER TABLE trades DROP COLUMN IF EXISTS origin_kind`)
     .catch(() => {});
