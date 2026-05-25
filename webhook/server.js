@@ -9407,6 +9407,13 @@ async function _mt5InitBackendInternal() {
             },
             uid,
           );
+
+          // Archive bars + snapshots + move folder to closed
+          const tradeSymbol = row?.symbol || "";
+          if (tradeSymbol) {
+            archiveTradeStats(tradeId, tradeSymbol);
+            moveTradeFolder(tradeId, "active", "closed");
+          }
         }
       };
       let closed_by_snapshot = 0;
@@ -9448,6 +9455,17 @@ async function _mt5InitBackendInternal() {
           );
           closed_by_snapshot = Number(closeRes.rowCount || 0);
           await finalizeSnapshotClosures(closeRes.rows || []);
+        }
+      }
+
+      // Move trade folders: newly opened/filled → active
+      if (Array.isArray(items) && items.length > 0) {
+        for (const it of items) {
+          const sid = String(it.sid || "").trim();
+          const st = String(it.execution_status || "").toUpperCase();
+          if (sid && ["PENDING", "OPEN", "FILLED"].includes(st)) {
+            moveTradeFolder(sid, "files", "active");
+          }
         }
       }
 
