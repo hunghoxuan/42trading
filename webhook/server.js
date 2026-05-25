@@ -3280,6 +3280,82 @@ function resolveTradeDir(sid, symbol = "") {
 }
 
 // Move trade folder between categories
+// Copy bars + snapshots from market_data into trade folder before archival
+// Read bars for a trade: priority closed > active > market_data
+function readTradeBars(safeSid, tf) {
+  const dirs = [
+    path.join(TRADE_CLOSED_DIR, "trade-" + safeSid, "bars"),
+    path.join(TRADE_FILES_DIR, "trade-" + safeSid, "bars"),
+  ];
+
+  for (const dir of dirs) {
+    const csvPath = path.join(dir, tf + ".csv");
+    if (fs.existsSync(csvPath)) {
+      const lines = fs.readFileSync(csvPath, "utf8").trim().split("\n");
+      const bars = [];
+      for (let i = 1; i < lines.length; i++) {
+        const p = lines[i].split(",");
+        const t = Number(p[0]);
+        if (!Number.isFinite(t)) continue;
+        bars.push({ time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) });
+      }
+      if (bars.length) return bars;
+    }
+  }
+
+  // Fallback: market_data
+  const marketPath = path.join(ROOT_DIR, "market_data");
+  // Need symbol — try all symbol dirs
+  if (fs.existsSync(marketPath)) {
+    for (const sym of fs.readdirSync(marketPath)) {
+      const csvPath = path.join(marketPath, sym, "bars", tf + ".csv");
+      if (fs.existsSync(csvPath)) {
+        const lines = fs.readFileSync(csvPath, "utf8").trim().split("\n");
+        const bars = [];
+        for (let i = 1; i < lines.length; i++) {
+          const p = lines[i].split(",");
+          const t = Number(p[0]);
+          if (!Number.isFinite(t)) continue;
+          bars.push({ time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) });
+        }
+        return bars;
+      }
+    }
+  }
+
+  return [];
+}
+
+function archiveTradeStats(sid, symbol) {
+  if (!sid || !symbol) return;
+  const sym = String(symbol).toUpperCase();
+  const srcBarsDir = path.join(ROOT_DIR, "market_data", sym, "bars");
+  const srcSnapDir = path.join(ROOT_DIR, "market_data", sym);
+  const safeSid = String(sid).trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+  const tradeDir = path.join(TRADE_FILES_DIR, "trade-" + safeSid);
+  if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
+
+  // Copy bars CSV files
+  if (fs.existsSync(srcBarsDir)) {
+    const dstBarsDir = path.join(tradeDir, "bars");
+    if (!fs.existsSync(dstBarsDir)) fs.mkdirSync(dstBarsDir, { recursive: true });
+    const barFiles = fs.readdirSync(srcBarsDir).filter(f => f.endsWith(".csv"));
+    for (const f of barFiles) {
+      try { fs.copyFileSync(path.join(srcBarsDir, f), path.join(dstBarsDir, f)); } catch {}
+    }
+  }
+
+  // Copy snapshots (jpg/png files that are NOT in bars/ subdir)
+  if (fs.existsSync(srcSnapDir)) {
+    const dstSnapDir = path.join(tradeDir, "snapshots");
+    if (!fs.existsSync(dstSnapDir)) fs.mkdirSync(dstSnapDir, { recursive: true });
+    const snapFiles = fs.readdirSync(srcSnapDir).filter(f => /.(jpg|jpeg|png)$/i.test(f));
+    for (const f of snapFiles) {
+      try { fs.copyFileSync(path.join(srcSnapDir, f), path.join(dstSnapDir, f)); } catch {}
+    }
+  }
+}
+
 function moveTradeFolder(sid, fromCategory, toCategory) {
   const fromDir = TRADE_CATEGORY_DIRS[fromCategory];
   const toDir = TRADE_CATEGORY_DIRS[toCategory];
@@ -8284,6 +8360,8 @@ async function _mt5InitBackendInternal() {
         if (["PENDING", "OPEN", "FILLED"].includes(newStatus)) {
           moveTradeFolder(tradeSid, "files", "active");
         } else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)) {
+          // Copy bars + snapshots from market_data before moving to closed
+          archiveTradeStats(tradeSid, res.rows[0]?.symbol);
           moveTradeFolder(tradeSid, "active", "closed");
         }
         // Auto-capture master snapshot on FILLED/CLOSED
@@ -22366,6 +22444,10 @@ const appHandler = async (req, res) => {
       const confidencePct = asNum(payload.confidence_pct, NaN);
       const estimatedBars = asNum(payload.estimated_bars, NaN);
       const beTrigger = asNum(payload.be_trigger, NaN);
+      const riskMoneyPlanned = asNum(
+        payload.risk_money_planned ?? payload.risk_money,
+        NaN,
+      );
       const tradeType = String(
         payload.trade_type || payload.order_type || "limit",
       )
@@ -22384,11 +22466,15 @@ const appHandler = async (req, res) => {
       const editableTp2 = lockAll ? NaN : tpNorm.tp2;
       const editableTp3 = lockAll ? NaN : tpNorm.tp3;
       const editableRr = lockAll ? NaN : rr;
+      const editableRiskMoneyPlanned = lockAll ? NaN : riskMoneyPlanned;
       const metaPatch = {
         order_type: ["limit", "market", "stop"].includes(editableTradeType)
           ? editableTradeType
           : "limit",
         rr_planned: Number.isFinite(editableRr) ? editableRr : null,
+        risk_money_planned: Number.isFinite(editableRiskMoneyPlanned)
+          ? editableRiskMoneyPlanned
+          : null,
         trade_plan: {
           direction: editableSide || null,
           order_type:
@@ -22445,6 +22531,9 @@ const appHandler = async (req, res) => {
         ["limit", "market", "stop"].includes(editableTradeType)
           ? editableTradeType
           : null,
+        Number.isFinite(editableRiskMoneyPlanned)
+          ? editableRiskMoneyPlanned
+          : null,
       ];
       const whereUser = userId ? "AND user_id = $11" : "";
       const resUpd = await (
@@ -22469,6 +22558,7 @@ const appHandler = async (req, res) => {
             entry_model = COALESCE($17, entry_model),
             source_id = COALESCE($18, source_id),
             order_type = COALESCE($19, order_type),
+            risk_money_planned = COALESCE($20, risk_money_planned),
             execution_status = execution_status,
             updated_at = NOW()
         WHERE sid = $10
@@ -22485,6 +22575,7 @@ const appHandler = async (req, res) => {
         { event_type: "TRADE_PLAN_SAVED", data: metaPatch },
         row.user_id || userId || CFG.mt5DefaultUserId,
       );
+      invalidateTradeListCaches().catch(() => {});
       return json(res, 200, { ok: true, item: row });
     } catch (error) {
       return json(res, 400, {
@@ -22767,6 +22858,30 @@ const appHandler = async (req, res) => {
       const filePath = chartObjectsPath(tradeRef);
       fs.writeFileSync(filePath, JSON.stringify(objects, null, 2));
       return json(res, 200, { ok: true, sid: tradeRef, objects });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Trade bars — priority: closed > active > market_data
+  if (
+    req.method === "GET" &&
+    /^\/v2\/trades\/[^/]+\/bars$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/bars$/);
+      const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
+      const tf = String(url.searchParams.get("tf") || "15");
+      if (!tradeRef) return json(res, 400, { ok: false, error: "sid required" });
+
+      const safeSid = tradeRef.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const bars = readTradeBars(safeSid, tf);
+      return json(res, 200, { ok: true, sid: tradeRef, tf, bars });
     } catch (error) {
       return json(res, 400, {
         ok: false,
