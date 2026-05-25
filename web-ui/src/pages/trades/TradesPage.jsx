@@ -72,7 +72,7 @@ function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
   if (s === "Draft") return { cls: "DRAFT", label: "DRAFT" };
   if (s === "FILLED") return { cls: "ACTIVE", label: "FILLED" };
-  if (s === "OPEN") return { cls: "ACTIVE", label: "FILLED" };
+  if (s === "FILLED") return { cls: "ACTIVE", label: "FILLED" };
   if (s === "CLOSED" || s === "CANCELLED") return { cls: "INACTIVE", label: s };
   if (s === "ERROR") return { cls: "FAIL", label: s };
   return { cls: "OTHER", label: s || "PENDING" };
@@ -378,13 +378,13 @@ export default function TradesPage() {
       queryApi.created_from = b.from || "";
       queryApi.created_to = b.to || "";
       if (String(queryApi.execution_status || "").toUpperCase() === "FILLED") {
-        queryApi.execution_status = "OPEN";
+        queryApi.execution_status = "FILLED";
       }
       const data = await api.v2Trades(queryApi);
       const itemsRaw = data.items || [];
       const statusOrder = (x) => {
         const s = String(x?.execution_status || "").toUpperCase();
-        if (s === "OPEN" || s === "FILLED") return 0;
+        if (s === "FILLED" || s === "FILLED") return 0;
         if (s === "PENDING") return 1;
         if (s === "CLOSED" || s === "CANCELLED") return 2;
         return 3;
@@ -770,7 +770,7 @@ export default function TradesPage() {
   const sortedRows = useMemo(() => {
     const statusRankAsc = (v) => {
       const s = String(v || "").toUpperCase();
-      if (s === "OPEN" || s === "FILLED") return 0;
+      if (s === "FILLED" || s === "FILLED") return 0;
       if (s === "PENDING") return 1;
       if (s === "CLOSED" || s === "CANCELLED") return 2;
       return 3;
@@ -778,7 +778,7 @@ export default function TradesPage() {
     const statusRankDesc = (v) => {
       const s = String(v || "").toUpperCase();
       if (s === "PENDING") return 0;
-      if (s === "OPEN" || s === "FILLED") return 1;
+      if (s === "FILLED" || s === "FILLED") return 1;
       if (s === "CLOSED" || s === "CANCELLED") return 2;
       return 3;
     };
@@ -1508,7 +1508,7 @@ export default function TradesPage() {
                                   : t.broker_sl_pnl
                               }
                               showFilledDetails={
-                                stRaw === "OPEN" || stRaw === "FILLED"
+                                stRaw === "FILLED" || stRaw === "FILLED"
                               }
                               brokerVolume={
                                 asNum(t.broker_volume) ??

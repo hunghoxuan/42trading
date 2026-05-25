@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@max89701/ctrader-layer": "^1.4.6"
+  }
+}

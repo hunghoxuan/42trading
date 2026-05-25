@@ -7495,7 +7495,7 @@ async function _mt5InitBackendInternal() {
       `
     ALTER TABLE trades
     ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['Draft','PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','OPEN','FILLED','CLOSED','REJECTED','CANCELLED']))
+    CHECK (execution_status = ANY (ARRAY['Draft','PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','FILLED','CLOSED','REJECTED','CANCELLED']))
   `,
     )
     .catch(() => {});
@@ -8357,7 +8357,7 @@ async function _mt5InitBackendInternal() {
         // Migrate trade folder based on status
         const newStatus = String(payload.execution_status || "").toUpperCase();
         const tradeSid = payload.sid || payload.trade_id;
-        if (["PENDING", "OPEN", "FILLED"].includes(newStatus)) {
+        if (["PENDING", "FILLED"].includes(newStatus)) {
           moveTradeFolder(tradeSid, "files", "active");
         } else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)) {
           // Copy bars + snapshots from market_data before moving to closed
@@ -8677,7 +8677,7 @@ async function _mt5InitBackendInternal() {
             else if (raw.closed_at || raw.close_reason) statusRaw = "CLOSED";
             else if (pnl !== null && raw.execution_status === "CLOSED")
               statusRaw = "CLOSED";
-            else statusRaw = "OPEN";
+            else statusRaw = "FILLED";
           }
           let executionStatus = "PENDING";
           const s = String(statusRaw || "").toUpperCase();
@@ -8693,7 +8693,7 @@ async function _mt5InitBackendInternal() {
             Number.isFinite(Number(raw.realized_pnl_partial ?? NaN)) ||
             Number.isFinite(Number(raw.realized_pnl_total ?? NaN));
 
-          if (["START", "OPEN", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
+          if (["START", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
             executionStatus = "OPEN";
           } else if (
             ["PLACED", "NEW", "PENDING", "SUBMITTED", "PARTIAL"].includes(s)
@@ -9463,7 +9463,7 @@ async function _mt5InitBackendInternal() {
         for (const it of items) {
           const sid = String(it.sid || "").trim();
           const st = String(it.execution_status || "").toUpperCase();
-          if (sid && ["PENDING", "OPEN", "FILLED"].includes(st)) {
+          if (sid && ["PENDING", "FILLED"].includes(st)) {
             moveTradeFolder(sid, "files", "active");
           }
         }
@@ -14806,7 +14806,7 @@ function mt5ComputeTradeMetrics(rows) {
     const s = mt5CanonicalStoredStatus(
       r.execution_status || r.status || r.close_reason,
     );
-    return ["OPEN", "PLACED", "FILLED"].includes(s);
+    return ["PLACED", "FILLED"].includes(s);
   }).length;
 
   const countClosed = all.filter((r) => {
