@@ -8705,7 +8705,7 @@ END
             Number.isFinite(Number(raw.realized_pnl_partial ?? NaN)) ||
             Number.isFinite(Number(raw.realized_pnl_total ?? NaN));
 
-          if (["START", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
+          if (["START", "ACTIVE", "OPEN", "FILLED", "EXECUTED"].includes(s)) {
             executionStatus = TRADE_STATUS.LIVE;
           } else if (
             ["PLACED", "NEW", "PENDING", "SUBMITTED", "PARTIAL"].includes(s)
