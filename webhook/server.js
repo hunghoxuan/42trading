@@ -719,7 +719,7 @@ const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
 const TRADE_STATUS = {
   DRAFT: "Draft",
   PENDING: "PENDING",
-  LIVE: "OPEN",           // LIVE = OPEN = FILLED — all mean position is live
+  LIVE: "FILLED",           // canonical live status
   FILLED: "FILLED",       // alias for LIVE
   CLOSED: "CLOSED",
   CANCELLED: "CANCELLED",

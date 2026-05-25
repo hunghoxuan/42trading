@@ -377,9 +377,6 @@ export default function TradesPage() {
       const b = rangeBounds(queryApi.range);
       queryApi.created_from = b.from || "";
       queryApi.created_to = b.to || "";
-      if (String(queryApi.execution_status || "").toUpperCase() === "FILLED") {
-        queryApi.execution_status = "OPEN";
-      }
       const data = await api.v2Trades(queryApi);
       const itemsRaw = data.items || [];
       const statusOrder = (x) => {
