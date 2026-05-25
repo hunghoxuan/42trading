@@ -520,14 +520,12 @@ export default function TradeDetailPage() {
           </button>
         </div>
       )}
-      {["FILLED", "OPEN"].includes(
-        String(trade.execution_status || "").toUpperCase(),
-      ) && (
+      {trade.execution_status === "FILLED" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
             type="button"
             className="primary-button"
-            style={{ background: "#ef5350", borderColor: "#ef5350" }}
+            style={{ background: "#ff9800", borderColor: "#ff9800" }}
             onClick={async () => {
               if (!confirm("Close this trade?")) return;
               try {
@@ -535,8 +533,8 @@ export default function TradeDetailPage() {
                   "close_trade",
                   { symbol: trade.symbol, sid: trade.sid || trade.id },
                   () =>
-                    api.v2TradesBulkAction("close_all", {
-                      sids: [trade.sid || trade.id],
+                    api.v2UpdateTrade(trade.sid || trade.id, {
+                      execution_status: "CLOSED",
                     }),
                 );
                 await clp;
@@ -575,7 +573,7 @@ export default function TradeDetailPage() {
               lockMode: (() => {
                 const st = String(trade.execution_status || "").toUpperCase();
                 if (st === "CLOSED" || st === "CANCELLED") return "all";
-                if (st === "FILLED" || st === "OPEN") return "core";
+                if (st === "FILLED") return "core";
                 return "none";
               })(),
               error: planError,

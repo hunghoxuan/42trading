@@ -625,8 +625,8 @@ export function TradePlanEditor({
                     height: "24px",
                     fontSize: "11px",
                     padding: "0 10px",
-                    color: "#ef5350",
-                    borderColor: "#ef5350",
+                    color: "#ff9800",
+                    borderColor: "#ff9800",
                   }}
                 >
                   Close
@@ -990,6 +990,29 @@ export function TradePlanEditor({
                   {resetLabel}
                 </button>
               ) : null}
+              {effectiveShowSave ? (
+                <button
+                  className={`${isTradeSaveAction ? "primary-button" : "secondary-button"} ${busy?.save ? "btn-busy" : ""}`}
+                  type="button"
+                  onClick={onSave}
+                  disabled={controlsDisabled || typeof onSave !== "function"}
+                  style={{
+                    height: "26px",
+                    fontSize: "11px",
+                    padding: "0 10px",
+                    borderRadius: "4px",
+                  }}
+                >
+                  {busy?.save ? (
+                    <div
+                      className="spinner"
+                      style={{ width: 12, height: 12 }}
+                    />
+                  ) : (
+                    resolvedSaveLabel
+                  )}
+                </button>
+              ) : null}
               {typeof onCancel === "function" ? (
                 <button
                   className="secondary-button"
@@ -1019,34 +1042,11 @@ export function TradePlanEditor({
                     fontSize: "11px",
                     padding: "0 10px",
                     borderRadius: "4px",
-                    color: "#ef5350",
-                    borderColor: "#ef5350",
+                    color: "#ff9800",
+                    borderColor: "#ff9800",
                   }}
                 >
                   Close
-                </button>
-              ) : null}
-              {effectiveShowSave ? (
-                <button
-                  className={`${isTradeSaveAction ? "primary-button" : "secondary-button"} ${busy?.save ? "btn-busy" : ""}`}
-                  type="button"
-                  onClick={onSave}
-                  disabled={controlsDisabled || typeof onSave !== "function"}
-                  style={{
-                    height: "26px",
-                    fontSize: "11px",
-                    padding: "0 10px",
-                    borderRadius: "4px",
-                  }}
-                >
-                  {busy?.save ? (
-                    <div
-                      className="spinner"
-                      style={{ width: 12, height: 12 }}
-                    />
-                  ) : (
-                    resolvedSaveLabel
-                  )}
                 </button>
               ) : null}
               {effectiveShowSaveDraft ? (
