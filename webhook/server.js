@@ -8621,7 +8621,7 @@ END
       const snapshotComplete = hasPositionsSnapshot && hasOrdersSnapshot;
       const statusRank = (s) => {
         if (s === "CLOSED") return 3;
-        if (s === "OPEN") return 2;
+        if (s === "FILLED") return 2;
         return 1;
       };
       const pushItems = (arr = []) => {
@@ -8874,13 +8874,13 @@ END
                 `
               UPDATE trades
               SET broker_trade_id = NULL,
-                  execution_status = CASE WHEN execution_status = 'OPEN' THEN 'PENDING' ELSE execution_status END,
+                  execution_status = CASE WHEN execution_status = 'FILLED' THEN 'PENDING' ELSE execution_status END,
                   metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
                   updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
               WHERE account_id = $1
                 AND broker_trade_id = ANY($2::text[])
                 AND symbol <> $3
-                AND execution_status IN ('PENDING','OPEN')
+                AND execution_status IN ('PENDING','FILLED')
             `,
                 [
                   aid,
@@ -8904,7 +8904,7 @@ END
                 execution_status = CASE
                   WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN
                     CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN $1::text ELSE execution_status END
-                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
                   ELSE $1::text
                 END,
                 pnl_realized = CASE
@@ -8994,7 +8994,7 @@ END
                   WHEN execution_status = 'CLOSED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN $1::text
                   WHEN execution_status = 'CANCELLED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
                   WHEN execution_status = 'PENDING_CANCEL' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
                   ELSE $1::text
                 END,
                 broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
@@ -9086,7 +9086,7 @@ END
                 END,
                 execution_status = CASE
                   WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'OPEN' AND $1::text = 'PENDING' THEN execution_status
+                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
                   ELSE $1::text
                 END,
                 broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
@@ -9121,7 +9121,7 @@ END
               SELECT sid
               FROM trades
               WHERE account_id = $4::text
-                AND execution_status IN ('PENDING','OPEN')
+                AND execution_status IN ('PENDING','FILLED')
                 AND (broker_trade_id IS NULL OR broker_trade_id = '')
                 AND $9::text <> ''
                 AND symbol = $9::text
@@ -9252,7 +9252,7 @@ END
               }
             }
           } else if (
-            it.execution_status === "OPEN" ||
+            it.execution_status === "FILLED" ||
             it.execution_status === "PENDING"
           ) {
             if (!syncSymbol || !syncAction) {
@@ -9439,7 +9439,7 @@ END
                 closed_at = COALESCE(closed_at, NOW()),
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE account_id = $1::text
-              AND execution_status IN ('OPEN','PENDING')
+              AND execution_status IN ('FILLED','PENDING')
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
               AND NOT (broker_trade_id = ANY($2::text[]))
@@ -9458,7 +9458,7 @@ END
                 closed_at = COALESCE(closed_at, NOW()),
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE account_id = $1::text
-              AND execution_status IN ('OPEN','PENDING')
+              AND execution_status IN ('FILLED','PENDING')
               AND broker_trade_id IS NOT NULL
               AND broker_trade_id <> ''
             RETURNING sid, symbol, user_id, broker_trade_id, execution_status, close_reason, pnl_realized
@@ -9840,7 +9840,7 @@ END
         .toUpperCase();
       const allowed = new Set([
         "PENDING",
-        "OPEN",
+        "FILLED",
         "CLOSED",
         "CANCELLED",
         "REJECTED",
@@ -9852,7 +9852,7 @@ END
         return {
           ok: false,
           error:
-            "execution_status must be one of: PENDING, OPEN, CLOSED, CANCELLED, REJECTED, PENDING_MOD, PENDING_CLOSE, PENDING_CANCEL",
+            "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED, PENDING_MOD, PENDING_CLOSE, PENDING_CANCEL",
         };
       }
       const pnlRaw = payload.pnl_realized ?? payload.pnl;
@@ -9996,7 +9996,7 @@ END
         )`);
       }
       if (act === "close_all")
-        clauses.push(`execution_status IN ('OPEN','PENDING')`);
+        clauses.push(`execution_status IN ('FILLED','PENDING')`);
       if (act === "cancel_all") clauses.push(`execution_status = 'PENDING'`);
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       if (act === "delete_all") {
@@ -11313,13 +11313,13 @@ function mt5NormalizeExecutionStatusV2(value) {
     return "CANCELLED";
   if (
     s === "PENDING" ||
-    s === "OPEN" ||
+    s === "FILLED" ||
     s === "CLOSED" ||
     s === "REJECTED" ||
     s === "CANCELLED"
   )
     return s;
-  return "OPEN";
+  return "FILLED";
 }
 
 function mt5TfToMinutes(tf) {
@@ -14604,7 +14604,7 @@ function mt5CountBy(rows, pick, { sortDesc = true, limit = 0 } = {}) {
 
 function mt5StatusTier(statusRaw) {
   const s = mt5CanonicalStoredStatus(statusRaw);
-  if (["NEW", "LOCKED", "PLACED", "START"].includes(s)) return "OPEN";
+  if (["NEW", "LOCKED", "PLACED", "START"].includes(s)) return "FILLED";
   if (["TP", "SL"].includes(s)) return "WINS_LOSSES";
   return "CLOSED";
 }
@@ -14806,7 +14806,7 @@ function mt5ComputeTradeMetrics(rows) {
   const all = Array.isArray(rows) ? rows : [];
 
   // Count by status tiers using all rows
-  // trades table uses: PENDING, OPEN, CLOSED, CANCELLED
+  // trades table uses: PENDING, FILLED, CLOSED, CANCELLED
   const countPending = all.filter((r) => {
     const s = mt5CanonicalStoredStatus(
       r.execution_status || r.status || r.close_reason,
@@ -21921,7 +21921,7 @@ const appHandler = async (req, res) => {
         // Populate Redis cache for PENDING/OPEN lists
         const execStatus = String(filters.execution_status || "").toUpperCase();
         if (
-          (execStatus === "PENDING" || execStatus === "OPEN") &&
+          (execStatus === "PENDING" || execStatus === "FILLED") &&
           !hasFilters
         ) {
           setTradeListCache(
@@ -21935,7 +21935,7 @@ const appHandler = async (req, res) => {
       // Fast path: try Redis cache first for unfiltered PENDING/OPEN lists
       const execStatus = String(filters.execution_status || "").toUpperCase();
       if (
-        (execStatus === "PENDING" || execStatus === "OPEN") &&
+        (execStatus === "PENDING" || execStatus === "FILLED") &&
         !hasFilters &&
         page === 1
       ) {
@@ -23271,7 +23271,7 @@ const appHandler = async (req, res) => {
       const resp = {
         ok: true,
         items: (items || []).map((t) => {
-          let type = "OPEN";
+          let type = "FILLED";
           if (t.execution_status === "PENDING_MOD") type = "MODIFY";
           else if (t.execution_status === "PENDING_CLOSE") type = "CLOSE";
           else if (t.execution_status === "PENDING_CANCEL") type = "CANCEL";
@@ -23638,7 +23638,7 @@ const appHandler = async (req, res) => {
           userId: uid,
           accountId: account.account_id,
           pageSize: 200,
-          executionStatus: ["OPEN", "PENDING"],
+          executionStatus: ["FILLED", "PENDING"],
         });
         for (const t of tradesRes.items || []) {
           if (t.symbol && !posSymbols.includes(t.symbol.toUpperCase()))
@@ -24427,7 +24427,7 @@ const appHandler = async (req, res) => {
           const b2 = await mt5Backend();
           if (status === "SL_CHANGED" && Number.isFinite(slExec)) {
             await b2.pool.query(
-              `UPDATE trades SET sl = COALESCE($2::numeric, sl), tp = COALESCE($3::numeric, tp), updated_at = NOW() WHERE sid = $1::text AND execution_status IN ('OPEN','PENDING')`,
+              `UPDATE trades SET sl = COALESCE($2::numeric, sl), tp = COALESCE($3::numeric, tp), updated_at = NOW() WHERE sid = $1::text AND execution_status IN ('FILLED','PENDING')`,
               [
                 signalId,
                 slExec > 0 ? slExec : null,
