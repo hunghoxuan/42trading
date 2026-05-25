@@ -3283,10 +3283,13 @@ function resolveTradeDir(sid, symbol = "") {
 // Copy bars + snapshots from market_data into trade folder before archival
 // Read bars for a trade: priority closed > active > market_data
 function readTradeBars(safeSid, tf) {
-  const dirs = [
-    path.join(TRADE_CLOSED_DIR, "trade-" + safeSid, "bars"),
-    path.join(TRADE_FILES_DIR, "trade-" + safeSid, "bars"),
-  ];
+  const dirs = [];
+  // Try resolved trade dir (any category)
+  const resolved = resolveTradeDir(safeSid);
+  if (resolved) dirs.push(path.join(resolved, "bars"));
+  // Fallbacks
+  dirs.push(path.join(TRADE_CLOSED_DIR, "trade-" + safeSid, "bars"));
+  dirs.push(path.join(TRADE_FILES_DIR, "trade-" + safeSid, "bars"));
 
   for (const dir of dirs) {
     const csvPath = path.join(dir, tf + ".csv");
@@ -3331,9 +3334,12 @@ function archiveTradeStats(sid, symbol) {
   const sym = String(symbol).toUpperCase();
   const srcBarsDir = path.join(ROOT_DIR, "market_data", sym, "bars");
   const srcSnapDir = path.join(ROOT_DIR, "market_data", sym);
-  const safeSid = String(sid).trim().replace(/[^A-Za-z0-9_.-]/g, "_");
-  const tradeDir = path.join(TRADE_FILES_DIR, "trade-" + safeSid);
-  if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
+  // Use existing trade folder (any category) or create in trade_files
+  let tradeDir = resolveTradeDir(sid, symbol);
+  if (!tradeDir) {
+    tradeDir = path.join(TRADE_FILES_DIR, "trade-" + String(sid).trim().replace(/[^A-Za-z0-9_.-]/g, "_"));
+    if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
+  }
 
   // Copy bars CSV files
   if (fs.existsSync(srcBarsDir)) {
