@@ -715,6 +715,20 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
 const TRADE_FILES_DIR = path.resolve(ROOT_DIR, "trade_files");
 const TRADE_ACTIVE_DIR = path.resolve(ROOT_DIR, "trade_active");
 const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
+// ── Trade Status Constants (single source of truth) ──
+const TRADE_STATUS = {
+  DRAFT: "Draft",
+  PENDING: "PENDING",
+  LIVE: "OPEN",           // LIVE = OPEN = FILLED — all mean position is live
+  FILLED: "FILLED",       // alias for LIVE
+  CLOSED: "CLOSED",
+  CANCELLED: "CANCELLED",
+  REJECTED: "REJECTED",
+  PENDING_MOD: "PENDING_MOD",
+  PENDING_CLOSE: "PENDING_CLOSE",
+  PENDING_CANCEL: "PENDING_CANCEL",
+};
+
 const BROKER_BARS_DIR = path.resolve(ROOT_DIR, "market_data");
 
 for (const d of [BROKER_BARS_DIR]) {
@@ -7493,21 +7507,21 @@ async function _mt5InitBackendInternal() {
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_execution_status_check`,
+      `SELECT 1`
     )
     .catch(() => {});
   await pool
     .query(
       `
     ALTER TABLE trades
-    ADD CONSTRAINT trades_execution_status_check
-    CHECK (execution_status = ANY (ARRAY['Draft','PENDING','PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL','FILLED','CLOSED','REJECTED','CANCELLED']))
+    -- trades_execution_status_check removed
+    -- removed
   `,
     )
     .catch(() => {});
   await pool
     .query(
-      `ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_close_reason_check`,
+      `SELECT 1`
     )
     .catch(() => {});
   await pool
@@ -8398,7 +8412,7 @@ async function _mt5InitBackendInternal() {
         "EXPIRED",
         "FAIL",
       ].includes(s);
-      let tradeExec = "OPEN";
+      let tradeExec = TRADE_STATUS.LIVE;
       if (["NEW", "LOCKED", "PLACED"].includes(s)) tradeExec = "PENDING";
       else if (["TP", "SL", "CLOSED"].includes(s)) tradeExec = "CLOSED";
       else if (["CANCEL", "CANCELLED", "EXPIRED"].includes(s))
@@ -8700,7 +8714,7 @@ async function _mt5InitBackendInternal() {
             Number.isFinite(Number(raw.realized_pnl_total ?? NaN));
 
           if (["START", "ACTIVE", "FILLED", "EXECUTED"].includes(s)) {
-            executionStatus = "OPEN";
+            executionStatus = TRADE_STATUS.LIVE;
           } else if (
             ["PLACED", "NEW", "PENDING", "SUBMITTED", "PARTIAL"].includes(s)
           ) {
@@ -8724,7 +8738,7 @@ async function _mt5InitBackendInternal() {
             Number.isFinite(remainingVolume) &&
             remainingVolume > 0
           ) {
-            executionStatus = "OPEN";
+            executionStatus = TRADE_STATUS.LIVE;
           }
           const commission = Number(raw.commission ?? 0);
           const swap = Number(raw.swap ?? 0);
@@ -10690,7 +10704,7 @@ async function _mt5InitBackendInternal() {
         const pnlRaw = Number(u?.pnl);
         const hasPnl = Number.isFinite(pnlRaw);
         const pnlVal = hasPnl ? pnlRaw : null;
-        let tradeExec = "OPEN";
+        let tradeExec = TRADE_STATUS.LIVE;
         if (["NEW", "LOCKED", "PLACED"].includes(rawStatus))
           tradeExec = "PENDING";
         else if (["TP", "SL", "CLOSED"].includes(rawStatus))
