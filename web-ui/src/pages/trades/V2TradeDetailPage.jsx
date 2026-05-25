@@ -281,8 +281,8 @@ export default function TradeDetailPage() {
               opacity: 0.95,
             }}
           >
-            <span>{`SID: ${sidText}`}</span>
-            <span>{`BrokerID: ${brokerIdText}`}</span>
+            <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>{sidText}</span>
+            <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>{brokerIdText}</span>
             <span>|</span>
             <span className={`badge ${currentStatus.cls}`} style={{ cursor: "default" }}>
               {currentStatus.label}

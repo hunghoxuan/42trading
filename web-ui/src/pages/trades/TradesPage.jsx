@@ -1803,10 +1803,11 @@ export default function TradesPage() {
                             color: "var(--muted)",
                           }}
                         >
-                          <span>
-                            {`SID: ${String(selectedTrade.sid || selectedTrade.signal_sid || "-").trim() || "-"}`}
-                            {"  "}
-                            {`BrokerID: ${String(selectedTrade.broker_trade_id || selectedTrade.ticket || selectedTrade.broker_id || "-").trim() || "-"}`}
+                          <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>
+                            {String(selectedTrade.sid || selectedTrade.signal_sid || "-").trim() || "-"}
+                          </span>
+                          <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>
+                            {String(selectedTrade.broker_trade_id || selectedTrade.ticket || selectedTrade.broker_id || "-").trim() || "-"}
                           </span>
                           <span>|</span>
                           <span

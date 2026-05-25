@@ -753,10 +753,17 @@ function PlanHeader({
             }}
           >
             {(sidVal || brokerIdVal) && (
-              <span>
-                {sidVal ? `SID: ${sidVal}` : ""}
-                {sidVal && brokerIdVal ? "  " : ""}
-                {brokerIdVal ? `BrokerID: ${brokerIdVal}` : ""}
+              <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                {sidVal ? (
+                  <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}>
+                    {sidVal}
+                  </span>
+                ) : null}
+                {brokerIdVal ? (
+                  <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}>
+                    {brokerIdVal}
+                  </span>
+                ) : null}
               </span>
             )}
             {statusText && <span>|</span>}
