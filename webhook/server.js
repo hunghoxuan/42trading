@@ -1721,7 +1721,7 @@ async function repoGetPendingSignals(userId = "all") {
     const params = userId === "all" ? [] : [userId];
     try {
       const { rows } = await db.query(
-        `SELECT * FROM signals WHERE ${where} ORDER BY updated_at DESC, created_at DESC`,
+        `SELECT * FROM signals WHERE ${where} ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC`,
         params,
       );
       return rows;
@@ -1754,7 +1754,7 @@ async function repoGetUserTemplates(userId) {
   return await StateRepo.get("USER_TEMPLATES", userId, async () => {
     const db = await mt5InitBackend();
     const { rows } = await db.query(
-      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY updated_at DESC, created_at DESC",
+      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC",
       [userId],
     );
     return rows.map((r) => ({
@@ -5318,7 +5318,7 @@ async function loadTradePlansForAiContext(userId, symbolNorm) {
        FROM signals
        WHERE user_id = $1 AND regexp_replace(upper(symbol), '[^A-Z0-9]', '', 'g') = $2
          AND status IN ('NEW','PENDING','ACTIVE')
-       ORDER BY updated_at DESC, created_at DESC
+       ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
        LIMIT 20`,
       [userId, symbolNorm],
     );
@@ -9387,7 +9387,7 @@ END
               WHERE object_table = 'trades'
                 AND object_id = $1
                 AND metadata->>'event' IN ('SYNC_UPDATE', 'TRADE_SYNC_UPDATE')
-              ORDER BY updated_at DESC, created_at DESC, log_id DESC
+              ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC, log_id DESC
               LIMIT 1
             `,
               [tradeId],
@@ -9436,8 +9436,7 @@ END
             UPDATE trades
             SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
-                closed_at = COALESCE(closed_at, NOW()),
-                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+                closed_at = COALESCE(closed_at, NOW())
             WHERE account_id = $1::text
               AND execution_status IN ('FILLED','PENDING')
               AND broker_trade_id IS NOT NULL
@@ -9455,8 +9454,7 @@ END
             UPDATE trades
             SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
                 close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
-                closed_at = COALESCE(closed_at, NOW()),
-                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+                closed_at = COALESCE(closed_at, NOW())
             WHERE account_id = $1::text
               AND execution_status IN ('FILLED','PENDING')
               AND broker_trade_id IS NOT NULL
@@ -9821,7 +9819,7 @@ END
       );
       params.push(safePageSize, offset);
       const res = await pool.query(
-        `SELECT * FROM trades ${where} ORDER BY updated_at DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        `SELECT * FROM trades ${where} ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params,
       );
       return {
@@ -9881,8 +9879,7 @@ END
             closed_at = CASE
               WHEN $1::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(closed_at, NOW())
               ELSE closed_at
-            END,
-            updated_at = NOW()
+            END
         WHERE (
           ($4::bigint IS NOT NULL AND id = $4::bigint)
           OR sid = $5
@@ -13592,7 +13589,7 @@ async function mt5FindDuplicateSignal(payload = {}) {
       AND tp IS NOT NULL
       AND ABS(sl - $3) <= 1e-8
       AND ABS(tp - $4) <= 1e-8
-    ORDER BY updated_at DESC, created_at DESC
+    ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
     LIMIT 500
   `,
     [userId, symbol, sl, tp],
@@ -13962,7 +13959,7 @@ async function mt5ResolveSignalRefV2(signalRef, userId = null) {
       OR sid = $2
     )
     ${whereUser}
-    ORDER BY updated_at DESC, created_at DESC
+    ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
     LIMIT 1
   `,
     params,
@@ -16790,7 +16787,7 @@ const appHandler = async (req, res) => {
         if (tradeRefs.length) {
           const b = await mt5Backend();
           const tradeRes = await b.pool.query(
-            `UPDATE trades SET execution_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'PENDING_CANCEL' ELSE 'CANCELLED' END, updated_at = NOW() WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
+            `UPDATE trades SET execution_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'PENDING_CANCEL' ELSE 'CANCELLED' END, closed_at = COALESCE(closed_at, NOW()) WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
             [tradeRefs],
           );
           if (tradeRes.rowCount > 0) {
@@ -17778,7 +17775,7 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const { rows } = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY updated_at DESC, created_at DESC",
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC",
         [CFG.mt5DefaultUserId],
       );
       const templates = rows.map((r) => ({
@@ -23908,7 +23905,7 @@ const appHandler = async (req, res) => {
          WHERE object_table = 'accounts'
            AND object_id = $1
            AND metadata->>'event' = 'PRICE_PUSH'
-         ORDER BY updated_at DESC, created_at DESC
+         ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
          LIMIT 1`,
         [account.account_id],
       );
@@ -24464,7 +24461,7 @@ const appHandler = async (req, res) => {
           const failReason =
             ackErrorCombined || ackMessage || "broker rejected";
           await b2.pool.query(
-            `UPDATE trades SET execution_status = 'CANCEL', close_reason = $2, updated_at = NOW() WHERE sid = $1::text`,
+            `UPDATE trades SET execution_status = 'CANCEL', close_reason = $2, closed_at = COALESCE(closed_at, NOW()) WHERE sid = $1::text`,
             [signalId, failReason],
           );
           await mt5Log(signalId, "trades", {
