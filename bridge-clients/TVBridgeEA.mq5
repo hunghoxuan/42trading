@@ -265,6 +265,7 @@ double   g_ackPipValuePerLot = 0.0; // USD value of 1 pip on 1 standard lot for 
 double   g_ackSlPips = 0.0;         // SL distance in pips
 double   g_ackTpPips = 0.0;         // TP distance in pips
 double   g_ackRiskMoneyActual = 0.0;    // lots * pip_value * sl_pips (actual risk $)
+double   g_ackRiskMoneyPlanned = 0.0;   // planned risk $ from signal (2-way synced)
 double   g_ackRewardMoneyPlanned = 0.0; // lots * pip_value * tp_pips (planned reward $)
 
 string   g_stopRetrySignalId[];
@@ -2014,6 +2015,7 @@ void Ack(const string signalId, const string status, const string ticket, const 
    body += "\"sl_pips\":" + DoubleToString(g_ackSlPips, 2) + ",";
    body += "\"tp_pips\":" + DoubleToString(g_ackTpPips, 2) + ",";
    body += "\"risk_money_actual\":" + DoubleToString(g_ackRiskMoneyActual, 2) + ",";
+   body += "\"risk_money_planned\":" + DoubleToString(g_ackRiskMoneyPlanned, 2) + ",";
    body += "\"reward_money_planned\":" + DoubleToString(g_ackRewardMoneyPlanned, 4) + ",";
    if(g_ackHasPnlRealized)
       body += "\"pnl_money_realized\":" + DoubleToString(g_ackPnlRealized, 2) + ",";
@@ -2311,6 +2313,7 @@ bool ExecuteSignal(const string signalId,
    g_ackSlPips = 0;
    g_ackTpPips = 0;
    g_ackRiskMoneyActual = 0;
+   g_ackRiskMoneyPlanned = 0;
    g_ackRewardMoneyPlanned = 0;
 
    double entryRef = (entry > 0.0) ? entry : ((actionRaw=="BUY") ? SymbolInfoDouble(symbolRaw, SYMBOL_ASK) : SymbolInfoDouble(symbolRaw, SYMBOL_BID));
@@ -2975,7 +2978,7 @@ void OnTimer()
       g_syncHistoryLastTime = now;
    }
 
-   string url = BuildApiUrl("/mt5/ea/pull?account=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)));
+   string url = BuildApiUrl("/mt5/ea/pull?account=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + "&max_items=50");
    string resp;
    if(!HttpGet(url, resp))
    {
@@ -3005,7 +3008,9 @@ void OnTimer()
     string leaseToken = JsonGetString(resp, "lease_token");
     string tradeId = JsonGetString(resp, "trade_id");
     string signalId = JsonGetString(resp, "signal_id");
+    string sid = JsonGetString(resp, "sid");
     if(signalId == "") signalId = tradeId;
+    if(signalId == "") signalId = sid;
     if(signalId == "") signalId = JsonGetString(resp, "task_id");
 
     // Track V2 context
@@ -3024,7 +3029,9 @@ void OnTimer()
     double volume   = JsonGetNumber(resp, "volume", 0.0);
     double riskPct  = JsonGetNumber(resp, "risk_pct", 0.0);
     if(riskPct <= 0.0) riskPct = volume;
-    double riskMoney = JsonGetNumber(resp, "risk_money", 0.0);
+    double riskMoney = JsonGetNumber(resp, "risk_money_planned", 0.0);
+    if(riskMoney <= 0.0) riskMoney = JsonGetNumber(resp, "risk_money", 0.0);
+    double explicitLots = JsonGetNumber(resp, "lots", 0.0);
     double entry    = JsonGetNumber(resp, "entry", 0.0);
     double sl       = JsonGetNumber(resp, "sl", 0.0);
     double tp       = JsonGetNumber(resp, "tp", 0.0);
@@ -3042,7 +3049,9 @@ void OnTimer()
     string outTicket = "";
 
     if(taskType == "OPEN") {
-       ok = ExecuteSignal(signalId, action, symbolIn, comment, volume, riskPct, riskMoney, entry, orderType, sl, tp, 0, outTicket, err, leaseToken);
+       g_ackRiskMoneyPlanned = riskMoney;
+       double execVolume = (explicitLots > 0.0) ? explicitLots : volume;
+       ok = ExecuteSignal(signalId, action, symbolIn, comment, execVolume, riskPct, riskMoney, entry, orderType, sl, tp, 0, outTicket, err, leaseToken);
        if(ok) {
           string initialStatus = (orderType == "market") ? "START" : "PLACED";
           Ack(signalId, initialStatus, outTicket, "exec_ok_" + orderType);
