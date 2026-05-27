@@ -8700,7 +8700,7 @@ END
             console.log(`[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`);
             continue;
           }
-          const leaseToken = crypto.randomUUID();
+          const leaseToken = mt5GenerateTimeSid();
           const leaseExpiresAt = new Date(
             Date.now() + leaseSec * 1000,
           ).toISOString();

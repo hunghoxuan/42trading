@@ -1909,20 +1909,6 @@ export default function TradesPage() {
                       group: "account",
                     },
                     {
-                      label: "Lease",
-                      value: selectedTrade.lease_token
-                        ? selectedTrade.lease_token.slice(0, 12) + "..."
-                        : "-",
-                      group: "account",
-                    },
-                    {
-                      label: "Lease Expires",
-                      value: selectedTrade.lease_expires_at
-                        ? showDateTime(selectedTrade.lease_expires_at)
-                        : "-",
-                      group: "account",
-                    },
-                    {
                       label: "Broker Vol",
                       value: selectedTrade.broker_volume != null
                         ? Number(selectedTrade.broker_volume).toFixed(2)
