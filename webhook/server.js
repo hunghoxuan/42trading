@@ -1857,7 +1857,7 @@ async function repoGetUserTemplates(userId) {
   return await StateRepo.get("USER_TEMPLATES", userId, async () => {
     const db = await mt5InitBackend();
     const { rows } = await db.query(
-      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC",
+      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY updated_at DESC, created_at DESC",
       [userId],
     );
     return rows.map((r) => ({
@@ -18330,7 +18330,7 @@ const appHandler = async (req, res) => {
     try {
       const db = await mt5InitBackend();
       const { rows } = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC",
+        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY updated_at DESC, created_at DESC",
         [CFG.mt5DefaultUserId],
       );
       const templates = rows.map((r) => ({
