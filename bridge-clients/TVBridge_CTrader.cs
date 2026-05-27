@@ -30,6 +30,9 @@ namespace cAlgo.Robots
         [Parameter("Magic Number", DefaultValue = 20260411)]
         public int MagicNumber { get; set; }
 
+        [Parameter("Provider Code", DefaultValue = "ICMARKETS")]
+        public string ProviderCode { get; set; }
+
         [Parameter("Max Risk ($)", DefaultValue = 100)]
         public double MaxRiskAmount { get; set; }
 
@@ -1377,7 +1380,9 @@ namespace cAlgo.Robots
                     + "\",\"balance\":" + bal.ToString("F2", CultureInfo.InvariantCulture)
                     + ",\"equity\":" + eq.ToString("F2", CultureInfo.InvariantCulture)
                     + ",\"margin\":" + marg.ToString("F2", CultureInfo.InvariantCulture)
-                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\"" + ",\"build_version\":\"" + BuildVersion + "\""
+                    + ",\"broker_name\":\"" + (brokerName ?? "").Replace("\"", "'") + "\""
+                    + ",\"provider_code\":\"" + (ProviderCode ?? "").Replace("\"", "'") + "\""
+                    + ",\"build_version\":\"" + BuildVersion + "\""
                     + ",\"positions\":[" + string.Join(",", posList ?? new List<string>()) + "]"
                     + ",\"orders\":[" + string.Join(",", ordersList ?? new List<string>()) + "]"
                     + ",\"closed\":[" + string.Join(",", closedList ?? new List<string>()) + "]"

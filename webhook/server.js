@@ -8984,6 +8984,9 @@ END
         broker_name: String(
           payload.broker_name || existingMeta.broker_name || "",
         ),
+        provider_code: String(
+          payload.provider_code || existingMeta.provider_code || "",
+        ),
         build_version: String(
           payload.build_version || existingMeta.build_version || "",
         ),
