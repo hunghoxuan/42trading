@@ -2923,7 +2923,10 @@ export default function ChartSnapshotsPage() {
   const [templateName, setTemplateName] = useState("");
 
   const [provider, setProvider] = useState(
-    () => String(DEFAULT_CONFIG?.broker || "").toUpperCase(),
+    () =>
+      authUser?.metadata?.default_provider_code ||
+      String(DEFAULT_CONFIG?.broker || "").toUpperCase() ||
+      "ICMARKETS",
   );
   const autoSaveTimerRef = useRef(null);
   const [items, setItems] = useState([]);

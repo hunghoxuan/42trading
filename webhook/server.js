@@ -15907,6 +15907,11 @@ const appHandler = async (req, res) => {
           metadata: {
             ...(sess.metadata || {}),
             watchlist: watchlist || sess.metadata?.watchlist || [],
+            default_provider_code:
+              (Array.isArray(accounts) &&
+                accounts[0]?.metadata?.provider_code) ||
+              sess.metadata?.default_provider_code ||
+              "ICMARKETS",
           },
         },
         eager_data: {
