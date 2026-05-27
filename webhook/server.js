@@ -10312,7 +10312,12 @@ END
       );
       params.push(safePageSize, offset);
       const res = await pool.query(
-        `SELECT * FROM trades ${where} ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        `SELECT t.*, ua.metadata AS account_metadata, ua.broker_name AS account_broker_name
+         FROM trades t
+         LEFT JOIN user_accounts ua ON t.account_id = ua.account_id
+         ${where}
+         ORDER BY COALESCE(t.closed_at, t.updated_at) DESC, t.created_at DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
         params,
       );
       return {

@@ -1822,7 +1822,10 @@ export default function TradesPage() {
                     onDetailTfTabChange: setDetailTfTab,
                     iframeTitle: `trade-tv-${detailTfTab}`,
                     symbol: selectedTrade.symbol,
-                    provider: selectedTrade.metadata?.provider_code || "",
+                    provider:
+                      selectedTrade.account_metadata?.provider_code ||
+                      selectedTrade.metadata?.provider_code ||
+                      "",
                     interval:
                       selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
                     live: true,
@@ -1885,12 +1888,19 @@ export default function TradesPage() {
                     },
                     {
                       label: "Broker Name",
-                      value: selectedTrade.metadata?.broker_name || "-",
+                      value:
+                        selectedTrade.account_broker_name ||
+                        selectedTrade.account_metadata?.broker_name ||
+                        selectedTrade.metadata?.broker_name ||
+                        "-",
                       group: "account",
                     },
                     {
                       label: "Provider",
-                      value: selectedTrade.metadata?.provider_code || "-",
+                      value:
+                        selectedTrade.account_metadata?.provider_code ||
+                        selectedTrade.metadata?.provider_code ||
+                        "-",
                       group: "account",
                     },
                     {
