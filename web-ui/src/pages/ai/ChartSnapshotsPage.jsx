@@ -2922,12 +2922,18 @@ export default function ChartSnapshotsPage() {
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [templateName, setTemplateName] = useState("");
 
-  const [provider, setProvider] = useState(
-    () =>
-      authUser?.metadata?.default_provider_code ||
-      String(DEFAULT_CONFIG?.broker || "").toUpperCase() ||
-      "ICMARKETS",
-  );
+  const [provider, setProvider] = useState("ICMARKETS");
+
+  // Load default provider from auth/me on mount
+  useEffect(() => {
+    api.authMe().then((res) => {
+      const code =
+        res?.user?.metadata?.default_provider_code ||
+        String(DEFAULT_CONFIG?.broker || "").toUpperCase() ||
+        "ICMARKETS";
+      setProvider(code);
+    }).catch(() => {});
+  }, []);
   const autoSaveTimerRef = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
