@@ -1893,7 +1893,7 @@ export default function TradesPage() {
                         selectedTrade.account_metadata?.broker_name ||
                         selectedTrade.metadata?.broker_name ||
                         "-",
-                      group: "account",
+                      group: "identity",
                     },
                     {
                       label: "Provider",
@@ -1901,33 +1901,52 @@ export default function TradesPage() {
                         selectedTrade.account_metadata?.provider_code ||
                         selectedTrade.metadata?.provider_code ||
                         "-",
-                      group: "account",
+                      group: "identity",
                     },
                     {
                       label: "Dispatch",
                       value: selectedTrade.dispatch_status || "-",
-                      group: "account",
+                      group: "identity",
                     },
                     {
-                      label: "Broker Vol",
-                      value: selectedTrade.broker_volume != null
-                        ? Number(selectedTrade.broker_volume).toFixed(2)
-                        : "-",
-                      group: "account",
+                      label: "Account",
+                      value:
+                        accountById.get(String(selectedTrade.account_id || ""))
+                          ?.name ||
+                        selectedTrade.account_id ||
+                        "-",
+                      group: "identity",
+                    },
+                    {
+                      label: "Broker Ticket",
+                      value: brokerTicketOf(selectedTrade),
+                      group: "identity",
+                    },
+                    {
+                      label: "Broker Status",
+                      value: selectedTrade.metadata?.broker_data?.status || "-",
+                      group: "identity",
                     },
                     {
                       label: "Broker PnL",
                       value: selectedTrade.broker_pnl != null
                         ? `$${Number(selectedTrade.broker_pnl).toFixed(2)}`
                         : "-",
-                      group: "account",
+                      group: "pnl",
                     },
                     {
                       label: "Broker Margin",
                       value: selectedTrade.broker_margin != null
                         ? `$${Number(selectedTrade.broker_margin).toFixed(2)}`
                         : "-",
-                      group: "account",
+                      group: "pnl",
+                    },
+                    {
+                      label: "Broker Vol",
+                      value: selectedTrade.broker_volume != null
+                        ? Number(selectedTrade.broker_volume).toFixed(2)
+                        : "-",
+                      group: "sizing",
                     },
                     {
                       label: "Chart TF",
@@ -2176,25 +2195,6 @@ export default function TradesPage() {
                       value: detailPlan.note || "-",
                       fullWidth: true,
                     },
-                    {
-                      label: "Account",
-                      value:
-                        accountById.get(String(selectedTrade.account_id || ""))
-                          ?.name ||
-                        selectedTrade.account_id ||
-                        "-",
-                      group: "account",
-                    },
-                    {
-                      label: "Broker Ticket",
-                      value: brokerTicketOf(selectedTrade),
-                      group: "account",
-                    },
-                    {
-                      label: "Broker Status",
-                      value: selectedTrade.metadata?.broker_data?.status || "-",
-                      group: "account",
-                    },
                     ...(selectedTrade.metadata &&
                     typeof selectedTrade.metadata === "object"
                       ? (() => {
@@ -2238,7 +2238,7 @@ export default function TradesPage() {
                                 bVol != null
                                   ? `${bVol.toLocaleString()} units`
                                   : null,
-                              group: "account",
+                              group: "sizing",
                             },
                             {
                               label: "Broker Lots",
@@ -2246,7 +2246,7 @@ export default function TradesPage() {
                                 bLots != null
                                   ? `${bLots.toFixed(2)} lots`
                                   : null,
-                              group: "account",
+                              group: "sizing",
                             },
                             {
                               label: "Broker Pips",
@@ -2254,7 +2254,7 @@ export default function TradesPage() {
                                 bPips != null
                                   ? `${bPips.toFixed(1)} pips`
                                   : null,
-                              group: "account",
+                              group: "sizing",
                             },
                             {
                               label: "Broker Net Profit",
@@ -2262,19 +2262,19 @@ export default function TradesPage() {
                                 bProfit != null
                                   ? `$${bProfit.toFixed(2)}`
                                   : null,
-                              group: "account",
+                              group: "pnl",
                             },
                             {
                               label: "Commission",
                               value:
                                 bComm != null ? `$${bComm.toFixed(2)}` : null,
-                              group: "account",
+                              group: "pnl",
                             },
                             {
                               label: "Swap",
                               value:
                                 bSwap != null ? `$${bSwap.toFixed(2)}` : null,
-                              group: "account",
+                              group: "pnl",
                             },
                             {
                               label: "Margin",
@@ -2282,19 +2282,19 @@ export default function TradesPage() {
                                 bMargin != null
                                   ? `$${bMargin.toFixed(2)}`
                                   : null,
-                              group: "account",
+                              group: "pnl",
                             },
                             {
                               label: "Planned TP Profit",
                               value:
                                 bTpPnl != null ? `$${bTpPnl.toFixed(2)}` : null,
-                              group: "account",
+                              group: "pnl",
                             },
                             {
                               label: "Planned SL Profit",
                               value:
                                 bSlPnl != null ? `$${bSlPnl.toFixed(2)}` : null,
-                              group: "account",
+                              group: "pnl",
                             },
                           ].filter((x) => x.value !== null);
                         })()
