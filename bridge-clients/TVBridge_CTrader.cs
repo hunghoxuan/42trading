@@ -1188,7 +1188,7 @@ namespace cAlgo.Robots
                             var rejectMsg = string.Format("SL too close: {0:F1} pips (min {1}). E={2:F5} SL={3:F5}", slDistPips, MinStopPips, executionPrice, sl);
                             Print("[Reject] {0}", rejectMsg);
                             UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            _ = AckAsync(id, leaseToken, "FAIL", "", rejectMsg);
+                            Task.Run(async () => { try { await AckAsync(id, leaseToken, "FAIL", "", rejectMsg); Print("[Ack] FAIL sent for {0}", id); } catch (Exception ex) { Print("[Ack] FAIL error: {0}", ex.Message); } });
                             return;
                         }
                     }
@@ -1200,7 +1200,7 @@ namespace cAlgo.Robots
                             var rejectMsg = string.Format("TP too close: {0:F1} pips (min {1}). E={2:F5} TP={3:F5}", tpDistPips, MinStopPips, executionPrice, tp);
                             Print("[Reject] {0}", rejectMsg);
                             UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            _ = AckAsync(id, leaseToken, "FAIL", "", rejectMsg);
+                            Task.Run(async () => { try { await AckAsync(id, leaseToken, "FAIL", "", rejectMsg); Print("[Ack] FAIL sent for {0}", id); } catch (Exception ex) { Print("[Ack] FAIL error: {0}", ex.Message); } });
                             return;
                         }
                     }
