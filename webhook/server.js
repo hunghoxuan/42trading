@@ -180,6 +180,12 @@ function emitNotification(payload) {
   // global clients (admin/system listeners)
   const globalClients = SSE_CLIENTS.get("*");
   if (globalClients) globalClients.forEach((r) => targets.add(r));
+  // optional broadcast to all connected users (used for cross-surface events)
+  if (payload && payload.broadcast_all === true) {
+    for (const set of SSE_CLIENTS.values()) {
+      set.forEach((r) => targets.add(r));
+    }
+  }
   for (const res of targets) {
     try {
       res.write(data);
@@ -221,6 +227,37 @@ function csvTfAliases(tf) {
   if (key === "5") out.add("5m");
   if (key === "1") out.add("1m");
   return [...out];
+}
+
+// Discover all symbols with market_data directories
+function discoverAllMarketSymbols() {
+  const dir = path.join(ROOT_DIR, "market_data");
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((d) => fs.statSync(path.join(dir, d)).isDirectory())
+    .filter((d) => d === d.toUpperCase())
+    .sort();
+}
+
+// Resolve symbols_group to actual symbol list
+const SYMBOLS_GROUP_MAP = {
+  crypto: ["BTCUSD","ETHUSD","XRPUSD","SOLUSD","DOGEUSD","ADAUSD","LTCUSD","BNBUSD","DOTUSD","MATICUSD","ATOMUSD","ETCUSD","NEARUSD"],
+  forex: ["EURUSD","GBPUSD","USDJPY","AUDUSD","NZDUSD","USDCAD","USDCHF","GBPJPY","EURJPY","EURGBP","EURAUD","EURCAD","GBPAUD","GBPCAD","AUDCAD","AUDCHF","AUDJPY","AUDNZD","CADJPY","NZDCAD","EURSGD","USDSGD"],
+  indices: ["US30","NAS100","SPX500","GER40","UK100","JPN225","DE40"],
+  metals: ["XAUUSD","XAGUSD","XPTUSD","XPDUSD","XAUEUR","XAUGBP","XAUJPY","XTIUSD"],
+};
+
+function resolveCronSymbols(data = {}) {
+  const group = String(data.symbols_group || "").trim();
+  if (group === "all") return discoverAllMarketSymbols();
+  if (group && SYMBOLS_GROUP_MAP[group]) {
+    const preset = SYMBOLS_GROUP_MAP[group];
+    const all = discoverAllMarketSymbols();
+    return preset.filter((s) => all.includes(s)); // only return symbols that exist in market_data
+  }
+  // Fallback to stored symbols or auto-discover all
+  const syms = Array.isArray(data.symbols) && data.symbols.length ? data.symbols : discoverAllMarketSymbols();
+  return syms;
 }
 
 function resolveBrokerCsvPath(symbol, tf) {
@@ -293,7 +330,29 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
   const tfKey = normalizeCsvTfKey(tf);
   const csvDir = path.join(ROOT_DIR, "market_data", sym, "bars");
   if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
-  const csvPath = resolveBrokerCsvPath(sym, tfKey);
+  // Always use canonical path ({tfKey}.csv), never alias
+  const csvPath = path.join(csvDir, `${tfKey}.csv`);
+
+  // Migrate bars from alias files into canonical file, then remove aliases
+  const aliases = csvTfAliases(tf);
+  for (const alias of aliases) {
+    if (alias === tfKey) continue;
+    const aliasPath = path.join(csvDir, `${alias}.csv`);
+    if (fs.existsSync(aliasPath)) {
+      try {
+        const aliasLines = fs.readFileSync(aliasPath, "utf8").trim().split("\n");
+        for (let i = 1; i < aliasLines.length; i++) {
+          const parts = aliasLines[i].split(",");
+          const t = Number(parts[0]);
+          if (Number.isFinite(t)) {
+            const n = `time,open,high,low,close,volume`; // skip header
+            if (aliasLines[i] !== n) newBars.push({ t, o: Number(parts[1]), h: Number(parts[2]), l: Number(parts[3]), c: Number(parts[4]), v: Number(parts[5] || 0) });
+          }
+        }
+        fs.unlinkSync(aliasPath);
+      } catch {}
+    }
+  }
 
   // Read existing bars into Map (time -> csv line)
   const existing = new Map();
@@ -533,6 +592,22 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
     db_log: true,
     hub: false,
   },
+  CRON_SNAPSHOT: {
+    toast: false,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    sound: null,
+  },
+  SNAPSHOT_CREATED: {
+    toast: false,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    sound: null,
+  },
 };
 
 class NotificationManager {
@@ -664,6 +739,34 @@ class NotificationManager {
 }
 
 const notificationManager = new NotificationManager();
+
+function emitSnapshotCreatedNotification({
+  userId = null,
+  symbol = "",
+  timeframe = "",
+  fileName = "",
+  reused = false,
+} = {}) {
+  if (reused) return;
+  const sym = normalizeMarketDataSymbol(symbol) || "UNKNOWN";
+  const tf = String(timeframe || "").trim();
+  notificationManager.handle("SNAPSHOT_CREATED", "created", {
+    user_id: userId || null,
+    event: "snapshot_created",
+    message: `Snapshot: ${sym}${tf ? ` ${tf}` : ""}`,
+    type: "info",
+    notification: true,
+    need_refresh: false,
+    comp_refresh: false,
+    action: null,
+    sound: null,
+    position: "bottom-right",
+    symbol: sym,
+    timeframe: tf || null,
+    file_name: fileName || null,
+    broadcast_all: true,
+  });
+}
 
 // Legacy: keep NOTIFICATION_PULSE for backward compat during migration
 const NOTIFICATION_PULSE = { global: 0, user: {} };
@@ -1031,8 +1134,8 @@ const CFG = {
     envStr(process.env.POSTGRE_URL),
   redisEnabled: asBool(process.env.REDIS_ENABLED, true),
   redisUrl: envStr(process.env.REDIS_URL, "redis://127.0.0.1:6379"),
-  marketDataCronEnabled: asBool(process.env.MARKET_DATA_CRON_ENABLED, true),
-  snapshotsCronEnabled: asBool(process.env.SNAPSHOTS_CRON_ENABLED, true),
+  marketDataCronEnabled: true, // always enabled — toggled per-cron via status field
+  snapshotsCronEnabled: true, // always enabled — toggled per-cron via status field
   marketDataCronQueueEnabled: asBool(
     process.env.MARKET_DATA_CRON_QUEUE_ENABLED,
     true,
@@ -1866,6 +1969,32 @@ function snapshotTfToSeconds(canonical) { return SNAPSHOT_TF_MAP[canonical]?.sec
 function snapshotTfToLabel(canonical)  { return SNAPSHOT_TF_MAP[canonical]?.label || canonical; }
 function snapshotTfToTVInterval(canonical) { return SNAPSHOT_TF_MAP[canonical]?.tv || canonical; }
 
+function normalizeTvTimezone(raw, fallback = "Etc/UTC") {
+  const s = String(raw || "").trim();
+  if (!s) return fallback;
+  const up = s.toUpperCase();
+  if (up === "UTC" || up === "ETC/UTC") return "Etc/UTC";
+  if (up === "NY" || up === "NEW_YORK" || up === "AMERICA/NEW_YORK")
+    return "America/New_York";
+  if (up === "LOCAL") return "LOCAL";
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: s }).format(new Date());
+    return s;
+  } catch {
+    return fallback;
+  }
+}
+
+function sessionKillerZoneLabelUTC(d = new Date()) {
+  const h = Number(d.getUTCHours());
+  if (h >= 0 && h < 6) return "Asia Session / Asia Range";
+  if (h >= 6 && h < 8) return "London Pre-open / Frankfurt Kill Zone";
+  if (h >= 8 && h < 12) return "London Session / London Kill Zone";
+  if (h >= 12 && h < 17) return "New York Session / New York Kill Zone";
+  if (h >= 17 && h < 22) return "NY PM Session / Reversal Zone";
+  return "Late Session / Rollover Zone";
+}
+
 // Canonicalize, dedup, sort descending
 function canonicalizeTfList(tfList) {
   const canonicals = tfList
@@ -2073,6 +2202,126 @@ async function notifyPulse(userId, type = "general") {
     await client.expire(key, 3600); // 1 hour is enough for pulse
     await client.set("NOTIF_PULSE:GLOBAL", String(now), { EX: 3600 });
   } catch (err) {}
+}
+
+async function updateHealthActivity(objectType, objectId, value = {}) {
+  if (!CFG.redisEnabled) return;
+  try {
+    const client = await getRedisClient();
+    if (!client) return;
+    const type = String(objectType || "").trim().toUpperCase();
+    const id = String(objectId || "").trim();
+    if (!type || !id) return;
+    const field = `${type}:${id}`;
+    const ts = Date.now();
+    const payload = {
+      object_type: type,
+      object_id: id,
+      key: field,
+      updated_at: new Date(ts).toISOString(),
+      ts,
+      ...((value && typeof value === "object") ? value : { value }),
+    };
+    await client.hSet("HEALTH_ACTIVITY", field, JSON.stringify(payload));
+    await client.zAdd("HEALTH_ACTIVITY_TS", [{ score: ts, value: field }]);
+    await client.expire("HEALTH_ACTIVITY", 86400 * 14);
+    await client.expire("HEALTH_ACTIVITY_TS", 86400 * 14);
+  } catch {}
+}
+
+async function getHealthActivity(limit = 50, prefix = "") {
+  if (!CFG.redisEnabled) return [];
+  try {
+    const client = await getRedisClient();
+    if (!client) return [];
+    const max = Math.max(1, Math.min(500, Number(limit) || 50));
+    const filter = String(prefix || "").trim().toUpperCase();
+    const members = await client.zRange("HEALTH_ACTIVITY_TS", 0, max * 5, {
+      REV: true,
+    });
+    if (!Array.isArray(members) || !members.length) return [];
+    const filtered = filter
+      ? members.filter((m) => String(m || "").toUpperCase().startsWith(filter))
+      : members;
+    const picked = [...new Set(filtered)].slice(0, max);
+    if (!picked.length) return [];
+    const values = await client.hmGet("HEALTH_ACTIVITY", picked);
+    return picked
+      .map((k, i) => {
+        const raw = values[i];
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return { key: k, raw };
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function upsertSymbolActivity(symbolRaw, patch = {}) {
+  if (!CFG.redisEnabled) return null;
+  const symbol = normalizeMarketDataSymbol(symbolRaw);
+  if (!symbol) return null;
+  try {
+    const client = await getRedisClient();
+    if (!client) return null;
+    const field = symbol;
+    const existingRaw = await client.hGet("HEALTH_SYMBOL_ACTIVITY", field);
+    let existing = {};
+    if (existingRaw) {
+      try {
+        existing = JSON.parse(existingRaw) || {};
+      } catch {
+        existing = {};
+      }
+    }
+    const ts = Date.now();
+    const next = {
+      symbol,
+      updated_at: new Date(ts).toISOString(),
+      ts,
+      ...existing,
+      ...patch,
+    };
+    await client.hSet("HEALTH_SYMBOL_ACTIVITY", field, JSON.stringify(next));
+    await client.zAdd("HEALTH_SYMBOL_ACTIVITY_TS", [{ score: ts, value: field }]);
+    await client.expire("HEALTH_SYMBOL_ACTIVITY", 86400 * 14);
+    await client.expire("HEALTH_SYMBOL_ACTIVITY_TS", 86400 * 14);
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+async function getSymbolActivity(limit = 200) {
+  if (!CFG.redisEnabled) return [];
+  try {
+    const client = await getRedisClient();
+    if (!client) return [];
+    const max = Math.max(1, Math.min(1000, Number(limit) || 200));
+    const members = await client.zRange("HEALTH_SYMBOL_ACTIVITY_TS", 0, max - 1, {
+      REV: true,
+    });
+    if (!Array.isArray(members) || !members.length) return [];
+    const values = await client.hmGet("HEALTH_SYMBOL_ACTIVITY", members);
+    return members
+      .map((symbol, i) => {
+        const raw = values[i];
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return { symbol, raw };
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 async function getRedisClient() {
@@ -2471,6 +2720,11 @@ function maskApiKeyForDisplay(value) {
   if (!raw) return "";
   if (raw.length <= 8) return raw.slice(0, 1) + "****" + raw.slice(-1);
   return raw.slice(0, 4) + "****" + raw.slice(-4);
+}
+
+function isMaskedApiKeyLike(value) {
+  const v = String(value || "").trim();
+  return v.includes("****");
 }
 
 function hashPassword(passwordRaw, saltHex) {
@@ -3417,6 +3671,12 @@ async function captureStatusSnapshot(tradeSid, symbol, status) {
   if (!tradeSid || !symbol) return;
   const statusLower = String(status || "").toLowerCase();
   if (!["filled", "closed"].includes(statusLower)) return;
+  const safeSymbol = String(symbol || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^[A-Z0-9_-]+:/, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!safeSymbol) return;
   try {
     const created = await captureTradingViewSnapshotsBatch({
       symbols: [symbol],
@@ -3432,12 +3692,14 @@ async function captureStatusSnapshot(tradeSid, symbol, status) {
       const fn = String(item?.file_name || "");
       if (!fn.toUpperCase().includes("_MASTER.")) continue;
       const destDir = tradeSnapshotDir(tradeSid);
-      const ext = path.extname(fn);
-      const newName = `${tradeSid}_${statusLower}${ext}`;
+      const newName = `${safeSymbol}_${statusLower}.png`;
       const oldPath = path.join(destDir, fn);
       const newPath = path.join(destDir, newName);
       if (fs.existsSync(oldPath)) {
-        try { fs.renameSync(oldPath, newPath); } catch {}
+        try {
+          if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
+          fs.renameSync(oldPath, newPath);
+        } catch {}
       }
     }
   } catch (e) {
@@ -3464,6 +3726,22 @@ function migrateLegacyTradeSnapshots(sid) {
     }
   } catch {}
   return { copied };
+}
+
+function inferSymbolFromTradeFolder(sid) {
+  const safeSid = String(sid || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  if (!safeSid) return "";
+  const dir = resolveTradeDir(safeSid);
+  const base = path.basename(String(dir || ""));
+  const prefix = `${safeSid}-`;
+  if (!base || !base.startsWith(prefix)) return "";
+  const raw = String(base.slice(prefix.length) || "").trim().toUpperCase();
+  const sym = raw
+    .replace(/^[A-Z0-9_-]+:/, "")
+    .replace(/[^A-Z0-9]/g, "");
+  return sym;
 }
 
 function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
@@ -3520,10 +3798,16 @@ function snapshotTimestampToken(date = new Date()) {
     .replace(".", "_");
 }
 
-function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
+function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "", status = "pending") {
   const sid = String(tradeSid || "").trim();
   if (!sid) return [];
   ensureChartSnapshotDir();
+  const destDir = tradeSnapshotDir(sid, symbol);
+  // If trade folder already has any snapshot, skip — keep only 1 file
+  if (fs.existsSync(destDir)) {
+    const existing = fs.readdirSync(destDir).filter((f) => /\.(png|jpe?g)$/i.test(f));
+    if (existing.length) return existing;
+  }
   const requested = (Array.isArray(files) ? files : [])
     .map((f) => normalizeSnapshotFileName(f))
     .filter(Boolean);
@@ -3531,7 +3815,6 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
     ? []
     : listLatestSnapshotFilesForSymbol(symbol, 12);
   const sourceFiles = requested.length ? requested : fallback;
-  const destDir = tradeSnapshotDir(sid, symbol);
   const copied = [];
   const srcDir = snapshotSymbolDir(symbol);
   for (const fileName of sourceFiles) {
@@ -3541,20 +3824,67 @@ function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "") {
     if (!src || !fs.existsSync(src)) continue;
     const ext = path.extname(safe);
     const base = path.basename(safe, ext);
-    let destName = `${base}_${snapshotTimestampToken()}${ext}`;
-    let dest = path.join(destDir, destName);
-    let suffix = 1;
-    while (fs.existsSync(dest)) {
-      destName = `${base}_${snapshotTimestampToken()}_${suffix}${ext}`;
-      dest = path.join(destDir, destName);
-      suffix += 1;
-    }
+    const destName = `${base}_${snapshotTimestampToken()}_${status}${ext}`;
+    const dest = path.join(destDir, destName);
     try {
       fs.copyFileSync(src, dest);
       copied.push(destName);
     } catch {}
   }
   return copied;
+}
+
+function copyAnalyzeSnapshotToTradeSession(tradeSid, symbol = "") {
+  const sid = String(tradeSid || "").trim();
+  const inferred = inferSymbolFromTradeFolder(sid);
+  const sym = String(symbol || inferred || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^[A-Z0-9_-]+:/, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!sid || !sym) return "";
+  const srcDir = snapshotSymbolDir(sym);
+  const tradeDir = tradeSnapshotDir(sid, sym);
+  // If trade folder already has any snapshot, skip
+  if (fs.existsSync(tradeDir)) {
+    const existing = fs.readdirSync(tradeDir).filter((f) => /\.(png|jpe?g)$/i.test(f));
+    if (existing.length) return existing[0];
+  }
+  const sourceDirs = [srcDir, tradeDir];
+  let candidates = [];
+  for (const dir of sourceDirs) {
+    if (!dir || !fs.existsSync(dir)) continue;
+    try {
+      const list = fs
+        .readdirSync(dir)
+        .filter((f) => /\.(png|jpe?g)$/i.test(f))
+        .map((f) => {
+          const abs = path.join(dir, f);
+          let mtimeMs = 0;
+          try {
+            mtimeMs = Number(fs.statSync(abs).mtimeMs || 0);
+          } catch {}
+          return { f, abs, mtimeMs };
+        });
+      candidates.push(...list);
+    } catch {}
+  }
+  candidates = candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (!candidates.length) return "";
+  const preferred =
+    candidates.find((x) => String(x.f).toUpperCase().includes("_MASTER.")) ||
+    candidates[0];
+  if (!preferred?.abs || !fs.existsSync(preferred.abs)) return "";
+  const ext = (path.extname(preferred.f) || ".png").toLowerCase();
+  const destName = `${sym}_MASTER_${snapshotTimestampToken()}_pending${ext}`;
+  const destDir = tradeDir;
+  const dest = path.join(destDir, destName);
+  try {
+    fs.copyFileSync(preferred.abs, dest);
+    return destName;
+  } catch {
+    return "";
+  }
 }
 
 async function persistTradeSnapshotFiles(tradeSid, files = [], symbol = "") {
@@ -3774,7 +4104,7 @@ function snapshotTimestampToken(dateLike = Date.now()) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mi = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${yyyy}${mm}${dd}_${hh}_${mi}`;
+  return `${yyyy}${mm}${dd}_${hh}:${mi}`;
 }
 
 function toTradingViewInterval(tfRaw) {
@@ -3795,13 +4125,29 @@ function toTradingViewSymbol(inputSymbol, provider) {
   const raw = String(inputSymbol || "")
     .trim()
     .toUpperCase();
-  if (!raw) return "BINANCE:BTCUSDT";
+  if (!raw) return "BTCUSD";
   if (raw.includes(":")) return raw;
   const prov = String(provider || "")
     .trim()
     .toUpperCase();
-  if (prov) return `${prov}:${raw}`;
-  return `BINANCE:${raw}`;
+  // If provider is not explicitly passed, keep symbol untouched.
+  if (!prov) return raw;
+  const isForex = /^[A-Z]{6}$/.test(raw);
+  const isMetal = raw.startsWith("XAU") || raw.startsWith("XAG");
+  const isCrypto =
+    raw.endsWith("USDT") ||
+    raw.endsWith("USD") ||
+    ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "DOT", "MATIC", "NEAR", "ATOM", "ETC"].some((x) => raw.startsWith(x));
+  if (prov === "BINANCE")
+    return `BINANCE:${raw.endsWith("USD") ? raw.replace(/USD$/, "USDT") : raw}`;
+  if (prov === "OANDA") return `OANDA:${raw}`;
+  if (prov === "ICMARKETS") {
+    // Keep raw symbol for broker feed to let TradingView auto-resolve
+    // the best exchange for instruments like XAUGBP/XAUJPY/etc.
+    return raw;
+  }
+  // Default fallback: avoid hard-forcing exchange prefixes.
+  return raw;
 }
 
 function cleanTvHtmlMarker(text) {
@@ -3869,35 +4215,22 @@ async function fetchTradingViewSymbolSearch(
   }
 }
 
-async function resolveTradingViewSymbolForCapture(inputSymbol, provider) {
-  const raw = String(inputSymbol || "")
-    .trim()
-    .toUpperCase();
-  if (!raw) return "BINANCE:BTCUSDT";
-  if (raw.includes(":")) return raw;
-  const preferred = String(provider || "ICMARKETS")
-    .trim()
-    .toUpperCase();
-  const exactInPreferred = await fetchTradingViewSymbolSearch(
-    raw,
-    preferred,
-    8,
-  );
-  const preferredExact = exactInPreferred.find(
-    (x) => String(x.symbol || "").toUpperCase() === raw,
-  );
-  if (preferredExact?.full_symbol)
-    return preferredExact.full_symbol.toUpperCase();
-  if (exactInPreferred[0]?.full_symbol)
-    return String(exactInPreferred[0].full_symbol).toUpperCase();
-  const anyMatches = await fetchTradingViewSymbolSearch(raw, "", 8);
-  const anyExact = anyMatches.find(
-    (x) => String(x.symbol || "").toUpperCase() === raw,
-  );
-  if (anyExact?.full_symbol) return anyExact.full_symbol.toUpperCase();
-  if (anyMatches[0]?.full_symbol)
-    return String(anyMatches[0].full_symbol).toUpperCase();
-  return toTradingViewSymbol(raw, preferred || "ICMARKETS");
+async function resolveTradingViewSymbolForCapture(inputSymbol, broker) {
+  const sym = String(inputSymbol || "").trim().toUpperCase();
+  if (!sym) return "BTCUSD";
+  const brk = String(broker || "").trim().toUpperCase();
+  if (!brk) return sym;
+  const normalize = (v) =>
+    String(v || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  try {
+    const items = await fetchTradingViewSymbolSearch(sym, brk, 20);
+    const exact = items.find((it) => normalize(it?.symbol) === normalize(sym));
+    if (exact?.full_symbol) return String(exact.full_symbol).toUpperCase();
+  } catch {}
+  // Fallback: do not force broker prefix for unresolved broker-symbol pairs.
+  return brk === "ICMARKETS" ? sym : `${brk}:${sym}`;
 }
 
 function loadPlaywrightMaybe() {
@@ -4090,8 +4423,10 @@ function resolvePlaywrightChromiumExecutablePath() {
 
 async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   ensureChartSnapshotDir();
-  const symbol = await resolveTradingViewSymbolForCapture(
-    opts.symbol,
+  const symbolRaw = normalizeMarketDataSymbol(opts.symbol || "");
+  const symbol = symbolRaw || "BTCUSD";
+  const tvSymbol = await resolveTradingViewSymbolForCapture(
+    symbol,
     opts.provider,
   );
   const interval = toTradingViewInterval(opts.timeframe || opts.tf);
@@ -4102,6 +4437,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   );
   const theme =
     String(opts.theme || "dark").toLowerCase() === "light" ? "light" : "dark";
+  const tz = normalizeTvTimezone(opts.timezone, "Etc/UTC");
   const lookbackBars = Math.max(
     50,
     Math.min(Number(opts.lookbackBars || 300) || 300, 5000),
@@ -4110,17 +4446,13 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   const outFormat = outFormatRaw === "jpg" || outFormatRaw === "jpeg" ? "jpg" : "png";
   const jpgQuality = Math.max(
     20,
-    Math.min(Number(opts.quality || 55) || 55, 95),
+    Math.min(Number(opts.quality || 90) || 90, 95),
   );
 
   const ts = Date.now();
   const symbolToken = sanitizeSnapshotFileToken(symbol);
   const tfToken = sanitizeSnapshotFileToken(interval, "TF");
   const userId = sanitizeSnapshotFileToken(opts.userId || "default");
-  const watermarkTs = new Date(ts)
-    .toISOString()
-    .replace("T", " ")
-    .replace("Z", " UTC");
 
   // Simple naming: SYMBOL_TF.png — overwrites on re-capture
   const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
@@ -4164,11 +4496,11 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     const page = await context.newPage();
 
     const embedUrl = new URL("https://s.tradingview.com/widgetembed/");
-    embedUrl.searchParams.set("symbol", symbol);
+    embedUrl.searchParams.set("symbol", tvSymbol);
     embedUrl.searchParams.set("interval", interval);
     embedUrl.searchParams.set("theme", theme);
     embedUrl.searchParams.set("style", "1");
-    embedUrl.searchParams.set("timezone", "Etc/UTC");
+    embedUrl.searchParams.set("timezone", tz === "LOCAL" ? "Etc/UTC" : tz);
     embedUrl.searchParams.set("hide_side_toolbar", "1");
     embedUrl.searchParams.set("hide_top_toolbar", "1");
     embedUrl.searchParams.set("hide_legend", "1");
@@ -4237,13 +4569,13 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     });
 
     await page.evaluate(
-      ({ wmSymbol, wmTf, wmTs }) => {
+      ({ wmSymbol, wmTf }) => {
         try {
           const existing = document.getElementById("snapshot-watermark-top");
           if (existing) existing.remove();
           const watermark = document.createElement("div");
           watermark.id = "snapshot-watermark-top";
-          watermark.textContent = `${wmSymbol} ${wmTf} | ${wmTs}`;
+          watermark.textContent = `${wmSymbol} | ${wmTf}`;
           watermark.style.position = "fixed";
           watermark.style.left = "10px";
           watermark.style.top = "8px";
@@ -4264,7 +4596,7 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
           document.body.appendChild(watermark);
         } catch {}
       },
-      { wmSymbol: symbol, wmTf: interval, wmTs: watermarkTs },
+      { wmSymbol: symbol, wmTf: interval },
     );
 
     await page.waitForTimeout(1000);
@@ -4442,10 +4774,11 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
   }
 
   const st = fs.statSync(outPath);
-  return {
+  const result = {
     id: fileName.replace(/\.(png|jpe?g)$/i, ""),
     file_name: fileName,
     symbol,
+    tv_symbol: tvSymbol,
     timeframe: interval,
     provider: String(opts.provider || ""),
     theme,
@@ -4457,6 +4790,14 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     size_bytes: Number(st.size || 0),
     url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${encodeURIComponent(fileName)}`,
   };
+  emitSnapshotCreatedNotification({
+    userId: opts.userId || null,
+    symbol: result.symbol,
+    timeframe: result.timeframe,
+    fileName: result.file_name,
+    reused: false,
+  });
+  return result;
 }
 
 function isLikelyChromiumCrash(error) {
@@ -4528,9 +4869,13 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
       ? opts.symbols
       : [opts.symbol]
   )
-    .map((s) => String(s || "").trim())
+    .map((s) => {
+      const raw = String(s || "").trim();
+      if (/^\[object\s+promise\]$/i.test(raw)) return "";
+      return normalizeMarketDataSymbol(raw);
+    })
     .filter(Boolean)
-    .slice(0, 12);
+    .slice(0, 50);
   if (!symbols.length) {
     throw new Error("symbol or symbols is required");
   }
@@ -4569,74 +4914,94 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     if (mergeSnapshots) {
       // Deduplicate and sort timeframes: highest TF first
       const uniqueTfs = canonicalizeTfList(timeframes);
-      const results = [];
-      for (const symbol of symbols) {
+      // Keep grid capture single-threaded per batch to avoid Chromium context
+      // instability under cron load ("Target page/context/browser closed").
+      const maxConcurrent = 1;
+      const results = new Array(symbols.length);
+      let nextIdx = 0;
+
+      const captureOne = async (symbol) => {
+        const ext = opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
+        const brokerSymbol = await resolveTradingViewSymbolForCapture(
+          symbol,
+          opts.provider,
+        );
+        const outFileName = `${symbol}_MASTER.${ext}`;
+        const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
+        const tz = encodeURIComponent(
+          normalizeTvTimezone(opts.timezone, "Etc/UTC"),
+        );
+        const providerQ = encodeURIComponent(String(opts.provider || ""));
+        const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${encodeURIComponent(brokerSymbol)}?tfs=${uniqueTfs.join(",")}&theme=${opts.theme || "dark"}&tz=${tz}&provider=${providerQ}&capture=1`;
+
+        const context = await browser.newContext({
+          viewport: { width: 1920, height: 1080 },
+          deviceScaleFactor: 2,
+          ignoreHTTPSErrors: true,
+        });
         try {
-          const ext = opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
-          const outFileName = `${symbol}_MASTER.${ext}`;
-          const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
-          // Use internal loopback to fetch the grid HTML
-          const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${symbol}?tfs=${uniqueTfs.join(",")}&theme=${opts.theme || "dark"}`;
-
-          const context = await browser.newContext({
-            viewport: { width: 1920, height: 1080 },
-            deviceScaleFactor: 2, // High DPI for better AI recognition
-            ignoreHTTPSErrors: true,
-          });
           const page = await context.newPage();
-          console.log(
-            `[snapshot-grid] Capturing master grid for ${symbol} at ${gridUrl}`,
+          console.log(`[snapshot-grid] Capturing master grid for ${symbol}`);
+          const renderWaitMs = Math.max(
+            3000,
+            Math.floor(asNum(process.env.SNAPSHOT_GRID_RENDER_WAIT_MS, 9000)),
           );
-
-          await page.goto(gridUrl, {
-            waitUntil: "domcontentloaded",
-            timeout: 60000,
-          });
-          // Give embedded charts time to load iframes
-          await page.waitForTimeout(12000);
-          const gridWatermarkOk = await page.evaluate(() => {
-            const badges = [
-              ...document.querySelectorAll(".sym-time-badge,.tf-badge"),
-            ];
-            if (!badges.length) return false;
-            return badges.every((el) => {
-              const r = el.getBoundingClientRect();
-              const styles = window.getComputedStyle(el);
-              return (
-                r.width > 20 &&
-                r.height > 14 &&
-                styles.display !== "none" &&
-                styles.visibility !== "hidden"
-              );
-            });
-          });
-          if (!gridWatermarkOk) {
-            throw new Error(
-              "snapshot_grid_watermark_not_visible_before_capture",
+          const readyTimeoutMs = Math.max(
+            10000,
+            Math.floor(asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000)),
+          );
+          await page.goto(gridUrl, { waitUntil: "load", timeout: 90000 });
+          await page.waitForTimeout(renderWaitMs);
+          await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+          // Wait for at least one TradingView iframe to actually render chart content
+          try {
+            await page.waitForFunction(
+              () => {
+                const iframes = document.querySelectorAll("iframe");
+                return [...iframes].some((f) => {
+                  try { return f.contentDocument?.querySelector?.("canvas, .chart-markup-table"); } catch { return false; }
+                });
+              },
+              { timeout: readyTimeoutMs },
             );
-          }
-
+          } catch { /* continue even if iframes not fully loaded */ }
+          const ok = await page.evaluate(() => {
+            const badges = [...document.querySelectorAll(".grid-meta-badge,.tf-badge")];
+            if (!badges.length) return false;
+            return badges.every((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+          });
+          if (!ok) throw new Error("snapshot_grid_watermark_not_visible_before_capture");
           await page.screenshot({
             path: outPath,
             type: opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
             quality: opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
+            fullPage: true,
           });
-          await context.close();
-
-          results.push({
+          emitSnapshotCreatedNotification({
+            userId: opts.userId || null,
             symbol,
             timeframe: uniqueTfs.join(","),
-            status: "ok",
-            file_name: outFileName,
-            url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
-            master: true,
+            fileName: outFileName,
+            reused: false,
           });
+          return { symbol, timeframe: uniqueTfs.join(","), status: "ok", file_name: outFileName, url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`, master: true };
         } catch (e) {
           console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
-          results.push({ symbol, status: "error", error: e.message });
+          return { symbol, status: "error", error: e.message };
+        } finally {
+          await context.close();
         }
-      }
-      return results;
+      };
+
+      const worker = async () => {
+        while (nextIdx < symbols.length) {
+          const idx = nextIdx++;
+          results[idx] = await captureOne(symbols[idx]);
+        }
+      };
+
+      await Promise.all(Array.from({ length: maxConcurrent }, () => worker()));
+      return results.filter(Boolean);
     }
 
     const items = new Array(tasks.length);
@@ -6181,11 +6546,20 @@ async function anthropicMessagesWithFallback({
 }
 
 // Multi-provider AI call — routes to Claude, OpenAI, DeepSeek, or Gemini based on model name
-async function loadAiConfig() {
+function sanitizeRuntimeApiKey(raw) {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  // Masked keys from UI display should never be used for real API calls.
+  if (v.includes("****")) return "";
+  return v;
+}
+
+async function loadAiConfig(userId = "") {
   const db = await mt5InitBackend();
+  const uid = String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
   const { rows } = await db.query(
     "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
-    [CFG.mt5DefaultUserId],
+    [uid],
   );
   const cfg = {};
   for (const row of rows) {
@@ -6194,21 +6568,31 @@ async function loadAiConfig() {
       row?.data && typeof row.data === "object" ? row.data : {},
     );
     // New provider schema: { models, api_key, remain_credits }
-    cfg[name] = String(dec?.api_key || dec?.value || "").trim();
+    cfg[name] = sanitizeRuntimeApiKey(dec?.api_key || dec?.value || "");
   }
   // Fallback to env vars for providers not yet saved in UI settings
   if (!cfg.OPENROUTER_API_KEY)
-    cfg.OPENROUTER_API_KEY = envStr(process.env.OPENROUTER_API_KEY);
+    cfg.OPENROUTER_API_KEY = sanitizeRuntimeApiKey(
+      envStr(process.env.OPENROUTER_API_KEY),
+    );
   if (!cfg.DEEPSEEK_API_KEY)
-    cfg.DEEPSEEK_API_KEY = envStr(process.env.DEEPSEEK_API_KEY);
+    cfg.DEEPSEEK_API_KEY = sanitizeRuntimeApiKey(
+      envStr(process.env.DEEPSEEK_API_KEY),
+    );
   if (!cfg.ANTHROPIC_API_KEY)
-    cfg.ANTHROPIC_API_KEY = envStr(
+    cfg.ANTHROPIC_API_KEY = sanitizeRuntimeApiKey(
+      envStr(
       process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
+      ),
     );
   if (!cfg.OPENAI_API_KEY)
-    cfg.OPENAI_API_KEY = envStr(process.env.OPENAI_API_KEY);
+    cfg.OPENAI_API_KEY = sanitizeRuntimeApiKey(
+      envStr(process.env.OPENAI_API_KEY),
+    );
   if (!cfg.GEMINI_API_KEY)
-    cfg.GEMINI_API_KEY = envStr(process.env.GEMINI_API_KEY);
+    cfg.GEMINI_API_KEY = sanitizeRuntimeApiKey(
+      envStr(process.env.GEMINI_API_KEY),
+    );
   return cfg;
 }
 
@@ -6219,6 +6603,7 @@ async function callAiProvider({
   timeoutMs = 180000,
   provider: explicitProvider = "",
   apiKey: callerApiKey = "",
+  userId = "",
 }) {
   // If explicit provider is given (for OpenRouter), use it directly
   if (explicitProvider) {
@@ -6271,9 +6656,9 @@ async function callAiProvider({
   }
 
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
-  let apiKey = callerApiKey || "";
+  let apiKey = sanitizeRuntimeApiKey(callerApiKey || "");
   if (!apiKey) {
-    const cfg = await loadAiConfig();
+    const cfg = await loadAiConfig(userId);
     apiKey =
       provider === "deepseek"
         ? cfg.DEEPSEEK_API_KEY
@@ -6283,7 +6668,7 @@ async function callAiProvider({
             ? cfg.OPENAI_API_KEY
             : cfg.GEMINI_API_KEY;
   }
-  if (!apiKey)
+  if (!sanitizeRuntimeApiKey(apiKey))
     throw new Error(
       `${provider.toUpperCase()}_API_KEY is missing in Settings.`,
     );
@@ -6710,7 +7095,7 @@ async function healthCronConfigDiagnostics() {
         `
         SELECT COUNT(*)::int AS n
         FROM user_settings s
-        WHERE s.type='cron' AND s.data->>'cron_type'='SNAPSHOTS_CRON'
+        WHERE s.type='cron' AND s.data->>'cron_type' IN ('SNAPSHOTS_CRON','SNAPSHOT_CRON')
           AND UPPER(s.status)='ACTIVE'
       `,
       ),
@@ -8251,10 +8636,17 @@ END
     },
     async ackTradeV2(accountId, payload = {}) {
       trackSourceActivity(payload?.source_id || "mt5", true);
+      // Normalize broker statuses to DB-allowed values
+      const rawStatus = String(payload.execution_status || "").toUpperCase();
+      let execStatus = rawStatus;
+      if (execStatus === "FAIL") execStatus = "REJECTED";
+      if (execStatus === "EXPIRED") execStatus = "REJECTED";
+      if (execStatus === "START" || execStatus === "PLACED") execStatus = "PENDING";
+      payload.execution_status = execStatus;
       const now = mt5NowIso();
       const openedAt = payload.opened_at || payload.openedAt || null;
       const closedAt = payload.closed_at || payload.closedAt || null;
-      const isClosed = ["CLOSED", "TP", "SL", "CANCELLED"].includes(
+      const isClosed = ["CLOSED", "TP", "SL", "CANCELLED", "REJECTED"].includes(
         String(payload.execution_status || "").toUpperCase(),
       );
       const usedVolumeRaw = Number(
@@ -9893,14 +10285,19 @@ END
       if ((res.rowCount || 0) === 0)
         return { ok: false, error: "trade not found" };
       const row = res.rows[0];
+      const tradeSymbol = await pool
+        .query("SELECT symbol FROM trades WHERE sid = $1 LIMIT 1", [row.sid])
+        .then((r) => r.rows[0]?.symbol || "")
+        .catch(() => "");
 
       // Archive bars + snapshots on CLOSED/CANCELLED/REJECTED
       const newStatus = String(row.execution_status || "").toUpperCase();
+      if (["FILLED", "CLOSED"].includes(newStatus)) {
+        captureStatusSnapshot(row.sid, tradeSymbol, newStatus).catch((e) =>
+          console.error("[status-snapshot] manual update failed:", e.message),
+        );
+      }
       if (["CLOSED", "CANCELLED", "REJECTED"].includes(newStatus)) {
-        const tradeSymbol = await pool.query(
-          "SELECT symbol FROM trades WHERE sid = $1 LIMIT 1",
-          [row.sid],
-        ).then(r => r.rows[0]?.symbol || "").catch(() => "");
         archiveTradeStats(row.sid, tradeSymbol);
         moveTradeFolder(row.sid, "active", "closed");
       }
@@ -15842,16 +16239,9 @@ const appHandler = async (req, res) => {
   }
 
   if (["GET", "HEAD"].includes(req.method) && url.pathname === "/") {
-    return json(res, 200, {
-      ok: true,
-      service: "telegram-trading-bot",
-      version: SERVER_VERSION,
-      endpoints: {
-        health: "/health",
-        mt5Health: "/mt5/health",
-        signal: "/signal",
-      },
-    });
+    res.writeHead(302, { Location: "/v2/chart/snapshots-grid/" });
+    res.end();
+    return;
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
@@ -15920,19 +16310,19 @@ const appHandler = async (req, res) => {
         ctrader: {
           id: "Ctrader",
           connected: SOURCE_STATUS.ctrader.connected,
-          enabled: CFG.ctraderEnabled,
+          enabled: SOURCE_STATUS.ctrader.enabled,
           lastActivity: SOURCE_STATUS.ctrader.lastActivity,
         },
         mt5: {
           id: "MT5",
           connected: SOURCE_STATUS.mt5.connected,
-          enabled: CFG.mt5Enabled,
+          enabled: SOURCE_STATUS.mt5.enabled,
           lastActivity: SOURCE_STATUS.mt5.lastActivity,
         },
         binance: {
           id: "Binance",
           connected: SOURCE_STATUS.binance.connected,
-          enabled: CFG.binanceEnabled,
+          enabled: SOURCE_STATUS.binance.enabled,
           lastActivity: SOURCE_STATUS.binance.lastActivity,
         },
       },
@@ -15963,6 +16353,38 @@ const appHandler = async (req, res) => {
         },
       },
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/cron/snapshots/latest") {
+    const limit = Math.max(
+      1,
+      Math.min(50, Number(url.searchParams.get("limit") || 5) || 5),
+    );
+    const runs = await getHealthActivity(limit, "CRON:");
+    return json(res, 200, {
+      ok: true,
+      count: runs.length,
+      runs,
+    });
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/health/activity") {
+    const limit = Math.max(
+      1,
+      Math.min(500, Number(url.searchParams.get("limit") || 100) || 100),
+    );
+    const prefix = String(url.searchParams.get("prefix") || "").trim();
+    const items = await getHealthActivity(limit, prefix);
+    return json(res, 200, { ok: true, count: items.length, items });
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/health/symbol-activity") {
+    const limit = Math.max(
+      1,
+      Math.min(1000, Number(url.searchParams.get("limit") || 200) || 200),
+    );
+    const items = await getSymbolActivity(limit);
+    return json(res, 200, { ok: true, count: items.length, items });
   }
 
   if (req.method === "GET" && url.pathname === "/mt5/health") {
@@ -16715,8 +17137,30 @@ const appHandler = async (req, res) => {
           Array.isArray(payload?.snapshot_files) ? payload.snapshot_files : [],
           symbol,
         );
-        copiedBySid[sid] = copied;
-        persistedBySid[sid] = await persistTradeSnapshotFiles(sid, copied);
+        const analyzeFile = copyAnalyzeSnapshotToTradeSession(sid, symbol);
+        // Copy session files from analyze session folder if SIDs differ
+        const sessionSid = String(payload?.session_id || payload?.sid || "").trim();
+        if (sessionSid && sessionSid !== sid) {
+          const srcDir = path.join(TRADE_FILES_DIR, `trade-${sessionSid}`);
+          if (fs.existsSync(srcDir)) {
+            moveTradeFolder(sessionSid, "files", "active");
+            // Also copy to the new trade SID folder
+            const destDir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
+            if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+            for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+              const src = path.join(srcDir, entry.name);
+              const dest = path.join(destDir, entry.name);
+              try { fs.cpSync(src, dest, { recursive: true }); } catch {}
+            }
+          }
+        }
+        const mergedCopied = [
+          ...new Set(
+            [...(Array.isArray(copied) ? copied : []), ...(analyzeFile ? [analyzeFile] : [])].filter(Boolean),
+          ),
+        ];
+        copiedBySid[sid] = mergedCopied;
+        persistedBySid[sid] = await persistTradeSnapshotFiles(sid, mergedCopied);
       }
       return json(res, 200, {
         ok: true,
@@ -17844,7 +18288,24 @@ const appHandler = async (req, res) => {
 
       if (body.key && body.value !== undefined) {
         // Individual key update
-        const encValue = encryptData(String(body.value));
+        const keyName = normalizeAiApiKeyName(body.key);
+        let rawVal = String(body.value || "").trim();
+        if (ALLOWED_AI_API_KEY_NAMES.has(keyName) && isMaskedApiKeyLike(rawVal)) {
+          rawVal = "";
+          const existing = await db.query(
+            "SELECT data FROM user_settings WHERE user_id=$1 AND type='api_key' AND name='default' LIMIT 1",
+            [userId],
+          );
+          if (existing.rows.length) {
+            const dec = decryptObject(
+              existing.rows[0].data && typeof existing.rows[0].data === "object"
+                ? existing.rows[0].data
+                : {},
+            );
+            rawVal = String(dec?.[keyName] || "").trim();
+          }
+        }
+        const encValue = encryptData(rawVal);
         await db
           .query(
             `
@@ -17853,7 +18314,7 @@ const appHandler = async (req, res) => {
           ON CONFLICT (user_id, type, name)
           DO UPDATE SET data = user_settings.data || jsonb_build_object($2, $3), updated_at = NOW()
         `,
-            [userId, body.key, encValue],
+            [userId, keyName, encValue],
           )
           .catch(async () => {
             // Fallback for systems without the partial unique index
@@ -18090,8 +18551,25 @@ const appHandler = async (req, res) => {
               "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY",
           });
         }
-        const rawValue = String(payloadData.value || "").trim();
-        data = encryptObject({ value: rawValue });
+        const incomingValue = String(
+          payloadData.api_key ?? payloadData.value ?? "",
+        ).trim();
+        let rawValue = incomingValue;
+        if (!rawValue || isMaskedApiKeyLike(rawValue)) {
+          const rowRes = await db.query(
+            "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'api_key' AND name = $2 LIMIT 1",
+            [userId, settingName],
+          );
+          if (rowRes.rows.length) {
+            const dec = decryptObject(
+              rowRes.rows[0]?.data && typeof rowRes.rows[0].data === "object"
+                ? rowRes.rows[0].data
+                : {},
+            );
+            rawValue = String(dec?.api_key || dec?.value || "").trim();
+          }
+        }
+        data = encryptObject({ value: rawValue, api_key: rawValue });
       }
 
       const res2 = await db.query(
@@ -18172,7 +18650,8 @@ const appHandler = async (req, res) => {
         context,
       } = body;
       const db = await mt5InitBackend();
-      const userId = CFG.mt5DefaultUserId;
+      const sess = getUiSessionFromReq(req);
+      const userId = sess?.user_id || CFG.mt5DefaultUserId;
       const sessionId = `ai_gen_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       await (
         await mt5Backend()
@@ -18188,24 +18667,7 @@ const appHandler = async (req, res) => {
           finalPrompt = rows[0].data.prompt_text || rows[0].data.prompt;
       }
 
-      const configRes = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
-        [userId],
-      );
-      const config = {};
-      for (const row of configRes.rows || []) {
-        const name = normalizeAiApiKeyName(row?.name);
-        const dec = decryptObject(
-          row?.data && typeof row.data === "object" ? row.data : {},
-        );
-        if (ALLOWED_AI_API_KEY_NAMES.has(name) && dec?.value) {
-          config[name] = String(dec.value || "");
-        }
-        // Backward compatibility: old payloads may store key/value directly in data object.
-        if (dec && typeof dec === "object") {
-          Object.assign(config, dec);
-        }
-      }
+      const config = await loadUserApiKeysMap(userId);
 
       const { rows: tRows } = templateId
         ? await db.query("SELECT data FROM user_templates WHERE id = $1", [
@@ -18233,7 +18695,6 @@ const appHandler = async (req, res) => {
         )
         .replace(/{RR}/g, body.rr || "1:2");
 
-      const sess = getUiSessionFromReq(req);
       const userLang = sess?.metadata?.settings?.language || "English";
 
       finalPrompt += `\n\n${buildAiSchemaPromptText()}`;
@@ -18524,6 +18985,7 @@ const appHandler = async (req, res) => {
         width: body.width,
         height: body.height,
         theme: body.theme,
+        timezone: body.timezone || body.tz,
         lookbackBars: body.lookbackBars,
         format: body.format,
         quality: body.quality,
@@ -18571,6 +19033,7 @@ const appHandler = async (req, res) => {
         width: body.width,
         height: body.height,
         theme: body.theme,
+        timezone: body.timezone || body.tz,
         lookbackBars: body.lookbackBars,
         format: body.format,
         quality: body.quality,
@@ -18615,48 +19078,217 @@ const appHandler = async (req, res) => {
     req.method === "GET" &&
     url.pathname.startsWith("/v2/chart/snapshots-grid/")
   ) {
-    const symbol = url.pathname.split("/").pop() || "BTCUSD";
+    const symbolRaw = url.pathname.split("/").pop() || "BTCUSD";
+    const tfsFromForm = url.searchParams.getAll("tfs").filter(Boolean);
     const tfsRaw =
       url.searchParams.get("timeframes") ||
+      (tfsFromForm.length ? tfsFromForm.join(",") : "") ||
       url.searchParams.get("tfs") ||
       "15,60,240,D";
+    const symbolsParam = String(
+      url.searchParams.get("symbols") || url.searchParams.get("symbol") || "",
+    ).trim();
+    const provider = String(url.searchParams.get("provider") || "").trim();
+    const decodedPathSymbol = decodeURIComponent(symbolRaw);
+    const splitSymbols = (input) =>
+      (/\[object\s+promise\]/i.test(String(input || ""))
+        ? ""
+        : String(input || ""))
+        .split(/[\s,|;+]+|--|-/g)
+        .map((s) => normalizeMarketDataSymbol(s))
+        .filter(Boolean);
+    const pathSymbols = splitSymbols(decodedPathSymbol);
+    const querySymbols = splitSymbols(symbolsParam);
+    const symbols = [...new Set((querySymbols.length ? querySymbols : pathSymbols).slice(0, 8))];
+    if (!symbols.length) symbols.push("BTCUSD");
+
     // Canonicalize, dedup, sort descending
     const tfs = canonicalizeTfList(tfsRaw.split(",").filter(Boolean));
+
+    // Resolve broker-specific TV symbols for display/capture.
+    const resolvedTvSymbols = {};
+    for (const sym of symbols) {
+      resolvedTvSymbols[sym] = await resolveTradingViewSymbolForCapture(
+        sym,
+        provider,
+      );
+    }
 
     // Derived mappings from single canonical source
     const tvIntervals = tfs.map(tf => snapshotTfToTVInterval(tf));
     const displayTfs = tfs.map(tf => snapshotTfToLabel(tf));
 
     const theme = url.searchParams.get("theme") || "dark";
+    const captureMode =
+      asBool(url.searchParams.get("save_image"), false) ||
+      asBool(url.searchParams.get("capture"), false);
+    const selectedTz = normalizeTvTimezone(url.searchParams.get("tz"), "Etc/UTC");
+    const effectiveTz = selectedTz === "LOCAL" && captureMode ? "Etc/UTC" : selectedTz;
     const gridStamp = new Date()
       .toISOString()
       .replace("T", " ")
       .replace("Z", " UTC");
-    const symbolEsc = htmlEscape(symbol);
     const gridStampEsc = htmlEscape(gridStamp);
+    const sessionLabel = sessionKillerZoneLabelUTC(new Date());
+    const cols = tfs.length > 2 ? 2 : tfs.length;
+    const cellHeight = Math.max(
+      280,
+      Math.min(900, Number(url.searchParams.get("cell_h") || 420) || 420),
+    );
+    const tzLabel =
+      selectedTz === "LOCAL"
+        ? "Local"
+        : selectedTz === "America/New_York"
+          ? "NY"
+          : "UTC";
+    const sessionLabelShort = String(sessionLabel || "").replace(/Kill Zone/gi, "KZ");
+    const gridHeaderText = `${gridStampEsc} | ${htmlEscape(sessionLabelShort)} | ${tzLabel}`;
+    const tfChoices = ["1m", "5m", "15m", "1h", "4h", "1D", "1W"];
 
     res.writeHead(200, { "Content-Type": "text/html" });
     res.end(`
       <html>
         <head>
           <meta charset="utf-8">
-          <title>Grid ${symbol}</title>
+          <title>Grid ${htmlEscape(symbols.join("-"))}</title>
           <style>
             body {
               margin: 0;
               background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
-              overflow: hidden;
+              overflow: ${captureMode ? "visible" : "hidden"};
               font-family: sans-serif;
+            }
+            .grid-header {
+              height: 52px;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              padding: 6px 12px 0 12px;
+              box-sizing: border-box;
+              background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
+            }
+            .grid-meta-badge {
+              background: rgba(255,255,255,0.95);
+              color: #07111f;
+              padding: 4px 7px;
+              border-radius: 5px;
+              font-size: 11px;
+              font-family: monospace;
+              font-weight: 800;
+              letter-spacing: 0;
+              border: 2px solid rgba(0,0,0,0.88);
+              box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65);
+              pointer-events: none;
+              max-width: 60vw;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+            }
+            .grid-controls {
+              display: flex;
+              align-items: center;
+              margin-left: auto;
+              justify-content: flex-end;
+              gap: 8px;
+              flex-wrap: wrap;
+              opacity: 0;
+              pointer-events: none;
+              transform: translateY(-2px);
+              transition: opacity 140ms ease, transform 140ms ease;
+            }
+            .grid-header:hover .grid-controls,
+            .grid-controls:focus-within {
+              opacity: 1;
+              pointer-events: auto;
+              transform: translateY(0);
+            }
+            body.capture-mode .grid-controls {
+              opacity: 0 !important;
+              pointer-events: none !important;
+            }
+            .grid-controls input[type="text"] {
+              height: 28px;
+              min-width: 220px;
+              border-radius: 6px;
+              border: 1px solid rgba(148,163,184,0.45);
+              background: rgba(8,15,30,0.85);
+              color: #e5e7eb;
+              font-size: 12px;
+              padding: 0 8px;
+            }
+            .tf-pills {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+              flex-wrap: wrap;
+            }
+            .tf-pill {
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+              font-size: 11px;
+              color: #cbd5e1;
+              border: 1px solid rgba(148,163,184,0.35);
+              border-radius: 999px;
+              padding: 2px 7px;
+              background: rgba(15,23,42,0.7);
+            }
+            .tf-pill input {
+              margin: 0;
+            }
+            .apply-btn {
+              height: 28px;
+              border-radius: 6px;
+              border: 1px solid rgba(56,189,248,0.45);
+              background: rgba(56,189,248,0.14);
+              color: #bae6fd;
+              font-size: 12px;
+              font-weight: 700;
+              padding: 0 10px;
+              cursor: pointer;
+            }
+            .snapshot-btn {
+              height: 28px;
+              border-radius: 6px;
+              border: 1px solid rgba(16,185,129,0.5);
+              background: rgba(16,185,129,0.14);
+              color: #a7f3d0;
+              font-size: 12px;
+              font-weight: 700;
+              padding: 0 10px;
+              cursor: pointer;
+            }
+            .snapshot-status {
+              font-size: 11px;
+              color: #94a3b8;
+              min-width: 90px;
+              text-align: right;
+            }
+            .symbols-stack {
+              height: ${captureMode ? "auto" : "calc(100vh - 52px)"};
+              overflow-y: ${captureMode ? "visible" : "auto"};
+              padding: 8px;
+              box-sizing: border-box;
+              background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
+              display: flex;
+              flex-direction: column;
+              gap: 14px; /* visual separator between symbol groups */
+            }
+            .symbol-group {
+              border: 1px solid ${theme === "dark" ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.2)"};
+              border-radius: 6px;
+              padding: 6px;
+              background: ${theme === "dark" ? "rgba(11,18,32,0.55)" : "rgba(255,255,255,0.6)"};
             }
             .grid {
               display: grid;
-              grid-template-columns: repeat(${tfs.length > 2 ? 2 : tfs.length}, 1fr);
-              grid-auto-rows: 1fr;
-              width: 100vw;
-              height: 100vh;
+              grid-template-columns: repeat(${cols}, 1fr);
+              grid-auto-rows: minmax(${cellHeight}px, 1fr);
+              width: 100%;
+              min-height: ${captureMode ? "unset" : "calc(100vh - 74px)"};
               gap: 8px; /* Increased gap to help AI partition */
-              background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
-              padding: 8px; /* Outer padding */
+              background: transparent;
+              padding: 0;
               box-sizing: border-box;
             }
             .chart-cell {
@@ -18675,57 +19307,207 @@ const appHandler = async (req, res) => {
             }
             .tf-badge {
               position: absolute;
-              top: 15px; /* Moved down to avoid top chart edge */
-              right: 15px; /* Moved left to avoid right chart edge */
+              top: 11px;
+              left: 11px;
               background: rgba(255,255,255,0.95);
               color: #07111f;
-              padding: 6px 14px; /* Much larger padding */
-              border-radius: 6px;
-              font-size: 24px; /* Significantly larger text */
-              font-family: monospace; /* Monospace for clear 'm' vs 'M' */
+              padding: 3px 6px;
+              border-radius: 4px;
+              font-size: 9px;
+              font-family: monospace;
               font-weight: 800;
               letter-spacing: 0;
               z-index: 2147483647;
               pointer-events: none;
-              border: 2px solid rgba(0,0,0,0.88);
-              box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65);
-            }
-            .sym-time-badge {
-              position: absolute;
-              top: 12px;
-              left: 12px;
-              background: rgba(255,255,255,0.95);
-              color: #07111f;
-              padding: 7px 10px;
-              border-radius: 6px;
-              font-size: 15px;
-              font-family: monospace;
-              font-weight: 900;
-              letter-spacing: 0;
-              z-index: 2147483647;
-              border: 2px solid rgba(0,0,0,0.88);
-              box-shadow: 0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65);
-              pointer-events: none;
+              border: 1px solid rgba(0,0,0,0.88);
+              box-shadow: 0 0 0 1px rgba(255,255,255,0.65), 0 2px 8px rgba(0,0,0,0.65);
             }
           </style>
         </head>
-        <body>
-          <div class="grid">
-            ${tfs
-              .map(
-                (tf, i) => `
-              <div class="chart-cell">
-                <div class="sym-time-badge">${symbolEsc} | ${htmlEscape(displayTfs[i])} | ${gridStampEsc}</div>
-                <div class="tf-badge">${htmlEscape(displayTfs[i])}</div>
-                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(tvIntervals[i])}&theme=${encodeURIComponent(theme)}&style=1&timezone=Etc/UTC&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
+        <body class="${captureMode ? "capture-mode" : ""}">
+          <div class="grid-header">
+            <div class="grid-meta-badge">${gridHeaderText}</div>
+            <form id="grid-controls-form" class="grid-controls" method="GET" action="/v2/chart/snapshots-grid/${encodeURIComponent(symbolRaw)}">
+              <input type="hidden" name="theme" value="${htmlEscape(theme)}" />
+              <select name="tz" style="height:28px;border-radius:6px;border:1px solid rgba(148,163,184,0.45);background:rgba(8,15,30,0.85);color:#e5e7eb;font-size:12px;padding:0 8px;">
+                <option value="UTC" ${selectedTz === "Etc/UTC" ? "selected" : ""}>UTC</option>
+                <option value="NY" ${selectedTz === "America/New_York" ? "selected" : ""}>NY</option>
+                <option value="LOCAL" ${selectedTz === "LOCAL" ? "selected" : ""}>Local</option>
+              </select>
+              <select name="provider" style="height:28px;border-radius:6px;border:1px solid rgba(148,163,184,0.45);background:rgba(8,15,30,0.85);color:#e5e7eb;font-size:12px;padding:0 8px;">
+                <option value="" ${provider === "" ? "selected" : ""}>Empty</option>
+                <option value="ICMARKETS" ${provider.toUpperCase() === "ICMARKETS" ? "selected" : ""}>IC Markets</option>
+                <option value="OANDA" ${provider.toUpperCase() === "OANDA" ? "selected" : ""}>OANDA</option>
+                <option value="BINANCE" ${provider.toUpperCase() === "BINANCE" ? "selected" : ""}>Binance</option>
+              </select>
+              <input type="text" name="symbols" value="${htmlEscape(symbols.join(","))}" placeholder="XAUUSD,BTCUSD" />
+              <div class="tf-pills">
+                ${tfChoices
+                  .map((choice) => {
+                    const checked = tfs.some(
+                      (x) => String(x).toLowerCase() === String(choice).toLowerCase(),
+                    )
+                      ? "checked"
+                      : "";
+                    return `<label class="tf-pill"><input type="checkbox" name="tfs" value="${choice}" ${checked} />${choice}</label>`;
+                  })
+                  .join("")}
               </div>
+              <button class="apply-btn" type="submit">Apply</button>
+              <button class="snapshot-btn" id="snapshot-btn" type="button">Snapshot</button>
+              <span class="snapshot-status" id="snapshot-status"></span>
+            </form>
+          </div>
+          <div class="symbols-stack">
+            ${symbols
+              .map(
+                (sym) => `
+              <section class="symbol-group">
+                <div class="grid">
+                  ${tfs
+                    .map(
+                      (tf, i) => `
+                    <div class="chart-cell">
+                      <div class="tf-badge">${htmlEscape(sym)} | ${htmlEscape(displayTfs[i])}${provider ? ` | ${htmlEscape(String(provider).toUpperCase())}` : ""}</div>
+                      <iframe src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedTvSymbols[sym] || toTradingViewSymbol(sym, provider))}&interval=${encodeURIComponent(tvIntervals[i])}&theme=${encodeURIComponent(theme)}&style=1&timezone=${encodeURIComponent(effectiveTz)}&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
+                    </div>
+                  `,
+                    )
+                    .join("")}
+                </div>
+              </section>
             `,
               )
               .join("")}
           </div>
+          <script>
+            (function () {
+              const form = document.getElementById("grid-controls-form");
+              const btn = document.getElementById("snapshot-btn");
+              const statusEl = document.getElementById("snapshot-status");
+              const titleEl = document.querySelector(".grid-meta-badge");
+              if (!form || !btn || !statusEl) return;
+
+              // LOCAL timezone must be resolved client-side for browser view.
+              try {
+                const tzSelect = form.querySelector('select[name="tz"]');
+                const tzMode = String(tzSelect?.value || "").toUpperCase();
+                if (tzMode === "LOCAL") {
+                  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Etc/UTC";
+                  document.querySelectorAll(".chart-cell iframe").forEach((fr) => {
+                    const u = new URL(fr.src);
+                    u.searchParams.set("timezone", localTz);
+                    fr.src = u.toString();
+                  });
+                  if (titleEl) {
+                    const now = new Date();
+                    const time = now.toLocaleString("sv-SE", { timeZone: localTz, hour12: false }).replace(" ", " ");
+                    titleEl.textContent = time + " " + localTz + " | ${sessionLabelShort} | Local";
+                  }
+                }
+              } catch (_) {}
+
+              btn.addEventListener("click", async () => {
+                try {
+                  statusEl.textContent = "Saving...";
+                  const fd = new FormData(form);
+                  const symbolsRaw = String(fd.get("symbols") || "");
+                  const symbols = symbolsRaw
+                    .split(/[\s,|;+]+|--|-/g)
+                    .map((s) => String(s || "").trim().toUpperCase())
+                    .filter(Boolean)
+                    .slice(0, 8);
+                  const tfs = fd
+                    .getAll("tfs")
+                    .map((s) => String(s || "").trim())
+                    .filter(Boolean);
+                  const theme = String(fd.get("theme") || "dark").trim() || "dark";
+                  const tz = String(fd.get("tz") || "UTC").trim() || "UTC";
+                  const provider = String(fd.get("provider") || "").trim();
+                  if (!symbols.length || !tfs.length) {
+                    statusEl.textContent = "Need symbols + TFs";
+                    return;
+                  }
+                  const body = {
+                    symbols,
+                    tfs,
+                    theme,
+                    timezone: tz,
+                    provider,
+                    merge_snapshots: true,
+                  };
+                  const res = await fetch("/v2/chart/snapshot/batch", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok || data?.ok === false) {
+                    statusEl.textContent = "Failed";
+                    return;
+                  }
+                  const count = Array.isArray(data?.items) ? data.items.length : 0;
+                  statusEl.textContent = "Saved " + count;
+                } catch (_) {
+                  statusEl.textContent = "Failed";
+                }
+              });
+            })();
+          </script>
         </body>
       </html>
     `);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/chart/tv-tile") {
+    const symbolRaw = normalizeMarketDataSymbol(
+      url.searchParams.get("symbol") || "BTCUSD",
+    );
+    const provider = String(url.searchParams.get("provider") || "").trim();
+    const symbol = await resolveTradingViewSymbolForCapture(symbolRaw, provider);
+    const interval = String(url.searchParams.get("interval") || "60").trim();
+    const theme =
+      String(url.searchParams.get("theme") || "dark").toLowerCase() === "light"
+        ? "light"
+        : "dark";
+    const tz = normalizeTvTimezone(url.searchParams.get("tz"), "Etc/UTC");
+    const symbolEsc = htmlEscape(symbol);
+    const intervalEsc = htmlEscape(interval);
+    const themeEsc = htmlEscape(theme);
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: ${themeEsc === "dark" ? "#0b1220" : "#ffffff"}; overflow: hidden; }
+    .tradingview-widget-container, .tradingview-widget-container__widget { width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <div class="tradingview-widget-container">
+    <div class="tradingview-widget-container__widget"></div>
+    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+      {
+        "autosize": true,
+        "symbol": "${symbolEsc}",
+        "interval": "${intervalEsc}",
+        "timezone": "${htmlEscape(tz === "LOCAL" ? "Etc/UTC" : tz)}",
+        "theme": "${themeEsc}",
+        "style": "1",
+        "locale": "en",
+        "hide_top_toolbar": true,
+        "hide_side_toolbar": true,
+        "hide_legend": true,
+        "allow_symbol_change": false,
+        "save_image": false
+      }
+    </script>
+  </div>
+</body>
+</html>`);
     return;
   }
 
@@ -18872,7 +19654,7 @@ const appHandler = async (req, res) => {
                 timeframes: cached.missing_timeframes,
                 lookbackBars: bars,
                 format: body.format || "png",
-                quality: body.quality || 55,
+                quality: body.quality || 90,
                 captureConcurrency: body.captureConcurrency || 2,
               });
             }
@@ -19750,6 +20532,8 @@ const appHandler = async (req, res) => {
         useContextFiles = false;
       }
       if (useContextFiles) {
+        let snapshotCaptureTriggered = false;
+        let snapshotCaptureReason = "context_cache_hit";
         const symbol = contextSymbol;
         const timeframes = Array.isArray(body.timeframes)
           ? body.timeframes
@@ -19824,6 +20608,8 @@ const appHandler = async (req, res) => {
         }
         if (!usedSnapshotFiles.length) {
           try {
+            snapshotCaptureTriggered = true;
+            snapshotCaptureReason = "context_auto_capture_fallback";
             const autoCreated = await captureTradingViewSnapshotsBatch({
               symbol: contextBundle.symbol,
               provider: String(body.provider || "ICMARKETS"),
@@ -20058,6 +20844,8 @@ const appHandler = async (req, res) => {
           raw_response: rawResponse,
           parsed_json: parsedJson,
           auto_save_result: autoSaveResult,
+          snapshot_capture_triggered: snapshotCaptureTriggered,
+          snapshot_capture_reason: snapshotCaptureReason,
           source: "claude_context_cache",
           updated_time: Date.now(),
           auto_refresh: 0,
@@ -20166,6 +20954,10 @@ const appHandler = async (req, res) => {
       let files = Array.isArray(body.files)
         ? body.files.map((x) => String(x || "").trim()).filter(Boolean)
         : [];
+      let snapshotCaptureTriggered = false;
+      let snapshotCaptureReason = files.length
+        ? "request_files"
+        : "latest_snapshot_files";
       if (!files.length) {
         const allSnapshots = [];
         // Scan top-level snapshots/ and per-symbol subdirectory
@@ -20209,6 +21001,8 @@ const appHandler = async (req, res) => {
       }
       if (!files.length && requestedSymbols.length) {
         try {
+          snapshotCaptureTriggered = true;
+          snapshotCaptureReason = "snapshot_auto_capture_fallback";
           const created = await captureTradingViewSnapshotsBatch({
             symbols: requestedSymbols,
             provider: requestedProvider,
@@ -20438,6 +21232,7 @@ const appHandler = async (req, res) => {
         maxTokens: Number(body.max_tokens || 32000),
         timeoutMs: 180000,
         apiKey: requiredKeyValue,
+        userId,
       });
 
       const rawResponse = aiResult.rawText;
@@ -20611,6 +21406,8 @@ const appHandler = async (req, res) => {
         raw_response: rawResponse,
         parsed_json: parsedJson,
         auto_save_result: autoSaveResult,
+        snapshot_capture_triggered: snapshotCaptureTriggered,
+        snapshot_capture_reason: snapshotCaptureReason,
         source: "remote_api",
         updated_time: Date.now(),
         auto_refresh: 0,
@@ -21501,13 +22298,30 @@ const appHandler = async (req, res) => {
           parsedJson = extracted.parsed[0];
         }
       }
+      const responseSymbol = String(
+        parsedJson?.symbol || data?.parsed_json?.symbol || "",
+      ).trim();
+      const analyzeSnapshotFile = copyAnalyzeSnapshotToTradeSession(
+        respRef,
+        responseSymbol,
+      );
+      const snapshotDir = tradeSnapshotDir(respRef, responseSymbol);
+      const snapshotFiles = fs.existsSync(snapshotDir)
+        ? fs
+            .readdirSync(snapshotDir)
+            .filter((f) => /\.(png|jpe?g)$/i.test(String(f || "")))
+            .sort()
+        : [];
       return json(res, 200, {
         ok: true,
         session_id: respRef,
+        sid: respRef,
         parsed_json: parsedJson || null,
         raw_response: data.raw_response || "",
         model: data.model || "",
         timestamp: data.timestamp || null,
+        analyze_snapshot_file: analyzeSnapshotFile || null,
+        snapshot_files: snapshotFiles,
       });
     } catch (e) {
       return json(res, 500, { ok: false, error: String(e.message || e) });
@@ -21531,11 +22345,13 @@ const appHandler = async (req, res) => {
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       if (!tradeRef)
         return json(res, 400, { ok: false, error: "trade sid is required" });
-      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
-      if (!resolvedTrade?.sid)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      const sid = String(resolvedTrade.sid || "").trim();
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
+        () => null,
+      );
+      const sid = String(resolvedTrade?.sid || tradeRef || "").trim();
       migrateLegacyTradeSnapshots(sid);
+      const symbolHint = String(resolvedTrade?.symbol || "").trim();
+      const ensuredAnalyze = copyAnalyzeSnapshotToTradeSession(sid, symbolHint);
       const dir = tradeSnapshotDir(sid);
       const files = fs
         .readdirSync(dir)
@@ -21564,7 +22380,13 @@ const appHandler = async (req, res) => {
         .sort((a, b) =>
           String(b.created_at).localeCompare(String(a.created_at)),
         );
-      return json(res, 200, { ok: true, trade_sid: sid, items: files, files });
+      return json(res, 200, {
+        ok: true,
+        trade_sid: sid,
+        ensured_analyze_snapshot: ensuredAnalyze || null,
+        items: files,
+        files,
+      });
     } catch (error) {
       return json(res, 500, {
         ok: false,
@@ -21596,10 +22418,10 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "trade sid and filename are required",
         });
-      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null);
-      if (!resolvedTrade?.sid)
-        return json(res, 404, { ok: false, error: "trade not found" });
-      const sid = String(resolvedTrade.sid || "").trim();
+      const resolvedTrade = await mt5ResolveTradeRefV2(tradeRef, null).catch(
+        () => null,
+      );
+      const sid = String(resolvedTrade?.sid || tradeRef || "").trim();
       const safeName = normalizeSnapshotFileName(fileName);
       if (!safeName)
         return json(res, 400, { ok: false, error: "Invalid file" });
@@ -23489,6 +24311,18 @@ const appHandler = async (req, res) => {
           received: itemReceived, inserted: itemInserted, duplicated: itemDuplicated, rejected: itemRejected,
           latest_timestamp_after_sync: latestTs,
         });
+        if (itemInserted > 0) {
+          await upsertSymbolActivity(sym, {
+            bars: {
+              last_time: new Date().toISOString(),
+              tf: String(tf || ""),
+              inserted: itemInserted,
+              duplicated: itemDuplicated,
+              rejected: itemRejected,
+              latest_timestamp_after_sync: latestTs || null,
+            },
+          });
+        }
       }
 
       if (totalInserted > 0) {
@@ -23523,7 +24357,16 @@ const appHandler = async (req, res) => {
         if (!symbol || !tf) continue;
         const n = mergeBarsIntoCSV(symbol, tf, [bar]);
         inserted += n;
-        if (n > 0) symbolsSeen.add(symbol);
+        if (n > 0) {
+          symbolsSeen.add(symbol);
+          await upsertSymbolActivity(symbol, {
+            bars: {
+              last_time: new Date().toISOString(),
+              tf: String(tf || ""),
+              inserted: n,
+            },
+          });
+        }
       }
 
       if (inserted > 0) {
@@ -24672,9 +25515,9 @@ async function start() {
 }
 
 const SOURCE_STATUS = {
-  ctrader: { lastActivity: null, connected: false, enabled: false },
-  mt5: { lastActivity: null, connected: false, enabled: false },
-  binance: { lastActivity: null, connected: false, enabled: false },
+  ctrader: { lastActivity: null, connected: false, enabled: CFG.ctraderEnabled },
+  mt5:     { lastActivity: null, connected: false, enabled: CFG.mt5Enabled },
+  binance: { lastActivity: null, connected: false, enabled: CFG.binanceEnabled },
 };
 const CRON_STATE = {
   lastMarketDataRun: {}, // { [userId_name]: timestamp }
@@ -24867,14 +25710,11 @@ function initMarketDataQueue() {
 }
 
 async function mt5RunSnapshotsCron() {
-  if (!asBool(process.env.SNAPSHOTS_CRON_ENABLED ?? "true", true)) {
-    return null;
-  }
   const b = await mt5Backend();
   const res = await b.query(`
     SELECT s.*
     FROM user_settings s
-    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'SNAPSHOTS_CRON'
+    WHERE s.type = 'cron' AND s.data->>'cron_type' IN ('SNAPSHOTS_CRON','SNAPSHOT_CRON')
       AND UPPER(s.status) = 'ACTIVE'
   `);
   const configs = res.rows || [];
@@ -24892,7 +25732,7 @@ async function mt5RunSnapshotsCron() {
     const data = conf.data || {};
     if (!asBool(data.enabled ?? true, true)) continue;
     summary.configs++;
-    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+    const symbols = resolveCronSymbols(data);
     const excludeSymbols = new Set(
       (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
         .map((s) => String(s).toUpperCase().trim())
@@ -24904,26 +25744,30 @@ async function mt5RunSnapshotsCron() {
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     if (!filteredSymbols.length || !tfs.length) continue;
     const cadenceSec = Number(data.cadence_seconds || 3600);
+    const batchSize = Math.max(1, Number(data.symbols_per_tick || 1));
     const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
     if (now - lastRun < cadenceSec * 1000 - 5000) {
       summary.skipped++;
       continue;
     }
+    // Round-robin: rotate through symbols across ticks
+    const rrKey = `${userId}_${conf.name}_rr`;
+    let rrIdx = CRON_STATE.lastSnapshotsRun[rrKey] || 0;
+    if (rrIdx >= filteredSymbols.length) rrIdx = 0;
+    const tickSymbols = filteredSymbols.slice(rrIdx, rrIdx + batchSize);
+    CRON_STATE.lastSnapshotsRun[rrKey] = (rrIdx + batchSize) % filteredSymbols.length;
     console.log(
-      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${filteredSymbols.length} tfs=${tfs.length}`,
+      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length} (batch ${Math.floor(rrIdx/batchSize)+1})`,
     );
     CRON_STATE.lastSnapshotsRun[stateKey] = now;
     try {
-      const provider = String(data.provider || "tv");
-      const sessionPrefix = String(
-        data.session_prefix || sanitizeSessionPrefix(""),
-      );
+      const startedAt = Date.now();
+      const broker = String(data.broker || "");
       const results = await captureTradingViewSnapshotsBatch({
-        symbols: filteredSymbols,
+        symbols: tickSymbols,
         timeframes: tfs,
-        provider,
-        sessionPrefix,
+        provider: broker,
         lookbackBars: Number(data.lookback_bars || 200),
         format: String(data.format || "png"),
         quality: Number(data.quality || 90),
@@ -24932,17 +25776,101 @@ async function mt5RunSnapshotsCron() {
         height: Number(data.height || 800),
         userId,
       });
+      const created = [];
       if (Array.isArray(results)) {
         for (const r of results) {
-          if (r && r.id) {
+          if (r && r.status === "ok") {
             summary.captured++;
             summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`);
+            created.push({
+              symbol: r.symbol || "",
+              timeframe: r.timeframe || "",
+              file_name: r.file_name || "",
+              url: r.url || "",
+            });
+            await updateHealthActivity("SNAPSHOT", String(r.symbol || ""), {
+              status: "ok",
+              message: `${r.symbol || "?"} ${r.timeframe || ""}`,
+              timeframe: r.timeframe || "",
+              file_name: r.file_name || "",
+              url: r.url || "",
+              cron_name: conf.name,
+            });
+            await upsertSymbolActivity(String(r.symbol || ""), {
+              snapshot: {
+                last_time: new Date().toISOString(),
+                timeframe: r.timeframe || "",
+                file_name: r.file_name || "",
+                url: r.url || "",
+                cron_name: conf.name,
+              },
+            });
+            notificationManager.handle("CRON_SNAPSHOT", "item_done", {
+              user_id: userId,
+              event: "cron_snapshot_item_done",
+              message: `Snapshot done: ${String(r.symbol || "").toUpperCase()} (${r.timeframe || ""})`,
+              type: "info",
+              notification: true,
+              symbol: String(r.symbol || "").toUpperCase(),
+              timeframe: r.timeframe || "",
+              file_name: r.file_name || "",
+              url: r.url || "",
+              cron_name: String(conf.name || "SNAPSHOTS_CRON"),
+            });
           }
         }
       }
+      const createdSymbols = created
+        .map((x) => String(x.symbol || "").trim().toUpperCase())
+        .filter(Boolean);
+      await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
+        status: "ok",
+        message: `completed ${createdSymbols.join(", ") || "0 symbols"}`,
+        user_id: userId,
+        cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+        broker: broker || null,
+        tick_symbols: tickSymbols,
+        all_symbols_count: filteredSymbols.length,
+        timeframes: Array.isArray(tfs) ? tfs : [],
+        created_count: created.length,
+        created,
+        duration_ms: Date.now() - startedAt,
+      });
+      notificationManager.handle("CRON_SNAPSHOT", "completed", {
+        user_id: userId,
+        event: "cron_snapshot_completed",
+        message: `Snapshot cron completed: ${createdSymbols.join(", ") || "none"}`,
+        type: "info",
+        notification: true,
+        symbols: createdSymbols,
+        cron_name: String(conf.name || "SNAPSHOTS_CRON"),
+        created_count: created.length,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       summary.errors.push(msg);
+      await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
+        status: "error",
+        message: msg,
+        user_id: userId,
+        cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+        broker: String(data.broker || "") || null,
+        tick_symbols: tickSymbols,
+        all_symbols_count: filteredSymbols.length,
+        timeframes: Array.isArray(tfs) ? tfs : [],
+        created_count: 0,
+        created: [],
+        errors: [msg],
+      });
+      notificationManager.handle("CRON_SNAPSHOT", "failed", {
+        user_id: userId,
+        event: "cron_snapshot_failed",
+        message: `Snapshot cron failed (${String(conf.name || "SNAPSHOTS_CRON")}): ${msg}`,
+        type: "warning",
+        notification: true,
+        cron_name: String(conf.name || "SNAPSHOTS_CRON"),
+        error: msg,
+      });
       console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg);
     }
   }
@@ -24967,7 +25895,7 @@ async function mt5CronLoop() {
         const res = await Promise.race([
           fn(),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("timeout")), 120000),
+            setTimeout(() => reject(new Error("timeout")), 300000),
           ),
         ]);
         const elapsed = Math.round((Date.now() - t0) / 1000);
@@ -25059,7 +25987,7 @@ async function mt5RunMarketDataCron() {
     const userId = conf.user_id;
     const data = conf.data || {};
     if (!marketDataCronSettingEnabled(data)) continue;
-    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+    const symbols = resolveCronSymbols(data);
     const excludeSymbols = new Set(
       (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
         .map((s) => String(s).toUpperCase().trim())
@@ -25069,8 +25997,8 @@ async function mt5RunMarketDataCron() {
       (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
     );
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
-    const timezone = marketDataCronTimezone(data);
     if (!filteredSymbols.length || !tfs.length) continue;
+    const timezone = marketDataCronTimezone(data);
 
     // Cadence: use cadence_seconds from config, fall back to first TF period
     const defaultCadence = tfs.length ? parseTfTokenToSeconds(tfs[0]) : 60;
@@ -25175,7 +26103,7 @@ async function mt5RunAiAnalysisCron() {
   for (const conf of configs) {
     const userId = conf.user_id;
     const data = conf.data || {};
-    const symbols = Array.isArray(data.symbols) ? data.symbols : [];
+    const symbols = resolveCronSymbols(data);
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     const cadenceSec = Number(data.cadence_seconds || 3600);
 
