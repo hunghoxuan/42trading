@@ -8357,6 +8357,46 @@ END
       try {
         await client.query("BEGIN");
 
+        // 0. Re-pick expired leased trades first (broker ack never arrived)
+        const selExpired = await client.query(
+          `
+          SELECT * FROM trades
+          WHERE account_id = $1::TEXT
+            AND execution_status = 'PENDING'
+            AND dispatch_status = 'LEASED'
+            AND lease_expires_at < NOW()
+          ORDER BY created_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        `,
+          [aid],
+        );
+
+        if (selExpired.rows.length > 0) {
+          const row = selExpired.rows[0];
+          const leaseToken = mt5GenerateTimeSid();
+          await client.query(
+            `UPDATE trades SET dispatch_status = 'LEASED', lease_token = $1, lease_expires_at = NOW() + INTERVAL '1 minute', updated_at = NOW() WHERE sid = $2`,
+            [leaseToken, row.sid],
+          );
+          await client.query("COMMIT");
+          console.log(`[Poll] Re-leasing expired trade ${row.sid} (was stuck at LEASED)`);
+          return {
+            task_id: row.sid,
+            type: "OPEN",
+            symbol: row.symbol,
+            action: row.action,
+            volume: row.volume,
+            price: row.entry,
+            sl: row.sl,
+            tp: row.tp,
+            risk_money_planned: row.risk_money_planned,
+            sid: row.sid,
+            ticket: row.broker_trade_id,
+            raw_json: row.raw_json,
+          };
+        }
+
         // 1. Unified Trades table: Pending Actions (Mod/Close/Cancel) OR New Signals
         const selTrd = await client.query(
           `
