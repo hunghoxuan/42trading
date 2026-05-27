@@ -2354,6 +2354,43 @@ async function getRedisClient() {
   return REDIS_CONNECTING;
 }
 
+// ── Provider code resolver ──
+function resolveProviderCode(brokerName) {
+  if (!brokerName) return null;
+  const name = String(brokerName).toLowerCase();
+  // IC Markets
+  if (name.includes("ic market") || name.includes("icmarkets")) return "ICMARKETS";
+  // OANDA
+  if (name.includes("oanda")) return "OANDA";
+  // EightCap
+  if (name.includes("eightcap") || name.includes("8cap")) return "EIGHTCAP";
+  // Pepperstone
+  if (name.includes("pepperstone")) return "PEPPERSTONE";
+  // Forex.com
+  if (name.includes("forex.com") || name.includes("forexcom") || name.includes("gain capital")) return "FOREXCOM";
+  // FXCM
+  if (name.includes("fxcm")) return "FXCM";
+  // XM
+  if (name.includes("xm group") || name.includes("xm.com")) return "XM";
+  // Exness
+  if (name.includes("exness")) return "EXNESS";
+  // RoboForex
+  if (name.includes("roboforex")) return "ROBOFOREX";
+  // FP Markets
+  if (name.includes("fp market")) return "FPMARKETS";
+  // Admiral Markets
+  if (name.includes("admiral")) return "ADMIRAL";
+  // Vantage
+  if (name.includes("vantage")) return "VANTAGE";
+  // Tickmill
+  if (name.includes("tickmill")) return "TICKMILL";
+  // Fusion Markets
+  if (name.includes("fusion")) return "FUSIONMARKETS";
+  // Darwinex
+  if (name.includes("darwinex")) return "DARWINEX";
+  return null;
+}
+
 // ── Trade List Redis Cache (Pending / Filled) ──
 const TRADE_LIST_CACHE_TTL = 300; // 5 minutes
 
@@ -8985,7 +9022,10 @@ END
           payload.broker_name || existingMeta.broker_name || "",
         ),
         provider_code: String(
-          payload.provider_code || existingMeta.provider_code || "",
+          payload.provider_code ||
+          existingMeta.provider_code ||
+          resolveProviderCode(payload.broker_name) ||
+          "",
         ),
         build_version: String(
           payload.build_version || existingMeta.build_version || "",
