@@ -9342,6 +9342,8 @@ END
                 : [];
           const syncMeta = JSON.stringify({
             order_type: mt5NormalizeOrderTypeValue(it.order_type, "limit"),
+            broker_name: existingMeta.broker_name || "",
+            provider_code: existingMeta.provider_code || "",
             broker_data: {
               ...it, // Spread all processed fields (pips, lots, commission, etc.)
               position_id: ticketCandidates[0] || null,

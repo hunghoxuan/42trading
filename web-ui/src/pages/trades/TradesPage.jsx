@@ -1177,11 +1177,7 @@ export default function TradesPage() {
                 {sortedRows.map((t) => {
                   const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
                   const action = String(t.action || t.side || "").toUpperCase();
-                  const statusRaw =
-                    t.execution_status ||
-                    t.metadata?.broker_data?.execution_status ||
-                    t.metadata?.broker_data?.status ||
-                    "";
+                  const statusRaw = t.execution_status || "";
                   const stRaw = String(statusRaw).toUpperCase().trim();
                   const pnl = asNum(t.broker_pnl) ?? asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl) ?? asNum(t.pnl_money);
                   const tpPnl = asNum(
@@ -1826,6 +1822,7 @@ export default function TradesPage() {
                     onDetailTfTabChange: setDetailTfTab,
                     iframeTitle: `trade-tv-${detailTfTab}`,
                     symbol: selectedTrade.symbol,
+                    provider: selectedTrade.metadata?.provider_code || "",
                     interval:
                       selectedTrade.signal_tf || selectedTrade.chart_tf || "1h",
                     live: true,
@@ -1885,6 +1882,56 @@ export default function TradesPage() {
                       label: "Trade SID",
                       value: selectedTrade.sid || "-",
                       group: "source",
+                    },
+                    {
+                      label: "Broker Name",
+                      value: selectedTrade.metadata?.broker_name || "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Provider",
+                      value: selectedTrade.metadata?.provider_code || "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Dispatch",
+                      value: selectedTrade.dispatch_status || "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Lease",
+                      value: selectedTrade.lease_token
+                        ? selectedTrade.lease_token.slice(0, 12) + "..."
+                        : "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Lease Expires",
+                      value: selectedTrade.lease_expires_at
+                        ? showDateTime(selectedTrade.lease_expires_at)
+                        : "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Broker Vol",
+                      value: selectedTrade.broker_volume != null
+                        ? Number(selectedTrade.broker_volume).toFixed(2)
+                        : "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Broker PnL",
+                      value: selectedTrade.broker_pnl != null
+                        ? `$${Number(selectedTrade.broker_pnl).toFixed(2)}`
+                        : "-",
+                      group: "account",
+                    },
+                    {
+                      label: "Broker Margin",
+                      value: selectedTrade.broker_margin != null
+                        ? `$${Number(selectedTrade.broker_margin).toFixed(2)}`
+                        : "-",
+                      group: "account",
                     },
                     {
                       label: "Chart TF",
