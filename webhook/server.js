@@ -10236,78 +10236,78 @@ END
         const idParts = [];
         if (numericIds.length) {
           params.push(numericIds);
-          idParts.push(`id = ANY($${params.length}::bigint[])`);
+          idParts.push(`t.id = ANY($${params.length}::bigint[])`);
         }
         params.push(tradeIds);
-        idParts.push(`sid = ANY($${params.length}::text[])`);
-        idParts.push(`sid = ANY($${params.length}::text[])`);
+        idParts.push(`t.sid = ANY($${params.length}::text[])`);
+        idParts.push(`t.sid = ANY($${params.length}::text[])`);
         clauses.push(`(${idParts.join(" OR ")})`);
       }
       if (filters.user_id) {
         params.push(filters.user_id);
-        clauses.push(`user_id = $${params.length}`);
+        clauses.push(`t.user_id = $${params.length}`);
       }
       if (filters.account_id) {
         params.push(filters.account_id);
-        clauses.push(`account_id = $${params.length}`);
+        clauses.push(`t.account_id = $${params.length}`);
       }
       if (filters.source_id) {
         params.push(filters.source_id);
-        clauses.push(`source_id = $${params.length}`);
+        clauses.push(`t.source_id = $${params.length}`);
       }
       if (filters.dispatch_status) {
         params.push(filters.dispatch_status);
-        clauses.push(`dispatch_status = $${params.length}`);
+        clauses.push(`t.dispatch_status = $${params.length}`);
       }
       if (filters.execution_status) {
         params.push(filters.execution_status);
-        clauses.push(`execution_status = $${params.length}`);
+        clauses.push(`t.execution_status = $${params.length}`);
       }
       if (filters.created_from) {
         params.push(filters.created_from);
-        clauses.push(`created_at >= $${params.length}`);
+        clauses.push(`t.created_at >= $${params.length}`);
       }
       if (filters.created_to) {
         params.push(filters.created_to);
-        clauses.push(`created_at <= $${params.length}`);
+        clauses.push(`t.created_at <= $${params.length}`);
       }
       if (filters.symbol) {
         params.push(filters.symbol);
-        clauses.push(`symbol = $${params.length}`);
+        clauses.push(`t.symbol = $${params.length}`);
       }
       const actionFilter = filters.action || filters.side;
       if (actionFilter) {
         params.push(actionFilter);
-        clauses.push(`action = $${params.length}`);
+        clauses.push(`t.action = $${params.length}`);
       }
       if (filters.entry_model) {
         params.push(filters.entry_model);
-        clauses.push(`entry_model = $${params.length}`);
+        clauses.push(`t.entry_model = $${params.length}`);
       }
       if (filters.chart_tf) {
         params.push(filters.chart_tf);
-        clauses.push(`chart_tf = $${params.length}`);
+        clauses.push(`t.chart_tf = $${params.length}`);
       }
       if (filters.q) {
         params.push(`%${String(filters.q)}%`);
         const p = `$${params.length}`;
         clauses.push(`(
-          sid ILIKE ${p}
-          OR id::text ILIKE ${p}
-          OR sid ILIKE ${p}
-          OR sid ILIKE ${p}
-          OR broker_trade_id ILIKE ${p}
-          OR symbol ILIKE ${p}
-          OR account_id ILIKE ${p}
-          OR source_id ILIKE ${p}
-          OR action ILIKE ${p}
-          OR entry_model ILIKE ${p}
-          OR note ILIKE ${p}
+          t.sid ILIKE ${p}
+          OR t.id::text ILIKE ${p}
+          OR t.sid ILIKE ${p}
+          OR t.sid ILIKE ${p}
+          OR t.broker_trade_id ILIKE ${p}
+          OR t.symbol ILIKE ${p}
+          OR t.account_id ILIKE ${p}
+          OR t.source_id ILIKE ${p}
+          OR t.action ILIKE ${p}
+          OR t.entry_model ILIKE ${p}
+          OR t.note ILIKE ${p}
         )`);
       }
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       const countRes = await pool.query(
-        `SELECT COUNT(*) FROM trades ${where}`,
+        `SELECT COUNT(*) FROM trades t ${where}`,
         params,
       );
       params.push(safePageSize, offset);
