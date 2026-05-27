@@ -8651,13 +8651,29 @@ END
         );
         const out = [];
         for (const row of sel.rows || []) {
+          // Auto-reject trades that have been re-leased too many times without ack
+          const retryCount =
+            (row.metadata?.lease_retry_count || 0) +
+            (row.dispatch_status === "LEASED" && row.lease_expires_at < new Date().toISOString() ? 1 : 0);
+          if (retryCount >= 3) {
+            await client.query(
+              `UPDATE trades SET execution_status = 'REJECTED', dispatch_status = 'CONSUMED', updated_at = NOW() WHERE sid = $1`,
+              [row.sid],
+            );
+            console.log(`[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`);
+            continue;
+          }
           const leaseToken = crypto.randomUUID();
           const leaseExpiresAt = new Date(
             Date.now() + leaseSec * 1000,
           ).toISOString();
+          const updatedMeta = {
+            ...(row.metadata || {}),
+            lease_retry_count: retryCount,
+          };
           await client.query(
-            `UPDATE trades SET dispatch_status = 'LEASED', lease_token = $1, lease_expires_at = $2, updated_at = NOW() WHERE sid = $3`,
-            [leaseToken, leaseExpiresAt, row.sid],
+            `UPDATE trades SET dispatch_status = 'LEASED', lease_token = $1, lease_expires_at = $2, metadata = $3, updated_at = NOW() WHERE sid = $4`,
+            [leaseToken, leaseExpiresAt, JSON.stringify(updatedMeta), row.sid],
           );
           out.push({
             ...row,
