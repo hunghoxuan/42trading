@@ -9380,6 +9380,8 @@ END
                 order_type = COALESCE($12::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
                 broker_trade_id = COALESCE(NULLIF($9::text, ''), broker_trade_id),
+                sl = COALESCE(NULLIF(NULLIF($22::numeric, 0), -1), sl),
+                tp = COALESCE(NULLIF(NULLIF($23::numeric, 0), -1), tp),
                 metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
                 opened_at = COALESCE($5::timestamptz, opened_at),
                 closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),

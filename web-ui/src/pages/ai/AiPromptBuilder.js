@@ -1,7 +1,6 @@
 import TRADE_PLAN_SCHEMA from "../../../../config/trade_plan_schema.json";
 import GUIDE_SYSTEM from "../../../../config/guide_system.md?raw";
 import SCHEMA_ENUMS from "../../../../config/schema_enums.json";
-import RESPONSE_MAPPING from "../../../../config/response_mapping.json";
 
 // AI Prompt Builder — constants and functions for building AI analysis prompts
 
@@ -814,6 +813,8 @@ export const DEFAULT_CONFIG = {
   lookbackBars: "300",
   snapshotQuality: "80",
   mergeSnapshots: true,
+  broker: "",
+  refreshSnapshot: true,
   strategies: ["SMC", "Price Action", "Market Structure"],
   profile: "day",
   htf_tfs: [...PROFILE_PRESETS.day.htf_tfs],
@@ -1147,5 +1148,3 @@ export function buildJsonConfig(cfg) {
     2,
   );
 }
-
-export { RESPONSE_MAPPING };

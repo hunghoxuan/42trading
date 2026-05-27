@@ -41,7 +41,6 @@ import {
   buildJsonConfig,
   buildSchemaString,
 } from "./AiPromptBuilder";
-import RESPONSE_MAPPING_RAW from "../../../../config/response_mapping.json";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
@@ -1024,9 +1023,7 @@ function extractByRulePath(root, rulePath) {
 }
 
 function collectTradePlansByRules(root) {
-  const paths = Array.isArray(RESPONSE_MAPPING_RAW?.trade_plan_paths)
-    ? RESPONSE_MAPPING_RAW.trade_plan_paths
-    : DEFAULT_TRADE_PLAN_PATHS;
+  const paths = DEFAULT_TRADE_PLAN_PATHS;
   const out = [];
   for (const p of paths) {
     const hits = extractByRulePath(root, p);
@@ -2634,6 +2631,32 @@ function enrichParsedAnalysis(rawText, parsed) {
   return res;
 }
 
+// Fields that belong at root level, not duplicated inside trade_plan items
+const SHARED_ROOT_FIELDS = [
+  "context",
+  "execution_plan",
+  "risk_management",
+  "execution_verdict",
+  "top_down_analysis",
+  "institutional_safety_filters",
+  "snapshot_files",
+  "snapshot_folder",
+];
+
+function stripSharedFromTradePlans(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  if (!Array.isArray(obj.trade_plan)) return obj;
+  const cleaned = obj.trade_plan.map((item) => {
+    if (!item || typeof item !== "object") return item;
+    const stripped = { ...item };
+    for (const key of SHARED_ROOT_FIELDS) {
+      delete stripped[key];
+    }
+    return stripped;
+  });
+  return { ...obj, trade_plan: cleaned };
+}
+
 function extractSignalsFromAnalysis(parsed, fallback = {}) {
   if (!parsed || typeof parsed !== "object") return [];
   const rows = [];
@@ -2859,6 +2882,8 @@ export default function ChartSnapshotsPage() {
       lookbackBars: cfg.lookbackBars,
       snapshotQuality: cfg.snapshotQuality,
       mergeSnapshots: cfg.mergeSnapshots,
+      broker: cfg.broker,
+      refreshSnapshot: cfg.refreshSnapshot !== false,
     });
     api
       .upsertSetting({
@@ -2868,6 +2893,8 @@ export default function ChartSnapshotsPage() {
           lookbackBars: cfg.lookbackBars,
           snapshotQuality: cfg.snapshotQuality,
           mergeSnapshots: cfg.mergeSnapshots,
+          broker: cfg.broker,
+          refreshSnapshot: cfg.refreshSnapshot !== false,
         },
       })
       .then(() => {
@@ -2883,13 +2910,22 @@ export default function ChartSnapshotsPage() {
         setActionStatus({ action: "save", type: "error", text: msg });
         showToast({ message: msg, type: "error" });
       });
-  }, [cfg.lookbackBars, cfg.snapshotQuality, cfg.mergeSnapshots]);
+  }, [
+    cfg.lookbackBars,
+    cfg.snapshotQuality,
+    cfg.mergeSnapshots,
+    cfg.broker,
+    cfg.refreshSnapshot,
+  ]);
 
   const [templates, setTemplates] = useState(() => loadTemplates());
   const [templateId, setTemplateId] = useState(DEFAULT_TEMPLATE_ID);
   const [templateName, setTemplateName] = useState("");
 
-  const [provider, setProvider] = useState("ICMARKETS");
+  const [provider, setProvider] = useState(
+    () => String(DEFAULT_CONFIG?.broker || "").toUpperCase(),
+  );
+  const autoSaveTimerRef = useRef(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -3047,13 +3083,18 @@ export default function ChartSnapshotsPage() {
             data.raw_response || "",
             data.parsed_json,
           );
-          setAnalysisParsed(parsed);
-          setAnalysisJson(JSON.stringify(data.parsed_json, null, 2));
-          setAnalysisRaw(data.raw_response || "");
-          setPosition(extractPositionFromAnalysis(parsed));
-          // Set cfg.symbol so navigation buttons use the right symbol (no nav redirect)
+          const raw = String(data.raw_response || "");
           const sym = normalizeWatchSymbol(data.parsed_json?.symbol || "");
-          if (sym && !cfg.symbol) {
+          const currentSym = normalizeWatchSymbol(cfg.symbol || "");
+          const needsSymbolSwitch = Boolean(sym && sym !== currentSym);
+          if (needsSymbolSwitch) {
+            // Preserve response payload across cfg.symbol reset effect.
+            pendingHydrateRef.current = {
+              raw,
+              parsed: parsed && typeof parsed === "object" ? parsed : null,
+              usedFiles: [],
+              displayFiles: [],
+            };
             setCfg((prev) => {
               const prevSymbols = Array.isArray(prev?.symbols)
                 ? prev.symbols
@@ -3064,12 +3105,20 @@ export default function ChartSnapshotsPage() {
                 symbols: [sym, ...prevSymbols.filter((x) => x !== sym)],
               };
             });
+          } else {
+            setAnalysisParsed(parsed);
+            setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(data.parsed_json), null, 2));
+            setAnalysisRaw(raw);
+            setPosition(extractPositionFromAnalysis(parsed));
           }
+          setAnalyzeSessionId(
+            String(data?.sid || data?.session_id || tradeSidFromRoute || "").trim(),
+          );
         }
       } catch (_) {}
     };
     load();
-  }, [tradeSidFromRoute]);
+  }, [tradeSidFromRoute, cfg.symbol]);
   const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
@@ -3080,9 +3129,6 @@ export default function ChartSnapshotsPage() {
   const [schemaUserDraft, setSchemaUserDraft] = useState(SCHEMA_USER_DEFAULT);
   const [guideSubTab, setGuideSubTab] = useState("user");
   const [schemaSubTab, setSchemaSubTab] = useState("user");
-  const [responseMappingDraft, setResponseMappingDraft] = useState(() =>
-    JSON.stringify(RESPONSE_MAPPING_RAW, null, 2),
-  );
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
@@ -3095,6 +3141,15 @@ export default function ChartSnapshotsPage() {
   const autoFlowRef = useRef({ runId: 0, key: "", timer: null });
   const lastAutoAnalyzeRef = useRef("");
   const tfConfig = useMemo(() => getEffectiveTfConfig(cfg), [cfg]);
+  const chartUiConfigKey = useMemo(
+    () =>
+      `${String(provider || "").toUpperCase()}|${String(cfg.lookbackBars || "300")}|${(Array.isArray(browserTfs) ? browserTfs : []).join(",")}`,
+    [provider, cfg.lookbackBars, browserTfs],
+  );
+  useEffect(() => {
+    const nextBroker = String(cfg?.broker || "").trim().toUpperCase();
+    if (nextBroker !== provider) setProvider(nextBroker);
+  }, [cfg?.broker, provider]);
 
   const tvSymbol = useMemo(() => {
     const raw = String(cfg.symbol || "")
@@ -3102,7 +3157,7 @@ export default function ChartSnapshotsPage() {
       .toUpperCase();
     if (!raw) return "";
 
-    let p = String(provider || "ICMARKETS").toUpperCase();
+    let p = String(provider || "").toUpperCase();
     let s = raw;
     if (raw.includes(":")) {
       const parts = raw.split(":");
@@ -3133,6 +3188,7 @@ export default function ChartSnapshotsPage() {
     };
 
     const fixed = FIXES[p]?.[s] || s;
+    if (!p) return fixed;
     return `${p}:${fixed}`;
   }, [cfg.symbol, provider]);
 
@@ -3229,7 +3285,7 @@ export default function ChartSnapshotsPage() {
       if (p.raw != null) setAnalysisRaw(String(p.raw || ""));
       if (p.parsed && typeof p.parsed === "object") {
         setAnalysisParsed(p.parsed);
-        setAnalysisJson(JSON.stringify(p.parsed, null, 2));
+        setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(p.parsed), null, 2));
         setPosition(extractPositionFromAnalysis(p.parsed));
       }
       if (Array.isArray(p.usedFiles)) setUsedFiles(p.usedFiles);
@@ -3464,6 +3520,18 @@ export default function ChartSnapshotsPage() {
       }
     }
   };
+  const saveAnalyseSettingsSilent = useCallback(
+    (data = {}) => {
+      api
+        .upsertSetting({
+          type: "settings",
+          name: "ANALYSE_SETTINGS",
+          data,
+        })
+        .catch(() => {});
+    },
+    [],
+  );
   const setSelectedSymbols = (symbols = []) => {
     const next = [
       ...new Set(
@@ -3961,6 +4029,7 @@ export default function ChartSnapshotsPage() {
         ? context.context_files
         : [];
       const useContextFiles = contextFiles.length > 0;
+      const shouldRefreshSnapshot = cfg.refreshSnapshot !== false;
       const payload = {
         model: selectedModel,
         ai_provider: analysisSource,
@@ -3975,9 +4044,9 @@ export default function ChartSnapshotsPage() {
         use_context_files: useContextFiles,
         context_mode: useContextFiles ? "claude" : "none",
         context_files: contextFiles,
-        // Reduce stale context/snapshot impact on TP/SL output quality.
+        // Keep bars fresh, but do NOT force snapshot recapture when valid snapshots already exist.
         force_refresh: true,
-        snapshot_refresh: true,
+        snapshot_refresh: shouldRefreshSnapshot,
       };
       if (autoSaveMode === "signals" || autoSaveMode === "trades") {
         payload.auto_save = autoSaveMode;
@@ -4006,44 +4075,46 @@ export default function ChartSnapshotsPage() {
           "Symbols context is empty. Select at least one symbol before Analyze.",
         );
       }
-      if (!payload.files || !payload.files.length) {
-        if (payload.symbols.length) {
-          try {
-            const { promise: snapPromise } = NotificationHub.track(
-              "snapshot",
-              { symbol: activeSymbols.join(",") },
-              () =>
-                api.chartSnapshotCreateBatch({
-                  symbols: activeSymbols,
-                  provider: provider || "ICMARKETS",
-                  session_prefix: activeSessionPrefix,
-                  tfs:
-                    Array.isArray(snapshotTfs) && snapshotTfs.length
-                      ? snapshotTfs
-                      : ["D", "240", "15", "5"],
-                  lookbackBars: resolveLookbackBarsValue(
-                    cfg.lookbackBars,
-                    timeframe,
-                  ),
-                  quality: Number(cfg.snapshotQuality || 80) || 80,
-                  merge_snapshots: cfg.mergeSnapshots !== false,
-                }),
-            );
-            const batch = await snapPromise;
-            const freshFiles = Array.isArray(batch?.items)
-              ? batch.items
-                  .map((x) => String(x?.file_name || "").trim())
-                  .filter(Boolean)
-              : [];
-            if (!batch._notify_extra) {
-              batch._notify_extra = freshFiles.length
-                ? `Re-captured ${freshFiles.length} snapshots`
-                : "No snapshots captured";
-            }
-            if (freshFiles.length) payload.files = freshFiles;
-          } catch {
-            // Backend will still validate symbol-matched snapshots and return clear error if unavailable.
+      const mustCaptureBeforeAnalyze =
+        payload.symbols.length &&
+        (shouldRefreshSnapshot || !payload.files || !payload.files.length);
+      if (mustCaptureBeforeAnalyze) {
+        try {
+          const { promise: snapPromise } = NotificationHub.track(
+            "snapshot",
+            { symbol: activeSymbols.join(",") },
+            () =>
+              api.chartSnapshotCreateBatch({
+                symbols: activeSymbols,
+                provider: provider || "",
+                session_prefix: activeSessionPrefix,
+                tfs:
+                  Array.isArray(snapshotTfs) && snapshotTfs.length
+                    ? snapshotTfs
+                    : ["D", "240", "15", "5"],
+                lookbackBars: resolveLookbackBarsValue(
+                  cfg.lookbackBars,
+                  timeframe,
+                ),
+                quality: Number(cfg.snapshotQuality || 80) || 80,
+                merge_snapshots: cfg.mergeSnapshots !== false,
+                force: shouldRefreshSnapshot,
+              }),
+          );
+          const batch = await snapPromise;
+          const freshFiles = Array.isArray(batch?.items)
+            ? batch.items
+                .map((x) => String(x?.file_name || "").trim())
+                .filter(Boolean)
+            : [];
+          if (!batch._notify_extra) {
+            batch._notify_extra = freshFiles.length
+              ? `Captured ${freshFiles.length} snapshots`
+              : "No snapshots captured";
           }
+          if (freshFiles.length) payload.files = freshFiles;
+        } catch {
+          // Backend will still validate symbol-matched snapshots and return clear error if unavailable.
         }
       }
 
@@ -4179,7 +4250,7 @@ export default function ChartSnapshotsPage() {
         //           parsed.symbol = inputSymbol;
         //         }
         setAnalysisParsed(parsed);
-        setAnalysisJson(JSON.stringify(parsed, null, 2));
+        setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(parsed), null, 2));
         if (!hasRequiredPlanLevels(parsed)) {
           throw new Error(
             "Invalid analysis response: entry, tp, sl are required in trade_plan.",
@@ -4618,14 +4689,24 @@ export default function ChartSnapshotsPage() {
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
           source_id:
-            String(
-              activePosition.source_id ||
-                payload.source_id ||
-                payload.source ||
-                "manual",
-            )
-              .trim()
-              .toLowerCase() || "manual",
+            (() => {
+              const aiSource =
+                analysisSource && String(analysisSource).startsWith("ai_")
+                  ? String(analysisSource).trim().toLowerCase()
+                  : "";
+              const payloadSource = String(
+                payload.source_id || payload.source || "",
+              )
+                .trim()
+                .toLowerCase();
+              const activeSource = String(
+                activePosition.source_id || activePosition.source || "",
+              )
+                .trim()
+                .toLowerCase();
+              if (aiSource) return aiSource;
+              return payloadSource || activeSource || "manual";
+            })(),
           strategy:
             String(activePosition.strategy || payload.strategy || "PA").trim() ||
             "PA",
@@ -4634,6 +4715,7 @@ export default function ChartSnapshotsPage() {
               activePosition.entry_model || payload.entry_model || "S/R",
             ).trim() || "S/R",
           session_prefix: activeSessionPrefix || undefined,
+          session_id: analyzeSessionId || undefined,
           sid:
             analyzeSessionId ||
             (() => {
@@ -4852,10 +4934,14 @@ export default function ChartSnapshotsPage() {
       templateId && templateId !== DEFAULT_TEMPLATE_ID
         ? templates.find((x) => x.id === templateId)
         : null;
+    const trimmedName = String(templateName || "").trim();
+    if (!existingTemplate && !trimmedName) {
+      setStatus({ type: "error", text: "Template name is required." });
+      return;
+    }
     const name = existingTemplate
       ? existingTemplate.name
-      : String(templateName || "").trim() ||
-        `${cfg.symbol} ${cfg.strategies.join("+")}`;
+      : trimmedName || `${cfg.symbol} ${cfg.strategies.join("+")}`;
     const payload = {
       ...(templateId && templateId !== DEFAULT_TEMPLATE_ID
         ? { template_id: templateId }
@@ -5275,7 +5361,7 @@ export default function ChartSnapshotsPage() {
     }
     const timer = setTimeout(async () => {
       try {
-        const res = await api.chartSymbols(q, "ICMARKETS", 20);
+        const res = await api.chartSymbols(q, provider || "ICMARKETS", 20);
         if (Array.isArray(res?.symbols)) {
           setApiSymbolOptions(res.symbols.map((s) => s.symbol || s));
         }
@@ -5284,7 +5370,32 @@ export default function ChartSnapshotsPage() {
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [searchTerm, provider]);
+
+  useEffect(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveAnalyseSettingsSilent({
+        lookbackBars: cfg.lookbackBars,
+        snapshotQuality: cfg.snapshotQuality,
+        mergeSnapshots: cfg.mergeSnapshots,
+        refreshSnapshot: cfg.refreshSnapshot !== false,
+        broker: provider || "",
+        browserTfs: Array.isArray(browserTfs) ? browserTfs : [],
+      });
+    }, 250);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [
+    cfg.lookbackBars,
+    cfg.snapshotQuality,
+    cfg.mergeSnapshots,
+    cfg.refreshSnapshot,
+    provider,
+    browserTfs,
+    saveAnalyseSettingsSilent,
+  ]);
 
   useEffect(() => {
     if (!effectiveParsed || typeof effectiveParsed !== "object") return;
@@ -5670,22 +5781,6 @@ export default function ChartSnapshotsPage() {
             rows={30}
             value={jsonConfigText}
             readOnly
-          />
-        </>
-      ) : null}
-      {settingsTab === "mapping" ? (
-        <>
-          <div className="minor-text" style={{ marginBottom: 8 }}>
-            Response Mapping — define how AI response fields map to UI display.
-            Format: each field has a fixed label and a mapping chain using ||
-            for fallbacks. Readonly fields cannot be customized; editable fields
-            can.
-          </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={30}
-            value={responseMappingDraft}
-            onChange={(e) => setResponseMappingDraft(e.target.value)}
           />
         </>
       ) : null}
@@ -6368,123 +6463,220 @@ export default function ChartSnapshotsPage() {
                     return (
                       <span className="minor-text">No matching symbols.</span>
                     );
+                  const SYMBOL_GROUP_ORDER = [
+                    "forex",
+                    "indices",
+                    "commodity",
+                    "crypto",
+                    "other",
+                  ];
+                  const SYMBOL_GROUP_LABEL = {
+                    forex: "Forex",
+                    indices: "Indices",
+                    commodity: "Commodities",
+                    crypto: "Crypto",
+                    other: "Other",
+                  };
+                  const grouped = filtered.reduce((acc, s) => {
+                    const raw = String(classifySymbol(s) || "").toLowerCase();
+                    const group = SYMBOL_GROUP_LABEL[raw] ? raw : "other";
+                    if (!acc[group]) acc[group] = [];
+                    acc[group].push(s);
+                    return acc;
+                  }, {});
+                  const orderedGroups = SYMBOL_GROUP_ORDER.filter(
+                    (group) =>
+                      Array.isArray(grouped[group]) && grouped[group].length > 0,
+                  );
+                  const isAllTab = symbolFilterTab === "ALL";
+                  const isForexTab = symbolFilterTab === "FOREX";
                   return (
                     <div
-                      className="snapshot-tabs-v2"
-                      style={{ flexWrap: "wrap" }}
+                      style={{ display: "grid", gap: 8 }}
                     >
-                      {filtered.map((s) => (
-                        <span
-                          key={s}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 2,
-                          }}
-                          draggable={symbolFilterTab === "FAVOURITE"}
-                          onDragStart={() => {
-                            dragWatchSymbolRef.current = s;
-                          }}
-                          onDragOver={(e) => {
-                            if (symbolFilterTab !== "FAVOURITE") return;
-                            e.preventDefault();
-                          }}
-                          onDrop={(e) => {
-                            if (symbolFilterTab !== "FAVOURITE") return;
-                            e.preventDefault();
-                            const from = dragWatchSymbolRef.current;
-                            moveWatchlistSymbol(from, s);
-                            dragWatchSymbolRef.current = "";
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
-                            onClick={() => {
-                              if (isTradeRoute) {
-                                // Trade route: single symbol only, no toggle
-                                setCfg((prev) => ({
-                                  ...prev,
-                                  symbols: [s],
-                                  symbol: s,
-                                }));
-                                navigate(buildAiTradeRoute([s]), {
-                                  replace: false,
-                                });
-                              } else {
-                                setCfg((prev) => {
-                                  const prevSelected = Array.isArray(
-                                    prev?.symbols,
-                                  )
-                                    ? prev.symbols
-                                    : [];
-                                  const exists = prevSelected.includes(s);
-                                  const nextSelected = exists
-                                    ? prevSelected.filter((x) => x !== s)
-                                    : [...prevSelected, s];
-                                  if (!exists) {
-                                    navigate(buildAiAnalyzeRoute([s]), {
-                                      replace: false,
-                                    });
-                                  }
-                                  return {
-                                    ...prev,
-                                    symbols: nextSelected,
-                                    symbol: nextSelected[0] || "",
-                                  };
-                                });
-                              }
+                      {orderedGroups.map((group) => (
+                        <div key={group}>
+                          <div
+                            style={{
+                              fontSize: 10,
+                              color: "rgba(148,163,184,0.72)",
+                              letterSpacing: "0.04em",
+                              textTransform: "uppercase",
+                              margin: "2px 0 6px 2px",
                             }}
                           >
-                            {s}
-                          </button>
-                          {(() => {
-                            const inWatchlist = watchlist.includes(s);
-                            return (
-                              <>
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  style={{
-                                    width: 18,
-                                    height: 18,
-                                    padding: 0,
-                                    fontSize: 10,
-                                    lineHeight: 1,
-                                    minWidth: 18,
-                                    borderRadius: 4,
-                                    color: inWatchlist
-                                      ? "rgba(239,68,68,0.7)"
-                                      : "var(--muted)",
-                                    borderColor: inWatchlist
-                                      ? "rgba(239,68,68,0.35)"
-                                      : "rgba(255,255,255,0.08)",
-                                  }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (inWatchlist) {
-                                      removeFromWatchlist(s);
-                                    } else {
-                                      const next = [
-                                        ...new Set([...watchlist, s]),
-                                      ];
-                                      saveWatchlistToDb(next).then(() =>
-                                        setWatchlist(next),
-                                      );
-                                    }
-                                  }}
-                                  title={
-                                    inWatchlist
-                                      ? "Remove " + s + " from watchlist"
-                                      : "Add " + s + " to watchlist"
-                                  }
+                            {SYMBOL_GROUP_LABEL[group]}
+                          </div>
+                          <div
+                            className="snapshot-tabs-v2"
+                            style={{ display: "grid", gap: 6 }}
+                          >
+                            {(() => {
+                              const useForexPrefixTitles =
+                                group === "forex" && (isAllTab || isForexTab);
+                              if (useForexPrefixTitles) {
+                                return Object.entries(
+                                  grouped[group].reduce((acc, symbol) => {
+                                    const prefix = String(symbol || "")
+                                      .toUpperCase()
+                                      .slice(0, 3);
+                                    if (!acc[prefix]) acc[prefix] = [];
+                                    acc[prefix].push(symbol);
+                                    return acc;
+                                  }, {}),
+                                ).sort(([a], [b]) => a.localeCompare(b));
+                              }
+                              if (isAllTab) {
+                                // In ALL tab, non-forex groups are split by first letter,
+                                // but letter headers are intentionally hidden.
+                                return Object.entries(
+                                  grouped[group].reduce((acc, symbol) => {
+                                    const prefix = String(symbol || "")
+                                      .toUpperCase()
+                                      .slice(0, 1);
+                                    if (!acc[prefix]) acc[prefix] = [];
+                                    acc[prefix].push(symbol);
+                                    return acc;
+                                  }, {}),
+                                ).sort(([a], [b]) => a.localeCompare(b));
+                              }
+                              return [["", grouped[group]]];
+                            })().map(([prefix, symbols]) => (
+                              <div key={`${group}-${prefix || "all"}`}>
+                                {group === "forex" && (isAllTab || isForexTab) ? (
+                                  <div
+                                    style={{
+                                      fontSize: 8,
+                                      color: "rgba(148,163,184,0.56)",
+                                      letterSpacing: "0.02em",
+                                      margin: "0 0 4px 2px",
+                                    }}
+                                  >
+                                    {prefix}
+                                  </div>
+                                ) : null}
+                                <div
+                                  className="snapshot-tabs-v2"
+                                  style={{ flexWrap: "wrap" }}
                                 >
-                                  {inWatchlist ? "-" : "+"}
-                                </button>
-                              </>
-                            );
-                          })()}
-                        </span>
+                                  {symbols.map((s) => (
+                                      <span
+                                        key={s}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          gap: 2,
+                                        }}
+                                        draggable={symbolFilterTab === "FAVOURITE"}
+                                        onDragStart={() => {
+                                          dragWatchSymbolRef.current = s;
+                                        }}
+                                        onDragOver={(e) => {
+                                          if (symbolFilterTab !== "FAVOURITE") return;
+                                          e.preventDefault();
+                                        }}
+                                        onDrop={(e) => {
+                                          if (symbolFilterTab !== "FAVOURITE") return;
+                                          e.preventDefault();
+                                          const from = dragWatchSymbolRef.current;
+                                          moveWatchlistSymbol(from, s);
+                                          dragWatchSymbolRef.current = "";
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
+                                          onClick={() => {
+                                            if (isTradeRoute) {
+                                              // Trade route: single symbol only, no toggle
+                                              setCfg((prev) => ({
+                                                ...prev,
+                                                symbols: [s],
+                                                symbol: s,
+                                              }));
+                                              navigate(buildAiTradeRoute([s]), {
+                                                replace: false,
+                                              });
+                                            } else {
+                                              setCfg((prev) => {
+                                                const prevSelected = Array.isArray(
+                                                  prev?.symbols,
+                                                )
+                                                  ? prev.symbols
+                                                  : [];
+                                                const exists = prevSelected.includes(s);
+                                                const nextSelected = exists
+                                                  ? prevSelected.filter((x) => x !== s)
+                                                  : [...prevSelected, s];
+                                                if (!exists) {
+                                                  navigate(buildAiAnalyzeRoute([s]), {
+                                                    replace: false,
+                                                  });
+                                                }
+                                                return {
+                                                  ...prev,
+                                                  symbols: nextSelected,
+                                                  symbol: nextSelected[0] || "",
+                                                };
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          {s}
+                                        </button>
+                                        {(() => {
+                                          const inWatchlist = watchlist.includes(s);
+                                          return (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="secondary-button"
+                                                style={{
+                                                  width: 18,
+                                                  height: 18,
+                                                  padding: 0,
+                                                  fontSize: 10,
+                                                  lineHeight: 1,
+                                                  minWidth: 18,
+                                                  borderRadius: 4,
+                                                  color: inWatchlist
+                                                    ? "rgba(239,68,68,0.7)"
+                                                    : "var(--muted)",
+                                                  borderColor: inWatchlist
+                                                    ? "rgba(239,68,68,0.35)"
+                                                    : "rgba(255,255,255,0.08)",
+                                                }}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (inWatchlist) {
+                                                    removeFromWatchlist(s);
+                                                  } else {
+                                                    const next = [
+                                                      ...new Set([...watchlist, s]),
+                                                    ];
+                                                    saveWatchlistToDb(next).then(() =>
+                                                      setWatchlist(next),
+                                                    );
+                                                  }
+                                                }}
+                                                title={
+                                                  inWatchlist
+                                                    ? "Remove " + s + " from watchlist"
+                                                    : "Add " + s + " to watchlist"
+                                                }
+                                              >
+                                                {inWatchlist ? "-" : "+"}
+                                              </button>
+                                            </>
+                                          );
+                                        })()}
+                                      </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   );
@@ -6913,6 +7105,28 @@ export default function ChartSnapshotsPage() {
                 </option>
               ))}
             </select>
+            <select
+              className="secondary-button"
+              style={{
+                height: "34px",
+                padding: "0 10px",
+                fontSize: "12px",
+              }}
+              value={provider}
+              onChange={(e) => {
+                const next = String(e.target.value || "")
+                  .trim()
+                  .toUpperCase();
+                setProvider(next);
+                setCfgField("broker", next);
+              }}
+              title="Broker for live chart, fixed chart, and snapshots"
+            >
+              <option value="">Auto</option>
+              <option value="ICMARKETS">IC Markets</option>
+              <option value="OANDA">OANDA</option>
+              <option value="BINANCE">Binance</option>
+            </select>
             <div className="tf-pills">
               {["D", "4h", "1h", "15m", "5m", "1m"].map((tf) => (
                 <button
@@ -6989,6 +7203,26 @@ export default function ChartSnapshotsPage() {
                 style={{ cursor: "pointer" }}
               />
               Merge
+            </label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 11,
+                cursor: "pointer",
+              }}
+              title="If checked, Analyze forces fresh snapshots before AI analyze"
+            >
+              <input
+                type="checkbox"
+                checked={cfg.refreshSnapshot !== false}
+                onChange={(e) =>
+                  setCfgField("refreshSnapshot", e.target.checked)
+                }
+                style={{ cursor: "pointer" }}
+              />
+              New
             </label>
             <div style={{ display: "flex", gap: 4 }}>
               <button
@@ -7405,7 +7639,9 @@ export default function ChartSnapshotsPage() {
                                   }
                                 >
                                   <SymbolChart
+                                    key={`${sym}|${chartUiConfigKey}`}
                                     symbol={sym}
+                                    provider={provider || ""}
                                     timeframes={browserTfs}
                                     defaultMode="live"
                                     initialGridCols={effectiveGridCols}
@@ -7455,7 +7691,9 @@ export default function ChartSnapshotsPage() {
                           }
                         >
                           <SymbolChart
+                            key={`${sym}|${chartUiConfigKey}`}
                             symbol={sym}
+                            provider={provider || ""}
                             timeframes={browserTfs}
                             defaultMode="live"
                             initialGridCols={effectiveGridCols}
@@ -7546,7 +7784,9 @@ export default function ChartSnapshotsPage() {
                   }
                 >
                   <SymbolChart
+                    key={`${sym}|${chartUiConfigKey}`}
                     symbol={sym}
+                    provider={provider || ""}
                     timeframes={widgetTfs}
                     defaultMode="live"
                     initialGridCols={effectiveGridCols}
@@ -7572,11 +7812,12 @@ export default function ChartSnapshotsPage() {
               fallback={<div className="loading-card">Loading Details...</div>}
             >
               <SignalDetailCard
-                key={selectedSymbol}
+                key={`${selectedSymbol}|${chartUiConfigKey}`}
                 mode="ai"
                 hideTabsBeforeResponse={!hasAnalyzeResponse && !isTradeRoute}
                 chart={{
                   enabled: true,
+                  provider: provider || "",
                   symbol: normalizeSignalSymbol(
                     activePlan?.symbol ||
                       activePlan?.raw?.symbol ||
@@ -7698,6 +7939,9 @@ export default function ChartSnapshotsPage() {
                 }}
                 response={{
                   enabled: true,
+                  sid: String(
+                    analyzeSessionId || tradeSidFromRoute || "",
+                  ).trim(),
                   hasData: hasAnalyzeResponse || isTradeRoute,
                   pending: analyzing,
                   pendingText:
@@ -7994,14 +8238,6 @@ export default function ChartSnapshotsPage() {
                   style={{ fontSize: 11, padding: "4px 10px" }}
                 >
                   Template
-                </button>
-                <button
-                  type="button"
-                  className={`secondary-button ${settingsTab === "mapping" ? "active" : ""}`}
-                  onClick={() => setSettingsTab("mapping")}
-                  style={{ fontSize: 11, padding: "4px 10px" }}
-                >
-                  Mapping
                 </button>
               </div>
               <div

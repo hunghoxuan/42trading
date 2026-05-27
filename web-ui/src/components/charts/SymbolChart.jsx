@@ -72,29 +72,8 @@ function toTradingViewSymbol(symRaw, provider = "") {
   const s = String(symRaw || "").trim().toUpperCase();
   if (!s) return "";
   if (s.includes(":")) return s;
-
-  const p = String(provider || "").toUpperCase();
-  const isCrypto = s.endsWith("USD") || s.endsWith("USDT");
-  const isMetal = s.startsWith("XAU") || s.startsWith("XAG");
-  const isForex = /^[A-Z]{6}$/.test(s);
-
-  // Provider-specific prefix
-  if (p === "BINANCE") {
-    const binSym = isCrypto && !s.endsWith("USDT") ? s.replace(/USD$/, "USDT") : s;
-    return `BINANCE:${binSym}`;
-  }
-  if (p === "OANDA") return `OANDA:${s}`;
-  if (p === "ICMARKETS") {
-    // ICMarkets: metals via OANDA, crypto via BINANCE, forex via OANDA
-    if (isMetal || isForex) return `OANDA:${s}`;
-    if (isCrypto || s.endsWith("USDT")) return `BINANCE:${s.replace(/USD$/, "USDT")}`;
-    return `OANDA:${s}`;
-  }
-
-  // Fallback: metals+forex via OANDA, crypto via BINANCE
-  if (isMetal || isForex) return `OANDA:${s}`;
-  if (isCrypto) return `BINANCE:${s.replace(/USD$/, "USDT")}`;
-  return `OANDA:${s}`;
+  const p = String(provider || "").trim().toUpperCase();
+  return p ? `${p}:${s}` : s;
 }
 
 function toTradingViewTimezone() {
@@ -651,6 +630,25 @@ export default function SymbolChart({
   const [fullscreenTf, setFullscreenTf] = useState(null);
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
+
+  const tradeLifecycleMarkers = useMemo(() => {
+    const toIso = (v) => {
+      const s = String(v || "").trim();
+      if (!s) return null;
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString();
+    };
+    const fmt = (iso) => (iso ? iso.slice(0, 16).replace("T", " ") : "-");
+    const rows = [];
+    const c = toIso(createdAt);
+    const o = toIso(openedAt);
+    const x = toIso(closedAt);
+    if (c) rows.push({ key: "created", label: "Created", short: "C", color: "#f59e0b", time: fmt(c) });
+    if (o) rows.push({ key: "opened", label: "Opened", short: "O", color: "#22c55e", time: fmt(o) });
+    if (x) rows.push({ key: "closed", label: "Closed", short: "X", color: "#ef4444", time: fmt(x) });
+    return rows;
+  }, [createdAt, openedAt, closedAt]);
 
   useEffect(() => {
     setAnnotations([]);
@@ -1285,8 +1283,30 @@ export default function SymbolChart({
     return MODE_LABELS[m] + " (no data)";
   };
 
+  const isMasterSnapshotMode = useMemo(() => {
+    return (
+      mode === "snapshots" &&
+      master?.snapshots &&
+      Object.values(master.snapshots).some((s) =>
+        String(s?.file_name).toUpperCase().includes("_MASTER"),
+      )
+    );
+  }, [mode, master?.snapshots]);
+
+  const displayTfCount = useMemo(() => {
+    const count = isMasterSnapshotMode && sortedTfs.length ? 1 : sortedTfs.length;
+    return Math.max(1, count || 1);
+  }, [isMasterSnapshotMode, sortedTfs]);
+
+  const activeGridCols = useMemo(() => {
+    return Math.max(
+      1,
+      Math.min(isMasterSnapshotMode ? 1 : gridCols, displayTfCount),
+    );
+  }, [displayTfCount, gridCols, isMasterSnapshotMode]);
+
   const chartHeight = useMemo(() => {
-    const cols = Math.max(1, gridCols);
+    const cols = Math.max(1, activeGridCols);
     const gapPx = 8;
     const usableWidth = Math.max(0, containerWidth - gapPx * (cols - 1));
     const tileWidth = usableWidth > 0 ? usableWidth / cols : 0;
@@ -1297,7 +1317,7 @@ export default function SymbolChart({
     return Math.round(
       Math.max(210, Math.min(360, tileWidth / targetAspectRatio)),
     );
-  }, [containerWidth, gridCols]);
+  }, [activeGridCols, containerWidth]);
 
   const showControls = !(hasTradePlan && hasAnalysis);
   const tvTimezone = toTradingViewTimezone();
@@ -1990,18 +2010,8 @@ export default function SymbolChart({
       </div>
 
       {(() => {
-        const isMasterSnapshot =
-          mode === "snapshots" &&
-          master?.snapshots &&
-          Object.values(master.snapshots).some((s) =>
-            String(s?.file_name).toUpperCase().includes("_MASTER"),
-          );
         const displayTfs =
-          isMasterSnapshot && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
-        const activeGridCols = Math.max(
-          1,
-          Math.min(isMasterSnapshot ? 1 : gridCols, displayTfs.length || 1),
-        );
+          isMasterSnapshotMode && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
         return (
           <div
             style={{
@@ -2222,6 +2232,58 @@ export default function SymbolChart({
                         }}
                         src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
+                      {tradeLifecycleMarkers.length > 0 && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            left: 8,
+                            bottom: 8,
+                            display: "flex",
+                            gap: 6,
+                            flexWrap: "wrap",
+                            zIndex: 11,
+                            pointerEvents: "none",
+                          }}
+                        >
+                          {tradeLifecycleMarkers.map((m) => (
+                            <div
+                              key={m.key}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                padding: "3px 6px",
+                                borderRadius: 6,
+                                background: "rgba(2,6,23,0.78)",
+                                border: "1px solid rgba(148,163,184,0.35)",
+                                color: "#e2e8f0",
+                                fontSize: 10,
+                                fontWeight: 700,
+                                lineHeight: 1.1,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 999,
+                                  background: m.color,
+                                  color: "#0b1220",
+                                  textAlign: "center",
+                                  fontSize: 9,
+                                  fontWeight: 900,
+                                  lineHeight: "12px",
+                                }}
+                              >
+                                {m.short}
+                              </span>
+                              <span>{m.label}</span>
+                              <span style={{ opacity: 0.9 }}>{m.time}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <button
                         className="secondary-button"
                         onClick={() => setFullscreenTf(tf)}
@@ -2248,7 +2310,7 @@ export default function SymbolChart({
                     <div
                       style={{
                         position: "relative",
-                        height: isMasterSnapshot ? 410 : chartHeight,
+                        height: isMasterSnapshotMode ? 410 : chartHeight,
                         overflow: "hidden",
                         borderRadius: 6,
                       }}
@@ -2262,7 +2324,7 @@ export default function SymbolChart({
                         style={{
                           width: "100%",
                           height: "100%",
-                          objectFit: isMasterSnapshot ? "fill" : "contain",
+                          objectFit: isMasterSnapshotMode ? "fill" : "contain",
                           background: "#000",
                           cursor: "pointer",
                         }}
@@ -2324,6 +2386,7 @@ export default function SymbolChart({
                         onViewportChange={
                           mode === "cache" ? handleViewportChange : undefined
                         }
+                        initialViewport={viewports[chartId] || null}
                       />
                       {mode === "cache" && (
                         <div

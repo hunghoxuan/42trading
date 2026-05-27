@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TradeFileUpload } from "./TradeFileUpload";
 import { normalizeOrderTypeValue } from "../utils/signalDetailUtils";
 
@@ -115,12 +115,33 @@ function calcSliderMeta(rawValue) {
   return { min, max, step, value: n, enabled: true };
 }
 
-function priceSliderMeta(rawValue) {
+function priceSliderMeta(rawValue, entryValue, slValue, frozenStep) {
   const n = parseNum(rawValue);
-  const clamped = Number.isFinite(n) ? Math.max(0, Math.min(200000, n)) : 0;
-  // Dynamic step: ~0.02% of price, smooth for slider
-  const step = Number.isFinite(n) && n > 0 ? Math.max(0.00001, n * 0.0002) : 1;
-  return { min: 0, max: 200000, step, value: clamped, enabled: true };
+  if (!Number.isFinite(n)) {
+    return { min: 0, max: 1, step: 0.001, value: 0, enabled: false };
+  }
+  const step = Number.isFinite(frozenStep) && frozenStep > 0
+    ? frozenStep
+    : (() => {
+        const entry = parseNum(entryValue);
+        const sl = parseNum(slValue);
+        if (Number.isFinite(entry) && Number.isFinite(sl) && entry !== sl) {
+          return Math.max(0.00001, Math.abs(entry - sl) / 20);
+        }
+        return Math.max(0.00001, (Math.max(Math.abs(n), 1) * 0.5) / 100);
+      })();
+  const range = (() => {
+    const entry = parseNum(entryValue);
+    const sl = parseNum(slValue);
+    if (Number.isFinite(entry) && Number.isFinite(sl) && entry !== sl) {
+      return Math.abs(entry - sl);
+    }
+    const magnitude = Math.max(Math.abs(n), 1);
+    return magnitude * 0.25;
+  })();
+  const min = n - range;
+  const max = n + range;
+  return { min, max, step, value: n, enabled: true };
 }
 
 function calcRrByTarget(entryRaw, slRaw, targetRaw, directionRaw = "") {
@@ -178,15 +199,26 @@ const NumericInline = memo(function NumericInline({
   disabled = false,
   controlsDisabled = false,
   onUpdate,
+  entryValue,
+  slValue,
+  frozenStep,
 }) {
   const fieldId = `${idPrefix}-${k}`;
   const sliderMeta = useMemo(
-    () =>
-      sliderOverride ||
-      (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(k)
-        ? priceSliderMeta(valueRaw)
-        : calcSliderMeta(valueRaw)),
-    [k, sliderOverride, valueRaw],
+    () => {
+      if (sliderOverride) return sliderOverride;
+      if (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(k)) {
+        return priceSliderMeta(valueRaw, entryValue, slValue, frozenStep);
+      }
+      if (k === "rr" || k === "rr2" || k === "rr3") {
+        const n = parseNum(valueRaw);
+        if (!Number.isFinite(n)) return { min: 0, max: 10, step: 0.1, value: 0, enabled: false };
+        const span = Math.max(n * 0.5, 1);
+        return { min: Math.max(0, n - span), max: n + span, step: 0.1, value: n, enabled: true };
+      }
+      return calcSliderMeta(valueRaw);
+    },
+    [k, sliderOverride, valueRaw, entryValue, slValue, frozenStep],
   );
   const isDisabled = disabled || controlsDisabled;
   const toneColor = labelColorByKey(k);
@@ -346,6 +378,19 @@ export function TradePlanEditor({
   error = "",
   className = "",
 }) {
+  // Freeze initial entry/SL for slider step (computed once, never changes while editing)
+  const frozenStepRef = useRef(null);
+  const entry = parseNum(value?.entry);
+  const sl = parseNum(value?.sl);
+  if (
+    frozenStepRef.current == null &&
+    Number.isFinite(entry) &&
+    Number.isFinite(sl) &&
+    entry !== sl
+  ) {
+    frozenStepRef.current = Math.abs(entry - sl) / 20;
+  }
+  const frozenStep = frozenStepRef.current;
   const [mode, setMode] = useState("view");
   const effectiveShowSave =
     typeof showSaveButton === "boolean"
@@ -748,6 +793,9 @@ export function TradePlanEditor({
                   label="Entry"
                   k="entry"
                   valueRaw={value.entry}
+                  entryValue={value.entry}
+                  slValue={value.sl}
+                  frozenStep={frozenStep}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={coreFieldsDisabled}
@@ -759,6 +807,9 @@ export function TradePlanEditor({
                   label="SL"
                   k="sl"
                   valueRaw={value.sl}
+                  entryValue={value.entry}
+                  slValue={value.sl}
+                  frozenStep={frozenStep}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={tradeFieldsDisabled}
@@ -772,6 +823,9 @@ export function TradePlanEditor({
                   label="TP1"
                   k="tp1"
                   valueRaw={value.tp1 ?? value.tp}
+                  entryValue={value.entry}
+                  slValue={value.sl}
+                  frozenStep={frozenStep}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={tradeFieldsDisabled}
@@ -796,6 +850,9 @@ export function TradePlanEditor({
                   label="TP2"
                   k="tp2"
                   valueRaw={value.tp2}
+                  entryValue={value.entry}
+                  slValue={value.sl}
+                  frozenStep={frozenStep}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={tradeFieldsDisabled}
@@ -820,6 +877,9 @@ export function TradePlanEditor({
                   label="TP3"
                   k="tp3"
                   valueRaw={value.tp3}
+                  entryValue={value.entry}
+                  slValue={value.sl}
+                  frozenStep={frozenStep}
                   controlsDisabled={controlsDisabled}
                   onUpdate={update}
                   disabled={tradeFieldsDisabled}
