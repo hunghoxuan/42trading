@@ -509,6 +509,8 @@ export default function SymbolChart({
   showAnalyzeButton = true,
   showTradeButton = true,
   showEditButton = true,
+  showSnapshotButton = true,
+  onSnapshot = null,
   analyzeLabel = "Analyze",
   showPerCardLayoutControls = true,
   selectedTradePlanGroup = null,
@@ -630,6 +632,7 @@ export default function SymbolChart({
   const [fullscreenTf, setFullscreenTf] = useState(null);
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
+  const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
 
   useEffect(() => {
     setAnnotations([]);
@@ -1971,6 +1974,72 @@ export default function SymbolChart({
           >
             Trade
           </button>
+          {showSnapshotButton && (
+            <button
+              className="secondary-button"
+              style={{
+                minWidth: 28,
+                height: 22,
+                padding: "0 6px",
+                fontSize: 10,
+                lineHeight: 1,
+                fontWeight: 700,
+              }}
+              disabled={browserSnapshotBusy}
+              onClick={async () => {
+                setBrowserSnapshotBusy(true);
+                try {
+                  const stream = await navigator.mediaDevices.getDisplayMedia({
+                    preferCurrentTab: true,
+                    video: { frameRate: 1 },
+                  });
+                  const track = stream.getVideoTracks()[0];
+                  const imageCapture = new ImageCapture(track);
+                  const bitmap = await imageCapture.grabFrame();
+                  track.stop();
+                  const isFullscreen = fullscreenTf != null;
+                  let sx, sy, sw, sh;
+                  if (isFullscreen) {
+                    // Fullscreen: capture entire viewport (chart fills screen)
+                    sx = 0; sy = 0;
+                    sw = bitmap.width;
+                    sh = bitmap.height;
+                  } else {
+                    // Crop to visible portion of this chart card
+                    const rect = rootRef.current?.getBoundingClientRect?.();
+                    sx = rect ? Math.max(0, Math.round(rect.x)) : 0;
+                    sy = rect ? Math.max(0, Math.round(rect.y)) : 0;
+                    sw = rect ? Math.min(bitmap.width - sx, Math.round(rect.width)) : bitmap.width;
+                    sh = rect ? Math.min(bitmap.height - sy, Math.round(rect.height)) : bitmap.height;
+                  }
+                  const canvas = document.createElement("canvas");
+                  canvas.width = sw;
+                  canvas.height = sh;
+                  canvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
+                  const dataUrl = canvas.toDataURL("image/png");
+                  const res = await fetch("/v2/chart/snapshots-grid/upload", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      symbol: String(symbol || "").toUpperCase(),
+                      image_data: dataUrl,
+                    }),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (res.ok && data?.ok) {
+                    onSnapshot?.(data);
+                  }
+                } catch (_) {
+                  // user cancelled or error
+                } finally {
+                  setBrowserSnapshotBusy(false);
+                }
+              }}
+              title="Screenshot this chart card"
+            >
+              📷
+            </button>
+          )}
           <button
             className="secondary-button"
             style={{
