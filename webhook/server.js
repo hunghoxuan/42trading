@@ -1310,6 +1310,26 @@ const CFG = {
   ),
 };
 
+// ── App Config (in-memory cache, hot-reload safe via delete require.cache) ──
+let _APP_CONFIG = null;
+let _APP_CONFIG_MTIME = 0;
+function getAppConfig() {
+  try {
+    const p = require("path").join(ROOT_DIR, "..", "config", "config.json");
+    const st = require("fs").statSync(p);
+    const mtime = Number(st.mtimeMs || 0);
+    if (!_APP_CONFIG || mtime > _APP_CONFIG_MTIME) {
+      delete require.cache[require.resolve("../config/config.json")];
+      _APP_CONFIG = require("../config/config.json");
+      _APP_CONFIG_MTIME = mtime;
+    }
+    return _APP_CONFIG;
+  } catch (e) {
+    console.warn("[config] config.json load failed, using empty");
+    return {};
+  }
+}
+
 const AI_SCHEMA_SPEC = (() => {
   try {
     const planSchema = require("../config/schema/trade.json");
@@ -9671,7 +9691,12 @@ END
             res = await pool.query(
               `
             UPDATE trades
-            SET pnl_realized = CASE
+            SET execution_status = CASE
+                  WHEN $1::text = 'CLOSED' AND execution_status IN ('FILLED','PENDING') THEN $1::text
+                  WHEN $1::text = 'FILLED' AND execution_status = 'PENDING' THEN $1::text
+                  ELSE execution_status
+                END,
+                pnl_realized = CASE
                   WHEN $26::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2::numeric, pnl_realized)
                   ELSE pnl_realized
                 END,
@@ -9750,7 +9775,12 @@ END
               res = await pool.query(
                 `
             UPDATE trades
-            SET broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+            SET execution_status = CASE
+                  WHEN $1::text = 'CLOSED' AND execution_status IN ('FILLED','PENDING') THEN $1::text
+                  WHEN $1::text = 'FILLED' AND execution_status = 'PENDING' THEN $1::text
+                  ELSE execution_status
+                END,
+                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
                 pnl_realized = CASE
                   WHEN $25::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
                   ELSE pnl_realized
@@ -9833,7 +9863,12 @@ END
             res = await pool.query(
               `
             UPDATE trades
-            SET broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+            SET execution_status = CASE
+                  WHEN $1::text = 'CLOSED' AND execution_status IN ('FILLED','PENDING') THEN $1::text
+                  WHEN $1::text = 'FILLED' AND execution_status = 'PENDING' THEN $1::text
+                  ELSE execution_status
+                END,
+                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
                 pnl_realized = CASE
                   WHEN $25::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
                   ELSE pnl_realized
@@ -23895,7 +23930,14 @@ const appHandler = async (req, res) => {
             source_id = COALESCE($18, source_id),
             order_type = COALESCE($19, order_type),
             risk_money_planned = COALESCE($20, risk_money_planned),
-            execution_status = execution_status,
+            execution_status = CASE
+              WHEN execution_status = 'FILLED' THEN 'PENDING_MOD'
+              ELSE execution_status
+            END,
+            dispatch_status = CASE
+              WHEN execution_status = 'FILLED' THEN 'NEW'
+              ELSE dispatch_status
+            END,
             updated_at = NOW()
         WHERE sid = $10
           ${whereUser}
