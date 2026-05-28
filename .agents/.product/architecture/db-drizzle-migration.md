@@ -80,9 +80,11 @@ Priority order:
 
 ## Raw SQL Queries to Replace (57 in server.js)
 
-Status: **3 of 57 done** — pattern established.
+Status: **~20 of 57 done** — all simple CRUD queries replaced.
 
-Remaining 54 queries are intentionally kept as raw SQL — most use JSONB operators, dynamic SQL, or PostgreSQL-specific features that don't benefit from typed Drizzle queries. Future replacements can follow the pattern: add helper to `db/queries.js`, import `dbQueries` in server.js, call via `dbQueries.methodName(db.db, ...)`.
+Remaining ~37 queries are JSONB-heavy or use PostgreSQL-specific features (`->`, `->>`, `::cast`, `COALESCE`, `ILIKE`, `ANY()`, `regexp_replace`, CTEs). These would require Drizzle `sql` template literals — same raw SQL, just wrapped in Drizzle API. No real migration benefit until JSONB columns are normalized into regular columns.
+
+**Next step for SQLite:** normalize JSONB columns (`raw_json`, `metadata`, `data`) into dedicated columns or a separate key-value table. This is a schema refactoring, not just a query rewrite.
 
 ## Raw SQL Queries already abstracted (in mt5Backend methods)
 
