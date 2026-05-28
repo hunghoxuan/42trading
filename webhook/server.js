@@ -9,6 +9,8 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const dbQueries = require("../db/queries");
+const { eq, and, or, desc, asc, sql, inArray, ilike, gte, lte, count } = require("drizzle-orm");
+const schema = require("../db/schema.js");
 const syncGuards = require("./syncGuards");
 const { execFileSync, spawnSync } = require("child_process");
 const { URL, URLSearchParams } = require("url");
@@ -1977,25 +1979,14 @@ async function repoUpsertUnifiedMarketData(symbol, tf, dataUpdate) {
 async function repoGetPendingSignals(userId = "all") {
   return await StateRepo.get("SIGNALS_PENDING", userId, async () => {
     const db = await mt5InitBackend();
-    const where =
-      userId === "all"
-        ? "status IN ('NEW', 'PENDING')"
-        : "status IN ('NEW', 'PENDING') AND user_id = $1";
-    const params = userId === "all" ? [] : [userId];
+    const conditions = [inArray(schema.signals.status, ["NEW", "PENDING"])];
+    if (userId !== "all") conditions.push(eq(schema.signals.userId, userId));
     try {
-      const { rows } = await db.query(
-        `SELECT * FROM signals WHERE ${where} ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC`,
-        params,
-      );
-      return rows;
+      return await db.db.select().from(schema.signals).where(and(...conditions))
+        .orderBy(desc(sql`COALESCE(${schema.signals.closedAt}, ${schema.signals.updatedAt})`), desc(schema.signals.createdAt));
     } catch (err) {
-      // Backward-compat: some DBs do not have signals.updated_at.
       if (String(err?.code || "") === "42703") {
-        const { rows } = await db.query(
-          `SELECT * FROM signals WHERE ${where} ORDER BY created_at DESC`,
-          params,
-        );
-        return rows;
+        return await db.db.select().from(schema.signals).where(and(...conditions)).orderBy(desc(schema.signals.createdAt));
       }
       throw err;
     }
@@ -2005,39 +1996,26 @@ async function repoGetPendingSignals(userId = "all") {
 async function repoGetUserWatchlist(userId) {
   return await StateRepo.get("USER_WATCHLIST", userId, async () => {
     const db = await mt5InitBackend();
-    const { rows } = await db.query(
-      "SELECT metadata->'watchlist' as watchlist FROM users WHERE user_id = $1",
-      [userId],
-    );
-    return rows[0]?.watchlist || [];
+    const meta = await dbQueries.getUserMetadata(db.db, userId);
+    const d = dbQueries.parseJsonField(meta);
+    return d?.watchlist || [];
   });
 }
 
 async function repoGetUserTemplates(userId) {
   return await StateRepo.get("USER_TEMPLATES", userId, async () => {
     const db = await mt5InitBackend();
-    const { rows } = await db.query(
-      "SELECT id as template_id, name, data FROM user_templates WHERE user_id = $1 ORDER BY updated_at DESC, created_at DESC",
-      [userId],
-    );
-    return rows.map((r) => ({
-      template_id: r.template_id,
-      name: r.name,
-      ...r.data,
-    }));
+    const rows = await db.db.select({ templateId: schema.userTemplates.id, name: schema.userTemplates.name, data: schema.userTemplates.data })
+      .from(schema.userTemplates).where(eq(schema.userTemplates.userId, userId))
+      .orderBy(desc(schema.userTemplates.updatedAt), desc(schema.userTemplates.createdAt));
+    return rows.map((r) => ({ template_id: r.templateId, name: r.name, ...dbQueries.parseJsonField(r.data) }));
   });
 }
 
 async function repoListUserSettings(userId) {
   const db = await mt5InitBackend();
-  const { rows } = await db.query(
-    "SELECT type, name, data, value, status, created_at FROM user_settings WHERE user_id = $1 ORDER BY type ASC",
-    [userId],
-  );
-  console.log(
-    `[Settings] repoListUserSettings for user: ${userId}, found ${rows.length} rows`,
-  );
-  return rows;
+  const rows = await dbQueries.listUserSettingsByType(db.db, userId, null);
+  return rows.map((r) => ({ type: r.type, name: r.name, data: r.data, value: null, status: r.status, created_at: r.createdAt }));
 }
 
 let REDIS_CLIENT = null;
@@ -6001,31 +5979,21 @@ function marketDataFreshness(snapshot = {}, tfNorm = "") {
 async function loadTradePlansForAiContext(userId, symbolNorm) {
   try {
     const db = await mt5InitBackend();
-    const rows = await db.query(
-      `SELECT sid, created_at, symbol, side, order_type, entry, sl, tp, signal_tf, chart_tf, rr_planned, risk_pct_planned, note, status, metadata
-       FROM signals
-       WHERE user_id = $1 AND regexp_replace(upper(symbol), '[^A-Z0-9]', '', 'g') = $2
-         AND status IN ('NEW','PENDING','ACTIVE')
-       ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
-       LIMIT 20`,
-      [userId, symbolNorm],
-    );
-    return (rows.rows || []).map((r) => ({
-      sid: r.sid,
-      created_at: r.created_at,
-      symbol: r.symbol,
-      side: r.side,
-      order_type: r.order_type,
-      entry: r.entry,
-      sl: r.sl,
-      tp: r.tp,
-      signal_tf: r.signal_tf,
-      chart_tf: r.chart_tf,
-      rr_planned: r.rr_planned,
-      risk_pct_planned: r.risk_pct_planned,
-      status: r.status,
-      note: r.note,
-      metadata: r.metadata && typeof r.metadata === "object" ? r.metadata : {},
+    const rows = await db.db.select()
+      .from(schema.signals)
+      .where(and(eq(schema.signals.userId, userId), inArray(schema.signals.status, ["NEW", "PENDING", "ACTIVE"])))
+      .limit(100);
+    // Filter in JS: regexp_replace-equivalent
+    const filtered = rows.filter((r) => {
+      const sym = String(r.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return sym === symbolNorm;
+    }).slice(0, 20);
+    return filtered.map((r) => ({
+      sid: r.sid, created_at: r.createdAt, symbol: r.symbol, side: r.side,
+      order_type: r.orderType, entry: r.entry, sl: r.sl, tp: r.tp,
+      signal_tf: r.signalTf, chart_tf: r.chartTf, rr_planned: r.rrPlanned,
+      risk_pct_planned: r.riskPctPlanned, status: r.status, note: r.note,
+      metadata: dbQueries.parseJsonField(r.metadata),
     }));
   } catch {
     return [];
@@ -14935,29 +14903,16 @@ async function mt5ResolveTradeRefV2(tradeRef, userId = null) {
   const ref = String(tradeRef || "").trim();
   if (!ref) return null;
   const b = await mt5Backend();
-  if (!b?.query) return null;
+  if (!b?.db) return null;
   const numericId = mt5ParseNumericId(ref);
-  const params = [numericId, ref];
-  let whereUser = "";
-  if (userId) {
-    params.push(String(userId));
-    whereUser = ` AND user_id = $${params.length}`;
-  }
-  const res = await b.query(
-    `
-    SELECT id, sid, user_id
-    FROM trades
-    WHERE (
-      ($1::bigint IS NOT NULL AND id = $1::bigint)
-      OR sid = $2
-    )
-    ${whereUser}
-    ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-    LIMIT 1
-  `,
-    params,
-  );
-  return res.rows?.[0] || null;
+  const conditions = [];
+  if (numericId != null) conditions.push(eq(schema.trades.id, sql`${numericId}::bigint`));
+  conditions.push(eq(schema.trades.sid, ref));
+  if (userId) conditions.push(eq(schema.trades.userId, userId));
+  const rows = await b.db.select({ id: schema.trades.id, sid: schema.trades.sid, userId: schema.trades.userId })
+    .from(schema.trades).where(or(...conditions))
+    .orderBy(desc(schema.trades.updatedAt), desc(schema.trades.createdAt)).limit(1);
+  return rows[0] || null;
 }
 
 async function mt5ResolveSignalRefV2(signalRef, userId = null) {

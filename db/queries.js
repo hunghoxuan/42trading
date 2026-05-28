@@ -149,7 +149,8 @@ async function getUserSettingData(db, userId, type, name) {
 }
 
 async function listUserSettingsByType(db, userId, type) {
-  const conditions = [eq(schema.userSettings.type, type)];
+  const conditions = [];
+  if (type) conditions.push(eq(schema.userSettings.type, type));
   if (userId) conditions.push(eq(schema.userSettings.userId, userId));
   return db.select().from(schema.userSettings).where(and(...conditions)).orderBy(schema.userSettings.name);
 }

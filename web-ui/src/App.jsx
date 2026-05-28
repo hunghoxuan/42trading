@@ -32,6 +32,7 @@ import NotificationDot from "./components/NotificationDot";
 
 import ToastContainer from "./components/ToastContainer";
 import AppShell from "./components/AppShell";
+import NavDropdown from "./components/NavDropdown";
 import { normalizeDisplayTimezone } from "./utils/format";
 import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 

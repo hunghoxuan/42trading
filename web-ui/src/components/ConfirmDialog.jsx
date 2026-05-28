@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 
 const ConfirmDialogContext = createContext(null);
 
@@ -17,41 +18,35 @@ export function ConfirmDialogProvider({ children }) {
     resolver?.(value);
   };
 
+  const open = !!state;
+  const confirmClass = state?.tone === "danger" ? "danger-button" : "secondary-button";
+
   return (
     <ConfirmDialogContext.Provider value={confirm}>
       {children}
-      {state ? (
-        <div
-          className="modal-backdrop"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.55)",
-            zIndex: 10000,
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          <div className="panel" style={{ width: "min(420px, 92vw)", padding: 18 }}>
-            <h3 style={{ marginTop: 0 }}>{state.title || "Confirm"}</h3>
-            <p className="minor-text" style={{ whiteSpace: "pre-wrap" }}>
-              {state.message || "Are you sure?"}
-            </p>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button type="button" className="secondary-button" onClick={() => close(false)}>
-                {state.cancelLabel || "Cancel"}
-              </button>
-              <button
-                type="button"
-                className={`secondary-button ${state.tone === "danger" ? "danger" : ""}`}
-                onClick={() => close(true)}
-              >
-                {state.confirmLabel || "Confirm"}
+      <Dialog.Root open={open} onOpenChange={(o) => { if (!o) close(false); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="dialog-overlay" />
+          <Dialog.Content className="panel dialog-content">
+            <Dialog.Title className="dialog-title">
+              {state?.title || "Confirm"}
+            </Dialog.Title>
+            <Dialog.Description className="minor-text dialog-description">
+              {state?.message || "Are you sure?"}
+            </Dialog.Description>
+            <div className="dialog-actions">
+              <Dialog.Close asChild>
+                <button type="button" className="secondary-button">
+                  {state?.cancelLabel || "Cancel"}
+                </button>
+              </Dialog.Close>
+              <button type="button" className={confirmClass} onClick={() => close(true)}>
+                {state?.confirmLabel || "Confirm"}
               </button>
             </div>
-          </div>
-        </div>
-      ) : null}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </ConfirmDialogContext.Provider>
   );
 }

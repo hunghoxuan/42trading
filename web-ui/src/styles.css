@@ -74,12 +74,12 @@ body {
 }
 
 .app-container {
-    padding: 20px;
+    padding: var(--space-2xl);
     width: 100%;
     margin: 0 auto;
 }
 .app-shell {
-    padding: 20px;
+    padding: var(--space-2xl);
     width: 100%;
     margin: 0 auto;
 }
@@ -204,7 +204,8 @@ body {
         transform 0.12s ease;
 }
 .nav-dropdown:hover .nav-dropdown-menu,
-.nav-dropdown:focus-within .nav-dropdown-menu {
+.nav-dropdown:focus-within .nav-dropdown-menu,
+.nav-dropdown-menu[data-state="open"] {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
@@ -392,7 +393,7 @@ body {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-xl);
-    padding: 18px;
+    padding: var(--space-xl);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     margin-bottom: 0;
 }
@@ -641,6 +642,45 @@ button:disabled {
     border-bottom: 1px solid var(--border);
     vertical-align: middle;
 }
+
+/* === Radix Dialog === */
+.dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10000;
+    animation: fadeInFrame 0.15s ease-out;
+}
+.dialog-content {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(420px, 92vw);
+    max-height: 85vh;
+    overflow-y: auto;
+    z-index: 10001;
+    animation: fadeInFrame 0.18s ease-out;
+}
+.dialog-title {
+    margin: 0 0 var(--space-sm) 0;
+    font-size: var(--font-lg);
+    font-weight: 800;
+}
+.dialog-description {
+    white-space: pre-wrap;
+    margin-bottom: var(--space-lg);
+}
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+}
+
+/* === Radix Tooltip === */
+.tooltip-content { background: rgba(15, 23, 42, 0.98); color: #fff; padding: 4px 10px; border-radius: var(--radius-sm); font-size: var(--font-2xs); font-weight: 600; line-height: 1.4; max-width: 260px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); animation: fadeInFrame 0.12s ease-out; }
+.tooltip-arrow { fill: rgba(15, 23, 42, 0.98); }
+
 .events-table tr:hover {
     background: var(--accent-soft);
     cursor: pointer;
@@ -1751,7 +1791,7 @@ button:disabled {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: var(--space-2xl);
 }
 .snapshot-modal-panel-v4 {
     width: min(1020px, 96vw);
