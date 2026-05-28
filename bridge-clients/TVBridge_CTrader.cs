@@ -92,7 +92,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.28 17:35 - status-refresh-fix";
+        private const string BuildVersion = "v2026.05.29 00:30 - tick-main-thread";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -205,6 +205,15 @@ namespace cAlgo.Robots
             BeginInvokeOnMainThread(() => Print(format, args));
         }
 
+        private void RunOnMainThread(Action fn)
+        {
+            BeginInvokeOnMainThread(() =>
+            {
+                try { fn(); }
+                catch (Exception ex) { Print("[MainThread] {0}", ex.Message); }
+            });
+        }
+
         private Task<T> RunOnMainThreadAsync<T>(Func<T> fn)
         {
             var tcs = new TaskCompletionSource<T>();
@@ -229,7 +238,7 @@ namespace cAlgo.Robots
             // OnTick handles periodics; DoTimerWork on startup
             DoTimerWork();
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
-            RefreshDebugPanel();
+            RefreshDebugPanelNow();
         }
 
         private void StartTimerWatchdog()
@@ -260,7 +269,7 @@ namespace cAlgo.Robots
                     catch (TaskCanceledException) { break; }
                     catch (Exception ex)
                     {
-                        if (_pollCount <= 6) Print("[Diag] Watchdog error: {0}", ex.Message);
+                        if (_pollCount <= 6) SafePrint("[Diag] Watchdog error: {0}", ex.Message);
                     }
                 }
             }, ct);
@@ -321,7 +330,7 @@ namespace cAlgo.Robots
                                 // Immediate ack SL change to VPS
                                 var beSid = ResolveSid(pos.Id.ToString(), pos.Comment);
                                 if (!string.IsNullOrEmpty(beSid))
-                                    Task.Run(async () => await AckAsync(beSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0));
+                                    SafeAck(beSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0);
                             }
                             else
                                 Print("[BE] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
@@ -360,7 +369,7 @@ namespace cAlgo.Robots
                                 // Immediate ack SL change to VPS
                                 var trailSid = ResolveSid(pos.Id.ToString(), pos.Comment);
                                 if (!string.IsNullOrEmpty(trailSid))
-                                    Task.Run(async () => await AckAsync(trailSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0));
+                                    SafeAck(trailSid, "", "SL_CHANGED", pos.Id.ToString(), "", 0);
                             }
                             else
                                 Print("[Trail] SL move FAILED for {0} #{1}: {2}", pos.SymbolName, pos.Id, result.Error);
@@ -407,7 +416,7 @@ namespace cAlgo.Robots
                                     Print("[Partial] Closed {0} units ({1}%) for {2} at {3}", volToClose, p.SizePct, pos.Id, p.Price);
                                     // Immediate ack partial close to VPS
                                     if (!string.IsNullOrEmpty(sid))
-                                        Task.Run(async () => await AckAsync(sid, "", "PARTIAL_CLOSE", pos.Id.ToString(), "", 0));
+                                        SafeAck(sid, "", "PARTIAL_CLOSE", pos.Id.ToString(), "", 0);
                                 }
                                 else
                                 {
@@ -764,7 +773,7 @@ namespace cAlgo.Robots
                     _pollStatus = _lastPollTime == DateTime.MinValue ? "POLLING" : _pollStatus;
                     _syncStatus = _lastSyncTime == DateTime.MinValue ? "SYNCING" : _syncStatus;
                 }
-                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                RefreshDebugPanelNow();
 
                 var bal = balance; var eq = equity; var mar = margin; var brk = brokerName;
                 var pl = posList; var ol = ordersList; var cl = closedList; var ml = metricsList;
@@ -792,7 +801,7 @@ namespace cAlgo.Robots
                     finally
                     {
                         _isBusy = false;
-                        BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                        RefreshDebugPanel();
                     }
                 });
             }
@@ -805,7 +814,7 @@ namespace cAlgo.Robots
                 _lastPollErr = FormatServerErrorForPanel(ex.Message);
                 _lastSyncErr = FormatServerErrorForPanel(ex.Message);
                 _isBusy = false;
-                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                RefreshDebugPanelNow();
             }
         }
 
@@ -846,7 +855,7 @@ namespace cAlgo.Robots
                         }
 
                         var json = await response.Content.ReadAsStringAsync();
-                        BeginInvokeOnMainThread(() => ProcessResponse(json));
+                        RunOnMainThread(() => ProcessResponse(json));
                     }
                     else
                     {
@@ -874,7 +883,7 @@ namespace cAlgo.Robots
             }
             finally
             {
-                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                RefreshDebugPanel();
             }
         }
 
@@ -940,7 +949,7 @@ namespace cAlgo.Robots
                 {
                     var msg = "Symbol not found: " + symbolCode;
                     UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (" + msg + ")");
-                    _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
+                    SafeAck(id, leaseToken, "REJECTED", "", msg);
                     Print("[Error] Symbol '{0}' not found in your platform.", symbolCode);
                     return;
                 }
@@ -1105,13 +1114,13 @@ namespace cAlgo.Robots
                 if (Positions.Any(p => p.Comment == id))
                 {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_OPEN)");
-                    _ = AckAsync(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
+                    SafeAck(id, leaseToken, "FILLED", "ALREADY_OPEN", "");
                     return;
                 }
                 if (PendingOrders.Any(o => o.Comment == id))
                 {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (ALREADY_PLACED)");
-                    _ = AckAsync(id, leaseToken, "PENDING", "ALREADY_PLACED", "");
+                    SafeAck(id, leaseToken, "PENDING", "ALREADY_PLACED", "");
                     return;
                 }
 
@@ -1184,7 +1193,7 @@ namespace cAlgo.Robots
                 {
                     var msg = "Volume too small: " + volumeUnits;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
-                    _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
+                    SafeAck(id, leaseToken, "REJECTED", "", msg);
                     return;
                 }
 
@@ -1261,7 +1270,7 @@ namespace cAlgo.Robots
                 {
                     var msg = "Invalid execution price: " + executionPrice;
                     UpdateSignalHistory(id, action + " " + symbolCode + " (" + msg + ")");
-                    _ = AckAsync(id, leaseToken, "REJECTED", "", msg);
+                    SafeAck(id, leaseToken, "REJECTED", "", msg);
                     Print("[Error] Cannot execute {0} {1}: Ask/Bid price is 0. Check connection.", action, symbolCode);
                     return;
                 }
@@ -1279,7 +1288,7 @@ namespace cAlgo.Robots
                             var rejectMsg = string.Format("SL too close: {0:F1} pips (min {1}). E={2:F5} SL={3:F5}", slDistPips, MinStopPips, executionPrice, sl);
                             Print("[Reject] {0}", rejectMsg);
                             UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            Task.Run(async () => { try { await AckAsync(id, leaseToken, "FAIL", "", rejectMsg); Print("[Ack] FAIL sent for {0}", id); } catch (Exception ex) { Print("[Ack] FAIL error: {0}", ex.Message); } });
+                            SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
                             return;
                         }
                     }
@@ -1291,7 +1300,7 @@ namespace cAlgo.Robots
                             var rejectMsg = string.Format("TP too close: {0:F1} pips (min {1}). E={2:F5} TP={3:F5}", tpDistPips, MinStopPips, executionPrice, tp);
                             Print("[Reject] {0}", rejectMsg);
                             UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            Task.Run(async () => { try { await AckAsync(id, leaseToken, "FAIL", "", rejectMsg); Print("[Ack] FAIL sent for {0}", id); } catch (Exception ex) { Print("[Ack] FAIL error: {0}", ex.Message); } });
+                            SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
                             return;
                         }
                     }
@@ -1340,7 +1349,7 @@ namespace cAlgo.Robots
                                     else
                                         Print("[CRITICAL] Close also failed for {0} #{1}: {2} - POSITION UNPROTECTED!", symbolCode, ticket, closeRes.Error);
                                     UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
-                                    _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                    SafeAck(id, leaseToken, "FAIL", ticket, errDetail);
                                     return;
                                 }
                                 else
@@ -1348,7 +1357,7 @@ namespace cAlgo.Robots
                                     // Continue: keep position without SL/TP
                                     Print("[WARN] SL/TP rejected but continuing: {0} for {1} #{2}", errDetail, symbolCode, ticket);
                                     var status = orderTypeStr == "limit" || orderTypeStr == "stop" ? "PLACED" : "START";
-                                    _ = AckAsync(id, leaseToken, status, ticket, "sl_tp_rejected: " + errDetail);
+                                    SafeAck(id, leaseToken, status, ticket, "sl_tp_rejected: " + errDetail);
                                 }
                             }
                         }
@@ -1378,13 +1387,13 @@ namespace cAlgo.Robots
                                     Print("[FATAL] {0}. Cancelling order.", errDetail);
                                     CancelPendingOrder(res.PendingOrder);
                                     UpdateSignalHistory(id, action + " " + symbolCode + " (CANCEL: SL/TP rejected)");
-                                    _ = AckAsync(id, leaseToken, "FAIL", ticket, errDetail);
+                                    SafeAck(id, leaseToken, "FAIL", ticket, errDetail);
                                     return;
                                 }
                                 else
                                 {
                                     Print("[WARN] SL/TP rejected for pending order but continuing: {0}", errDetail);
-                                    _ = AckAsync(id, leaseToken, "PLACED", ticket, "sl_tp_rejected: " + errDetail);
+                                    SafeAck(id, leaseToken, "PLACED", ticket, "sl_tp_rejected: " + errDetail);
                                 }
                             }
                         }
@@ -1392,12 +1401,12 @@ namespace cAlgo.Robots
 
                     UpdateSignalHistory(id, action + " " + symbolCode + " (FILLED)");
                     double lots = symbol.VolumeInUnitsToQuantity(volumeUnits);
-                    _ = AckAsync(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)), finalRiskMoney, lots);
+                    SafeAck(id, leaseToken, (res.Position != null ? "OPEN" : "PENDING"), ticket, "", (res.Position != null ? res.Position.EntryPrice : (res.PendingOrder != null ? res.PendingOrder.TargetPrice : 0)), finalRiskMoney, lots);
                 }
                 else
                 {
                     UpdateSignalHistory(id, action + " " + symbolCode + " (EXEC_FAIL: " + res.Error + ")");
-                    _ = AckAsync(id, leaseToken, "REJECTED", "", res.Error.ToString());
+                    SafeAck(id, leaseToken, "REJECTED", "", res.Error.ToString());
                 }
             });
         }
@@ -1522,7 +1531,7 @@ namespace cAlgo.Robots
             }
             finally
             {
-                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                RefreshDebugPanel();
             }
         }
 
@@ -1541,26 +1550,43 @@ namespace cAlgo.Robots
                     if (symbolsMatch.Success)
                     {
                         var items = Regex.Matches(symbolsMatch.Groups[1].Value, "\"([^\"]+)\"");
-                        _trackedSymbols.Clear();
-                        var skipped = new List<string>();
+                        var requestedSymbols = new List<string>();
                         foreach (Match m in items)
                         {
-                            string brokerSymbol;
                             var requested = m.Groups[1].Value;
-                            if (TryResolveBrokerSymbol(requested, out brokerSymbol))
-                            {
-                                if (!_trackedSymbols.Contains(brokerSymbol))
-                                    _trackedSymbols.Add(brokerSymbol);
-                            }
-                            else if (!skipped.Contains(requested))
-                            {
-                                skipped.Add(requested);
-                            }
+                            if (!string.IsNullOrWhiteSpace(requested) && !requestedSymbols.Contains(requested))
+                                requestedSymbols.Add(requested);
                         }
+
+                        var resolved = await RunOnMainThreadAsync(() =>
+                        {
+                            var brokerSymbols = new List<string>();
+                            var skippedSymbols = new List<string>();
+                            foreach (var requested in requestedSymbols)
+                            {
+                                string brokerSymbol;
+                                if (TryResolveBrokerSymbol(requested, out brokerSymbol))
+                                {
+                                    if (!brokerSymbols.Contains(brokerSymbol))
+                                        brokerSymbols.Add(brokerSymbol);
+                                }
+                                else if (!skippedSymbols.Contains(requested))
+                                {
+                                    skippedSymbols.Add(requested);
+                                }
+                            }
+                            return Tuple.Create(brokerSymbols, skippedSymbols);
+                        });
+
+                        _trackedSymbols.Clear();
+                        foreach (var brokerSymbol in resolved.Item1)
+                            _trackedSymbols.Add(brokerSymbol);
+
+                        var skipped = resolved.Item2;
                         if (skipped.Count > 0)
                             SafePrint("[Price] Skipped {0} unsupported tracked symbols: {1}", skipped.Count, string.Join(",", skipped.Take(8)));
                         SafePrint("[Price] Fetched {0} tracked symbols", _trackedSymbols.Count);
-                        BeginInvokeOnMainThread(() => RefreshDebugPanel());
+                        RefreshDebugPanel();
                     }
                 }
             }
@@ -1608,7 +1634,7 @@ namespace cAlgo.Robots
             }
             if (_lastPriceTime == DateTime.MinValue)
                 _lastPriceTime = DateTime.Now;
-            BeginInvokeOnMainThread(() => RefreshDebugPanel());
+            RefreshDebugPanel();
         }
 
         private async Task PushBarsAsync(string accId, List<string> symbols)
@@ -2036,19 +2062,28 @@ namespace cAlgo.Robots
                 try
                 {
                     await AckAsync(sid, token, status, ticket, err, entryExec, riskMoneyPlanned, volumeLots);
-                    Print("[Ack] {0} sent for {1}", status, sid);
+                    SafePrint("[Ack] {0} sent for {1}", status, sid);
                 }
                 catch (Exception ex)
                 {
-                    Print("[Ack] {0} failed for {1}: {2}", status, sid, ex.Message);
+                    SafePrint("[Ack] {0} failed for {1}: {2}", status, sid, ex.Message);
                 }
             });
         }
 
         private void RefreshDebugPanel()
         {
-            BeginInvokeOnMainThread(() =>
+            RunOnMainThread(RefreshDebugPanelNow);
+        }
+
+        private void RefreshDebugPanelNow()
+        {
+            try
             {
+                var heartbeat = string.Format("{0} | poll={1} sync={2} price={3} | {4}",
+                    BuildVersion, _pollStatus, _syncStatus, _priceStatus, DateTime.Now.ToString("HH:mm:ss"));
+                Chart.DrawStaticText("Panel_HEARTBEAT", heartbeat, VerticalAlignment.Center, HorizontalAlignment.Center, Color.Yellow);
+
                 var tl = new StringBuilder();
                 tl.AppendLine(string.Format("BUILD: {0}", BuildVersion));
                 tl.AppendLine(string.Format("TIME: {0}", DateTime.Now.ToString("HH:mm:ss")));
@@ -2098,7 +2133,11 @@ namespace cAlgo.Robots
                                  (_syncStatus == "SYNCING" ? Color.Yellow :
                                  (_syncStatus == "PARTIAL" ? Color.Orange : Color.Red)));
                 Chart.DrawStaticText("Panel_BR", br.ToString(), VerticalAlignment.Bottom, HorizontalAlignment.Right, syncColor);
-            });
+            }
+            catch (Exception ex)
+            {
+                Print("[Panel] Draw failed: {0}", ex.Message);
+            }
         }
 
         private string GetJsonValue(string json, string key)
