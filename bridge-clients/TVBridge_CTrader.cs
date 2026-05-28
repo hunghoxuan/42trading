@@ -888,12 +888,11 @@ namespace cAlgo.Robots
                             if (cRes.IsSuccessful)
                             {
                                 UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCELLED)");
-                                _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, "cancel_close_ok");
+                                SafeAck(id, leaseToken, "CANCELLED", ticketStr, "cancel_close_ok");
                             }
                             else
                             {
-                                UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCEL_FAIL: " + cRes.Error + ")");
-                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "cancel_close_fail: " + cRes.Error);
+                                SafeAck(id, leaseToken, "ERROR", ticketStr, "cancel_close_fail: " + cRes.Error);
                             }
                         }
                         else
@@ -905,13 +904,11 @@ namespace cAlgo.Robots
                                 var oRes = CancelPendingOrder(ord);
                                 if (oRes.IsSuccessful)
                                 {
-                                    UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCELLED)");
-                                    _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, "cancel_order_ok");
+                                    SafeAck(id, leaseToken, "CANCELLED", ticketStr, "cancel_order_ok");
                                 }
                                 else
                                 {
-                                    UpdateSignalHistory(id, taskType + " " + action + " " + symbolCode + " (CANCEL_FAIL: " + oRes.Error + ")");
-                                    _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "cancel_order_fail: " + oRes.Error);
+                                    SafeAck(id, leaseToken, "ERROR", ticketStr, "cancel_order_fail: " + oRes.Error);
                                 }
                             }
                             else
@@ -923,7 +920,7 @@ namespace cAlgo.Robots
                                     var pRes = ClosePosition(p);
                                     if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                                 }
-                                _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
+                                SafeAck(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
                             }
                         }
                     }
@@ -936,7 +933,7 @@ namespace cAlgo.Robots
                             var pRes = ClosePosition(p);
                             if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                         }
-                        _ = AckAsync(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
+                        SafeAck(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
                     }
                     return;
                 }
@@ -952,11 +949,11 @@ namespace cAlgo.Robots
                             var cRes = ClosePosition(pos);
                             if (cRes.IsSuccessful)
                             {
-                                _ = AckAsync(id, leaseToken, "CLOSED", ticketStr, "close_ok");
+                                SafeAck(id, leaseToken, "CLOSED", ticketStr, "close_ok");
                             }
                             else
                             {
-                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "close_fail: " + cRes.Error);
+                                SafeAck(id, leaseToken, "ERROR", ticketStr, "close_fail: " + cRes.Error);
                             }
                             return;
                         }
@@ -967,7 +964,7 @@ namespace cAlgo.Robots
                         var cRes = ClosePosition(p);
                         if (!cRes.IsSuccessful) Print("[Error] Close failed: {0}", cRes.Error);
                     }
-                    _ = AckAsync(id, leaseToken, "CLOSED", ticketStr, "");
+                    SafeAck(id, leaseToken, "CLOSED", ticketStr, "");
                     return;
                 }
 
@@ -1919,6 +1916,23 @@ namespace cAlgo.Robots
                 await _httpClient.PostAsync(ServerBaseUrl.TrimEnd('/') + "/v2/broker/ack", content);
             }
             catch { }
+        }
+
+        // Reliable ack: runs on thread pool so it completes even inside BeginInvokeOnMainThread
+        private void SafeAck(string sid, string token, string status, string ticket, string err, double entryExec = 0, double riskMoneyPlanned = 0, double volumeLots = 0)
+        {
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await AckAsync(sid, token, status, ticket, err, entryExec, riskMoneyPlanned, volumeLots);
+                    Print("[Ack] {0} sent for {1}", status, sid);
+                }
+                catch (Exception ex)
+                {
+                    Print("[Ack] {0} failed for {1}: {2}", status, sid, ex.Message);
+                }
+            });
         }
 
         private void RefreshDebugPanel()
