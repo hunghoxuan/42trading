@@ -8551,9 +8551,17 @@ END
   global.__notificationManager = notificationManager;
 
   const storage = "postgres";
+
+  // Drizzle ORM — type-safe queries, share same pool
+  const { initDb } = require("../db");
+  const db = initDb(pool);
+  const schema = require("../db/schema.js");
+
   MT5_BACKEND = {
     storage,
     pool,
+    db,
+    schema,
     query: (q, p) => pool.query(q, p),
     info: { url: CFG.mt5PostgresUrl.replace(/:[^:@/]+@/, ":***@") },
     async log(objectId, objectTable, metadata = {}, userId = null) {

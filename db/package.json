@@ -1,0 +1,9 @@
+{
+  "name": "@trading/db",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "drizzle-orm": "*",
+    "pg": "*"
+  }
+}
