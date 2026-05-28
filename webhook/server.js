@@ -951,9 +951,9 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   AI_CONTEXT_FILE_DIR,
   ".claude-context-files.json",
 );
-const TRADE_FILES_DIR = path.resolve(ROOT_DIR, "trade_files");
-const TRADE_ACTIVE_DIR = path.resolve(ROOT_DIR, "trade_active");
-const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
+const TRADE_FILES_DIR = path.resolve(GLOBAL_DATA_DIR, "trade_files");
+const TRADE_ACTIVE_DIR = path.resolve(GLOBAL_DATA_DIR, "trade_active");
+const TRADE_CLOSED_DIR = path.resolve(GLOBAL_DATA_DIR, "trade_closed");
 // ── Trade Status Constants (single source of truth) ──
 const TRADE_STATUS = {
   DRAFT: "Draft",
@@ -965,7 +965,7 @@ const TRADE_STATUS = {
   REJECTED: "REJECTED",
 };
 
-const BROKER_BARS_DIR = path.resolve(ROOT_DIR, "market_data");
+const BROKER_BARS_DIR = path.resolve(GLOBAL_DATA_DIR, "market_data");
 
 for (const d of [BROKER_BARS_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
