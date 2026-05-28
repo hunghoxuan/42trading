@@ -7391,39 +7391,18 @@ async function healthCronConfigDiagnostics() {
   };
   try {
     const b = await mt5Backend();
-    if (!b?.query) return empty;
-    const [md, ai, snap] = await Promise.all([
-      b.query(
-        `
-        SELECT COUNT(*)::int AS n
-        FROM user_settings s
-        WHERE s.type='cron' AND s.data->>'cron_type'='MARKET_DATA_CRON'
-          AND UPPER(s.status)='ACTIVE'
-      `,
-      ),
-      b.query(
-        `
-        SELECT COUNT(*)::int AS n
-        FROM user_settings s
-        WHERE s.type='cron' AND s.data->>'cron_type'='ANALYSIS_CRON'
-          AND UPPER(s.status)='ACTIVE'
-      `,
-      ),
-      b.query(
-        `
-        SELECT COUNT(*)::int AS n
-        FROM user_settings s
-        WHERE s.type='cron' AND s.data->>'cron_type' IN ('SNAPSHOTS_CRON','SNAPSHOT_CRON')
-          AND UPPER(s.status)='ACTIVE'
-      `,
-      ),
-    ]);
-    return {
-      market_data_active: Number(md?.rows?.[0]?.n || 0),
-      analysis_active: Number(ai?.rows?.[0]?.n || 0),
-      snapshots_active: Number(snap?.rows?.[0]?.n || 0),
-      db_error: null,
-    };
+    if (!b?.db) return empty;
+    const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+    let md = 0, ai = 0, snap = 0;
+    for (const r of rows) {
+      const d = typeof r.data === "string" ? JSON.parse(r.data) : (r.data || {});
+      const ct = d.cron_type || "";
+      if (String(r.status || "").toUpperCase() !== "ACTIVE") continue;
+      if (ct === "MARKET_DATA_CRON") md++;
+      else if (ct === "ANALYSIS_CRON") ai++;
+      else if (ct === "SNAPSHOTS_CRON" || ct === "SNAPSHOT_CRON") snap++;
+    }
+    return { market_data_active: md, analysis_active: ai, snapshots_active: snap, db_error: null };
   } catch (err) {
     return {
       ...empty,
@@ -8550,6 +8529,23 @@ END
   const { initDb } = require("../db");
   const db = initDb(pool);
   const schema = require("../db/schema.js");
+
+  // Migration: JSONB → TEXT for SQLite compatibility
+  await pool.query(`
+    ALTER TABLE users ALTER COLUMN metadata TYPE TEXT USING metadata::text;
+    ALTER TABLE user_accounts ALTER COLUMN metadata TYPE TEXT USING metadata::text;
+    ALTER TABLE user_accounts ALTER COLUMN source_ids_cache TYPE TEXT USING source_ids_cache::text;
+    ALTER TABLE user_templates ALTER COLUMN data TYPE TEXT USING data::text;
+    ALTER TABLE user_settings ALTER COLUMN data TYPE TEXT USING data::text;
+    ALTER TABLE signals ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
+    ALTER TABLE signals ALTER COLUMN metadata TYPE TEXT USING metadata::text;
+    ALTER TABLE trades ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
+    ALTER TABLE trades ALTER COLUMN metadata TYPE TEXT USING metadata::text;
+    ALTER TABLE trades ALTER COLUMN confluence_checklist TYPE TEXT USING confluence_checklist::text;
+    ALTER TABLE trades ALTER COLUMN risk_management TYPE TEXT USING risk_management::text;
+    ALTER TABLE logs ALTER COLUMN metadata TYPE TEXT USING metadata::text;
+    ALTER TABLE market_data ALTER COLUMN bars TYPE TEXT USING bars::text;
+  `).catch(() => {}); // ignore if already TEXT
 
   MT5_BACKEND = {
     storage,

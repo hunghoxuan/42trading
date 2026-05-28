@@ -35,6 +35,12 @@ This file tracks the status of user-facing features and links them to technical 
   - [./1-backlog/2026-05-23-ui-info-tab-broker-static-chart.md] — UI display
 - **Summary**: EA pushes closed-candle OHLC bars to webhook → stored as CSV + Redis cache → Info tab renders static chart from broker data.
 
+## [ ] Design System & Performance Refactor
+- **Status**: Planned
+- **Feature Doc**: [../features/web-ui/design_system_and_performance_refactor.md]
+- **Ticket**: [./1-backlog/2026-05-28-design-system-and-performance-refactor.md]
+- **Summary**: Formalize existing CSS into design tokens + utility classes. Add mobile-first responsive breakpoints (hamburger nav, scrollable tables, stacked cards). Integrate TanStack Table (headless) on 7 data-table pages. Add react-virtuoso for virtual scrolling. Replace hand-rolled modal/dropdown with Radix UI primitives (Dialog, DropdownMenu, Tooltip). Zero visual regression. No TypeScript.
+
 ## [ ] Unified Notification Manager
 - **Status**: Plan
 - **Feature Doc**: [../features/1-plan/unified_notification_manager.md]

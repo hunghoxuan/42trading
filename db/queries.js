@@ -44,7 +44,7 @@ async function listUserAccounts(db, userId) {
 }
 
 async function upsertSignal(db, signal) {
-  const v = { sid: signal.sid, createdAt: signal.created_at ? new Date(signal.created_at) : new Date(), userId: signal.user_id, symbol: signal.symbol, side: signal.side, source: signal.source || null, sourceId: signal.source_id || null, orderType: signal.order_type || null, entry: signal.entry != null ? Number(signal.entry) : null, sl: signal.sl != null ? Number(signal.sl) : null, tp: signal.tp != null ? Number(signal.tp) : null, strategy: signal.strategy || null, entryModel: signal.entry_model || null, signalTf: signal.signal_tf || null, chartTf: signal.chart_tf || null, rrPlanned: signal.rr_planned != null ? Number(signal.rr_planned) : null, riskMoneyPlanned: signal.risk_money_planned != null ? Number(signal.risk_money_planned) : null, riskPctPlanned: signal.risk_pct_planned != null ? Number(signal.risk_pct_planned) : null, note: signal.note || null, rejectionReason: signal.rejection_reason || null, rawJson: signal.raw_json || null, status: signal.status || "NEW", profile: signal.profile || null, confidencePct: signal.confidence_pct != null ? Number(signal.confidence_pct) : null, estimatedBars: signal.estimated_bars != null ? Number(signal.estimated_bars) : null, beTrigger: signal.be_trigger != null ? Number(signal.be_trigger) : null };
+  const v = { sid: signal.sid, createdAt: signal.created_at ? new Date(signal.created_at) : new Date(), userId: signal.user_id, symbol: signal.symbol, side: signal.side, source: signal.source || null, sourceId: signal.source_id || null, orderType: signal.order_type || null, entry: signal.entry != null ? Number(signal.entry) : null, sl: signal.sl != null ? Number(signal.sl) : null, tp: signal.tp != null ? Number(signal.tp) : null, strategy: signal.strategy || null, entryModel: signal.entry_model || null, signalTf: signal.signal_tf || null, chartTf: signal.chart_tf || null, rrPlanned: signal.rr_planned != null ? Number(signal.rr_planned) : null, riskMoneyPlanned: signal.risk_money_planned != null ? Number(signal.risk_money_planned) : null, riskPctPlanned: signal.risk_pct_planned != null ? Number(signal.risk_pct_planned) : null, note: signal.note || null, rejectionReason: signal.rejection_reason || null, rawJson: jsonField(signal.raw_json), metadata: jsonField(signal.metadata), status: signal.status || "NEW", profile: signal.profile || null, confidencePct: signal.confidence_pct != null ? Number(signal.confidence_pct) : null, estimatedBars: signal.estimated_bars != null ? Number(signal.estimated_bars) : null, beTrigger: signal.be_trigger != null ? Number(signal.be_trigger) : null };
   try { await db.insert(schema.signals).values(v); return { sid: signal.sid }; }
   catch (e) { if (e.message?.includes("duplicate key") || e.code === "23505") return { sid: signal.sid, existed: true }; throw e; }
 }
@@ -56,7 +56,7 @@ async function findAccountByApiKeyHash(db, apiKeyHash) {
 
 async function upsertUserAccount(db, userId, account) {
   const now = new Date();
-  const rows = await db.insert(schema.userAccounts).values({ accountId: String(account?.account_id || ""), userId: String(userId || ""), name: String(account?.name || ""), balance: account?.balance != null && !Number.isNaN(Number(account.balance)) ? Number(account.balance) : null, status: String(account?.status || ""), metadata: account?.metadata || null, createdAt: now, updatedAt: now })
+  const rows = await db.insert(schema.userAccounts).values({ accountId: String(account?.account_id || ""), userId: String(userId || ""), name: String(account?.name || ""), balance: account?.balance != null && !Number.isNaN(Number(account.balance)) ? Number(account.balance) : null, status: String(account?.status || ""), metadata: jsonField(account?.metadata), createdAt: now, updatedAt: now })
     .onConflictDoUpdate({ target: schema.userAccounts.accountId, set: { userId: sql`EXCLUDED.user_id`, name: sql`EXCLUDED.name`, balance: sql`EXCLUDED.balance`, status: sql`EXCLUDED.status`, metadata: sql`EXCLUDED.metadata`, updatedAt: now } }).returning();
   return rows[0] || null;
 }
@@ -149,15 +149,15 @@ async function getUserSettingData(db, userId, type, name) {
 }
 
 async function listUserSettingsByType(db, userId, type) {
-  return db.select().from(schema.userSettings)
-    .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, type)))
-    .orderBy(schema.userSettings.name);
+  const conditions = [eq(schema.userSettings.type, type)];
+  if (userId) conditions.push(eq(schema.userSettings.userId, userId));
+  return db.select().from(schema.userSettings).where(and(...conditions)).orderBy(schema.userSettings.name);
 }
 
 async function upsertUserSetting(db, userId, type, name, data, status) {
   const now = new Date();
   return db.insert(schema.userSettings).values({
-    userId, type, name: name || "default", data: data || {},
+    userId, type, name: name || "default", data: jsonField(data),
     status: status || "ACTIVE", createdAt: now, updatedAt: now,
   }).onConflictDoUpdate({
     target: [schema.userSettings.userId, schema.userSettings.type, schema.userSettings.name],
@@ -210,3 +210,19 @@ async function promoteDraftTrade(db, tradeRef, userId) {
 }
 
 module.exports = Object.assign(module.exports, { resolveSignalRef, closeSignal, promoteDraftTrade });
+
+// ── JSON helpers (TEXT columns that store JSON) ──
+
+function jsonField(val) {
+  if (val === null || val === undefined) return null;
+  if (typeof val === "string") return val;
+  return JSON.stringify(val);
+}
+
+function parseJsonField(val) {
+  if (val === null || val === undefined) return null;
+  if (typeof val === "object") return val;
+  try { return JSON.parse(val); } catch { return val; }
+}
+
+module.exports = Object.assign(module.exports, { jsonField, parseJsonField });

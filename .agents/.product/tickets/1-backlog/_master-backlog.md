@@ -1,5 +1,8 @@
 # Backlog
 
+## Planned
+- [ ] [2026-05-28] [Web-UI/Design] [Author: DeepSeek] Feature: Design System & Performance Refactor — see `2026-05-28-design-system-and-performance-refactor.md`
+
 ## Completed
 - [x] [2026-05-23] [Feature] [Author: DeepSeek] Multi-Cron Support + Snapshot Improvements — see `2026-05-23-multi-cron-support-and-snapshot-improvements.md`
 - [ ] [2026-05-23] [Webhook/Snapshots] [Author: Codex] Fix Bug: MASTER snapshot duplicates timeframe aliases (`D`/`1D`, `240`/`4H`) and can sort incorrectly due to non-canonical dedup/sort path. Spec: `1-backlog/2026-05-23-master-snapshot-timeframe-canonicalization-dedup-sort-fix.md`.
