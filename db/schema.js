@@ -84,7 +84,6 @@ const userSettings = pgTable(
 // ── signals ──
 const signals = pgTable("signals", {
   sid: text("sid").primaryKey(),
-  id: serial("id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   userId: text("user_id")
     .notNull()

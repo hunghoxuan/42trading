@@ -109,6 +109,55 @@ async function test_listSignals_bySymbol() {
   }
 }
 
+// ── listUserAccounts ──
+
+async function test_listUserAccounts() {
+  const result = await queries.listUserAccounts(db, "default");
+  if (!Array.isArray(result)) throw new Error("not array");
+  if (result.length === 0) throw new Error("no accounts for default user");
+  if (!result[0].accountId) throw new Error("missing accountId");
+}
+
+// ── upsertSignal ──
+
+async function test_upsertSignal() {
+  const sid = "TEST_DRIZZLE_" + Date.now();
+  const result = await queries.upsertSignal(db, {
+    sid,
+    created_at: new Date().toISOString(),
+    user_id: "default",
+    symbol: "TESTUSD",
+    side: "BUY",
+    status: "NEW",
+  });
+  if (!result.sid) throw new Error("no sid returned");
+
+  // Verify it exists
+  const raw = await pool.query("SELECT sid FROM signals WHERE sid = $1", [sid]);
+  if (raw.rows.length !== 1) throw new Error("signal not inserted");
+
+  // Duplicate should not throw
+  const dup = await queries.upsertSignal(db, {
+    sid,
+    created_at: new Date().toISOString(),
+    user_id: "default",
+    symbol: "TESTUSD",
+    side: "BUY",
+    status: "NEW",
+  });
+  if (!dup.sid) throw new Error("duplicate should return sid");
+
+  // Cleanup
+  await pool.query("DELETE FROM signals WHERE sid = $1", [sid]);
+}
+
+// ── findAccountByApiKeyHash ──
+
+async function test_findAccountByApiKeyHash() {
+  const result = await queries.findAccountByApiKeyHash(db, "nonexistent_hash_12345");
+  if (result !== null) throw new Error("should return null for nonexistent");
+}
+
 // ── Schema Integrity ──
 
 async function test_schema_tablesExist() {
@@ -159,6 +208,10 @@ async function test_schema_columnMapping() {
 
   await test("listSignals — no filters", test_listSignals_noFilters);
   await test("listSignals — by symbol", test_listSignals_bySymbol);
+
+  await test("listUserAccounts", test_listUserAccounts);
+  await test("upsertSignal", test_upsertSignal);
+  await test("findAccountByApiKeyHash", test_findAccountByApiKeyHash);
 
   await teardown();
   console.log("\n✅ All tests passed\n");
