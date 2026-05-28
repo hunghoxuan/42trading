@@ -92,7 +92,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.24 20:32 - c61346bd";
+        private const string BuildVersion = "v2026.05.28 14:00 - 27d0ea66";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -920,7 +920,14 @@ namespace cAlgo.Robots
                                     var pRes = ClosePosition(p);
                                     if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                                 }
-                                SafeAck(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_ticket");
+                                var ordTargets = PendingOrders.Where(o => o.SymbolName == symbolCode && (o.Comment == id || o.Label == MagicNumber.ToString())).ToList();
+                                foreach (var o in ordTargets)
+                                {
+                                    var oRes = CancelPendingOrder(o);
+                                    if (!oRes.IsSuccessful) Print("[Error] Cancel order failed: {0}", oRes.Error);
+                                }
+                                int totalClosed = targets.Count + ordTargets.Count;
+                                SafeAck(id, leaseToken, "CANCELLED", ticketStr, totalClosed > 0 ? "cancel_ok" : "cancel_no_ticket");
                             }
                         }
                     }
@@ -933,7 +940,14 @@ namespace cAlgo.Robots
                             var pRes = ClosePosition(p);
                             if (!pRes.IsSuccessful) Print("[Error] Cancel close failed: {0}", pRes.Error);
                         }
-                        SafeAck(id, leaseToken, "CANCELLED", ticketStr, targets.Count > 0 ? "cancel_close_ok" : "cancel_no_pos");
+                        var ordTargets = PendingOrders.Where(o => o.SymbolName == symbolCode && (o.Comment == id || o.Label == MagicNumber.ToString())).ToList();
+                        foreach (var o in ordTargets)
+                        {
+                            var oRes = CancelPendingOrder(o);
+                            if (!oRes.IsSuccessful) Print("[Error] Cancel order failed: {0}", oRes.Error);
+                        }
+                        int totalClosed = targets.Count + ordTargets.Count;
+                        SafeAck(id, leaseToken, "CANCELLED", ticketStr, totalClosed > 0 ? "cancel_ok" : "cancel_no_pos");
                     }
                     return;
                 }
