@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import "./SessionClockBar.css";
 import { playSound, SoundEvents } from "../utils/SoundManager";
+import Tooltip from "./Tooltip";
 import {
   getDisplayTimezoneMode,
   setDisplayTimezoneMode,
@@ -430,20 +431,22 @@ export default function SessionClockBar({ displayTimezone }) {
         </div>
 
         {/* Digital Clock & Timezone (Inside Bar, Right Aligned) */}
-        <div
-          className="digital-clock-embedded"
-          onClick={toggleTz}
-          style={{ cursor: "pointer" }}
-        >
-          {countdown && <div className="countdown-text">{countdown.text}</div>}
-          <div className="time-value-small">{timeStr}</div>
-          <div className="tz-label-small">
-            {dateStr ? `${dateStr} ` : ""}
-            {tzMode === "local"
-              ? "LOCAL"
-              : currentTz.split("/").pop().replace("_", " ")}
+        <Tooltip content="Current server time">
+          <div
+            className="digital-clock-embedded"
+            onClick={toggleTz}
+            style={{ cursor: "pointer" }}
+          >
+            {countdown && <div className="countdown-text">{countdown.text}</div>}
+            <div className="time-value-small">{timeStr}</div>
+            <div className="tz-label-small">
+              {dateStr ? `${dateStr} ` : ""}
+              {tzMode === "local"
+                ? "LOCAL"
+                : currentTz.split("/").pop().replace("_", " ")}
+            </div>
           </div>
-        </div>
+        </Tooltip>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./TickerBar.css";
+import Tooltip from "./Tooltip";
 
 /**
  * Right ticker: realtime FILLED trades (symbol + colored pnl) from broker sync.
@@ -45,22 +46,26 @@ export default function TickerBar() {
       <div className="ticker-right">
         <div className="ticker-filled-list">
           {filledTrades.map((t) => (
-            <button
+            <Tooltip
               key={t.sid}
-              type="button"
-              className="ticker-filled-item ticker-filled-clickable"
-              onClick={() => navigate(`/trades/${t.sid}`)}
-              title={`Open trade ${t.sid}`}
+              content={`${t.symbol || "-"} — PnL: ${formatPnl(t.pnl) || "0.00"}`}
             >
-              <span className="sym">{t.symbol || "-"}</span>
-              {Number.isFinite(Number(t.pnl)) && Number(t.pnl) !== 0 ? (
-                <span className={Number(t.pnl) >= 0 ? "pnl pos" : "pnl neg"}>
-                  {formatPnl(t.pnl)}
-                </span>
-              ) : (
-                <span className="pnl" />
-              )}
-            </button>
+              <button
+                type="button"
+                className="ticker-filled-item ticker-filled-clickable"
+                onClick={() => navigate(`/trades/${t.sid}`)}
+                title={`Open trade ${t.sid}`}
+              >
+                <span className="sym">{t.symbol || "-"}</span>
+                {Number.isFinite(Number(t.pnl)) && Number(t.pnl) !== 0 ? (
+                  <span className={Number(t.pnl) >= 0 ? "pnl pos" : "pnl neg"}>
+                    {formatPnl(t.pnl)}
+                  </span>
+                ) : (
+                  <span className="pnl" />
+                )}
+              </button>
+            </Tooltip>
           ))}
         </div>
       </div>

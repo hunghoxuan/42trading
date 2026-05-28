@@ -1,4 +1,5 @@
 import React from "react";
+import Tooltip from "./Tooltip";
 
 export function brokerDispatchColor(dispatchStatus, fallback = "var(--border)") {
   const d = String(dispatchStatus || "").trim().toUpperCase();
@@ -18,18 +19,20 @@ export function BrokerTicketBadge({
   const text = String(brokerId || "").trim();
   if (!text || text === "-") return null;
   return (
-    <span
-      className={className}
-      style={{
-        padding: "2px 6px",
-        fontSize: 9,
-        fontWeight: 400,
-        ...style,
-        borderColor: brokerDispatchColor(dispatchStatus, fallbackColor),
-        borderWidth: 1.5,
-      }}
-    >
-      {text}
-    </span>
+    <Tooltip content={text}>
+      <span
+        className={className}
+        style={{
+          padding: "2px 6px",
+          fontSize: 9,
+          fontWeight: 400,
+          ...style,
+          borderColor: brokerDispatchColor(dispatchStatus, fallbackColor),
+          borderWidth: 1.5,
+        }}
+      >
+        {text}
+      </span>
+    </Tooltip>
   );
 }

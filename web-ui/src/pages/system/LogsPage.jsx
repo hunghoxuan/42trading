@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 import PaginationBar from "../../components/PaginationBar";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import DataTable from "../../components/DataTable";
 
 function getEventId(ev) {
   return ev?.log_id ?? ev?.id ?? "";
@@ -84,6 +85,7 @@ export default function LogsPage() {
   });
   const [bulkAction, setBulkAction] = useState("");
   const [initialAutoSelectDone, setInitialAutoSelectDone] = useState(false);
+  const [sorting, setSorting] = useState(null);
 
   const query = useMemo(
     () => ({
@@ -163,6 +165,111 @@ export default function LogsPage() {
     setInitialAutoSelectDone(false);
     loadEvents();
   }, [query]);
+
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: "symbol",
+        header: "SYMBOL",
+        cell: ({ getValue }) => (
+          <strong
+            className="minor-text"
+            style={{ color: "var(--text)" }}
+          >
+            {getValue() || "N/A"}
+          </strong>
+        ),
+      },
+      {
+        accessorKey: "event_type",
+        header: "EVENT TYPE",
+        cell: ({ getValue }) => (
+          <span className="badge">{getValue()}</span>
+        ),
+      },
+      {
+        id: "id_ticket",
+        header: "ID | TICKET",
+        accessorFn: (row) => getEventObjectId(row),
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <div className="minor-text">{getEventObjectId(row.original)}</div>
+            {!!row.original.object_table && (
+              <div className="minor-text">{row.original.object_table}</div>
+            )}
+            {row.original.ack_ticket && (
+              <div
+                className="minor-text"
+                style={{ color: "var(--accent)" }}
+              >
+                # {row.original.ack_ticket}
+              </div>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: "result",
+        header: "RESULT",
+        accessorFn: (row) => {
+          if (row.event_type === "EA") return row.metadata?.level || "INFO";
+          if (row.status === "ERROR" || row.error) return "ERROR";
+          return row.status || "OK";
+        },
+        cell: ({ row }) => {
+          const ev = row.original;
+          if (ev.event_type === "EA") {
+            return (
+              <div className="cell-wrap">
+                <span
+                  className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}
+                >
+                  {ev.metadata?.level || "INFO"}
+                </span>
+                <div
+                  className="minor-text"
+                  style={{
+                    maxWidth: "150px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {ev.metadata?.message}
+                </div>
+              </div>
+            );
+          }
+          if (ev.status === "ERROR" || ev.error) {
+            return (
+              <span className="badge SL" title={ev.error || "Error"}>
+                ERROR
+              </span>
+            );
+          }
+          if (ev.status) {
+            return <span className="badge FILLED">{ev.status}</span>;
+          }
+          return (
+            <span className="badge" style={{ opacity: 0.6 }}>
+              OK
+            </span>
+          );
+        },
+      },
+      {
+        id: "date_time",
+        header: "DATE TIME",
+        accessorFn: (row) => getEventTime(row),
+        cell: ({ row }) => (
+          <span className="minor-text">
+            {showDateTime(getEventTime(row.original))}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   return (
     <section className="logs-page-container stack-layout">
@@ -324,100 +431,21 @@ export default function LogsPage() {
       <div className="logs-layout-split">
         <div className="logs-list-pane">
           {error && <div className="error">{error}</div>}
-          <div className="events-table-wrap">
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th>SYMBOL</th>
-                  <th>EVENT TYPE</th>
-                  <th>ID | TICKET</th>
-                  <th>RESULT</th>
-                  <th>DATE TIME</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((ev) => (
-                  <tr
-                    key={getEventId(ev)}
-                    className={
-                      getEventId(selectedEvent) === getEventId(ev)
-                        ? "active"
-                        : ""
-                    }
-                    onClick={() => {
-                      setSelectedEvent(ev);
-                      navigate(`/system/logs/${getEventId(ev)}`);
-                    }}
-                  >
-                    <td>
-                      <strong
-                        className="minor-text"
-                        style={{ color: "var(--text)" }}
-                      >
-                        {ev.symbol || "N/A"}
-                      </strong>
-                    </td>
-                    <td>
-                      <span className="badge">{ev.event_type}</span>
-                    </td>
-                    <td>
-                      <div className="cell-wrap">
-                        <div className="minor-text">{getEventObjectId(ev)}</div>
-                        {!!ev.object_table && (
-                          <div className="minor-text">{ev.object_table}</div>
-                        )}
-                        {ev.ack_ticket && (
-                          <div
-                            className="minor-text"
-                            style={{ color: "var(--accent)" }}
-                          >
-                            # {ev.ack_ticket}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td>
-                      {ev.event_type === "EA" ? (
-                        <div className="cell-wrap">
-                          <span
-                            className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}
-                          >
-                            {ev.metadata?.level || "INFO"}
-                          </span>
-                          <div
-                            className="minor-text"
-                            style={{
-                              maxWidth: "150px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {ev.metadata?.message}
-                          </div>
-                        </div>
-                      ) : ev.status === "ERROR" || ev.error ? (
-                        <span className="badge SL" title={ev.error || "Error"}>
-                          ERROR
-                        </span>
-                      ) : ev.status ? (
-                        <span className="badge FILLED">{ev.status}</span>
-                      ) : (
-                        <span className="badge" style={{ opacity: 0.6 }}>
-                          OK
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="minor-text">
-                        {showDateTime(getEventTime(ev))}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            data={events}
+            sorting={sorting}
+            onSortingChange={setSorting}
+            loading={loading}
+            emptyText="No log entries found."
+            rowClassName={(ev) =>
+              getEventId(selectedEvent) === getEventId(ev) ? "active" : ""
+            }
+            onRowClick={(ev) => {
+              setSelectedEvent(ev);
+              navigate(`/system/logs/${getEventId(ev)}`);
+            }}
+          />
         </div>
 
         <div className="logs-detail-pane">

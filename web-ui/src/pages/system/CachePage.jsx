@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 import MasterDetailLayout from "../../components/MasterDetailLayout";
+import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function timeAgo(ms) {
@@ -103,6 +104,9 @@ export default function CachePage() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [symbolFilter, setSymbolFilter] = useState("");
+  const [sorting, setSorting] = useState(null);
+
+  const emptyText = items.length === 0 ? "No cache items" : "No matches";
 
   // Derive unique symbols from items
   const symbols = useMemo(() => {
@@ -200,6 +204,81 @@ export default function CachePage() {
     }
   }
 
+  const columns = useMemo(() => [
+    {
+      accessorKey: "key",
+      header: "KEY",
+      cell: ({ row }) => (
+        <div>
+          <div style={{ fontSize: 11, fontFamily: "monospace", wordBreak: "break-all" }}>
+            {row.original.key}
+          </div>
+          {row.original.data && typeof row.original.data === "object" && (
+            <div className="minor-text" style={{ fontSize: 9, marginTop: 4 }}>
+              {row.original.data.symbol} {row.original.data.tf} · {row.original.data.bars} bars
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      accessorKey: "source",
+      header: "SOURCE",
+      cell: ({ row }) => (
+        <span
+          className={`badge ${row.original.source === "memory" ? "FILLED" : "OTHER"}`}
+          style={{ fontSize: 9 }}
+        >
+          {row.original.source.toUpperCase()}
+        </span>
+      ),
+      size: 80,
+    },
+    {
+      id: "updated",
+      header: "UPDATED / EXPIRY",
+      accessorFn: (row) => row.data?.updated_at ?? 0,
+      cell: ({ row }) => (
+        <div>
+          <div className="minor-text" style={{ fontSize: 9 }}>
+            {row.original.data?.updated_at
+              ? timeAgo(new Date(row.original.data.updated_at).getTime())
+              : "n/a"}
+          </div>
+          {expiryText(row.original) && (
+            <div
+              className="minor-text"
+              style={{
+                fontSize: 8,
+                color: row.original.expired ? "#ef4444" : "var(--muted)",
+              }}
+            >
+              {expiryText(row.original)}
+            </div>
+          )}
+        </div>
+      ),
+      size: 140,
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => (
+        <button
+          className="secondary-button icon-button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDelete(row.original.key, row.original.source);
+          }}
+        >
+          ✖
+        </button>
+      ),
+      size: 40,
+      enableSorting: false,
+    },
+  ], [handleDelete]);
+
   const isCsv = (content) => {
     if (typeof content !== "string") return false;
     if (content.length < 5) return false;
@@ -278,113 +357,23 @@ export default function CachePage() {
         style={{ height: "100%", overflow: "hidden", marginTop: 0 }}
       >
         {/* Left Column: List */}
-        <div className="panel" style={{ overflowY: "auto", padding: 0 }}>
-          <table className="events-table">
-            <thead
-              style={{
-                position: "sticky",
-                top: 0,
-                background: "var(--panel-bg)",
-                zIndex: 1,
-              }}
-            >
-              <tr>
-                <th>KEY</th>
-                <th style={{ width: 80 }}>SOURCE</th>
-                <th style={{ width: 140 }}>UPDATED / EXPIRY</th>
-                <th style={{ width: 40 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredItems.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan="4"
-                    style={{ textAlign: "center", padding: 40 }}
-                    className="muted"
-                  >
-                    {loading
-                      ? "Loading..."
-                      : items.length === 0
-                        ? "No cache items"
-                        : "No matches"}
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((item, idx) => (
-                  <tr
-                    key={`${item.source}-${item.key}-${idx}`}
-                    className={
-                      selectedKey?.key === item.key &&
-                      selectedKey?.source === item.source
-                        ? "selected-row"
-                        : ""
-                    }
-                    onClick={() => loadDetail(item.key, item.source)}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <td>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          fontFamily: "monospace",
-                          wordBreak: "break-all",
-                        }}
-                      >
-                        {item.key}
-                      </div>
-                      {item.data && typeof item.data === "object" && (
-                        <div
-                          className="minor-text"
-                          style={{ fontSize: 9, marginTop: 4 }}
-                        >
-                          {item.data.symbol} {item.data.tf} · {item.data.bars}{" "}
-                          bars
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${item.source === "memory" ? "FILLED" : "OTHER"}`}
-                        style={{ fontSize: 9 }}
-                      >
-                        {item.source.toUpperCase()}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="minor-text" style={{ fontSize: 9 }}>
-                        {item.data?.updated_at
-                          ? timeAgo(new Date(item.data.updated_at).getTime())
-                          : "n/a"}
-                      </div>
-                      {expiryText(item) && (
-                        <div
-                          className="minor-text"
-                          style={{
-                            fontSize: 8,
-                            color: item.expired ? "#ef4444" : "var(--muted)",
-                          }}
-                        >
-                          {expiryText(item)}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        className="secondary-button icon-button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(item.key, item.source);
-                        }}
-                      >
-                        ✖
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="panel" style={{ padding: 0 }}>
+          <DataTable
+            columns={columns}
+            data={filteredItems}
+            sorting={sorting}
+            onSortingChange={setSorting}
+            globalFilter=""
+            loading={loading}
+            emptyText={emptyText}
+            rowClassName={(row) =>
+              selectedKey?.key === row.key &&
+              selectedKey?.source === row.source
+                ? "selected-row"
+                : ""
+            }
+            onRowClick={(row) => loadDetail(row.key, row.source)}
+          />
         </div>
 
         {/* Right Column: Detail */}

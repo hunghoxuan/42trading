@@ -4,6 +4,7 @@ import { api, setRuntimeActiveUserId } from "../../api";
 import UserDetailSection from "../../components/UserDetailSection";
 import PaginationBar from "../../components/PaginationBar";
 import SearchFilterBar from "../../components/SearchFilterBar";
+import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 const ROLE_OPTIONS = ["System", "Admin", "User", "Guest"];
@@ -82,6 +83,7 @@ export default function UsersPage({ authUser }) {
   });
   const [editingAccountId, setEditingAccountId] = useState("");
   const [accountFormOpen, setAccountFormOpen] = useState(false);
+  const [sorting, setSorting] = useState(null);
 
   const filteredUsers = useMemo(() => {
     const q = String(searchQuery || "")
@@ -474,6 +476,102 @@ export default function UsersPage({ authUser }) {
     }
   }
 
+  const columns = useMemo(() => {
+    const cols = [
+      {
+        id: "checkbox",
+        header: () => (
+          <input
+            type="checkbox"
+            checked={
+              pageRows.length > 0 &&
+              checkedUserIds.size === pageRows.length
+            }
+            onChange={toggleCheckAll}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        cell: ({ row }) => (
+          <span onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={checkedUserIds.has(row.original.user_id)}
+              onChange={() => toggleCheck(row.original.user_id)}
+            />
+          </span>
+        ),
+        enableSorting: false,
+      },
+      {
+        accessorKey: "name",
+        header: "NAME",
+        cell: ({ row }) => (
+          <div className="cell-wrap">
+            <div className="cell-major">
+              {row.original.name || row.original.user_id}
+            </div>
+            <div className="cell-minor">{row.original.user_id}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "email",
+        header: "EMAIL",
+        cell: ({ row }) => (
+          <span className="cell-minor">{row.original.email || "-"}</span>
+        ),
+      },
+      {
+        accessorKey: "role",
+        header: "ROLE",
+        cell: ({ row }) => (
+          <span className="badge">{row.original.role || "User"}</span>
+        ),
+      },
+      {
+        accessorKey: "is_active",
+        header: "STATUS",
+        cell: ({ row }) => (
+          <span
+            className={`badge ${row.original.is_active ? "ACTIVE" : "INACTIVE"}`}
+          >
+            {row.original.is_active ? "ACTIVE" : "INACTIVE"}
+          </span>
+        ),
+      },
+    ];
+    if (authUser?.role === "System") {
+      cols.push({
+        id: "actions",
+        header: () => <span>ACTIONS</span>,
+        cell: ({ row }) => (
+          <div style={{ textAlign: "right" }}>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ padding: "2px 8px", fontSize: "0.75rem" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleSwitchUser(e, row.original);
+              }}
+            >
+              Switch User
+            </button>
+          </div>
+        ),
+        enableSorting: false,
+      });
+    }
+    return cols;
+  }, [
+    pageRows.length,
+    checkedUserIds,
+    authUser?.role,
+    toggleCheckAll,
+    toggleCheck,
+    handleSwitchUser,
+  ]);
+
   return (
     <div className="stack-layout fadeIn">
       <h2 className="page-title">Users</h2>
@@ -543,95 +641,25 @@ export default function UsersPage({ authUser }) {
               {pageAlert.text}
             </div>
           ) : null}
-          <div className="events-table-wrap">
-            <table className="events-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 40 }}>
-                    <input
-                      type="checkbox"
-                      checked={
-                        pageRows.length > 0 &&
-                        checkedUserIds.size === pageRows.length
-                      }
-                      onChange={toggleCheckAll}
-                    />
-                  </th>
-                  <th>NAME</th>
-                  <th>EMAIL</th>
-                  <th>ROLE</th>
-                  <th>STATUS</th>
-                  {authUser?.role === "System" && (
-                    <th style={{ textAlign: "right" }}>ACTIONS</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {loadingUsers ? (
-                  <tr>
-                    <td colSpan={4} className="loading">
-                      Loading users...
-                    </td>
-                  </tr>
-                ) : (
-                  pageRows.map((u) => (
-                    <tr
-                      key={u.user_id}
-                      className={
-                        String(u.user_id) === String(selectedUserId) &&
-                        detailMode !== "create"
-                          ? "active"
-                          : ""
-                      }
-                      onClick={() => {
-                        openViewMode(u.user_id);
-                        navigate(`/system/users/${u.user_id}`);
-                      }}
-                    >
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={checkedUserIds.has(u.user_id)}
-                          onChange={() => toggleCheck(u.user_id)}
-                        />
-                      </td>
-                      <td>
-                        <div className="cell-wrap">
-                          <div className="cell-major">
-                            {u.name || u.user_id}
-                          </div>
-                          <div className="cell-minor">{u.user_id}</div>
-                        </div>
-                      </td>
-                      <td className="cell-minor">{u.email || "-"}</td>
-                      <td>
-                        <span className="badge">{u.role || "User"}</span>
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${u.is_active ? "ACTIVE" : "INACTIVE"}`}
-                        >
-                          {u.is_active ? "ACTIVE" : "INACTIVE"}
-                        </span>
-                      </td>
-                      {authUser?.role === "System" && (
-                        <td style={{ textAlign: "right" }}>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            style={{ padding: "2px 8px", fontSize: "0.75rem" }}
-                            onClick={(e) => handleSwitchUser(e, u)}
-                          >
-                            Switch User
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            data={pageRows}
+            sorting={sorting}
+            onSortingChange={setSorting}
+            loading={loadingUsers}
+            emptyText="No users found."
+            rowClassName={(row) =>
+              String(row.user_id) === String(selectedUserId) &&
+              detailMode !== "create"
+                ? "active"
+                : ""
+            }
+            onRowClick={(row) => {
+              openViewMode(row.user_id);
+              navigate(`/system/users/${row.user_id}`);
+            }}
+            className="events-table"
+          />
           <div
             style={{
               padding: "10px 12px",

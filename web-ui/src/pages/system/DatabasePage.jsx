@@ -5,6 +5,7 @@ import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 import PaginationBar from "../../components/PaginationBar";
 import SearchFilterBar from "../../components/SearchFilterBar";
+import DataTable from "../../components/DataTable";
 
 // Columns hidden in COMPACT preset (verbose/metadata/raw/internal)
 const COMPACT_HIDE = [
@@ -243,10 +244,12 @@ export default function DatabasePage() {
   );
   const [editMode, setEditMode] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
-  const [sortCol, setSortCol] = useState("");
-  const [sortDir, setSortDir] = useState("DESC");
+  const [sorting, setSorting] = useState(null);
   const [hiddenCols, setHiddenCols] = useState(new Set());
   const inFlightRef = useRef(false);
+
+  const sortCol = sorting?.key || "";
+  const sortDir = (sorting?.dir || "desc").toUpperCase();
 
   const [filter, setFilter] = useState({
     q: "",
@@ -353,15 +356,6 @@ export default function DatabasePage() {
     }
   }
 
-  function handleSort(colName) {
-    if (sortCol === colName) {
-      setSortDir((d) => (d === "ASC" ? "DESC" : "ASC"));
-    } else {
-      setSortCol(colName);
-      setSortDir("ASC");
-    }
-  }
-
   function toggleColVisibility(colName) {
     setHiddenCols((prev) => {
       const next = new Set(prev);
@@ -384,6 +378,34 @@ export default function DatabasePage() {
     if (!rows.length) return [];
     return Object.keys(rows[0]);
   }, [rows, schema]);
+
+  const columns = useMemo(() => {
+    return tableHeaders.map((h) => ({
+      accessorKey: h,
+      header: () => h.replace(/_/g, " ").toUpperCase(),
+      cell: ({ getValue }) => {
+        const val = getValue();
+        const isDate =
+          h.includes("_at") || h === "tick_time" || h === "event_time";
+        const isStatus = h === "status" || h === "ack_status";
+
+        if (isStatus) {
+          const ui = statusUi(val);
+          return <span className={`badge ${ui.cls}`}>{ui.label}</span>;
+        }
+
+        return (
+          <div className="cell-wrap">
+            <div className="minor-text">
+              {isDate
+                ? showDateTime(val)
+                : String(val ?? "-").slice(0, 50)}
+            </div>
+          </div>
+        );
+      },
+    }));
+  }, [tableHeaders]);
 
   return (
     <div className="stack-layout fadeIn">
@@ -547,100 +569,21 @@ export default function DatabasePage() {
               </table>
             </div>
           )}
-          <div
-            className="events-table-wrap"
-            style={{ overflowX: "auto", whiteSpace: "nowrap" }}
-          >
-            <table className="events-table">
-              <thead>
-                <tr>
-                  {tableHeaders.map((h) => (
-                    <th
-                      key={h}
-                      onClick={() => handleSort(h)}
-                      style={{ cursor: "pointer", userSelect: "none" }}
-                    >
-                      {h.replace(/_/g, " ").toUpperCase()}
-                      {sortCol === h && (
-                        <span style={{ marginLeft: 4, fontSize: 10 }}>
-                          {sortDir === "ASC" ? "▲" : "▼"}
-                        </span>
-                      )}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loading && (
-                  <tr>
-                    <td
-                      colSpan={tableHeaders.length}
-                      style={{ textAlign: "center", padding: "40px" }}
-                      className="muted"
-                    >
-                      Loading institutional records...
-                    </td>
-                  </tr>
-                )}
-                {!loading && rows.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={tableHeaders.length}
-                      style={{ textAlign: "center", padding: "40px" }}
-                      className="muted"
-                    >
-                      No records found
-                    </td>
-                  </tr>
-                )}
-                {!loading &&
-                  rows.map((row, idx) => (
-                    <tr
-                      key={idx}
-                      onClick={() => {
-                        setCreateMode(false);
-                        setEditMode(false);
-                        setSelectedRow(row);
-                        navigate(`/system/db/${selectedTable}`);
-                      }}
-                      className={selectedRow === row ? "active" : ""}
-                    >
-                      {tableHeaders.map((h) => {
-                        const val = row[h];
-                        const isDate =
-                          h.includes("_at") ||
-                          h === "tick_time" ||
-                          h === "event_time";
-                        const isStatus = h === "status" || h === "ack_status";
-
-                        if (isStatus) {
-                          const ui = statusUi(val);
-                          return (
-                            <td key={h}>
-                              <span className={`badge ${ui.cls}`}>
-                                {ui.label}
-                              </span>
-                            </td>
-                          );
-                        }
-
-                        return (
-                          <td key={h}>
-                            <div className="cell-wrap">
-                              <div className="minor-text">
-                                {isDate
-                                  ? showDateTime(val)
-                                  : String(val ?? "-").slice(0, 50)}
-                              </div>
-                            </div>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            data={rows}
+            sorting={sorting}
+            onSortingChange={setSorting}
+            loading={loading}
+            emptyText="No records found"
+            rowClassName={(row) => (selectedRow === row ? "active" : "")}
+            onRowClick={(row) => {
+              setCreateMode(false);
+              setEditMode(false);
+              setSelectedRow(row);
+              navigate(`/system/db/${selectedTable}`);
+            }}
+          />
           <div
             style={{
               padding: "10px 12px",

@@ -19605,6 +19605,7 @@ const appHandler = async (req, res) => {
         <head>
           <meta charset="utf-8">
           <title>Grid ${htmlEscape(symbols.join("-"))}</title>
+          <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
           <style>
             body {
               margin: 0;
@@ -19865,7 +19866,7 @@ const appHandler = async (req, res) => {
 
               btn.addEventListener("click", async () => {
                 try {
-                  statusEl.textContent = "Saving...";
+                  statusEl.textContent = "Capturing...";
                   const fd = new FormData(form);
                   const symbolsRaw = String(fd.get("symbols") || "");
                   const symbols = symbolsRaw
@@ -19873,37 +19874,31 @@ const appHandler = async (req, res) => {
                     .map((s) => String(s || "").trim().toUpperCase())
                     .filter(Boolean)
                     .slice(0, 8);
-                  const tfs = fd
-                    .getAll("tfs")
-                    .map((s) => String(s || "").trim())
-                    .filter(Boolean);
-                  const theme = String(fd.get("theme") || "dark").trim() || "dark";
-                  const tz = String(fd.get("tz") || "UTC").trim() || "UTC";
-                  const provider = String(fd.get("provider") || "").trim();
-                  if (!symbols.length || !tfs.length) {
-                    statusEl.textContent = "Need symbols + TFs";
+                  if (!symbols.length) {
+                    statusEl.textContent = "Need symbols";
                     return;
                   }
-                  const body = {
-                    symbols,
-                    tfs,
-                    theme,
-                    timezone: tz,
-                    provider,
-                    merge_snapshots: true,
-                  };
-                  const res = await fetch("/v2/chart/snapshot/batch", {
+                  const symbol = symbols[0];
+                  // Browser-native capture using html2canvas
+                  const canvas = await html2canvas(document.body, {
+                    useCORS: true,
+                    allowTaint: true,
+                    scale: 1,
+                    backgroundColor: null,
+                  });
+                  statusEl.textContent = "Uploading...";
+                  const dataUrl = canvas.toDataURL("image/png");
+                  const res = await fetch("/v2/chart/snapshots-grid/upload", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(body),
+                    body: JSON.stringify({ symbol, image_data: dataUrl }),
                   });
                   const data = await res.json().catch(() => ({}));
                   if (!res.ok || data?.ok === false) {
                     statusEl.textContent = "Failed";
                     return;
                   }
-                  const count = Array.isArray(data?.items) ? data.items.length : 0;
-                  statusEl.textContent = "Saved " + count;
+                  statusEl.textContent = "Saved " + (data?.file_name || symbol);
                 } catch (_) {
                   statusEl.textContent = "Failed";
                 }
@@ -19914,6 +19909,45 @@ const appHandler = async (req, res) => {
       </html>
     `);
     return;
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/v2/chart/snapshots-grid/upload"
+  ) {
+    try {
+      const body = await readJson(req);
+      const symbol = String(body?.symbol || "").trim().toUpperCase();
+      const imageData = String(body?.image_data || "").trim();
+      if (!symbol || !imageData) {
+        return json(res, 400, { ok: false, error: "symbol and image_data required" });
+      }
+      // Decode base64 data URL: data:image/png;base64,XXXX
+      const base64Match = imageData.match(/^data:image\/\w+;base64,(.+)$/);
+      if (!base64Match) {
+        return json(res, 400, { ok: false, error: "invalid image_data format, expected data URL" });
+      }
+      const buf = Buffer.from(base64Match[1], "base64");
+      if (buf.length === 0) {
+        return json(res, 400, { ok: false, error: "empty image data" });
+      }
+      const outFileName = `${symbol}_MASTER.png`;
+      const outDir = snapshotSymbolDir(symbol);
+      const outPath = path.join(outDir, outFileName);
+      fs.writeFileSync(outPath, buf);
+      return json(res, 200, {
+        ok: true,
+        symbol,
+        file_name: outFileName,
+        size_bytes: buf.length,
+        url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${encodeURIComponent(outFileName)}`,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/v2/chart/tv-tile") {

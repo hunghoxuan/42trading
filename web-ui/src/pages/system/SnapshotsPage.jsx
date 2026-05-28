@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
 import PaginationBar from "../../components/PaginationBar";
+import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function formatBytes(value) {
@@ -63,6 +64,7 @@ export default function SnapshotsPage() {
   const [viewing, setViewing] = useState(false);
   const [modal, setModal] = useState(null);
   const [status, setStatus] = useState({ type: "", text: "" });
+  const [sorting, setSorting] = useState(null);
 
   const closeModal = () => {
     if (modal?.objectUrl && modal.source === "claude") URL.revokeObjectURL(modal.objectUrl);
@@ -285,6 +287,98 @@ export default function SnapshotsPage() {
     }
   };
 
+  const columns = useMemo(() => [
+    {
+      id: "select",
+      header: () => "",
+      cell: ({ row }) => {
+        const key = fileKey(source, row.original);
+        return (
+          <input
+            type="checkbox"
+            checked={selectedFiles.has(key)}
+            onChange={() => toggleFile(key)}
+          />
+        );
+      },
+      enableSorting: false,
+      size: 40,
+    },
+    {
+      id: "preview",
+      header: "Type",
+      cell: ({ row }) => {
+        const it = row.original;
+        if (it.url && isImageFile(it)) {
+          return (
+            <img
+              src={it.url}
+              alt={it.file_name}
+              style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }}
+            />
+          );
+        }
+        return <strong>{String(it.mime_type || "file").split("/").pop().toUpperCase()}</strong>;
+      },
+      enableSorting: false,
+      size: 70,
+    },
+    {
+      accessorKey: "file_name",
+      header: "Name",
+      cell: ({ getValue }) => <span className="cell-major">{getValue()}</span>,
+    },
+    {
+      id: "sourceInfo",
+      header: source === "claude" ? "Claude ID" : "Local Path",
+      cell: ({ row }) => {
+        const it = row.original;
+        return (
+          <div className="cell-wrap">
+            {source === "claude" && it.claude_file_id ? (
+              <span className="cell-minor">{it.claude_file_id}</span>
+            ) : null}
+            {it.local_file ? <span className="cell-minor">VPS: {it.local_file}</span> : null}
+          </div>
+        );
+      },
+      enableSorting: false,
+    },
+    {
+      id: "typeSize",
+      header: "Type / Size",
+      cell: ({ row }) => {
+        const it = row.original;
+        return (
+          <span className="cell-minor">
+            {String(it.mime_type || "unknown")} &middot; {formatBytes(it.size_bytes)}
+          </span>
+        );
+      },
+      enableSorting: false,
+    },
+    {
+      accessorKey: "created_at",
+      header: "Created",
+      cell: ({ getValue }) => <span className="cell-minor">{showDateTime(getValue())}</span>,
+    },
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => {
+        const it = row.original;
+        return (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="secondary-button" type="button" onClick={() => viewFile(it)} disabled={viewing}>View</button>
+            <button className="secondary-button" type="button" onClick={() => downloadFile(it)}>Download</button>
+            <button className="danger-button" type="button" onClick={() => deleteOne(it)} disabled={deleting}>Delete</button>
+          </div>
+        );
+      },
+      enableSorting: false,
+    },
+  ], [source, selectedFiles, toggleFile, viewing, deleting]);
+
   useEffect(() => {
     loadFiles(source);
     return () => closeModal();
@@ -352,48 +446,14 @@ export default function SnapshotsPage() {
           </div>
         ) : null}
 
-        {pageItems.length === 0 ? (
-          <div className="minor-text">No {source === "claude" ? "Claude files" : "VPS files"} yet.</div>
-        ) : (
-          <div className="snapshot-gallery-v2">
-            {pageItems.map((it) => {
-              const key = fileKey(source, it);
-              return (
-                <article key={key || it.file_name} className="snapshot-card-v2">
-                  <label className="snapshot-select-v2">
-                    <input
-                      type="checkbox"
-                      checked={selectedFiles.has(key)}
-                      onChange={() => toggleFile(key)}
-                    />
-                  </label>
-                  {it.url && isImageFile(it) ? (
-                    <button type="button" className="snapshot-image-button-v2" onClick={() => viewFile(it)}>
-                      <img src={it.url} alt={it.file_name} />
-                    </button>
-                  ) : (
-                    <div className="snapshot-card-file-v2">
-                      <strong>{String(it.mime_type || "file").split("/").pop().toUpperCase()}</strong>
-                      <span>{source === "claude" ? "Claude file" : "VPS file"}</span>
-                    </div>
-                  )}
-                  <div className="snapshot-meta-v2">
-                    <div className="snapshot-file-v2">{it.file_name}</div>
-                    {source === "claude" ? <div className="snapshot-time-v2">{it.claude_file_id}</div> : null}
-                    {it.local_file ? <div className="snapshot-time-v2">VPS: {it.local_file}</div> : null}
-                    <div className="snapshot-time-v2">{String(it.mime_type || "unknown")} · {formatBytes(it.size_bytes)}</div>
-                    <div className="snapshot-time-v2">{showDateTime(it.created_at)}</div>
-                  </div>
-                  <div className="snapshot-file-actions-v2">
-                    <button className="secondary-button" type="button" onClick={() => viewFile(it)} disabled={viewing}>View</button>
-                    <button className="secondary-button" type="button" onClick={() => downloadFile(it)}>Download</button>
-                    <button className="danger-button" type="button" onClick={() => deleteOne(it)} disabled={deleting}>Delete</button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        )}
+        <DataTable
+          columns={columns}
+          data={pageItems}
+          sorting={sorting}
+          onSortingChange={setSorting}
+          loading={loading}
+          emptyText={`No ${source === "claude" ? "Claude files" : "VPS files"} yet.`}
+        />
       </section>
 
       {modal ? (
