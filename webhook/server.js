@@ -1834,11 +1834,7 @@ const StateRepo = {
 async function repoGetSystemSettings() {
   return await StateRepo.get("SYSTEM_SETTINGS", "global", async () => {
     const db = await mt5InitBackend();
-    const { rows } = await db.query(
-      "SELECT data FROM user_settings WHERE type = 'api_key' AND user_id = $1",
-      [CFG.mt5DefaultUserId],
-    );
-    const raw = rows[0]?.data || {};
+    const raw = await dbQueries.getUserSettingData(db.db, CFG.mt5DefaultUserId, "api_key", "default");
     try {
       return decryptObject(raw);
     } catch {
@@ -6884,10 +6880,7 @@ async function loadAiConfig(userId = "") {
   const db = await mt5InitBackend();
   const uid =
     String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
-  const { rows } = await db.query(
-    "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
-    [uid],
-  );
+  const rows = await dbQueries.listUserSettingsByType(db.db, uid, "api_key");
   const cfg = {};
   for (const row of rows) {
     const name = normalizeAiApiKeyName(row?.name);
@@ -13581,11 +13574,8 @@ function parseTimeToUnixSec(raw) {
 async function loadUserApiKeysMap(userId) {
   const db = await mt5InitBackend();
   const out = {};
-  const configRes = await db.query(
-    "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
-    [userId],
-  );
-  for (const row of configRes.rows || []) {
+  const rows = await dbQueries.listUserSettingsByType(db.db, userId, "api_key");
+  for (const row of rows || []) {
     const name = normalizeAiApiKeyName(row?.name);
     const dec = decryptObject(
       row?.data && typeof row.data === "object" ? row.data : {},
@@ -15022,11 +15012,8 @@ async function mt5ListAccountsV2(userId = null) {
 async function mt5ListExecutionProfilesV2(userId) {
   const b = await mt5Backend();
   if (!userId) return [];
-  const res = await b.query(
-    `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 ORDER BY name ASC`,
-    [userId],
-  );
-  return (res.rows || []).map(mt5NormalizeExecutionProfileRow);
+  const rows = await dbQueries.listUserSettingsByType(b.db, userId, "execution_profiles");
+  return (rows || []).map(mt5NormalizeExecutionProfileRow);
 }
 
 async function mt5GetActiveExecutionProfileV2(userId) {
@@ -16532,17 +16519,10 @@ const appHandler = async (req, res) => {
       const db = await mt5InitBackend();
       const userId = sess.user_id;
 
-      const currentRes = await db.query(
-        "SELECT metadata FROM users WHERE user_id = $1",
-        [userId],
-      );
-      const current = currentRes.rows[0]?.metadata || {};
+      const current = await dbQueries.getUserMetadata(db.db, userId) || {};
       const next = { ...current, ...payload };
 
-      await db.query(
-        "UPDATE users SET metadata = $1, updated_at = NOW() WHERE user_id = $2",
-        [JSON.stringify(next), userId],
-      );
+      await dbQueries.updateUserMetadata(db.db, userId, next);
 
       // Update session cache
       const token = sess.token;
@@ -18887,10 +18867,7 @@ const appHandler = async (req, res) => {
     if (!requireAdminKey(req, res, url)) return;
     try {
       const db = await mt5InitBackend();
-      const { rows } = await db.query(
-        "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'ai_template' ORDER BY updated_at DESC, created_at DESC",
-        [CFG.mt5DefaultUserId],
-      );
+      const rows = await dbQueries.listUserSettingsByType(db.db, CFG.mt5DefaultUserId, "ai_template");
       const templates = rows.map((r) => ({
         template_id: r.name,
         name: r.name,
@@ -18910,19 +18887,13 @@ const appHandler = async (req, res) => {
       const { template_id, name, ...rest } = payload;
       const config = rest.config || rest;
       const templateName = String(name || config?.name || "Unnamed").trim();
-      const data = JSON.stringify({
+      const settingData = {
         config,
         _guide: config._guide,
         _schema: config._schema,
         saved: rest.saved || new Date().toISOString(),
-      });
-      await db.query(
-        `INSERT INTO user_settings (user_id, type, name, data)
-         VALUES ($1, 'ai_template', $2, $3::jsonb)
-         ON CONFLICT (user_id, type, name)
-         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-        [CFG.mt5DefaultUserId, templateName, data],
-      );
+      };
+      await dbQueries.upsertUserSetting(db.db, CFG.mt5DefaultUserId, "ai_template", templateName, settingData, "ACTIVE");
       await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
       return json(res, 201, {
         ok: true,
@@ -18938,10 +18909,7 @@ const appHandler = async (req, res) => {
     try {
       const templateName = decodeURIComponent(url.pathname.split("/").pop());
       const db = await mt5InitBackend();
-      await db.query(
-        "DELETE FROM user_settings WHERE user_id = $1 AND type = 'ai_template' AND name = $2",
-        [CFG.mt5DefaultUserId, templateName],
-      );
+      await dbQueries.deleteUserSetting(db.db, CFG.mt5DefaultUserId, "ai_template", templateName);
       return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -19064,42 +19032,30 @@ const appHandler = async (req, res) => {
       console.log(
         `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
       );
-      await db.query(
-        `
-        INSERT INTO user_settings (user_id, type, name, data, status)
-        VALUES
-          ($1, 'cron', 'CRON_MD_DEFAULT', $2::jsonb, 'INACTIVE'),
-          ($1, 'cron', 'CRON_AI_DEFAULT', $3::jsonb, 'INACTIVE')
-        ON CONFLICT (user_id, type, name) DO NOTHING
-      `,
-        [
-          userId,
-          JSON.stringify({
-            cron_type: "MARKET_DATA_CRON",
-            enabled: false,
-            provider: "twelvedata",
-            timezone: CFG.marketDataDefaultTimezone,
-            symbols: [],
-            timeframes: ["1m", "5m", "15m"],
-            batch_size: CFG.marketDataCronBatchSize,
-            last_sync: {},
-          }),
-          JSON.stringify({
-            cron_type: "ANALYSIS_CRON",
-            enabled: false,
-            symbols: [],
-            timeframes: ["15m", "1h"],
-            cadence_minutes: 60,
-            model: "claude-sonnet-4-0",
-            profile: "",
-            entry_models: [],
-            directions: ["BUY", "SELL"],
-            order_types: ["market", "limit", "stop"],
-            prompt: "",
-            last_sync: {},
-          }),
-        ],
-      );
+      await dbQueries.upsertUserSetting(db.db, userId, "cron", "CRON_MD_DEFAULT", {
+        cron_type: "MARKET_DATA_CRON",
+        enabled: false,
+        provider: "twelvedata",
+        timezone: CFG.marketDataDefaultTimezone,
+        symbols: [],
+        timeframes: ["1m", "5m", "15m"],
+        batch_size: CFG.marketDataCronBatchSize,
+        last_sync: {},
+      }, "INACTIVE");
+      await dbQueries.upsertUserSetting(db.db, userId, "cron", "CRON_AI_DEFAULT", {
+        cron_type: "ANALYSIS_CRON",
+        enabled: false,
+        symbols: [],
+        timeframes: ["15m", "1h"],
+        cadence_minutes: 60,
+        model: "claude-sonnet-4-0",
+        profile: "",
+        entry_models: [],
+        directions: ["BUY", "SELL"],
+        order_types: ["market", "limit", "stop"],
+        prompt: "",
+        last_sync: {},
+      }, "INACTIVE");
       const rows = await repoListUserSettings(userId);
       const settings = rows.map((r) => {
         let d = r.data;
@@ -22742,12 +22698,9 @@ const appHandler = async (req, res) => {
       const sess = getUiSessionFromReq(req);
       const db = await mt5InitBackend();
       let data = {};
-      const { rows } = await db.query(
-        "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'notification' AND name = 'preferences'",
-        [sess.user_id],
-      );
-      if (rows[0]?.data && typeof rows[0].data === "object")
-        data = rows[0].data;
+      const setting = await dbQueries.getUserSetting(db.db, sess.user_id, "notification_config", "preferences");
+      if (setting?.data && typeof setting.data === "object")
+        data = setting.data;
       return json(res, 200, { ok: true, settings: data });
     } catch (e) {
       return json(res, 200, { ok: true, settings: {} });
@@ -22767,13 +22720,7 @@ const appHandler = async (req, res) => {
           .toUpperCase()
           .replace(/[^A-Z_]/g, "");
         if (!eventKey) continue;
-        await db.query(
-          `INSERT INTO user_settings (user_id, type, name, data)
-           VALUES ($1, 'notification_config', $2, $3)
-           ON CONFLICT (user_id, type, name)
-           DO UPDATE SET data = $3, updated_at = NOW()`,
-          [sess.user_id, eventKey, JSON.stringify(config)],
-        );
+        await dbQueries.upsertUserSetting(db.db, sess.user_id, "notification_config", eventKey, config, "ACTIVE");
       }
       // Reload NotificationManager cache
       if (global.__notificationManager) {
@@ -26506,24 +26453,13 @@ async function marketDataUpdateCronState({
 }) {
   const b = await mt5Backend();
   const key = `${normalizeMarketDataSymbol(symbol)}:${normalizeMarketDataTf(tf)}`;
-  const res = await b.query(
-    `SELECT data FROM user_settings WHERE user_id = $1 AND type = 'cron' AND name = $2 LIMIT 1`,
-    [userId, settingName],
-  );
-  if (!res.rows.length) return;
-  const data =
-    res.rows[0].data && typeof res.rows[0].data === "object"
-      ? res.rows[0].data
-      : {};
+  const setting = await dbQueries.getUserSetting(b.db, userId, "cron", settingName);
+  if (!setting) return;
+  const data = setting.data && typeof setting.data === "object" ? setting.data : {};
   const sync =
     data.last_sync && typeof data.last_sync === "object" ? data.last_sync : {};
   sync[key] = { ...(sync[key] || {}), ...patch };
-  await b.query(
-    `UPDATE user_settings
-        SET data = $1::jsonb, updated_at = NOW()
-      WHERE user_id = $2 AND type = 'cron' AND name = $3`,
-    [JSON.stringify({ ...data, last_sync: sync }), userId, settingName],
-  );
+  await dbQueries.upsertUserSetting(b.db, userId, "cron", settingName, { ...data, last_sync: sync }, "ACTIVE");
 }
 
 async function marketDataFetchJob({

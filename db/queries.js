@@ -131,3 +131,56 @@ async function getUserTemplateData(db, id) {
 }
 
 module.exports = Object.assign(module.exports, { deleteUserTemplate, getUserTemplate, getUserTemplateData });
+
+// ── user_settings helpers (most common pattern) ──
+
+async function getUserSetting(db, userId, type, name) {
+  const rows = await db.select().from(schema.userSettings)
+    .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, type), eq(schema.userSettings.name, name || "default")))
+    .limit(1);
+  return rows[0] || null;
+}
+
+async function getUserSettingData(db, userId, type, name) {
+  const rows = await db.select({ data: schema.userSettings.data }).from(schema.userSettings)
+    .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, type), eq(schema.userSettings.name, name || "default")))
+    .limit(1);
+  return rows[0]?.data || null;
+}
+
+async function listUserSettingsByType(db, userId, type) {
+  return db.select().from(schema.userSettings)
+    .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, type)))
+    .orderBy(schema.userSettings.name);
+}
+
+async function upsertUserSetting(db, userId, type, name, data, status) {
+  const now = new Date();
+  return db.insert(schema.userSettings).values({
+    userId, type, name: name || "default", data: data || {},
+    status: status || "ACTIVE", createdAt: now, updatedAt: now,
+  }).onConflictDoUpdate({
+    target: [schema.userSettings.userId, schema.userSettings.type, schema.userSettings.name],
+    set: { data: sql`EXCLUDED.data`, status: sql`EXCLUDED.status`, updatedAt: now },
+  }).returning();
+}
+
+async function deleteUserSetting(db, userId, type, name) {
+  return db.delete(schema.userSettings)
+    .where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, type), eq(schema.userSettings.name, name || "default")));
+}
+
+// ── users helpers ──
+
+async function getUserMetadata(db, userId) {
+  const rows = await db.select({ metadata: schema.users.metadata }).from(schema.users)
+    .where(eq(schema.users.userId, userId)).limit(1);
+  return rows[0]?.metadata || null;
+}
+
+async function updateUserMetadata(db, userId, metadata) {
+  return db.update(schema.users).set({ metadata, updatedAt: new Date() })
+    .where(eq(schema.users.userId, userId));
+}
+
+module.exports = Object.assign(module.exports, { getUserSetting, getUserSettingData, listUserSettingsByType, upsertUserSetting, deleteUserSetting, getUserMetadata, updateUserMetadata });

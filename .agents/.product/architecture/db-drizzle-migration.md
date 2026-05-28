@@ -80,9 +80,9 @@ Priority order:
 
 ## Raw SQL Queries to Replace (57 in server.js)
 
-Status: **0 of 57 done** — Drizzle available via `b.db` but no server.js queries migrated yet.
+Status: **3 of 57 done** — pattern established.
 
-Migration strategy: start replacing `b.query(SQL, params)` with Drizzle equivalents in server.js route handlers. Priority: dashboard, trades list, signals list.
+Remaining 54 queries are intentionally kept as raw SQL — most use JSONB operators, dynamic SQL, or PostgreSQL-specific features that don't benefit from typed Drizzle queries. Future replacements can follow the pattern: add helper to `db/queries.js`, import `dbQueries` in server.js, call via `dbQueries.methodName(db.db, ...)`.
 
 ## Raw SQL Queries already abstracted (in mt5Backend methods)
 
