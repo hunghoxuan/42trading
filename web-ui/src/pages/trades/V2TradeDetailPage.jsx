@@ -18,6 +18,7 @@ import {
 } from "../../utils/signalDetailUtils";
 import { showDateTime } from "../../utils/format";
 import { showToast } from "../../components/ToastContainer";
+import { BrokerTicketBadge } from "../../components/BrokerTicketBadge";
 
 function PnlDisplay({ value }) {
   const n = asNum(value);
@@ -282,7 +283,10 @@ export default function TradeDetailPage() {
             }}
           >
             <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>{sidText}</span>
-            <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>{brokerIdText}</span>
+            <BrokerTicketBadge
+              brokerId={brokerIdText}
+              dispatchStatus={trade.dispatch_status}
+            />
             <span>|</span>
             <span className={`badge ${currentStatus.cls}`} style={{ cursor: "default" }}>
               {currentStatus.label}
@@ -569,6 +573,12 @@ export default function TradeDetailPage() {
               hideEditor: false,
               mode: "trade",
               tradeId: trade.sid || trade.id,
+              sid: trade.sid || trade.signal_sid || "",
+              broker_trade_id:
+                trade.broker_trade_id || trade.ticket || trade.broker_id || "",
+              execution_status: trade.execution_status || "",
+              dispatch_status: trade.dispatch_status || "",
+              rejection_reason: trade.rejection_reason || "",
               value: detailPlan,
               onChange: (k, v) => applyPlanChange(k, v),
               onSave: onUpdateTradePlan,

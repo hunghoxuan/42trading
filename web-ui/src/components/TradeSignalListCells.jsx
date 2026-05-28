@@ -1,4 +1,5 @@
 import React from "react";
+import { BrokerTicketBadge } from "./BrokerTicketBadge";
 
 function num(v) {
   const n = Number(v);
@@ -116,6 +117,7 @@ export function PositionAuditCell({
   timeText = "-",
   sid = "-",
   brokerId = "-",
+  dispatchStatus = "",
 }) {
   const metaLine = [sid, brokerId && brokerId !== "-" ? brokerId : null]
     .filter(Boolean)
@@ -124,8 +126,25 @@ export function PositionAuditCell({
   return (
     <div className="cell-wrap">
       <div className="cell-major">{timeText || "-"}</div>
-      <div className="cell-minor" style={{ opacity: 0.7 }}>
-        {metaLine}
+      <div className="cell-minor" style={{ opacity: 0.7, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <span>{sid}</span>
+        {brokerId && brokerId !== "-" ? (
+          <>
+            <span>|</span>
+            <BrokerTicketBadge
+              brokerId={brokerId}
+              dispatchStatus={dispatchStatus}
+              className=""
+              fallbackColor="rgba(148, 163, 184, 0.35)"
+              style={{
+                border: "1px solid",
+                borderRadius: 4,
+                padding: "1px 4px",
+                lineHeight: 1.2,
+              }}
+            />
+          </>
+        ) : metaLine ? null : "-"}
       </div>
     </div>
   );

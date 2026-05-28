@@ -15,6 +15,7 @@ import { sortTimeframes } from "../utils/format";
 import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
+import { BrokerTicketBadge } from "./BrokerTicketBadge";
 
 import { TF_WEIGHTS, DEFAULT_TF_TABS } from "../pages/ai/AiPromptBuilder";
 
@@ -748,20 +749,10 @@ function PlanHeader({
                     {sidVal}
                   </span>
                 ) : null}
-                {brokerIdVal ? (
-                  <span className="badge badge-mini" style={{
-                    padding: "2px 6px", fontSize: "9px", fontWeight: 400,
-                    borderColor: (() => {
-                      const d = String(plan.dispatch_status || "").toUpperCase();
-                      if (d === "REJECTED") return "#dc2626";
-                      if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL" || d === "LEASED") return "#16a34a";
-                      return "var(--border)";
-                    })(),
-                    borderWidth: 1.5,
-                  }}>
-                    {brokerIdVal}
-                  </span>
-                ) : null}
+                <BrokerTicketBadge
+                  brokerId={brokerIdVal}
+                  dispatchStatus={plan.dispatch_status}
+                />
               </span>
             )}
             {statusText && <span>|</span>}
@@ -1889,6 +1880,14 @@ export default function SignalDetailCard({
                 execution_status:
                   planValue?.execution_status ||
                   tradePlan?.execution_status ||
+                  "",
+                dispatch_status:
+                  planValue?.dispatch_status ||
+                  tradePlan?.dispatch_status ||
+                  "",
+                rejection_reason:
+                  planValue?.rejection_reason ||
+                  tradePlan?.rejection_reason ||
                   "",
                 strategy: planValue?.strategy || selectedAiPlan?.strategy || "",
                 entry_model:

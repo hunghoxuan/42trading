@@ -1458,6 +1458,7 @@ export default function TradesPage() {
                               timeText={timeValue}
                               sid={String(t.sid || "-")}
                               brokerId={brokerTicketOf(t)}
+                              dispatchStatus={t.dispatch_status}
                               confidence={
                                 t.confidence_pct ||
                                 t.raw_json?.confidence_pct ||
@@ -1625,6 +1626,8 @@ export default function TradesPage() {
                       selectedTrade.broker_id ||
                       "",
                     execution_status: selectedTrade.execution_status || "",
+                    dispatch_status: selectedTrade.dispatch_status || "",
+                    rejection_reason: selectedTrade.rejection_reason || "",
                     statusUi: statusUi(selectedTrade.execution_status),
                     value: detailPlan,
                     onChange: (k, v) =>

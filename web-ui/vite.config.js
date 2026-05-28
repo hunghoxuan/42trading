@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       "/auth": { target: T, changeOrigin: true },
       "/health": { target: T, changeOrigin: true },
-      "/webhook": { target: T, changeOrigin: true, rewrite: (p) => p.replace(/^\/webhook/, "") },
+      "/webhook": { target: T, changeOrigin: true },
       "/mt5": { target: T, changeOrigin: true },
       "/v2": { target: T, changeOrigin: true },
       "/sse": { target: T, changeOrigin: true, ws: true },

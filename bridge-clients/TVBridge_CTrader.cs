@@ -2080,9 +2080,7 @@ namespace cAlgo.Robots
         {
             try
             {
-                var heartbeat = string.Format("{0} | poll={1} sync={2} price={3} | {4}",
-                    BuildVersion, _pollStatus, _syncStatus, _priceStatus, DateTime.Now.ToString("HH:mm:ss"));
-                Chart.DrawStaticText("Panel_HEARTBEAT", heartbeat, VerticalAlignment.Center, HorizontalAlignment.Center, Color.Yellow);
+                Chart.RemoveObject("Panel_HEARTBEAT");
 
                 var tl = new StringBuilder();
                 tl.AppendLine(string.Format("BUILD: {0}", BuildVersion));

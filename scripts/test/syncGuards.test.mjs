@@ -106,6 +106,40 @@ test("brokerSnapshotHash changes when synced broker fields change", () => {
   assert.notEqual(before, after);
 });
 
+test("shouldClearRejectedDispatchFromBrokerSnapshot repairs stale lease retry rejects", () => {
+  assert.equal(
+    guards.shouldClearRejectedDispatchFromBrokerSnapshot(
+      {
+        sid: "TFOWSIUNW",
+        dispatch_status: "REJECTED",
+        rejection_reason: "broker ack lease retry limit exceeded",
+      },
+      {
+        ticket: "976252918",
+        execution_status: "PENDING",
+      },
+    ),
+    true,
+  );
+});
+
+test("shouldClearRejectedDispatchFromBrokerSnapshot preserves real rejects", () => {
+  assert.equal(
+    guards.shouldClearRejectedDispatchFromBrokerSnapshot(
+      {
+        sid: "TFOWSIUNW",
+        dispatch_status: "REJECTED",
+        rejection_reason: "broker rejected invalid stop loss",
+      },
+      {
+        ticket: "976252918",
+        execution_status: "PENDING",
+      },
+    ),
+    false,
+  );
+});
+
 test("brokerLinkedManualStatus maps terminal manual edits to broker queue statuses", () => {
   const result = guards.brokerLinkedManualStatus(
     { broker_trade_id: "pos-1", execution_status: "FILLED" },

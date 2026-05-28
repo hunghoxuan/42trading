@@ -102,6 +102,39 @@ function brokerSnapshotHash(item = {}) {
     .digest("hex");
 }
 
+function shouldClearRejectedDispatchFromBrokerSnapshot(row = {}, item = {}) {
+  if (normText(row.dispatch_status) !== "REJECTED") return false;
+  if (
+    String(row.rejection_reason || "").trim() !==
+    "broker ack lease retry limit exceeded"
+  ) {
+    return false;
+  }
+  const status = normText(item.execution_status || item.status_raw || item.status);
+  if (
+    ![
+      "PENDING",
+      "FILLED",
+      "OPEN",
+      "CLOSED",
+      "CANCELLED",
+      "TP",
+      "SL",
+    ].includes(status)
+  ) {
+    return false;
+  }
+  const brokerId = String(
+    item.ticket ||
+      item.broker_trade_id ||
+      item.position_id ||
+      row.broker_trade_id ||
+      "",
+  ).trim();
+  const sid = String(item.sid || item.signal_id || row.sid || "").trim();
+  return Boolean(brokerId || sid);
+}
+
 // Returns NEW dispatch_status for the broker queue action.
 // Keeps execution_status unchanged — that's the trade state, not the sync action.
 function brokerLinkedManualStatus(row = {}, requestedStatus = "") {
@@ -122,6 +155,7 @@ module.exports = {
   brokerSnapshotFingerprint,
   brokerSnapshotHash,
   brokerTaskTypeForTrade,
+  shouldClearRejectedDispatchFromBrokerSnapshot,
   leaseRetryCount,
   nextLeaseRetryCount,
   shouldAutoRejectLeasedTrade,

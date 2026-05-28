@@ -700,6 +700,11 @@ export function extractTradePlanFromTrade(trade = {}) {
     source === "manual" && looksLikeBrokerAccount ? "" : rawEntryModel;
   // User-saved values from metadata.trade_plan take priority over AI plan values
   const entry = pickFirstFinite(
+    trade.entry,
+    trade.target_price,
+    trade.entry_price,
+    meta?.broker_data?.entry,
+    meta?.broker_data?.target_price,
     trade.entry_price_exec,
     trade.entry_exec,
     meta?.trade_plan?.entry,
@@ -709,12 +714,10 @@ export function extractTradePlanFromTrade(trade = {}) {
     raw?.entry_price,
     plan?.entry,
     plan?.entry_price,
-    trade.entry,
-    trade.target_price,
-    trade.entry_price,
-    meta?.broker_data?.entry,
   );
   const tp = pickFirstFinite(
+    trade.tp,
+    meta?.broker_data?.tp,
     meta?.trade_plan?.tp,
     meta?.trade_plan?.take_profit,
     raw?.tp,
@@ -722,8 +725,6 @@ export function extractTradePlanFromTrade(trade = {}) {
     plan?.tp,
     plan?.take_profit,
     planPrimaryTp(plan),
-    trade.tp,
-    meta?.broker_data?.tp,
   );
   const tp1 = pickFirstFinite(
     trade.tp1,
@@ -751,6 +752,8 @@ export function extractTradePlanFromTrade(trade = {}) {
     meta?.tp_targets?.[2],
   );
   const sl = pickFirstFinite(
+    trade.sl,
+    meta?.broker_data?.sl,
     meta?.trade_plan?.sl,
     meta?.trade_plan?.stop_loss,
     plan?.execution_plan?.stop_loss?.price,
@@ -758,8 +761,6 @@ export function extractTradePlanFromTrade(trade = {}) {
     raw?.stop_loss,
     plan?.sl,
     plan?.stop_loss,
-    trade.sl,
-    meta?.broker_data?.sl,
   );
   const rr =
     asNum(meta?.trade_plan?.rr) ??

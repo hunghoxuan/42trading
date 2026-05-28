@@ -9762,6 +9762,8 @@ END
               sid,
               broker_trade_id,
               execution_status,
+              dispatch_status,
+              rejection_reason,
               sl,
               tp,
               broker_pnl AS pnl,
@@ -9800,7 +9802,17 @@ END
               oldForItem?.metadata?.last_broker_snapshot_hash ||
               "",
           ).trim();
-          if (oldForItem && oldSnapshotHash && oldSnapshotHash === snapshotHash) {
+          const clearRejectedDispatch =
+            syncGuards.shouldClearRejectedDispatchFromBrokerSnapshot(
+              oldForItem || {},
+              it,
+            );
+          if (
+            oldForItem &&
+            oldSnapshotHash &&
+            oldSnapshotHash === snapshotHash &&
+            !clearRejectedDispatch
+          ) {
             results.push({
               ticket: it.ticket,
               sid: oldForItem.sid || it.sid || null,
@@ -9893,11 +9905,13 @@ END
                 tp1 = COALESCE($27::numeric, tp1),
                 tp2 = COALESCE($28::numeric, tp2),
                 tp3 = COALESCE($29::numeric, tp3),
+                dispatch_status = CASE WHEN $30::boolean THEN 'CONSUMED' ELSE dispatch_status END,
+                rejection_reason = CASE WHEN $30::boolean THEN NULL ELSE rejection_reason END,
                 note = COALESCE(NULLIF($25::text, ''), note),
                 metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
                 opened_at = COALESCE($5::timestamptz, opened_at),
                 closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
-                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $30::boolean THEN NOW() ELSE updated_at END
             WHERE account_id = $3
               AND ($11::text = '' OR symbol = $11::text)
               AND (
@@ -9940,6 +9954,7 @@ END
                 mt5ParsePriceOrNull(it.tp1),
                 mt5ParsePriceOrNull(it.tp2),
                 mt5ParsePriceOrNull(it.tp3),
+                clearRejectedDispatch,
               ],
             );
           }
@@ -9974,13 +9989,15 @@ END
                 tp1 = COALESCE($26::numeric, tp1),
                 tp2 = COALESCE($27::numeric, tp2),
                 tp3 = COALESCE($28::numeric, tp3),
+                dispatch_status = CASE WHEN $29::boolean THEN 'CONSUMED' ELSE dispatch_status END,
+                rejection_reason = CASE WHEN $29::boolean THEN NULL ELSE rejection_reason END,
                 note = COALESCE(NULLIF($24::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
                 opened_at = COALESCE($9::timestamptz, opened_at),
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10::timestamptz, closed_at, NOW()) ELSE closed_at END,
-                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
+                updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $29::boolean THEN NOW() ELSE updated_at END
             WHERE sid = (
               SELECT sid
               FROM trades
@@ -10026,6 +10043,7 @@ END
                   mt5ParsePriceOrNull(it.tp1),
                   mt5ParsePriceOrNull(it.tp2),
                   mt5ParsePriceOrNull(it.tp3),
+                  clearRejectedDispatch,
                 ],
               );
             }
@@ -16273,12 +16291,15 @@ const appHandler = async (req, res) => {
     req.url,
     `${proto}://${req.headers.host || "localhost"}`,
   );
+  const isWebhookBasePath = incomingUrl.pathname === "/webhook";
 
   // NORMALIZE PATH: Support both /webhook/path and /path for routing
   if (incomingUrl.pathname.startsWith("/webhook/")) {
     incomingUrl.pathname = incomingUrl.pathname.substring(8);
-  } else if (incomingUrl.pathname === "/webhook") {
-    incomingUrl.pathname = "/";
+  } else if (isWebhookBasePath) {
+    incomingUrl.pathname = ["GET", "HEAD"].includes(req.method)
+      ? "/health"
+      : "/";
   }
 
   // Optimization: Any incoming webhook/POST potentially changes state
