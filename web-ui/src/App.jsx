@@ -205,27 +205,22 @@ export default function App() {
         >
           AI
         </NavLink>
-        <div className="nav-dropdown">
-          <NavLink
-            to="/trades"
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            Trades
-          </NavLink>
-          <div className="nav-dropdown-menu">
-            <NavLink
-              to="/trades?status=PENDING"
-              className={({ isActive }) =>
-                isActive &&
-                location.pathname === "/trades" &&
-                new URLSearchParams(location.search).get("status") ===
-                  "PENDING"
-                  ? "active"
-                  : ""
-              }
-            >
-              Pending
+        <NavDropdown
+          align="start"
+          trigger={
+            <NavLink to="/trades" className={({ isActive }) => (isActive ? "active" : "")}>
+              Trades
             </NavLink>
+          }
+        >
+          <NavLink
+            to="/trades?status=PENDING"
+            className={({ isActive }) =>
+              isActive && location.pathname === "/trades" && new URLSearchParams(location.search).get("status") === "PENDING" ? "active" : ""
+            }
+          >
+            Pending
+          </NavLink>
             <NavLink
               to="/trades?status=FILLED"
               className={({ isActive }) =>
@@ -264,20 +259,18 @@ export default function App() {
             >
               Draft
             </NavLink>
-          </div>
-        </div>
+        </NavDropdown>
 
         <div style={{ flex: 1 }} />
 
         {canAccessSystemPages && (
-          <div className="nav-dropdown">
-            <button
-              type="button"
-              className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}
-            >
-              System
-            </button>
-            <div className="nav-dropdown-menu">
+          <NavDropdown
+            trigger={
+              <button type="button" className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}>
+                System
+              </button>
+            }
+          >
               <NavLink to="/system/files">Files</NavLink>
               <NavLink to="/system/storage">Storage</NavLink>
               <NavLink to="/system/cache">Cache</NavLink>
@@ -293,17 +286,15 @@ export default function App() {
                 }}
               />
               <NavLink to="/tools">🛠 Tools</NavLink>
-            </div>
-          </div>
+          </NavDropdown>
         )}
-        <div className="nav-dropdown">
-          <button
-            type="button"
-            className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}
-          >
-            User
-          </button>
-          <div className="nav-dropdown-menu">
+        <NavDropdown
+          trigger={
+            <button type="button" className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}>
+              User
+            </button>
+          }
+        >
             <NavLink to="/settings/profile">Profile</NavLink>
             <NavLink to="/settings/notifications">Notifications</NavLink>
             <NavLink to="/settings/accounts">Accounts</NavLink>
@@ -335,8 +326,7 @@ export default function App() {
             >
               Logout
             </button>
-          </div>
-        </div>
+        </NavDropdown>
         <NotificationDot />
         <button
           onClick={toggleTheme}

@@ -7591,9 +7591,10 @@ async function _mt5InitBackendInternal() {
   // SQLite mode — skip all PostgreSQL DDL, use Drizzle directly
   if (CFG.mt5StorageBackend === "sqlite") {
     const { initDb } = require("../db");
+    const s = require("../db/schema.js");
     const db = initDb({ storage: { backend: "sqlite", sqlite: { path: CFG.mt5SqlitePath || "data/trading.db" } } });
     MT5_BACKEND = {
-      storage: "sqlite", db, schema,
+      storage: "sqlite", db, schema: s,
       query: (q, p) => { throw new Error("raw SQL not supported in SQLite mode"); },
       info: { url: `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}` },
       pool: null,
@@ -16628,11 +16629,16 @@ const appHandler = async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     let postgresOk = false;
     let redisOk = false;
+    let storageBackend = "unknown";
     try {
       const b = await mt5Backend();
+      storageBackend = b?.storage || "unknown";
       if (b?.pool) {
         const pgRes = await b.pool.query("SELECT 1 AS ok");
         postgresOk = pgRes?.rows?.[0]?.ok === 1;
+      } else if (b?.db) {
+        // SQLite — just check db is accessible
+        postgresOk = true;
       }
     } catch {}
     try {
@@ -16678,6 +16684,7 @@ const appHandler = async (req, res) => {
       ctraderMode: CFG.ctraderMode || null,
       mt5Enabled: CFG.mt5Enabled,
       postgres: postgresOk ? "ok" : "error",
+      storage: storageBackend,
       redis: redisOk ? "ok" : CFG.redisEnabled ? "error" : "disabled",
       redisEnabled: CFG.redisEnabled || false,
       cron: global._cronStatus || "unknown",

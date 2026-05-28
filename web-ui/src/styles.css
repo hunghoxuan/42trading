@@ -364,6 +364,13 @@ body {
 
 .chart-mobile-fallback { display: none; }
 
+/* Force all inline grids to single column on mobile */
+@media (max-width: 767px) {
+    [style*="grid-template-columns"] {
+        grid-template-columns: 1fr !important;
+    }
+}
+
 /* === UTILITY CLASSES === */
 .card-flat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-xl); }
 .card-dense { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-md); }
