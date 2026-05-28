@@ -9418,7 +9418,13 @@ END
       };
       const pushItems = (arr = []) => {
         for (const raw of Array.isArray(arr) ? arr : []) {
-          if (!raw || typeof raw !== "object") continue;
+          // cTrader sends positions as JSON strings — parse them
+          const parsed =
+            raw && typeof raw === "string"
+              ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
+              : raw;
+          if (!parsed || typeof parsed !== "object") continue;
+          raw = parsed; // reassign so rest of function uses the parsed object
           const signalId = String(raw.sid || raw.signal_id || "").trim();
           const ticketCandidates = mt5TicketCandidates(raw);
           const ticket = ticketCandidates[0] || null;
