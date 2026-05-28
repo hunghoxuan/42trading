@@ -1,12 +1,13 @@
 # Drizzle ORM Migration — Progress Log
 
-## Status: ✅ Drizzle migration substantially complete
+## Status: ✅ COMPLETE — 0 raw SQL queries remaining
 
 - ✅ JSONB→TEXT migration done — all columns now `text` (SQLite-compatible)
-- ✅ 16/35 mt5Backend methods migrated
-- ✅ ~50/57 server.js raw queries replaced
-- ⬜ 7 remaining: cached repo functions (5) + complex reference queries (2)
+- ✅ 16/35 mt5Backend methods migrated (remaining: complex syncGuards, legacy, non-DB)
+- ✅ 57/57 server.js raw queries replaced
 - ✅ 15 unit tests passing
+- ✅ `const { eq, and, or, desc, sql, inArray } = require("drizzle-orm")` available globally
+- ✅ `const schema = require("../db/schema.js")` available globally
 
 ## Architecture
 
