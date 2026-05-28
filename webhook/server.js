@@ -8,6 +8,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const dbQueries = require("../db/queries");
 const syncGuards = require("./syncGuards");
 const { execFileSync, spawnSync } = require("child_process");
 const { URL, URLSearchParams } = require("url");
@@ -19301,7 +19302,7 @@ const appHandler = async (req, res) => {
     try {
       const templateId = url.pathname.split("/").pop();
       const db = await mt5InitBackend();
-      await db.query("DELETE FROM user_templates WHERE id = $1", [templateId]);
+      await dbQueries.deleteUserTemplate(db.db, templateId);
       return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -19330,22 +19331,16 @@ const appHandler = async (req, res) => {
 
       let finalPrompt = customPrompt || "";
       if (templateId) {
-        const { rows } = await db.query(
-          "SELECT data FROM user_templates WHERE id = $1",
-          [templateId],
-        );
-        if (rows.length)
-          finalPrompt = rows[0].data.prompt_text || rows[0].data.prompt;
+        const data = await dbQueries.getUserTemplateData(db.db, templateId);
+        if (data)
+          finalPrompt = data.prompt_text || data.prompt;
       }
 
       const config = await loadUserApiKeysMap(userId);
 
-      const { rows: tRows } = templateId
-        ? await db.query("SELECT data FROM user_templates WHERE id = $1", [
-            templateId,
-          ])
-        : { rows: [] };
-      const tData = tRows[0]?.data || {};
+      const tData = templateId
+        ? (await dbQueries.getUserTemplateData(db.db, templateId)) || {}
+        : {};
 
       // Data for placeholders
       const symbol = body.symbol || tData.default_symbol || "BTCUSDT";

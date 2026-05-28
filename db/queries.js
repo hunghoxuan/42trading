@@ -113,3 +113,21 @@ async function pruneOldSignals(db, days = 14) {
 }
 
 module.exports = Object.assign(module.exports, { findSignalById, pruneOldSignals });
+
+// ── Admin helpers (used in server.js route handlers) ──
+
+async function deleteUserTemplate(db, id) {
+  return db.delete(schema.userTemplates).where(eq(schema.userTemplates.id, Number(id)));
+}
+
+async function getUserTemplate(db, id) {
+  const rows = await db.select().from(schema.userTemplates).where(eq(schema.userTemplates.id, Number(id))).limit(1);
+  return rows[0] || null;
+}
+
+async function getUserTemplateData(db, id) {
+  const rows = await db.select({ data: schema.userTemplates.data }).from(schema.userTemplates).where(eq(schema.userTemplates.id, Number(id))).limit(1);
+  return rows[0]?.data || null;
+}
+
+module.exports = Object.assign(module.exports, { deleteUserTemplate, getUserTemplate, getUserTemplateData });
