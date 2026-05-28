@@ -1,1 +1,0 @@
-[2026-05-24T18:52:39.445Z] INFO TRADE_SYNC_UPDATE object_type=trades object_id=TFGACZOSZ status_raw=PENDING execution_status=PENDING ticket=974996056 signal_id=TFGACZOSZ pnl=0 pips=0 lots=0.45 commission=0 swap=0 volume=45000 margin=0 sl_before=1.85 sl_after=1.84996 tp_before=1.857 tp_after=1.8572 has_partial=false entry=1.853

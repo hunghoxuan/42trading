@@ -1,8 +1,0 @@
-{
-  "timestamp": "2026-05-23T11:33:49.145Z",
-  "session_id": "TFHMS80TM",
-  "model": "claude-sonnet-4-6",
-  "provider": "claude",
-  "raw_response": "```json\n[{\"symbol\":\"EURUSD\",\"direction\":\"SELL\",\"order_type\":\"Limit\",\"profile\":\"Intraday\",\"session\":\"London-NY_Overlap\",\"strategy\":\"ICT\",\"entry_model\":\"",
-  "parsed_json": {}
-}
