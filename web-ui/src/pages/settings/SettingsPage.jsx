@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
 
-const SYSTEM_SETTING_TYPES = new Set(["system_config", "notification_config"]);
+// Types excluded from Settings page (have their own dedicated pages)
+const EXCLUDED_TYPES = new Set(["api_key", "cron", "system_config", "notification_config"]);
+
+// Display labels for setting types
+const TYPE_LABELS = { trade: "symbols" };
+function typeLabel(t) { return TYPE_LABELS[String(t || "").toLowerCase()] || t; }
 
 function settingStatusClass(status) {
   return (
@@ -106,28 +111,19 @@ export default function SettingsPage() {
 
   function renderSidebarItem(s) {
     const key = getSettingKey(s);
+    const active = String(s.status || "").toUpperCase() === "ACTIVE";
     return (
       <button
         key={key}
         className={`sidebar-item-v2 ${activeTab === key ? "active" : ""}`}
         onClick={() => setActiveTab(key)}
-        style={{ padding: "6px 10px", minHeight: "auto", marginBottom: 2 }}
+        style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, padding: "8px 12px" }}
       >
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "flex-start",
-          }}
-        >
-          <span style={{ fontWeight: 500, fontSize: 12 }}>{s.name}</span>
+        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: active ? "#22c55e" : "#666", flexShrink: 0 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{ fontWeight: 700, fontSize: 12 }}>{s.name}</span>
+          <span className="minor-text" style={{ fontSize: 9 }}>{typeLabel(s.type)}</span>
         </div>
-        <span
-          className={`status-badge ${settingStatusClass(s.status)}`}
-          style={{ fontSize: 8, padding: "2px 4px" }}
-        >
-          {s.status}
-        </span>
       </button>
     );
   }
@@ -275,11 +271,7 @@ export default function SettingsPage() {
   );
 
   const sidebarSettings = useMemo(
-    () =>
-      settings.filter((s) => {
-        const type = String(s.type || "").toLowerCase();
-        return type !== "api_key" && type !== "cron" && !type.endsWith("_cron");
-      }),
+    () => settings.filter((s) => !EXCLUDED_TYPES.has(String(s.type || "").toLowerCase())),
     [settings],
   );
 
@@ -334,8 +326,11 @@ export default function SettingsPage() {
         }}
       >
         {/* ── Left: Sidebar ──────────────────────────────────────────────── */}
-        <section className="panel" style={{ margin: 0 }}>
-          <div className="panel-label">SETTINGS</div>
+        <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span className="panel-label" style={{ marginBottom: 0 }}>SETTINGS</span>
+            <button className="secondary-button" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => { setNewSettingForm({ type: "note", name: "", value: "" }); setShowAddForm(true); }}>+ New</button>
+          </div>
 
           {/* Add new setting form */}
           {showAddForm && (
@@ -360,8 +355,8 @@ export default function SettingsPage() {
                   }
                 >
                   <option value="note">note</option>
-                  <option value="trade">trade</option>
                   <option value="symbols">symbols</option>
+                  <option value="trade">trade (watchlist)</option>
                 </select>
               </label>
               <label className="stack-layout" style={{ gap: 4 }}>
@@ -408,100 +403,28 @@ export default function SettingsPage() {
           )}
 
           {/* Settings list */}
-          <div className="stack-layout" style={{ gap: 0, marginTop: 8 }}>
+          <div className="stack-layout" style={{ gap: 0 }}>
             {sidebarSettings.map((s) => renderSidebarItem(s))}
             {sidebarSettings.length === 0 && !settingsLoading && (
-              <span className="minor-text" style={{ padding: "8px 10px" }}>
+              <span className="minor-text" style={{ padding: "8px 12px" }}>
                 No settings yet.
               </span>
             )}
           </div>
-
-          <div style={{ marginTop: 16 }}>
-            <button
-              className="secondary-button"
-              onClick={() => {
-                setNewSettingForm({ type: "note", name: "", value: "" });
-                setShowAddForm(true);
-              }}
-            >
-              + Add Setting
-            </button>
-          </div>
-        </section>
+        </div>
 
         {/* ── Right: Detail ──────────────────────────────────────────────── */}
-        <section
-          className="panel"
-          style={{ margin: 0, minHeight: 600, overflowY: "auto" }}
-        >
+        <div className="panel stack-layout" style={{ gap: 16, padding: 24 }}>
           {/* Selected setting detail */}
           {selectedSetting && (
-            <div className="fadeIn">
-              {/* Header */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: 24,
-                }}
-              >
-                <div>
-                  <h3 style={{ margin: 0, textTransform: "uppercase" }}>
-                    {selectedSetting.name}
-                  </h3>
-                  <div className="minor-text" style={{ marginTop: 4 }}>
-                    Type: {selectedSetting.type}
-                  </div>
-                </div>
-                <div
-                  style={{ display: "flex", gap: 12, alignItems: "center" }}
-                >
-                  <select
-                    style={{
-                      padding: "4px 8px",
-                      fontSize: 11,
-                      borderRadius: 4,
-                      background: "var(--surface)",
-                      color: "var(--text)",
-                      border: "1px solid var(--border)",
-                    }}
-                    value={String(
-                      selectedSetting.status || "INACTIVE",
-                    ).toUpperCase()}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setSettings((prev) =>
-                        prev.map((s) =>
-                          getSettingKey(s) === getSettingKey(selectedSetting)
-                            ? { ...s, status: val }
-                            : s,
-                        ),
-                      );
-                    }}
-                  >
-                    <option value="ACTIVE">ACTIVE</option>
-                    <option value="INACTIVE">INACTIVE</option>
-                  </select>
-
-                  {!SYSTEM_SETTING_TYPES.has(
-                    String(selectedSetting.type || ""),
-                  ) && (
-                    <button
-                      className="danger-button"
-                      onClick={() =>
-                        deleteSetting(
-                          selectedSetting.type,
-                          selectedSetting.name,
-                        )
-                      }
-                      disabled={settingsLoading}
-                    >
-                      DELETE
-                    </button>
-                  )}
-                </div>
+            <>
+              <div>
+                <input
+                  value={selectedSetting.name}
+                  readOnly
+                  style={{ fontSize: 16, fontWeight: 700, border: "none", background: "transparent", color: "inherit", width: "100%", outline: "none", paddingLeft: 0, opacity: 0.7 }}
+                />
+                <span className="minor-text" style={{ fontSize: 11 }}>Type: {typeLabel(selectedSetting.type)}</span>
               </div>
 
               {/* Detail renderer by type */}
@@ -569,58 +492,63 @@ export default function SettingsPage() {
                   </label>
                 </div>
               ) : (
-                <div className="stack-layout" style={{ gap: 20 }}>
-                  <label className="stack-layout" style={{ gap: 6 }}>
-                    <span className="minor-text">JSON Configuration</span>
-                    <textarea
-                      rows={20}
-                      value={jsonDetailText}
-                      onChange={(e) => setJsonDetailText(e.target.value)}
-                    />
-                  </label>
-                  <button
-                    className="secondary-button"
-                    style={{ alignSelf: "flex-start" }}
-                    onClick={() => {
+                <div className="stack-layout" style={{ gap: 6 }}>
+                  <span className="panel-label" style={{ fontSize: 10 }}>JSON CONFIGURATION</span>
+                  <textarea
+                    rows={16}
+                    style={{ fontFamily: "monospace", fontSize: 11 }}
+                    value={jsonDetailText}
+                    onChange={(e) => {
+                      setJsonDetailText(e.target.value);
                       try {
-                        const parsed = JSON.parse(
-                          String(jsonDetailText || "{}"),
-                        );
-                        setSettings((prev) =>
-                          prev.map((x) =>
-                            getSettingKey(x) === getSettingKey(selectedSetting)
-                              ? { ...x, data: parsed }
-                              : x,
-                          ),
-                        );
-                        setSettingsMsg("JSON applied. Click SAVE to persist.");
-                      } catch (err) {
-                        setSettingsMsg(`Invalid JSON: ${err?.message}`);
-                      }
+                        const parsed = JSON.parse(String(e.target.value || "{}"));
+                        setSettings((prev) => prev.map((x) => getSettingKey(x) === getSettingKey(selectedSetting) ? { ...x, data: parsed } : x));
+                      } catch {}
                     }}
-                  >
-                    APPLY JSON
-                  </button>
+                  />
                 </div>
               )}
 
-              {/* Save button */}
+              {/* Actions */}
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "flex-end",
-                  marginTop: 32,
-                  paddingTop: 24,
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  paddingTop: 20,
                   borderTop: "1px solid var(--border)",
                 }}
               >
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className={String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "secondary-button" : "primary-button"}
+                    style={{ padding: "12px 24px", fontSize: 14 }}
+                    onClick={() => {
+                      const newStatus = String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+                      setSettings((prev) => prev.map((s) => getSettingKey(s) === getSettingKey(selectedSetting) ? { ...s, status: newStatus } : s));
+                    }}
+                    disabled={settingsLoading}
+                  >
+                    {String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "DEACTIVATE" : "ACTIVATE"}
+                  </button>
+                  {!EXCLUDED_TYPES.has(String(selectedSetting.type || "")) && (
+                    <button
+                      className="danger-button"
+                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      onClick={() => deleteSetting(selectedSetting.type, selectedSetting.name)}
+                      disabled={settingsLoading}
+                    >
+                      DELETE
+                    </button>
+                  )}
+                </div>
                 <button
                   className="primary-button"
                   style={{ padding: "12px 32px", fontSize: 14 }}
                   onClick={() => saveSetting(getSettingKey(selectedSetting))}
                   disabled={settingsLoading}
                 >
-                  {settingsLoading ? "SAVING..." : "SAVE CHANGES"}
+                  {settingsLoading ? "SAVING..." : "SAVE"}
                 </button>
               </div>
 
@@ -632,13 +560,13 @@ export default function SettingsPage() {
                   {settingsMsg}
                 </div>
               )}
-            </div>
+            </>
           )}
 
-          {!selectedSetting && !watchlistSetting && (
-            <div className="empty-state">Select a setting to view details.</div>
+          {!selectedSetting && (
+            <span className="minor-text">Select a setting to view details.</span>
           )}
-        </section>
+        </div>
       </div>
     </div>
   );

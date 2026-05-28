@@ -92,7 +92,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.28 14:10 - 1f4f402a";
+        private const string BuildVersion = "v2026.05.28 17:35 - status-refresh-fix";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -166,6 +166,38 @@ namespace cAlgo.Robots
             if (_ticketSidMap.TryGetValue(key, out mapped) && !string.IsNullOrWhiteSpace(mapped))
                 return mapped.Trim();
             return "";
+        }
+
+        private bool TryResolveBrokerSymbol(string rawSymbol, out string symbolName)
+        {
+            symbolName = "";
+            var sym = string.IsNullOrWhiteSpace(rawSymbol) ? "" : rawSymbol.Trim();
+            if (string.IsNullOrEmpty(sym)) return false;
+
+            try
+            {
+                var direct = Symbols.GetSymbol(sym);
+                if (direct != null)
+                {
+                    symbolName = direct.Name;
+                    return true;
+                }
+
+                var compact = sym.Replace("/", "").Replace("-", "").Replace("_", "");
+                if (compact.Length == 6)
+                {
+                    var slashName = compact.Substring(0, 3) + "/" + compact.Substring(3, 3);
+                    var slash = Symbols.GetSymbol(slashName);
+                    if (slash != null)
+                    {
+                        symbolName = slash.Name;
+                        return true;
+                    }
+                }
+            }
+            catch { }
+
+            return false;
         }
 
         private void SafePrint(string format, params object[] args)
@@ -633,9 +665,37 @@ namespace cAlgo.Robots
                     }
 
                     ordersList = new List<string>();
+
+                    // Build position SID lookup for pending order SID fallback
+                    var posSidLookup = new Dictionary<string, string>();
+                    foreach (var pos in Positions)
+                    {
+                        var posSid = ResolveSid(pos.Id.ToString(), pos.Comment);
+                        if (!string.IsNullOrEmpty(posSid))
+                        {
+                            var key = (pos.SymbolName + "_" + pos.TradeType.ToString()).ToUpper();
+                            if (!posSidLookup.ContainsKey(key))
+                                posSidLookup[key] = posSid;
+                        }
+                    }
+
                     foreach (var order in PendingOrders)
                     {
                         var sid3 = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
+
+                        // Fallback: cTrader may recreate order with new OID on modify, losing comment SID
+                        if (string.IsNullOrEmpty(sid3))
+                        {
+                            var lookupKey = (order.SymbolName + "_" + order.TradeType.ToString()).ToUpper();
+                            if (posSidLookup.TryGetValue(lookupKey, out var posSid))
+                            {
+                                sid3 = posSid;
+                                // Cache new OID -> SID for future syncs
+                                var oidKey = order.Id.ToString();
+                                if (!_ticketSidMap.ContainsKey(oidKey))
+                                    _ticketSidMap[oidKey] = posSid;
+                            }
+                        }
                         var s2 = Symbols.GetSymbol(order.SymbolName);
                         double lotsVal2 = (s2 != null) ? s2.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
                         double pnlTp = 0, pnlSl = 0;
@@ -683,10 +743,11 @@ namespace cAlgo.Robots
                             ",\"digits\":" + s3.Digits + "}");
                     }
 
-                    _pollStatus = "POLLING";
-                    _syncStatus = "SYNCING";
+                    // Show that a new cycle has started, but keep last successful stamps.
+                    _pollStatus = _lastPollTime == DateTime.MinValue ? "POLLING" : _pollStatus;
+                    _syncStatus = _lastSyncTime == DateTime.MinValue ? "SYNCING" : _syncStatus;
                 }
-                RefreshDebugPanel();
+                BeginInvokeOnMainThread(() => RefreshDebugPanel());
 
                 var bal = balance; var eq = equity; var mar = margin; var brk = brokerName;
                 var pl = posList; var ol = ordersList; var cl = closedList; var ml = metricsList;
@@ -714,7 +775,7 @@ namespace cAlgo.Robots
                     finally
                     {
                         _isBusy = false;
-                        RefreshDebugPanel();
+                        BeginInvokeOnMainThread(() => RefreshDebugPanel());
                     }
                 });
             }
@@ -727,7 +788,7 @@ namespace cAlgo.Robots
                 _lastPollErr = FormatServerErrorForPanel(ex.Message);
                 _lastSyncErr = FormatServerErrorForPanel(ex.Message);
                 _isBusy = false;
-                RefreshDebugPanel();
+                BeginInvokeOnMainThread(() => RefreshDebugPanel());
             }
         }
 
@@ -794,6 +855,10 @@ namespace cAlgo.Robots
                 _consecutiveErrors++;
                 SafePrint("[Error] Poll exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
+            finally
+            {
+                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+            }
         }
 
         private void ProcessResponse(string json)
@@ -851,13 +916,8 @@ namespace cAlgo.Robots
 
             BeginInvokeOnMainThread(() =>
             {
-                var symbol = Symbols.GetSymbol(symbolCode);
-
-                if (symbol == null && symbolCode.Length == 6)
-                {
-                    var slashName = symbolCode.Substring(0, 3) + "/" + symbolCode.Substring(3, 3);
-                    symbol = Symbols.GetSymbol(slashName);
-                }
+                string resolvedSymbolName;
+                var symbol = TryResolveBrokerSymbol(symbolCode, out resolvedSymbolName) ? Symbols.GetSymbol(resolvedSymbolName) : null;
 
                 if (symbol == null)
                 {
@@ -1443,6 +1503,10 @@ namespace cAlgo.Robots
                 _consecutiveErrors++;
                 SafePrint("[Error] Sync exception: {0} (consecutive errors: {1})", ex.Message, _consecutiveErrors);
             }
+            finally
+            {
+                BeginInvokeOnMainThread(() => RefreshDebugPanel());
+            }
         }
 
         private async Task FetchTrackedSymbolsAsync(string accId)
@@ -1461,8 +1525,23 @@ namespace cAlgo.Robots
                     {
                         var items = Regex.Matches(symbolsMatch.Groups[1].Value, "\"([^\"]+)\"");
                         _trackedSymbols.Clear();
+                        var skipped = new List<string>();
                         foreach (Match m in items)
-                            _trackedSymbols.Add(m.Groups[1].Value);
+                        {
+                            string brokerSymbol;
+                            var requested = m.Groups[1].Value;
+                            if (TryResolveBrokerSymbol(requested, out brokerSymbol))
+                            {
+                                if (!_trackedSymbols.Contains(brokerSymbol))
+                                    _trackedSymbols.Add(brokerSymbol);
+                            }
+                            else if (!skipped.Contains(requested))
+                            {
+                                skipped.Add(requested);
+                            }
+                        }
+                        if (skipped.Count > 0)
+                            SafePrint("[Price] Skipped {0} unsupported tracked symbols: {1}", skipped.Count, string.Join(",", skipped.Take(8)));
                         SafePrint("[Price] Fetched {0} tracked symbols", _trackedSymbols.Count);
                         BeginInvokeOnMainThread(() => RefreshDebugPanel());
                     }

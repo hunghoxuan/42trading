@@ -1,3 +1,24 @@
+# Session Log: 2026-05-28 16:30 UTC
+- **Starting Task**: Investigate why SL/TP changes on cTrader pending orders don't sync to VPS.
+- **Work Accomplished**:
+  - Traced full sync flow for PendingOrders → VPS
+  - Categorized all fields into Group 1 (info) and Group 2 (computed)
+  - Identified root cause: cTrader recreates order with new OID on SL/TP modify, dropping SID comment → server can't match trade → SL/TP never written
+  - Fixed: added position-based SID lookup fallback in orders sync loop
+  - Created handoff document
+- **Changed Files**:
+  - `bridge-clients/TVBridge_CTrader.cs` — position SID fallback + build version bump
+  - `.agents/sync/HANDOFF_2026-05-28_PENDING_ORDER_SID_FALLBACK.md` — handoff doc
+- **Technical Decisions**:
+  - Client-side fix (no server changes), position-based SID lookup by symbol+side
+  - _ticketSidMap cache update for future sync efficiency
+- **Verification**:
+  - Code trace verified for all paths
+  - Server UPDATE query confirmed to write SL/TP when SID is present
+- **Deploy Status**:
+  - Build version v2026.05.28 16:30 - sid-fallback
+  - NOT_DEPLOYED — requires manual cTrader recompile
+
 # Session Log: 2026-05-20 13:42 UTC
 - **Starting Task**: Add Pending/Filled dynamic symbol tabs in AI Analysis.
 - **Work Accomplished**: Added Pending and Filled options after Watchlist dropdown. Fetches symbols from v2/trades API filtered by execution_status. Shows trade list below symbols with entry/tp/date.

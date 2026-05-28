@@ -60,6 +60,12 @@ export default function TradeFilesTab({
 
       const sidFiles = snapRes.files || snapRes.items || [];
       const uploadFiles = uploadRes.files || [];
+      const propSnapshotFiles = (Array.isArray(snapshotFiles)
+        ? snapshotFiles
+        : []
+      )
+        .map((x) => String(x || "").trim())
+        .filter(Boolean);
 
       const serverFiles = [
         ...sidFiles.map((item) => ({
@@ -70,6 +76,14 @@ export default function TradeFilesTab({
           ),
           size_bytes: item.size_bytes || item.size || 0,
           source: "snapshot",
+        })),
+        ...propSnapshotFiles.map((name) => ({
+          name,
+          url: withApiKey(
+            `/v2/trades/${encodeURIComponent(tradeSid)}/snapshots/${encodeURIComponent(name)}/content`,
+          ),
+          size_bytes: 0,
+          source: "snapshot-prop",
         })),
         ...uploadFiles.map((item) => ({
           name: item.name || item.file_name || "file",
@@ -95,7 +109,7 @@ export default function TradeFilesTab({
     } finally {
       setLoading(false);
     }
-  }, [tradeSid]);
+  }, [tradeSid, snapshotFiles]);
 
   useEffect(() => {
     loadFiles();

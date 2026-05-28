@@ -120,16 +120,13 @@ function set(symbol, tf, entry) {
   tfCache.set(key, { ...entry, created_at: Date.now() });
 }
 
-/** Get cached entry for a symbol+TF. Returns null if missing or expired. */
+/** Get cached entry for a symbol+TF. Returns null if missing, stale if expired. */
 function get(symbol, tf) {
   const key = cacheKey(symbol, tf);
   const entry = tfCache.get(key);
   if (!entry) return null;
-  if (Date.now() - entry.created_at > tfToMs(tf)) {
-    tfCache.delete(key);
-    return null;
-  }
-  return { ...entry, stale: false };
+  const stale = Date.now() - entry.created_at > tfToMs(tf);
+  return { ...entry, stale };
 }
 
 /** Check if symbol+TF has fresh data. */

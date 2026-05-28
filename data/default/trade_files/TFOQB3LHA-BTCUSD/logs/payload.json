@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-27T07:33:03.208Z",
+  "session_id": "TFOQB3LHA",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "BTCUSD",
+  "symbols": [
+    "BTCUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 43900,
+  "files_count": 1,
+  "files": [
+    "BTCUSD_MASTER.png"
+  ]
+}

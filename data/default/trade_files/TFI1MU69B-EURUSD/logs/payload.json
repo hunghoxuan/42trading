@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-05-23T16:54:30.086Z",
+  "session_id": "TFI1MU69B",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "EURUSD",
+  "symbols": [
+    "EURUSD",
+    "XAGUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 77122,
+  "files_count": 1,
+  "files": [
+    "XAGUSD_MASTER.jpg"
+  ]
+}

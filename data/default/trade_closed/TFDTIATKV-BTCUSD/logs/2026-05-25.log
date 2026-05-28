@@ -1,0 +1,2 @@
+[2026-05-25T10:02:52.171Z] INFO TRADE_SYNC_UPDATE object_type=trades object_id=TFDTIATKV status_raw=PENDING execution_status=PENDING ticket=974209371 signal_id=TFDTIATKV pnl=0 pips=0 lots=0.16 commission=0 swap=0 volume=0.16 margin=0 sl_before=78650 sl_after=78650 tp_before=76800 tp_after=76800 has_partial=false entry=78050
+[2026-05-25T10:40:01.214Z] INFO TRADE_SYNC_CLOSE object_type=trades object_id=TFDTIATKV ticket=974209371 execution_status=CANCELLED close_reason=CANCEL pnl_inferred=0

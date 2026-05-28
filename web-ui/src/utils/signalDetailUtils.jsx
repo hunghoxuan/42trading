@@ -190,7 +190,8 @@ export function historyWhen(item, formatDateTime) {
 export function formatNum3(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "";
-  return String(Number(n.toFixed(3)));
+  // Keep full precision — no rounding. Trim trailing zeros, max 8 decimals.
+  return parseFloat(n.toFixed(8)).toString();
 }
 
 function formatNumPrec(v, refVal) {

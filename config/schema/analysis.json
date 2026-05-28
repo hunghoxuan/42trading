@@ -1,0 +1,93 @@
+{
+  "context": {
+    "trading_profile": "Position|Swing|Day_Trading|Scalping",
+    "htf_bias": "Bullish|Bearish|Neutral",
+    "ltf_bias": "",
+    "timeframe_matrix": {
+      "htf": "W1|D1|H4|H1",
+      "setup_tf": "H4|H1|M15|M5",
+      "entry_tf": "H1|M15|M5|M1",
+      "trigger_tf": "M15|M5|M1|Order_Flow"
+    },
+    "macro_environment": "Risk_On|Risk_Off|Neutral|High_Impact_News_Pending",
+    "draw_on_liquidity": "",
+    "structural_narrative": ""
+  },
+  "top_down_analysis": {
+    "step_1_htf_structural_mapping": {
+      "order_flow_phase": "Uptrend|Downtrend|Ranging",
+      "liquidity_swept": {
+        "status": false,
+        "pool_type": "BSL|SSL|EQH|EQL|PDH|PDL|PWH|PWL",
+        "delivery": "Wick_Sweep|Body_Close_Invalidation"
+      },
+      "premium_discount_matrix": {
+        "zone": "Discount|Premium|Equilibrium",
+        "execution_authorized": false
+      },
+      "major_decision_zones": []
+    },
+    "step_2_setup_tf_confluence": {
+      "setup_status": false,
+      "pattern_type": "OB|FVG|Breaker|Mitigation_Block|Volume_Imbalance|Classic_Pattern",
+      "multi_tf_alignment": {
+        "status": false,
+        "tf_conflict_rule_applied": "Rule_1_HTF_Dominance|Rule_2_2/3_Alignment|Rule_3_3-Way_Conflict_Abort|Rule_4_LTF_Pullback"
+      },
+      "freshness": "Fresh|Once_Tested|Stale"
+    },
+    "step_3_ltf_entry_and_risk_parameters": {
+      "market_structure_shift": {
+        "status": false,
+        "type": "MSB|ChoCH|CISD",
+        "displacement_confirmed": false
+      },
+      "invalidation_logic": ""
+    },
+    "step_4_trigger_tf_execution": {
+      "trigger_confirmed": false,
+      "candle_pattern": "",
+      "signal_type": "Wick_Rejection|Candle_Body_Expansion|NR7_Compression|Inside_Bar_Break|Liquidity_Grab_Displacement",
+      "volume_velocity_validation": {
+        "status": false,
+        "breakout_volume": "Above_Average_1.5x|Normal|Divergent_Low",
+        "pullback_volume": "Dry_Up|Dangerous_High"
+      }
+    }
+  },
+  "institutional_safety_filters": {
+    "pre_entry_checklist": {
+      "checklist_1_htf_alignment": false,
+      "checklist_2_structure_validation": false,
+      "checklist_3_setup_verification": false,
+      "checklist_4_confluence_matrix": false,
+      "checklist_5_volume_and_velocity": false,
+      "checklist_6_mathematical_rr_gte_1_2": false,
+      "checklist_7_macro_news_buffer_2hr": false,
+      "checklist_8_market_range_edge_context": false
+    },
+    "execution_constraints": {
+      "session_killzone": {
+        "in_killzone": false,
+        "active_session": "Asian|London_Open|NY_Open|Overlap"
+      },
+      "spread_and_liquidity": {
+        "acceptable": false,
+        "current_spread_pips": 0.0
+      },
+      "macro_correlation": {
+        "alignment": "Confirming|Neutral|Conflicting",
+        "dxy_bias": "Bullish|Bearish|Consolidating"
+      }
+    }
+  },
+  "execution_verdict": {
+    "suggested_action": "NO_TRADE_ABORT|PROCEED_FULL_SIZE|PROCEED_HALF_SIZE_RULE_2",
+    "setup_grade": "A|B|C|Invalid",
+    "allocation_percent": 0.0,
+    "confidence_score_pct": 0,
+    "max_wait_before_cancel_mins": 0,
+    "estimated_entry_mins": null,
+    "estimated_entry_window_mins": null
+  }
+}

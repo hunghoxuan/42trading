@@ -8,7 +8,10 @@ const BASENAME = window.location.pathname.startsWith("/ui") ? "/ui" : "/";
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <BrowserRouter basename={BASENAME}>
+    <BrowserRouter
+      basename={BASENAME}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <App />
     </BrowserRouter>
   </React.StrictMode>,

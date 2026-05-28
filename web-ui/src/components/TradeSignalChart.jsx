@@ -9,6 +9,27 @@ const parsePosNum = (v) => {
   return Number.isFinite(n) && n > 0 ? n : null;
 };
 
+function toTradingViewInterval(tfRaw) {
+  const tf = String(tfRaw || "").trim().toLowerCase();
+  if (tf === "1m") return "1";
+  if (tf === "3m") return "3";
+  if (tf === "5m") return "5";
+  if (tf === "15m") return "15";
+  if (tf === "30m") return "30";
+  if (tf === "45m") return "45";
+  if (tf === "1h") return "60";
+  if (tf === "2h") return "120";
+  if (tf === "4h") return "240";
+  if (tf === "1d" || tf === "d") return "D";
+  if (tf === "1w" || tf === "w") return "W";
+  if (tf === "1mth" || tf === "m") return "M";
+  return "60";
+}
+
+function toTradingViewSymbol(symbolRaw) {
+  return String(symbolRaw || "").trim().toUpperCase();
+}
+
 function parseSnapshotBars(snapshot) {
   const bars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
   return bars
@@ -310,6 +331,7 @@ export default function TradeSignalChart({
   sharedLines = [],
   onContextRequest = null,
   onViewportChange = null,
+  initialViewport = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -317,6 +339,8 @@ export default function TradeSignalChart({
   const suppressCrosshairSyncRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState("");
+  const tvSymbol = toTradingViewSymbol(symbol);
+  const tvInterval = toTradingViewInterval(interval);
   const lwTimeToMs = useCallback((v) => {
     if (typeof v === "number" && Number.isFinite(v))
       return Math.round(v * 1000);
@@ -1072,42 +1096,54 @@ export default function TradeSignalChart({
               });
             }
 
-            // --- FIT VIEW ---
-            const snapshotStart = Number(snapshot?.bar_start);
-            const snapshotEnd = Number(snapshot?.bar_end);
+            // --- VIEWPORT --- restore saved state if available, otherwise fit to data
             if (
-              Number.isFinite(snapshotStart) &&
-              Number.isFinite(snapshotEnd) &&
-              snapshotEnd > snapshotStart
+              initialViewport &&
+              Number.isFinite(Number(initialViewport.timeStartMs)) &&
+              Number.isFinite(Number(initialViewport.timeEndMs))
             ) {
-              const dur = snapshotEnd - snapshotStart;
-              chart.timeScale().setVisibleRange({
-                from: snapshotStart - dur * 0.06,
-                to: snapshotEnd + dur * 0.06,
-              });
-            } else if (createdAt) {
-              const rangeStart = Math.floor(
-                new Date(createdAt).getTime() / 1000,
-              );
-              const rangeEndRaw = closedAt || openedAt;
-              const rangeEnd = rangeEndRaw
-                ? Math.floor(new Date(rangeEndRaw).getTime() / 1000)
-                : rangeStart + 86400; // fallback: +1 day
-              const dur = Math.max(rangeEnd - rangeStart, 3600);
-              chart.timeScale().setVisibleRange({
-                from: rangeStart - dur * 0.1,
-                to: rangeEnd + dur * 0.1,
-              });
-            } else if (openedAt && closedAt) {
-              const rangeStart = Math.floor(
-                new Date(openedAt).getTime() / 1000,
-              );
-              const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
-              const dur = rangeEnd - rangeStart;
-              chart.timeScale().setVisibleRange({
-                from: rangeStart - dur * 0.2,
-                to: rangeEnd + dur * 0.2,
-              });
+              const from = Number(initialViewport.timeStartMs) / 1000;
+              const to = Number(initialViewport.timeEndMs) / 1000;
+              if (from > 0 && to > from) {
+                chart.timeScale().setVisibleRange({ from, to });
+              }
+            } else {
+              const snapshotStart = Number(snapshot?.bar_start);
+              const snapshotEnd = Number(snapshot?.bar_end);
+              if (
+                Number.isFinite(snapshotStart) &&
+                Number.isFinite(snapshotEnd) &&
+                snapshotEnd > snapshotStart
+              ) {
+                const dur = snapshotEnd - snapshotStart;
+                chart.timeScale().setVisibleRange({
+                  from: snapshotStart - dur * 0.06,
+                  to: snapshotEnd + dur * 0.06,
+                });
+              } else if (createdAt) {
+                const rangeStart = Math.floor(
+                  new Date(createdAt).getTime() / 1000,
+                );
+                const rangeEndRaw = closedAt || openedAt;
+                const rangeEnd = rangeEndRaw
+                  ? Math.floor(new Date(rangeEndRaw).getTime() / 1000)
+                  : rangeStart + 86400;
+                const dur = Math.max(rangeEnd - rangeStart, 3600);
+                chart.timeScale().setVisibleRange({
+                  from: rangeStart - dur * 0.1,
+                  to: rangeEnd + dur * 0.1,
+                });
+              } else if (openedAt && closedAt) {
+                const rangeStart = Math.floor(
+                  new Date(openedAt).getTime() / 1000,
+                );
+                const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
+                const dur = rangeEnd - rangeStart;
+                chart.timeScale().setVisibleRange({
+                  from: rangeStart - dur * 0.2,
+                  to: rangeEnd + dur * 0.2,
+                });
+              }
             }
           }
         } catch (err) {
@@ -1232,6 +1268,28 @@ export default function TradeSignalChart({
           height: "100%",
           borderRadius: "8px",
           overflow: "hidden",
+        }}
+      />
+      <button
+        type="button"
+        aria-label={`Open ${tvSymbol} ${interval} in TradingView`}
+        title={`Open ${tvSymbol} ${interval} in TradingView`}
+        onClick={() => {
+          const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(tvInterval)}`;
+          window.open(url, "_blank", "noopener,noreferrer");
+        }}
+        style={{
+          position: "absolute",
+          left: 8,
+          bottom: 8,
+          width: 34,
+          height: 24,
+          padding: 0,
+          border: "none",
+          borderRadius: 4,
+          background: "transparent",
+          cursor: "pointer",
+          zIndex: 12,
         }}
       />
     </div>

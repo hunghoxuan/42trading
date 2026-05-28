@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-05-23T14:53:20.706Z",
+  "session_id": "TFHW0PQIW",
+  "model": "claude-sonnet-4-6",
+  "provider": "claude",
+  "raw_response": "{\"trade_plans\":[{\"symbol\":\"GBPJPY\",\"direction\":\"SELL\",\"order_type\":\"Limit\",\"profile\":\"Intraday\",\"session\":\"London-NY_Overlap\",\"strategy\":\"ICT\",\"entry_model\":\"Sweep+MSS+OB\",\"context\":{\"htf_bias\":\"Bearish\",\"htf\":\"4h\",\"entry_tf\":\"15m\",\"ltf_structure\":\"Downtrend\",\"macro\":\"Risk_Off\",\"draw_on_liquidity\":\"SSL below 213.400\",\"daily_bias_note\":\"4H shows clear bearish displacement from ~215.50 zone with price failing to reclaim 214.000. Daily showing rejection at recent highs ~214.000. Price currently at 213.825 with bearish pressure intact. 15m and 5m confirm lower highs forming after spike to 213.950 area.\"},\"analysis\":{\"",
+  "parsed_json": {}
+}

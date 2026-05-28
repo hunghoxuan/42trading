@@ -8,6 +8,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const syncGuards = require("./syncGuards");
 const { execFileSync, spawnSync } = require("child_process");
 const { URL, URLSearchParams } = require("url");
 let createRedisClient = null;
@@ -1255,6 +1256,10 @@ const CFG = {
   mt5V2DualWriteEnabled: asBool(process.env.MT5_V2_DUAL_WRITE_ENABLED, false),
   mt5V2BrokerApiEnabled: asBool(process.env.MT5_V2_BROKER_API_ENABLED, true),
   mt5V2LeaseSeconds: asNum(process.env.MT5_V2_LEASE_SECONDS, 30),
+  mt5V2BrokerPullMaxAgeHours: asNum(
+    process.env.MT5_V2_BROKER_PULL_MAX_AGE_HOURS,
+    24,
+  ),
   mt5DefaultLot: asNum(process.env.MT5_DEFAULT_LOT, 0.01),
   mt5DefaultUserId: envStr(process.env.MT5_DEFAULT_USER_ID, "default"),
   mt5PruneEnabled: asBool(process.env.MT5_PRUNE_ENABLED, true),
@@ -8981,18 +8986,74 @@ END
         );
         const out = [];
         for (const row of sel.rows || []) {
-          // Auto-reject trades that have been re-leased too many times without ack
-          const retryCount =
-            (row.metadata?.lease_retry_count || 0) +
-            (row.dispatch_status === "LEASED" &&
-            row.lease_expires_at < new Date().toISOString()
-              ? 1
-              : 0);
-          if (retryCount >= 3) {
+          const staleNew = syncGuards.isNewTradeTooOld(
+            row,
+            CFG.mt5V2BrokerPullMaxAgeHours,
+          );
+          if (staleNew) {
             await client.query(
-              `UPDATE trades SET execution_status = 'REJECTED', dispatch_status = 'CONSUMED', updated_at = NOW() WHERE sid = $1`,
-              [row.sid],
+              `
+              UPDATE trades
+              SET execution_status = 'REJECTED',
+                  dispatch_status = 'CONSUMED',
+                  rejection_reason = COALESCE(rejection_reason, $2),
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                  updated_at = NOW()
+              WHERE sid = $1
+            `,
+              [
+                row.sid,
+                "stale broker pull task",
+                JSON.stringify({
+                  stale_pull_rejected_at: mt5NowIso(),
+                  stale_pull_max_age_hours: CFG.mt5V2BrokerPullMaxAgeHours,
+                }),
+              ],
             );
+            await this.log(
+              row.sid,
+              "trades",
+              {
+                event: "BROKER_PULL_STALE_REJECT",
+                symbol: row.symbol || null,
+                execution_status: row.execution_status || null,
+                dispatch_status: row.dispatch_status || null,
+                max_age_hours: CFG.mt5V2BrokerPullMaxAgeHours,
+              },
+              row.user_id || CFG.mt5DefaultUserId,
+            ).catch(() => {});
+            console.log(
+              `[Pull] Auto-rejected stale broker task ${row.sid} ${row.symbol || ""}`,
+            );
+            continue;
+          }
+
+          // Auto-reject trades that have been re-leased too many times without ack
+          const retryCount = syncGuards.nextLeaseRetryCount(row);
+          if (syncGuards.shouldAutoRejectLeasedTrade(row, 3)) {
+            await client.query(
+              `
+              UPDATE trades
+              SET execution_status = 'REJECTED',
+                  dispatch_status = 'CONSUMED',
+                  rejection_reason = COALESCE(rejection_reason, $2),
+                  updated_at = NOW()
+              WHERE sid = $1
+            `,
+              [row.sid, "broker ack lease retry limit exceeded"],
+            );
+            await this.log(
+              row.sid,
+              "trades",
+              {
+                event: "BROKER_PULL_RETRY_REJECT",
+                symbol: row.symbol || null,
+                execution_status: row.execution_status || null,
+                dispatch_status: row.dispatch_status || null,
+                retry_count: retryCount,
+              },
+              row.user_id || CFG.mt5DefaultUserId,
+            ).catch(() => {});
             console.log(
               `[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`,
             );
@@ -9091,6 +9152,8 @@ END
         }),
       );
 
+      const tradeId = payload.sid || payload.trade_id;
+      const leaseToken = String(payload.lease_token || "").trim();
       const res = await pool.query(
         `
          UPDATE trades
@@ -9109,7 +9172,11 @@ END
              opened_at = COALESCE($5, opened_at, CASE WHEN $1 = 'OPEN' THEN $6 ELSE NULL END),
              closed_at = COALESCE($7, CASE WHEN $1 = 'CLOSED' THEN $6 ELSE NULL END),
              updated_at = $6
-         WHERE sid = $8 AND account_id = $9 RETURNING user_id, opened_at, closed_at
+         WHERE sid = $8
+           AND account_id = $9
+           AND dispatch_status = 'LEASED'
+           AND lease_token = $16
+         RETURNING user_id, opened_at, closed_at, symbol, dispatch_status, execution_status
        `,
         [
           payload.execution_status,
@@ -9119,7 +9186,7 @@ END
           openedAt,
           now,
           closedAt,
-          payload.sid || payload.trade_id,
+          tradeId,
           accountId,
           isClosed,
           usedVolume,
@@ -9127,6 +9194,7 @@ END
           payload.order_type || null,
           payload.release_only === true,
           asNum(payload.risk_money_planned),
+          leaseToken,
         ],
       );
       if (res.rowCount > 0) {
@@ -9152,7 +9220,7 @@ END
         invalidateTradeListCaches().catch(() => {});
         // Migrate trade folder based on status
         const newStatus = String(payload.execution_status || "").toUpperCase();
-        const tradeSid = payload.sid || payload.trade_id;
+        const tradeSid = tradeId;
         if (["PENDING", "FILLED"].includes(newStatus)) {
           moveTradeFolder(tradeSid, "files", "active");
         } else if (
@@ -9170,14 +9238,59 @@ END
         }
       } else {
         // Fallback log for tracking orphan/failed acks
-        await this.log(payload.sid || payload.trade_id, "trades", {
+        const existing = await pool.query(
+          `
+          SELECT sid, user_id, dispatch_status, execution_status, broker_trade_id, lease_token
+          FROM trades
+          WHERE sid = $1 AND account_id = $2
+          LIMIT 1
+        `,
+          [tradeId, accountId],
+        );
+        const row = existing.rows?.[0] || null;
+        const alreadyApplied =
+          row &&
+          String(row.dispatch_status || "").toUpperCase() === "CONSUMED" &&
+          String(row.execution_status || "").toUpperCase() ===
+            String(payload.execution_status || "").toUpperCase() &&
+          (!payload.broker_trade_id ||
+            String(row.broker_trade_id || "") ===
+              String(payload.broker_trade_id || ""));
+
+        if (alreadyApplied) {
+          await this.log(tradeId, "trades", {
+            event: "TRADE_ACK_DUPLICATE",
+            status: payload.execution_status,
+            broker_trade_id: payload.broker_trade_id || null,
+          }, row.user_id || CFG.mt5DefaultUserId).catch(() => {});
+          return {
+            ok: true,
+            duplicate: true,
+            dispatch_status: row.dispatch_status,
+            execution_status: row.execution_status,
+          };
+        }
+
+        await this.log(tradeId, "trades", {
           event: "TRADE_ACK_FAILED",
-          reason: "Trade not found or update failed",
+          reason: row ? "stale or mismatched lease token" : "trade not found",
           payload_status: payload.execution_status || payload.status,
           account_id: accountId,
-        });
+          dispatch_status: row?.dispatch_status || null,
+          execution_status: row?.execution_status || null,
+          broker_trade_id: row?.broker_trade_id || null,
+          lease_token_present: Boolean(leaseToken),
+        }, row?.user_id || CFG.mt5DefaultUserId).catch(() => {});
+        return {
+          ok: false,
+          error: row ? "stale or mismatched lease token" : "trade not found",
+        };
       }
-      return { ok: res.rowCount > 0 };
+      return {
+        ok: true,
+        dispatch_status: res.rows[0]?.dispatch_status,
+        execution_status: res.rows[0]?.execution_status,
+      };
     },
     async ackSignal(signalId, status, ticket, error, extra = {}) {
       const s = String(status || "").toUpperCase();
@@ -9417,14 +9530,19 @@ END
         return 1;
       };
       const pushItems = (arr = []) => {
-        for (const raw of Array.isArray(arr) ? arr : []) {
+        for (const item of Array.isArray(arr) ? arr : []) {
           // cTrader sends positions as JSON strings — parse them
-          const parsed =
-            raw && typeof raw === "string"
-              ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
-              : raw;
-          if (!parsed || typeof parsed !== "object") continue;
-          raw = parsed; // reassign so rest of function uses the parsed object
+          const raw =
+            item && typeof item === "string"
+              ? (() => {
+                  try {
+                    return JSON.parse(item);
+                  } catch {
+                    return null;
+                  }
+                })()
+              : item;
+          if (!raw || typeof raw !== "object") continue;
           const signalId = String(raw.sid || raw.signal_id || "").trim();
           const ticketCandidates = mt5TicketCandidates(raw);
           const ticket = ticketCandidates[0] || null;
@@ -9624,17 +9742,48 @@ END
       let matched = 0;
       let synced = 0;
       const results = [];
-      // Batch-query old execution_statuses + sl/tp for change detection
+      // Batch-query old state for change detection and broker snapshot idempotency.
       const oldStatusMap = new Map();
+      const oldTicketMap = new Map();
       {
         const sids = items.map((it) => it.sid).filter(Boolean);
-        if (sids.length) {
+        const tickets = Array.from(
+          new Set(
+            items
+              .flatMap((it) =>
+                Array.isArray(it.ticket_candidates) && it.ticket_candidates.length
+                  ? it.ticket_candidates
+                  : it.ticket
+                    ? [it.ticket]
+                    : [],
+              )
+              .map((t) => String(t || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        if (sids.length || tickets.length) {
           const oldRows = await pool.query(
-            `SELECT sid, execution_status, sl, tp, COALESCE(metadata->>'has_partial','false') AS has_partial FROM trades WHERE sid = ANY($1::text[])`,
-            [sids],
+            `
+            SELECT
+              sid,
+              broker_trade_id,
+              execution_status,
+              sl,
+              tp,
+              broker_pnl AS pnl,
+              metadata,
+              COALESCE(metadata->>'has_partial','false') AS has_partial,
+              COALESCE(metadata->>'last_broker_snapshot_hash','') AS last_broker_snapshot_hash
+            FROM trades
+            WHERE sid = ANY($1::text[])
+               OR broker_trade_id = ANY($2::text[])
+            `,
+            [sids, tickets],
           );
           for (const r of oldRows.rows || []) {
             oldStatusMap.set(r.sid, r);
+            const brokerTradeId = String(r.broker_trade_id || "").trim();
+            if (brokerTradeId) oldTicketMap.set(brokerTradeId, r);
           }
         }
       }
@@ -9647,15 +9796,40 @@ END
               : it.ticket
                 ? [it.ticket]
                 : [];
+          const snapshotHash = syncGuards.brokerSnapshotHash(it);
+          const oldForItem =
+            (it.sid && oldStatusMap.get(it.sid)) ||
+            ticketCandidates.map((tk) => oldTicketMap.get(String(tk))).find(Boolean) ||
+            null;
+          const oldSnapshotHash = String(
+            oldForItem?.last_broker_snapshot_hash ||
+              oldForItem?.metadata?.last_broker_snapshot_hash ||
+              "",
+          ).trim();
+          if (oldForItem && oldSnapshotHash && oldSnapshotHash === snapshotHash) {
+            results.push({
+              ticket: it.ticket,
+              sid: oldForItem.sid || it.sid || null,
+              status: "NoChange",
+              symbol: it.symbol,
+              action: it.action,
+            });
+            continue;
+          }
+
           const syncMeta = JSON.stringify({
             order_type: mt5NormalizeOrderTypeValue(it.order_type, "limit"),
             broker_name: existingMeta.broker_name || "",
             provider_code: existingMeta.provider_code || "",
+            last_change_origin: "broker",
+            last_inbound_event_id: `broker:${aid}:${snapshotHash}`,
+            last_broker_snapshot_hash: snapshotHash,
             broker_data: {
               ...it, // Spread all processed fields (pips, lots, commission, etc.)
               position_id: ticketCandidates[0] || null,
               ticket_candidates: ticketCandidates,
               status: it.status_raw || null,
+              snapshot_hash: snapshotHash,
               last_sync_at: new Date().toISOString(),
             },
             last_sync_source: "broker_sync_v2",
@@ -10650,50 +10824,79 @@ END
             "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED, PENDING_MOD, PENDING_CLOSE, PENDING_CANCEL",
         };
       }
+      const lookupParams = [numericId, tid];
+      const lookupClauses = [];
+      if (userId) {
+        lookupParams.push(String(userId));
+        lookupClauses.push(`user_id = $${lookupParams.length}`);
+      }
+      const lookupWhereUser = lookupClauses.length
+        ? ` AND ${lookupClauses.join(" AND ")}`
+        : "";
+      const currentRes = await pool.query(
+        `
+        SELECT id, sid, signal_id, user_id, symbol, execution_status, broker_trade_id
+        FROM trades
+        WHERE (
+          ($1::bigint IS NOT NULL AND id = $1::bigint)
+          OR sid = $2
+        )
+          ${lookupWhereUser}
+        LIMIT 1
+      `,
+        lookupParams,
+      );
+      if ((currentRes.rowCount || 0) === 0)
+        return { ok: false, error: "trade not found" };
+      const currentRow = currentRes.rows[0];
+      const appliedStatus = syncGuards.brokerLinkedManualStatus(currentRow, stRaw);
+      const queuedBrokerAction = appliedStatus !== stRaw;
       const pnlRaw = payload.pnl_realized ?? payload.pnl;
       const pnlNum = Number(pnlRaw);
       const pnl =
-        stRaw === "PENDING" ? 0 : Number.isFinite(pnlNum) ? pnlNum : null;
+        appliedStatus === "PENDING" ? 0 : Number.isFinite(pnlNum) ? pnlNum : null;
       const closeReasonRaw = String(
         payload.close_reason || payload.reason || "",
       )
         .trim()
         .toUpperCase();
       const closeReason = closeReasonRaw || null;
-      const params = [stRaw, pnl, closeReason, numericId, tid];
-      const clauses = [];
-      if (userId) {
-        params.push(String(userId));
-        clauses.push(`user_id = $${params.length}`);
-      }
-      const whereUser = clauses.length ? ` AND ${clauses.join(" AND ")}` : "";
+      const manualMeta = JSON.stringify({
+        manual_requested_status: stRaw,
+        manual_applied_status: appliedStatus,
+        manual_queued_broker_action: queuedBrokerAction,
+        manual_edit_source: "vps",
+        manual_edit_at: mt5NowIso(),
+      });
       const res = await pool.query(
         `
         UPDATE trades
         SET execution_status = $1::text,
             pnl_realized = CASE WHEN $2::double precision IS NULL THEN pnl_realized ELSE $2::double precision END,
             close_reason = COALESCE($3::text, close_reason),
+            dispatch_status = CASE WHEN $5::boolean THEN 'NEW' ELSE dispatch_status END,
+            lease_token = CASE WHEN $5::boolean THEN NULL ELSE lease_token END,
+            lease_expires_at = CASE WHEN $5::boolean THEN NULL ELSE lease_expires_at END,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
             closed_at = CASE
+              WHEN $5::boolean THEN closed_at
               WHEN $1::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(closed_at, NOW())
               ELSE closed_at
             END
-        WHERE (
-          ($4::bigint IS NOT NULL AND id = $4::bigint)
-          OR sid = $5
-          OR sid = $5
-        )
-          ${whereUser}
-        RETURNING id, sid, signal_id, user_id, execution_status, pnl_realized, close_reason, closed_at
+        WHERE sid = $4
+        RETURNING id, sid, signal_id, user_id, symbol, execution_status, dispatch_status, pnl_realized, close_reason, closed_at
       `,
-        params,
+        [
+          appliedStatus,
+          pnl,
+          closeReason,
+          currentRow.sid,
+          queuedBrokerAction,
+          manualMeta,
+        ],
       );
-      if ((res.rowCount || 0) === 0)
-        return { ok: false, error: "trade not found" };
       const row = res.rows[0];
-      const tradeSymbol = await pool
-        .query("SELECT symbol FROM trades WHERE sid = $1 LIMIT 1", [row.sid])
-        .then((r) => r.rows[0]?.symbol || "")
-        .catch(() => "");
+      const tradeSymbol = row.symbol || currentRow.symbol || "";
 
       // Archive bars + snapshots on CLOSED/CANCELLED/REJECTED
       const newStatus = String(row.execution_status || "").toUpperCase();
@@ -10712,13 +10915,15 @@ END
         "trades",
         {
           event: "TRADE_MANUAL_EDIT",
+          requested_status: stRaw,
           execution_status: row.execution_status,
+          queued_broker_action: queuedBrokerAction,
           pnl_realized: row.pnl_realized,
           close_reason: row.close_reason || null,
         },
         row.user_id || CFG.mt5DefaultUserId,
       );
-      return { ok: true, item: row };
+      return { ok: true, queued_broker_action: queuedBrokerAction, item: row };
     },
     async bulkActionTradesV2(action, filters = {}) {
       const act = String(action || "")
@@ -24605,10 +24810,7 @@ const appHandler = async (req, res) => {
       const resp = {
         ok: true,
         items: (items || []).map((t) => {
-          let type = "FILLED";
-          if (t.execution_status === "PENDING_MOD") type = "MODIFY";
-          else if (t.execution_status === "PENDING_CLOSE") type = "CLOSE";
-          else if (t.execution_status === "PENDING_CANCEL") type = "CANCEL";
+          const type = syncGuards.brokerTaskTypeForTrade(t);
           return {
             sid: t.sid,
             type,
@@ -24691,11 +24893,12 @@ const appHandler = async (req, res) => {
           ok: false,
           error: result?.error || "ack failed",
         });
-      return json(res, 200, {
-        ok: true,
-        dispatch_status: result.dispatch_status,
-        execution_status: result.execution_status,
-      });
+	      return json(res, 200, {
+	        ok: true,
+	        duplicate: Boolean(result.duplicate),
+	        dispatch_status: result.dispatch_status,
+	        execution_status: result.execution_status,
+	      });
     } catch (error) {
       return json(res, 400, {
         ok: false,
@@ -25105,20 +25308,28 @@ const appHandler = async (req, res) => {
             posSymbols.push(t.symbol.toUpperCase());
         }
       } catch {}
-      const merged = [
-        ...new Set([
-          ...posSymbols,
-          ...watchlist.map((s) => String(s).toUpperCase()),
-        ]),
-      ].sort();
-      return json(res, 200, {
-        ok: true,
-        symbols: merged,
-        sources: {
-          positions: posSymbols,
-          watchlist: watchlist.map((s) => String(s).toUpperCase()),
-        },
-      });
+	      const watchlistSymbols = watchlist
+	        .map((s) => String(s).trim().toUpperCase())
+	        .filter(Boolean)
+	        .filter((s) => {
+	          if (posSymbols.includes(s)) return true;
+	          const barsDir = path.join(BROKER_BARS_DIR, s, "bars");
+	          return fs.existsSync(barsDir);
+	        });
+	      const droppedWatchlist = watchlist
+	        .map((s) => String(s).trim().toUpperCase())
+	        .filter(Boolean)
+	        .filter((s) => !watchlistSymbols.includes(s) && !posSymbols.includes(s));
+	      const merged = [...new Set([...posSymbols, ...watchlistSymbols])].sort();
+	      return json(res, 200, {
+	        ok: true,
+	        symbols: merged,
+	        sources: {
+	          positions: posSymbols,
+	          watchlist: watchlistSymbols,
+	          dropped_watchlist: droppedWatchlist,
+	        },
+	      });
     } catch (error) {
       return json(res, 400, {
         ok: false,

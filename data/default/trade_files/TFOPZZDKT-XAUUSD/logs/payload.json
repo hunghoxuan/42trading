@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-27T07:26:23.022Z",
+  "session_id": "TFOPZZDKT",
+  "model": "openai/gpt-4o",
+  "provider": "openrouter",
+  "symbol": "XAUUSD",
+  "symbols": [
+    "XAUUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 50116,
+  "files_count": 1,
+  "files": [
+    "XAUUSD_MASTER.png"
+  ]
+}

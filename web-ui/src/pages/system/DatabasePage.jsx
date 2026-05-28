@@ -17,7 +17,6 @@ const COMPACT_HIDE = [
   "lease_expires_at",
   "rejection_reason",
   "source_ids_cache",
-  "dispatch_status",
 ];
 
 function fDateTime(v) {

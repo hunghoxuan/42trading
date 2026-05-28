@@ -758,6 +758,24 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     post("/auth/password", { currentPassword, newPassword }),
   health: () => get("/health"),
+  healthActivity: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") {
+        q.set(k, String(v));
+      }
+    });
+    return get(`/v2/health/activity?${q.toString()}`);
+  },
+  healthSymbolActivity: (params = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && String(v) !== "") {
+        q.set(k, String(v));
+      }
+    });
+    return get(`/v2/health/symbol-activity?${q.toString()}`);
+  },
   dashboardAdvanced: (params = {}) => {
     const q = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {

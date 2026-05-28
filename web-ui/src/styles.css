@@ -1270,6 +1270,10 @@ button:disabled {
     flex-wrap: wrap;
     gap: 6px;
     align-items: flex-start;
+    max-height: calc(100vh - 290px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
 }
 .snapshot-activity-list-v4 {
     display: flex;

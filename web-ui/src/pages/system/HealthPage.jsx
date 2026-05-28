@@ -3,337 +3,197 @@ import { api } from "../../api";
 
 function StatusDot({ ok }) {
   return (
-    <span
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: ok ? "#26a69a" : "#ef5350",
-        marginRight: 6,
-        flexShrink: 0,
-      }}
-    />
+    <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ok ? "#22c55e" : "#666", flexShrink: 0, marginRight: 8 }} />
   );
+}
+
+function cronItemOk(detail) {
+  if (!detail) return false;
+  return detail.startsWith("ok") || detail.includes("done");
 }
 
 export default function HealthPage() {
   const [health, setHealth] = useState(null);
+  const [activity, setActivity] = useState([]);
+  const [symbolActivity, setSymbolActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchHealth = async () => {
     setLoading(true);
-    try {
-      const data = await api.health();
-      setHealth(data);
-      setError("");
-    } catch (e) {
-      setError(e?.message || "Failed to fetch health");
-    } finally {
-      setLoading(false);
-    }
+    try { const d = await api.health(); setHealth(d); setError(""); }
+    catch (e) { setError(e?.message || "Failed"); }
+    finally { setLoading(false); }
   };
 
+  const fetchActivity = async () => {
+    try {
+      const d = await api.healthActivity({ limit: 200 });
+      setActivity(Array.isArray(d?.items) ? d.items : []);
+    } catch {}
+  };
+
+  const fetchSymbolActivity = async () => {
+    try {
+      const d = await api.healthSymbolActivity({ limit: 300 });
+      setSymbolActivity(Array.isArray(d?.items) ? d.items : []);
+    } catch {}
+  };
+
+  useEffect(() => { fetchHealth(); fetchActivity(); fetchSymbolActivity(); }, []);
   useEffect(() => {
-    fetchHealth();
-  }, []);
-  useEffect(() => {
-    const t = setInterval(fetchHealth, 30000);
+    const t = setInterval(() => {
+      fetchHealth();
+      fetchActivity();
+      fetchSymbolActivity();
+    }, 30000);
     return () => clearInterval(t);
   }, []);
 
-  if (loading && !health)
-    return <div className="loading-card">Loading health...</div>;
-  if (error && !health) return <div className="msg-error">{error}</div>;
+  if (loading && !health) return <div className="panel minor-text" style={{ padding: 24 }}>Loading health...</div>;
+  if (error && !health) return <div className="panel msg-error" style={{ padding: 24 }}>{error}</div>;
 
   const timeAgo = (iso) => {
     if (!iso) return "-";
-    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (diff < 60) return Math.round(diff) + "s ago";
-    if (diff < 3600) return Math.round(diff / 60) + "m ago";
-    if (diff < 86400) return Math.round(diff / 3600) + "h ago";
-    return Math.round(diff / 86400) + "d ago";
+    const d = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (d < 60) return Math.round(d) + "s ago";
+    if (d < 3600) return Math.round(d / 60) + "m ago";
+    if (d < 86400) return Math.round(d / 3600) + "h ago";
+    return Math.round(d / 86400) + "d ago";
   };
 
-  const sourceDefaults = {
-    ctrader: {
-      id: "Ctrader",
-      connected: false,
-      enabled: false,
-      lastActivity: null,
-    },
-    mt5: { id: "MT5", connected: false, enabled: false, lastActivity: null },
-    binance: {
-      id: "Binance",
-      connected: false,
-      enabled: false,
-      lastActivity: null,
-    },
-  };
-  const sources = health?.sources || sourceDefaults;
+  const sources = health?.sources || {};
+  const cronCfg = health?.diagnostics?.cron?.configs || {};
+  const cronDet = health?.cronDetails || {};
+  const cronEvt = health?.cronEvents || [];
+  const redisActivityEnabled = Boolean(health?.redisEnabled);
 
-  const items = [
-    {
-      label: "Server",
-      value: health?.ok ? "Online" : "Offline",
-      ok: health?.ok,
-    },
-    { label: "Version", value: health?.version || "-", ok: true },
-    {
-      label: "Postgres",
-      value: health?.postgres || "-",
-      ok: health?.postgres === "ok",
-    },
-    {
-      label: "Redis",
-      value: health?.redis || "-",
-      ok: health?.redis === "ok" || health?.redis === "disabled",
-    },
-    {
-      label: "Cron Jobs",
-      value: health?.cron || "-",
-      ok: health?.cron?.startsWith?.("ok"),
-    },
+  const cronItems = [
+    { label: "Market Data", ok: cronItemOk(cronDet.marketData), right: cronDet.marketData || "inactive" },
+    { label: "AI Analysis", ok: cronItemOk(cronDet.aiAnalysis), right: cronDet.aiAnalysis || "inactive" },
+    { label: "Snapshots",  ok: cronItemOk(cronDet.snapshots),  right: cronDet.snapshots || "inactive" },
   ];
 
   const sourceItems = [
-    {
-      label: sources.ctrader.id,
-      dot: sources.ctrader.connected,
-      status: sources.ctrader.enabled ? "Enabled" : "Disabled",
-      last: timeAgo(sources.ctrader.lastActivity),
-    },
-    {
-      label: sources.mt5.id,
-      dot: sources.mt5.connected,
-      status: sources.mt5.enabled ? "Enabled" : "Disabled",
-      last: timeAgo(sources.mt5.lastActivity),
-    },
-    {
-      label: sources.binance.id,
-      dot: sources.binance.connected,
-      status: sources.binance.enabled ? "Enabled" : "Disabled",
-      last: timeAgo(sources.binance.lastActivity),
-    },
+    { label: "Ctrader",  ok: sources.ctrader?.connected,  right: `${sources.ctrader?.enabled ? "Enabled" : "Disabled"} · ${timeAgo(sources.ctrader?.lastActivity)}` },
+    { label: "MT5",      ok: sources.mt5?.connected,      right: `${sources.mt5?.enabled ? "Enabled" : "Disabled"} · ${timeAgo(sources.mt5?.lastActivity)}` },
+    { label: "Binance",  ok: sources.binance?.connected,  right: `${sources.binance?.enabled ? "Enabled" : "Disabled"} · ${timeAgo(sources.binance?.lastActivity)}` },
   ];
 
+  const Row = ({ ok, label, right }) => (
+    <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+      <StatusDot ok={ok} />
+      <span style={{ fontWeight: 600, fontSize: 12 }}>{label}</span>
+      <span className="minor-text" style={{ marginLeft: "auto", fontSize: 11 }}>{right}</span>
+    </div>
+  );
+
+  const activityIcon = (type) => {
+    const t = String(type || "").toUpperCase();
+    if (t === "SNAPSHOT") return "▣";
+    if (t === "CRON") return "◷";
+    if (t === "TRADE") return "◆";
+    return "•";
+  };
+
   return (
-    <div className="stack-layout fadeIn" style={{ maxWidth: 760, gap: 14 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <h2 className="page-title" style={{ margin: 0 }}>
-          System Health
-        </h2>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={fetchHealth}
-          disabled={loading}
-          style={{ height: 30, fontSize: 11, padding: "0 12px" }}
-        >
+    <div className="stack-layout fadeIn" style={{ maxWidth: 760 }}>
+      <div className="topbar" style={{ marginBottom: 4 }}>
+        <h2 className="page-title">System Health</h2>
+        <button className="secondary-button" onClick={fetchHealth} disabled={loading} style={{ height: 30, fontSize: 11, padding: "0 12px" }}>
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
-      <div
-        className="toolbar-panel"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: "0 24px",
-          padding: "10px 14px",
-        }}
-      >
-        {items.map((item) => (
-          <div
-            key={item.label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              fontSize: 12,
-              minHeight: 30,
-              padding: "5px 0",
-              borderBottom: "1px solid rgba(255,255,255,0.04)",
-            }}
-          >
-            <StatusDot ok={item.ok} />
-            <span className="minor-text" style={{ marginRight: 8 }}>
-              {item.label}
-            </span>
-            <span style={{ marginLeft: "auto", fontWeight: 650 }}>
-              {item.value}
-            </span>
-          </div>
-        ))}
-      </div>
-      <div className="toolbar-panel" style={{ padding: "10px 14px" }}>
-        <div
-          className="minor-text"
-          style={{
-            fontSize: 10,
-            textTransform: "uppercase",
-            marginBottom: 8,
-            fontWeight: 700,
-          }}
-        >
-          Sources
-        </div>
-        {sourceItems.map((s) => (
-          <div
-            key={s.label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              fontSize: 12,
-              minHeight: 30,
-              padding: "5px 0",
-              borderBottom: "1px solid rgba(255,255,255,0.04)",
-            }}
-          >
-            <StatusDot ok={s.dot} />
-            <span style={{ flex: 1, fontWeight: 600 }}>{s.label}</span>
-            <span
-              style={{
-                color: s.status === "Enabled" ? "var(--success)" : "#666",
-                fontSize: 10,
-                textTransform: "uppercase",
-                fontWeight: 700,
-              }}
-            >
-              {s.status}
-            </span>
-            <span
-              className="minor-text"
-              style={{ fontSize: 10, minWidth: 58, textAlign: "right" }}
-            >
-              {s.last}
-            </span>
-          </div>
-        ))}
+
+      <div className="panel" style={{ padding: "14px 18px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>STATUS</div>
+        <Row ok={health?.ok} label="Server" right={health?.ok ? "Online" : "Offline"} />
+        <Row ok={health?.postgres === "ok"} label="PostgreSQL" right={health?.postgres || "-"} />
+        <Row ok={health?.redis === "ok" || health?.redis === "disabled"} label="Redis" right={health?.redis || "-"} />
+        <Row ok={cronItems.some((c) => c.ok)} label="Cron Jobs" right={health?.cron || "-"} />
       </div>
 
-      {health?.cronEvents?.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              flexWrap: "wrap",
-              marginBottom: 12,
-            }}
-          >
-            <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>
-                MARKET DATA
-              </span>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: (health.cronDetails?.marketData || "").includes(
-                    "error",
-                  )
-                    ? "#ef4444"
-                    : "var(--success)",
-                }}
-              >
-                {health.cronDetails?.marketData || "-"}
-              </div>
-            </div>
-            <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>
-                AI ANALYSIS
-              </span>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: (health.cronDetails?.aiAnalysis || "").includes(
-                    "error",
-                  )
-                    ? "#ef4444"
-                    : "var(--muted)",
-                }}
-              >
-                {health.cronDetails?.aiAnalysis || "-"}
-              </div>
-            </div>
-            <div className="summary-item">
-              <span className="minor-text" style={{ fontSize: 9 }}>
-                SNAPSHOTS
-              </span>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: (health.cronDetails?.snapshots || "").includes("error")
-                    ? "#ef4444"
-                    : "var(--muted)",
-                }}
-              >
-                {health.cronDetails?.snapshots || "-"}
-              </div>
-            </div>
-          </div>
+      <div className="panel" style={{ padding: "14px 18px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>SOURCES</div>
+        {sourceItems.map((s, i) => <Row key={i} {...s} />)}
+      </div>
 
-          <div
-            className="minor-text"
-            style={{
-              marginBottom: 8,
-              fontSize: 10,
-              textTransform: "uppercase",
-            }}
-          >
-            Recent Cron Runs
+      <div className="panel" style={{ padding: "14px 18px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>CRON JOBS</div>
+        {cronItems.map((c, i) => <Row key={i} {...c} />)}
+        {cronEvt.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div className="minor-text" style={{ marginBottom: 6 }}>Recent Runs</div>
+            {cronEvt.slice(0, 10).map((ev, i) => (
+              <div key={i} className="minor-text" style={{ padding: "2px 0", borderBottom: "1px solid var(--border)" }}>
+                <StatusDot ok={ev.status === "ok"} />
+                {ev.events?.join(", ") || "-"}
+                <span style={{ marginLeft: "auto", opacity: 0.5 }}>{new Date(ev.time).toLocaleTimeString()} · {ev.elapsed}s</span>
+              </div>
+            ))}
           </div>
-          {health.cronEvents.map((ev, i) => (
-            <div
-              key={i}
-              style={{
-                fontSize: 10,
-                color: "var(--muted)",
-                padding: "4px 0",
-                borderBottom: "1px solid rgba(255,255,255,0.04)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span>
-                  <StatusDot ok={ev.status === "ok"} />
-                  {ev.events?.join(", ") || "-"}
+        )}
+      </div>
+
+      <div className="panel" style={{ padding: "14px 18px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>HEALTH ACTIVITY</div>
+        {!redisActivityEnabled && (
+          <div className="minor-text" style={{ marginBottom: 8 }}>
+            Redis activity tracking is disabled (`redisEnabled=false`).
+          </div>
+        )}
+        {activity.length === 0 ? (
+          <div className="minor-text">No activity entries yet.</div>
+        ) : (
+          activity.slice(0, 120).map((item, i) => {
+            const key = item?.key || `${item?.object_type || "OBJECT"}:${item?.object_id || "unknown"}`;
+            const status = String(item?.status || "").toLowerCase();
+            const ok = status ? status !== "error" : true;
+            return (
+              <div key={`${key}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                <span style={{ width: 14, textAlign: "center", opacity: 0.9 }}>{activityIcon(item?.object_type)}</span>
+                <StatusDot ok={ok} />
+                <span style={{ fontWeight: 700 }}>{key}</span>
+                <span className="minor-text" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 380 }}>
+                  {item?.message || item?.timeframe || item?.file_name || "-"}
                 </span>
-                <span style={{ fontSize: 9, opacity: 0.7 }}>
-                  {new Date(ev.time).toLocaleTimeString()} - {ev.elapsed}s
+                <span className="minor-text" style={{ marginLeft: "auto" }}>
+                  {timeAgo(item?.updated_at)}
                 </span>
               </div>
-              {ev.events?.map((evt, j) => {
-                const isError = /error/i.test(evt);
-                if (!isError && ev.status === "ok") return null;
-                return (
-                  <div
-                    key={j}
-                    style={{
-                      fontSize: 9,
-                      opacity: 0.65,
-                      marginTop: 1,
-                      marginLeft: 14,
-                      color: isError
-                        ? "var(--danger, #ef4444)"
-                        : "var(--muted)",
-                      fontWeight: isError ? 600 : 300,
-                    }}
-                  >
-                    {evt}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      )}
+            );
+          })
+        )}
+      </div>
+
+      <div className="panel" style={{ padding: "14px 18px" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>SYMBOL ACTIVITY</div>
+        {!redisActivityEnabled && (
+          <div className="minor-text" style={{ marginBottom: 8 }}>
+            Redis symbol tracking is disabled (`redisEnabled=false`).
+          </div>
+        )}
+        {symbolActivity.length === 0 ? (
+          <div className="minor-text">No symbol activity entries yet.</div>
+        ) : (
+          symbolActivity.slice(0, 200).map((item, i) => {
+            const symbol = item?.symbol || "-";
+            const snapTime = item?.snapshot?.last_time ? timeAgo(item.snapshot.last_time) : "-";
+            const barsTime = item?.bars?.last_time ? timeAgo(item.bars.last_time) : "-";
+            return (
+              <div key={`${symbol}-${i}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                <span style={{ width: 14, textAlign: "center", opacity: 0.9 }}>◎</span>
+                <span style={{ fontWeight: 700, minWidth: 72 }}>{symbol}</span>
+                <span className="minor-text">snapshot: {snapTime}</span>
+                <span className="minor-text">bars: {barsTime}</span>
+                <span className="minor-text" style={{ marginLeft: "auto" }}>
+                  {timeAgo(item?.updated_at)}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

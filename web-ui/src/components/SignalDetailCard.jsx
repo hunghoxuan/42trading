@@ -16,19 +16,8 @@ import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
 
-const TF_WEIGHTS = {
-  "1m": 1,
-  "5m": 5,
-  "15m": 15,
-  "30m": 30,
-  "1h": 60,
-  "4h": 240,
-  d: 1440,
-  w: 10080,
-  m: 43200,
-};
+import { TF_WEIGHTS, DEFAULT_TF_TABS } from "../pages/ai/AiPromptBuilder";
 
-const DEFAULT_TF_TABS = ["ENTRY", "1m", "5m", "15m", "1h", "4h", "d", "W"];
 const MODE_PRESETS = {
   generic: {
     headerColumns: "minmax(0, 1fr) minmax(0, 1.25fr) minmax(120px, 0.55fr)",
@@ -1091,7 +1080,8 @@ export default function SignalDetailCard({
       ? chart.detailTfTabs
       : DEFAULT_TF_TABS;
   const tvSymbol = String(
-    chart?.tvSymbol || toTradingViewSymbol(chart?.symbol || ""),
+    chart?.tvSymbol ||
+      toTradingViewSymbol(chart?.symbol || "", chart?.provider || ""),
   ).trim();
 
   const availableTabs = useMemo(() => {
@@ -1109,7 +1099,7 @@ export default function SignalDetailCard({
 
     if (chart?.enabled) tabs.push("chart");
     if (trulyHasData || metaItems?.length || tradePlan?.enabled) tabs.push("info");
-    if (mode === "trade") tabs.push("broker");
+    if (mode === "trade" || tradePlan?.enabled) tabs.push("broker");
     if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
@@ -1149,7 +1139,13 @@ export default function SignalDetailCard({
     if (!responseRowRaw || typeof responseRowRaw !== "object") return {};
     const cleaned = {};
     for (const [k, v] of Object.entries(responseRowRaw)) {
-      if (!k.startsWith("__")) cleaned[k] = v;
+      if (k.startsWith("__")) continue;
+      // prompt is a huge AI system prompt — show truncated for readability
+      if (k === "prompt" && typeof v === "string" && v.length > 500) {
+        cleaned[k] = v.slice(0, 500) + ` ... (${v.length - 500} more chars — full text in DB)`;
+      } else {
+        cleaned[k] = v;
+      }
     }
     return cleaned;
   }, [responseRowRaw]);
@@ -2087,6 +2083,7 @@ export default function SignalDetailCard({
               >
                 <SymbolChart
                   symbol={chart?.symbol}
+                  provider={chart?.provider || ""}
                   timeframes={effectiveTfs}
                   defaultMode="cache"
                   initialGridCols={2}
@@ -3204,8 +3201,9 @@ export default function SignalDetailCard({
               x.label === "Metadata" ||
               x.label === "Raw Metadata" ||
               x.label === "Raw JSON";
+            const brokerGroups = new Set(["account", "identity", "pnl", "sizing"]);
             const accountItems = metaItems.filter(
-              (x) => x?.group === "account" && !isMeta(x) && hasVal(x),
+              (x) => brokerGroups.has(x?.group) && !isMeta(x) && hasVal(x),
             );
             const rawJsonItem = metaItems.find(
               (x) =>
@@ -3322,6 +3320,7 @@ export default function SignalDetailCard({
         >
           <SymbolChart
             symbol={selectedPlanSymbol || chart?.symbol}
+            provider={chart?.provider || ""}
             timeframes={effectiveTfs}
             defaultMode={chart?.mode || "live"}
             initialGridCols={
@@ -3500,11 +3499,22 @@ export default function SignalDetailCard({
           fallback={<div className="loading-card">Loading files...</div>}
         >
           <TradeFilesTab
-            tradeSid={tradePlan?.tradeId || tradePlan?.signalId || null}
+            tradeSid={
+              tradePlan?.tradeId ||
+              tradePlan?.signalId ||
+              chart?.tradeId ||
+              response?.sid ||
+              response?.id ||
+              null
+            }
             symbol={chart?.symbol || null}
             attachedFiles={chart?.attachedSnapshotFiles || []}
             snapshotsUsed={
-              tradePlan?.tradeId || tradePlan?.signalId
+              tradePlan?.tradeId ||
+              tradePlan?.signalId ||
+              chart?.tradeId ||
+              response?.sid ||
+              response?.id
                 ? []
                 : response?.snapshotsUsed || []
             }

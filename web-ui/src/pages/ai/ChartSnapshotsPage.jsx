@@ -20,7 +20,9 @@ import {
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
 import TradeSignalChart from "../../components/TradeSignalChart";
+import AiTradeDetailCard from "../../components/AiTradeDetailCard";
 import { chartFetchManager } from "../../services/chartFetchManager";
+import { extractTradePlanFromTrade } from "../../utils/signalDetailUtils";
 
 const SignalDetailCard = lazy(
   () => import("../../components/SignalDetailCard"),
@@ -35,29 +37,20 @@ import {
   GUIDE_USER_DEFAULT,
   SCHEMA_SYSTEM,
   SCHEMA_USER_DEFAULT,
+  DEFAULT_WATCHLIST,
   getEffectiveTfConfig,
   buildPrompt,
   buildStrategyContext,
   buildJsonConfig,
   buildSchemaString,
 } from "./AiPromptBuilder";
+import ANALYSIS_SCHEMA from "../../../../config/schema/analysis.json";
 
 const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
 const DEFAULT_TEMPLATE_ID = "__default__";
 
-const DEFAULT_WATCHLIST = [
-  "EURUSD",
-  "GBPUSD",
-  "USDJPY",
-  "BTCUSD",
-  "ETHUSD",
-  "XAUUSD",
-  "US30",
-  "US500",
-  "USTEC",
-  "DXY",
-];
+// DEFAULT_WATCHLIST now from config.json via AiPromptBuilder
 
 // Fixed default sets for asset-type filter tabs
 const DEFAULT_CRYPTO_SYMBOLS = [
@@ -380,7 +373,16 @@ const FOREX_PAIRS = new Set([
   "NOKJPY",
   "SEKJPY",
 ]);
-const COMMODITY_PREFIXES = new Set(["XAU", "XAG", "XTI", "XBR", "XNG", "XPT", "XPD", "COP"]);
+const COMMODITY_PREFIXES = new Set([
+  "XAU",
+  "XAG",
+  "XTI",
+  "XBR",
+  "XNG",
+  "XPT",
+  "XPD",
+  "COP",
+]);
 const INDICES_SET = new Set([
   "US500",
   "US30",
@@ -522,7 +524,7 @@ function normalizeTemplateRecord(raw = {}, fallbackId = "") {
   };
 }
 
-function buildTemplateConfigPayload(cfg, guideText, schemaText) {
+function buildTemplateConfigPayload(cfg, guideText, schemaText, analysisText) {
   const normalized = normalizeTemplateConfig(cfg);
   const { strategies, ...configOnly } = normalized;
   return {
@@ -530,6 +532,7 @@ function buildTemplateConfigPayload(cfg, guideText, schemaText) {
     strategies: Array.isArray(strategies) ? strategies : [],
     analysis_instructions: guideText || "",
     schema_additions: schemaText || "{}",
+    analysis_schema: analysisText || "{}",
   };
 }
 
@@ -687,7 +690,7 @@ function parseNum(value) {
 function formatNum3(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
-  return String(Math.round(n * 1000) / 1000);
+  return parseFloat(n.toFixed(8)).toString();
 }
 
 function parsePdZoneBounds(zoneRaw) {
@@ -1885,41 +1888,10 @@ function extractPositionFromAnalysis(parsed) {
         ? "BUY"
         : "";
   if (!direction) {
-    console.warn(
-      "[extractPositionFromAnalysis] FALLBACK direction empty. plan keys:",
-      JSON.stringify(Object.keys(plan || {})),
-      "directionRaw:",
-      JSON.stringify(directionRaw),
-      "plan.direction:",
-      JSON.stringify(plan?.direction),
-    );
+    // no direction found — will default to BUY
   }
   const entry = planEntryNumber(plan, parsed);
   const sl = planStopLossNumber(plan, parsed);
-  console.log(
-    "[extractPositionFromAnalysis] plan keys:",
-    JSON.stringify(Object.keys(plan || {})),
-  );
-  console.log(
-    "[extractPositionFromAnalysis] plan.execution_plan:",
-    JSON.stringify(plan?.execution_plan || null)?.slice(0, 300) || "null",
-  );
-  console.log(
-    "[extractPositionFromAnalysis] plan.entry:",
-    plan?.entry,
-    "plan.entry_price:",
-    plan?.entry_price,
-    "plan.direction:",
-    plan?.direction,
-  );
-  console.log(
-    "[extractPositionFromAnalysis] resolved entry:",
-    entry,
-    "sl:",
-    sl,
-    "direction:",
-    direction,
-  );
   const planTp = getPlanPrimaryTp(plan);
   const tp = Number.isFinite(planTp)
     ? planTp
@@ -1933,18 +1905,8 @@ function extractPositionFromAnalysis(parsed) {
   }
   if (!Number.isFinite(rr)) rr = Number.isFinite(rrRaw) ? rrRaw : null;
   const finalDirection = direction || "BUY";
-  if (!direction) {
-    console.warn(
-      "[extractPositionFromAnalysis] RETURN FALLBACK — direction empty, defaulting to BUY.",
-      "plan keys:",
-      JSON.stringify(Object.keys(plan || {})),
-      "plan.direction:",
-      JSON.stringify(plan?.direction),
-      "parsed keys:",
-      JSON.stringify(Object.keys(parsed || {}).slice(0, 10)),
-      "parsed.direction:",
-      JSON.stringify(parsed?.direction),
-    );
+  if (!finalDirection) {
+    // no direction after all attempts — default to BUY
   }
   return {
     direction: finalDirection,
@@ -2870,7 +2832,6 @@ export default function ChartSnapshotsPage() {
           (x) => x.type === "settings" && x.name === "ANALYSE_SETTINGS",
         );
         if (s?.data && typeof s.data === "object") {
-          console.log("[ANALYSE_SETTINGS] Loaded from DB:", s.data);
           setCfg((prev) => ({ ...prev, ...s.data }));
         }
       })
@@ -2878,13 +2839,6 @@ export default function ChartSnapshotsPage() {
   }, []);
 
   const saveSettings = useCallback(() => {
-    console.log("[ANALYSE_SETTINGS] Saving:", {
-      lookbackBars: cfg.lookbackBars,
-      snapshotQuality: cfg.snapshotQuality,
-      mergeSnapshots: cfg.mergeSnapshots,
-      broker: cfg.broker,
-      refreshSnapshot: cfg.refreshSnapshot !== false,
-    });
     api
       .upsertSetting({
         type: "settings",
@@ -2923,16 +2877,46 @@ export default function ChartSnapshotsPage() {
   const [templateName, setTemplateName] = useState("");
 
   const [provider, setProvider] = useState("ICMARKETS");
+  const [userDefaultProviderCode, setUserDefaultProviderCode] =
+    useState("ICMARKETS");
+  const [userAccounts, setUserAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
 
   // Load default provider from auth/me on mount
   useEffect(() => {
-    api.authMe().then((res) => {
-      const code =
-        res?.user?.metadata?.default_provider_code ||
-        String(DEFAULT_CONFIG?.broker || "").toUpperCase() ||
-        "ICMARKETS";
-      setProvider(code);
-    }).catch(() => {});
+    api
+      .authMe()
+      .then((res) => {
+        const code =
+          res?.user?.metadata?.default_provider_code ||
+          String(DEFAULT_CONFIG?.broker || "").toUpperCase() ||
+          "ICMARKETS";
+        const normalized =
+          String(code || "")
+            .trim()
+            .toUpperCase() || "ICMARKETS";
+        setProvider(normalized);
+        setUserDefaultProviderCode(normalized);
+      })
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    api
+      .v2Accounts()
+      .then((res) => {
+        const items = Array.isArray(res?.items) ? res.items : [];
+        setUserAccounts(items);
+        setSelectedAccountId((prev) => {
+          if (prev && items.some((a) => String(a?.account_id || "") === prev)) {
+            return prev;
+          }
+          const active = items.find(
+            (a) => String(a?.status || "").toUpperCase() === "ACTIVE",
+          );
+          return String(active?.account_id || items[0]?.account_id || "");
+        });
+      })
+      .catch(() => {});
   }, []);
   const autoSaveTimerRef = useRef(null);
   const [items, setItems] = useState([]);
@@ -3018,13 +3002,13 @@ export default function ChartSnapshotsPage() {
     const slug = list.join("-");
     return `/ai/analyze/${encodeURIComponent(slug)}`;
   }
-  function buildAiTradeRoute(symbols = []) {
+  function buildAiManualRoute(symbols = []) {
     const list = (Array.isArray(symbols) ? symbols : [])
       .map((x) => normalizeWatchSymbol(x))
       .filter(Boolean);
-    if (!list.length) return "/ai/trade";
+    if (!list.length) return "/ai/manual";
     const slug = list.join("-");
-    return `/ai/trade/${encodeURIComponent(slug)}`;
+    return `/ai/manual/${encodeURIComponent(slug)}`;
   }
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -3066,15 +3050,25 @@ export default function ChartSnapshotsPage() {
     updated_time: null,
     auto_refresh: 0,
   });
+  const [tradeDetailRow, setTradeDetailRow] = useState(null);
+  const [tradeDetailPlan, setTradeDetailPlan] = useState({});
+  const [tradeDetailTfTab, setTradeDetailTfTab] = useState("4h");
   const isResultRoute =
     location.pathname.startsWith("/ai/result") ||
     location.pathname.startsWith("/ai/trade") ||
+    location.pathname.startsWith("/ai/manual") ||
     location.pathname.startsWith("/ai/response");
-  const isTradeRoute = location.pathname.startsWith("/ai/trade");
+  const isTradeRoute =
+    location.pathname.startsWith("/ai/trade") &&
+    Boolean((paramSymbol || "").trim());
+  const isManualRoute = location.pathname.startsWith("/ai/manual");
   const isResponseRoute = location.pathname.startsWith("/ai/response");
+  const isSidLike = (value) =>
+    /^[A-Z0-9]{9,10}$/.test(String(value || "").trim());
   const tradeSidFromRoute = isResponseRoute
     ? String(paramSymbol || "").trim()
     : "";
+  const tradeRouteParam = isTradeRoute ? String(paramSymbol || "").trim() : "";
 
   // Load saved AI response when navigating to /ai/response/{sid}
   useEffect(() => {
@@ -3116,18 +3110,107 @@ export default function ChartSnapshotsPage() {
             });
           } else {
             setAnalysisParsed(parsed);
-            setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(data.parsed_json), null, 2));
+            setAnalysisJson(
+              JSON.stringify(
+                stripSharedFromTradePlans(data.parsed_json),
+                null,
+                2,
+              ),
+            );
             setAnalysisRaw(raw);
             setPosition(extractPositionFromAnalysis(parsed));
           }
           setAnalyzeSessionId(
-            String(data?.sid || data?.session_id || tradeSidFromRoute || "").trim(),
+            String(
+              data?.sid || data?.session_id || tradeSidFromRoute || "",
+            ).trim(),
           );
         }
       } catch (_) {}
     };
     load();
   }, [tradeSidFromRoute, cfg.symbol]);
+
+  useEffect(() => {
+    if (!tradeRouteParam) return;
+    let cancelled = false;
+    api
+      .v2Trades({ q: tradeRouteParam, page: 1, pageSize: 30 })
+      .then((res) => {
+        if (cancelled) return;
+        const items = Array.isArray(res?.items) ? res.items : [];
+        const exact =
+          items.find(
+            (t) =>
+              String(t?.sid || "").trim() === tradeRouteParam ||
+              String(t?.id || "").trim() === tradeRouteParam,
+          ) || items[0];
+        if (!exact) return;
+        setTradeDetailRow(exact);
+        setTradeDetailPlan(extractTradePlanFromTrade(exact));
+        const symbol = normalizeWatchSymbol(String(exact.symbol || ""));
+        if (symbol) {
+          setCfg((prev) => {
+            const prevSymbols = Array.isArray(prev?.symbols)
+              ? prev.symbols
+              : [];
+            return {
+              ...prev,
+              symbol,
+              symbols: [symbol, ...prevSymbols.filter((x) => x !== symbol)],
+            };
+          });
+        }
+        setPosition((prev) => ({
+          ...prev,
+          symbol: symbol || prev?.symbol || "",
+          direction: String(
+            exact.action || exact.side || prev?.direction || "BUY",
+          )
+            .trim()
+            .toUpperCase(),
+          entry:
+            exact.entry != null
+              ? formatNum3(exact.entry)
+              : String(prev?.entry || ""),
+          tp: exact.tp != null ? formatNum3(exact.tp) : String(prev?.tp || ""),
+          tp2:
+            exact.tp2 != null ? formatNum3(exact.tp2) : String(prev?.tp2 || ""),
+          tp3:
+            exact.tp3 != null ? formatNum3(exact.tp3) : String(prev?.tp3 || ""),
+          sl: exact.sl != null ? formatNum3(exact.sl) : String(prev?.sl || ""),
+          rr:
+            exact.rr_planned != null
+              ? formatNum3(exact.rr_planned)
+              : exact.rr != null
+                ? formatNum3(exact.rr)
+                : String(prev?.rr || ""),
+          trade_type: String(
+            exact.order_type || exact.type || prev?.trade_type || "limit",
+          ).toLowerCase(),
+          note: String(exact.note || prev?.note || ""),
+          account_id: String(exact.account_id || prev?.account_id || ""),
+          account_metadata:
+            exact?.account_metadata &&
+            typeof exact.account_metadata === "object"
+              ? exact.account_metadata
+              : exact?.metadata && typeof exact.metadata === "object"
+                ? exact.metadata
+                : prev?.account_metadata,
+        }));
+        setAddedEntities((prev) => ({
+          ...prev,
+          main: {
+            kind: "trade",
+            id: String(exact.sid || exact.id || "").trim(),
+          },
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [tradeRouteParam]);
   const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
@@ -3136,8 +3219,11 @@ export default function ChartSnapshotsPage() {
   const [promptEdited, setPromptEdited] = useState(false);
   const [guideUserDraft, setGuideUserDraft] = useState(GUIDE_USER_DEFAULT);
   const [schemaUserDraft, setSchemaUserDraft] = useState(SCHEMA_USER_DEFAULT);
+  const [analysisDraft, setAnalysisDraft] = useState(() =>
+    JSON.stringify(ANALYSIS_SCHEMA, null, 2),
+  );
   const [guideSubTab, setGuideSubTab] = useState("user");
-  const [schemaSubTab, setSchemaSubTab] = useState("user");
+  const [schemaSubTab, setSchemaSubTab] = useState("analysis");
   const [autoSaveMode, setAutoSaveMode] = useState("");
   const [tradesText, setTradesText] = useState("");
   const [browserAnalyzeOpen, setBrowserAnalyzeOpen] = useState(false);
@@ -3156,7 +3242,9 @@ export default function ChartSnapshotsPage() {
     [provider, cfg.lookbackBars, browserTfs],
   );
   useEffect(() => {
-    const nextBroker = String(cfg?.broker || "").trim().toUpperCase();
+    const nextBroker = String(cfg?.broker || "")
+      .trim()
+      .toUpperCase();
     if (nextBroker !== provider) setProvider(nextBroker);
   }, [cfg?.broker, provider]);
 
@@ -3294,7 +3382,9 @@ export default function ChartSnapshotsPage() {
       if (p.raw != null) setAnalysisRaw(String(p.raw || ""));
       if (p.parsed && typeof p.parsed === "object") {
         setAnalysisParsed(p.parsed);
-        setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(p.parsed), null, 2));
+        setAnalysisJson(
+          JSON.stringify(stripSharedFromTradePlans(p.parsed), null, 2),
+        );
         setPosition(extractPositionFromAnalysis(p.parsed));
       }
       if (Array.isArray(p.usedFiles)) setUsedFiles(p.usedFiles);
@@ -3486,6 +3576,27 @@ export default function ChartSnapshotsPage() {
     );
   }, [addedEntities]);
 
+  const handleSelectedAccountChange = useCallback(
+    (nextAccountIdRaw) => {
+      const accountId = String(nextAccountIdRaw || "").trim();
+      setSelectedAccountId(accountId);
+      if (!accountId) return;
+      const tradeId = String(
+        (isTradeRoute || isManualRoute ? tradeRouteParam : "") ||
+          activeAddedTradeEntity?.id ||
+          "",
+      ).trim();
+      if (!tradeId) return;
+      const dedupeKey = `${tradeId}|${accountId}`;
+      if (lastPersistedAccountRef.current === dedupeKey) return;
+      lastPersistedAccountRef.current = dedupeKey;
+      api.v2UpdateTrade(tradeId, { account_id: accountId }).catch(() => {
+        lastPersistedAccountRef.current = "";
+      });
+    },
+    [isTradeRoute, isManualRoute, tradeRouteParam, activeAddedTradeEntity?.id],
+  );
+
   const resolveCreatedId = (obj = {}, mode = "") => {
     const candidates = [
       obj?.sid,
@@ -3529,18 +3640,15 @@ export default function ChartSnapshotsPage() {
       }
     }
   };
-  const saveAnalyseSettingsSilent = useCallback(
-    (data = {}) => {
-      api
-        .upsertSetting({
-          type: "settings",
-          name: "ANALYSE_SETTINGS",
-          data,
-        })
-        .catch(() => {});
-    },
-    [],
-  );
+  const saveAnalyseSettingsSilent = useCallback((data = {}) => {
+    api
+      .upsertSetting({
+        type: "settings",
+        name: "ANALYSE_SETTINGS",
+        data,
+      })
+      .catch(() => {});
+  }, []);
   const setSelectedSymbols = (symbols = []) => {
     const next = [
       ...new Set(
@@ -4227,12 +4335,9 @@ export default function ChartSnapshotsPage() {
           autoEntity?.kind === "trade" &&
           autoEntity?.id
         ) {
-          const sym = normalizeWatchSymbol(activeSymbol || cfg.symbol || "");
-          if (sym) {
-            navigate(`/ai/trade/${encodeURIComponent(sym)}`, { replace: true });
-          } else {
-            navigate(`/trades/${autoEntity.id}`);
-          }
+          navigate(`/ai/trade/${encodeURIComponent(autoEntity.id)}`, {
+            replace: true,
+          });
         }
       }
       setAnalysisRaw(raw);
@@ -4259,7 +4364,9 @@ export default function ChartSnapshotsPage() {
         //           parsed.symbol = inputSymbol;
         //         }
         setAnalysisParsed(parsed);
-        setAnalysisJson(JSON.stringify(stripSharedFromTradePlans(parsed), null, 2));
+        setAnalysisJson(
+          JSON.stringify(stripSharedFromTradePlans(parsed), null, 2),
+        );
         if (!hasRequiredPlanLevels(parsed)) {
           throw new Error(
             "Invalid analysis response: entry, tp, sl are required in trade_plan.",
@@ -4550,6 +4657,53 @@ export default function ChartSnapshotsPage() {
   };
 
   const [submittingPlanId, setSubmittingPlanId] = useState(null); // track which plan is adding
+  const lastPersistedAccountRef = useRef("");
+
+  const selectedAccount = useMemo(
+    () =>
+      (Array.isArray(userAccounts) ? userAccounts : []).find(
+        (a) => String(a?.account_id || "") === String(selectedAccountId || ""),
+      ) || null,
+    [userAccounts, selectedAccountId],
+  );
+
+  const extractProviderCode = useCallback((meta) => {
+    if (!meta || typeof meta !== "object") return "";
+    return String(
+      meta.provider_code ||
+        meta.default_provider_code ||
+        meta.broker_code ||
+        meta.broker ||
+        "",
+    )
+      .trim()
+      .toUpperCase();
+  }, []);
+
+  const perTradeAccountMetadata = useMemo(() => {
+    const fromPosition = position?.account_metadata;
+    if (fromPosition && typeof fromPosition === "object") return fromPosition;
+    const fromParsed = analysisParsed?.account_metadata;
+    if (fromParsed && typeof fromParsed === "object") return fromParsed;
+    return null;
+  }, [position?.account_metadata, analysisParsed]);
+
+  const resolvedTradingViewProvider = useMemo(() => {
+    const fromTradeMeta = extractProviderCode(perTradeAccountMetadata);
+    if (fromTradeMeta) return fromTradeMeta;
+    const fromSelectedAccount = extractProviderCode(selectedAccount?.metadata);
+    if (fromSelectedAccount) return fromSelectedAccount;
+    const fromUserSession = String(userDefaultProviderCode || "")
+      .trim()
+      .toUpperCase();
+    if (fromUserSession) return fromUserSession;
+    return "ICMARKETS";
+  }, [
+    extractProviderCode,
+    perTradeAccountMetadata,
+    selectedAccount?.metadata,
+    userDefaultProviderCode,
+  ]);
   const chartFiles = (
     analysisFilesDisplay && analysisFilesDisplay.length
       ? analysisFilesDisplay
@@ -4634,11 +4788,15 @@ export default function ChartSnapshotsPage() {
           ).toLowerCase(),
           note: activePosition.note || "",
           source:
-            String(activePosition.source_id || activePosition.source || "manual")
+            String(
+              activePosition.source_id || activePosition.source || "manual",
+            )
               .trim()
               .toLowerCase() || "manual",
           source_id:
-            String(activePosition.source_id || activePosition.source || "manual")
+            String(
+              activePosition.source_id || activePosition.source || "manual",
+            )
               .trim()
               .toLowerCase() || "manual",
           strategy: String(activePosition.strategy || "PA").trim() || "PA",
@@ -4694,31 +4852,43 @@ export default function ChartSnapshotsPage() {
               cfg.symbol ||
               "",
           ),
+          account_id:
+            String(activePosition?.account_id || "").trim() ||
+            String(selectedAccountId || "").trim() ||
+            undefined,
+          account_metadata:
+            activePosition?.account_metadata &&
+            typeof activePosition.account_metadata === "object"
+              ? activePosition.account_metadata
+              : selectedAccount?.metadata &&
+                  typeof selectedAccount.metadata === "object"
+                ? selectedAccount.metadata
+                : undefined,
           source:
             String(payload?.source || analysisSource || "ai_claude").trim() ||
             "ai_claude",
-          source_id:
-            (() => {
-              const aiSource =
-                analysisSource && String(analysisSource).startsWith("ai_")
-                  ? String(analysisSource).trim().toLowerCase()
-                  : "";
-              const payloadSource = String(
-                payload.source_id || payload.source || "",
-              )
-                .trim()
-                .toLowerCase();
-              const activeSource = String(
-                activePosition.source_id || activePosition.source || "",
-              )
-                .trim()
-                .toLowerCase();
-              if (aiSource) return aiSource;
-              return payloadSource || activeSource || "manual";
-            })(),
+          source_id: (() => {
+            const aiSource =
+              analysisSource && String(analysisSource).startsWith("ai_")
+                ? String(analysisSource).trim().toLowerCase()
+                : "";
+            const payloadSource = String(
+              payload.source_id || payload.source || "",
+            )
+              .trim()
+              .toLowerCase();
+            const activeSource = String(
+              activePosition.source_id || activePosition.source || "",
+            )
+              .trim()
+              .toLowerCase();
+            if (aiSource) return aiSource;
+            return payloadSource || activeSource || "manual";
+          })(),
           strategy:
-            String(activePosition.strategy || payload.strategy || "PA").trim() ||
-            "PA",
+            String(
+              activePosition.strategy || payload.strategy || "PA",
+            ).trim() || "PA",
           entry_model:
             String(
               activePosition.entry_model || payload.entry_model || "S/R",
@@ -4801,7 +4971,9 @@ export default function ChartSnapshotsPage() {
             parseNum(activePosition.rr) !== null
               ? parseNum(activePosition.rr)
               : payload.rr,
-          risk_money: Number.isFinite(parseNum(activePosition.risk_money_planned))
+          risk_money: Number.isFinite(
+            parseNum(activePosition.risk_money_planned),
+          )
             ? parseNum(activePosition.risk_money_planned)
             : Number.isFinite(parseNum(activePosition.risk_money))
               ? parseNum(activePosition.risk_money)
@@ -4933,6 +5105,70 @@ export default function ChartSnapshotsPage() {
     }
   };
 
+  const onSaveTradeDetailPlan = useCallback(async () => {
+    const trade = tradeDetailRow;
+    if (!trade) return;
+    const ref = String(trade.sid || trade.id || "").trim();
+    if (!ref) return;
+    const toNum = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    await api.saveTradePlan(ref, {
+      side: tradeDetailPlan.direction || null,
+      order_type: tradeDetailPlan.trade_type || null,
+      price: toNum(tradeDetailPlan.entry),
+      tp: toNum(tradeDetailPlan.tp1 ?? tradeDetailPlan.tp),
+      tp1: toNum(tradeDetailPlan.tp1),
+      tp2: toNum(tradeDetailPlan.tp2),
+      tp3: toNum(tradeDetailPlan.tp3),
+      sl: toNum(tradeDetailPlan.sl),
+      rr: toNum(tradeDetailPlan.rr),
+      note: tradeDetailPlan.note || "",
+      strategy: tradeDetailPlan.strategy || "",
+      entry_model: tradeDetailPlan.entry_model || "",
+      risk_money: toNum(
+        tradeDetailPlan.risk_money_planned ?? tradeDetailPlan.risk_money,
+      ),
+      risk_money_planned: toNum(
+        tradeDetailPlan.risk_money_planned ?? tradeDetailPlan.risk_money,
+      ),
+    });
+    const refresh = await api.v2Trades({ q: ref, page: 1, pageSize: 20 });
+    const items = Array.isArray(refresh?.items) ? refresh.items : [];
+    const next =
+      items.find(
+        (t) =>
+          String(t?.sid || "").trim() === ref ||
+          String(t?.id || "").trim() === ref,
+      ) || items[0];
+    if (next) {
+      setTradeDetailRow(next);
+      setTradeDetailPlan(extractTradePlanFromTrade(next));
+    }
+  }, [tradeDetailRow, tradeDetailPlan]);
+
+  const onReEntryTradeDetail = useCallback(async () => {
+    const trade = tradeDetailRow;
+    if (!trade) return;
+    const payload = {
+      side: tradeDetailPlan.direction,
+      order_type: tradeDetailPlan.trade_type,
+      price: Number(tradeDetailPlan.entry),
+      tp: Number(tradeDetailPlan.tp1 || tradeDetailPlan.tp),
+      tp1: Number(tradeDetailPlan.tp1 || tradeDetailPlan.tp),
+      tp2: Number(tradeDetailPlan.tp2),
+      tp3: Number(tradeDetailPlan.tp3),
+      sl: Number(tradeDetailPlan.sl),
+      rr: Number(tradeDetailPlan.rr),
+      symbol: trade.symbol,
+      volume: Number(trade.volume),
+    };
+    await api.createTradeDirect(payload);
+    loadTradeSymbols("PENDING");
+    loadTradeSymbols("FILLED");
+  }, [tradeDetailRow, tradeDetailPlan]);
+
   const saveDraftFromEditor = (pos, planId = "main") => {
     addBySelection("draft_trade", pos, planId);
   };
@@ -4956,7 +5192,12 @@ export default function ChartSnapshotsPage() {
         ? { template_id: templateId }
         : {}),
       name,
-      config: buildTemplateConfigPayload(cfg, guideUserDraft, schemaUserDraft),
+      config: buildTemplateConfigPayload(
+        cfg,
+        guideUserDraft,
+        schemaUserDraft,
+        analysisDraft,
+      ),
       saved: new Date().toISOString(),
     };
 
@@ -5040,6 +5281,7 @@ export default function ChartSnapshotsPage() {
       }));
       setGuideUserDraft(GUIDE_USER_DEFAULT);
       setSchemaUserDraft(SCHEMA_USER_DEFAULT);
+      setAnalysisDraft(JSON.stringify(ANALYSIS_SCHEMA, null, 2));
       setPromptEdited(false);
       setTemplateName("");
       setStatus({ type: "success", text: "New template." });
@@ -5052,6 +5294,7 @@ export default function ChartSnapshotsPage() {
       }));
       setGuideUserDraft(GUIDE_USER_DEFAULT);
       setSchemaUserDraft(SCHEMA_USER_DEFAULT);
+      setAnalysisDraft(JSON.stringify(ANALYSIS_SCHEMA, null, 2));
       setPromptEdited(false);
       setTemplateName("");
       setStatus({ type: "success", text: "Default template loaded." });
@@ -5071,8 +5314,13 @@ export default function ChartSnapshotsPage() {
       found.schema_additions ||
       found.config?.schema_additions ||
       SCHEMA_USER_DEFAULT;
+    const savedAnalysis =
+      found.analysis_schema ||
+      found.config?.analysis_schema ||
+      JSON.stringify(ANALYSIS_SCHEMA, null, 2);
     setGuideUserDraft(savedGuide || GUIDE_USER_DEFAULT);
     setSchemaUserDraft(savedSchema);
+    setAnalysisDraft(savedAnalysis);
     setTemplateName(found.name || "");
     setPromptEdited(false);
     setStatus({ type: "success", text: `Template loaded: ${found.name}` });
@@ -5099,7 +5347,6 @@ export default function ChartSnapshotsPage() {
       const persisted = [
         ...new Set(symbols.map(normalizeWatchSymbol).filter(Boolean)),
       ];
-      console.log("[watchlist] Loaded from user_settings:", persisted);
       setWatchlist(persisted);
     } catch (err) {
       console.warn("[watchlist] Load failed, using empty list:", err.message);
@@ -5111,7 +5358,7 @@ export default function ChartSnapshotsPage() {
     const statusKey = status === "PENDING" ? "pending" : "filled";
     setTradeSymbolsLoading(true);
     try {
-      const queryStatus = status === "PENDING" ? "PENDING" : "OPEN";
+      const queryStatus = status === "PENDING" ? "PENDING" : "FILLED";
       const data = await api.v2Trades({
         execution_status: queryStatus,
         range: "all",
@@ -5142,7 +5389,6 @@ export default function ChartSnapshotsPage() {
         name: "WATCHLIST",
         data: { symbols: nextList },
       });
-      console.log("[watchlist] Saved to user_settings:", nextList);
     } catch (e) {
       console.error("[watchlist] Save failed:", e.message);
       throw e;
@@ -5234,6 +5480,7 @@ export default function ChartSnapshotsPage() {
     }
     if (paramSymbol) {
       const decoded = decodeURIComponent(paramSymbol);
+      if (isTradeRoute && decoded) return;
       // Response route with a SID — don't treat as symbol
       if (
         location.pathname.startsWith("/ai/response") &&
@@ -5294,11 +5541,13 @@ export default function ChartSnapshotsPage() {
     }
   }, [isResultRoute]);
 
-  // Reset form when entering trade route with a symbol (not session ID)
-  // Session IDs are 9-char uppercase alphanumeric (e.g. TFHW0MWWP).
-  // Symbols like XAUUSD, GBPJPY → fresh session, clear all previous analysis data.
+  // Reset form only when entering manual route with a pure symbol token.
   useEffect(() => {
-    if (isTradeRoute && paramSymbol && !/^[A-Z0-9]{9}$/.test(paramSymbol)) {
+    if (
+      isManualRoute &&
+      paramSymbol &&
+      /^[A-Z]{3,12}$/.test(String(paramSymbol || "").trim())
+    ) {
       setPosition(buildDefaultPosition(null));
       setAnalysisRaw("");
       setAnalysisJson("");
@@ -5307,7 +5556,7 @@ export default function ChartSnapshotsPage() {
       setUsedFiles([]);
       setAnalysisFilesDisplay([]);
     }
-  }, [isTradeRoute, paramSymbol]);
+  }, [isManualRoute, paramSymbol]);
 
   useEffect(() => {
     loadWatchlist();
@@ -5335,18 +5584,31 @@ export default function ChartSnapshotsPage() {
   }, []);
 
   useEffect(() => {
-    if (!isTradeRoute) return;
+    if (!isTradeRoute && !isManualRoute) return;
     setResponseTab("response");
-  }, [isTradeRoute]);
+  }, [isTradeRoute, isManualRoute]);
 
   // Fetch trade symbols when tab changes to PENDING or FILLED
   useEffect(() => {
-    if (symbolFilterTab === "PENDING") {
-      loadTradeSymbols("PENDING");
-    } else if (symbolFilterTab === "FILLED") {
-      loadTradeSymbols("FILLED");
-    }
+    loadTradeSymbols("PENDING");
+    loadTradeSymbols("FILLED");
   }, [symbolFilterTab]);
+
+  useEffect(() => {
+    loadTradeSymbols("PENDING");
+    loadTradeSymbols("FILLED");
+  }, [isTradeRoute, isManualRoute]);
+
+  // Keep Pending/Filled trade list fresh (PnL/status) without manual interaction.
+  useEffect(() => {
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      loadTradeSymbols("PENDING");
+      loadTradeSymbols("FILLED");
+    };
+    const id = setInterval(tick, 8000);
+    return () => clearInterval(id);
+  }, []);
 
   // Infinite scroll: load more on scroll near bottom
   useEffect(() => {
@@ -5461,11 +5723,7 @@ export default function ChartSnapshotsPage() {
             sl: x?.sl,
             rr: x?.rr_planned ?? x?.rr ?? null,
             pnl:
-              x?.broker_pnl ??
-              x?.pnl_realized ??
-              x?.net_pnl ??
-              x?.pnl ??
-              null,
+              x?.broker_pnl ?? x?.pnl_realized ?? x?.net_pnl ?? x?.pnl ?? null,
             tp_pnl: x?.broker_tp_pnl ?? x?.tp_pnl ?? null,
             sl_pnl: x?.broker_sl_pnl ?? x?.sl_pnl ?? null,
             updatedAt: x?.updated_at || x?.created_at,
@@ -5739,30 +5997,51 @@ export default function ChartSnapshotsPage() {
       ) : null}
       {settingsTab === "schema" ? (
         <>
-          <div className="minor-text" style={{ marginBottom: 8 }}>
-            System Schema (readonly) — base output structure.
+          <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+            <button
+              type="button"
+              className={`secondary-button ${schemaSubTab === "analysis" ? "active" : ""}`}
+              onClick={() => setSchemaSubTab("analysis")}
+              style={{ fontSize: 11, padding: "3px 10px" }}
+            >
+              Analysis
+            </button>
+            <button
+              type="button"
+              className={`secondary-button ${schemaSubTab === "system" ? "active" : ""}`}
+              onClick={() => setSchemaSubTab("system")}
+              style={{ fontSize: 11, padding: "3px 10px" }}
+            >
+              Trade Plan
+            </button>
           </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={14}
-            value={JSON.stringify(SCHEMA_SYSTEM, null, 2)}
-            readOnly
-            style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
-          />
-          <div
-            className="minor-text"
-            style={{ marginTop: 16, marginBottom: 8 }}
-          >
-            Your Schema Additions (editable JSON) — merged as {"{"}"extra": ...
-            {"}"} in final schema. Saved to template.
-          </div>
-          <textarea
-            className="snapshot-mono-v2"
-            rows={10}
-            value={schemaUserDraft}
-            onChange={(e) => setSchemaUserDraft(e.target.value)}
-            placeholder='{"custom_field": "value"}'
-          />
+          {schemaSubTab === "analysis" ? (
+            <>
+              <div className="minor-text" style={{ marginBottom: 8 }}>
+                Analysis Schema (editable) — merged as {"analysis"} node in
+                trade_plan_schema. Changes saved to template.
+              </div>
+              <textarea
+                className="snapshot-mono-v2"
+                rows={24}
+                value={analysisDraft}
+                onChange={(e) => setAnalysisDraft(e.target.value)}
+              />
+            </>
+          ) : (
+            <>
+              <div className="minor-text" style={{ marginBottom: 8 }}>
+                Trade Plan Schema (readonly) — base output structure.
+              </div>
+              <textarea
+                className="snapshot-mono-v2"
+                rows={24}
+                value={JSON.stringify(SCHEMA_SYSTEM, null, 2)}
+                readOnly
+                style={{ opacity: 0.7, background: "rgba(255,255,255,0.02)" }}
+              />
+            </>
+          )}
         </>
       ) : null}
       {settingsTab === "prompt" ? (
@@ -5830,7 +6109,7 @@ export default function ChartSnapshotsPage() {
       }
       setSelectedSymbols([sym]);
       setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
-      navigate(buildAiTradeRoute([sym]), { replace: false });
+      navigate(buildAiManualRoute([sym]), { replace: false });
     },
     [cfg.symbol, paramSymbol, tvSymbol, navigate],
   );
@@ -6008,6 +6287,7 @@ export default function ChartSnapshotsPage() {
   // On response route, param is always a SID — use cfg.symbol only.
   const selectedSymbol = (() => {
     if (isResponseRoute) return cfg.symbol || "";
+    if (isManualRoute) return selectedSymbolRaw;
     if (!isTradeRoute) return selectedSymbolRaw;
     // Strip SID- prefix
     const stripped = selectedSymbolRaw.replace(/^[A-Z0-9]{9,10}-/, "");
@@ -6320,6 +6600,9 @@ export default function ChartSnapshotsPage() {
             flexDirection: "column",
             gap: "10px",
             height: "100%",
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
           }}
         >
           <div style={{ display: "grid", gap: 6 }}>
@@ -6418,7 +6701,14 @@ export default function ChartSnapshotsPage() {
           </div>
           {isSymbolPanelOpen && (
             <>
-              <div className="snapshot-watchlist-v2">
+              <div
+                className="snapshot-watchlist-v2"
+                style={{
+                  overflow: "visible",
+                  flex: "0 0 auto",
+                  maxHeight: "none",
+                }}
+              >
                 {(() => {
                   if (symbolFilterTab === "SMT") {
                     return (
@@ -6443,9 +6733,10 @@ export default function ChartSnapshotsPage() {
                               className={`secondary-button snapshot-tag-v2 ${currentGroupActive ? "active" : ""}`}
                               onClick={() => {
                                 const next = [...new Set(group.symbols)];
-                                const route = isTradeRoute
-                                  ? buildAiTradeRoute([next[0]])
-                                  : buildAiAnalyzeRoute([next[0]]);
+                                const route =
+                                  isManualRoute || isTradeRoute
+                                    ? buildAiManualRoute([next[0]])
+                                    : buildAiAnalyzeRoute([next[0]]);
                                 navigate(route, { replace: false });
                                 setCfg((prev) => ({
                                   ...prev,
@@ -6495,14 +6786,13 @@ export default function ChartSnapshotsPage() {
                   }, {});
                   const orderedGroups = SYMBOL_GROUP_ORDER.filter(
                     (group) =>
-                      Array.isArray(grouped[group]) && grouped[group].length > 0,
+                      Array.isArray(grouped[group]) &&
+                      grouped[group].length > 0,
                   );
                   const isAllTab = symbolFilterTab === "ALL";
                   const isForexTab = symbolFilterTab === "FOREX";
                   return (
-                    <div
-                      style={{ display: "grid", gap: 8 }}
-                    >
+                    <div style={{ display: "grid", gap: 8 }}>
                       {orderedGroups.map((group) => (
                         <div key={group}>
                           <div
@@ -6552,7 +6842,8 @@ export default function ChartSnapshotsPage() {
                               return [["", grouped[group]]];
                             })().map(([prefix, symbols]) => (
                               <div key={`${group}-${prefix || "all"}`}>
-                                {group === "forex" && (isAllTab || isForexTab) ? (
+                                {group === "forex" &&
+                                (isAllTab || isForexTab) ? (
                                   <div
                                     style={{
                                       fontSize: 8,
@@ -6569,117 +6860,137 @@ export default function ChartSnapshotsPage() {
                                   style={{ flexWrap: "wrap" }}
                                 >
                                   {symbols.map((s) => (
-                                      <span
-                                        key={s}
-                                        style={{
-                                          display: "inline-flex",
-                                          alignItems: "center",
-                                          gap: 2,
-                                        }}
-                                        draggable={symbolFilterTab === "FAVOURITE"}
-                                        onDragStart={() => {
-                                          dragWatchSymbolRef.current = s;
-                                        }}
-                                        onDragOver={(e) => {
-                                          if (symbolFilterTab !== "FAVOURITE") return;
-                                          e.preventDefault();
-                                        }}
-                                        onDrop={(e) => {
-                                          if (symbolFilterTab !== "FAVOURITE") return;
-                                          e.preventDefault();
-                                          const from = dragWatchSymbolRef.current;
-                                          moveWatchlistSymbol(from, s);
-                                          dragWatchSymbolRef.current = "";
-                                        }}
-                                      >
-                                        <button
-                                          type="button"
-                                          className={`secondary-button snapshot-tag-v2 ${selectedSymbols.includes(s) ? "active" : ""}`}
-                                          onClick={() => {
-                                            if (isTradeRoute) {
-                                              // Trade route: single symbol only, no toggle
-                                              setCfg((prev) => ({
-                                                ...prev,
-                                                symbols: [s],
-                                                symbol: s,
-                                              }));
-                                              navigate(buildAiTradeRoute([s]), {
-                                                replace: false,
-                                              });
-                                            } else {
-                                              setCfg((prev) => {
-                                                const prevSelected = Array.isArray(
-                                                  prev?.symbols,
-                                                )
+                                    <span
+                                      key={s}
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 2,
+                                      }}
+                                      draggable={
+                                        symbolFilterTab === "FAVOURITE"
+                                      }
+                                      onDragStart={() => {
+                                        dragWatchSymbolRef.current = s;
+                                      }}
+                                      onDragOver={(e) => {
+                                        if (symbolFilterTab !== "FAVOURITE")
+                                          return;
+                                        e.preventDefault();
+                                      }}
+                                      onDrop={(e) => {
+                                        if (symbolFilterTab !== "FAVOURITE")
+                                          return;
+                                        e.preventDefault();
+                                        const from = dragWatchSymbolRef.current;
+                                        moveWatchlistSymbol(from, s);
+                                        dragWatchSymbolRef.current = "";
+                                      }}
+                                    >
+                                      <button
+                                        type="button"
+                                        className={`secondary-button snapshot-tag-v2 ${isManualRoute || isTradeRoute ? (normalizeWatchSymbol(s) === normalizeWatchSymbol(selectedSymbol) ? "active" : "") : selectedSymbols.includes(s) ? "active" : ""}`}
+                                        onClick={() => {
+                                          if (isManualRoute || isTradeRoute) {
+                                            // Manual/Trade route: single symbol only, no toggle
+                                            setCfg((prev) => ({
+                                              ...prev,
+                                              symbols: [s],
+                                              symbol: s,
+                                            }));
+                                            navigate(buildAiManualRoute([s]), {
+                                              replace: false,
+                                            });
+                                          } else {
+                                            setCfg((prev) => {
+                                              const prevSelected =
+                                                Array.isArray(prev?.symbols)
                                                   ? prev.symbols
                                                   : [];
-                                                const exists = prevSelected.includes(s);
-                                                const nextSelected = exists
-                                                  ? prevSelected.filter((x) => x !== s)
-                                                  : [...prevSelected, s];
-                                                if (!exists) {
-                                                  navigate(buildAiAnalyzeRoute([s]), {
-                                                    replace: false,
-                                                  });
-                                                }
-                                                return {
-                                                  ...prev,
-                                                  symbols: nextSelected,
-                                                  symbol: nextSelected[0] || "",
-                                                };
-                                              });
+                                              const exists =
+                                                prevSelected.includes(s);
+                                              const nextSelected = exists
+                                                ? prevSelected.filter(
+                                                    (x) => x !== s,
+                                                  )
+                                                : [...prevSelected, s];
+                                              return {
+                                                ...prev,
+                                                symbols: nextSelected,
+                                                symbol: nextSelected[0] || "",
+                                              };
+                                            });
+                                            const prevSelected = Array.isArray(
+                                              cfg?.symbols,
+                                            )
+                                              ? cfg.symbols
+                                              : [];
+                                            if (!prevSelected.includes(s)) {
+                                              navigate(
+                                                buildAiAnalyzeRoute([s]),
+                                                {
+                                                  replace: false,
+                                                },
+                                              );
                                             }
-                                          }}
-                                        >
-                                          {s}
-                                        </button>
-                                        {(() => {
-                                          const inWatchlist = watchlist.includes(s);
-                                          return (
-                                            <>
-                                              <button
-                                                type="button"
-                                                className="secondary-button"
-                                                style={{
-                                                  width: 18,
-                                                  height: 18,
-                                                  padding: 0,
-                                                  fontSize: 10,
-                                                  lineHeight: 1,
-                                                  minWidth: 18,
-                                                  borderRadius: 4,
-                                                  color: inWatchlist
-                                                    ? "rgba(239,68,68,0.7)"
-                                                    : "var(--muted)",
-                                                  borderColor: inWatchlist
-                                                    ? "rgba(239,68,68,0.35)"
-                                                    : "rgba(255,255,255,0.08)",
-                                                }}
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  if (inWatchlist) {
-                                                    removeFromWatchlist(s);
-                                                  } else {
-                                                    const next = [
-                                                      ...new Set([...watchlist, s]),
-                                                    ];
-                                                    saveWatchlistToDb(next).then(() =>
-                                                      setWatchlist(next),
-                                                    );
-                                                  }
-                                                }}
-                                                title={
-                                                  inWatchlist
-                                                    ? "Remove " + s + " from watchlist"
-                                                    : "Add " + s + " to watchlist"
+                                          }
+                                        }}
+                                      >
+                                        {s}
+                                      </button>
+                                      {(() => {
+                                        const inWatchlist =
+                                          watchlist.includes(s);
+                                        return (
+                                          <>
+                                            <button
+                                              type="button"
+                                              className="secondary-button"
+                                              style={{
+                                                width: 18,
+                                                height: 18,
+                                                padding: 0,
+                                                fontSize: 10,
+                                                lineHeight: 1,
+                                                minWidth: 18,
+                                                borderRadius: 4,
+                                                color: inWatchlist
+                                                  ? "rgba(239,68,68,0.7)"
+                                                  : "var(--muted)",
+                                                borderColor: inWatchlist
+                                                  ? "rgba(239,68,68,0.35)"
+                                                  : "rgba(255,255,255,0.08)",
+                                              }}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (inWatchlist) {
+                                                  removeFromWatchlist(s);
+                                                } else {
+                                                  const next = [
+                                                    ...new Set([
+                                                      ...watchlist,
+                                                      s,
+                                                    ]),
+                                                  ];
+                                                  saveWatchlistToDb(next).then(
+                                                    () => setWatchlist(next),
+                                                  );
                                                 }
-                                              >
-                                                {inWatchlist ? "-" : "+"}
-                                              </button>
-                                            </>
-                                          );
-                                        })()}
-                                      </span>
+                                              }}
+                                              title={
+                                                inWatchlist
+                                                  ? "Remove " +
+                                                    s +
+                                                    " from watchlist"
+                                                  : "Add " + s + " to watchlist"
+                                              }
+                                            >
+                                              {inWatchlist ? "-" : "+"}
+                                            </button>
+                                          </>
+                                        );
+                                      })()}
+                                    </span>
                                   ))}
                                 </div>
                               </div>
@@ -6694,275 +7005,239 @@ export default function ChartSnapshotsPage() {
             </>
           )}
           <div
-            className="snapshot-live-card-v3"
             style={{
               display: "flex",
               flexDirection: "column",
-              overflow: "hidden",
-              marginTop: "auto",
+              overflow: "visible",
+              marginTop: 6,
+              flex: "0 0 auto",
+              gap: 10,
             }}
           >
-            {(symbolFilterTab === "PENDING" ||
-              symbolFilterTab === "FILLED") && (
-              <div
-                className="minor-text"
-                style={{
-                  padding: "4px 0",
-                  fontWeight: 700,
-                  fontSize: 11,
-                }}
-              >
-                {symbolFilterTab === "PENDING"
-                  ? "Pending Trades"
-                  : "Filled Trades"}{" "}
-                (
-                {symbolFilterTab === "PENDING"
-                  ? tradeRowsByStatus.pending.length
-                  : tradeRowsByStatus.filled.length}
-                )
-              </div>
-            )}
-            <div
-              className="snapshot-activity-list-v4"
-              style={{ flex: 1, overflowY: "auto" }}
-            >
-              {symbolFilterTab === "PENDING" || symbolFilterTab === "FILLED" ? (
-                <>
-                  {tradeSymbolsLoading ? (
-                    <div className="minor-text">Loading trades...</div>
-                  ) : (symbolFilterTab === "PENDING"
-                      ? tradeRowsByStatus.pending
-                      : tradeRowsByStatus.filled
-                    ).length === 0 ? (
-                    <div className="minor-text">No trades found.</div>
-                  ) : (
-                    (symbolFilterTab === "PENDING"
-                      ? tradeRowsByStatus.pending
-                      : tradeRowsByStatus.filled
-                    ).map((t) => {
-                      const sideRaw = String(
-                        t?.action || t?.side || "",
-                      ).toUpperCase();
-                      const isBuy = sideRaw.includes("BUY");
-                      const isSell = sideRaw.includes("SELL");
-                      const sideColor = isBuy
-                        ? "#24e38f"
-                        : isSell
-                          ? "#ff5a5a"
-                          : "#c8d5e8";
-                      const entryNum = Number(t?.entry);
-                      const tpNum = Number(t?.tp);
-                      const entryTxt = Number.isFinite(entryNum)
-                        ? entryNum.toFixed(
-                            entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
-                          )
-                        : "-";
-                      const tpTxt = Number.isFinite(tpNum)
-                        ? tpNum.toFixed(tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4)
-                        : "-";
-                      const ref = t?.sid || t?.id || "";
-                      const pnlNum =
-                        Number(t?.broker_pnl ?? t?.pnl_realized ?? t?.pnl);
-                      const hasPnl = Number.isFinite(pnlNum);
-                      const tpPnlNum = Number(t?.broker_tp_pnl ?? t?.tp_pnl);
-                      const slPnlNum = Number(t?.broker_sl_pnl ?? t?.sl_pnl);
-                      const hasPlanPnl =
-                        Number.isFinite(tpPnlNum) || Number.isFinite(slPnlNum);
-                      const rrNum = Number(t?.rr_planned ?? t?.rr);
-                      const rrText = Number.isFinite(rrNum)
-                        ? `${rrNum.toFixed(1)}R`
-                        : "";
-                      const pnlText = hasPnl
-                        ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
-                        : hasPlanPnl
-                          ? `${Number.isFinite(tpPnlNum) ? `+${Math.abs(tpPnlNum).toFixed(0)}` : "-"} / ${Number.isFinite(slPnlNum) ? `-${Math.abs(slPnlNum).toFixed(0)}` : "-"}`
+            {tradeSymbolsLoading ? (
+              <div className="minor-text">Loading trades...</div>
+            ) : (
+              <>
+                <div>
+                  <div
+                    className="minor-text"
+                    style={{ padding: "2px 0", fontWeight: 700, fontSize: 11 }}
+                  >
+                    Pending ({tradeRowsByStatus.pending.length})
+                  </div>
+                  <div
+                    className="snapshot-activity-list-v4"
+                    style={{ overflow: "visible", maxHeight: "none" }}
+                  >
+                    {tradeRowsByStatus.pending.length === 0 ? (
+                      <div className="minor-text">No pending trades.</div>
+                    ) : (
+                      tradeRowsByStatus.pending.map((t) => {
+                        const sideRaw = String(
+                          t?.action || t?.side || "",
+                        ).toUpperCase();
+                        const isBuy = sideRaw.includes("BUY");
+                        const isSell = sideRaw.includes("SELL");
+                        const sideColor = isBuy
+                          ? "#24e38f"
+                          : isSell
+                            ? "#ff5a5a"
+                            : "#c8d5e8";
+                        const entryNum = Number(t?.entry);
+                        const tpNum = Number(t?.tp);
+                        const entryTxt = Number.isFinite(entryNum)
+                          ? entryNum.toFixed(
+                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const tpTxt = Number.isFinite(tpNum)
+                          ? tpNum.toFixed(
+                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const ref = t?.sid || t?.id || "";
+                        return (
+                          <article
+                            key={`pending-${ref || `${t?.symbol}_${t?.created_at}`}`}
+                            className="snapshot-activity-card-v4 compact"
+                            style={{
+                              cursor: "pointer",
+                              padding: "4px 6px",
+                              marginBottom: 3,
+                              borderRadius: 6,
+                              fontSize: 10,
+                              border:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "1px solid #22d3ee"
+                                  : undefined,
+                              boxShadow:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "0 0 0 1px rgba(34,211,238,0.2) inset"
+                                  : undefined,
+                            }}
+                            onClick={() => {
+                              if (ref)
+                                navigate(
+                                  `/ai/trade/${encodeURIComponent(ref)}`,
+                                );
+                            }}
+                          >
+                            <div
+                              className="snapshot-activity-row-top"
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color: sideColor,
+                                  letterSpacing: 0.2,
+                                  fontWeight: 700,
+                                  fontSize: 10,
+                                }}
+                              >
+                                {normalizeSignalSymbol(String(t?.symbol || ""))}
+                              </span>
+                              <span />
+                            </div>
+                            <div
+                              className="snapshot-activity-row-mid"
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                marginTop: 2,
+                              }}
+                            >
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {entryTxt} → {tpTxt}
+                              </span>
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {Number.isFinite(Number(t?.rr_planned ?? t?.rr))
+                                  ? `${Number(t?.rr_planned ?? t?.rr).toFixed(1)}R`
+                                  : ""}
+                              </span>
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div
+                    className="minor-text"
+                    style={{ padding: "2px 0", fontWeight: 700, fontSize: 11 }}
+                  >
+                    Filled ({tradeRowsByStatus.filled.length})
+                  </div>
+                  <div
+                    className="snapshot-activity-list-v4"
+                    style={{ overflow: "visible", maxHeight: "none" }}
+                  >
+                    {tradeRowsByStatus.filled.length === 0 ? (
+                      <div className="minor-text">No filled trades.</div>
+                    ) : (
+                      tradeRowsByStatus.filled.map((t) => {
+                        const sideRaw = String(
+                          t?.action || t?.side || "",
+                        ).toUpperCase();
+                        const isBuy = sideRaw.includes("BUY");
+                        const isSell = sideRaw.includes("SELL");
+                        const sideColor = isBuy
+                          ? "#24e38f"
+                          : isSell
+                            ? "#ff5a5a"
+                            : "#c8d5e8";
+                        const entryNum = Number(t?.entry);
+                        const tpNum = Number(t?.tp);
+                        const entryTxt = Number.isFinite(entryNum)
+                          ? entryNum.toFixed(
+                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const tpTxt = Number.isFinite(tpNum)
+                          ? tpNum.toFixed(
+                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const ref = t?.sid || t?.id || "";
+                        const pnlNum = Number(
+                          t?.broker_pnl ?? t?.pnl_realized ?? t?.pnl,
+                        );
+                        const hasPnl = Number.isFinite(pnlNum);
+                        const tpPnlNum = Number(t?.broker_tp_pnl ?? t?.tp_pnl);
+                        const slPnlNum = Number(t?.broker_sl_pnl ?? t?.sl_pnl);
+                        const hasPlanPnl =
+                          Number.isFinite(tpPnlNum) ||
+                          Number.isFinite(slPnlNum);
+                        const rrNum = Number(t?.rr_planned ?? t?.rr);
+                        const rrText = Number.isFinite(rrNum)
+                          ? `${rrNum.toFixed(1)}R`
                           : "";
-                      return (
-                        <article
-                          key={ref || `${t?.symbol}_${t?.created_at}`}
-                          className="snapshot-activity-card-v4 compact"
-                          style={{
-                            cursor: "pointer",
-                            padding: "4px 6px",
-                            marginBottom: 3,
-                            borderRadius: 6,
-                            fontSize: 10,
-                          }}
-                          onClick={() => {
-                            if (ref) navigate(`/trades/${ref}`);
-                          }}
-                        >
-                          <div
-                            className="snapshot-activity-row-top"
+                        const pnlText = hasPnl
+                          ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
+                          : hasPlanPnl
+                            ? `${Number.isFinite(tpPnlNum) ? `+${Math.abs(tpPnlNum).toFixed(0)}` : "-"} / ${Number.isFinite(slPnlNum) ? `-${Math.abs(slPnlNum).toFixed(0)}` : "-"}`
+                            : "";
+                        return (
+                          <article
+                            key={`filled-${ref || `${t?.symbol}_${t?.created_at}`}`}
+                            className="snapshot-activity-card-v4 compact"
                             style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
+                              cursor: "pointer",
+                              padding: "4px 6px",
+                              marginBottom: 3,
+                              borderRadius: 6,
+                              fontSize: 10,
+                              border:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "1px solid #22d3ee"
+                                  : undefined,
+                              boxShadow:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "0 0 0 1px rgba(34,211,238,0.2) inset"
+                                  : undefined,
+                            }}
+                            onClick={() => {
+                              if (ref)
+                                navigate(
+                                  `/ai/trade/${encodeURIComponent(ref)}`,
+                                );
                             }}
                           >
-                            <span
+                            <div
+                              className="snapshot-activity-row-top"
                               style={{
-                                color: sideColor,
-                                letterSpacing: 0.2,
-                                fontWeight: 700,
-                                fontSize: 10,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
                               }}
                             >
-                              {normalizeSignalSymbol(String(t?.symbol || ""))}
-                            </span>
-                            <span
-                              style={{
-                                fontWeight: 700,
-                                fontSize: 10,
-                                color:
-                                  hasPnl && pnlNum >= 0 ? "#10b981" : "#ef4444",
-                                opacity: hasPnl ? 1 : 0.72,
-                              }}
-                            >
-                              {hasPnl ? (
-                                pnlText
-                              ) : hasPlanPnl ? (
-                                <>
-                                  <span style={{ color: "#10b981" }}>
-                                    {Number.isFinite(tpPnlNum)
-                                      ? `+${Math.abs(tpPnlNum).toFixed(0)}`
-                                      : "-"}
-                                  </span>
-                                  <span
-                                    style={{
-                                      color: "var(--muted)",
-                                      margin: "0 3px",
-                                    }}
-                                  >
-                                    /
-                                  </span>
-                                  <span style={{ color: "#ef4444" }}>
-                                    {Number.isFinite(slPnlNum)
-                                      ? `-${Math.abs(slPnlNum).toFixed(0)}`
-                                      : "-"}
-                                  </span>
-                                </>
-                              ) : (
-                                ""
-                              )}
-                            </span>
-                          </div>
-                          <div
-                            className="snapshot-activity-row-mid"
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              marginTop: 2,
-                            }}
-                          >
-                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                              {entryTxt} → {tpTxt}
-                            </span>
-                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                              {hasPnl ? rrText : ""}
-                            </span>
-                          </div>
-                        </article>
-                      );
-                    })
-                  )}
-                </>
-              ) : (
-                <>
-                  {symbolActivity.loading ? (
-                    <div className="minor-text">Loading...</div>
-                  ) : null}
-                  {!symbolActivity.loading &&
-                  symbolActivity.items.length === 0 ? (
-                    <div className="minor-text">No related trades/signals.</div>
-                  ) : null}
-                  {!symbolActivity.loading &&
-                    symbolActivity.items.map((x) => {
-                      const pnlNum = Number(x?.pnl);
-                      const hasPnl = Number.isFinite(pnlNum);
-                      const isSignal =
-                        String(x?.kind || "").toUpperCase() === "SIGNAL";
-                      const sideText = String(x?.side || "").toUpperCase();
-                      const isBuy = sideText.includes("BUY");
-                      const isSell = sideText.includes("SELL");
-                      const sideColor = isBuy
-                        ? "#24e38f"
-                        : isSell
-                          ? "#ff5a5a"
-                          : "#c8d5e8";
-                      const pnlText = hasPnl
-                        ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
-                        : "";
-                      const statusText = String(
-                        x?.execution_status || x?.status || "",
-                      )
-                        .trim()
-                        .toUpperCase();
-                      const tpPnlNum = Number(x?.tp_pnl ?? x?.broker_tp_pnl);
-                      const slPnlNum = Number(x?.sl_pnl ?? x?.broker_sl_pnl);
-                      const hasPlanPnl =
-                        Number.isFinite(tpPnlNum) || Number.isFinite(slPnlNum);
-                      const canShowTradePnl = hasPnl || hasPlanPnl;
-                      const entryTxt = Number.isFinite(Number(x?.entry))
-                        ? Number(x.entry).toFixed(
-                            Number(x.entry) >= 100
-                              ? 1
-                              : Number(x.entry) >= 10
-                                ? 2
-                                : 4,
-                          )
-                        : "-";
-                      const tpTxt = Number.isFinite(Number(x?.tp))
-                        ? Number(x.tp).toFixed(
-                            Number(x.tp) >= 100
-                              ? 1
-                              : Number(x.tp) >= 10
-                                ? 2
-                                : 4,
-                          )
-                        : "-";
-                      const rrNum = Number(x?.rr_planned ?? x?.rr);
-                      const rrText = Number.isFinite(rrNum)
-                        ? `${rrNum.toFixed(1)}R`
-                        : "";
-                      return (
-                        <article
-                          key={`${x.kind}_${x.id}`}
-                          className="snapshot-activity-card-v4 compact"
-                          style={{
-                            cursor: "pointer",
-                            padding: "4px 6px",
-                            marginBottom: 3,
-                            borderRadius: 6,
-                            fontSize: 10,
-                          }}
-                          onClick={() => {
-                            const ref = x.sid || x.id;
-                            const k = String(x.kind || "").toUpperCase();
-                            if (k === "TRADE" || k === "trade")
-                              navigate(`/trades/${ref}`);
-                            else navigate(`/signals/${ref}`);
-                          }}
-                        >
-                          <div
-                            className="snapshot-activity-row-top"
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                            }}
-                          >
-                            <span
-                              style={{
-                                color: sideColor,
-                                letterSpacing: 0.2,
-                                fontWeight: 700,
-                                fontSize: 10,
-                              }}
-                            >
-                              {String(x.symbol || "").toUpperCase()}
-                            </span>
-                            {canShowTradePnl ? (
+                              <span
+                                style={{
+                                  color: sideColor,
+                                  letterSpacing: 0.2,
+                                  fontWeight: 700,
+                                  fontSize: 10,
+                                }}
+                              >
+                                {normalizeSignalSymbol(String(t?.symbol || ""))}
+                              </span>
                               <span
                                 style={{
                                   fontWeight: 700,
@@ -6974,35 +7249,61 @@ export default function ChartSnapshotsPage() {
                                   opacity: hasPnl ? 1 : 0.72,
                                 }}
                               >
-                                {hasPnl
-                                  ? `${pnlNum >= 0 ? "+" : "-"}$${Math.abs(pnlNum).toFixed(0)}`
-                                  : `${Number.isFinite(tpPnlNum) ? `+${Math.abs(tpPnlNum).toFixed(0)}` : "-"} / ${Number.isFinite(slPnlNum) ? `-${Math.abs(slPnlNum).toFixed(0)}` : "-"}`}
+                                {hasPnl ? (
+                                  pnlText
+                                ) : hasPlanPnl ? (
+                                  <>
+                                    <span style={{ color: "#10b981" }}>
+                                      {Number.isFinite(tpPnlNum)
+                                        ? `+${Math.abs(tpPnlNum).toFixed(0)}`
+                                        : "-"}
+                                    </span>
+                                    <span
+                                      style={{
+                                        color: "var(--muted)",
+                                        margin: "0 3px",
+                                      }}
+                                    >
+                                      /
+                                    </span>
+                                    <span style={{ color: "#ef4444" }}>
+                                      {Number.isFinite(slPnlNum)
+                                        ? `-${Math.abs(slPnlNum).toFixed(0)}`
+                                        : "-"}
+                                    </span>
+                                  </>
+                                ) : (
+                                  ""
+                                )}
                               </span>
-                            ) : (
-                              <span />
-                            )}
-                          </div>
-                          <div
-                            className="snapshot-activity-row-mid"
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              marginTop: 2,
-                            }}
-                          >
-                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                              {entryTxt} → {tpTxt}
-                            </span>
-                            <span style={{ color: "var(--muted)", fontSize: 9 }}>
-                              {hasPnl ? rrText : ""}
-                            </span>
-                          </div>
-                        </article>
-                      );
-                    })}
-                </>
-              )}
-            </div>
+                            </div>
+                            <div
+                              className="snapshot-activity-row-mid"
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                marginTop: 2,
+                              }}
+                            >
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {entryTxt} → {tpTxt}
+                              </span>
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {hasPnl ? rrText : ""}
+                              </span>
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -7052,7 +7353,7 @@ export default function ChartSnapshotsPage() {
                 >
                   {"< List"}
                 </button>
-                {isTradeRoute || isResponseRoute ? (
+                {isTradeRoute || isManualRoute || isResponseRoute ? (
                   <button
                     className="secondary-button"
                     type="button"
@@ -7070,7 +7371,7 @@ export default function ChartSnapshotsPage() {
                     className="secondary-button"
                     type="button"
                     onClick={() =>
-                      navigate(buildAiTradeRoute([selectedSymbol]), {
+                      navigate(buildAiManualRoute([selectedSymbol]), {
                         replace: false,
                       })
                     }
@@ -7437,7 +7738,7 @@ export default function ChartSnapshotsPage() {
                   style={{
                     display: "grid",
                     gridTemplateColumns:
-                      "minmax(140px, auto) auto minmax(120px, 1fr) minmax(140px, 1fr) minmax(130px, 1fr) auto",
+                      "minmax(140px, auto) auto minmax(170px, 1fr) minmax(120px, 1fr) minmax(140px, 1fr) minmax(130px, 1fr) auto",
                     gap: 8,
                     alignItems: "center",
                   }}
@@ -7474,6 +7775,36 @@ export default function ChartSnapshotsPage() {
                   >
                     Settings
                   </button>
+                  <select
+                    className="secondary-button"
+                    style={{
+                      height: "34px",
+                      padding: "0 10px",
+                      fontSize: "12px",
+                      width: "100%",
+                    }}
+                    value={selectedAccountId}
+                    onChange={(e) =>
+                      handleSelectedAccountChange(e.target.value)
+                    }
+                    title="Trade account (persists account_id to current trade)"
+                  >
+                    <option value="">Account: None</option>
+                    {(Array.isArray(userAccounts) ? userAccounts : []).map(
+                      (a) => {
+                        const aid = String(a?.account_id || "");
+                        const label = String(a?.name || aid || "");
+                        const pCode = extractProviderCode(a?.metadata);
+                        const suffix = pCode ? ` • ${pCode}` : "";
+                        return (
+                          <option key={aid} value={aid}>
+                            {label}
+                            {suffix}
+                          </option>
+                        );
+                      },
+                    )}
+                  </select>
                   <select
                     value={analysisSource}
                     onChange={(e) => {
@@ -7562,7 +7893,7 @@ export default function ChartSnapshotsPage() {
                         {analyzing ? "Analyzing..." : "Analyze"}
                       </button>
                     )}
-                    {isTradeRoute && (
+                    {(isManualRoute || isTradeRoute) && (
                       <button
                         className="primary-button"
                         type="button"
@@ -7650,7 +7981,7 @@ export default function ChartSnapshotsPage() {
                                   <SymbolChart
                                     key={`${sym}|${chartUiConfigKey}`}
                                     symbol={sym}
-                                    provider={provider || ""}
+                                    provider={resolvedTradingViewProvider}
                                     timeframes={browserTfs}
                                     defaultMode="live"
                                     initialGridCols={effectiveGridCols}
@@ -7702,7 +8033,7 @@ export default function ChartSnapshotsPage() {
                           <SymbolChart
                             key={`${sym}|${chartUiConfigKey}`}
                             symbol={sym}
-                            provider={provider || ""}
+                            provider={resolvedTradingViewProvider}
                             timeframes={browserTfs}
                             defaultMode="live"
                             initialGridCols={effectiveGridCols}
@@ -7776,6 +8107,7 @@ export default function ChartSnapshotsPage() {
         {selectedSymbols.length > 1 &&
           !hasAnalyzeResponse &&
           !isTradeRoute &&
+          !isManualRoute &&
           selectedSymbol && (
             <div
               className="browser-grid-v1"
@@ -7795,7 +8127,7 @@ export default function ChartSnapshotsPage() {
                   <SymbolChart
                     key={`${sym}|${chartUiConfigKey}`}
                     symbol={sym}
-                    provider={provider || ""}
+                    provider={resolvedTradingViewProvider}
                     timeframes={widgetTfs}
                     defaultMode="live"
                     initialGridCols={effectiveGridCols}
@@ -7805,7 +8137,7 @@ export default function ChartSnapshotsPage() {
                     onTrade={handleChartTrade}
                     showAnalyzeButton={isAnalyzeRoute}
                     showTradeButton={false}
-                    showEditButton={!isTradeRoute}
+                    showEditButton={!(isTradeRoute || isManualRoute)}
                     onRemove={null}
                   />
                 </Suspense>
@@ -7813,20 +8145,111 @@ export default function ChartSnapshotsPage() {
             </div>
           )}
 
-        {selectedSymbol &&
+        {isTradeRoute && tradeDetailRow && (
+          <Suspense
+            fallback={<div className="loading-card">Loading Details...</div>}
+          >
+            <AiTradeDetailCard
+              trade={tradeDetailRow}
+              detailPlan={tradeDetailPlan}
+              setDetailPlan={setTradeDetailPlan}
+              onSave={onSaveTradeDetailPlan}
+              onAddTrade={onReEntryTradeDetail}
+              onReset={() =>
+                setTradeDetailPlan(extractTradePlanFromTrade(tradeDetailRow))
+              }
+              onGoTrade={() =>
+                navigate(
+                  `/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`,
+                )
+              }
+              onGoAnalyze={() =>
+                navigate(
+                  `/ai/analyze/${encodeURIComponent(String(tradeDetailRow.symbol || "").toUpperCase())}`,
+                )
+              }
+              onCancel={
+                String(tradeDetailRow.execution_status || "").toUpperCase() ===
+                "PENDING"
+                  ? async () => {
+                      const ref = tradeDetailRow.sid || tradeDetailRow.id;
+                      if (!ref) return;
+                      await api.cancelTrades({ q: ref });
+                      const refreshed = await api.v2Trades({
+                        q: ref,
+                        page: 1,
+                        pageSize: 20,
+                      });
+                      const items = Array.isArray(refreshed?.items)
+                        ? refreshed.items
+                        : [];
+                      const exact =
+                        items.find(
+                          (t) => String(t?.sid || t?.id || "") === String(ref),
+                        ) || items[0];
+                      if (exact) {
+                        setTradeDetailRow(exact);
+                        setTradeDetailPlan(extractTradePlanFromTrade(exact));
+                      }
+                      loadTradeSymbols("PENDING");
+                      loadTradeSymbols("FILLED");
+                    }
+                  : null
+              }
+              onClose={
+                String(tradeDetailRow.execution_status || "").toUpperCase() ===
+                "FILLED"
+                  ? async () => {
+                      const ref = tradeDetailRow.sid || tradeDetailRow.id;
+                      if (!ref) return;
+                      await api.v2UpdateTrade(ref, {
+                        execution_status: "CLOSED",
+                      });
+                      const refreshed = await api.v2Trades({
+                        q: ref,
+                        page: 1,
+                        pageSize: 20,
+                      });
+                      const items = Array.isArray(refreshed?.items)
+                        ? refreshed.items
+                        : [];
+                      const exact =
+                        items.find(
+                          (t) => String(t?.sid || t?.id || "") === String(ref),
+                        ) || items[0];
+                      if (exact) {
+                        setTradeDetailRow(exact);
+                        setTradeDetailPlan(extractTradePlanFromTrade(exact));
+                      }
+                      loadTradeSymbols("PENDING");
+                      loadTradeSymbols("FILLED");
+                    }
+                  : null
+              }
+              detailTfTab={tradeDetailTfTab}
+              onDetailTfTabChange={setTradeDetailTfTab}
+              provider={resolvedTradingViewProvider}
+            />
+          </Suspense>
+        )}
+
+        {!isTradeRoute &&
+          selectedSymbol &&
           (selectedSymbols.length <= 1 ||
             hasAnalyzeResponse ||
-            isTradeRoute) && (
+            isManualRoute) && (
             <Suspense
               fallback={<div className="loading-card">Loading Details...</div>}
             >
               <SignalDetailCard
                 key={`${selectedSymbol}|${chartUiConfigKey}`}
                 mode="ai"
-                hideTabsBeforeResponse={!hasAnalyzeResponse && !isTradeRoute}
+                hideTabsBeforeResponse={
+                  !hasAnalyzeResponse && !isTradeRoute && !isManualRoute
+                }
                 chart={{
                   enabled: true,
-                  provider: provider || "",
+                  provider: resolvedTradingViewProvider,
                   symbol: normalizeSignalSymbol(
                     activePlan?.symbol ||
                       activePlan?.raw?.symbol ||
@@ -7844,9 +8267,21 @@ export default function ChartSnapshotsPage() {
                   tp3Price: position.tp3 || "",
                   onPlanLevelChange: handlePlanLevelChange,
                   detailTfTab: timeframe,
-                  showEditButton: !(isTradeRoute || hasAnalyzeResponse),
-                  showTradeButton: !(isTradeRoute || hasAnalyzeResponse),
-                  showAnalyzeButton: !(isTradeRoute || hasAnalyzeResponse),
+                  showEditButton: !(
+                    isTradeRoute ||
+                    isManualRoute ||
+                    hasAnalyzeResponse
+                  ),
+                  showTradeButton: !(
+                    isTradeRoute ||
+                    isManualRoute ||
+                    hasAnalyzeResponse
+                  ),
+                  showAnalyzeButton: !(
+                    isTradeRoute ||
+                    isManualRoute ||
+                    hasAnalyzeResponse
+                  ),
                   profileTfs: widgetTfs,
                   initialGridCols: effectiveGridCols,
                   initialBarsCount: Number(cfg.lookbackBars || 300),
@@ -7951,10 +8386,10 @@ export default function ChartSnapshotsPage() {
                   sid: String(
                     analyzeSessionId || tradeSidFromRoute || "",
                   ).trim(),
-                  hasData: hasAnalyzeResponse || isTradeRoute,
+                  hasData: hasAnalyzeResponse || isTradeRoute || isManualRoute,
                   pending: analyzing,
                   pendingText:
-                    hasAnalyzeResponse || isTradeRoute
+                    hasAnalyzeResponse || isTradeRoute || isManualRoute
                       ? "Refreshing analysis result..."
                       : "Analyzing screenshots...",
                   label: "Response",
@@ -8087,7 +8522,7 @@ export default function ChartSnapshotsPage() {
                           : [],
                 }}
                 tradePlan={{
-                  enabled: isTradeRoute || hasAnalyzeResponse,
+                  enabled: isTradeRoute || isManualRoute || hasAnalyzeResponse,
                   signalId: null,
                   tradeId: activeAddedTradeEntity?.id || null,
                   value: position,
@@ -8099,14 +8534,15 @@ export default function ChartSnapshotsPage() {
                     !manuallyAddedTrade &&
                     !manuallyAddedSignal,
                   showAddTradeButton: !autoSavedTrades && !manuallyAddedTrade,
-                  showSaveDraftButton: isTradeRoute,
+                  showSaveDraftButton: isTradeRoute || isManualRoute,
                   showResetButton: true,
-                  onReset: isTradeRoute
-                    ? () =>
-                        navigate(buildAiAnalyzeRoute([selectedSymbol]), {
-                          replace: false,
-                        })
-                    : resetToDefaultBrowser,
+                  onReset:
+                    isTradeRoute || isManualRoute
+                      ? () =>
+                          navigate(buildAiAnalyzeRoute([selectedSymbol]), {
+                            replace: false,
+                          })
+                      : resetToDefaultBrowser,
                   resetLabel: "Back",
                   addSignalLabel: "+ Signal",
                   saveDraftLabel: "Save Draft",
@@ -8122,7 +8558,7 @@ export default function ChartSnapshotsPage() {
                   onAddTrade: (pos, planId = "main") => {
                     const ent = addedEntities[planId];
                     if (ent?.kind === "trade" && ent?.id) {
-                      navigate(`/trades/${ent.id}`);
+                      navigate(`/ai/trade/${encodeURIComponent(ent.id)}`);
                       return;
                     }
                     addBySelection("trade", pos, planId);
@@ -8177,7 +8613,9 @@ export default function ChartSnapshotsPage() {
               type="button"
               className="primary-button"
               onClick={() =>
-                navigate(`/trades/${Object.values(addedEntities).pop()?.id}`)
+                navigate(
+                  `/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`,
+                )
               }
             >
               Goto Trade

@@ -158,6 +158,14 @@ export default function NotificationDot() {
     return h + ":" + m + ":" + s;
   };
 
+  var formatDurationMs = function (startTs, endTs) {
+    var s = Number(startTs || 0);
+    if (!Number.isFinite(s) || s <= 0) return "0ms";
+    var e = Number(endTs || Date.now());
+    if (!Number.isFinite(e) || e < s) e = s;
+    return String(Math.max(0, Math.round(e - s))) + "ms";
+  };
+
   return (
     <div
       style={{
@@ -328,10 +336,7 @@ export default function NotificationDot() {
                     <span
                       style={{ color: "#666", fontSize: "9px", flexShrink: 0 }}
                     >
-                      {formatTime(entry.createdAt)}
-                      {entry.completedAt
-                        ? "-" + formatTime(entry.completedAt)
-                        : ""}
+                      {formatTime(entry.createdAt)} +{formatDurationMs(entry.createdAt, entry.completedAt)}
                     </span>
                   </div>
                   {entry.extra &&

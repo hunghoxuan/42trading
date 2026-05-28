@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-23T14:53:10.769Z",
+  "session_id": "TFHW0MWWP",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "XAUUSD",
+  "symbols": [
+    "XAUUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 77065,
+  "files_count": 1,
+  "files": [
+    "XAUUSD_MASTER.jpg"
+  ]
+}

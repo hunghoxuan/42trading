@@ -34,9 +34,9 @@ const CADENCE_OPTIONS = [
 ];
 
 const CRON_TYPE_LABELS = {
+  SNAPSHOT_CRON: "Snapshots",
   MARKET_DATA_CRON: "Market Data",
   ANALYSIS_CRON: "AI Analysis",
-  SNAPSHOTS_CRON: "Snapshots",
 };
 
 const CRON_TYPES = [
@@ -51,7 +51,7 @@ const CRON_TYPES = [
     description: "Run AI analysis on a schedule",
   },
   {
-    value: "SNAPSHOTS_CRON",
+    value: "SNAPSHOT_CRON",
     label: "Snapshots",
     description: "Take chart snapshots on a schedule",
   },
@@ -65,10 +65,15 @@ const SNAPSHOT_FORMAT_OPTIONS = ["png", "jpeg", "webp"];
 
 const SNAPSHOT_THEME_OPTIONS = ["dark", "light"];
 
-const SNAPSHOT_QUALITY_OPTIONS = ["low", "medium", "high"];
+const SNAPSHOT_QUALITY_OPTIONS = [
+  { label: "Low (30)", value: 30 },
+  { label: "Medium (70)", value: 70 },
+  { label: "High (90)", value: 90 },
+];
 
 const SYMBOLS_GROUP_PRESETS = {
   watchlist: [],
+  all: [], // filled at runtime — all symbols from market_data
   crypto: [
     "BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD", "DOGEUSD", "ADAUSD", "LTCUSD",
   ],
@@ -148,18 +153,18 @@ function defaultForm(type) {
         entry_models: "",
         prompt: "",
       };
-    case "SNAPSHOTS_CRON":
+    case "SNAPSHOT_CRON":
       return {
         ...base,
         exclude_symbols: "",
-        provider: "twelvedata",
-        session_prefix: "",
+        broker: "",
         lookback_bars: 300,
         format: "png",
-        quality: "high",
+        quality: 90,
         theme: "dark",
         width: 1920,
         height: 1080,
+        symbols_per_tick: 1,
       };
     default:
       return base;
@@ -193,29 +198,30 @@ function formFromCronData(data) {
         entry_models: Array.isArray(data?.entry_models) ? data.entry_models.join("\n") : "",
         prompt: String(data?.prompt || ""),
       };
-    case "SNAPSHOTS_CRON":
+    case "SNAPSHOT_CRON":
       return {
         ...base,
         exclude_symbols: symbolsToText(data?.exclude_symbols),
-        provider: String(data?.provider || "twelvedata"),
-        session_prefix: String(data?.session_prefix || ""),
+        broker: String(data?.broker || ""),
         lookback_bars: Number(data?.lookback_bars || 300),
         format: String(data?.format || "png"),
-        quality: String(data?.quality || "high"),
+        quality: Number(data?.quality || 90),
         theme: String(data?.theme || "dark"),
         width: Number(data?.width || 1920),
         height: Number(data?.height || 1080),
+        symbols_per_tick: Number(data?.symbols_per_tick || 1),
       };
     default:
       return base;
   }
 }
 
-function formToDataPayload(form) {
+function formToDataPayload(form, symbolsGroup = "") {
   const symbols = parseTextList(form.symbols, true);
   const data = {
     cron_type: form.cron_type,
-    symbols,
+    symbols: symbolsGroup ? [] : symbols, // empty when group selected = dynamic
+    symbols_group: symbolsGroup || null,
     timeframes: form.timeframes,
     cadence_seconds: form.cadence_seconds,
   };
@@ -238,18 +244,18 @@ function formToDataPayload(form) {
         entry_models: parseTextList(form.entry_models),
         prompt: form.prompt,
       };
-    case "SNAPSHOTS_CRON":
+    case "SNAPSHOT_CRON":
       return {
         ...data,
         exclude_symbols: parseTextList(form.exclude_symbols, true),
-        provider: form.provider,
-        session_prefix: form.session_prefix,
+        broker: form.broker || "",
         lookback_bars: form.lookback_bars,
         format: form.format,
         quality: form.quality,
         theme: form.theme,
         width: form.width,
         height: form.height,
+        symbols_per_tick: form.symbols_per_tick,
       };
     default:
       return data;
@@ -263,6 +269,7 @@ export default function CronPage() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [selectedCronName, setSelectedCronName] = useState(null);
+  const [cronName, setCronName] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
   const [saveLoading, setSaveLoading] = useState(false);
   const [watchlistSymbols, setWatchlistSymbols] = useState([]);
@@ -351,8 +358,10 @@ export default function CronPage() {
       return;
     }
     if (selectedCron) {
-      setForm(formFromCronData(selectedCron.data || {}));
-      setSymbolsGroup("");
+      const d = selectedCron.data || {};
+      setForm(formFromCronData(d));
+      setCronName(selectedCron.name || "");
+      setSymbolsGroup(d.symbols_group || "");
     }
   }, [selectedCronName, selectedCron, isNewCron]);
 
@@ -365,9 +374,10 @@ export default function CronPage() {
   const handleNewCron = useCallback(
     (type) => {
       setShowNewCronPicker(false);
-      const name = `CRON_${type}_${Date.now().toString(36)}`;
+      const name = `${CRON_TYPE_LABELS[type] || type}_${Date.now().toString(36)}`;
       const newForm = defaultForm(type);
       setForm(newForm);
+      setCronName(name);
       setSelectedCronName(name);
       setSymbolsGroup("");
       setSaveMsg("");
@@ -379,17 +389,22 @@ export default function CronPage() {
     if (!selectedCronName) return;
     setSaveLoading(true);
     setSaveMsg("");
-    const data = formToDataPayload(form);
+    const data = formToDataPayload(form, symbolsGroup);
     const existing = cronSettings.find((s) => s.name === selectedCronName);
     const status = existing ? existing.status || "ACTIVE" : "INACTIVE";
     const payload = {
       type: "cron",
-      name: selectedCronName,
+      name: cronName,
       data,
       status,
     };
     try {
+      // If renaming, delete old row first
+      if (selectedCronName && selectedCronName !== cronName) {
+        await api.deleteSetting("cron", selectedCronName).catch(() => {});
+      }
       await api.upsertSetting(payload);
+      setSelectedCronName(cronName);
       const msg = `${CRON_TYPE_LABELS[form.cron_type] || form.cron_type} saved.`;
       setSaveMsg(msg);
       showToast({ message: msg, type: "success" });
@@ -520,7 +535,7 @@ export default function CronPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
+          gridTemplateColumns: "280px 1fr",
           gap: 24,
           marginTop: 12,
         }}
@@ -604,20 +619,13 @@ export default function CronPage() {
                     padding: "8px 12px",
                   }}
                 >
-                  <span>{ctLabel}</span>
-                  <span
-                    style={{
-                      fontSize: 9,
-                      padding: "2px 6px",
-                      borderRadius: 4,
-                      background: isCronActive
-                        ? "rgba(34,197,94,0.2)"
-                        : "rgba(255,255,255,0.04)",
-                      color: isCronActive ? "#22c55e" : "var(--muted)",
-                    }}
-                  >
-                    {isCronActive ? "ACTIVE" : "INACTIVE"}
-                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: isCronActive ? "#22c55e" : "#666", flexShrink: 0 }} />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      <span style={{ fontWeight: 700, fontSize: 12 }}>{cron.name}</span>
+                      <span className="minor-text" style={{ fontSize: 9 }}>{ctLabel}</span>
+                    </div>
+                  </div>
                 </button>
               );
             })
@@ -640,530 +648,568 @@ export default function CronPage() {
                   alignItems: "flex-start",
                 }}
               >
-                <div>
-                  <h3 style={{ margin: 0 }}>
-                    {cronTypeLabel}
-                    {isNewCron && (
-                      <span
-                        className="minor-text"
-                        style={{ fontSize: 10, marginLeft: 8, fontWeight: 400 }}
-                      >
-                        (new)
-                      </span>
-                    )}
-                  </h3>
-                  {selectedCron && (
-                    <span className="minor-text" style={{ fontSize: 10 }}>
-                      {selectedCron.name}
+                <div style={{ flex: 1 }}>
+                  <input
+                    value={cronName}
+                    onChange={(e) => setCronName(e.target.value)}
+                    placeholder="Cron name..."
+                    style={{ fontSize: 16, fontWeight: 700, border: "none", background: "transparent", color: "inherit", width: "100%", outline: "none", paddingLeft: 0 }}
+                  />
+                  {isNewCron && (
+                    <span className="minor-text" style={{ fontSize: 10, fontWeight: 400 }}>
+                      (new)
                     </span>
                   )}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {selectedCron && (
-                    <button
-                      className={isActive ? "secondary-button" : "primary-button"}
-                      style={{ padding: "6px 14px", fontSize: 12 }}
-                      onClick={handleToggleStatus}
-                      disabled={saveLoading}
-                    >
-                      {isActive ? "Deactivate" : "Activate"}
-                    </button>
-                  )}
-                  <button
-                    className="danger-button"
-                    style={{ padding: "6px 14px", fontSize: 12 }}
-                    onClick={handleDelete}
-                    disabled={saveLoading || isNewCron || !selectedCron}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-
-              {/* Status badge */}
-              {selectedCron && (
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <span
-                    className={`status-badge ${isActive ? "ACTIVE" : "INACTIVE"}`}
-                  >
-                    {selectedCron.status || "INACTIVE"}
+                  <span className="minor-text" style={{ fontSize: 11 }}>
+                    Type: {cronTypeLabel}
                   </span>
                 </div>
-              )}
-
-              {/* ── Shared fields ──────────────────────── */}
-
-              {/* Interval (Cadence) */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span
-                  className="panel-label"
-                  style={{ fontSize: 10, marginBottom: 0 }}
-                >
-                  INTERVAL
-                </span>
-                <select
-                  value={cadenceOption.label}
-                  onChange={(e) => {
-                    const opt = CADENCE_OPTIONS.find(
-                      (o) => o.label === e.target.value,
-                    );
-                    updateForm({
-                      cadence_seconds: opt ? opt.seconds : 60,
-                    });
-                  }}
-                >
-                  {CADENCE_OPTIONS.map((opt) => (
-                    <option key={opt.label} value={opt.label}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
               </div>
 
-              {/* Symbols Group Selector */}
-              <div className="stack-layout" style={{ gap: 6 }}>
+              {/* ═══════════════════════════════════════════
+                  Part 1 — Schedule (shared)
+                  ═══════════════════════════════════════════ */}
+
+              <div
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: 16,
+                }}
+              >
                 <span
                   className="panel-label"
-                  style={{ fontSize: 10, marginBottom: 0 }}
+                  style={{ fontSize: 11, marginBottom: 12, display: "block" }}
                 >
-                  SYMBOLS GROUP
+                  SCHEDULE
                 </span>
-                <select
-                  value={symbolsGroup}
-                  onChange={(e) => handleSymbolsGroupChange(e.target.value)}
-                >
-                  <option value="">Custom</option>
-                  {Object.keys(SYMBOLS_GROUP_LABELS).map((key) => (
-                    <option key={key} value={key}>
-                      {SYMBOLS_GROUP_LABELS[key]}
-                    </option>
-                  ))}
-                </select>
-              </div>
 
-              {/* Symbols */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span
-                  className="panel-label"
-                  style={{ fontSize: 10, marginBottom: 0 }}
-                >
-                  SYMBOLS (COMMA OR NEWLINE)
-                </span>
-                <textarea
-                  rows={4}
-                  value={form.symbols}
-                  onChange={(e) => updateForm({ symbols: e.target.value })}
-                  placeholder="e.g. XAUUSD, EURUSD, BTCUSD"
-                />
-              </div>
-
-              {/* Timeframes (shared) */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span
-                  className="panel-label"
-                  style={{ fontSize: 10, marginBottom: 0 }}
-                >
-                  TIMEFRAMES
-                </span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                  {TIMEFRAME_OPTIONS.map((tf) => (
-                    <label
-                      key={tf}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={form.timeframes.includes(tf)}
-                        onChange={() => handleCheckboxToggle("timeframes", tf)}
-                      />
-                      <span style={{ fontSize: 13 }}>{tf}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* ── Type-specific fields ───────────────── */}
-
-              {/* MARKET_DATA_CRON fields */}
-              {form.cron_type === "MARKET_DATA_CRON" && (
-                <>
-                  {/* Row: Provider / Timezone / Batch Size */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr 1fr",
-                      gap: 12,
-                    }}
-                  >
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Provider</span>
-                      <select
-                        value={form.provider}
-                        onChange={(e) => updateForm({ provider: e.target.value })}
-                      >
-                        <option value="twelvedata">Twelve Data</option>
-                      </select>
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Display Timezone</span>
-                      <select
-                        value={form.timezone}
-                        onChange={(e) => updateForm({ timezone: e.target.value })}
-                      >
-                        {DISPLAY_TIMEZONE_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Batch Size</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="50"
-                        value={form.batch_size}
-                        onChange={(e) =>
-                          updateForm({ batch_size: Number(e.target.value) })
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  {/* Exclude Symbols */}
+                <div className="stack-layout" style={{ gap: 12 }}>
+                  {/* Interval (Cadence) */}
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span
                       className="panel-label"
                       style={{ fontSize: 10, marginBottom: 0 }}
                     >
-                      EXCLUDE SYMBOLS (COMMA OR NEWLINE)
-                    </span>
-                    <textarea
-                      rows={2}
-                      value={form.exclude_symbols}
-                      onChange={(e) =>
-                        updateForm({ exclude_symbols: e.target.value })
-                      }
-                      placeholder="e.g. XAUUSD (skip these)"
-                    />
-                  </div>
-                </>
-              )}
-
-              {/* ANALYSIS_CRON fields */}
-              {form.cron_type === "ANALYSIS_CRON" && (
-                <>
-                  {/* Row: Directions / Order Types */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 12,
-                    }}
-                  >
-                    <div className="stack-layout" style={{ gap: 6 }}>
-                      <span
-                        className="panel-label"
-                        style={{ fontSize: 10, marginBottom: 0 }}
-                      >
-                        DIRECTIONS
-                      </span>
-                      <div style={{ display: "flex", gap: 12 }}>
-                        {DIRECTION_OPTIONS.map((direction) => (
-                          <label
-                            key={direction}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={form.directions.includes(direction)}
-                              onChange={() =>
-                                handleCheckboxToggle("directions", direction)
-                              }
-                            />
-                            <span style={{ fontSize: 13 }}>{direction}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="stack-layout" style={{ gap: 6 }}>
-                      <span
-                        className="panel-label"
-                        style={{ fontSize: 10, marginBottom: 0 }}
-                      >
-                        ORDER TYPES
-                      </span>
-                      <div style={{ display: "flex", gap: 12 }}>
-                        {ORDER_TYPE_OPTIONS.map((ot) => (
-                          <label
-                            key={ot}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                              cursor: "pointer",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={form.order_types.includes(ot)}
-                              onChange={() =>
-                                handleCheckboxToggle("order_types", ot)
-                              }
-                            />
-                            <span style={{ fontSize: 13 }}>{ot}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Model */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      MODEL
+                      INTERVAL
                     </span>
                     <select
-                      value={form.model}
-                      onChange={(e) => updateForm({ model: e.target.value })}
+                      value={cadenceOption.label}
+                      onChange={(e) => {
+                        const opt = CADENCE_OPTIONS.find(
+                          (o) => o.label === e.target.value,
+                        );
+                        updateForm({
+                          cadence_seconds: opt ? opt.seconds : 60,
+                        });
+                      }}
                     >
-                      {API_KEY_NAME_OPTIONS.map((opt) => (
-                        <option
-                          key={opt.value}
-                          value={opt.value.replace("_API_KEY", "").toLowerCase()}
-                        >
-                          {opt.label.replace(" API Key", "")}
+                      {CADENCE_OPTIONS.map((opt) => (
+                        <option key={opt.label} value={opt.label}>
+                          {opt.label}
                         </option>
                       ))}
                     </select>
                   </div>
 
-                  {/* Profile */}
+                  {/* Symbols Group Selector */}
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span
                       className="panel-label"
                       style={{ fontSize: 10, marginBottom: 0 }}
                     >
-                      PROFILE
+                      SYMBOLS GROUP
                     </span>
-                    <input
-                      value={form.profile}
-                      onChange={(e) => updateForm({ profile: e.target.value })}
-                      placeholder="Optional AI/profile name"
-                    />
+                    <select
+                      value={symbolsGroup}
+                      onChange={(e) => handleSymbolsGroupChange(e.target.value)}
+                    >
+                      <option value="">Custom</option>
+                      <option value="all">All</option>
+                      {Object.keys(SYMBOLS_GROUP_LABELS).map((key) => (
+                        <option key={key} value={key}>
+                          {SYMBOLS_GROUP_LABELS[key]}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
-                  {/* Entry Models */}
+                  {/* Symbols */}
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span
                       className="panel-label"
                       style={{ fontSize: 10, marginBottom: 0 }}
                     >
-                      ENTRY MODELS (COMMA OR NEWLINE)
-                    </span>
-                    <textarea
-                      rows={3}
-                      value={form.entry_models}
-                      onChange={(e) =>
-                        updateForm({ entry_models: e.target.value })
-                      }
-                      placeholder="Order Block, FVG, ICT..."
-                    />
-                  </div>
-
-                  {/* Prompt */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      PROMPT
+                      SYMBOLS (COMMA OR NEWLINE)
                     </span>
                     <textarea
-                      rows={6}
-                      value={form.prompt}
-                      onChange={(e) => updateForm({ prompt: e.target.value })}
-                      placeholder="Instructions for AI setup detection..."
+                      rows={4}
+                      value={form.symbols}
+                      onChange={(e) => updateForm({ symbols: e.target.value })}
+                      placeholder="e.g. XAUUSD, EURUSD, BTCUSD"
+                      disabled={symbolsGroup !== ""}
+                      style={symbolsGroup !== "" ? { opacity: 0.5 } : {}}
                     />
                   </div>
-                </>
-              )}
 
-              {/* SNAPSHOTS_CRON fields */}
-              {form.cron_type === "SNAPSHOTS_CRON" && (
-                <>
-                  {/* Row: Provider / Format / Quality / Theme */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr 1fr 1fr",
-                      gap: 12,
-                    }}
-                  >
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Provider</span>
-                      <select
-                        value={form.provider}
-                        onChange={(e) => updateForm({ provider: e.target.value })}
-                      >
-                        <option value="twelvedata">Twelve Data</option>
-                      </select>
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Format</span>
-                      <select
-                        value={form.format}
-                        onChange={(e) => updateForm({ format: e.target.value })}
-                      >
-                        {SNAPSHOT_FORMAT_OPTIONS.map((f) => (
-                          <option key={f} value={f}>
-                            {f.toUpperCase()}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Quality</span>
-                      <select
-                        value={form.quality}
-                        onChange={(e) => updateForm({ quality: e.target.value })}
-                      >
-                        {SNAPSHOT_QUALITY_OPTIONS.map((q) => (
-                          <option key={q} value={q}>
-                            {q.charAt(0).toUpperCase() + q.slice(1)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Theme</span>
-                      <select
-                        value={form.theme}
-                        onChange={(e) => updateForm({ theme: e.target.value })}
-                      >
-                        {SNAPSHOT_THEME_OPTIONS.map((t) => (
-                          <option key={t} value={t}>
-                            {t.charAt(0).toUpperCase() + t.slice(1)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  {/* Row: Width / Height / Lookback Bars */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr 1fr",
-                      gap: 12,
-                    }}
-                  >
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Width (px)</span>
-                      <input
-                        type="number"
-                        min="100"
-                        max="3840"
-                        value={form.width}
-                        onChange={(e) =>
-                          updateForm({ width: Number(e.target.value) })
-                        }
-                      />
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Height (px)</span>
-                      <input
-                        type="number"
-                        min="100"
-                        max="2160"
-                        value={form.height}
-                        onChange={(e) =>
-                          updateForm({ height: Number(e.target.value) })
-                        }
-                      />
-                    </label>
-
-                    <label className="stack-layout" style={{ gap: 6 }}>
-                      <span className="minor-text">Lookback Bars</span>
-                      <input
-                        type="number"
-                        min="10"
-                        max="10000"
-                        value={form.lookback_bars}
-                        onChange={(e) =>
-                          updateForm({ lookback_bars: Number(e.target.value) })
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  {/* Session Prefix */}
+                  {/* Timeframes (shared) */}
                   <div className="stack-layout" style={{ gap: 6 }}>
                     <span
                       className="panel-label"
                       style={{ fontSize: 10, marginBottom: 0 }}
                     >
-                      SESSION PREFIX
+                      TIMEFRAMES
                     </span>
-                    <input
-                      value={form.session_prefix}
-                      onChange={(e) =>
-                        updateForm({ session_prefix: e.target.value })
-                      }
-                      placeholder="e.g. daily, weekly..."
-                    />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                      {TIMEFRAME_OPTIONS.map((tf) => (
+                        <label
+                          key={tf}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.timeframes.includes(tf)}
+                            onChange={() => handleCheckboxToggle("timeframes", tf)}
+                          />
+                          <span style={{ fontSize: 13 }}>{tf}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
+                </div>
+              </div>
 
-                  {/* Exclude Symbols */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      EXCLUDE SYMBOLS (COMMA OR NEWLINE)
-                    </span>
-                    <textarea
-                      rows={2}
-                      value={form.exclude_symbols}
-                      onChange={(e) =>
-                        updateForm({ exclude_symbols: e.target.value })
-                      }
-                      placeholder="e.g. XAUUSD (skip these)"
-                    />
-                  </div>
-                </>
-              )}
+              {/* ═══════════════════════════════════════════
+                  Part 2 — Type-specific fields
+                  ═══════════════════════════════════════════ */}
 
-              {/* ── Save button ────────────────────────── */}
+              <div
+                style={{
+                  borderTop: "1px solid var(--border)",
+                  paddingTop: 16,
+                }}
+              >
+                <span
+                  className="panel-label"
+                  style={{
+                    fontSize: 10,
+                    marginBottom: 16,
+                    display: "block",
+                    color: "var(--muted)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.5px",
+                  }}
+                >
+                  ADVANCED SETTINGS — {cronTypeLabel.toUpperCase()}
+                </span>
+
+                <div className="stack-layout" style={{ gap: 12 }}>
+                  {/* MARKET_DATA_CRON fields */}
+                  {form.cron_type === "MARKET_DATA_CRON" && (
+                    <>
+                      {/* Row: Provider / Timezone / Batch Size */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Provider</span>
+                          <select
+                            value={form.provider}
+                            onChange={(e) => updateForm({ provider: e.target.value })}
+                          >
+                            <option value="twelvedata">Twelve Data</option>
+                          </select>
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Display Timezone</span>
+                          <select
+                            value={form.timezone}
+                            onChange={(e) => updateForm({ timezone: e.target.value })}
+                          >
+                            {DISPLAY_TIMEZONE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Batch Size</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={form.batch_size}
+                            onChange={(e) =>
+                              updateForm({ batch_size: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      {/* Exclude Symbols */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          EXCLUDE SYMBOLS (COMMA OR NEWLINE)
+                        </span>
+                        <textarea
+                          rows={2}
+                          value={form.exclude_symbols}
+                          onChange={(e) =>
+                            updateForm({ exclude_symbols: e.target.value })
+                          }
+                          placeholder="e.g. XAUUSD (skip these)"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* ANALYSIS_CRON fields */}
+                  {form.cron_type === "ANALYSIS_CRON" && (
+                    <>
+                      {/* Row: Directions / Order Types */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            DIRECTIONS
+                          </span>
+                          <div style={{ display: "flex", gap: 12 }}>
+                            {DIRECTION_OPTIONS.map((direction) => (
+                              <label
+                                key={direction}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={form.directions.includes(direction)}
+                                  onChange={() =>
+                                    handleCheckboxToggle("directions", direction)
+                                  }
+                                />
+                                <span style={{ fontSize: 13 }}>{direction}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            ORDER TYPES
+                          </span>
+                          <div style={{ display: "flex", gap: 12 }}>
+                            {ORDER_TYPE_OPTIONS.map((ot) => (
+                              <label
+                                key={ot}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={form.order_types.includes(ot)}
+                                  onChange={() =>
+                                    handleCheckboxToggle("order_types", ot)
+                                  }
+                                />
+                                <span style={{ fontSize: 13 }}>{ot}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Model */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          MODEL
+                        </span>
+                        <select
+                          value={form.model}
+                          onChange={(e) => updateForm({ model: e.target.value })}
+                        >
+                          {API_KEY_NAME_OPTIONS.map((opt) => (
+                            <option
+                              key={opt.value}
+                              value={opt.value.replace("_API_KEY", "").toLowerCase()}
+                            >
+                              {opt.label.replace(" API Key", "")}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Profile */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          PROFILE
+                        </span>
+                        <input
+                          value={form.profile}
+                          onChange={(e) => updateForm({ profile: e.target.value })}
+                          placeholder="Optional AI/profile name"
+                        />
+                      </div>
+
+                      {/* Entry Models */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          ENTRY MODELS (COMMA OR NEWLINE)
+                        </span>
+                        <textarea
+                          rows={3}
+                          value={form.entry_models}
+                          onChange={(e) =>
+                            updateForm({ entry_models: e.target.value })
+                          }
+                          placeholder="Order Block, FVG, ICT..."
+                        />
+                      </div>
+
+                      {/* Prompt */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          PROMPT
+                        </span>
+                        <textarea
+                          rows={6}
+                          value={form.prompt}
+                          onChange={(e) => updateForm({ prompt: e.target.value })}
+                          placeholder="Instructions for AI setup detection..."
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* SNAPSHOT_CRON fields */}
+                  {form.cron_type === "SNAPSHOT_CRON" && (
+                    <>
+                      {/* Broker Select */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span className="panel-label" style={{ fontSize: 10, marginBottom: 0 }}>BROKER (optional)</span>
+                        <select value={form.broker || ""} onChange={(e) => updateForm({ broker: e.target.value })}>
+                          <option value="">Auto (no prefix)</option>
+                          <option value="ICMARKETS">IC Markets</option>
+                          <option value="OANDA">OANDA</option>
+                          <option value="FOREXCOM">Forex.com</option>
+                          <option value="PEPPERSTONE">Pepperstone</option>
+                          <option value="FXCM">FXCM</option>
+                          <option value="BINANCE">Binance</option>
+                          <option value="BYBIT">Bybit</option>
+                        </select>
+                      </div>
+
+                      {/* Row: Format / Quality / Theme */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Format</span>
+                          <select
+                            value={form.format}
+                            onChange={(e) => updateForm({ format: e.target.value })}
+                          >
+                            {SNAPSHOT_FORMAT_OPTIONS.map((f) => (
+                              <option key={f} value={f}>
+                                {f.toUpperCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Quality</span>
+                          <select
+                            value={form.quality}
+                            onChange={(e) => updateForm({ quality: Number(e.target.value) })}
+                          >
+                            {SNAPSHOT_QUALITY_OPTIONS.map((q) => (
+                              <option key={q.value} value={q.value}>
+                                {q.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Theme</span>
+                          <select
+                            value={form.theme}
+                            onChange={(e) => updateForm({ theme: e.target.value })}
+                          >
+                            {SNAPSHOT_THEME_OPTIONS.map((t) => (
+                              <option key={t} value={t}>
+                                {t.charAt(0).toUpperCase() + t.slice(1)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      {/* Row: Width / Height / Lookback Bars / Symbols Per Tick */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Width (px)</span>
+                          <input
+                            type="number"
+                            min="100"
+                            max="3840"
+                            value={form.width}
+                            onChange={(e) =>
+                              updateForm({ width: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Height (px)</span>
+                          <input
+                            type="number"
+                            min="100"
+                            max="2160"
+                            value={form.height}
+                            onChange={(e) =>
+                              updateForm({ height: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Lookback Bars</span>
+                          <input
+                            type="number"
+                            min="10"
+                            max="10000"
+                            value={form.lookback_bars}
+                            onChange={(e) =>
+                              updateForm({ lookback_bars: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+
+                        <label className="stack-layout" style={{ gap: 6 }}>
+                          <span className="minor-text">Symbols Per Tick</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="50"
+                            value={form.symbols_per_tick}
+                            onChange={(e) =>
+                              updateForm({ symbols_per_tick: Number(e.target.value) })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                        {/* Exclude Symbols */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          EXCLUDE SYMBOLS (COMMA OR NEWLINE)
+                        </span>
+                        <textarea
+                          rows={2}
+                          value={form.exclude_symbols}
+                          onChange={(e) =>
+                            updateForm({ exclude_symbols: e.target.value })
+                          }
+                          placeholder="e.g. XAUUSD (skip these)"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Actions ────────────────────────── */}
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "flex-end",
+                  justifyContent: "space-between",
+                  alignItems: "center",
                   paddingTop: 20,
                   borderTop: "1px solid var(--border)",
                 }}
               >
+                <div style={{ display: "flex", gap: 8 }}>
+                  {selectedCron && (
+                    <button
+                      className={isActive ? "secondary-button" : "primary-button"}
+                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      onClick={handleToggleStatus}
+                      disabled={saveLoading}
+                    >
+                      {isActive ? "DEACTIVATE" : "ACTIVATE"}
+                    </button>
+                  )}
+                  {selectedCron && !isNewCron && (
+                    <button
+                      className="danger-button"
+                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      onClick={handleDelete}
+                      disabled={saveLoading}
+                    >
+                      DELETE
+                    </button>
+                  )}
+                </div>
                 <button
                   className="primary-button"
                   style={{ padding: "12px 32px", fontSize: 14 }}

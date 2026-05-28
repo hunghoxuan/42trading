@@ -373,6 +373,8 @@ export default function App() {
             <Route path="/ai/result/:symbol" element={<ChartSnapshotsPage />} />
             <Route path="/ai/trade" element={<ChartSnapshotsPage />} />
             <Route path="/ai/trade/:symbol" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/manual" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/manual/:symbol" element={<ChartSnapshotsPage />} />
             <Route
               path="/ai/response/:symbol"
               element={<ChartSnapshotsPage />}

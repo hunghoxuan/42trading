@@ -134,8 +134,10 @@ export default function ProvidersPage() {
 
   useEffect(() => {
     if (currentProvider) {
+      const dbModels = currentProvider.data.models || [];
+      const defaultModels = currentProvDef?.models || [];
       setForm({
-        models: [...currentProvider.data.models],
+        models: dbModels.length > 0 ? [...dbModels] : [...defaultModels],
         api_key: currentProvider.data.api_key,
         remain_credits: currentProvider.data.remain_credits,
       });
@@ -328,14 +330,16 @@ export default function ProvidersPage() {
   const visible = isRevealed();
   const showApiKey = visible ? getRevealedValue() : form.api_key;
 
+  const isActive = String(currentProvider?.status || "").toUpperCase() === "ACTIVE";
+
   return (
-    <div className="stack-layout fadeIn">
-      <h1 className="page-title">Providers</h1>
+    <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
+      <h2 className="page-title">Providers</h2>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
+          gridTemplateColumns: "280px 1fr",
           gap: 24,
           marginTop: 12,
         }}
@@ -347,43 +351,20 @@ export default function ProvidersPage() {
           </div>
           {PROVIDERS.map((prov) => {
             const info = providerMap[prov.name];
-            const isActive =
+            const ok =
               String(info?.status || "").toUpperCase() === "ACTIVE";
-            const hasKey = Boolean(
-              info?.data?.api_key || info?.data?.value,
-            );
             return (
               <button
                 key={prov.name}
                 className={`sidebar-item-v2 ${selectedProvider === prov.name ? "active" : ""}`}
                 onClick={() => setSelectedProvider(prov.name)}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "8px 12px",
-                }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, padding: "8px 12px" }}
               >
-                <span>{prov.label}</span>
-                <span
-                  style={{
-                    fontSize: 9,
-                    padding: "2px 6px",
-                    borderRadius: 4,
-                    background: hasKey
-                      ? isActive
-                        ? "rgba(34,197,94,0.2)"
-                        : "rgba(255,255,255,0.08)"
-                      : "rgba(255,255,255,0.04)",
-                    color: hasKey
-                      ? isActive
-                        ? "#22c55e"
-                        : "var(--muted)"
-                      : "var(--muted)",
-                  }}
-                >
-                  {hasKey ? (isActive ? "ACTIVE" : "SET") : "EMPTY"}
-                </span>
+                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ok ? "#22c55e" : "#666", flexShrink: 0 }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontWeight: 700, fontSize: 12 }}>{prov.label}</span>
+                  <span className="minor-text" style={{ fontSize: 9 }}>{prov.name}</span>
+                </div>
               </button>
             );
           })}
@@ -396,97 +377,24 @@ export default function ProvidersPage() {
           ) : (
             <>
               {/* Header */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div>
-                  <h3 style={{ margin: 0 }}>{currentProvDef.label}</h3>
-                  <span className="minor-text" style={{ fontSize: 11 }}>
-                    {currentProvDef.name}
-                  </span>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    className={
-                      String(currentProvider?.status || "").toUpperCase() ===
-                      "ACTIVE"
-                        ? "secondary-button"
-                        : "primary-button"
-                    }
-                    style={{ padding: "6px 14px", fontSize: 12 }}
-                    onClick={toggleStatus}
-                    disabled={saveBusy}
-                  >
-                    {String(currentProvider?.status || "").toUpperCase() ===
-                    "ACTIVE"
-                      ? "Deactivate"
-                      : "Activate"}
-                  </button>
-                  <button
-                    className="danger-button"
-                    style={{ padding: "6px 14px", fontSize: 12 }}
-                    onClick={deleteProvider}
-                    disabled={saveBusy || !currentProvider?.setting}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-
-              {/* Status badge */}
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <span
-                  className={`status-badge ${
-                    String(currentProvider?.status || "").toUpperCase() ===
-                    "ACTIVE"
-                      ? "ACTIVE"
-                      : "INACTIVE"
-                  }`}
-                  style={{ fontSize: 10, padding: "3px 8px" }}
-                >
-                  {currentProvider?.status || "INACTIVE"}
-                </span>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>{currentProvDef.label}</div>
+                <span className="minor-text" style={{ fontSize: 11 }}>{currentProvDef.name}</span>
               </div>
 
               {/* Models */}
-              {currentProvDef.models.length > 0 && (
-                <div className="stack-layout" style={{ gap: 8 }}>
-                  <span className="panel-label">Models</span>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                    }}
-                  >
-                    {currentProvDef.models.map((model) => {
-                      const selected = form.models.includes(model);
-                      return (
-                        <button
-                          key={model}
-                          type="button"
-                          className={`secondary-button snapshot-tag-v2 ${selected ? "active" : ""}`}
-                          onClick={() => toggleModel(model)}
-                          style={{
-                            fontSize: 11,
-                            padding: "4px 10px",
-                          }}
-                        >
-                          {model}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              <div className="stack-layout" style={{ gap: 6 }}>
+                <span className="panel-label" style={{ fontSize: 10 }}>MODELS (COMMA OR NEWLINE)</span>
+                <textarea
+                  rows={4}
+                  value={form.models.join("\n")}
+                  onChange={(e) => setForm((prev) => ({ ...prev, models: e.target.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) }))}
+                />
+              </div>
 
               {/* API Key */}
               <div className="stack-layout" style={{ gap: 6 }}>
-                <span className="panel-label">API Key</span>
+                <span className="panel-label" style={{ fontSize: 10 }}>API KEY</span>
                 <div
                   style={{
                     display: "flex",
@@ -573,20 +481,35 @@ export default function ProvidersPage() {
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "flex-end",
                   gap: 8,
-                  marginTop: 8,
-                  paddingTop: 16,
+                  paddingTop: 20,
                   borderTop: "1px solid var(--border)",
                 }}
               >
                 <button
+                  className={isActive ? "secondary-button" : "primary-button"}
+                  style={{ padding: "12px 24px", fontSize: 14 }}
+                  onClick={toggleStatus}
+                  disabled={saveBusy}
+                >
+                  {isActive ? "DEACTIVATE" : "ACTIVATE"}
+                </button>
+                <button
+                  className="danger-button"
+                  style={{ padding: "12px 24px", fontSize: 14 }}
+                  onClick={deleteProvider}
+                  disabled={saveBusy || !currentProvider?.setting}
+                >
+                  DELETE
+                </button>
+                <div style={{ flex: 1 }} />
+                <button
                   className="primary-button"
-                  style={{ padding: "10px 32px", fontSize: 13 }}
+                  style={{ padding: "12px 32px", fontSize: 14 }}
                   onClick={saveProvider}
                   disabled={saveBusy}
                 >
-                  {saveBusy ? "SAVING..." : "Save"}
+                  {saveBusy ? "SAVING..." : "SAVE"}
                 </button>
               </div>
             </>

@@ -301,7 +301,7 @@ function TfHeader({
     <div
       style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}
     >
-      <span style={{ fontWeight: 800, fontSize: 11, opacity: 0.8 }}>{tf}</span>
+      <span style={{ fontWeight: 800, fontSize: 13, opacity: 0.95 }}>{tf}</span>
       {(() => {
         const bars = master?.bars?.[tf.toLowerCase()] || [];
         const count = bars.length;
@@ -630,25 +630,6 @@ export default function SymbolChart({
   const [fullscreenTf, setFullscreenTf] = useState(null);
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
-
-  const tradeLifecycleMarkers = useMemo(() => {
-    const toIso = (v) => {
-      const s = String(v || "").trim();
-      if (!s) return null;
-      const d = new Date(s);
-      if (Number.isNaN(d.getTime())) return null;
-      return d.toISOString();
-    };
-    const fmt = (iso) => (iso ? iso.slice(0, 16).replace("T", " ") : "-");
-    const rows = [];
-    const c = toIso(createdAt);
-    const o = toIso(openedAt);
-    const x = toIso(closedAt);
-    if (c) rows.push({ key: "created", label: "Created", short: "C", color: "#f59e0b", time: fmt(c) });
-    if (o) rows.push({ key: "opened", label: "Opened", short: "O", color: "#22c55e", time: fmt(o) });
-    if (x) rows.push({ key: "closed", label: "Closed", short: "X", color: "#ef4444", time: fmt(x) });
-    return rows;
-  }, [createdAt, openedAt, closedAt]);
 
   useEffect(() => {
     setAnnotations([]);
@@ -2221,8 +2202,36 @@ export default function SymbolChart({
                   />
                   {isLive ? (
                     <div style={{ position: "relative", height: chartHeight }}>
+                      {(() => {
+                        const tvSymbol = toTradingViewSymbol(cleanSym, provider);
+                        const tvInterval = liveTfToTvInterval(tf);
+                        const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(tvInterval)}`;
+                        return (
+                          <button
+                            type="button"
+                            aria-label={`Open ${tvSymbol} ${tf} in TradingView`}
+                            title={`Open ${tvSymbol} ${tf} in TradingView`}
+                            onClick={() => {
+                              window.open(tvUrl, "_blank", "noopener,noreferrer");
+                            }}
+                            style={{
+                              position: "absolute",
+                              left: 13,
+                              bottom: 42,
+                              width: 34,
+                              height: 34,
+                              border: "none",
+                              borderRadius: 999,
+                              background: "transparent",
+                              cursor: "pointer",
+                              zIndex: 12,
+                              padding: 0,
+                            }}
+                          />
+                        );
+                      })()}
                       <iframe
-                        key={`tv-${symbol}-${tf}-${liveKey}`}
+                        key={`tv-${toTradingViewSymbol(cleanSym, provider)}-${liveTfToTvInterval(tf)}`}
                         title={`tv-${symbol}-${tf}`}
                         className="browser-chart-v1"
                         style={{
@@ -2232,58 +2241,6 @@ export default function SymbolChart({
                         }}
                         src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
-                      {tradeLifecycleMarkers.length > 0 && (
-                        <div
-                          style={{
-                            position: "absolute",
-                            left: 8,
-                            bottom: 8,
-                            display: "flex",
-                            gap: 6,
-                            flexWrap: "wrap",
-                            zIndex: 11,
-                            pointerEvents: "none",
-                          }}
-                        >
-                          {tradeLifecycleMarkers.map((m) => (
-                            <div
-                              key={m.key}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 6,
-                                padding: "3px 6px",
-                                borderRadius: 6,
-                                background: "rgba(2,6,23,0.78)",
-                                border: "1px solid rgba(148,163,184,0.35)",
-                                color: "#e2e8f0",
-                                fontSize: 10,
-                                fontWeight: 700,
-                                lineHeight: 1.1,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  display: "inline-block",
-                                  width: 12,
-                                  height: 12,
-                                  borderRadius: 999,
-                                  background: m.color,
-                                  color: "#0b1220",
-                                  textAlign: "center",
-                                  fontSize: 9,
-                                  fontWeight: 900,
-                                  lineHeight: "12px",
-                                }}
-                              >
-                                {m.short}
-                              </span>
-                              <span>{m.label}</span>
-                              <span style={{ opacity: 0.9 }}>{m.time}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                       <button
                         className="secondary-button"
                         onClick={() => setFullscreenTf(tf)}

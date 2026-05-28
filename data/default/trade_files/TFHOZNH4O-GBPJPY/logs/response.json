@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-05-23T12:21:27.816Z",
+  "session_id": "TFHOZNH4O",
+  "model": "claude-sonnet-4-6",
+  "provider": "claude",
+  "raw_response": "```json\n[{\"symbol\":\"GBPJPY\",\"direction\":\"BUY\",\"order_type\":\"Limit\",\"profile\":\"Intraday\",\"session\":\"London-NY_Overlap\",\"strategy\":\"ICT\",\"entry_model",
+  "parsed_json": {}
+}

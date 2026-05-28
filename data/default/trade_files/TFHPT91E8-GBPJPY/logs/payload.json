@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-05-23T12:39:09.514Z",
+  "session_id": "TFHPT91E8",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "GBPJPY",
+  "symbols": [
+    "GBPJPY"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D"
+  ],
+  "prompt_len": 12401,
+  "files_count": 1,
+  "files": [
+    "GBPJPY_MASTER.jpg"
+  ]
+}

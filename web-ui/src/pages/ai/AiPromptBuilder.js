@@ -1,28 +1,29 @@
-import TRADE_PLAN_SCHEMA from "../../../../config/trade_plan_schema.json";
-import GUIDE_SYSTEM from "../../../../config/guide_system.md?raw";
-import SCHEMA_ENUMS from "../../../../config/schema_enums.json";
+import TRADE_PLAN_SCHEMA from "../../../../config/schema/trade.json";
+import ANALYSIS_SCHEMA from "../../../../config/schema/analysis.json";
+import GUIDE_SYSTEM from "../../../../config/guide/system.md?raw";
+import SCHEMA_CONFIG from "../../../../config/config.json";
+
+// Merge analysis.json into trade_plan_schema.analysis (backend does this at runtime too)
+const MERGED_TRADE_PLAN_SCHEMA = {
+  ...TRADE_PLAN_SCHEMA,
+  analysis: ANALYSIS_SCHEMA,
+};
 
 // AI Prompt Builder — constants and functions for building AI analysis prompts
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STRATEGY OPTIONS
+// STRATEGY OPTIONS (from config.json — underscore → space for display)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const STRATEGY_OPTIONS = [
-  "ICT",
-  "SMC",
-  "Price Action",
-  "Market Structure",
-  "Wyckoff",
-  "EMA Trend",
-  "Breakout",
-  "VWAP",
-  "Mean Reversion",
-  "Order Flow",
-  "Volatility",
-  "Trend Following",
-  "Divergence",
-];
+function configToDisplay(s) {
+  return String(s || "").replace(/_/g, " ");
+}
+
+export const STRATEGY_OPTIONS = (SCHEMA_CONFIG.strategy || []).map(configToDisplay);
+export const ORDER_SIDES = SCHEMA_CONFIG.order_side || ["BUY", "SELL"];
+export const TF_WEIGHTS = SCHEMA_CONFIG.timeframe_weights || {};
+export const DEFAULT_TF_TABS = SCHEMA_CONFIG.default_tf_tabs || ["ENTRY","1m","5m","15m","1h","4h","d","W"];
+export const DEFAULT_WATCHLIST = SCHEMA_CONFIG.default_watchlist || ["EURUSD","GBPUSD","USDJPY","BTCUSD","ETHUSD","XAUUSD","US30"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STRATEGY → ENTRY MODELS → CHECKLIST
@@ -851,8 +852,8 @@ export const DEFAULT_CONFIG = {
 //       JSON.stringify strips them — the AI receives clean JSON.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const AI_RESPONSE_SCHEMA_VERSION = "3.0";
-export const AI_RESPONSE_SCHEMA = [TRADE_PLAN_SCHEMA];
+export const AI_RESPONSE_SCHEMA_VERSION = "3.1";
+export const AI_RESPONSE_SCHEMA = [MERGED_TRADE_PLAN_SCHEMA];
 export const SCHEMA_SYSTEM = AI_RESPONSE_SCHEMA;
 export const SCHEMA_USER_DEFAULT = "{}";
 export const GUIDE_USER_DEFAULT = "";
@@ -903,8 +904,8 @@ export function getEffectiveTfConfig(cfg) {
 // CRITICAL: includes checklist items with weights AND full entry model details —
 // not just names. Without this the AI cannot score confluence or validate triggers.
 //
-// Source-of-truth: config/guide_strategies.md (parsed at import time).
-import strategiesRaw from "../../../../config/guide_strategies.md?raw";
+// Source-of-truth: config/guide/strategies.md (parsed at import time).
+import strategiesRaw from "../../../../config/guide/strategies.md?raw";
 
 function parseStrategyGuide(md) {
   const strategies = {};
@@ -1038,7 +1039,82 @@ export function buildSchemaString(userSchemaJson) {
 
 // Builds enum and constraint reference appended after the schema.
 export function buildEnumString() {
-  return JSON.stringify(SCHEMA_ENUMS, null, 2);
+  // config.json has all fields at top level.
+  // Separate enum arrays from scoring/grade metadata to match old prompt format.
+  const ENUM_KEYS = new Set([
+    "htf_timeframe",
+    "ltf_timeframe",
+    "trend",
+    "structure",
+    "phase",
+    "bias",
+    "direction",
+    "order_side",
+    "order_type",
+    "profile",
+    "session",
+    "broker_name",
+    "ltf_structure",
+    "macro",
+    "strategy",
+    "entry_model",
+    "weight",
+    "confidence",
+    "poi_freshness",
+    "ob_freshness",
+    "ob_type",
+    "fvg_type",
+    "liquidity_type",
+    "poi_type",
+    "premium_discount_position",
+    "choch_sub_type",
+    "choch_type",
+    "choch_used_as",
+    "mss_type",
+    "bos_type",
+    "candle_pattern",
+    "fib_level",
+    "harmonic_type",
+    "divergence_indicator",
+    "divergence_class",
+    "wyckoff_phase",
+    "wyckoff_event",
+    "wyckoff_range_type",
+    "vsa_signal",
+    "volume_level",
+    "idm_type",
+    "entry_trigger_type",
+    "news_impact",
+    "assets_checked",
+    "correlation_alignment",
+    "overextension_risk",
+    "breakeven_condition",
+    "tp1_logic",
+    "tp2_logic",
+    "tp3_logic",
+    "when_price",
+    "risk_grade",
+    "suggested_action",
+    "checklist_ai_confirm",
+    "zone_relevance",
+    "zone_status",
+  ]);
+  const enums = {};
+  const meta = {};
+  for (const [k, v] of Object.entries(SCHEMA_CONFIG)) {
+    if (ENUM_KEYS.has(k)) enums[k] = v;
+    else meta[k] = v;
+  }
+  return JSON.stringify(
+    {
+      schema_version: "3.1",
+      output_format: "single JSON object matching trade_plan_schema.json",
+      enums,
+      ...meta,
+    },
+    null,
+    2,
+  );
 }
 
 export function buildPrompt(cfg, guideUser, schemaUser) {

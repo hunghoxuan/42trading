@@ -1,0 +1,56 @@
+{
+  "symbol": "",
+  "direction": "BUY|SELL",
+  "order_type": "",
+  "strategy": "",
+  "profile": "",
+  "session": "",
+  "entry_model": "",
+  "broker_name": "",
+  "analysis": {},
+  "risk_management": {
+    "risk": "very_high|high|medium|low|none",
+    "volumn": "100|50",
+    "suggested_action": "Proceed_Full|Process_Small|Skip_News|Skip_Low_Confluence|Skip_Late_Entry|Skip_Spread|Skip_Counter_Trend"
+  },
+  "execution_plan": {
+    "pre_entry_invalidation": {
+      "when_price": "greater_than|less_than|equal_to",
+      "price": null
+    },
+    "entry": {
+      "price": null,
+      "reference": "",
+      "invalidation_note": ""
+    },
+    "stop_loss": {
+      "price": null,
+      "reference": ""
+    },
+    "breakeven_trigger": {
+      "condition": "After_TP1|At_1R|Manual",
+      "price": null
+    },
+    "tp1": {
+      "price": null,
+      "rr": null,
+      "pct": 40,
+      "logic": "IDM|EQH|EQL|OB_Mitigation|FVG_Fill|Session_High_Low|Fib_0.618|Nearest_Liquidity",
+      "move_sl_to": null
+    },
+    "tp2": {
+      "price": null,
+      "rr": null,
+      "pct": 35,
+      "logic": "HTF_POI|BSL_SSL|Swing_High_Low|Fib_1.618|Supply_Demand_Zone",
+      "move_sl_to": null
+    },
+    "tp3": {
+      "price": null,
+      "rr": null,
+      "pct": 25,
+      "logic": "Draw_on_Liquidity|Weekly_Level|Monthly_Level|Fib_2.618|Elliott_Wave_Target",
+      "note": "Trail or let run"
+    }
+  }
+}

@@ -61,7 +61,7 @@ function fDateTime(v) {
 function formatNum3(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "";
-  return String(Number(n.toFixed(3)));
+  return parseFloat(n.toFixed(8)).toString();
 }
 function asFiniteOrNull(v) {
   const n = asNum(v);

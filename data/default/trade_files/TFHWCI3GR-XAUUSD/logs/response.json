@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-05-23T15:00:26.595Z",
+  "session_id": "TFHWCI3GR",
+  "model": "claude-sonnet-4-6",
+  "provider": "claude",
+  "raw_response": "```json\n[{\"symbol\":\"XAUUSD\",\"direction\":\"SELL\",\"order_type\":\"Limit\",\"profile\":\"Intraday\",\"session\":\"London-NY_Overlap\",\"strategy\":\"ICT\",\"entry_model\":\"Sweep+MSS+OB\",\"context\":{\"htf_bias\":\"Bearish\",\"htf\":\"1D\",\"entry_tf\":\"1h\",\"ltf_structure\":\"Downtrend\",\"macro\":\"Risk_Off\",\"draw_on_liquidity\":\"4493 SSL / EQL lows near 4480\",\"daily_bias_note\":\"Daily chart shows clear distribution from ~5400 peak, price rejected from 4600 area and continues lower. Current price 4509 is in premium relative to recent swing lows. Bearish structure intact on 4h and 1D.\"},\"analysis\":{\"htf_context\":{\"liquidity_swept\":{\"status\":",
+  "parsed_json": {}
+}

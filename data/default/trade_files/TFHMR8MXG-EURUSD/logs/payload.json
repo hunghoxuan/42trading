@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-23T11:33:08.232Z",
+  "session_id": "TFHMR8MXG",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "EURUSD",
+  "symbols": [
+    "EURUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 12259,
+  "files_count": 1,
+  "files": [
+    "EURUSD_MASTER.png"
+  ]
+}

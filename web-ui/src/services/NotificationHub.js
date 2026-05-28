@@ -46,6 +46,36 @@ function emit(evt, sub, pay) {
       }),
     );
   }
+  // Persist server-driven snapshot events into hub history
+  // so cron/internal snapshots also show in Notification bell list.
+  try {
+    var evName = String((pay && pay.event) || evt || "").toLowerCase();
+    if (evName === "snapshot_created") {
+      var symbol = String((pay && pay.symbol) || "").toUpperCase();
+      var timeframe = String((pay && pay.timeframe) || "");
+      var now = Date.now();
+      var list = load();
+      var reqId = "snapshot_evt_" + now + "_" + Math.random().toString(36).slice(2, 6);
+      list.push({
+        requestId: reqId,
+        type: "snapshot",
+        symbol: symbol,
+        status: "ok",
+        createdAt: now,
+        completedAt: now,
+        extra: timeframe ? "TF: " + timeframe : "",
+        data: pay || {},
+        meta: pay || {},
+      });
+      save(list);
+      window.dispatchEvent(new CustomEvent("hub-result", { detail: list[list.length - 1] }));
+      if (bc) {
+        try {
+          bc.postMessage({ type: "hub-result", entry: list[list.length - 1] });
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
 }
 
 function on(evt, fn) {

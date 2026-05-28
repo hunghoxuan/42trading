@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TradeFileUpload } from "./TradeFileUpload";
 import { normalizeOrderTypeValue } from "../utils/signalDetailUtils";
+import { ORDER_SIDES } from "../pages/ai/AiPromptBuilder";
 
 const numericInlineRowStyle = {
   display: "grid",
@@ -424,7 +425,7 @@ export function TradePlanEditor({
   const tradeFieldsDisabled = disabled || normalizedLockMode === "all";
   const controlsDisabled =
     disabled || Boolean(busy?.save || busy?.draft || busy?.trade);
-  const directionOptions = useMemo(() => ["", "BUY", "SELL"], []);
+  const directionOptions = useMemo(() => ["", ...ORDER_SIDES], []);
 
   const update = useCallback(
     (key, val) => {

@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-27T08:21:06.197Z",
+  "session_id": "TFOSJ67SL",
+  "model": "claude-sonnet-4-0",
+  "provider": "claude",
+  "symbol": "ADAUSD",
+  "symbols": [
+    "ADAUSD"
+  ],
+  "timeframe": "15m",
+  "timeframes": [
+    "D",
+    "4H",
+    "15M",
+    "5M"
+  ],
+  "prompt_len": 43900,
+  "files_count": 1,
+  "files": [
+    "ADAUSD_MASTER.png"
+  ]
+}
