@@ -154,7 +154,7 @@ const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
 const GLOBAL_DATA_DIR = path.resolve(ROOT_DIR, "..", "data");
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.24 20:32 - c61346bd",
+  "v2026.05.28 12:18 - d008212f",
 ); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
@@ -941,7 +941,7 @@ function bumpPulse(userId = null, action = "updated", itemType = "general") {
     position: "bottom-right",
   });
 }
-const CHART_SNAPSHOT_DIR = path.resolve(ROOT_DIR, "market_data");
+const CHART_SNAPSHOT_DIR = path.resolve(GLOBAL_DATA_DIR, "market_data");
 const CHART_SNAPSHOT_CLAUDE_MAP_FILE = path.join(
   CHART_SNAPSHOT_DIR,
   ".claude-files.json",
