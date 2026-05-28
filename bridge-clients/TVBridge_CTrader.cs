@@ -92,7 +92,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.28 15:10 - thread-fix-safeack";
+        private const string BuildVersion = "v2026.05.29 00:20 - tick-thread-fix";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -226,7 +226,7 @@ namespace cAlgo.Robots
             // Timer removed — Watchdog handles everything via BeginInvokeOnMainThread
             _lastTimerTickSeen = DateTime.Now;
             StartTimerWatchdog();
-            BeginInvokeOnMainThread(() => OnTimer());
+            // OnTick handles all periodic work on main thread
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
         }
@@ -260,16 +260,13 @@ namespace cAlgo.Robots
             if (SelectedStrategy != ManagementStrategy.None)
                 ManagePositions();
 
-            // cTrader timer can occasionally stall on some instances.
-            // Fallback: if no timer tick was seen recently, kick one bridge cycle from OnTick.
+            // Main thread timer: run DoTimerWork every PollSeconds
             var now = DateTime.Now;
-            var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
-            if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
-                (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+            if ((now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
             {
                 _lastTickFallbackKick = now;
-                if (_pollCount <= 3) Print("[Diag] OnTick fallback kick (timer stale for >= {0}s)", timerStaleSeconds);
-                BeginInvokeOnMainThread(() => OnTimer());
+                _lastTimerTickSeen = now;
+                DoTimerWork();
             }
         }
 
@@ -422,9 +419,15 @@ namespace cAlgo.Robots
             }
         }
 
+        // OnTimer runs on background thread — redirect to OnTick (main thread)
         protected override void OnTimer()
         {
             _lastTimerTickSeen = DateTime.Now;
+        }
+
+        // DoTimerWork runs on main thread via OnTick or OnStart
+        private void DoTimerWork()
+        {
             if (_isBusy) return;
             _isBusy = true;
             try
