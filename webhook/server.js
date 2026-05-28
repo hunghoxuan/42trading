@@ -8494,9 +8494,9 @@ END
 
   const storage = "postgres";
 
-  // Drizzle ORM — type-safe queries, share same pool
+  // Drizzle ORM — multi-backend (PostgreSQL or SQLite)
   const { initDb } = require("../db");
-  const db = initDb(pool);
+  const db = initDb({ pool });
   const schema = require("../db/schema.js");
 
   // Migration: JSONB → TEXT for SQLite compatibility

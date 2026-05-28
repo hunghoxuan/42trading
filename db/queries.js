@@ -1,4 +1,4 @@
-const { eq, ilike, or, and, gte, lte, inArray, desc, sql, count } = require("drizzle-orm");
+const { eq, like, or, and, gte, lte, inArray, desc, sql, count } = require("drizzle-orm");
 const schema = require("./schema.js");
 
 async function listTradesV2(db, filters = {}, page = 1, pageSize = 50) {
@@ -21,7 +21,7 @@ async function listTradesV2(db, filters = {}, page = 1, pageSize = 50) {
   if (filters.chart_tf) conditions.push(eq(schema.trades.chartTf, filters.chart_tf));
   if (filters.q) {
     const q = "%" + String(filters.q) + "%";
-    conditions.push(or(ilike(schema.trades.sid, q), ilike(schema.trades.brokerTradeId, q), ilike(schema.trades.symbol, q), ilike(schema.trades.accountId, q), ilike(schema.trades.sourceId, q), ilike(schema.trades.action, q), ilike(schema.trades.entryModel, q), ilike(schema.trades.note, q)));
+    conditions.push(or(like(schema.trades.sid, q), like(schema.trades.brokerTradeId, q), like(schema.trades.symbol, q), like(schema.trades.accountId, q), like(schema.trades.sourceId, q), like(schema.trades.action, q), like(schema.trades.entryModel, q), like(schema.trades.note, q)));
   }
   const where = conditions.length ? and(...conditions) : undefined;
   const countRes = await db.select({ count: count() }).from(schema.trades).where(where);
