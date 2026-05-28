@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api, setRuntimeActiveUserId } from "../../api";
 import UserDetailSection from "../../components/UserDetailSection";
+import PaginationBar from "../../components/PaginationBar";
+import SearchFilterBar from "../../components/SearchFilterBar";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 const ROLE_OPTIONS = ["System", "Admin", "User", "Guest"];
 const ACCOUNT_STATUS_OPTIONS = ["ACTIVE", "INACTIVE"];
@@ -33,6 +36,7 @@ function statusLabel(v) {
 }
 
 export default function UsersPage({ authUser }) {
+  const confirm = useConfirmDialog();
   const { userId } = useParams();
   const navigate = useNavigate();
   const EMPTY_ALERT = { type: "", text: "" };
@@ -293,9 +297,12 @@ export default function UsersPage({ authUser }) {
   async function onDeactivateUser() {
     if (!selectedUser) return;
     if (
-      !window.confirm(
-        `Deactivate ${selectedUser.name || selectedUser.user_id}?`,
-      )
+      !(await confirm({
+        title: "Deactivate user?",
+        message: `Deactivate ${selectedUser.name || selectedUser.user_id}?`,
+        confirmLabel: "Deactivate",
+        tone: "danger",
+      }))
     )
       return;
     try {
@@ -323,9 +330,12 @@ export default function UsersPage({ authUser }) {
     }
     const ids = Array.from(checkedUserIds);
     if (
-      !window.confirm(
-        `Are you sure you want to ${bulkAction.toLowerCase()} ${ids.length} users?`,
-      )
+      !(await confirm({
+        title: "Confirm bulk action",
+        message: `Are you sure you want to ${bulkAction.toLowerCase()} ${ids.length} users?`,
+        confirmLabel: bulkAction,
+        tone: "danger",
+      }))
     )
       return;
     try {
@@ -432,7 +442,15 @@ export default function UsersPage({ authUser }) {
 
   async function onDeactivateAccount(account) {
     if (!selectedUser || !account) return;
-    if (!window.confirm(`Deactivate account ${account.account_id}?`)) return;
+    if (
+      !(await confirm({
+        title: "Deactivate account?",
+        message: `Deactivate account ${account.account_id}?`,
+        confirmLabel: "Deactivate",
+        tone: "danger",
+      }))
+    )
+      return;
     try {
       setSaving(true);
       await api.updateUserAccount(selectedUser.user_id, account.account_id, {
@@ -462,58 +480,36 @@ export default function UsersPage({ authUser }) {
 
       <div className="toolbar-panel">
         <div className="toolbar-group toolbar-pagination">
-          {pages > 1 ? (
-            <div className="pager-mini">
-              <button
-                className="secondary-button"
-                disabled={safePage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                &lt;
-              </button>
-              <span className="minor-text">
-                {safePage}/{pages}
-              </span>
-              <button
-                className="secondary-button"
-                disabled={safePage >= pages}
-                onClick={() => setPage((p) => Math.min(pages, p + 1))}
-              >
-                &gt;
-              </button>
-            </div>
-          ) : null}
-          <select
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-          >
-            {PAGE_SIZE_OPTIONS.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+          <PaginationBar
+            page={safePage}
+            pages={pages}
+            label={`${safePage}/${pages}`}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
 
-        <div className="toolbar-group toolbar-search-filter">
-          <input
-            placeholder="SEARCH USER, EMAIL..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{ width: "220px" }}
-          />
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-          >
-            <option value="">ALL ROLES</option>
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SearchFilterBar
+          search={{
+            placeholder: "SEARCH USER, EMAIL...",
+            value: searchQuery,
+            onChange: setSearchQuery,
+            style: { width: "220px" },
+          }}
+          filters={[
+            {
+              key: "role",
+              value: roleFilter,
+              onChange: setRoleFilter,
+              options: [
+                { value: "", label: "ALL ROLES" },
+                ...ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
+              ],
+            },
+          ]}
+        />
 
         <div className="toolbar-group toolbar-bulk-action">
           <select

@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
+import MasterDetailLayout from "../../components/MasterDetailLayout";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function timeAgo(ms) {
   if (!ms) return null;
@@ -90,6 +92,7 @@ function JsonViewer({ data }) {
 }
 
 export default function CachePage() {
+  const confirm = useConfirmDialog();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedKey, setSelectedKey] = useState(null);
@@ -165,9 +168,13 @@ export default function CachePage() {
   async function handleDelete(key = "", source = "") {
     if (
       !key &&
-      !window.confirm(
-        "Clear ALL cache? This includes Redis, memory, and database market data buffers.",
-      )
+      !(await confirm({
+        title: "Clear all cache?",
+        message:
+          "Clear ALL cache? This includes Redis, memory, and database market data buffers.",
+        confirmLabel: "Clear",
+        tone: "danger",
+      }))
     )
       return;
     try {
@@ -265,14 +272,10 @@ export default function CachePage() {
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "400px 1fr",
-          gap: 20,
-          height: "100%",
-          overflow: "hidden",
-        }}
+      <MasterDetailLayout
+        sidebarWidth={400}
+        gap={20}
+        style={{ height: "100%", overflow: "hidden", marginTop: 0 }}
       >
         {/* Left Column: List */}
         <div className="panel" style={{ overflowY: "auto", padding: 0 }}>
@@ -452,7 +455,7 @@ export default function CachePage() {
             </div>
           )}
         </div>
-      </div>
+      </MasterDetailLayout>
     </div>
   );
 }

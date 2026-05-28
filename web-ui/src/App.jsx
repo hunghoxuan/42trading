@@ -32,6 +32,7 @@ import NotificationDot from "./components/NotificationDot";
 
 import ToastContainer from "./components/ToastContainer";
 import { normalizeDisplayTimezone } from "./utils/format";
+import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 
 export default function App() {
   const [serverVersion, setServerVersion] = useState("");
@@ -165,6 +166,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <ConfirmDialogProvider>
       <NotificationWatcher />
       <ToastContainer />
       <header className="topbar">
@@ -564,6 +566,7 @@ export default function App() {
           </Routes>
         </Suspense>
       </main>
+      </ConfirmDialogProvider>
     </div>
   );
 }

@@ -2,10 +2,8 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
-
-function fDateTime(v) {
-  return showDateTime(v);
-}
+import PaginationBar from "../../components/PaginationBar";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function getEventId(ev) {
   return ev?.log_id ?? ev?.id ?? "";
@@ -68,6 +66,7 @@ const RANGE_OPTIONS = [
 ];
 
 export default function LogsPage() {
+  const confirm = useConfirmDialog();
   const { logId } = useParams();
   const navigate = useNavigate();
   const [events, setEvents] = useState([]);
@@ -122,7 +121,15 @@ export default function LogsPage() {
 
   async function onBulkOk() {
     if (bulkAction === "Delete All Log") {
-      if (!window.confirm("CRITICAL: DELETE ALL EVENTS/LOGS?")) return;
+      if (
+        !(await confirm({
+          title: "Delete all events/logs?",
+          message: "CRITICAL: DELETE ALL EVENTS/LOGS?",
+          confirmLabel: "Delete All",
+          tone: "danger",
+        }))
+      )
+        return;
       try {
         setLoading(true);
         await api.deleteEvents();
@@ -214,41 +221,26 @@ export default function LogsPage() {
           <div className="pager-area">
             <strong>{events.length}</strong>
             {!(page === 0 && events.length < pageSize) && (
-              <div className="pager-mini">
-                <button
-                  className="secondary-button"
-                  disabled={page === 0}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  &lt;
-                </button>
-                <span className="minor-text">{page + 1}</span>
-                <button
-                  className="secondary-button"
-                  disabled={events.length < pageSize}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  &gt;
-                </button>
-              </div>
+              <PaginationBar
+                page={page + 1}
+                pages={events.length < pageSize ? page + 1 : page + 2}
+                label={String(page + 1)}
+                onPageChange={(nextPage) => setPage(Math.max(0, nextPage - 1))}
+              />
             )}
-            <label htmlFor="logs-page-size" className="sr-only">
-              Page Size
-            </label>
-            <select
-              id="logs-page-size"
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
+            <PaginationBar
+              page={1}
+              pages={1}
+              label=""
+              pageSize={pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              showControls={false}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize);
                 setPage(0);
               }}
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+              style={{ display: "contents" }}
+            />
           </div>
         </div>
 
@@ -418,7 +410,7 @@ export default function LogsPage() {
                     </td>
                     <td>
                       <span className="minor-text">
-                        {fDateTime(getEventTime(ev))}
+                        {showDateTime(getEventTime(ev))}
                       </span>
                     </td>
                   </tr>
@@ -443,10 +435,10 @@ export default function LogsPage() {
                   EVENT DETAILS #{getEventId(selectedEvent)}
                 </div>
                 <div className="minor-text">
-                  {fDateTime(getEventTime(selectedEvent))}
+                  {showDateTime(getEventTime(selectedEvent))}
                   {getEventUpdatedAt(selectedEvent) !== getEventTime(selectedEvent) && (
                     <div style={{ fontSize: 10, opacity: 0.6 }}>
-                      updated: {fDateTime(getEventUpdatedAt(selectedEvent))}
+                      updated: {showDateTime(getEventUpdatedAt(selectedEvent))}
                     </div>
                   )}
                 </div>

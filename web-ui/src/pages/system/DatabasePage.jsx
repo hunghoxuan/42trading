@@ -3,6 +3,8 @@ import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 
 import { showDateTime } from "../../utils/format";
+import PaginationBar from "../../components/PaginationBar";
+import SearchFilterBar from "../../components/SearchFilterBar";
 
 // Columns hidden in COMPACT preset (verbose/metadata/raw/internal)
 const COMPACT_HIDE = [
@@ -18,10 +20,6 @@ const COMPACT_HIDE = [
   "rejection_reason",
   "source_ids_cache",
 ];
-
-function fDateTime(v) {
-  return showDateTime(v);
-}
 
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
@@ -392,70 +390,53 @@ export default function DatabasePage() {
       <h2 className="page-title">DB</h2>
       <div className="toolbar-panel">
         <div className="toolbar-group toolbar-pagination">
-          {pages > 1 && (
-            <div className="pager-mini">
-              <button
-                className="secondary-button"
-                disabled={filter.page <= 1}
-                onClick={() => handlePageChange(filter.page - 1)}
-              >
-                &lt;
-              </button>
-              <span className="minor-text">
-                {filter.page}/{pages}
-              </span>
-              <button
-                className="secondary-button"
-                disabled={filter.page >= pages}
-                onClick={() => handlePageChange(filter.page + 1)}
-              >
-                &gt;
-              </button>
-            </div>
-          )}
+          <PaginationBar
+            page={filter.page}
+            pages={pages}
+            label={`${filter.page}/${pages}`}
+            onPageChange={handlePageChange}
+          />
           <div className="minor-text" style={{ marginLeft: "10px" }}>
             TOTAL: {total}
           </div>
 
-          <select
-            value={filter.pageSize}
-            onChange={(e) =>
+          <PaginationBar
+            page={1}
+            pages={1}
+            pageSize={filter.pageSize}
+            pageSizeOptions={[50, 100, 200]}
+            showControls={false}
+            onPageSizeChange={(pageSize) =>
               setFilter((f) => ({
                 ...f,
-                pageSize: Number(e.target.value),
+                pageSize,
                 page: 1,
               }))
             }
-          >
-            {[50, 100, 200].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="toolbar-group toolbar-search-filter">
-          <select
-            value={selectedTable}
-            onChange={handleTableChange}
-            style={{ minWidth: "140px" }}
-          >
-            {tables.map((t) => (
-              <option key={t} value={t}>
-                {t.toUpperCase()}
-              </option>
-            ))}
-          </select>
-
-          <input
-            type="text"
-            placeholder="SEARCH RECORDS..."
-            value={filter.q}
-            onChange={handleSearchChange}
-            style={{ width: "180px" }}
+            style={{ display: "contents" }}
           />
         </div>
+
+        <SearchFilterBar
+          search={{
+            placeholder: "SEARCH RECORDS...",
+            value: filter.q,
+            onChange: (value) => handleSearchChange({ target: { value } }),
+            style: { width: "180px" },
+          }}
+          filters={[
+            {
+              key: "table",
+              value: selectedTable,
+              onChange: (value) => handleTableChange({ target: { value } }),
+              style: { minWidth: "140px" },
+              options: tables.map((table) => ({
+                value: table,
+                label: table.toUpperCase(),
+              })),
+            },
+          ]}
+        />
 
         <button
           type="button"
@@ -648,7 +629,7 @@ export default function DatabasePage() {
                             <div className="cell-wrap">
                               <div className="minor-text">
                                 {isDate
-                                  ? fDateTime(val)
+                                  ? showDateTime(val)
                                   : String(val ?? "-").slice(0, 50)}
                               </div>
                             </div>

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 export default function StoragePage() {
+  const confirm = useConfirmDialog();
   const [stats, setStats] = useState(null);
   const [canHardDiskCleanup, setCanHardDiskCleanup] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -38,7 +40,15 @@ export default function StoragePage() {
         ? "Clean all data caches? This will flush Redis, truncate market_data (bars) table, and clear memory cache. This will force a reload of all chart data."
       : `Are you sure you want to delete all ${target}? This cannot be undone.`;
 
-    if (!window.confirm(confirmMsg)) return;
+    if (
+      !(await confirm({
+        title: "Confirm cleanup",
+        message: confirmMsg,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    )
+      return;
 
     try {
       setBusy(true);

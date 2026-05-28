@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showDateTime } from "../../utils/format";
+import PaginationBar from "../../components/PaginationBar";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function formatBytes(value) {
   const n = Number(value || 0);
@@ -50,6 +52,7 @@ function fileType(item) {
 }
 
 export default function SnapshotsPage() {
+  const confirm = useConfirmDialog();
   const [source, setSource] = useState("vps");
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState({ q: "", type: "", page: 1, pageSize: 48 });
@@ -176,7 +179,15 @@ export default function SnapshotsPage() {
   const deleteOne = async (item) => {
     const key = fileKey(source, item);
     if (!key) return;
-    if (!window.confirm(`Delete ${item.file_name || key}?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete file?",
+        message: `Delete ${item.file_name || key}?`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    )
+      return;
     await deleteFiles(source === "claude" ? { file_ids: [key] } : { files: [key] });
   };
 
@@ -185,7 +196,15 @@ export default function SnapshotsPage() {
       setStatus({ type: "warning", text: "No files to delete." });
       return;
     }
-    if (!window.confirm(`Delete all ${source === "claude" ? "Claude" : "VPS"} files shown here?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete visible files?",
+        message: `Delete all ${source === "claude" ? "Claude" : "VPS"} files shown here?`,
+        confirmLabel: "Delete All",
+        tone: "danger",
+      }))
+    )
+      return;
     if (source === "claude") {
       const ids = items.map((it) => fileKey(source, it)).filter(Boolean);
       await deleteFiles({ file_ids: ids });
@@ -285,16 +304,17 @@ export default function SnapshotsPage() {
         <div className="toolbar-group toolbar-pagination">
           <div className="pager-area">
             <strong>{total}</strong>
-            {pages > 1 ? (
-              <div className="pager-mini">
-                <button className="secondary-button" type="button" disabled={currentPage <= 1} onClick={() => setFilter((f) => ({ ...f, page: Math.max(1, currentPage - 1) }))}>&lt;</button>
-                <span className="minor-text">{currentPage}/{pages}</span>
-                <button className="secondary-button" type="button" disabled={currentPage >= pages} onClick={() => setFilter((f) => ({ ...f, page: Math.min(pages, currentPage + 1) }))}>&gt;</button>
-              </div>
-            ) : null}
-            <select value={filter.pageSize} onChange={(e) => setFilter((f) => ({ ...f, pageSize: Number(e.target.value), page: 1 }))}>
-              {PAGE_SIZE_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
+            <PaginationBar
+              page={currentPage}
+              pages={pages}
+              label={`${currentPage}/${pages}`}
+              pageSize={filter.pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageChange={(page) => setFilter((f) => ({ ...f, page }))}
+              onPageSizeChange={(pageSize) =>
+                setFilter((f) => ({ ...f, pageSize, page: 1 }))
+              }
+            />
           </div>
         </div>
 

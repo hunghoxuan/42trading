@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import { parseTextList } from "../../utils/textList";
+import MasterDetailLayout from "../../components/MasterDetailLayout";
+import SidebarListItem from "../../components/SidebarListItem";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -94,20 +98,6 @@ const SYMBOLS_GROUP_LABELS = {
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-function parseTextList(value, uppercase = false) {
-  return [
-    ...new Set(
-      String(value || "")
-        .split(/[\n,]/)
-        .map((s) => {
-          const trimmed = s.trim();
-          return uppercase ? trimmed.toUpperCase() : trimmed;
-        })
-        .filter(Boolean),
-    ),
-  ];
-}
 
 function symbolsToText(arr) {
   return Array.isArray(arr) ? arr.join("\n") : "";
@@ -265,6 +255,7 @@ function formToDataPayload(form, symbolsGroup = "") {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function CronPage() {
+  const confirm = useConfirmDialog();
   const [settings, setSettings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -429,7 +420,14 @@ export default function CronPage() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedCron || isNewCron) return;
-    if (!window.confirm(`Delete cron "${selectedCron.name}"? This cannot be undone.`))
+    if (
+      !(await confirm({
+        title: "Delete cron?",
+        message: `Delete cron "${selectedCron.name}"? This cannot be undone.`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    )
       return;
     setSaveLoading(true);
     try {
@@ -532,14 +530,7 @@ export default function CronPage() {
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
       <h1 className="page-title">Cron Jobs</h1>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "280px 1fr",
-          gap: 24,
-          marginTop: 12,
-        }}
-      >
+      <MasterDetailLayout>
         {/* ── Left: Cron List ─────────────────────────────── */}
         <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
           <div
@@ -572,23 +563,16 @@ export default function CronPage() {
               }}
             >
               {CRON_TYPES.map((ct) => (
-                <button
+                <SidebarListItem
                   key={ct.value}
-                  className="sidebar-item-v2"
+                  title={ct.label}
+                  subtitle={ct.description}
                   style={{
                     fontSize: 10,
                     padding: "6px 10px",
-                    textAlign: "left",
                   }}
                   onClick={() => handleNewCron(ct.value)}
-                >
-                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontWeight: 700 }}>{ct.label}</span>
-                    <span className="minor-text" style={{ fontSize: 9, fontWeight: 400 }}>
-                      {ct.description}
-                    </span>
-                  </div>
-                </button>
+                />
               ))}
             </div>
           )}
@@ -605,28 +589,17 @@ export default function CronPage() {
                 String(cron.status || "").toUpperCase() === "ACTIVE";
 
               return (
-                <button
+                <SidebarListItem
                   key={cron.name}
-                  className={`sidebar-item-v2 ${selectedCronName === cron.name ? "active" : ""}`}
+                  active={selectedCronName === cron.name}
+                  enabled={isCronActive}
+                  title={cron.name}
+                  subtitle={ctLabel}
                   onClick={() => {
                     setSelectedCronName(cron.name);
                     setShowNewCronPicker(false);
                   }}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "8px 12px",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: isCronActive ? "#22c55e" : "#666", flexShrink: 0 }} />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                      <span style={{ fontWeight: 700, fontSize: 12 }}>{cron.name}</span>
-                      <span className="minor-text" style={{ fontSize: 9 }}>{ctLabel}</span>
-                    </div>
-                  </div>
-                </button>
+                />
               );
             })
           )}
@@ -1239,7 +1212,7 @@ export default function CronPage() {
             </>
           )}
         </div>
-      </div>
+      </MasterDetailLayout>
     </div>
   );
 }

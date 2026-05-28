@@ -13,8 +13,12 @@ import {
   SymbolEntryCell,
 } from "../../components/TradeSignalListCells";
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
+import PnlDisplay from "../../components/PnlDisplay";
+import PaginationBar from "../../components/PaginationBar";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 import {
   asNum,
+  asFiniteOrNull,
   buildHeaderMeta,
   buildRrVolRiskText,
   renderHistoryItem,
@@ -22,6 +26,7 @@ import {
   applyLinkedPlanChange,
   formatNum3,
 } from "../../utils/signalDetailUtils";
+import { getBrokerTicket } from "../../utils/tradeRow";
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
@@ -51,10 +56,6 @@ const RANGE_OPTIONS = [
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
 
 import { showDateTime } from "../../utils/format";
-
-function fDateTime(v) {
-  return showDateTime(v);
-}
 
 function formatTimeframe(min) {
   if (!min || min === "manual") return min || "-";
@@ -112,10 +113,6 @@ function brokerNameFromAccount(a) {
   return String(m.broker_name || m.broker || m.platform || "-");
 }
 
-function brokerTicketOf(t) {
-  return String(t?.broker_trade_id || t?.ticket || "").trim() || "-";
-}
-
 function tradeKeyOf(t) {
   // Prefer sid (UUID) for URLs, fall back to id for backward compat
   const sid = String(t?.sid || "").trim();
@@ -127,11 +124,6 @@ function tradeKeyOf(t) {
 
 function auditTimestampRaw(t) {
   return t?.created_at || t?.opened_at || t?.closed_at || t?.updated_at || null;
-}
-
-function asFiniteOrNull(v) {
-  const n = asNum(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 function rangeBounds(range) {
@@ -233,6 +225,7 @@ function displaySource(item = {}) {
 }
 
 export default function TradesPage() {
+  const confirm = useConfirmDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { tradeId } = useParams();
@@ -272,16 +265,6 @@ export default function TradesPage() {
     note: "",
   });
 
-  function PnlDisplay({ value }) {
-    const n = asNum(value);
-    if (n == null) return <span className="minor-text">-</span>;
-    const cls = n < 0 ? "money-neg" : "money-pos";
-    return (
-      <span className={cls} style={{ fontWeight: 800 }}>
-        ${n.toFixed(2)}
-      </span>
-    );
-  }
   const DEFAULT_CREATE_FORM = {
     action: "BUY",
     symbol: "",
@@ -460,9 +443,12 @@ export default function TradesPage() {
     if (!bulkAction) return;
     if (bulkAction === "delete_all") {
       const targetCount = selectedIds.size > 0 ? selectedIds.size : rows.length;
-      const ok = window.confirm(
-        `Delete ${targetCount} trade(s)? This cannot be undone.`,
-      );
+      const ok = await confirm({
+        title: "Delete trades?",
+        message: `Delete ${targetCount} trade(s)? This cannot be undone.`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      });
       if (!ok) return;
     }
     try {
@@ -926,47 +912,21 @@ export default function TradesPage() {
         <div className="toolbar-group toolbar-pagination">
           <div className="pager-area">
             <strong>{total}</strong>
-            {pages > 1 && (
-              <div className="pager-mini">
-                <button
-                  className="secondary-button"
-                  disabled={filter.page <= 1}
-                  onClick={() => setFilter((f) => ({ ...f, page: f.page - 1 }))}
-                >
-                  &lt;
-                </button>
-                <span className="minor-text">
-                  {filter.page}/{pages}
-                </span>
-                <button
-                  className="secondary-button"
-                  disabled={filter.page >= pages}
-                  onClick={() => setFilter((f) => ({ ...f, page: f.page + 1 }))}
-                >
-                  &gt;
-                </button>
-              </div>
-            )}
-            <label htmlFor="trades-page-size" className="sr-only">
-              Page Size
-            </label>
-            <select
-              id="trades-page-size"
-              value={filter.pageSize}
-              onChange={(e) =>
+            <PaginationBar
+              page={filter.page}
+              pages={pages}
+              label={`${filter.page}/${pages}`}
+              pageSize={filter.pageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageChange={(page) => setFilter((f) => ({ ...f, page }))}
+              onPageSizeChange={(pageSize) =>
                 setFilter((f) => ({
                   ...f,
-                  pageSize: Number(e.target.value),
+                  pageSize,
                   page: 1,
                 }))
               }
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
 
@@ -1387,7 +1347,7 @@ export default function TradesPage() {
                       const showPnl =
                         stRaw !== "PENDING" && pnl != null && pnl !== 0;
                       const rrDisplay = asNum(t.rr_planned) ?? rr;
-                      const timeValue = fDateTime(auditTimestampRaw(t));
+                      const timeValue = showDateTime(auditTimestampRaw(t));
                       const isSelected =
                         tradeKeyOf(selectedTrade) === tradeKeyOf(t);
                       const flashFields =
@@ -1457,7 +1417,7 @@ export default function TradesPage() {
                               strategy={strategyLabel}
                               timeText={timeValue}
                               sid={String(t.sid || "-")}
-                              brokerId={brokerTicketOf(t)}
+                              brokerId={getBrokerTicket(t)}
                               dispatchStatus={t.dispatch_status}
                               confidence={
                                 t.confidence_pct ||
@@ -1931,7 +1891,7 @@ export default function TradesPage() {
                     },
                     {
                       label: "Broker Ticket",
-                      value: brokerTicketOf(selectedTrade),
+                      value: getBrokerTicket(selectedTrade),
                       group: "identity",
                     },
                     {
@@ -2357,11 +2317,11 @@ export default function TradesPage() {
                     scroll: true,
                     renderItem: (ev, idx) =>
                       renderHistoryItem(ev, idx, {
-                        formatDateTime: fDateTime,
+                        formatDateTime: showDateTime,
                         includeTicket: true,
                       }),
                   }}
-                  formatDateTime={fDateTime}
+                  formatDateTime={showDateTime}
                 />
               </Suspense>
               {createMode ? (

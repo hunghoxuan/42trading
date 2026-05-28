@@ -16,6 +16,7 @@ import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
 import { BrokerTicketBadge } from "./BrokerTicketBadge";
+import { isCurrentAiTradePlan } from "../utils/tradePlanShape";
 
 import { TF_WEIGHTS, DEFAULT_TF_TABS } from "../pages/ai/AiPromptBuilder";
 
@@ -203,20 +204,6 @@ function normalizeRawPlan(p = {}) {
     trade_type: String(src?.type || src?.order_type || "limit").toLowerCase(),
     __canonical_plan: Boolean(canonical),
   };
-}
-
-function isCurrentAiTradePlan(value) {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    value.execution_plan &&
-    typeof value.execution_plan === "object" &&
-    (value.direction ||
-      value.symbol ||
-      value.risk_management ||
-      value.analysis),
-  );
 }
 
 function humanizeInfoKey(key) {

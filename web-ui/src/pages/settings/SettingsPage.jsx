@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import { parseTextList } from "../../utils/textList";
+import { maskSecretPreview } from "../../utils/secrets";
+import MasterDetailLayout from "../../components/MasterDetailLayout";
+import SidebarListItem from "../../components/SidebarListItem";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 // Types excluded from Settings page (have their own dedicated pages)
 const EXCLUDED_TYPES = new Set(["api_key", "cron", "system_config", "notification_config"]);
@@ -18,24 +23,11 @@ function settingStatusClass(status) {
 }
 
 function parseSymbolText(value) {
-  return parseTextList(value, true);
-}
-
-function parseTextList(value, uppercase = false) {
-  return [
-    ...new Set(
-      String(value || "")
-        .split(/[\n,]/)
-        .map((s) => {
-          const trimmed = s.trim();
-          return uppercase ? trimmed.toUpperCase() : trimmed;
-        })
-        .filter(Boolean),
-    ),
-  ];
+  return parseTextList(value, { uppercase: true });
 }
 
 export default function SettingsPage() {
+  const confirm = useConfirmDialog();
   const [settings, setSettings] = useState([]);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState("");
@@ -73,12 +65,6 @@ export default function SettingsPage() {
       return next;
     });
   };
-  const maskSecretPreview = (value) => {
-    const raw = String(value || "");
-    if (!raw) return "";
-    if (raw.length <= 8) return `${raw.slice(0, 1)}****${raw.slice(-1)}`;
-    return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
-  };
   const copySecretToClipboard = async (value, keyName = "Secret") => {
     const text = String(value || "");
     if (!text) {
@@ -113,18 +99,14 @@ export default function SettingsPage() {
     const key = getSettingKey(s);
     const active = String(s.status || "").toUpperCase() === "ACTIVE";
     return (
-      <button
+      <SidebarListItem
         key={key}
-        className={`sidebar-item-v2 ${activeTab === key ? "active" : ""}`}
+        active={activeTab === key}
+        enabled={active}
+        title={s.name}
+        subtitle={typeLabel(s.type)}
         onClick={() => setActiveTab(key)}
-        style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, padding: "8px 12px" }}
-      >
-        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: active ? "#22c55e" : "#666", flexShrink: 0 }} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ fontWeight: 700, fontSize: 12 }}>{s.name}</span>
-          <span className="minor-text" style={{ fontSize: 9 }}>{typeLabel(s.type)}</span>
-        </div>
-      </button>
+      />
     );
   }
 
@@ -209,7 +191,15 @@ export default function SettingsPage() {
   }
 
   async function deleteSetting(type, name) {
-    if (!window.confirm(`Delete setting ${type}/${name}?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete setting?",
+        message: `Delete setting ${type}/${name}?`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    )
+      return;
     setSettingsLoading(true);
     try {
       await api.deleteSetting(type, name || type);
@@ -316,15 +306,7 @@ export default function SettingsPage() {
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
       <h2 className="page-title">Settings</h2>
 
-      <div
-        className="settings-layout-v2"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "280px 1fr",
-          gap: 24,
-          marginTop: 12,
-        }}
-      >
+      <MasterDetailLayout className="settings-layout-v2">
         {/* ── Left: Sidebar ──────────────────────────────────────────────── */}
         <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -567,7 +549,7 @@ export default function SettingsPage() {
             <span className="minor-text">Select a setting to view details.</span>
           )}
         </div>
-      </div>
+      </MasterDetailLayout>
     </div>
   );
 }

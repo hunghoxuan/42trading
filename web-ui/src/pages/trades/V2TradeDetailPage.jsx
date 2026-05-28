@@ -9,27 +9,20 @@ const SignalDetailCard = lazy(
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import {
   asNum,
+  asFiniteOrNull,
   applyLinkedPlanChange,
   buildHeaderMeta,
   renderHistoryItem,
   extractTradePlanFromTrade,
+  formatNum3,
   normalizeOrderTypeValue,
   validateTradePlan,
 } from "../../utils/signalDetailUtils";
 import { showDateTime } from "../../utils/format";
 import { showToast } from "../../components/ToastContainer";
 import { BrokerTicketBadge } from "../../components/BrokerTicketBadge";
-
-function PnlDisplay({ value }) {
-  const n = asNum(value);
-  if (n == null) return <span className="minor-text">-</span>;
-  const cls = n < 0 ? "money-neg" : "money-pos";
-  return (
-    <span className={cls} style={{ fontWeight: 800 }}>
-      ${n.toFixed(2)}
-    </span>
-  );
-}
+import PnlDisplay from "../../components/PnlDisplay";
+import { getBrokerTicket } from "../../utils/tradeRow";
 
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
@@ -38,10 +31,6 @@ function statusUi(statusRaw) {
   if (s === "ERROR" || s === "FAIL") return { cls: "FAIL", label: s };
   if (s === "PENDING" || s === "NEW") return { cls: "OTHER", label: "PENDING" };
   return { cls: "OTHER", label: s || "PENDING" };
-}
-
-function brokerTicketOf(t) {
-  return String(t?.broker_trade_id || t?.ticket || "").trim() || "-";
 }
 
 function formatTimeframe(value) {
@@ -53,20 +42,6 @@ function formatTimeframe(value) {
   if (n < 43200) return `${n / 10080}W`;
   if (n === 43200) return "1M";
   return `${n / 43200}M`;
-}
-
-function fDateTime(v) {
-  return showDateTime(v);
-}
-
-function formatNum3(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  return parseFloat(n.toFixed(8)).toString();
-}
-function asFiniteOrNull(v) {
-  const n = asNum(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 function inferDirection(entry, tp, sl, fallback = "BUY") {
@@ -230,7 +205,7 @@ export default function TradeDetailPage() {
     const aiEta = asNum(detailPlan.estimated_bars);
     const aiAction = detailPlan.skip_recommendation || "";
     const sidText = String(trade.sid || trade.signal_sid || "-").trim() || "-";
-    const brokerIdText = brokerTicketOf(trade);
+    const brokerIdText = getBrokerTicket(trade);
     const currentStatus = statusUi(trade.execution_status);
     const headerMeta = buildHeaderMeta({
       statusRaw: trade.execution_status,
@@ -707,7 +682,7 @@ export default function TradeDetailPage() {
                 value: `${trade.dispatch_status}${trade.rejection_reason ? ' — ' + trade.rejection_reason : ''}`,
                 cls: trade.dispatch_status === 'REJECTED' ? 'warn' : '',
               } : null,
-              { label: "Broker Ticket", value: brokerTicketOf(trade) },
+              { label: "Broker Ticket", value: getBrokerTicket(trade) },
               { label: "Account", value: trade.account_id || "-" },
               { label: "Volume", value: `${trade.volume ?? "-"} lots` },
               {
@@ -723,7 +698,7 @@ export default function TradeDetailPage() {
                 value:
                   trade.only_signal != null ? String(trade.only_signal) : "-",
               },
-              { label: "Created", value: fDateTime(trade.created_at) },
+              { label: "Created", value: showDateTime(trade.created_at) },
               {
                 label: "Entry Condition",
                 value: detailPlan.entry_condition || "-",
@@ -875,7 +850,7 @@ export default function TradeDetailPage() {
               ),
               renderItem: (ev, idx) =>
                 renderHistoryItem(ev, idx, {
-                  formatDateTime: fDateTime,
+                  formatDateTime: showDateTime,
                   includeTicket: true,
                 }),
             }}

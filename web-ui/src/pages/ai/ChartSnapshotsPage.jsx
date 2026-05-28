@@ -19,10 +19,12 @@ import {
 
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 import TradeSignalChart from "../../components/TradeSignalChart";
 import AiTradeDetailCard from "../../components/AiTradeDetailCard";
 import { chartFetchManager } from "../../services/chartFetchManager";
-import { extractTradePlanFromTrade } from "../../utils/signalDetailUtils";
+import { extractTradePlanFromTrade, formatNum3 } from "../../utils/signalDetailUtils";
+import { isCurrentAiTradePlan } from "../../utils/tradePlanShape";
 
 const SignalDetailCard = lazy(
   () => import("../../components/SignalDetailCard"),
@@ -687,12 +689,6 @@ function parseNum(value) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function formatNum3(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "";
-  return parseFloat(n.toFixed(8)).toString();
-}
-
 function parsePdZoneBounds(zoneRaw) {
   if (zoneRaw === null || zoneRaw === undefined)
     return { low: null, high: null };
@@ -1039,20 +1035,6 @@ function collectTradePlansByRules(root) {
     }
   }
   return out;
-}
-
-function isCurrentAiTradePlan(value) {
-  return Boolean(
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    value.execution_plan &&
-    typeof value.execution_plan === "object" &&
-    (value.direction ||
-      value.symbol ||
-      value.risk_management ||
-      value.analysis),
-  );
 }
 
 function dedupeTradePlans(plans = []) {
@@ -2818,6 +2800,7 @@ function buildDefaultPosition(seedEntry = null) {
 }
 
 export default function ChartSnapshotsPage() {
+  const confirm = useConfirmDialog();
   const navigate = useNavigate();
   const location = useLocation();
   const { symbol: paramSymbol } = useParams();
@@ -5240,7 +5223,15 @@ export default function ChartSnapshotsPage() {
     const found = templates.find((x) => x.id === templateId);
     if (!found) return;
 
-    if (!window.confirm(`Delete template "${found.name}"?`)) return;
+    if (
+      !(await confirm({
+        title: "Delete template?",
+        message: `Delete template "${found.name}"?`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    )
+      return;
 
     setStatus({ type: "warning", text: "Deleting template..." });
     try {

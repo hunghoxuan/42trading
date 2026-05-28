@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TradeFileUpload } from "./TradeFileUpload";
-import { normalizeOrderTypeValue } from "../utils/signalDetailUtils";
+import { normalizeOrderTypeValue, formatNum3 } from "../utils/signalDetailUtils";
 import { ORDER_SIDES } from "../pages/ai/AiPromptBuilder";
 
 const numericInlineRowStyle = {
@@ -91,10 +91,6 @@ function parseNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function formatNum3(v) {
-  if (!Number.isFinite(v)) return "";
-  return String(Number(v.toFixed(8)));
-}
 function cleanFieldValue(v) {
   const s = String(v ?? "")
     .trim()

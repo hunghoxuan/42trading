@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import MasterDetailLayout from "../../components/MasterDetailLayout";
+import SidebarListItem from "../../components/SidebarListItem";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 export default function AccountsV2Page() {
+  const confirm = useConfirmDialog();
   const [accounts, setAccounts] = useState([]);
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -104,9 +108,12 @@ export default function AccountsV2Page() {
   const handleArchive = async () => {
     if (!selected) return;
     if (
-      !window.confirm(
-        `Archive account "${selected.name || selected.account_id}"? This cannot be undone.`,
-      )
+      !(await confirm({
+        title: "Archive account?",
+        message: `Archive account "${selected.name || selected.account_id}"? This cannot be undone.`,
+        confirmLabel: "Archive",
+        tone: "danger",
+      }))
     )
       return;
     setSaving(true);
@@ -151,14 +158,7 @@ export default function AccountsV2Page() {
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
       <h2 className="page-title">Accounts</h2>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "280px 1fr",
-          gap: 24,
-          marginTop: 12,
-        }}
-      >
+      <MasterDetailLayout>
         {/* Left: Account list */}
         <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
           <div className="panel-label" style={{ marginBottom: 8 }}>
@@ -167,38 +167,14 @@ export default function AccountsV2Page() {
           {accounts.map((a) => {
             const ok = String(a.status).toUpperCase() === "ACTIVE";
             return (
-              <button
+              <SidebarListItem
                 key={a.account_id}
-                className={`sidebar-item-v2 ${selectedId === a.account_id ? "active" : ""}`}
+                active={selectedId === a.account_id}
+                enabled={ok}
+                title={a.name || a.account_id}
+                subtitle={a.user_id}
                 onClick={() => setSelectedId(a.account_id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "flex-start",
-                  gap: 6,
-                  padding: "8px 12px",
-                  textAlign: "left",
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-block",
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: ok ? "#22c55e" : "#666",
-                    flexShrink: 0,
-                  }}
-                />
-                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  <span style={{ fontWeight: 700, fontSize: 12 }}>
-                    {a.name || a.account_id}
-                  </span>
-                  <span className="minor-text" style={{ fontSize: 9 }}>
-                    {a.user_id}
-                  </span>
-                </div>
-              </button>
+              />
             );
           })}
         </div>
@@ -347,7 +323,7 @@ export default function AccountsV2Page() {
             </>
           )}
         </div>
-      </div>
+      </MasterDetailLayout>
     </div>
   );
 }

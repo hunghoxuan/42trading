@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import { maskSecretPreview } from "../../utils/secrets";
+import MasterDetailLayout from "../../components/MasterDetailLayout";
+import SidebarListItem from "../../components/SidebarListItem";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 // ── Provider definitions ──────────────────────────────────────────────────
 
@@ -55,13 +59,6 @@ const PROVIDERS = [
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function maskSecretPreview(value) {
-  const raw = String(value || "");
-  if (!raw) return "";
-  if (raw.length <= 8) return `${raw.slice(0, 1)}****${raw.slice(-1)}`;
-  return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
-}
-
 function normalizeProviderName(raw) {
   const s = String(raw || "").toUpperCase().replace(/\s+/g, "_");
   // Map old names
@@ -77,6 +74,7 @@ function normalizeProviderName(raw) {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ProvidersPage() {
+  const confirm = useConfirmDialog();
   const [settings, setSettings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
@@ -302,9 +300,12 @@ export default function ProvidersPage() {
 
   async function deleteProvider() {
     if (
-      !window.confirm(
-        `Delete ${currentProvDef.label} settings? This cannot be undone.`,
-      )
+      !(await confirm({
+        title: "Delete provider settings?",
+        message: `Delete ${currentProvDef.label} settings? This cannot be undone.`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
     )
       return;
     setSaveBusy(true);
@@ -336,14 +337,7 @@ export default function ProvidersPage() {
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
       <h2 className="page-title">Providers</h2>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "280px 1fr",
-          gap: 24,
-          marginTop: 12,
-        }}
-      >
+      <MasterDetailLayout>
         {/* Left: Provider list */}
         <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
           <div className="panel-label" style={{ marginBottom: 8 }}>
@@ -354,18 +348,14 @@ export default function ProvidersPage() {
             const ok =
               String(info?.status || "").toUpperCase() === "ACTIVE";
             return (
-              <button
+              <SidebarListItem
                 key={prov.name}
-                className={`sidebar-item-v2 ${selectedProvider === prov.name ? "active" : ""}`}
+                active={selectedProvider === prov.name}
+                enabled={ok}
+                title={prov.label}
+                subtitle={prov.name}
                 onClick={() => setSelectedProvider(prov.name)}
-                style={{ display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 6, padding: "8px 12px" }}
-              >
-                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: ok ? "#22c55e" : "#666", flexShrink: 0 }} />
-                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                  <span style={{ fontWeight: 700, fontSize: 12 }}>{prov.label}</span>
-                  <span className="minor-text" style={{ fontSize: 9 }}>{prov.name}</span>
-                </div>
-              </button>
+              />
             );
           })}
         </div>
@@ -515,7 +505,7 @@ export default function ProvidersPage() {
             </>
           )}
         </div>
-      </div>
+      </MasterDetailLayout>
 
       {/* Global message */}
       {msg && (

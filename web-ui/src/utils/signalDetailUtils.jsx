@@ -1,11 +1,8 @@
 import React from "react";
 import { showDateTime } from "./format";
+import { asNum, asFiniteOrNull, formatNum3 } from "./numberFormat";
 
-export function asNum(v) {
-  if (v === "" || v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
+export { asNum, asFiniteOrNull, formatNum3 };
 
 export function normalizeOrderTypeValue(raw, fallback = "limit") {
   const fb = String(fallback || "limit")
@@ -185,13 +182,6 @@ export function historyWhen(item, formatDateTime) {
   return typeof formatDateTime === "function"
     ? formatDateTime(dt)
     : formatDetailDateTime(dt);
-}
-
-export function formatNum3(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  // Keep full precision — no rounding. Trim trailing zeros, max 8 decimals.
-  return parseFloat(n.toFixed(8)).toString();
 }
 
 function formatNumPrec(v, refVal) {
