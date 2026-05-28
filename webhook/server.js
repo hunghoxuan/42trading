@@ -150,6 +150,8 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
+// Global data dirs (not user-specific)
+const GLOBAL_DATA_DIR = path.resolve(ROOT_DIR, "..", "data");
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
   "v2026.05.24 20:32 - c61346bd",
@@ -157,7 +159,7 @@ const SERVER_VERSION = envStr(
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
-  path.join(ROOT_DIR, "logs"),
+  path.join(GLOBAL_DATA_DIR, "logs"),
 );
 
 // --- SSE Notification Bus ---
@@ -245,7 +247,7 @@ function csvTfAliases(tf) {
 
 // Discover all symbols with market_data directories
 function discoverAllMarketSymbols() {
-  const dir = path.join(ROOT_DIR, "market_data");
+  const dir = path.join(GLOBAL_DATA_DIR, "market_data");
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
@@ -329,7 +331,7 @@ function resolveBrokerCsvPath(symbol, tf) {
     .trim()
     .toUpperCase();
   if (!sym) return "";
-  const baseDir = path.join(ROOT_DIR, "market_data", sym, "bars");
+  const baseDir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "bars");
   const aliases = csvTfAliases(tf);
   for (const alias of aliases) {
     const p = path.join(baseDir, `${alias}.csv`);
@@ -346,7 +348,7 @@ function resolveMetadataPath(symbol, tf) {
     .toUpperCase();
   if (!sym) return "";
   const tfKey = normalizeCsvTfKey(tf);
-  const dir = path.join(ROOT_DIR, "market_data", sym, "metadata");
+  const dir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "metadata");
   return path.join(dir, `${tfKey}.json`);
 }
 function readMarketDataMetadata(symbol, tf) {
@@ -418,7 +420,7 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
   if (!symbol || !tf || !newBars.length) return 0;
   const sym = String(symbol).toUpperCase();
   const tfKey = normalizeCsvTfKey(tf);
-  const csvDir = path.join(ROOT_DIR, "market_data", sym, "bars");
+  const csvDir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "bars");
   if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
   // Always use canonical path ({tfKey}.csv), never alias
   const csvPath = path.join(csvDir, `${tfKey}.csv`);
@@ -3819,7 +3821,7 @@ function readTradeBars(safeSid, tf) {
   }
 
   // Fallback: market_data
-  const marketPath = path.join(ROOT_DIR, "market_data");
+  const marketPath = path.join(GLOBAL_DATA_DIR, "market_data");
   // Need symbol — try all symbol dirs
   if (fs.existsSync(marketPath)) {
     for (const sym of fs.readdirSync(marketPath)) {
@@ -3851,8 +3853,8 @@ function readTradeBars(safeSid, tf) {
 function archiveTradeStats(sid, symbol) {
   if (!sid || !symbol) return;
   const sym = String(symbol).toUpperCase();
-  const srcBarsDir = path.join(ROOT_DIR, "market_data", sym, "bars");
-  const srcSnapDir = path.join(ROOT_DIR, "market_data", sym);
+  const srcBarsDir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "bars");
+  const srcSnapDir = path.join(GLOBAL_DATA_DIR, "market_data", sym);
   // Use existing trade folder (any category) or create in trade_files
   let tradeDir = resolveTradeDir(sid, symbol);
   if (!tradeDir) {
@@ -24942,7 +24944,7 @@ const appHandler = async (req, res) => {
         resolvedSymbols = wl.map((s) => String(s).toUpperCase());
       } else {
         mode = "all";
-        const dataDir = path.join(ROOT_DIR, "market_data");
+        const dataDir = path.join(GLOBAL_DATA_DIR, "market_data");
         if (fs.existsSync(dataDir)) {
           resolvedSymbols = fs
             .readdirSync(dataDir)
@@ -25499,7 +25501,7 @@ const appHandler = async (req, res) => {
           continue;
 
         // 1. Append to CSV file
-        const csvDir = path.join(ROOT_DIR, "market_data", symbol, "bars");
+        const csvDir = path.join(GLOBAL_DATA_DIR, "market_data", symbol, "bars");
         if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
         const csvPath = path.join(csvDir, `${tf}.csv`);
         const isNew = !fs.existsSync(csvPath);
