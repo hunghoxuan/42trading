@@ -310,6 +310,31 @@ body {
     .snapshot-settings-shell-v2 { grid-template-columns: 1fr; }
     .snapshot-stats { grid-template-columns: repeat(2, 1fr); }
     .snapshot-fields-v2 { grid-template-columns: repeat(2, 1fr); }
+    .snapshot-col-v3 { min-height: auto; max-height: none; }
+    .snapshot-live-grid-v4 { grid-template-columns: 1fr; }
+    .snapshot-footer-row0-v3,
+    .snapshot-footer-row1-v3 { grid-template-columns: 1fr; }
+    .snapshot-chart-grid-v2 { grid-template-columns: 1fr; }
+    .browser-grid-v1 { grid-template-columns: 1fr; }
+    .browser-chart-v1 { height: 220px; }
+}
+
+/* Medium screens: 2-col layout for AI builder */
+@media (min-width: 768px) and (max-width: 1023px) {
+    .snapshot-builder-v3 { grid-template-columns: 1fr 1fr; }
+    .snapshot-builder-ai-v4 { grid-template-columns: 1fr; }
+    .snapshot-col-symbols-v3 { grid-column: 1 / -1; max-height: 300px; }
+    .snapshot-live-grid-v4 { grid-template-columns: 1fr; }
+    .snapshot-live-iframe-v3 { min-height: 200px; }
+    .snapshot-footer-row0-v3,
+    .snapshot-footer-row1-v3 { grid-template-columns: 1fr 1fr; }
+    .snapshot-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Large screens: proportional 3-col layout */
+@media (min-width: 1024px) and (max-width: 1439px) {
+    .snapshot-builder-v3 { grid-template-columns: minmax(240px, 0.7fr) minmax(420px, 1.2fr) minmax(420px, 1.2fr); }
+    .snapshot-builder-ai-v4 { grid-template-columns: minmax(180px, 0.4fr) minmax(700px, 1.6fr); }
 }
 
 @media (max-width: 479px) {
@@ -327,7 +352,9 @@ body {
         min-height: 120px;
     }
     .chart-wrapper, .chart-tab-content,
-    .snapshot-live-iframe-v3, .tf-row-charts { display: none; }
+    .tf-row-charts { display: none; }
+    .snapshot-live-grid-v4 { grid-template-columns: 1fr; }
+    .snapshot-live-iframe-v3 { min-height: 180px; }
     .panel, .kpi-card { padding: 12px; border-radius: var(--radius-md); }
     button, input, select { min-height: 44px; font-size: 13px; }
     .kpi-value { font-size: 20px; }
@@ -349,6 +376,13 @@ body {
 .table-dense td { padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border); vertical-align: middle; }
 
 /* Layouts */
+/* Responsive master-detail: stack on mobile */
+.master-detail-grid {}
+@media (max-width: 767px) {
+    .master-detail-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
 .stack-layout {
     display: flex;
     flex-direction: column;

@@ -13,7 +13,7 @@ export default function MasterDetailLayout({
     typeof sidebarWidth === "number" ? `${sidebarWidth}px` : sidebarWidth;
   return (
     <div
-      className={className}
+      className={`master-detail-grid ${className}`}
       style={{
         display: "grid",
         gridTemplateColumns: `${width} 1fr`,

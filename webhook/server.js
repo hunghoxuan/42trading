@@ -1272,6 +1272,8 @@ const CFG = {
     envStr(process.env.MT5_POSTGRES_URL) ||
     envStr(process.env.POSTGRES_URL) ||
     envStr(process.env.POSTGRE_URL),
+  mt5StorageBackend: envStr(process.env.MT5_STORAGE, "postgres"),
+  mt5SqlitePath: envStr(process.env.MT5_SQLITE_PATH, "data/trading.db"),
   redisEnabled: asBool(process.env.REDIS_ENABLED, true),
   redisUrl: envStr(process.env.REDIS_URL, "redis://127.0.0.1:6379"),
   marketDataCronEnabled: true, // always enabled — toggled per-cron via status field
@@ -7586,6 +7588,19 @@ async function mt5InitBackend() {
 }
 
 async function _mt5InitBackendInternal() {
+  // SQLite mode — skip all PostgreSQL DDL, use Drizzle directly
+  if (CFG.mt5StorageBackend === "sqlite") {
+    const { initDb } = require("../db");
+    const db = initDb({ storage: { backend: "sqlite", sqlite: { path: CFG.mt5SqlitePath || "data/trading.db" } } });
+    MT5_BACKEND = {
+      storage: "sqlite", db, schema,
+      query: (q, p) => { throw new Error("raw SQL not supported in SQLite mode"); },
+      info: { url: `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}` },
+      pool: null,
+    };
+    return MT5_BACKEND;
+  }
+
   if (!CFG.mt5PostgresUrl) {
     throw new Error(
       "MT5_STORAGE=postgres but POSTGRES_URL/POSTGRE_URL/MT5_POSTGRES_URL is empty",
