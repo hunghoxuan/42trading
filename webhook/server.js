@@ -9999,7 +9999,6 @@ END
                 statusChanged ||
                 slChanged ||
                 tpChanged ||
-                pnlChanged ||
                 hasPartialChanged
               ) {
                 await this.log(
