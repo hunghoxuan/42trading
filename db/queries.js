@@ -61,9 +61,7 @@ async function upsertUserAccount(db, userId, account) {
   return rows[0] || null;
 }
 
-async function listUiUsers(db) {
-  return db.select().from(schema.users).orderBy(schema.users.createdAt, schema.users.userId);
-}
+async function listUiUsers(db) { return db.select().from(schema.users).orderBy(schema.users.createdAt, schema.users.userId); }
 
 async function deleteUserAccount(db, userId, accountId) {
   return db.delete(schema.userAccounts).where(and(eq(schema.userAccounts.userId, String(userId || "")), eq(schema.userAccounts.accountId, String(accountId || ""))));
@@ -78,4 +76,28 @@ async function listAllEvents(db, filters = {}, limit = 200) {
   return db.select().from(schema.logs).where(where).orderBy(desc(schema.logs.createdAt)).limit(limit);
 }
 
-module.exports = { listTradesV2, listSignals, listUserAccounts, upsertSignal, findAccountByApiKeyHash, upsertUserAccount, listUiUsers, deleteUserAccount, listAllEvents };
+async function listActiveSignals(db, userId) {
+  return db.select().from(schema.signals).where(and(eq(schema.signals.userId, String(userId || "")), eq(schema.signals.status, "ACTIVE"))).orderBy(desc(schema.signals.createdAt));
+}
+
+async function getSignalByTicket(db, ticket) {
+  const rows = await db.select().from(schema.signals).where(eq(schema.signals.sid, String(ticket || ""))).limit(1);
+  return rows[0] || null;
+}
+
+async function bulkAckSignals(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db.update(schema.signals).set({ status: "ACKED" }).where(inArray(schema.signals.sid, ids));
+}
+
+async function cancelSignalsByIds(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db.update(schema.signals).set({ status: "CANCELLED" }).where(inArray(schema.signals.sid, ids));
+}
+
+async function deleteSignalsByIds(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db.delete(schema.signals).where(inArray(schema.signals.sid, ids));
+}
+
+module.exports = { listTradesV2, listSignals, listUserAccounts, upsertSignal, findAccountByApiKeyHash, upsertUserAccount, listUiUsers, deleteUserAccount, listAllEvents, listActiveSignals, getSignalByTicket, bulkAckSignals, cancelSignalsByIds, deleteSignalsByIds };
