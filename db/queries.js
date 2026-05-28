@@ -137,4 +137,7 @@ async function listSignals(db, filters = {}) {
 module.exports = {
   listTradesV2,
   listSignals,
+  listUserAccounts,
+  upsertSignal,
+  findAccountByApiKeyHash,
 };

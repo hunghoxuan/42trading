@@ -16,7 +16,7 @@ Read in this order:
 
 ## Read Later Only If Needed
 
-- DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`
+- DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`, `.agents/.product/architecture/db-drizzle-migration.md`
 - UI work: `.agents/rules/ui.md`
 - Deploy/version work: `.agents/rules/deploy.md`
 - Local dev work: `.agents/wiki/local-dev-environment.md`
