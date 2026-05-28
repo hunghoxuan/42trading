@@ -226,7 +226,8 @@ namespace cAlgo.Robots
             Timer.Start(PollSeconds);
             _lastTimerTickSeen = DateTime.Now;
             StartTimerWatchdog();
-            BeginInvokeOnMainThread(() => OnTimer());
+            // OnTick handles periodics; DoTimerWork on startup
+            DoTimerWork();
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
         }
@@ -270,16 +271,13 @@ namespace cAlgo.Robots
             if (SelectedStrategy != ManagementStrategy.None)
                 ManagePositions();
 
-            // cTrader timer can occasionally stall on some instances.
-            // Fallback: if no timer tick was seen recently, kick one bridge cycle from OnTick.
+            // Run DoTimerWork on main thread every PollSeconds
             var now = DateTime.Now;
-            var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
-            if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
-                (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+            if ((now - _lastTickFallbackKick).TotalSeconds >= PollSeconds)
             {
                 _lastTickFallbackKick = now;
-                if (_pollCount <= 3) Print("[Diag] OnTick fallback kick (timer stale for >= {0}s)", timerStaleSeconds);
-                BeginInvokeOnMainThread(() => OnTimer());
+                _lastTimerTickSeen = now;
+                DoTimerWork();
             }
         }
 
@@ -435,6 +433,10 @@ namespace cAlgo.Robots
         protected override void OnTimer()
         {
             _lastTimerTickSeen = DateTime.Now;
+        }
+
+        private void DoTimerWork()
+        {
             if (_isBusy) return;
             _isBusy = true;
             try
@@ -465,7 +467,7 @@ namespace cAlgo.Robots
                     (DateTime.Now - _lastTrackedFetch).TotalMinutes >= 5)
                 {
                     _lastTrackedFetch = DateTime.Now;
-                    Task.Run(async () => await FetchTrackedSymbolsAsync(accId));
+                    _ = FetchTrackedSymbolsAsync(accId);
                 }
 
                 // --- Price push (every PricePushSeconds) ---
@@ -535,7 +537,7 @@ namespace cAlgo.Robots
                                 syms.Add(Symbol.Name);
                         }
                         if (syms.Count > 0)
-                            Task.Run(async () => await PushBarsAsync(accId, syms));
+                            _ = PushBarsAsync(accId, syms);
                         else
                         {
                             _barStatus = "IDLE";
