@@ -8956,7 +8956,7 @@ END
             AND (
               (dispatch_status = 'NEW' AND execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
               OR (dispatch_status = 'NEW' AND execution_status = 'PENDING')
-              OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW())
+              OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW() AND execution_status IN ('PENDING', 'PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
             )
             AND (
               $3::text IS NULL
