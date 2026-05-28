@@ -149,7 +149,10 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
 loadEnvFile();
 // ROOT_FOLDER overrides __dirname for all data/snapshot/log paths
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
-const SERVER_VERSION = envStr(process.env.WEBHOOK_SERVER_VERSION, "v2026.05.24 20:32 - c61346bd"); // broker live price stream, tracked-symbols api, timer-split sync+price
+const SERVER_VERSION = envStr(
+  process.env.WEBHOOK_SERVER_VERSION,
+  "v2026.05.24 20:32 - c61346bd",
+); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(
   process.env.SERVER_LOG_DIR,
@@ -203,12 +206,22 @@ function emitNotification(payload) {
 // Format: time,open,high,low,close,volume
 // Also updates L1 memory cache + Redis L2.
 function normalizeCsvTfKey(tf) {
-  const raw = String(tf || "").trim().toLowerCase();
+  const raw = String(tf || "")
+    .trim()
+    .toLowerCase();
   if (!raw) return "";
-  if (raw === "d" || raw === "1d" || raw === "day" || raw === "1440" || raw === "1day") return "1440";
+  if (
+    raw === "d" ||
+    raw === "1d" ||
+    raw === "day" ||
+    raw === "1440" ||
+    raw === "1day"
+  )
+    return "1440";
   if (raw === "w" || raw === "1w" || raw === "week") return "1w";
   if (raw === "4h" || raw === "240") return "240";
-  if (raw === "1h" || raw === "60" || raw === "60m" || raw === "60min") return "60";
+  if (raw === "1h" || raw === "60" || raw === "60m" || raw === "60min")
+    return "60";
   if (raw === "15m" || raw === "15" || raw === "15min") return "15";
   if (raw === "5m" || raw === "5" || raw === "5min") return "5";
   if (raw === "1m" || raw === "1" || raw === "1min") return "1";
@@ -233,7 +246,8 @@ function csvTfAliases(tf) {
 function discoverAllMarketSymbols() {
   const dir = path.join(ROOT_DIR, "market_data");
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
+  return fs
+    .readdirSync(dir)
     .filter((d) => fs.statSync(path.join(dir, d)).isDirectory())
     .filter((d) => d === d.toUpperCase())
     .sort();
@@ -241,10 +255,56 @@ function discoverAllMarketSymbols() {
 
 // Resolve symbols_group to actual symbol list
 const SYMBOLS_GROUP_MAP = {
-  crypto: ["BTCUSD","ETHUSD","XRPUSD","SOLUSD","DOGEUSD","ADAUSD","LTCUSD","BNBUSD","DOTUSD","MATICUSD","ATOMUSD","ETCUSD","NEARUSD"],
-  forex: ["EURUSD","GBPUSD","USDJPY","AUDUSD","NZDUSD","USDCAD","USDCHF","GBPJPY","EURJPY","EURGBP","EURAUD","EURCAD","GBPAUD","GBPCAD","AUDCAD","AUDCHF","AUDJPY","AUDNZD","CADJPY","NZDCAD","EURSGD","USDSGD"],
-  indices: ["US30","NAS100","SPX500","GER40","UK100","JPN225","DE40"],
-  metals: ["XAUUSD","XAGUSD","XPTUSD","XPDUSD","XAUEUR","XAUGBP","XAUJPY","XTIUSD"],
+  crypto: [
+    "BTCUSD",
+    "ETHUSD",
+    "XRPUSD",
+    "SOLUSD",
+    "DOGEUSD",
+    "ADAUSD",
+    "LTCUSD",
+    "BNBUSD",
+    "DOTUSD",
+    "MATICUSD",
+    "ATOMUSD",
+    "ETCUSD",
+    "NEARUSD",
+  ],
+  forex: [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "NZDUSD",
+    "USDCAD",
+    "USDCHF",
+    "GBPJPY",
+    "EURJPY",
+    "EURGBP",
+    "EURAUD",
+    "EURCAD",
+    "GBPAUD",
+    "GBPCAD",
+    "AUDCAD",
+    "AUDCHF",
+    "AUDJPY",
+    "AUDNZD",
+    "CADJPY",
+    "NZDCAD",
+    "EURSGD",
+    "USDSGD",
+  ],
+  indices: ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225", "DE40"],
+  metals: [
+    "XAUUSD",
+    "XAGUSD",
+    "XPTUSD",
+    "XPDUSD",
+    "XAUEUR",
+    "XAUGBP",
+    "XAUJPY",
+    "XTIUSD",
+  ],
 };
 
 function resolveCronSymbols(data = {}) {
@@ -256,12 +316,17 @@ function resolveCronSymbols(data = {}) {
     return preset.filter((s) => all.includes(s)); // only return symbols that exist in market_data
   }
   // Fallback to stored symbols or auto-discover all
-  const syms = Array.isArray(data.symbols) && data.symbols.length ? data.symbols : discoverAllMarketSymbols();
+  const syms =
+    Array.isArray(data.symbols) && data.symbols.length
+      ? data.symbols
+      : discoverAllMarketSymbols();
   return syms;
 }
 
 function resolveBrokerCsvPath(symbol, tf) {
-  const sym = String(symbol || "").trim().toUpperCase();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
   if (!sym) return "";
   const baseDir = path.join(ROOT_DIR, "market_data", sym, "bars");
   const aliases = csvTfAliases(tf);
@@ -275,7 +340,9 @@ function resolveBrokerCsvPath(symbol, tf) {
 
 // ── Metadata sidecar (replaces market_data.metadata column) ──
 function resolveMetadataPath(symbol, tf) {
-  const sym = String(symbol || "").trim().toUpperCase();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
   if (!sym) return "";
   const tfKey = normalizeCsvTfKey(tf);
   const dir = path.join(ROOT_DIR, "market_data", sym, "metadata");
@@ -284,7 +351,11 @@ function resolveMetadataPath(symbol, tf) {
 function readMarketDataMetadata(symbol, tf) {
   const p = resolveMetadataPath(symbol, tf);
   if (!p || !fs.existsSync(p)) return null;
-  try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; }
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
 }
 function writeMarketDataMetadata(symbol, tf, metadata) {
   if (!metadata || typeof metadata !== "object") return;
@@ -292,11 +363,15 @@ function writeMarketDataMetadata(symbol, tf, metadata) {
   if (!p) return;
   const dir = path.dirname(p);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  try { fs.writeFileSync(p, JSON.stringify(metadata)); } catch {}
+  try {
+    fs.writeFileSync(p, JSON.stringify(metadata));
+  } catch {}
 }
 
 function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
-  const sym = String(symbol || "").trim().toUpperCase();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
   const tfKey = normalizeCsvTfKey(tf);
   if (!sym || !tfKey) return [];
   const csvPath = resolveBrokerCsvPath(sym, tfKey);
@@ -314,8 +389,22 @@ function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
       const l = Number(cols[3]);
       const c = Number(cols[4]);
       const v = Number(cols[5]) || 0;
-      if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
-      rows.push({ time: Math.floor(t), open: o, high: h, low: l, close: c, volume: v });
+      if (
+        !Number.isFinite(t) ||
+        !Number.isFinite(o) ||
+        !Number.isFinite(h) ||
+        !Number.isFinite(l) ||
+        !Number.isFinite(c)
+      )
+        continue;
+      rows.push({
+        time: Math.floor(t),
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: v,
+      });
     }
     rows.sort((a, b) => a.time - b.time);
     return rows.slice(-Math.max(50, Math.min(Number(limit) || 300, 5000)));
@@ -340,13 +429,24 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
     const aliasPath = path.join(csvDir, `${alias}.csv`);
     if (fs.existsSync(aliasPath)) {
       try {
-        const aliasLines = fs.readFileSync(aliasPath, "utf8").trim().split("\n");
+        const aliasLines = fs
+          .readFileSync(aliasPath, "utf8")
+          .trim()
+          .split("\n");
         for (let i = 1; i < aliasLines.length; i++) {
           const parts = aliasLines[i].split(",");
           const t = Number(parts[0]);
           if (Number.isFinite(t)) {
             const n = `time,open,high,low,close,volume`; // skip header
-            if (aliasLines[i] !== n) newBars.push({ t, o: Number(parts[1]), h: Number(parts[2]), l: Number(parts[3]), c: Number(parts[4]), v: Number(parts[5] || 0) });
+            if (aliasLines[i] !== n)
+              newBars.push({
+                t,
+                o: Number(parts[1]),
+                h: Number(parts[2]),
+                l: Number(parts[3]),
+                c: Number(parts[4]),
+                v: Number(parts[5] || 0),
+              });
           }
         }
         fs.unlinkSync(aliasPath);
@@ -373,22 +473,40 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
     const l = Number(b.l || b.low);
     const c = Number(b.c || b.close);
     const v = Number(b.v || b.volume || 0);
-    if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+    if (
+      !Number.isFinite(t) ||
+      !Number.isFinite(o) ||
+      !Number.isFinite(h) ||
+      !Number.isFinite(l) ||
+      !Number.isFinite(c)
+    )
+      continue;
     const line = t + "," + o + "," + h + "," + l + "," + c + "," + v;
-    existing.set(t, line); added++;
+    existing.set(t, line);
+    added++;
   }
 
   if (added === 0) return 0;
 
   // Sort by time, rewrite CSV
   const sorted = Array.from(existing.entries()).sort((a, b) => a[0] - b[0]);
-  const csv = "time,open,high,low,close,volume\n" + sorted.map(e => e[1]).join("\n") + "\n";
+  const csv =
+    "time,open,high,low,close,volume\n" +
+    sorted.map((e) => e[1]).join("\n") +
+    "\n";
   fs.writeFileSync(csvPath, csv);
 
   // Build merged bar objects for cache
   const mergedBars = sorted.map(([t, line]) => {
     const p = line.split(",");
-    return { time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) };
+    return {
+      time: t,
+      open: Number(p[1]),
+      high: Number(p[2]),
+      low: Number(p[3]),
+      close: Number(p[4]),
+      volume: Number(p[5]),
+    };
   });
   const lastBar = mergedBars[mergedBars.length - 1];
 
@@ -400,7 +518,10 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
     for (const tfEntry of root.data) {
       if (String(tfEntry.tf || "").toLowerCase() === tfKey) {
         tfEntry.bars = mergedBars.slice(-1000);
-        if (lastBar) { tfEntry.last_price = lastBar.close; tfEntry.last_price_at = new Date(lastBar.time * 1000).toISOString(); }
+        if (lastBar) {
+          tfEntry.last_price = lastBar.close;
+          tfEntry.last_price_at = new Date(lastBar.time * 1000).toISOString();
+        }
         break;
       }
     }
@@ -408,29 +529,41 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
   }
 
   // Async Redis L2
-  getRedisClient().then(async (client) => {
-    if (!client) return;
-    try {
-      const raw = await client.get(key).catch(() => "");
-      let redisRoot = null;
-      if (raw) { try { redisRoot = JSON.parse(raw); } catch {} }
-      if (redisRoot && Array.isArray(redisRoot.data)) {
-        for (const tfEntry of redisRoot.data) {
-          if (String(tfEntry.tf || "").toLowerCase() === tfKey) {
-            tfEntry.bars = mergedBars.slice(-1000);
-            if (lastBar) { tfEntry.last_price = lastBar.close; tfEntry.last_price_at = new Date(lastBar.time * 1000).toISOString(); }
-            break;
-          }
+  getRedisClient()
+    .then(async (client) => {
+      if (!client) return;
+      try {
+        const raw = await client.get(key).catch(() => "");
+        let redisRoot = null;
+        if (raw) {
+          try {
+            redisRoot = JSON.parse(raw);
+          } catch {}
         }
-        redisRoot.updated_time = Math.floor(Date.now() / 1000);
-        await client.setEx(key, 3600, JSON.stringify(redisRoot)).catch(() => {});
-      }
-    } catch {}
-  }).catch(() => {});
+        if (redisRoot && Array.isArray(redisRoot.data)) {
+          for (const tfEntry of redisRoot.data) {
+            if (String(tfEntry.tf || "").toLowerCase() === tfKey) {
+              tfEntry.bars = mergedBars.slice(-1000);
+              if (lastBar) {
+                tfEntry.last_price = lastBar.close;
+                tfEntry.last_price_at = new Date(
+                  lastBar.time * 1000,
+                ).toISOString();
+              }
+              break;
+            }
+          }
+          redisRoot.updated_time = Math.floor(Date.now() / 1000);
+          await client
+            .setEx(key, 3600, JSON.stringify(redisRoot))
+            .catch(() => {});
+        }
+      } catch {}
+    })
+    .catch(() => {});
 
   return added;
 }
-
 
 // Search all trade category dirs for existing {sid}-* folder
 function findExistingTradeDir(safeSid) {
@@ -822,8 +955,8 @@ const TRADE_CLOSED_DIR = path.resolve(ROOT_DIR, "trade_closed");
 const TRADE_STATUS = {
   DRAFT: "Draft",
   PENDING: "PENDING",
-  LIVE: "FILLED",           // canonical live status
-  FILLED: "FILLED",       // alias for LIVE
+  LIVE: "FILLED", // canonical live status
+  FILLED: "FILLED", // alias for LIVE
   CLOSED: "CLOSED",
   CANCELLED: "CANCELLED",
   REJECTED: "REJECTED",
@@ -1179,14 +1312,20 @@ const CFG = {
 
 const AI_SCHEMA_SPEC = (() => {
   try {
-    const planSchema = require("../config/trade_plan_schema.json");
+    const planSchema = require("../config/schema/trade.json");
+    try {
+      const analysisSchema = require("../config/schema/analysis.json");
+      planSchema.analysis = analysisSchema;
+    } catch {
+      /* analysis.json optional */
+    }
     return {
-      version: "3.0",
+      version: "3.1",
       schema: [planSchema],
     };
   } catch (e) {
-    console.warn("[schema] trade_plan_schema.json not found");
-    return { version: "3.0", schema: [{}] };
+    console.warn("[schema] system.json not found");
+    return { version: "3.1", schema: [{}] };
   }
 })();
 const AI_RESPONSE_SCHEMA_VERSION = String(AI_SCHEMA_SPEC.version || "3.0");
@@ -1929,45 +2068,55 @@ function parseTfTokenToSeconds(tfToken) {
 // Single source of truth: canonical TF token -> { seconds, label, tvInterval }
 const SNAPSHOT_TF_MAP = {
   "1W": { seconds: 604800, label: "1W", tv: "W" },
-  "1D": { seconds: 86400,  label: "1D", tv: "D" },
-  "4H": { seconds: 14400,  label: "4h", tv: "240" },
-  "1H": { seconds: 3600,   label: "1h", tv: "60" },
-  "30m":{ seconds: 1800,   label: "30m",tv: "30" },
-  "15m":{ seconds: 900,    label: "15m",tv: "15" },
-  "5m": { seconds: 300,    label: "5m", tv: "5" },
-  "1m": { seconds: 60,     label: "1m", tv: "1" },
+  "1D": { seconds: 86400, label: "1D", tv: "D" },
+  "4H": { seconds: 14400, label: "4h", tv: "240" },
+  "1H": { seconds: 3600, label: "1h", tv: "60" },
+  "30m": { seconds: 1800, label: "30m", tv: "30" },
+  "15m": { seconds: 900, label: "15m", tv: "15" },
+  "5m": { seconds: 300, label: "5m", tv: "5" },
+  "1m": { seconds: 60, label: "1m", tv: "1" },
 };
 
 function normalizeSnapshotTfToken(raw) {
-  const s = String(raw || "").trim().toUpperCase();
+  const s = String(raw || "")
+    .trim()
+    .toUpperCase();
   if (!s) return "";
   // Direct canonical matches
-  if (s === "1W" || s === "W" || s === "1WEEK" || s === "WEEK")  return "1W";
-  if (s === "1D" || s === "D" || s === "DAY" || s === "1DAY")    return "1D";
-  if (s === "4H" || s === "240" || s === "H4" || s === "4HOUR")   return "4H";
-  if (s === "1H" || s === "60" || s === "H1" || s === "1HOUR" || s === "HOUR") return "1H";
-  if (s === "30M" || s === "30" || s === "M30" || s === "30MIN")  return "30m";
-  if (s === "15M" || s === "15" || s === "M15" || s === "15MIN")  return "15m";
-  if (s === "5M" || s === "5" || s === "M5" || s === "5MIN")      return "5m";
-  if (s === "1M" || s === "1" || s === "M1" || s === "1MIN" || s === "MIN") return "1m";
+  if (s === "1W" || s === "W" || s === "1WEEK" || s === "WEEK") return "1W";
+  if (s === "1D" || s === "D" || s === "DAY" || s === "1DAY") return "1D";
+  if (s === "4H" || s === "240" || s === "H4" || s === "4HOUR") return "4H";
+  if (s === "1H" || s === "60" || s === "H1" || s === "1HOUR" || s === "HOUR")
+    return "1H";
+  if (s === "30M" || s === "30" || s === "M30" || s === "30MIN") return "30m";
+  if (s === "15M" || s === "15" || s === "M15" || s === "15MIN") return "15m";
+  if (s === "5M" || s === "5" || s === "M5" || s === "5MIN") return "5m";
+  if (s === "1M" || s === "1" || s === "M1" || s === "1MIN" || s === "MIN")
+    return "1m";
   // Numeric fallback: bare number = minutes
   const n = Number(s);
   if (Number.isFinite(n) && n > 0) {
     if (n >= 10080) return "1W";
-    if (n >= 1440)  return "1D";
-    if (n >= 240)   return "4H";
-    if (n >= 60)    return "1H";
-    if (n >= 30)    return "30m";
-    if (n >= 15)    return "15m";
-    if (n >= 5)     return "5m";
+    if (n >= 1440) return "1D";
+    if (n >= 240) return "4H";
+    if (n >= 60) return "1H";
+    if (n >= 30) return "30m";
+    if (n >= 15) return "15m";
+    if (n >= 5) return "5m";
     return "1m";
   }
   return "";
 }
 
-function snapshotTfToSeconds(canonical) { return SNAPSHOT_TF_MAP[canonical]?.seconds || 60; }
-function snapshotTfToLabel(canonical)  { return SNAPSHOT_TF_MAP[canonical]?.label || canonical; }
-function snapshotTfToTVInterval(canonical) { return SNAPSHOT_TF_MAP[canonical]?.tv || canonical; }
+function snapshotTfToSeconds(canonical) {
+  return SNAPSHOT_TF_MAP[canonical]?.seconds || 60;
+}
+function snapshotTfToLabel(canonical) {
+  return SNAPSHOT_TF_MAP[canonical]?.label || canonical;
+}
+function snapshotTfToTVInterval(canonical) {
+  return SNAPSHOT_TF_MAP[canonical]?.tv || canonical;
+}
 
 function normalizeTvTimezone(raw, fallback = "Etc/UTC") {
   const s = String(raw || "").trim();
@@ -1998,10 +2147,11 @@ function sessionKillerZoneLabelUTC(d = new Date()) {
 // Canonicalize, dedup, sort descending
 function canonicalizeTfList(tfList) {
   const canonicals = tfList
-    .map(t => normalizeSnapshotTfToken(t))
+    .map((t) => normalizeSnapshotTfToken(t))
     .filter(Boolean);
-  return [...new Set(canonicals)]
-    .sort((a, b) => snapshotTfToSeconds(b) - snapshotTfToSeconds(a));
+  return [...new Set(canonicals)].sort(
+    (a, b) => snapshotTfToSeconds(b) - snapshotTfToSeconds(a),
+  );
 }
 
 function estimateRequestedBarsRange({ tfNorm, bars, nowSec = nowUnixSec() }) {
@@ -2209,7 +2359,9 @@ async function updateHealthActivity(objectType, objectId, value = {}) {
   try {
     const client = await getRedisClient();
     if (!client) return;
-    const type = String(objectType || "").trim().toUpperCase();
+    const type = String(objectType || "")
+      .trim()
+      .toUpperCase();
     const id = String(objectId || "").trim();
     if (!type || !id) return;
     const field = `${type}:${id}`;
@@ -2220,7 +2372,7 @@ async function updateHealthActivity(objectType, objectId, value = {}) {
       key: field,
       updated_at: new Date(ts).toISOString(),
       ts,
-      ...((value && typeof value === "object") ? value : { value }),
+      ...(value && typeof value === "object" ? value : { value }),
     };
     await client.hSet("HEALTH_ACTIVITY", field, JSON.stringify(payload));
     await client.zAdd("HEALTH_ACTIVITY_TS", [{ score: ts, value: field }]);
@@ -2235,13 +2387,19 @@ async function getHealthActivity(limit = 50, prefix = "") {
     const client = await getRedisClient();
     if (!client) return [];
     const max = Math.max(1, Math.min(500, Number(limit) || 50));
-    const filter = String(prefix || "").trim().toUpperCase();
+    const filter = String(prefix || "")
+      .trim()
+      .toUpperCase();
     const members = await client.zRange("HEALTH_ACTIVITY_TS", 0, max * 5, {
       REV: true,
     });
     if (!Array.isArray(members) || !members.length) return [];
     const filtered = filter
-      ? members.filter((m) => String(m || "").toUpperCase().startsWith(filter))
+      ? members.filter((m) =>
+          String(m || "")
+            .toUpperCase()
+            .startsWith(filter),
+        )
       : members;
     const picked = [...new Set(filtered)].slice(0, max);
     if (!picked.length) return [];
@@ -2288,7 +2446,9 @@ async function upsertSymbolActivity(symbolRaw, patch = {}) {
       ...patch,
     };
     await client.hSet("HEALTH_SYMBOL_ACTIVITY", field, JSON.stringify(next));
-    await client.zAdd("HEALTH_SYMBOL_ACTIVITY_TS", [{ score: ts, value: field }]);
+    await client.zAdd("HEALTH_SYMBOL_ACTIVITY_TS", [
+      { score: ts, value: field },
+    ]);
     await client.expire("HEALTH_SYMBOL_ACTIVITY", 86400 * 14);
     await client.expire("HEALTH_SYMBOL_ACTIVITY_TS", 86400 * 14);
     return next;
@@ -2303,9 +2463,14 @@ async function getSymbolActivity(limit = 200) {
     const client = await getRedisClient();
     if (!client) return [];
     const max = Math.max(1, Math.min(1000, Number(limit) || 200));
-    const members = await client.zRange("HEALTH_SYMBOL_ACTIVITY_TS", 0, max - 1, {
-      REV: true,
-    });
+    const members = await client.zRange(
+      "HEALTH_SYMBOL_ACTIVITY_TS",
+      0,
+      max - 1,
+      {
+        REV: true,
+      },
+    );
     if (!Array.isArray(members) || !members.length) return [];
     const values = await client.hmGet("HEALTH_SYMBOL_ACTIVITY", members);
     return members
@@ -2359,7 +2524,8 @@ function resolveProviderCode(brokerName) {
   if (!brokerName) return null;
   const name = String(brokerName).toLowerCase();
   // IC Markets
-  if (name.includes("ic market") || name.includes("icmarkets")) return "ICMARKETS";
+  if (name.includes("ic market") || name.includes("icmarkets"))
+    return "ICMARKETS";
   // OANDA
   if (name.includes("oanda")) return "OANDA";
   // EightCap
@@ -2367,7 +2533,12 @@ function resolveProviderCode(brokerName) {
   // Pepperstone
   if (name.includes("pepperstone")) return "PEPPERSTONE";
   // Forex.com
-  if (name.includes("forex.com") || name.includes("forexcom") || name.includes("gain capital")) return "FOREXCOM";
+  if (
+    name.includes("forex.com") ||
+    name.includes("forexcom") ||
+    name.includes("gain capital")
+  )
+    return "FOREXCOM";
   // FXCM
   if (name.includes("fxcm")) return "FXCM";
   // XM
@@ -2545,8 +2716,6 @@ async function marketDataRedisWrite(symbolNorm, tfNorm, snapshot) {
   await client.setEx(key, ttl, JSON.stringify(root)).catch(() => {});
 }
 
-
-
 async function marketDataFileUpsert(symbolNorm, tfNorm, snapshot) {
   const bars = normalizeMarketDataBars(snapshot?.bars);
   if (!bars.length) return;
@@ -2565,10 +2734,7 @@ async function marketDataFileUpsert(symbolNorm, tfNorm, snapshot) {
       last_bar_start: bars[bars.length - 1]?.time || null,
       chunk_count: 1,
       bar_count: bars.length,
-      gap_candidates: detectMarketDataGapCandidates(bars, tfNorm).slice(
-        0,
-        20,
-      ),
+      gap_candidates: detectMarketDataGapCandidates(bars, tfNorm).slice(0, 20),
     },
   }).catch(() => {});
 }
@@ -3519,10 +3685,17 @@ function ensureTradeDir(sid, symbol = "", category = "files") {
     const dir = path.join(baseDir, `${safeSid}-${safeSymbol}`);
     if (!fs.existsSync(dir)) {
       // Migrate from old, unknown, or sid-only folder
-      for (const oldName of [`trade-${safeSid}`, `${safeSid}-UNKNOWN`, safeSid]) {
+      for (const oldName of [
+        `trade-${safeSid}`,
+        `${safeSid}-UNKNOWN`,
+        safeSid,
+      ]) {
         const oldDir = path.join(baseDir, oldName);
         if (fs.existsSync(oldDir)) {
-          try { fs.renameSync(oldDir, dir); break; } catch {}
+          try {
+            fs.renameSync(oldDir, dir);
+            break;
+          } catch {}
         }
       }
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -3570,7 +3743,9 @@ function resolveTradeDir(sid, symbol = "") {
     const baseDir = TRADE_CATEGORY_DIRS[cat];
     if (!fs.existsSync(baseDir)) continue;
     try {
-      const safeSid = String(sid || "").trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+      const safeSid = String(sid || "")
+        .trim()
+        .replace(/[^A-Za-z0-9_.-]/g, "_");
       const entries = fs.readdirSync(baseDir);
       const match = entries.find(
         (e) =>
@@ -3605,7 +3780,14 @@ function readTradeBars(safeSid, tf) {
         const p = lines[i].split(",");
         const t = Number(p[0]);
         if (!Number.isFinite(t)) continue;
-        bars.push({ time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) });
+        bars.push({
+          time: t,
+          open: Number(p[1]),
+          high: Number(p[2]),
+          low: Number(p[3]),
+          close: Number(p[4]),
+          volume: Number(p[5]),
+        });
       }
       if (bars.length) return bars;
     }
@@ -3624,7 +3806,14 @@ function readTradeBars(safeSid, tf) {
           const p = lines[i].split(",");
           const t = Number(p[0]);
           if (!Number.isFinite(t)) continue;
-          bars.push({ time: t, open: Number(p[1]), high: Number(p[2]), low: Number(p[3]), close: Number(p[4]), volume: Number(p[5]) });
+          bars.push({
+            time: t,
+            open: Number(p[1]),
+            high: Number(p[2]),
+            low: Number(p[3]),
+            close: Number(p[4]),
+            volume: Number(p[5]),
+          });
         }
         return bars;
       }
@@ -3642,27 +3831,43 @@ function archiveTradeStats(sid, symbol) {
   // Use existing trade folder (any category) or create in trade_files
   let tradeDir = resolveTradeDir(sid, symbol);
   if (!tradeDir) {
-    tradeDir = path.join(TRADE_FILES_DIR, "trade-" + String(sid).trim().replace(/[^A-Za-z0-9_.-]/g, "_"));
+    tradeDir = path.join(
+      TRADE_FILES_DIR,
+      "trade-" +
+        String(sid)
+          .trim()
+          .replace(/[^A-Za-z0-9_.-]/g, "_"),
+    );
     if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
   }
 
   // Copy bars CSV files
   if (fs.existsSync(srcBarsDir)) {
     const dstBarsDir = path.join(tradeDir, "bars");
-    if (!fs.existsSync(dstBarsDir)) fs.mkdirSync(dstBarsDir, { recursive: true });
-    const barFiles = fs.readdirSync(srcBarsDir).filter(f => f.endsWith(".csv"));
+    if (!fs.existsSync(dstBarsDir))
+      fs.mkdirSync(dstBarsDir, { recursive: true });
+    const barFiles = fs
+      .readdirSync(srcBarsDir)
+      .filter((f) => f.endsWith(".csv"));
     for (const f of barFiles) {
-      try { fs.copyFileSync(path.join(srcBarsDir, f), path.join(dstBarsDir, f)); } catch {}
+      try {
+        fs.copyFileSync(path.join(srcBarsDir, f), path.join(dstBarsDir, f));
+      } catch {}
     }
   }
 
   // Copy snapshots (jpg/png files that are NOT in bars/ subdir)
   if (fs.existsSync(srcSnapDir)) {
     const dstSnapDir = path.join(tradeDir, "snapshots");
-    if (!fs.existsSync(dstSnapDir)) fs.mkdirSync(dstSnapDir, { recursive: true });
-    const snapFiles = fs.readdirSync(srcSnapDir).filter(f => /.(jpg|jpeg|png)$/i.test(f));
+    if (!fs.existsSync(dstSnapDir))
+      fs.mkdirSync(dstSnapDir, { recursive: true });
+    const snapFiles = fs
+      .readdirSync(srcSnapDir)
+      .filter((f) => /.(jpg|jpeg|png)$/i.test(f));
     for (const f of snapFiles) {
-      try { fs.copyFileSync(path.join(srcSnapDir, f), path.join(dstSnapDir, f)); } catch {}
+      try {
+        fs.copyFileSync(path.join(srcSnapDir, f), path.join(dstSnapDir, f));
+      } catch {}
     }
   }
 }
@@ -3673,7 +3878,9 @@ function moveTradeFolder(sid, fromCategory, toCategory) {
   if (!fromDir || !toDir) return false;
   if (!fs.existsSync(fromDir)) return false;
   try {
-    const safeSid = String(sid || "").trim().replace(/[^A-Za-z0-9_.-]/g, "_");
+    const safeSid = String(sid || "")
+      .trim()
+      .replace(/[^A-Za-z0-9_.-]/g, "_");
     const entries = fs.readdirSync(fromDir);
     const match = entries.find(
       (e) =>
@@ -3774,10 +3981,10 @@ function inferSymbolFromTradeFolder(sid) {
   const base = path.basename(String(dir || ""));
   const prefix = `${safeSid}-`;
   if (!base || !base.startsWith(prefix)) return "";
-  const raw = String(base.slice(prefix.length) || "").trim().toUpperCase();
-  const sym = raw
-    .replace(/^[A-Z0-9_-]+:/, "")
-    .replace(/[^A-Z0-9]/g, "");
+  const raw = String(base.slice(prefix.length) || "")
+    .trim()
+    .toUpperCase();
+  const sym = raw.replace(/^[A-Z0-9_-]+:/, "").replace(/[^A-Z0-9]/g, "");
   return sym;
 }
 
@@ -3835,14 +4042,21 @@ function snapshotTimestampToken(date = new Date()) {
     .replace(".", "_");
 }
 
-function copySnapshotsToTradeSidFolder(tradeSid, files = [], symbol = "", status = "pending") {
+function copySnapshotsToTradeSidFolder(
+  tradeSid,
+  files = [],
+  symbol = "",
+  status = "pending",
+) {
   const sid = String(tradeSid || "").trim();
   if (!sid) return [];
   ensureChartSnapshotDir();
   const destDir = tradeSnapshotDir(sid, symbol);
   // If trade folder already has any snapshot, skip — keep only 1 file
   if (fs.existsSync(destDir)) {
-    const existing = fs.readdirSync(destDir).filter((f) => /\.(png|jpe?g)$/i.test(f));
+    const existing = fs
+      .readdirSync(destDir)
+      .filter((f) => /\.(png|jpe?g)$/i.test(f));
     if (existing.length) return existing;
   }
   const requested = (Array.isArray(files) ? files : [])
@@ -3884,7 +4098,9 @@ function copyAnalyzeSnapshotToTradeSession(tradeSid, symbol = "") {
   const tradeDir = tradeSnapshotDir(sid, sym);
   // If trade folder already has any snapshot, skip
   if (fs.existsSync(tradeDir)) {
-    const existing = fs.readdirSync(tradeDir).filter((f) => /\.(png|jpe?g)$/i.test(f));
+    const existing = fs
+      .readdirSync(tradeDir)
+      .filter((f) => /\.(png|jpe?g)$/i.test(f));
     if (existing.length) return existing[0];
   }
   const sourceDirs = [srcDir, tradeDir];
@@ -4174,7 +4390,20 @@ function toTradingViewSymbol(inputSymbol, provider) {
   const isCrypto =
     raw.endsWith("USDT") ||
     raw.endsWith("USD") ||
-    ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "DOT", "MATIC", "NEAR", "ATOM", "ETC"].some((x) => raw.startsWith(x));
+    [
+      "BTC",
+      "ETH",
+      "SOL",
+      "XRP",
+      "ADA",
+      "DOGE",
+      "BNB",
+      "DOT",
+      "MATIC",
+      "NEAR",
+      "ATOM",
+      "ETC",
+    ].some((x) => raw.startsWith(x));
   if (prov === "BINANCE")
     return `BINANCE:${raw.endsWith("USD") ? raw.replace(/USD$/, "USDT") : raw}`;
   if (prov === "OANDA") return `OANDA:${raw}`;
@@ -4253,9 +4482,13 @@ async function fetchTradingViewSymbolSearch(
 }
 
 async function resolveTradingViewSymbolForCapture(inputSymbol, broker) {
-  const sym = String(inputSymbol || "").trim().toUpperCase();
+  const sym = String(inputSymbol || "")
+    .trim()
+    .toUpperCase();
   if (!sym) return "BTCUSD";
-  const brk = String(broker || "").trim().toUpperCase();
+  const brk = String(broker || "")
+    .trim()
+    .toUpperCase();
   if (!brk) return sym;
   const normalize = (v) =>
     String(v || "")
@@ -4480,7 +4713,8 @@ async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
     Math.min(Number(opts.lookbackBars || 300) || 300, 5000),
   );
   const outFormatRaw = String(opts.format || "png").toLowerCase();
-  const outFormat = outFormatRaw === "jpg" || outFormatRaw === "jpeg" ? "jpg" : "png";
+  const outFormat =
+    outFormatRaw === "jpg" || outFormatRaw === "jpeg" ? "jpg" : "png";
   const jpgQuality = Math.max(
     20,
     Math.min(Number(opts.quality || 90) || 90, 95),
@@ -4958,7 +5192,8 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
       let nextIdx = 0;
 
       const captureOne = async (symbol) => {
-        const ext = opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
+        const ext =
+          opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
         const brokerSymbol = await resolveTradingViewSymbolForCapture(
           symbol,
           opts.provider,
@@ -4985,33 +5220,55 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           );
           const readyTimeoutMs = Math.max(
             10000,
-            Math.floor(asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000)),
+            Math.floor(
+              asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000),
+            ),
           );
           await page.goto(gridUrl, { waitUntil: "load", timeout: 90000 });
           await page.waitForTimeout(renderWaitMs);
-          await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+          await page
+            .waitForLoadState("networkidle", { timeout: 15000 })
+            .catch(() => {});
           // Wait for at least one TradingView iframe to actually render chart content
           try {
             await page.waitForFunction(
               () => {
                 const iframes = document.querySelectorAll("iframe");
                 return [...iframes].some((f) => {
-                  try { return f.contentDocument?.querySelector?.("canvas, .chart-markup-table"); } catch { return false; }
+                  try {
+                    return f.contentDocument?.querySelector?.(
+                      "canvas, .chart-markup-table",
+                    );
+                  } catch {
+                    return false;
+                  }
                 });
               },
               { timeout: readyTimeoutMs },
             );
-          } catch { /* continue even if iframes not fully loaded */ }
+          } catch {
+            /* continue even if iframes not fully loaded */
+          }
           const ok = await page.evaluate(() => {
-            const badges = [...document.querySelectorAll(".grid-meta-badge,.tf-badge")];
+            const badges = [
+              ...document.querySelectorAll(".grid-meta-badge,.tf-badge"),
+            ];
             if (!badges.length) return false;
-            return badges.every((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+            return badges.every((el) => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            });
           });
-          if (!ok) throw new Error("snapshot_grid_watermark_not_visible_before_capture");
+          if (!ok)
+            throw new Error(
+              "snapshot_grid_watermark_not_visible_before_capture",
+            );
           await page.screenshot({
             path: outPath,
-            type: opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
-            quality: opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
+            type:
+              opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
+            quality:
+              opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
             fullPage: true,
           });
           emitSnapshotCreatedNotification({
@@ -5021,7 +5278,14 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
             fileName: outFileName,
             reused: false,
           });
-          return { symbol, timeframe: uniqueTfs.join(","), status: "ok", file_name: outFileName, url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`, master: true };
+          return {
+            symbol,
+            timeframe: uniqueTfs.join(","),
+            status: "ok",
+            file_name: outFileName,
+            url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
+            master: true,
+          };
         } catch (e) {
           console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
           return { symbol, status: "error", error: e.message };
@@ -6593,7 +6857,8 @@ function sanitizeRuntimeApiKey(raw) {
 
 async function loadAiConfig(userId = "") {
   const db = await mt5InitBackend();
-  const uid = String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
   const { rows } = await db.query(
     "SELECT name, data FROM user_settings WHERE user_id = $1 AND type = 'api_key'",
     [uid],
@@ -6618,9 +6883,7 @@ async function loadAiConfig(userId = "") {
     );
   if (!cfg.ANTHROPIC_API_KEY)
     cfg.ANTHROPIC_API_KEY = sanitizeRuntimeApiKey(
-      envStr(
-      process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
-      ),
+      envStr(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY),
     );
   if (!cfg.OPENAI_API_KEY)
     cfg.OPENAI_API_KEY = sanitizeRuntimeApiKey(
@@ -7927,11 +8190,7 @@ async function _mt5InitBackendInternal() {
   await pool
     .query(`ALTER TABLE trades ADD COLUMN IF NOT EXISTS chart_tf TEXT NULL`)
     .catch(() => {});
-  await pool
-    .query(
-      `SELECT 1`
-    )
-    .catch(() => {});
+  await pool.query(`SELECT 1`).catch(() => {});
   await pool
     .query(
       `
@@ -7941,11 +8200,7 @@ async function _mt5InitBackendInternal() {
   `,
     )
     .catch(() => {});
-  await pool
-    .query(
-      `SELECT 1`
-    )
-    .catch(() => {});
+  await pool.query(`SELECT 1`).catch(() => {});
   // trades_close_reason_check removed
   await pool
     .query(`ALTER TABLE trades DROP COLUMN IF EXISTS origin_kind`)
@@ -8313,7 +8568,14 @@ END
           signal.risk_pct_planned,
           signal.note,
           signal.rejection_reason,
-          JSON.stringify(signal.raw_json || {}),
+          (() => {
+            const rj = signal.raw_json || {};
+            if (rj && typeof rj === "object" && rj.prompt) {
+              const { prompt: _, ...rest } = rj;
+              return JSON.stringify(rest);
+            }
+            return JSON.stringify(rj);
+          })(),
           signal.status || "NEW",
           signal.profile || null,
           signal.confidence_pct || null,
@@ -8417,7 +8679,9 @@ END
             [leaseToken, row.sid],
           );
           await client.query("COMMIT");
-          console.log(`[Poll] Re-leasing expired trade ${row.sid} (was stuck at LEASED)`);
+          console.log(
+            `[Poll] Re-leasing expired trade ${row.sid} (was stuck at LEASED)`,
+          );
           return {
             task_id: row.sid,
             type: "OPEN",
@@ -8601,7 +8865,16 @@ END
                 })(),
               ),
               JSON.stringify(
-                payload.metadata?.raw_json || payload.raw_json || {},
+                (() => {
+                  const rj =
+                    payload.metadata?.raw_json || payload.raw_json || {};
+                  // Strip prompt from raw_json — it's massive (~20KB) and redundant with schema files
+                  if (rj && typeof rj === "object" && rj.prompt) {
+                    const { prompt: _, ...rest } = rj;
+                    return rest;
+                  }
+                  return rj;
+                })(),
               ),
               mt5NowIso(),
               payload.profile || null,
@@ -8691,13 +8964,18 @@ END
           // Auto-reject trades that have been re-leased too many times without ack
           const retryCount =
             (row.metadata?.lease_retry_count || 0) +
-            (row.dispatch_status === "LEASED" && row.lease_expires_at < new Date().toISOString() ? 1 : 0);
+            (row.dispatch_status === "LEASED" &&
+            row.lease_expires_at < new Date().toISOString()
+              ? 1
+              : 0);
           if (retryCount >= 3) {
             await client.query(
               `UPDATE trades SET execution_status = 'REJECTED', dispatch_status = 'CONSUMED', updated_at = NOW() WHERE sid = $1`,
               [row.sid],
             );
-            console.log(`[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`);
+            console.log(
+              `[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`,
+            );
             continue;
           }
           const leaseToken = mt5GenerateTimeSid();
@@ -8734,7 +9012,8 @@ END
       let execStatus = rawStatus;
       if (execStatus === "FAIL") execStatus = "REJECTED";
       if (execStatus === "EXPIRED") execStatus = "REJECTED";
-      if (execStatus === "START" || execStatus === "PLACED") execStatus = "PENDING";
+      if (execStatus === "START" || execStatus === "PLACED")
+        execStatus = "PENDING";
       payload.execution_status = execStatus;
       const now = mt5NowIso();
       const openedAt = payload.opened_at || payload.openedAt || null;
@@ -8856,7 +9135,9 @@ END
         const tradeSid = payload.sid || payload.trade_id;
         if (["PENDING", "FILLED"].includes(newStatus)) {
           moveTradeFolder(tradeSid, "files", "active");
-        } else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)) {
+        } else if (
+          ["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)
+        ) {
           // Copy bars + snapshots from market_data before moving to closed
           archiveTradeStats(tradeSid, res.rows[0]?.symbol);
           moveTradeFolder(tradeSid, "active", "closed");
@@ -9023,9 +9304,9 @@ END
         ),
         provider_code: String(
           payload.provider_code ||
-          existingMeta.provider_code ||
-          resolveProviderCode(payload.broker_name) ||
-          "",
+            existingMeta.provider_code ||
+            resolveProviderCode(payload.broker_name) ||
+            "",
         ),
         build_version: String(
           payload.build_version || existingMeta.build_version || "",
@@ -9390,17 +9671,7 @@ END
             res = await pool.query(
               `
             UPDATE trades
-            SET dispatch_status = CASE
-                  WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
-                  ELSE dispatch_status
-                END,
-                execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN
-                    CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN $1::text ELSE execution_status END
-                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
-                  ELSE $1::text
-                END,
-                pnl_realized = CASE
+            SET pnl_realized = CASE
                   WHEN $26::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($2::numeric, pnl_realized)
                   ELSE pnl_realized
                 END,
@@ -9479,18 +9750,7 @@ END
               res = await pool.query(
                 `
             UPDATE trades
-            SET dispatch_status = CASE
-                  WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
-                  ELSE dispatch_status
-                END,
-                execution_status = CASE
-                  WHEN execution_status = 'CLOSED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN $1::text
-                  WHEN execution_status = 'CANCELLED' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'PENDING_CANCEL' AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
-                  ELSE $1::text
-                END,
-                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+            SET broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
                 pnl_realized = CASE
                   WHEN $25::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
                   ELSE pnl_realized
@@ -9573,18 +9833,9 @@ END
             res = await pool.query(
               `
             UPDATE trades
-            SET dispatch_status = CASE
-                  WHEN dispatch_status IN ('NEW','LEASED') THEN 'CONSUMED'
-                  ELSE dispatch_status
-                END,
-                execution_status = CASE
-                  WHEN execution_status IN ('CLOSED', 'CANCELLED') AND $1::text NOT IN ('CLOSED', 'CANCELLED') THEN execution_status
-                  WHEN execution_status = 'FILLED' AND $1::text = 'PENDING' THEN execution_status
-                  ELSE $1::text
-                END,
-                broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
+            SET broker_trade_id = COALESCE(NULLIF($2::text, ''), broker_trade_id),
                 pnl_realized = CASE
-                  WHEN $24::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
+                  WHEN $25::boolean = TRUE OR $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($3::numeric, pnl_realized)
                   ELSE pnl_realized
                 END,
                 broker_pnl = $3::numeric,
@@ -10023,6 +10274,14 @@ END
             } catch {
               /* non-blocking */
             }
+            // Copy bars + snapshots from market_data before moving to closed
+            try {
+              archiveTradeStats(row.sid, row.symbol);
+            } catch {}
+            // Move folder from active to closed
+            try {
+              moveTradeFolder(row.sid, "active", "closed");
+            } catch {}
           }
         }
       }
@@ -10533,7 +10792,8 @@ END
       // Archive for close_all
       if (act === "close_all" && preCloseRows) {
         for (const r of rows) {
-          const sym = r.symbol || preCloseRows.find(p => p.sid === r.sid)?.symbol || "";
+          const sym =
+            r.symbol || preCloseRows.find((p) => p.sid === r.sid)?.symbol || "";
           archiveTradeStats(r.sid, sym);
           moveTradeFolder(r.sid, "active", "closed");
         }
@@ -11744,7 +12004,11 @@ function mt5NormalizeOrderType(payload) {
     payload.order_type ?? payload.orderType,
     "limit",
   );
-  if (normalized === "limit" || normalized === "stop" || normalized === "market")
+  if (
+    normalized === "limit" ||
+    normalized === "stop" ||
+    normalized === "market"
+  )
     return normalized;
   throw new Error("order_type must be one of: limit, stop, market");
 }
@@ -13286,7 +13550,8 @@ async function buildAnalysisSnapshotFromTwelve({
     if (brokerBars.length) {
       const barStart = brokerBars[0]?.time || null;
       const barEnd = brokerBars.length
-        ? Number(brokerBars[brokerBars.length - 1].time) + Math.max(60, parseTfTokenToSeconds(tfNorm))
+        ? Number(brokerBars[brokerBars.length - 1].time) +
+          Math.max(60, parseTfTokenToSeconds(tfNorm))
         : null;
       const brokerSnapshot = {
         provider: "broker_csv",
@@ -13299,16 +13564,25 @@ async function buildAnalysisSnapshotFromTwelve({
         fetched_at: new Date().toISOString(),
         bar_start: barStart,
         bar_end: barEnd,
-        last_price: brokerBars.length ? brokerBars[brokerBars.length - 1].close : null,
+        last_price: brokerBars.length
+          ? brokerBars[brokerBars.length - 1].close
+          : null,
         last_price_at: brokerBars.length
-          ? new Date(Number(brokerBars[brokerBars.length - 1].time) * 1000).toISOString()
+          ? new Date(
+              Number(brokerBars[brokerBars.length - 1].time) * 1000,
+            ).toISOString()
           : null,
         bars: brokerBars,
         cache_source: "broker_csv",
-        gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(0, 20),
+        gap_candidates: detectMarketDataGapCandidates(brokerBars, tfNorm).slice(
+          0,
+          20,
+        ),
       };
       tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
-      await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(() => {});
+      await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(
+        () => {},
+      );
       return mergeLastPriceIntoBars(brokerSnapshot);
     }
   }
@@ -13382,7 +13656,9 @@ async function buildAnalysisSnapshotFromTwelve({
       });
     }
     tfCacheSet(symbolNorm, tfNorm, binanceResult);
-    await marketDataFileUpsert(symbolNorm, tfNorm, binanceResult).catch(() => {});
+    await marketDataFileUpsert(symbolNorm, tfNorm, binanceResult).catch(
+      () => {},
+    );
     return mergeLastPriceIntoBars(binanceResult);
   }
 
@@ -14887,8 +15163,7 @@ function mt5FilterRows(rows, opts = {}) {
     if (userId && String(r.user_id || "") !== userId) return false;
     if (symbol && String(r.symbol || "").toUpperCase() !== symbol) return false;
     if (source && mt5SourceIdFromRow(r) !== source) return false;
-    if (entryModel && mt5EntryModelLabelFromRow(r) !== entryModel)
-      return false;
+    if (entryModel && mt5EntryModelLabelFromRow(r) !== entryModel) return false;
     if (
       chartTf &&
       String(
@@ -17250,28 +17525,41 @@ const appHandler = async (req, res) => {
         );
         const analyzeFile = copyAnalyzeSnapshotToTradeSession(sid, symbol);
         // Copy session files from analyze session folder if SIDs differ
-        const sessionSid = String(payload?.session_id || payload?.sid || "").trim();
+        const sessionSid = String(
+          payload?.session_id || payload?.sid || "",
+        ).trim();
         if (sessionSid && sessionSid !== sid) {
           const srcDir = path.join(TRADE_FILES_DIR, `trade-${sessionSid}`);
           if (fs.existsSync(srcDir)) {
             moveTradeFolder(sessionSid, "files", "active");
             // Also copy to the new trade SID folder
             const destDir = path.join(TRADE_FILES_DIR, `trade-${sid}`);
-            if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-            for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+            if (!fs.existsSync(destDir))
+              fs.mkdirSync(destDir, { recursive: true });
+            for (const entry of fs.readdirSync(srcDir, {
+              withFileTypes: true,
+            })) {
               const src = path.join(srcDir, entry.name);
               const dest = path.join(destDir, entry.name);
-              try { fs.cpSync(src, dest, { recursive: true }); } catch {}
+              try {
+                fs.cpSync(src, dest, { recursive: true });
+              } catch {}
             }
           }
         }
         const mergedCopied = [
           ...new Set(
-            [...(Array.isArray(copied) ? copied : []), ...(analyzeFile ? [analyzeFile] : [])].filter(Boolean),
+            [
+              ...(Array.isArray(copied) ? copied : []),
+              ...(analyzeFile ? [analyzeFile] : []),
+            ].filter(Boolean),
           ),
         ];
         copiedBySid[sid] = mergedCopied;
-        persistedBySid[sid] = await persistTradeSnapshotFiles(sid, mergedCopied);
+        persistedBySid[sid] = await persistTradeSnapshotFiles(
+          sid,
+          mergedCopied,
+        );
       }
       return json(res, 200, {
         ok: true,
@@ -18401,7 +18689,10 @@ const appHandler = async (req, res) => {
         // Individual key update
         const keyName = normalizeAiApiKeyName(body.key);
         let rawVal = String(body.value || "").trim();
-        if (ALLOWED_AI_API_KEY_NAMES.has(keyName) && isMaskedApiKeyLike(rawVal)) {
+        if (
+          ALLOWED_AI_API_KEY_NAMES.has(keyName) &&
+          isMaskedApiKeyLike(rawVal)
+        ) {
           rawVal = "";
           const existing = await db.query(
             "SELECT data FROM user_settings WHERE user_id=$1 AND type='api_key' AND name='default' LIMIT 1",
@@ -19204,13 +19495,18 @@ const appHandler = async (req, res) => {
     const splitSymbols = (input) =>
       (/\[object\s+promise\]/i.test(String(input || ""))
         ? ""
-        : String(input || ""))
+        : String(input || "")
+      )
         .split(/[\s,|;+]+|--|-/g)
         .map((s) => normalizeMarketDataSymbol(s))
         .filter(Boolean);
     const pathSymbols = splitSymbols(decodedPathSymbol);
     const querySymbols = splitSymbols(symbolsParam);
-    const symbols = [...new Set((querySymbols.length ? querySymbols : pathSymbols).slice(0, 8))];
+    const symbols = [
+      ...new Set(
+        (querySymbols.length ? querySymbols : pathSymbols).slice(0, 8),
+      ),
+    ];
     if (!symbols.length) symbols.push("BTCUSD");
 
     // Canonicalize, dedup, sort descending
@@ -19226,15 +19522,19 @@ const appHandler = async (req, res) => {
     }
 
     // Derived mappings from single canonical source
-    const tvIntervals = tfs.map(tf => snapshotTfToTVInterval(tf));
-    const displayTfs = tfs.map(tf => snapshotTfToLabel(tf));
+    const tvIntervals = tfs.map((tf) => snapshotTfToTVInterval(tf));
+    const displayTfs = tfs.map((tf) => snapshotTfToLabel(tf));
 
     const theme = url.searchParams.get("theme") || "dark";
     const captureMode =
       asBool(url.searchParams.get("save_image"), false) ||
       asBool(url.searchParams.get("capture"), false);
-    const selectedTz = normalizeTvTimezone(url.searchParams.get("tz"), "Etc/UTC");
-    const effectiveTz = selectedTz === "LOCAL" && captureMode ? "Etc/UTC" : selectedTz;
+    const selectedTz = normalizeTvTimezone(
+      url.searchParams.get("tz"),
+      "Etc/UTC",
+    );
+    const effectiveTz =
+      selectedTz === "LOCAL" && captureMode ? "Etc/UTC" : selectedTz;
     const gridStamp = new Date()
       .toISOString()
       .replace("T", " ")
@@ -19252,7 +19552,10 @@ const appHandler = async (req, res) => {
         : selectedTz === "America/New_York"
           ? "NY"
           : "UTC";
-    const sessionLabelShort = String(sessionLabel || "").replace(/Kill Zone/gi, "KZ");
+    const sessionLabelShort = String(sessionLabel || "").replace(
+      /Kill Zone/gi,
+      "KZ",
+    );
     const gridHeaderText = `${gridStampEsc} | ${htmlEscape(sessionLabelShort)} | ${tzLabel}`;
     const tfChoices = ["1m", "5m", "15m", "1h", "4h", "1D", "1W"];
 
@@ -19456,7 +19759,9 @@ const appHandler = async (req, res) => {
                 ${tfChoices
                   .map((choice) => {
                     const checked = tfs.some(
-                      (x) => String(x).toLowerCase() === String(choice).toLowerCase(),
+                      (x) =>
+                        String(x).toLowerCase() ===
+                        String(choice).toLowerCase(),
                     )
                       ? "checked"
                       : "";
@@ -19576,7 +19881,10 @@ const appHandler = async (req, res) => {
       url.searchParams.get("symbol") || "BTCUSD",
     );
     const provider = String(url.searchParams.get("provider") || "").trim();
-    const symbol = await resolveTradingViewSymbolForCapture(symbolRaw, provider);
+    const symbol = await resolveTradingViewSymbolForCapture(
+      symbolRaw,
+      provider,
+    );
     const interval = String(url.searchParams.get("interval") || "60").trim();
     const theme =
       String(url.searchParams.get("theme") || "dark").toLowerCase() === "light"
@@ -19955,14 +20263,26 @@ const appHandler = async (req, res) => {
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
-      const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
+      const symbol = String(url.searchParams.get("symbol") || "")
+        .trim()
+        .toUpperCase();
       const tfInput = String(url.searchParams.get("tf") || "").trim();
       const tf = normalizeCsvTfKey(tfInput);
-      const limit = Math.max(10, Math.min(5000, Number(url.searchParams.get("limit") || 300) || 300));
-      if (!symbol || !tf) return json(res, 400, { ok: false, error: "symbol and tf required" });
+      const limit = Math.max(
+        10,
+        Math.min(5000, Number(url.searchParams.get("limit") || 300) || 300),
+      );
+      if (!symbol || !tf)
+        return json(res, 400, { ok: false, error: "symbol and tf required" });
       const csvPath = path.join(BROKER_BARS_DIR, symbol, "bars", `${tf}.csv`);
       if (!fs.existsSync(csvPath)) {
-        return json(res, 200, { ok: true, symbol, tf, bars: [], source: "cache" });
+        return json(res, 200, {
+          ok: true,
+          symbol,
+          tf,
+          bars: [],
+          source: "cache",
+        });
       }
       const raw = fs.readFileSync(csvPath, "utf8");
       const lines = raw.trim().split(/\r?\n/);
@@ -19980,9 +20300,18 @@ const appHandler = async (req, res) => {
         bars.push({ t: Math.floor(t), o, h, l, c, v });
       }
       const sliced = bars.slice(-limit);
-      return json(res, 200, { ok: true, symbol, tf, bars: sliced, source: "broker" });
+      return json(res, 200, {
+        ok: true,
+        symbol,
+        tf,
+        bars: sliced,
+        source: "broker",
+      });
     } catch (error) {
-      return json(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -21255,11 +21584,18 @@ const appHandler = async (req, res) => {
               const bars = readBrokerBarsFromCsv(symbolNorm, tfNorm, 300);
               if (bars.length) {
                 const lastBar = bars[bars.length - 1];
-                rows.push({ tf: tfNorm, bar_count: bars.length, last_price: lastBar.close });
+                rows.push({
+                  tf: tfNorm,
+                  bar_count: bars.length,
+                  last_price: lastBar.close,
+                });
               }
             }
             if (rows.length) {
-              const barLines = rows.map((r) => `${r.tf}: ${r.bar_count} bars, latest close=${r.last_price}`);
+              const barLines = rows.map(
+                (r) =>
+                  `${r.tf}: ${r.bar_count} bars, latest close=${r.last_price}`,
+              );
               finalPrompt += `\n\n## MARKET DATA (text-only model — chart images not visible)\nSymbol: ${symbol}\n${barLines.join("\n")}`;
             }
           }
@@ -22358,10 +22694,20 @@ const appHandler = async (req, res) => {
       }
       const absPath = abs;
       const ext = path.extname(absPath).toLowerCase();
-      const mimeTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-      const ct = mimeTypes[ext] || 'application/octet-stream';
+      const mimeTypes = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+      };
+      const ct = mimeTypes[ext] || "application/octet-stream";
       const data = fs.readFileSync(absPath);
-      res.writeHead(200, { 'Content-Type': ct, 'Content-Length': data.length, 'Cache-Control': 'public, max-age=3600' });
+      res.writeHead(200, {
+        "Content-Type": ct,
+        "Content-Length": data.length,
+        "Cache-Control": "public, max-age=3600",
+      });
       res.end(data);
       return;
     } catch (error) {
@@ -22542,10 +22888,20 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "file not found" });
       const absPath = abs;
       const ext2 = path.extname(absPath).toLowerCase();
-      const mimeMap = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-      const ct2 = mimeMap[ext2] || 'application/octet-stream';
+      const mimeMap = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+      };
+      const ct2 = mimeMap[ext2] || "application/octet-stream";
       const buf = fs.readFileSync(absPath);
-      res.writeHead(200, { 'Content-Type': ct2, 'Content-Length': buf.length, 'Cache-Control': 'public, max-age=3600' });
+      res.writeHead(200, {
+        "Content-Type": ct2,
+        "Content-Length": buf.length,
+        "Cache-Control": "public, max-age=3600",
+      });
       res.end(buf);
       return;
     } catch (error) {
@@ -23857,7 +24213,8 @@ const appHandler = async (req, res) => {
       const m = url.pathname.match(/^\/v2\/trades\/([^/]+)\/bars$/);
       const tradeRef = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
       const tf = String(url.searchParams.get("tf") || "15");
-      if (!tradeRef) return json(res, 400, { ok: false, error: "sid required" });
+      if (!tradeRef)
+        return json(res, 400, { ok: false, error: "sid required" });
 
       const safeSid = tradeRef.replace(/[^A-Za-z0-9_.-]/g, "_");
       const bars = readTradeBars(safeSid, tf);
@@ -24305,15 +24662,24 @@ const appHandler = async (req, res) => {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
     try {
-      const symbolParam = (url.searchParams.get("symbol") || "").trim().toUpperCase();
-      const symbolsParam = (url.searchParams.get("symbols") || "").trim().toUpperCase();
-      const groupParam = (url.searchParams.get("group") || "").trim().toLowerCase();
+      const symbolParam = (url.searchParams.get("symbol") || "")
+        .trim()
+        .toUpperCase();
+      const symbolsParam = (url.searchParams.get("symbols") || "")
+        .trim()
+        .toUpperCase();
+      const groupParam = (url.searchParams.get("group") || "")
+        .trim()
+        .toLowerCase();
 
       let mode = "all";
       let resolvedSymbols = [];
       if (symbolsParam) {
         mode = "symbols";
-        resolvedSymbols = symbolsParam.split(",").map((s) => s.trim()).filter(Boolean);
+        resolvedSymbols = symbolsParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
       } else if (symbolParam) {
         mode = "symbol";
         resolvedSymbols = [symbolParam];
@@ -24338,7 +24704,17 @@ const appHandler = async (req, res) => {
       }
 
       if (!resolvedSymbols.length) {
-        return json(res, 200, { ok: true, mode, filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" }, items: [] });
+        return json(res, 200, {
+          ok: true,
+          mode,
+          filters: {
+            symbol: symbolParam || null,
+            symbols: symbolsParam ? resolvedSymbols : null,
+            group: groupParam || null,
+            default: "all",
+          },
+          items: [],
+        });
       }
 
       const TFS = ["1", "5", "15", "60", "240", "1440"];
@@ -24358,9 +24734,22 @@ const appHandler = async (req, res) => {
         }
         items.push({ symbol: sym, bars_info: barsInfo });
       }
-      return json(res, 200, { ok: true, mode, filters: { symbol: symbolParam || null, symbols: symbolsParam ? resolvedSymbols : null, group: groupParam || null, default: "all" }, items });
+      return json(res, 200, {
+        ok: true,
+        mode,
+        filters: {
+          symbol: symbolParam || null,
+          symbols: symbolsParam ? resolvedSymbols : null,
+          group: groupParam || null,
+          default: "all",
+        },
+        items,
+      });
     } catch (error) {
-      return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -24373,10 +24762,25 @@ const appHandler = async (req, res) => {
       const account = await requireV2BrokerAccount(req, res, url, payload);
       if (!account) return;
       const items = Array.isArray(payload.items) ? payload.items : [];
-      if (!items.length) return json(res, 200, { ok: true, sync_id: genTraceId("sync_"), summary: { items: 0, received: 0, inserted: 0, duplicated: 0, rejected: 0 }, results: [] });
+      if (!items.length)
+        return json(res, 200, {
+          ok: true,
+          sync_id: genTraceId("sync_"),
+          summary: {
+            items: 0,
+            received: 0,
+            inserted: 0,
+            duplicated: 0,
+            rejected: 0,
+          },
+          results: [],
+        });
 
       const syncId = genTraceId("sync_");
-      let totalReceived = 0, totalInserted = 0, totalDuplicated = 0, totalRejected = 0;
+      let totalReceived = 0,
+        totalInserted = 0,
+        totalDuplicated = 0,
+        totalRejected = 0;
       const results = [];
 
       for (const item of items) {
@@ -24384,13 +24788,25 @@ const appHandler = async (req, res) => {
         const tf = String(item.tf || "").trim();
         const bars = Array.isArray(item.bars) ? item.bars : [];
         if (!sym || !tf) {
-          results.push({ symbol: item.symbol, tf, received: 0, inserted: 0, duplicated: 0, rejected: bars.length, reject_reason: "invalid_symbol_or_tf" });
+          results.push({
+            symbol: item.symbol,
+            tf,
+            received: 0,
+            inserted: 0,
+            duplicated: 0,
+            rejected: bars.length,
+            reject_reason: "invalid_symbol_or_tf",
+          });
           totalRejected += bars.length;
           continue;
         }
 
         const normalizedBars = [];
-        let itemReceived = 0, itemInserted = 0, itemDuplicated = 0, itemRejected = 0, latestTs = null;
+        let itemReceived = 0,
+          itemInserted = 0,
+          itemDuplicated = 0,
+          itemRejected = 0,
+          latestTs = null;
 
         for (const bar of bars) {
           const t = Number(bar.time ?? bar.t);
@@ -24399,12 +24815,25 @@ const appHandler = async (req, res) => {
           const l = Number(bar.low ?? bar.l);
           const c = Number(bar.close ?? bar.c);
           const v = Number(bar.volume ?? bar.v);
-          if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) {
+          if (
+            !Number.isFinite(t) ||
+            !Number.isFinite(o) ||
+            !Number.isFinite(h) ||
+            !Number.isFinite(l) ||
+            !Number.isFinite(c)
+          ) {
             itemRejected++;
             continue;
           }
           itemReceived++;
-          normalizedBars.push({ time: Math.floor(t), open: o, high: h, low: l, close: c, volume: Number.isFinite(v) ? v : 0 });
+          normalizedBars.push({
+            time: Math.floor(t),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: Number.isFinite(v) ? v : 0,
+          });
           if (!latestTs || t > latestTs) latestTs = t;
         }
 
@@ -24418,8 +24847,12 @@ const appHandler = async (req, res) => {
         totalDuplicated += itemDuplicated;
         totalRejected += itemRejected;
         results.push({
-          symbol: sym, tf,
-          received: itemReceived, inserted: itemInserted, duplicated: itemDuplicated, rejected: itemRejected,
+          symbol: sym,
+          tf,
+          received: itemReceived,
+          inserted: itemInserted,
+          duplicated: itemDuplicated,
+          rejected: itemRejected,
           latest_timestamp_after_sync: latestTs,
         });
         if (itemInserted > 0) {
@@ -24437,15 +24870,38 @@ const appHandler = async (req, res) => {
       }
 
       if (totalInserted > 0) {
-        await mt5Log(account.account_id, "accounts", {
-          event: "PRICES_SYNC", sync_id: syncId, source_id: payload.source_id || "unknown",
-          inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected,
-        }, account.user_id || CFG.mt5DefaultUserId);
+        await mt5Log(
+          account.account_id,
+          "accounts",
+          {
+            event: "PRICES_SYNC",
+            sync_id: syncId,
+            source_id: payload.source_id || "unknown",
+            inserted: totalInserted,
+            duplicated: totalDuplicated,
+            rejected: totalRejected,
+          },
+          account.user_id || CFG.mt5DefaultUserId,
+        );
       }
 
-      return json(res, 200, { ok: true, sync_id: syncId, summary: { items: items.length, received: totalReceived, inserted: totalInserted, duplicated: totalDuplicated, rejected: totalRejected }, results });
+      return json(res, 200, {
+        ok: true,
+        sync_id: syncId,
+        summary: {
+          items: items.length,
+          received: totalReceived,
+          inserted: totalInserted,
+          duplicated: totalDuplicated,
+          rejected: totalRejected,
+        },
+        results,
+      });
     } catch (error) {
-      return json(res, 400, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -24456,14 +24912,15 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       if (!(await requireEaKey(req, res, url, payload))) return;
       const bars = Array.isArray(payload.bars) ? payload.bars : [];
-      if (!bars.length)
-        return json(res, 200, { ok: true, inserted: 0 });
+      if (!bars.length) return json(res, 200, { ok: true, inserted: 0 });
 
       // Merge into CSV (unified source of truth) + L1/Redis cache
       let inserted = 0;
       const symbolsSeen = new Set();
       for (const bar of bars) {
-        const symbol = String(bar.s || "").trim().toUpperCase();
+        const symbol = String(bar.s || "")
+          .trim()
+          .toUpperCase();
         const tf = String(bar.tf || "").trim();
         if (!symbol || !tf) continue;
         const n = mergeBarsIntoCSV(symbol, tf, [bar]);
@@ -24482,12 +24939,17 @@ const appHandler = async (req, res) => {
 
       if (inserted > 0) {
         const pushAccountId = payload.account_id || "unknown";
-        await mt5Log(pushAccountId, "accounts", {
-          event: "BAR_PUSH",
-          source_id: payload.source_id || "MT5",
-          bar_count: inserted,
-          symbols: [...symbolsSeen],
-        }, CFG.mt5DefaultUserId);
+        await mt5Log(
+          pushAccountId,
+          "accounts",
+          {
+            event: "BAR_PUSH",
+            source_id: payload.source_id || "MT5",
+            bar_count: inserted,
+            symbols: [...symbolsSeen],
+          },
+          CFG.mt5DefaultUserId,
+        );
       }
 
       return json(res, 200, { ok: true, inserted });
@@ -24754,8 +25216,12 @@ const appHandler = async (req, res) => {
 
       let stored = 0;
       for (const bar of bars) {
-        const symbol = String(bar.s || bar.symbol || "").trim().toUpperCase();
-        const tf = String(bar.tf || bar.timeframe || "").trim().toLowerCase();
+        const symbol = String(bar.s || bar.symbol || "")
+          .trim()
+          .toUpperCase();
+        const tf = String(bar.tf || bar.timeframe || "")
+          .trim()
+          .toLowerCase();
         const t = Number(bar.t);
         const o = Number(bar.o);
         const h = Number(bar.h);
@@ -24763,7 +25229,16 @@ const appHandler = async (req, res) => {
         const c = Number(bar.c);
         const v = Number(bar.v || 0);
 
-        if (!symbol || !tf || !Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
+        if (
+          !symbol ||
+          !tf ||
+          !Number.isFinite(t) ||
+          !Number.isFinite(o) ||
+          !Number.isFinite(h) ||
+          !Number.isFinite(l) ||
+          !Number.isFinite(c)
+        )
+          continue;
 
         // 1. Append to CSV file
         const csvDir = path.join(ROOT_DIR, "market_data", symbol, "bars");
@@ -24789,9 +25264,16 @@ const appHandler = async (req, res) => {
           for (const tfEntry of root.data) {
             if (String(tfEntry.tf || "").toLowerCase() === tf) {
               const barsArr = Array.isArray(tfEntry.bars) ? tfEntry.bars : [];
-              const dup = barsArr.find(b => Number(b.time || b.t) === t);
+              const dup = barsArr.find((b) => Number(b.time || b.t) === t);
               if (!dup) {
-                barsArr.push({ time: t, open: o, high: h, low: l, close: c, volume: v });
+                barsArr.push({
+                  time: t,
+                  open: o,
+                  high: h,
+                  low: l,
+                  close: c,
+                  volume: v,
+                });
                 // Keep max 1000
                 if (barsArr.length > 1000) barsArr.shift();
               }
@@ -24805,32 +25287,51 @@ const appHandler = async (req, res) => {
         }
 
         // 3. Async Redis L2 merge
-        getRedisClient().then(async (client) => {
-          if (!client) return;
-          try {
-            const raw = await client.get(key).catch(() => "");
-            let redisRoot = null;
-            if (raw) { try { redisRoot = JSON.parse(raw); } catch {} }
-            if (redisRoot && Array.isArray(redisRoot.data)) {
-              for (const tfEntry of redisRoot.data) {
-                if (String(tfEntry.tf || "").toLowerCase() === tf) {
-                  const barsArr = Array.isArray(tfEntry.bars) ? tfEntry.bars : [];
-                  const dup = barsArr.find(b => Number(b.time || b.t) === t);
-                  if (!dup) {
-                    barsArr.push({ time: t, open: o, high: h, low: l, close: c, volume: v });
-                    if (barsArr.length > 1000) barsArr.shift();
-                  }
-                  tfEntry.bars = barsArr;
-                  tfEntry.last_price = c;
-                  tfEntry.last_price_at = new Date().toISOString();
-                  break;
-                }
+        getRedisClient()
+          .then(async (client) => {
+            if (!client) return;
+            try {
+              const raw = await client.get(key).catch(() => "");
+              let redisRoot = null;
+              if (raw) {
+                try {
+                  redisRoot = JSON.parse(raw);
+                } catch {}
               }
-              redisRoot.updated_time = Math.floor(Date.now() / 1000);
-              await client.setEx(key, 3600, JSON.stringify(redisRoot)).catch(() => {});
-            }
-          } catch {}
-        }).catch(() => {});
+              if (redisRoot && Array.isArray(redisRoot.data)) {
+                for (const tfEntry of redisRoot.data) {
+                  if (String(tfEntry.tf || "").toLowerCase() === tf) {
+                    const barsArr = Array.isArray(tfEntry.bars)
+                      ? tfEntry.bars
+                      : [];
+                    const dup = barsArr.find(
+                      (b) => Number(b.time || b.t) === t,
+                    );
+                    if (!dup) {
+                      barsArr.push({
+                        time: t,
+                        open: o,
+                        high: h,
+                        low: l,
+                        close: c,
+                        volume: v,
+                      });
+                      if (barsArr.length > 1000) barsArr.shift();
+                    }
+                    tfEntry.bars = barsArr;
+                    tfEntry.last_price = c;
+                    tfEntry.last_price_at = new Date().toISOString();
+                    break;
+                  }
+                }
+                redisRoot.updated_time = Math.floor(Date.now() / 1000);
+                await client
+                  .setEx(key, 3600, JSON.stringify(redisRoot))
+                  .catch(() => {});
+              }
+            } catch {}
+          })
+          .catch(() => {});
       }
 
       return json(res, 200, { ok: true, stored });
@@ -24866,7 +25367,8 @@ const appHandler = async (req, res) => {
       // Get a sample of updated prices from memory cache
       const recentPrices = [];
       for (const [key, root] of MARKET_DATA_MEMORY_CACHE) {
-        if (!root || typeof root !== "object" || !Array.isArray(root.data)) continue;
+        if (!root || typeof root !== "object" || !Array.isArray(root.data))
+          continue;
         for (const tfEntry of root.data) {
           if (tfEntry.last_price_at) {
             recentPrices.push({
@@ -24880,7 +25382,9 @@ const appHandler = async (req, res) => {
           }
         }
       }
-      recentPrices.sort((a, b) => (b.last_price_at || "").localeCompare(a.last_price_at || ""));
+      recentPrices.sort((a, b) =>
+        (b.last_price_at || "").localeCompare(a.last_price_at || ""),
+      );
       const topPrices = recentPrices.slice(0, 10);
       return json(res, 200, {
         ok: true,
@@ -25626,9 +26130,17 @@ async function start() {
 }
 
 const SOURCE_STATUS = {
-  ctrader: { lastActivity: null, connected: false, enabled: CFG.ctraderEnabled },
-  mt5:     { lastActivity: null, connected: false, enabled: CFG.mt5Enabled },
-  binance: { lastActivity: null, connected: false, enabled: CFG.binanceEnabled },
+  ctrader: {
+    lastActivity: null,
+    connected: false,
+    enabled: CFG.ctraderEnabled,
+  },
+  mt5: { lastActivity: null, connected: false, enabled: CFG.mt5Enabled },
+  binance: {
+    lastActivity: null,
+    connected: false,
+    enabled: CFG.binanceEnabled,
+  },
 };
 const CRON_STATE = {
   lastMarketDataRun: {}, // { [userId_name]: timestamp }
@@ -25867,9 +26379,10 @@ async function mt5RunSnapshotsCron() {
     let rrIdx = CRON_STATE.lastSnapshotsRun[rrKey] || 0;
     if (rrIdx >= filteredSymbols.length) rrIdx = 0;
     const tickSymbols = filteredSymbols.slice(rrIdx, rrIdx + batchSize);
-    CRON_STATE.lastSnapshotsRun[rrKey] = (rrIdx + batchSize) % filteredSymbols.length;
+    CRON_STATE.lastSnapshotsRun[rrKey] =
+      (rrIdx + batchSize) % filteredSymbols.length;
     console.log(
-      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length} (batch ${Math.floor(rrIdx/batchSize)+1})`,
+      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length} (batch ${Math.floor(rrIdx / batchSize) + 1})`,
     );
     CRON_STATE.lastSnapshotsRun[stateKey] = now;
     try {
@@ -25932,21 +26445,29 @@ async function mt5RunSnapshotsCron() {
         }
       }
       const createdSymbols = created
-        .map((x) => String(x.symbol || "").trim().toUpperCase())
+        .map((x) =>
+          String(x.symbol || "")
+            .trim()
+            .toUpperCase(),
+        )
         .filter(Boolean);
-      await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
-        status: "ok",
-        message: `completed ${createdSymbols.join(", ") || "0 symbols"}`,
-        user_id: userId,
-        cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
-        broker: broker || null,
-        tick_symbols: tickSymbols,
-        all_symbols_count: filteredSymbols.length,
-        timeframes: Array.isArray(tfs) ? tfs : [],
-        created_count: created.length,
-        created,
-        duration_ms: Date.now() - startedAt,
-      });
+      await updateHealthActivity(
+        "CRON",
+        String(conf.name || "SNAPSHOTS_CRON"),
+        {
+          status: "ok",
+          message: `completed ${createdSymbols.join(", ") || "0 symbols"}`,
+          user_id: userId,
+          cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+          broker: broker || null,
+          tick_symbols: tickSymbols,
+          all_symbols_count: filteredSymbols.length,
+          timeframes: Array.isArray(tfs) ? tfs : [],
+          created_count: created.length,
+          created,
+          duration_ms: Date.now() - startedAt,
+        },
+      );
       notificationManager.handle("CRON_SNAPSHOT", "completed", {
         user_id: userId,
         event: "cron_snapshot_completed",
@@ -25960,19 +26481,23 @@ async function mt5RunSnapshotsCron() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       summary.errors.push(msg);
-      await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
-        status: "error",
-        message: msg,
-        user_id: userId,
-        cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
-        broker: String(data.broker || "") || null,
-        tick_symbols: tickSymbols,
-        all_symbols_count: filteredSymbols.length,
-        timeframes: Array.isArray(tfs) ? tfs : [],
-        created_count: 0,
-        created: [],
-        errors: [msg],
-      });
+      await updateHealthActivity(
+        "CRON",
+        String(conf.name || "SNAPSHOTS_CRON"),
+        {
+          status: "error",
+          message: msg,
+          user_id: userId,
+          cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+          broker: String(data.broker || "") || null,
+          tick_symbols: tickSymbols,
+          all_symbols_count: filteredSymbols.length,
+          timeframes: Array.isArray(tfs) ? tfs : [],
+          created_count: 0,
+          created: [],
+          errors: [msg],
+        },
+      );
       notificationManager.handle("CRON_SNAPSHOT", "failed", {
         user_id: userId,
         event: "cron_snapshot_failed",
@@ -26038,7 +26563,11 @@ async function mt5CronLoop() {
     ];
     if (CFG.snapshotsCronEnabled) {
       cronTasks.push(
-        runOne("snapshots", mt5RunSnapshotsCron, (r) => `${r.captured || 0} img`),
+        runOne(
+          "snapshots",
+          mt5RunSnapshotsCron,
+          (r) => `${r.captured || 0} img`,
+        ),
       );
     } else {
       global._cronDetails.snapshots = "disabled";
