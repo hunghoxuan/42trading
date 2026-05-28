@@ -1884,16 +1884,8 @@ setTimeout(refreshEconomicCalendar, 5000); // Initial boot
 
 async function repoGetUserAccounts(userId) {
   return await StateRepo.get("USER_ACCOUNTS", userId, async () => {
-    const b = await mt5Backend();
-    // Use the backend's existing listAccounts or direct query if not available
-    if (b.listAccounts) return await b.listAccounts({ userId });
-    const { rows } = await (
-      await mt5InitBackend()
-    ).query(
-      "SELECT * FROM user_accounts WHERE user_id = $1 AND status != 'ARCHIVED'",
-      [userId],
-    );
-    return rows;
+    const db = await mt5InitBackend();
+    return await dbQueries.listUserAccounts(db.db, userId);
   });
 }
 
@@ -19725,7 +19717,19 @@ const appHandler = async (req, res) => {
               // 📷 Browser: Screen Capture API — captures your actual viewport (zoom, bars, iframes)
               browserBtn.addEventListener("click", async () => {
                 hideToolbar();
+                const stack = document.querySelector(".symbols-stack");
+                const origBodyOverflow = document.body.style.overflow;
+                const origStackOverflow = stack?.style?.overflowY;
+                const origStackHeight = stack?.style?.height;
                 try {
+                  statusEl.textContent = "Expanding page...";
+                  // Expand page to show full grid content before capture
+                  document.body.style.overflow = "visible";
+                  if (stack) {
+                    stack.style.overflowY = "visible";
+                    stack.style.height = "auto";
+                  }
+                  await new Promise((r) => setTimeout(r, 200));
                   statusEl.textContent = "Capturing viewport...";
                   const symbols = getSymbols();
                   if (!symbols.length) {
@@ -19763,6 +19767,12 @@ const appHandler = async (req, res) => {
                 } catch (_) {
                   statusEl.textContent = "Failed";
                 } finally {
+                  // Restore original overflow styles
+                  document.body.style.overflow = origBodyOverflow;
+                  if (stack) {
+                    stack.style.overflowY = origStackOverflow;
+                    stack.style.height = origStackHeight;
+                  }
                   showToolbar();
                 }
               });

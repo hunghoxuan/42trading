@@ -26,7 +26,7 @@ const userTemplates = pgTable("user_templates", {
 });
 
 const userSettings = pgTable("user_settings", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
   name: text("name").notNull().default("default"), type: text("type").notNull(), data: text("data").notNull(),
   status: text("status").default("ACTIVE"),

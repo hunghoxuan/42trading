@@ -157,8 +157,9 @@ async function listUserSettingsByType(db, userId, type) {
 
 async function upsertUserSetting(db, userId, type, name, data, status) {
   const now = new Date();
+  const id = require("crypto").randomUUID();
   return db.insert(schema.userSettings).values({
-    userId, type, name: name || "default", data: jsonField(data),
+    id, userId, type, name: name || "default", data: jsonField(data),
     status: status || "ACTIVE", createdAt: now, updatedAt: now,
   }).onConflictDoUpdate({
     target: [schema.userSettings.userId, schema.userSettings.type, schema.userSettings.name],

@@ -14,15 +14,13 @@ export default function NavDropdown({ trigger, children, align = "end" }) {
       <DropdownMenu.Trigger asChild>
         {trigger}
       </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          className="nav-dropdown-menu"
-          align={align}
-          sideOffset={4}
-        >
-          {children}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
+      <DropdownMenu.Content
+        className="nav-dropdown-menu"
+        align={align}
+        sideOffset={4}
+      >
+        {children}
+      </DropdownMenu.Content>
     </DropdownMenu.Root>
   );
 }
