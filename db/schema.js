@@ -84,6 +84,7 @@ const userSettings = pgTable(
 // ── signals ──
 const signals = pgTable("signals", {
   sid: text("sid").primaryKey(),
+  id: serial("id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   userId: text("user_id")
     .notNull()
@@ -101,19 +102,16 @@ const signals = pgTable("signals", {
   signalTf: text("signal_tf"),
   chartTf: text("chart_tf"),
   rrPlanned: doublePrecision("rr_planned"),
-  riskPct: doublePrecision("risk_pct"),
-  riskMoney: doublePrecision("risk_money"),
-  volume: doublePrecision("volume"),
-  status: text("status").default("ACTIVE"),
-  dispatchStatus: text("dispatch_status"),
-  brokerTradeId: text("broker_trade_id"),
-  rejectionReason: text("rejection_reason"),
+  riskPctPlanned: doublePrecision("risk_pct_planned"),
+  riskMoneyPlanned: doublePrecision("risk_money_planned"),
   note: text("note"),
-  leaseToken: text("lease_token"),
-  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-  metadata: jsonb("metadata"),
+  rejectionReason: text("rejection_reason"),
   rawJson: jsonb("raw_json"),
+  status: text("status").default("NEW"),
+  profile: text("profile"),
+  confidencePct: doublePrecision("confidence_pct"),
+  estimatedBars: integer("estimated_bars"),
+  beTrigger: doublePrecision("be_trigger"),
 });
 
 // ── trades ──
@@ -179,7 +177,6 @@ const trades = pgTable("trades", {
   pnlRealized: doublePrecision("pnl_realized"),
   metadata: jsonb("metadata"),
   rawJson: jsonb("raw_json"),
-  lastPrice: doublePrecision("last_price"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
@@ -207,29 +204,7 @@ const marketData = pgTable("market_data", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
-// ── ai_templates ──
-const aiTemplates = pgTable("ai_templates", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  config: jsonb("config"),
-  status: text("status").default("ACTIVE"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
-
-// ── ui_auth_users ──
-const uiAuthUsers = pgTable("ui_auth_users", {
-  id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash"),
-  passwordSalt: text("password_salt"),
-  name: text("name"),
-  role: text("role").default("viewer"),
-  isActive: boolean("is_active").default(true),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-});
+// ── ui_auth_users ── (legacy — table dropped by migration)
 
 module.exports = {
   users,
@@ -240,6 +215,4 @@ module.exports = {
   trades,
   logs,
   marketData,
-  aiTemplates,
-  uiAuthUsers,
 };
