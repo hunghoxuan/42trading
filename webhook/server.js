@@ -4180,32 +4180,33 @@ async function persistTradeSnapshotFiles(tradeSid, files = [], symbol = "") {
     : `trade-${sid}/snapshots`;
   try {
     const db = await mt5Backend();
-    const fileJson = JSON.stringify(safeFiles);
-    const { rowCount } = await db.query(
-      `
-      WITH merged AS (
-        SELECT jsonb_agg(DISTINCT file_name ORDER BY file_name) AS files
-        FROM jsonb_array_elements_text(
-          COALESCE((SELECT metadata->'snapshot_files' FROM trades WHERE sid = $1 LIMIT 1), '[]'::jsonb)
-          || $2::jsonb
-        ) AS f(file_name)
-      )
-      UPDATE trades
-      SET metadata = COALESCE(metadata, '{}'::jsonb)
-            || jsonb_build_object(
-              'snapshot_files', COALESCE((SELECT files FROM merged), '[]'::jsonb),
-              'snapshot_folder', $3::text
-            ),
-          raw_json = COALESCE(raw_json, '{}'::jsonb)
-            || jsonb_build_object(
-              'snapshot_files', COALESCE((SELECT files FROM merged), '[]'::jsonb),
-              'snapshot_folder', $3::text
-            ),
-          updated_at = NOW()
-      WHERE sid = $1
-      `,
-      [sid, fileJson, folder],
-    );
+    const { eq } = require("drizzle-orm");
+    const schema = db.schema || require("../db/schema");
+
+    // Fetch existing trade metadata
+    const existing = await db.db.select({
+      metadata: schema.trades.metadata,
+      rawJson: schema.trades.rawJson,
+    }).from(schema.trades).where(eq(schema.trades.sid, sid)).limit(1);
+
+    const existingMeta = dbQueries.parseJsonField(existing[0]?.metadata) || {};
+    const existingRaw = dbQueries.parseJsonField(existing[0]?.rawJson) || {};
+
+    // Merge snapshot_files: deduplicate and sort
+    const existingFiles = Array.isArray(existingMeta.snapshot_files) ? existingMeta.snapshot_files : [];
+    const mergedSet = new Set([...existingFiles, ...safeFiles].map(String));
+    const mergedFiles = [...mergedSet].sort();
+
+    // Build updated objects
+    const updatedMeta = { ...existingMeta, snapshot_files: mergedFiles, snapshot_folder: folder };
+    const updatedRaw = { ...existingRaw, snapshot_files: mergedFiles, snapshot_folder: folder };
+
+    const { rowCount } = await db.db.update(schema.trades).set({
+      metadata: dbQueries.jsonField(updatedMeta),
+      rawJson: dbQueries.jsonField(updatedRaw),
+      updatedAt: new Date(),
+    }).where(eq(schema.trades.sid, sid));
+
     return { updated: rowCount || 0, files: safeFiles, folder };
   } catch (error) {
     console.warn(
@@ -13596,14 +13597,16 @@ async function loadUserApiKeysMap(userId) {
 async function migrateProviderSchema() {
   try {
     const db = await mt5InitBackend();
-    const { rows } = await db.query(
-      "SELECT user_id, name, data FROM user_settings WHERE type = 'api_key' AND data->>'api_key' IS NULL",
-    );
+    const { and, eq } = require("drizzle-orm");
+    const rows = await dbQueries.listUserSettingsByType(db.db, null, "api_key");
+    const filtered = (rows || []).filter(r => {
+      const d = dbQueries.parseJsonField(r.data) || {};
+      return !d.api_key;
+    });
     let migrated = 0;
-    for (const row of rows || []) {
-      const dec = decryptObject(
-        row?.data && typeof row.data === "object" ? row.data : {},
-      );
+    for (const row of filtered) {
+      const parsed = dbQueries.parseJsonField(row.data) || {};
+      const dec = decryptObject(parsed);
       const oldKey = String(dec?.value || dec?.api_key || "").trim();
       const newData = {
         models: Array.isArray(dec?.models) ? dec.models : [],
@@ -13613,10 +13616,7 @@ async function migrateProviderSchema() {
           : 0,
       };
       const enc = encryptObject(newData);
-      await db.query(
-        "UPDATE user_settings SET data = $1 WHERE user_id = $2 AND type = 'api_key' AND name = $3",
-        [JSON.stringify(enc), row.user_id, row.name],
-      );
+      await db.db.update(db.schema.userSettings).set({ data: dbQueries.jsonField(enc), updatedAt: new Date() }).where(and(eq(db.schema.userSettings.userId, row.userId), eq(db.schema.userSettings.type, "api_key"), eq(db.schema.userSettings.name, row.name)));
       migrated++;
     }
     if (migrated > 0) {
@@ -14606,30 +14606,25 @@ async function mt5FindDuplicateSignal(payload = {}) {
   )
     return null;
   const b = await mt5Backend();
-  if (!b?.query) return null;
-  const rows = await b.query(
-    `
-    SELECT
-      sid,
-      raw_json->>'entry' AS entry_raw,
-      raw_json->>'price' AS price_raw,
-      raw_json->>'entry_price' AS entry_price_raw
-    FROM signals
-    WHERE user_id = $1
-      AND symbol = $2
-      AND sl IS NOT NULL
-      AND tp IS NOT NULL
-      AND ABS(sl - $3) <= 1e-8
-      AND ABS(tp - $4) <= 1e-8
-    ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
-    LIMIT 500
-  `,
-    [userId, symbol, sl, tp],
-  );
+  if (!b?.db) return null;
+  const { sql, eq, and, desc } = require("drizzle-orm");
+  const schema = b.schema || require("../db/schema");
+  const rows = await b.db.select().from(schema.signals)
+    .where(and(
+      eq(schema.signals.userId, userId),
+      eq(schema.signals.symbol, symbol),
+    ))
+    .orderBy(desc(sql`COALESCE(${schema.signals.closedAt}, ${schema.signals.updatedAt})`), desc(schema.signals.createdAt))
+    .limit(500);
   const EPS = 1e-8;
-  for (const row of rows.rows || []) {
+  for (const row of rows) {
+    if (row.sl == null || row.tp == null) continue;
+    if (Math.abs(Number(row.sl) - sl) > EPS) continue;
+    if (Math.abs(Number(row.tp) - tp) > EPS) continue;
+    let rawJson;
+    try { rawJson = JSON.parse(row.rawJson || "{}"); } catch { rawJson = {}; }
     const rowEntry = Number(
-      row.entry_raw ?? row.price_raw ?? row.entry_price_raw,
+      rawJson.entry ?? rawJson.price ?? rawJson.entry_price,
     );
     if (Number.isFinite(rowEntry) && Math.abs(rowEntry - entry) <= EPS)
       return row;
@@ -14698,21 +14693,19 @@ async function mt5CleanupSignalTradeArtifacts({
 
   if (signalIdList.length > 0) {
     try {
-      const res = await b.query(
-        `SELECT raw_json FROM signals WHERE sid = ANY($1::text[])`,
-        [signalIdList],
-      );
-      for (const row of res.rows || [])
-        collectSnapshotFilesFromValue(row?.raw_json, fileSet);
+      const { inArray } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+      const res = await b.db.select({ rawJson: schema.signals.rawJson }).from(schema.signals).where(inArray(schema.signals.sid, signalIdList));
+      for (const row of res || [])
+        collectSnapshotFilesFromValue(row?.rawJson, fileSet);
     } catch {
       // ignore fetch failure; continue best effort
     }
     try {
-      const res = await b.query(
-        `SELECT sid FROM trades WHERE sid = ANY($1::text[])`,
-        [signalIdList],
-      );
-      for (const row of res.rows || []) {
+      const { inArray } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+      const res = await b.db.select({ sid: schema.trades.sid }).from(schema.trades).where(inArray(schema.trades.sid, signalIdList));
+      for (const row of res || []) {
         const tid = String(row?.sid || "").trim();
         if (tid) trdIdSet.add(tid);
       }
@@ -14724,11 +14717,10 @@ async function mt5CleanupSignalTradeArtifacts({
   const allTradeIds = [...trdIdSet];
   if (allTradeIds.length > 0) {
     try {
-      const res = await b.query(
-        `SELECT metadata FROM trades WHERE sid = ANY($1::text[])`,
-        [allTradeIds],
-      );
-      for (const row of res.rows || [])
+      const { inArray } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+      const res = await b.db.select({ metadata: schema.trades.metadata }).from(schema.trades).where(inArray(schema.trades.sid, allTradeIds));
+      for (const row of res || [])
         collectSnapshotFilesFromValue(row?.metadata, fileSet);
     } catch {
       // ignore fetch failure
@@ -14737,28 +14729,26 @@ async function mt5CleanupSignalTradeArtifacts({
 
   const filesDeleted = deleteSnapshotFilesByName([...fileSet]);
 
-  const where = [];
-  const params = [];
-  if (signalIdList.length > 0) {
-    params.push(signalIdList);
-    const p = `$${params.length}::text[]`;
-    where.push(`object_id = ANY(${p})`);
-    where.push(`(metadata->>'signal_id') = ANY(${p})`);
-  }
-  if (allTradeIds.length > 0) {
-    params.push(allTradeIds);
-    const p = `$${params.length}::text[]`;
-    where.push(`object_id = ANY(${p})`);
-    where.push(`(metadata->>'trade_id') = ANY(${p})`);
-  }
-
   let logsDeleted = 0;
-  if (where.length > 0) {
-    const del = await b.query(
-      `DELETE FROM logs WHERE ${where.join(" OR ")}`,
-      params,
-    );
-    logsDeleted = Number(del?.rowCount || 0);
+  if (signalIdList.length > 0 || allTradeIds.length > 0) {
+    try {
+      const { inArray } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+      const logRows = await b.db.select({ id: schema.logs.id, metadata: schema.logs.metadata, objectId: schema.logs.objectId }).from(schema.logs).limit(10000);
+      const toDelete = logRows.filter(r => {
+        const m = dbQueries.parseJsonField(r.metadata) || {};
+        return (
+          (signalIdList.length > 0 && (signalIdList.includes(r.objectId) || signalIdList.includes(m.signal_id))) ||
+          (allTradeIds.length > 0 && (allTradeIds.includes(r.objectId) || allTradeIds.includes(m.trade_id)))
+        );
+      }).map(r => r.id);
+      if (toDelete.length) {
+        const del = await b.db.delete(schema.logs).where(inArray(schema.logs.id, toDelete));
+        logsDeleted = toDelete.length;
+      }
+    } catch {
+      // ignore delete failure; continue best effort
+    }
   }
 
   return { logs_deleted: logsDeleted, files_deleted: filesDeleted };
@@ -14995,19 +14985,20 @@ async function mt5ListExecutionProfilesV2(userId) {
 async function mt5GetActiveExecutionProfileV2(userId) {
   const b = await mt5Backend();
   if (!userId) return null;
-  const res = await b.query(
-    `SELECT * FROM user_settings WHERE type = 'execution_profile' AND user_id = $1 AND (data->>'is_active')::boolean IS TRUE LIMIT 1`,
-    [userId],
-  );
-  return res.rows?.[0] ? mt5NormalizeExecutionProfileRow(res.rows[0]) : null;
+  const rows = await dbQueries.listUserSettingsByType(b.db, userId, "execution_profile");
+  const active = (rows || []).find(r => {
+    const d = dbQueries.parseJsonField(r.data) || {};
+    return d.is_active;
+  });
+  return active ? mt5NormalizeExecutionProfileRow(active) : null;
 }
 
 function mt5NormalizeExecutionProfileRow(row = {}) {
-  const data = row?.data && typeof row.data === "object" ? row.data : {};
+  const data = dbQueries.parseJsonField(row?.data) || {};
   return {
     profile_id:
       String(row?.name || row?.profile_id || "default").trim() || "default",
-    user_id: String(row?.user_id || "").trim(),
+    user_id: String(row?.userId || row?.user_id || "").trim(),
     profile_name:
       String(
         data?.profile_name || row?.profile_name || row?.name || "default",
@@ -15034,8 +15025,8 @@ function mt5NormalizeExecutionProfileRow(row = {}) {
     metadata:
       data?.metadata && typeof data.metadata === "object" ? data.metadata : {},
     raw: row,
-    created_at: row?.created_at || null,
-    updated_at: row?.updated_at || null,
+    created_at: row?.createdAt || row?.created_at || null,
+    updated_at: row?.updatedAt || row?.updated_at || null,
   };
 }
 
@@ -15077,52 +15068,47 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
       ? payload.metadata
       : {};
 
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    if (isActive) {
-      await client.query(
-        `UPDATE user_settings
-         SET data = jsonb_set(COALESCE(data,'{}'::jsonb), '{is_active}', 'false'::jsonb), updated_at = NOW()
-         WHERE user_id = $1 AND type = 'execution_profile'`,
-        [userId],
-      );
+  const backend = await mt5Backend();
+  const be = backend?.db ? backend : await mt5InitBackend();
+  const { eq, and } = require("drizzle-orm");
+  const schema = be.schema || require("../db/schema");
+
+  if (isActive) {
+    // Set all other execution_profiles for this user to inactive
+    const existingRows = await dbQueries.listUserSettingsByType(b.db, userId, "execution_profile");
+    for (const row of existingRows || []) {
+      const d = dbQueries.parseJsonField(row.data) || {};
+      if (d.is_active) {
+        const updated = { ...d, is_active: false };
+        await b.db.update(schema.userSettings).set({
+          data: dbQueries.jsonField(updated),
+          updatedAt: new Date(),
+        }).where(and(eq(schema.userSettings.userId, userId), eq(schema.userSettings.type, "execution_profile"), eq(schema.userSettings.name, row.name)));
+      }
     }
-    const data = JSON.stringify({
-      profile_name: profileName,
-      route,
-      account_id: accountId,
-      source_ids: sourceIds,
-      ctrader_mode: ctraderMode,
-      ctrader_account_id: ctraderAccountId,
-      is_active: isActive,
-      metadata,
-    });
-    await client.query(
-      `INSERT INTO user_settings (user_id, type, name, data, created_at, updated_at)
-       VALUES ($1, 'execution_profile', $2, $3::jsonb, NOW(), NOW())
-       ON CONFLICT (user_id, type, name)
-       DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-      [userId, profileId, data],
-    );
-    await client.query("COMMIT");
-    return {
-      ok: true,
-      item: mt5NormalizeExecutionProfileRow({
-        user_id: userId,
-        name: profileId,
-        data: JSON.parse(data),
-      }),
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    client.release();
   }
+
+  const data = {
+    profile_name: profileName,
+    route,
+    account_id: accountId,
+    source_ids: sourceIds,
+    ctrader_mode: ctraderMode,
+    ctrader_account_id: ctraderAccountId,
+    is_active: isActive,
+    metadata,
+  };
+
+  await dbQueries.upsertUserSetting(b.db, userId, "execution_profile", profileId, data, "ACTIVE");
+
+  return {
+    ok: true,
+    item: mt5NormalizeExecutionProfileRow({
+      userId: userId,
+      name: profileId,
+      data: data,
+    }),
+  };
 }
 
 async function mt5UpsertSourceV2(source) {
@@ -23655,54 +23641,40 @@ const appHandler = async (req, res) => {
       if (payload.confluence_checklist)
         rawPatch.confluence_checklist = payload.confluence_checklist;
       const b = await mt5Backend();
-      const params = [
-        side,
-        Number.isFinite(sl) ? sl : null,
-        Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
-        Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
-        Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
-        Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
-        Number.isFinite(rr) ? rr : null,
-        note || null,
-        JSON.stringify(rawPatch || {}),
-        signalId,
-        userId || null,
-        asNum(payload.confidence_pct),
-        asNum(payload.estimated_bars),
-        payload.profile || null,
-        asNum(payload.be_trigger),
-      ];
-      const whereUser = userId ? "AND user_id = $11" : "";
-      const resUpd = await b.query(
-        `
-        UPDATE signals
-        SET side = COALESCE($1, side),
-            sl = COALESCE($2, sl),
-            tp = COALESCE($3, tp),
-            tp1 = COALESCE($4, tp1),
-            tp2 = COALESCE($5, tp2),
-            tp3 = COALESCE($6, tp3),
-            rr_planned = COALESCE($7, rr_planned),
-            note = COALESCE($8, note),
-            raw_json = COALESCE(raw_json, '{}'::jsonb) || $9::jsonb,
-            confidence_pct = COALESCE($12, confidence_pct),
-            estimated_bars = COALESCE($13, estimated_bars),
-            profile = COALESCE($14, profile),
-            be_trigger = COALESCE($15::numeric, be_trigger),
-            updated_at = NOW()
-        WHERE sid = $10
-        ${whereUser}
-        RETURNING *
-      `,
-        params,
-      );
-      const row = resUpd.rows?.[0];
-      if (!row) return json(res, 404, { ok: false, error: "signal not found" });
+      const { eq, and } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+
+      // Fetch existing raw_json to merge in JS
+      const existingCond = [eq(schema.signals.sid, signalId)];
+      if (userId) existingCond.push(eq(schema.signals.userId, userId));
+      const existing = await b.db.select({ rawJson: schema.signals.rawJson }).from(schema.signals).where(and(...existingCond)).limit(1);
+      if (!existing.length) return json(res, 404, { ok: false, error: "signal not found" });
+      const existingRaw = dbQueries.parseJsonField(existing[0].rawJson) || {};
+      const mergedRaw = { ...existingRaw, ...rawPatch };
+
+      const resUpd = await b.db.update(schema.signals).set({
+        side: side || undefined,
+        sl: Number.isFinite(sl) ? sl : null,
+        tp: Number.isFinite(tpNorm.tp) ? tpNorm.tp : null,
+        tp1: Number.isFinite(tpNorm.tp1) ? tpNorm.tp1 : null,
+        tp2: Number.isFinite(tpNorm.tp2) ? tpNorm.tp2 : null,
+        tp3: Number.isFinite(tpNorm.tp3) ? tpNorm.tp3 : null,
+        rrPlanned: Number.isFinite(rr) ? rr : null,
+        note: note || null,
+        rawJson: dbQueries.jsonField(mergedRaw),
+        confidencePct: asNum(payload.confidence_pct) || null,
+        estimatedBars: asNum(payload.estimated_bars) || null,
+        profile: payload.profile || null,
+        beTrigger: asNum(payload.be_trigger) || null,
+        updatedAt: new Date(),
+      }).where(and(...existingCond)).returning();
+
+      const row = resUpd[0];
       await mt5Log(
         signalId,
         "signals",
         { event_type: "SIGNAL_TRADE_PLAN_SAVED", data: rawPatch },
-        row.user_id || userId || CFG.mt5DefaultUserId,
+        row.userId || userId || CFG.mt5DefaultUserId,
       );
       StateRepo.del("SIGNAL_DETAIL", signalRef);
       return json(res, 200, { ok: true, item: mt5MapDbRow(row) });
@@ -23877,15 +23849,17 @@ const appHandler = async (req, res) => {
       // If no other active users are subscribed to this source, mark signal CLOSED
       if (fanout?.created > 0 && sourceId) {
         try {
-          const subCheck = await b.query(
-            `SELECT COUNT(*) AS cnt
-             FROM user_settings
-             WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE
-               AND data->'source_ids' ? $1
-               AND user_id != $2`,
-            [sourceId, signal.userId || userId || CFG.mt5DefaultUserId],
-          );
-          const hasSubscribers = Number(subCheck.rows?.[0]?.cnt || 0) > 0;
+          const { and, eq, ne } = require("drizzle-orm");
+          const schema = b.schema || require("../db/schema");
+          const subRows = await b.db.select().from(schema.userSettings)
+            .where(and(
+              eq(schema.userSettings.type, "execution_profile"),
+              ne(schema.userSettings.userId, signal.userId || userId || CFG.mt5DefaultUserId),
+            ));
+          const hasSubscribers = (subRows || []).some(r => {
+            const d = dbQueries.parseJsonField(r.data) || {};
+            return d.is_active && Array.isArray(d.source_ids) && d.source_ids.includes(sourceId);
+          });
           if (!hasSubscribers) {
             await dbQueries.closeSignal(b.db, signalId);
           }
@@ -24022,75 +23996,46 @@ const appHandler = async (req, res) => {
         metaPatch.skip_recommendation = payload.skip_recommendation;
       if (payload.confluence_checklist)
         metaPatch.confluence_checklist = payload.confluence_checklist;
-      const params = [
-        editableSide,
-        Number.isFinite(editableEntry) ? editableEntry : null,
-        Number.isFinite(editableSl) ? editableSl : null,
-        Number.isFinite(editableTp) ? editableTp : null,
-        Number.isFinite(editableTp1) ? editableTp1 : null,
-        Number.isFinite(editableTp2) ? editableTp2 : null,
-        Number.isFinite(editableTp3) ? editableTp3 : null,
-        note || null,
-        JSON.stringify(metaPatch || {}),
-        tradeId,
-        userId || null,
-        Number.isFinite(confidencePct) ? confidencePct : null,
-        Number.isFinite(estimatedBars) ? estimatedBars : null,
-        payload.profile || null,
-        Number.isFinite(beTrigger) ? beTrigger : null,
-        strategy || null,
-        entryModel || null,
-        sourceId || null,
-        ["limit", "market", "stop"].includes(editableTradeType)
-          ? editableTradeType
-          : null,
-        Number.isFinite(editableRiskMoneyPlanned)
-          ? editableRiskMoneyPlanned
-          : null,
-      ];
-      const whereUser = userId ? "AND user_id = $11" : "";
-      const resUpd = await (
-        await mt5Backend()
-      ).query(
-        `
-        UPDATE trades
-        SET action = COALESCE($1, action),
-            entry = COALESCE($2, entry),
-            sl = COALESCE($3, sl),
-            tp = COALESCE($4, tp),
-            tp1 = COALESCE($5, tp1),
-            tp2 = COALESCE($6, tp2),
-            tp3 = COALESCE($7, tp3),
-            note = COALESCE($8, note),
-            metadata = COALESCE(metadata, '{}'::jsonb) || $9,
-            confidence_pct = COALESCE($12, confidence_pct),
-            estimated_bars = COALESCE($13, estimated_bars),
-            profile = COALESCE($14, profile),
-            be_trigger = COALESCE($15::numeric, be_trigger),
-            strategy = COALESCE($16, strategy),
-            entry_model = COALESCE($17, entry_model),
-            source_id = COALESCE($18, source_id),
-            order_type = COALESCE($19, order_type),
-            risk_money_planned = COALESCE($20, risk_money_planned),
-            execution_status = execution_status,
-            dispatch_status = CASE
-              WHEN execution_status IN ('FILLED', 'PENDING', 'PENDING_MOD') THEN 'MODIFY'
-              ELSE dispatch_status
-            END,
-            updated_at = NOW()
-        WHERE sid = $10
-          ${whereUser}
-        RETURNING *
-      `,
-        params,
-      );
-      const row = resUpd.rows?.[0];
-      if (!row) return json(res, 404, { ok: false, error: "trade not found" });
+      const b = await mt5Backend();
+      const { eq, and } = require("drizzle-orm");
+      const schema = b.schema || require("../db/schema");
+
+      // Fetch existing metadata to merge in JS
+      const tradeConds = [eq(schema.trades.sid, tradeId)];
+      if (userId) tradeConds.push(eq(schema.trades.userId, userId));
+      const existingTrade = await b.db.select({ metadata: schema.trades.metadata }).from(schema.trades).where(and(...tradeConds)).limit(1);
+      if (!existingTrade.length) return json(res, 404, { ok: false, error: "trade not found" });
+      const existingMeta = dbQueries.parseJsonField(existingTrade[0].metadata) || {};
+      const mergedMeta = { ...existingMeta, ...metaPatch };
+
+      const resUpd = await b.db.update(schema.trades).set({
+        action: editableSide || undefined,
+        entry: Number.isFinite(editableEntry) ? editableEntry : null,
+        sl: Number.isFinite(editableSl) ? editableSl : null,
+        tp: Number.isFinite(editableTp) ? editableTp : null,
+        tp1: Number.isFinite(editableTp1) ? editableTp1 : null,
+        tp2: Number.isFinite(editableTp2) ? editableTp2 : null,
+        tp3: Number.isFinite(editableTp3) ? editableTp3 : null,
+        note: note || null,
+        metadata: dbQueries.jsonField(mergedMeta),
+        confidencePct: Number.isFinite(confidencePct) ? confidencePct : null,
+        estimatedBars: Number.isFinite(estimatedBars) ? estimatedBars : null,
+        profile: payload.profile || null,
+        beTrigger: Number.isFinite(beTrigger) ? beTrigger : null,
+        strategy: strategy || null,
+        entryModel: entryModel || null,
+        sourceId: sourceId || null,
+        orderType: ["limit", "market", "stop"].includes(editableTradeType) ? editableTradeType : null,
+        riskMoneyPlanned: Number.isFinite(editableRiskMoneyPlanned) ? editableRiskMoneyPlanned : null,
+        updatedAt: new Date(),
+      }).where(and(...tradeConds)).returning();
+
+      const row = resUpd[0];
       await mt5Log(
         tradeId,
         "trades",
         { event_type: "TRADE_PLAN_SAVED", data: metaPatch },
-        row.user_id || userId || CFG.mt5DefaultUserId,
+        row.userId || userId || CFG.mt5DefaultUserId,
       );
       invalidateTradeListCaches().catch(() => {});
       return json(res, 200, { ok: true, item: row });
@@ -25377,21 +25322,21 @@ const appHandler = async (req, res) => {
       // 5. Update account metadata with last price push info
       try {
         const backend = await mt5Backend();
-        await backend.pool.query(
-          `UPDATE user_accounts
-           SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-               updated_at = NOW()
-           WHERE account_id = $1`,
-          [
-            account.account_id,
-            JSON.stringify({
-              last_price_push_at: new Date().toISOString(),
-              last_price_push_symbols: prices.length,
-              last_price_push_source: payload.source_id || "unknown",
-              last_price_push_elapsed_ms: elapsed,
-            }),
-          ],
-        );
+        const { eq } = require("drizzle-orm");
+        const schema = backend.schema || require("../db/schema");
+        const existingAcct = await backend.db.select({ metadata: schema.userAccounts.metadata }).from(schema.userAccounts).where(eq(schema.userAccounts.accountId, account.account_id)).limit(1);
+        const existingMeta = dbQueries.parseJsonField(existingAcct[0]?.metadata) || {};
+        const mergedMeta = {
+          ...existingMeta,
+          last_price_push_at: new Date().toISOString(),
+          last_price_push_symbols: prices.length,
+          last_price_push_source: payload.source_id || "unknown",
+          last_price_push_elapsed_ms: elapsed,
+        };
+        await backend.db.update(schema.userAccounts).set({
+          metadata: dbQueries.jsonField(mergedMeta),
+          updatedAt: new Date(),
+        }).where(eq(schema.userAccounts.accountId, account.account_id));
       } catch (e) {
         console.error("[broker/prices] metadata update failed:", e);
       }
@@ -25561,16 +25506,18 @@ const appHandler = async (req, res) => {
       if (!account) return;
       const db = await mt5Backend();
       // Get latest price push log
-      const logRes = await db.pool.query(
-        `SELECT created_at, metadata
-         FROM logs
-         WHERE object_table = 'accounts'
-           AND object_id = $1
-           AND metadata->>'event' = 'PRICE_PUSH'
-         ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
-         LIMIT 1`,
-        [account.account_id],
-      );
+      const { and, eq, desc } = require("drizzle-orm");
+      const schema = db.schema || require("../db/schema");
+      const logRows = await db.db.select({ createdAt: schema.logs.createdAt, metadata: schema.logs.metadata })
+        .from(schema.logs)
+        .where(and(eq(schema.logs.objectType, "accounts"), eq(schema.logs.objectId, account.account_id)))
+        .orderBy(desc(schema.logs.createdAt))
+        .limit(200);
+      const logRes = logRows.find(r => {
+        const m = dbQueries.parseJsonField(r.metadata) || {};
+        return m.event === "PRICE_PUSH";
+      });
+      const latestPricePush = logRes ? { created_at: logRes.createdAt, metadata: logRes.metadata } : null;
       // Get a sample of updated prices from memory cache
       const recentPrices = [];
       for (const [key, root] of MARKET_DATA_MEMORY_CACHE) {
@@ -25581,10 +25528,8 @@ const appHandler = async (req, res) => {
             recentPrices.push({
               symbol: root.symbol || key,
               last_price: tfEntry.last_price,
-              last_price_at: tfEntry.last_price_at,
-              updated_at: tfEntry.updated_time
-                ? new Date(tfEntry.updated_time * 1000).toISOString()
-                : null,
+              tf: tfEntry.tf || root.tf || "unknown",
+              at: tfEntry.last_price_at,
             });
           }
         }
@@ -25596,10 +25541,10 @@ const appHandler = async (req, res) => {
       return json(res, 200, {
         ok: true,
         account_id: account.account_id,
-        last_push: logRes.rows?.[0]
+        last_push: latestPricePush
           ? {
-              at: logRes.rows[0].created_at,
-              metadata: logRes.rows[0].metadata,
+              at: latestPricePush.created_at,
+              metadata: latestPricePush.metadata,
             }
           : null,
         recent_prices: topPrices,
@@ -25754,50 +25699,55 @@ const appHandler = async (req, res) => {
           last_sync_source: "ea_bulk_history",
         });
 
-        const resUpd = await b.query(
-          `
-          UPDATE trades
-          SET execution_status = $1,
-              pnl_realized = $2,
-              closed_at = COALESCE(closed_at, $3, NOW()),
-              close_reason = COALESCE($8, close_reason),
-              symbol = COALESCE($5, symbol),
-              volume = COALESCE($6, volume),
-              order_type = COALESCE($12, order_type),
-              broker_trade_id = COALESCE(NULLIF($10, ''), broker_trade_id),
-              metadata = COALESCE(metadata, '{}'::jsonb) || $9::jsonb,
-              updated_at = NOW()
-          WHERE ($11::text = '' OR account_id = $11)
-            AND (
-              broker_trade_id = ANY($4::text[])
-              OR metadata->>'broker_position_id' = ANY($4::text[])
-              OR metadata->>'position_ticket' = ANY($4::text[])
-              OR metadata->>'deal_ticket' = ANY($4::text[])
-              OR metadata->>'order_ticket' = ANY($4::text[])
-              OR ($7::text <> '' AND signal_id = $7)
-            )
-          AND execution_status <> 'CANCELLED'
-          RETURNING sid, user_id
-        `,
-          [
-            execStatus,
-            pnl,
-            closeTime,
-            ticketCandidates,
-            u.symbol || null,
-            u.volume || null,
-            signalId,
-            closeReason,
-            syncMeta,
-            ticket,
-            accountId,
-            u.order_type || null,
-          ],
-        );
+        const { and, eq, or, ne, inArray } = require("drizzle-orm");
+        const schema = b.schema || require("../db/schema");
 
-        if (resUpd.rowCount > 0) {
+        // Build base conditions
+        const baseConds = [ne(schema.trades.executionStatus, "CANCELLED")];
+        if (accountId) baseConds.push(eq(schema.trades.accountId, accountId));
+
+        // First try matching on broker_trade_id or signal_id (non-JSONB criteria)
+        const orConds = [inArray(schema.trades.brokerTradeId, ticketCandidates)];
+        if (signalId) orConds.push(eq(schema.trades.signalId, signalId));
+
+        let matchRow = null;
+        const directMatches = await b.db.select().from(schema.trades).where(and(...baseConds, or(...orConds))).limit(1);
+        if (directMatches.length) {
+          matchRow = directMatches[0];
+        } else {
+          // Try matching via metadata JSON fields
+          const allRows = await b.db.select().from(schema.trades).where(and(...baseConds)).limit(200);
+          const metaMatch = allRows.find(r => {
+            const m = dbQueries.parseJsonField(r.metadata) || {};
+            return ticketCandidates.includes(m.broker_position_id) ||
+                   ticketCandidates.includes(String(m.position_ticket)) ||
+                   ticketCandidates.includes(String(m.deal_ticket)) ||
+                   ticketCandidates.includes(String(m.order_ticket));
+          });
+          if (metaMatch) matchRow = metaMatch;
+        }
+
+        if (matchRow) {
+          // Merge metadata in JS
+          const existingMeta = dbQueries.parseJsonField(matchRow.metadata) || {};
+          const incomingMeta = JSON.parse(syncMeta);
+          const mergedMeta = { ...existingMeta, ...incomingMeta };
+
+          const resUpd = await b.db.update(schema.trades).set({
+            executionStatus: execStatus,
+            pnlRealized: pnl,
+            closedAt: matchRow.closedAt || closeTime || new Date(),
+            closeReason: closeReason || matchRow.closeReason,
+            symbol: u.symbol || matchRow.symbol,
+            volume: u.volume || matchRow.volume,
+            orderType: u.order_type || matchRow.orderType,
+            brokerTradeId: ticket || matchRow.brokerTradeId,
+            metadata: dbQueries.jsonField(mergedMeta),
+            updatedAt: new Date(),
+          }).where(eq(schema.trades.sid, matchRow.sid)).returning({ sid: schema.trades.sid, userId: schema.trades.userId });
+
           updatedCount++;
-          const row = resUpd.rows[0];
+          const row = resUpd[0];
           await b.log(
             row.sid,
             "trades",
@@ -25811,7 +25761,7 @@ const appHandler = async (req, res) => {
               pnl,
               source: "ea_bulk_sync",
             },
-            row.user_id || CFG.mt5DefaultUserId,
+            row.userId || CFG.mt5DefaultUserId,
           );
         } else {
           unmatchedCount++;
@@ -26530,13 +26480,11 @@ function initMarketDataQueue() {
 
 async function mt5RunSnapshotsCron() {
   const b = await mt5Backend();
-  const res = await b.query(`
-    SELECT s.*
-    FROM user_settings s
-    WHERE s.type = 'cron' AND s.data->>'cron_type' IN ('SNAPSHOTS_CRON','SNAPSHOT_CRON')
-      AND UPPER(s.status) = 'ACTIVE'
-  `);
-  const configs = res.rows || [];
+  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const configs = (rows || []).filter(r => {
+    const d = dbQueries.parseJsonField(r.data) || {};
+    return ["SNAPSHOTS_CRON", "SNAPSHOT_CRON"].includes(d.cron_type) && String(r.status || "").toUpperCase() === "ACTIVE";
+  });
   if (!configs.length) return null;
   const now = Date.now();
   const summary = {
@@ -26547,8 +26495,8 @@ async function mt5RunSnapshotsCron() {
     errors: [],
   };
   for (const conf of configs) {
-    const userId = conf.user_id;
-    const data = conf.data || {};
+    const userId = conf.userId;
+    const data = dbQueries.parseJsonField(conf.data) || {};
     if (!asBool(data.enabled ?? true, true)) continue;
     summary.configs++;
     const symbols = resolveCronSymbols(data);
@@ -26808,20 +26756,18 @@ async function mt5CronLoop() {
 async function mt5RunMarketDataCron() {
   if (!CFG.marketDataCronEnabled) return;
   const b = await mt5Backend();
-  const res = await b.query(`
-    SELECT s.*
-    FROM user_settings s
-    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'MARKET_DATA_CRON'
-      AND UPPER(s.status) = 'ACTIVE'
-  `);
-  const configs = res.rows || [];
+  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const configs = (rows || []).filter(r => {
+    const d = dbQueries.parseJsonField(r.data) || {};
+    return d.cron_type === "MARKET_DATA_CRON" && String(r.status || "").toUpperCase() === "ACTIVE";
+  });
   if (!configs.length) return;
 
   const now = Date.now();
 
   for (const conf of configs) {
-    const userId = conf.user_id;
-    const data = conf.data || {};
+    const userId = conf.userId;
+    const data = dbQueries.parseJsonField(conf.data) || {};
     if (!marketDataCronSettingEnabled(data)) continue;
     const symbols = resolveCronSymbols(data);
     const excludeSymbols = new Set(
@@ -26925,20 +26871,18 @@ async function mt5RunMarketDataCron() {
 
 async function mt5RunAiAnalysisCron() {
   const b = await mt5Backend();
-  const res = await b.query(`
-    SELECT s.*
-    FROM user_settings s
-    WHERE s.type = 'cron' AND s.data->>'cron_type' = 'ANALYSIS_CRON'
-      AND UPPER(s.status) = 'ACTIVE'
-  `);
-  const configs = res.rows || [];
+  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const configs = (rows || []).filter(r => {
+    const d = dbQueries.parseJsonField(r.data) || {};
+    return d.cron_type === "ANALYSIS_CRON" && String(r.status || "").toUpperCase() === "ACTIVE";
+  });
   if (!configs.length) return;
 
   const now = Date.now();
 
   for (const conf of configs) {
-    const userId = conf.user_id;
-    const data = conf.data || {};
+    const userId = conf.userId;
+    const data = dbQueries.parseJsonField(conf.data) || {};
     const symbols = resolveCronSymbols(data);
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     const cadenceSec = Number(data.cadence_seconds || 3600);

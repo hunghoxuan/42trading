@@ -31,6 +31,7 @@ import TickerBar from "./components/TickerBar";
 import NotificationDot from "./components/NotificationDot";
 
 import ToastContainer from "./components/ToastContainer";
+import AppShell from "./components/AppShell";
 import { normalizeDisplayTimezone } from "./utils/format";
 import { ConfirmDialogProvider } from "./components/ConfirmDialog";
 
@@ -164,156 +165,125 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="app-shell">
-      <ConfirmDialogProvider>
-      <NotificationWatcher />
-      <ToastContainer />
-      <header className="topbar">
-        <div className="brand">
-          <span>📈 Trading</span>
-          {serverVersion ? (
-            <span className="brand-version">v{serverVersion}</span>
-          ) : null}
-          {getRuntimeActiveUserId() && (
-            <span
-              style={{ marginLeft: 10, fontSize: "11px", color: "#f39c12" }}
+  const topbarContent = (
+    <>
+      <div className="brand">
+        <span>📈 Trading</span>
+        {serverVersion ? (
+          <span className="brand-version">v{serverVersion}</span>
+        ) : null}
+        {getRuntimeActiveUserId() && (
+          <span
+            style={{ marginLeft: 10, fontSize: "11px", color: "#f39c12" }}
+          >
+            (Acting as {getRuntimeActiveUserId()})
+            <button
+              type="button"
+              onClick={() => {
+                setRuntimeActiveUserId("");
+                window.location.reload();
+              }}
+              className="secondary-button icon-button"
+              style={{ marginLeft: 6, padding: "2px 6px" }}
             >
-              (Acting as {getRuntimeActiveUserId()})
-              <button
-                type="button"
-                onClick={() => {
-                  setRuntimeActiveUserId("");
-                  window.location.reload();
-                }}
-                className="secondary-button icon-button"
-                style={{ marginLeft: 6, padding: "2px 6px" }}
-              >
-                ✖
-              </button>
-            </span>
-          )}
-        </div>
-        <nav>
+              ✖
+            </button>
+          </span>
+        )}
+      </div>
+      <nav>
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) => (isActive ? "active" : "")}
+        >
+          Dashboard
+        </NavLink>
+        <NavLink
+          to="/ai/analyze"
+          className={({ isActive }) => (isActive ? "active" : "")}
+        >
+          AI
+        </NavLink>
+        <div className="nav-dropdown">
           <NavLink
-            to="/dashboard"
+            to="/trades"
             className={({ isActive }) => (isActive ? "active" : "")}
           >
-            Dashboard
+            Trades
           </NavLink>
-          <NavLink
-            to="/ai/analyze"
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            AI
-          </NavLink>
-          <div className="nav-dropdown">
+          <div className="nav-dropdown-menu">
             <NavLink
-              to="/trades"
-              className={({ isActive }) => (isActive ? "active" : "")}
+              to="/trades?status=PENDING"
+              className={({ isActive }) =>
+                isActive &&
+                location.pathname === "/trades" &&
+                new URLSearchParams(location.search).get("status") ===
+                  "PENDING"
+                  ? "active"
+                  : ""
+              }
             >
-              Trades
+              Pending
             </NavLink>
-            <div className="nav-dropdown-menu">
-              <NavLink
-                to="/trades?status=PENDING"
-                className={({ isActive }) =>
-                  isActive &&
-                  location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") ===
-                    "PENDING"
-                    ? "active"
-                    : ""
-                }
-              >
-                Pending
-              </NavLink>
-              <NavLink
-                to="/trades?status=FILLED"
-                className={({ isActive }) =>
-                  isActive &&
-                  location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") ===
-                    "FILLED"
-                    ? "active"
-                    : ""
-                }
-              >
-                Filled
-              </NavLink>
-              <NavLink
-                to="/trades?status=CLOSED"
-                className={({ isActive }) =>
-                  isActive &&
-                  location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") ===
-                    "CLOSED"
-                    ? "active"
-                    : ""
-                }
-              >
-                Closed
-              </NavLink>
-              <NavLink
-                to="/trades?status=Draft"
-                className={({ isActive }) =>
-                  isActive &&
-                  location.pathname === "/trades" &&
-                  new URLSearchParams(location.search).get("status") === "Draft"
-                    ? "active"
-                    : ""
-                }
-              >
-                Draft
-              </NavLink>
-            </div>
+            <NavLink
+              to="/trades?status=FILLED"
+              className={({ isActive }) =>
+                isActive &&
+                location.pathname === "/trades" &&
+                new URLSearchParams(location.search).get("status") ===
+                  "FILLED"
+                  ? "active"
+                  : ""
+              }
+            >
+              Filled
+            </NavLink>
+            <NavLink
+              to="/trades?status=CLOSED"
+              className={({ isActive }) =>
+                isActive &&
+                location.pathname === "/trades" &&
+                new URLSearchParams(location.search).get("status") ===
+                  "CLOSED"
+                  ? "active"
+                  : ""
+              }
+            >
+              Closed
+            </NavLink>
+            <NavLink
+              to="/trades?status=Draft"
+              className={({ isActive }) =>
+                isActive &&
+                location.pathname === "/trades" &&
+                new URLSearchParams(location.search).get("status") === "Draft"
+                  ? "active"
+                  : ""
+              }
+            >
+              Draft
+            </NavLink>
           </div>
+        </div>
 
-          <div style={{ flex: 1 }} />
+        <div style={{ flex: 1 }} />
 
-          {canAccessSystemPages && (
-            <div className="nav-dropdown">
-              <button
-                type="button"
-                className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}
-              >
-                System
-              </button>
-              <div className="nav-dropdown-menu">
-                <NavLink to="/system/files">Files</NavLink>
-                <NavLink to="/system/storage">Storage</NavLink>
-                <NavLink to="/system/cache">Cache</NavLink>
-                <NavLink to="/system/logs">Logs</NavLink>
-                <NavLink to="/system/db">DB</NavLink>
-                <NavLink to="/system/health">Health</NavLink>
-                <NavLink to="/system/users">Users</NavLink>
-                <hr
-                  style={{
-                    border: "0",
-                    borderTop: "1px solid rgba(255,255,255,0.1)",
-                    margin: "4px 0",
-                  }}
-                />
-                <NavLink to="/tools">🛠 Tools</NavLink>
-              </div>
-            </div>
-          )}
+        {canAccessSystemPages && (
           <div className="nav-dropdown">
             <button
               type="button"
-              className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}
+              className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}
             >
-              User
+              System
             </button>
             <div className="nav-dropdown-menu">
-              <NavLink to="/settings/profile">Profile</NavLink>
-              <NavLink to="/settings/notifications">Notifications</NavLink>
-              <NavLink to="/settings/accounts">Accounts</NavLink>
-              <NavLink to="/settings/crons">Cron</NavLink>
-              <NavLink to="/settings/providers">Providers</NavLink>
-              <NavLink to="/settings" end>
-                Settings
-              </NavLink>
+              <NavLink to="/system/files">Files</NavLink>
+              <NavLink to="/system/storage">Storage</NavLink>
+              <NavLink to="/system/cache">Cache</NavLink>
+              <NavLink to="/system/logs">Logs</NavLink>
+              <NavLink to="/system/db">DB</NavLink>
+              <NavLink to="/system/health">Health</NavLink>
+              <NavLink to="/system/users">Users</NavLink>
               <hr
                 style={{
                   border: "0",
@@ -321,39 +291,73 @@ export default function App() {
                   margin: "4px 0",
                 }}
               />
-              <button
-                onClick={handleLogout}
-                className="nav-item-button danger-text"
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: "none",
-                  border: "none",
-                  color: "#ff4d4f",
-                  padding: "8px 12px",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                }}
-              >
-                Logout
-              </button>
+              <NavLink to="/tools">🛠 Tools</NavLink>
             </div>
           </div>
-          <NotificationDot />
+        )}
+        <div className="nav-dropdown">
           <button
-            onClick={toggleTheme}
-            className="secondary-button"
-            style={{
-              padding: "4px 10px",
-              fontSize: "11px",
-              marginLeft: "10px",
-              minWidth: "40px",
-            }}
+            type="button"
+            className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}
           >
-            {theme === "dark" ? "☀️" : "🌙"}
+            User
           </button>
-        </nav>
-      </header>
+          <div className="nav-dropdown-menu">
+            <NavLink to="/settings/profile">Profile</NavLink>
+            <NavLink to="/settings/notifications">Notifications</NavLink>
+            <NavLink to="/settings/accounts">Accounts</NavLink>
+            <NavLink to="/settings/crons">Cron</NavLink>
+            <NavLink to="/settings/providers">Providers</NavLink>
+            <NavLink to="/settings" end>
+              Settings
+            </NavLink>
+            <hr
+              style={{
+                border: "0",
+                borderTop: "1px solid rgba(255,255,255,0.1)",
+                margin: "4px 0",
+              }}
+            />
+            <button
+              onClick={handleLogout}
+              className="nav-item-button danger-text"
+              style={{
+                width: "100%",
+                textAlign: "left",
+                background: "none",
+                border: "none",
+                color: "#ff4d4f",
+                padding: "8px 12px",
+                fontSize: "11px",
+                cursor: "pointer",
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        </div>
+        <NotificationDot />
+        <button
+          onClick={toggleTheme}
+          className="secondary-button"
+          style={{
+            padding: "4px 10px",
+            fontSize: "11px",
+            marginLeft: "10px",
+            minWidth: "40px",
+          }}
+        >
+          {theme === "dark" ? "☀️" : "🌙"}
+        </button>
+      </nav>
+    </>
+  );
+
+  return (
+    <AppShell topbar={topbarContent}>
+      <ConfirmDialogProvider>
+      <NotificationWatcher />
+      <ToastContainer />
       <SessionClockBar displayTimezone={displayTimezone} />
       <TickerBar />
       <main className="page-wrap">
@@ -567,6 +571,6 @@ export default function App() {
         </Suspense>
       </main>
       </ConfirmDialogProvider>
-    </div>
+    </AppShell>
   );
 }

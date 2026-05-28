@@ -2,9 +2,11 @@
 
 Use this skill for building high-density, professional dashboards using React and Vanilla CSS.
 
+> **PREREQUISITE**: Read `.agents/rules/design-system.md` FIRST. It catalogs every reusable CSS class. Inline `style={{}}` is banned unless no class matches.
+
 ## Operational Rules
 
-1.  **Design System First**: Use established CSS tokens (`--bg`, `--surface`, `--accent`).
+1.  **Design System First**: Use established CSS tokens (`--bg`, `--surface`, `--accent`). Never write raw hex colors or px values for spacing/radius/font when a CSS class exists.
 2.  **Micro-Animations**: All interactive elements must have hover/active states and subtle fade-ins.
 3.  **Consistency**: Use the `showDateTime` utility for all timestamps (24h clock, no seconds, no AM/PM).
 
@@ -112,12 +114,20 @@ Use these instead of local wrapper functions. All in `web-ui/src/utils/`.
 | `signalDetailUtils` | `signalDetailUtils.jsx` | `formatTimeframe`, `toTradingViewSymbol`, detail header builder |
 
 ## Verification Checklist
+- [ ] Read `.agents/rules/design-system.md` — no inline styles where CSS class exists
 - [ ] Checked shared component catalog before writing new code
 - [ ] Used `PaginationBar` instead of inline pagination
 - [ ] Used `ConfirmDialog` instead of `window.confirm()`
 - [ ] Used `SidebarListItem` + `MasterDetailLayout` for sidebar layouts
 - [ ] Used `PnlDisplay` for money display
 - [ ] Used shared utils instead of local wrapper functions
+- [ ] No `style={{ background: "var(--surface)" }}` — use `.panel` or `.card-flat`
+- [ ] No `style={{ display: "flex", gap: ... }}` — use `.stack-layout` or `.toolbar-panel`
+- [ ] No `style={{ color: "#10b981" }}` — use `.money-pos`
+- [ ] No `style={{ color: "#ef4444" }}` — use `.money-neg` or `.msg-error`
+- [ ] No inline styles on `<table>`, `<th>`, `<td>` — use `.table-dense`
+- [ ] All buttons use button classes, never inline
+- [ ] All loading/error/empty states use `.loading`, `.error`, `.empty-state`
 - [ ] Matches CSS tokens
 - [ ] Responsive at 375px
 - [ ] No layout shifts

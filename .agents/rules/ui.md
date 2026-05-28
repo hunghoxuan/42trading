@@ -1,5 +1,6 @@
 # UI Rules
 
+- **MANDATORY**: Read `.agents/rules/design-system.md` before writing any JSX component. Use CSS classes from the catalog instead of inline `style={{}}`.
 - Follow existing design system first.
 - Use dense, work-focused layouts for trading/admin tools.
 - Page wrapper: `stack-layout fadeIn`.

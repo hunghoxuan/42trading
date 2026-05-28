@@ -9,13 +9,14 @@ Read on every new chat:
 3. `rules/safety.md`
 4. `rules/cli.md`
 5. `rules/token.md`
-6. `rules/scratch.md`
+6. `rules/design-system.md`
+7. `rules/scratch.md`
 
 ## Read Only When Task Needs It
 
 - Handoff: `rules/handoff.md`
 - DB: `rules/db.md`
-- UI: `rules/ui.md`
+- UI: `rules/ui.md`, `rules/design-system.md` (mandatory — class catalog)
 - Deploy: `rules/deploy.md`
 - Testing: `rules/testing.md`
 - Scripts: `rules/scripting.md`

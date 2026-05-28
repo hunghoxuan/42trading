@@ -1,6 +1,8 @@
 # Drizzle ORM Migration — Progress Log
 
-## Status: IN PROGRESS — 16/35 methods done, 15 tests passing
+## Status: IN PROGRESS — JSONB→TEXT done, 16/35 methods + ~21/57 server queries replaced
+
+✅ JSONB→TEXT migration complete — all `jsonb` columns now `text`. SQLite-compatible.
 
 ## Architecture
 

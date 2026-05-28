@@ -12,12 +12,13 @@ Read in this order:
 4. `.agents/rules/communication.md`
 5. `.agents/rules/cli.md`
 6. `.agents/rules/token.md`
-7. `.agents/STATE.md`
+7. `.agents/rules/design-system.md`
+8. `.agents/STATE.md`
 
 ## Read Later Only If Needed
 
 - DB work: `.agents/rules/db.md`, `.agents/.product/architecture/db-schema.md`, `.agents/.product/architecture/db-drizzle-migration.md`
-- UI work: `.agents/rules/ui.md`
+- UI work: `.agents/rules/ui.md`, `.agents/rules/design-system.md` (mandatory — class catalog)
 - Deploy/version work: `.agents/rules/deploy.md`
 - Local dev work: `.agents/wiki/local-dev-environment.md`
 - Planning-heavy work: `.agents/rules/planning.md`
