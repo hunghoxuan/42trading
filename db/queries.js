@@ -101,3 +101,15 @@ async function deleteSignalsByIds(db, ids) {
 }
 
 module.exports = { listTradesV2, listSignals, listUserAccounts, upsertSignal, findAccountByApiKeyHash, upsertUserAccount, listUiUsers, deleteUserAccount, listAllEvents, listActiveSignals, getSignalByTicket, bulkAckSignals, cancelSignalsByIds, deleteSignalsByIds };
+
+async function findSignalById(db, id) {
+  const rows = await db.select().from(schema.signals).where(eq(schema.signals.sid, String(id || ""))).limit(1);
+  return rows[0] || null;
+}
+
+async function pruneOldSignals(db, days = 14) {
+  const cutoff = new Date(Date.now() - days * 86400000);
+  return db.delete(schema.signals).where(and(lte(schema.signals.createdAt, cutoff), eq(schema.signals.status, "CANCELLED")));
+}
+
+module.exports = Object.assign(module.exports, { findSignalById, pruneOldSignals });

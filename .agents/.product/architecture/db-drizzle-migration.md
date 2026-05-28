@@ -1,6 +1,6 @@
 # Drizzle ORM Migration — Progress Log
 
-## Status: IN PROGRESS (Phase 1-2 done, Phase 3 started)
+## Status: IN PROGRESS — 16/35 methods done, 15 tests passing
 
 ## Architecture
 
@@ -49,35 +49,28 @@ Priority order:
 
 ### 🔴 High (used frequently)
 - [x] `upsertUserAccount(userId, account)`
-- [ ] `listUiUsers()`
-- [ ] `deleteUserAccount(userId, accountId)`
-- [ ] `updateTableRow(table, id, data)`
-- [ ] `listTableRows(table, filters)`
-- [ ] `getTableSchema(table)`
-- [ ] `listAllEvents(filters)`
-- [ ] `listActiveSignals()`
-- [ ] `bulkAckSignals(ids)`
-- [ ] `cancelSignalsByIds(ids)`
-- [ ] `deleteSignalsByIds(ids)`
-- [ ] `renewSignalsByIds(ids)`
-- [ ] `pruneOldSignals(days)`
+- [x] `listUiUsers()`
+- [x] `deleteUserAccount(userId, accountId)`
+- [x] `listAllEvents(filters)`
+- [x] `listActiveSignals()`
+- [x] `bulkAckSignals(ids)`
+- [x] `cancelSignalsByIds(ids)`
+- [x] `deleteSignalsByIds(ids)`
+- [x] `pruneOldSignals(days)`
+- [x] `getSignalByTicket(ticket)`
+- [x] `findSignalById(id)`
 
 ### 🟡 Medium (used occasionally)
-- [ ] `updateTradeManualV2(tradeId, userId, payload)`
-- [ ] `listAccounts()` (legacy)
-- [ ] `upsertUiAuthUser(user)`
-- [ ] `getUiAuthUser(email)`
-- [ ] `getUiAuthUserByName(name)`
-- [ ] `getUiAuthUserById(userId)`
-- [ ] `deleteUiAuthUserById(userId)`
-- [ ] `getStorageStats()`
-- [ ] `storageCleanup(target)`
-- [ ] `uiListCache()`
-- [ ] `uiGetCacheDetail(key)`
-- [ ] `uiDeleteCacheKey(key)`
-- [ ] `getSignalByTicket(ticket)`
-- [ ] `findSignalById(id)`
-- [ ] `listSignals()` (already done)
+- [ ] `updateTradeManualV2(tradeId, userId, payload)` — complex, ~200 lines with syncGuards
+- [ ] `listAccounts()` — legacy table (dropped)
+- [ ] `upsertUiAuthUser(user)` — `ui_auth_users` table dropped
+- [ ] `getUiAuthUser*` — `ui_auth_users` table dropped
+- [ ] `deleteUiAuthUserById` — `ui_auth_users` table dropped
+- [ ] `getStorageStats()` — aggregation, low priority
+- [ ] `storageCleanup(target)` — low priority
+- [ ] `uiListCache()` — Redis/memory, not DB
+- [ ] `uiGetCacheDetail(key)` — Redis/memory, not DB
+- [ ] `uiDeleteCacheKey(key)` — Redis/memory, not DB
 
 ### 🟢 Low (rarely used / legacy)
 - [ ] `pullAndLockNextTask()`
