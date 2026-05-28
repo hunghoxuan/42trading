@@ -261,7 +261,7 @@ export default function TradeDetailPage() {
       side: action,
       symbol: trade.symbol || "-",
       sideClass: action === "BUY" ? "side-buy" : "side-sell",
-      positionText: `${trade.entry || "-"} → ${trade.tp || "-"} / ${trade.sl || "-"}`,
+      positionText: `${trade.entry_price_exec || trade.entry || "-"} → ${trade.tp || "-"} / ${trade.sl || "-"}`,
       aiBadges: (
         <div
           style={{
@@ -287,6 +287,13 @@ export default function TradeDetailPage() {
             <span className={`badge ${currentStatus.cls}`} style={{ cursor: "default" }}>
               {currentStatus.label}
             </span>
+            {(() => {
+              const d = trade.dispatch_status || 'OPEN';
+              if (d === 'REJECTED') return <span title={trade.rejection_reason || 'Sync failed'} style={{cursor:'default', fontSize:12}}>❌</span>;
+              if (d === 'MODIFY' || d === 'CLOSE' || d === 'CANCEL') return <span title={`Sync pending: ${d}`} style={{cursor:'default', fontSize:12}}>⏳</span>;
+              if (d === 'LEASED') return <span title="Syncing with broker..." style={{cursor:'default', fontSize:12}}>🔄</span>;
+              return null;
+            })()}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {aiStrategy && <span style={badgeS("#8b5cf6")}>{aiStrategy}</span>}
@@ -589,7 +596,7 @@ export default function TradeDetailPage() {
               symbol: trade.symbol,
               interval: trade.signal_tf || trade.chart_tf || "1h",
               live: true,
-              entryPrice: asNum(detailPlan.entry) || asNum(trade.entry),
+              entryPrice: asNum(trade.entry_price_exec) || asNum(detailPlan.entry) || asNum(trade.entry),
               slPrice: asNum(detailPlan.sl) || asNum(trade.sl),
               tpPrice: asNum(detailPlan.tp) || asNum(trade.tp),
               tp1Price:
@@ -650,7 +657,7 @@ export default function TradeDetailPage() {
                   trade.metadata?.session_prefix ||
                   "-",
               },
-              { label: "Entry", value: detailPlan.entry || trade.entry || "-" },
+              { label: "Entry", value: trade.entry_price_exec || trade.entry || "-" },
               { label: "TP", value: detailPlan.tp || trade.tp || "-" },
               { label: "SL", value: detailPlan.sl || trade.sl || "-" },
               { label: "RR", value: detailPlan.rr || trade.rr_planned || "-" },
@@ -685,6 +692,11 @@ export default function TradeDetailPage() {
                 label: "Status",
                 value: statusUi(trade.execution_status).label,
               },
+              trade.dispatch_status && trade.dispatch_status !== 'CONSUMED' && trade.dispatch_status !== 'OPEN' ? {
+                label: "Sync Status",
+                value: `${trade.dispatch_status}${trade.rejection_reason ? ' — ' + trade.rejection_reason : ''}`,
+                cls: trade.dispatch_status === 'REJECTED' ? 'warn' : '',
+              } : null,
               { label: "Broker Ticket", value: brokerTicketOf(trade) },
               { label: "Account", value: trade.account_id || "-" },
               { label: "Volume", value: `${trade.volume ?? "-"} lots` },

@@ -2,15 +2,27 @@
 
 const crypto = require("crypto");
 
-const CONTROL_STATUS_TO_TASK = Object.freeze({
-  PENDING_MOD: "MODIFY",
-  PENDING_CLOSE: "CLOSE",
-  PENDING_CANCEL: "CANCEL",
+// dispatch_status → broker pull task type
+// execution_status is now pure trade state (PENDING/FILLED/CLOSED...).
+// dispatch_status carries the sync action: OPEN, MODIFY, CLOSE, CANCEL, LEASED, CONSUMED.
+const DISPATCH_ACTION_TO_TASK = Object.freeze({
+  OPEN: "OPEN",
+  MODIFY: "MODIFY",
+  CLOSE: "CLOSE",
+  CANCEL: "CANCEL",
 });
 
 function brokerTaskTypeForTrade(row = {}) {
-  const status = String(row.execution_status || "").trim().toUpperCase();
-  return CONTROL_STATUS_TO_TASK[status] || "OPEN";
+  const dispatch = String(row.dispatch_status || "").trim().toUpperCase();
+  return DISPATCH_ACTION_TO_TASK[dispatch] || "OPEN";
+}
+
+function brokerActionForDispatch(executionStatus = "", newDispatch = "") {
+  const d = String(newDispatch || "").trim().toUpperCase();
+  if (d === "MODIFY") return "MODIFY";
+  if (d === "CLOSE") return "CLOSE";
+  if (d === "CANCEL") return "CANCEL";
+  return "OPEN";
 }
 
 function leaseRetryCount(row = {}) {
@@ -39,7 +51,8 @@ function shouldAutoRejectLeasedTrade(row = {}, maxRetries = 3, now = new Date())
 function isNewTradeTooOld(row = {}, maxAgeHours = 0, now = new Date()) {
   const maxAge = Number(maxAgeHours);
   if (!Number.isFinite(maxAge) || maxAge <= 0) return false;
-  if (String(row.dispatch_status || "").toUpperCase() !== "NEW") return false;
+  const dispatch = String(row.dispatch_status || "").trim().toUpperCase();
+  if (dispatch !== "OPEN" && dispatch !== "NEW") return false;
   const status = String(row.execution_status || "").trim().toUpperCase();
   if (status !== "PENDING") return false;
   const createdAt = new Date(row.created_at || 0);
@@ -89,14 +102,19 @@ function brokerSnapshotHash(item = {}) {
     .digest("hex");
 }
 
+// Returns NEW dispatch_status for the broker queue action.
+// Keeps execution_status unchanged — that's the trade state, not the sync action.
 function brokerLinkedManualStatus(row = {}, requestedStatus = "") {
   const target = normText(requestedStatus);
   const current = normText(row.execution_status);
   const brokerId = String(row.broker_trade_id || "").trim();
-  if (!brokerId) return target;
-  if (!["PENDING", "FILLED"].includes(current)) return target;
-  if (!["CLOSED", "CANCELLED", "REJECTED"].includes(target)) return target;
-  return current === "PENDING" ? "PENDING_CANCEL" : "PENDING_CLOSE";
+  if (!brokerId) return { execution_status: target, dispatch_status: null };
+  if (!["PENDING", "FILLED"].includes(current)) return { execution_status: target, dispatch_status: null };
+  if (!["CLOSED", "CANCELLED", "REJECTED"].includes(target)) return { execution_status: target, dispatch_status: null };
+  return {
+    execution_status: current, // keep trade state unchanged
+    dispatch_status: current === "PENDING" ? "CANCEL" : "CLOSE",
+  };
 }
 
 module.exports = {

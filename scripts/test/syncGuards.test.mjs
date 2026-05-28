@@ -4,22 +4,22 @@ import guards from "../../webhook/syncGuards.js";
 
 test("brokerTaskTypeForTrade returns OPEN for normal pending create tasks", () => {
   assert.equal(
-    guards.brokerTaskTypeForTrade({ execution_status: "PENDING" }),
+    guards.brokerTaskTypeForTrade({ dispatch_status: "OPEN" }),
     "OPEN",
   );
 });
 
-test("brokerTaskTypeForTrade maps control statuses to broker actions", () => {
+test("brokerTaskTypeForTrade maps dispatch_status to broker actions", () => {
   assert.equal(
-    guards.brokerTaskTypeForTrade({ execution_status: "PENDING_MOD" }),
+    guards.brokerTaskTypeForTrade({ dispatch_status: "MODIFY" }),
     "MODIFY",
   );
   assert.equal(
-    guards.brokerTaskTypeForTrade({ execution_status: "PENDING_CLOSE" }),
+    guards.brokerTaskTypeForTrade({ dispatch_status: "CLOSE" }),
     "CLOSE",
   );
   assert.equal(
-    guards.brokerTaskTypeForTrade({ execution_status: "PENDING_CANCEL" }),
+    guards.brokerTaskTypeForTrade({ dispatch_status: "CANCEL" }),
     "CANCEL",
   );
 });
@@ -45,7 +45,7 @@ test("isNewTradeTooOld catches stale unexecuted create tasks", () => {
   assert.equal(
     guards.isNewTradeTooOld(
       {
-        dispatch_status: "NEW",
+        dispatch_status: "OPEN",
         execution_status: "PENDING",
         created_at: "2026-05-26T09:00:00.000Z",
       },
@@ -107,28 +107,28 @@ test("brokerSnapshotHash changes when synced broker fields change", () => {
 });
 
 test("brokerLinkedManualStatus maps terminal manual edits to broker queue statuses", () => {
-  assert.equal(
-    guards.brokerLinkedManualStatus(
-      { broker_trade_id: "pos-1", execution_status: "FILLED" },
-      "CLOSED",
-    ),
-    "PENDING_CLOSE",
+  const result = guards.brokerLinkedManualStatus(
+    { broker_trade_id: "pos-1", execution_status: "FILLED" },
+    "CLOSED",
   );
-  assert.equal(
-    guards.brokerLinkedManualStatus(
-      { broker_trade_id: "ord-1", execution_status: "PENDING" },
-      "CANCELLED",
-    ),
-    "PENDING_CANCEL",
+  assert.equal(result.execution_status, "FILLED");
+  assert.equal(result.dispatch_status, "CLOSE");
+});
+
+test("brokerLinkedManualStatus maps pending cancel", () => {
+  const result = guards.brokerLinkedManualStatus(
+    { broker_trade_id: "ord-1", execution_status: "PENDING" },
+    "CANCELLED",
   );
+  assert.equal(result.execution_status, "PENDING");
+  assert.equal(result.dispatch_status, "CANCEL");
 });
 
 test("brokerLinkedManualStatus leaves local-only terminal edits unchanged", () => {
-  assert.equal(
-    guards.brokerLinkedManualStatus(
-      { broker_trade_id: "", execution_status: "PENDING" },
-      "CANCELLED",
-    ),
+  const result = guards.brokerLinkedManualStatus(
+    { broker_trade_id: "", execution_status: "PENDING" },
     "CANCELLED",
   );
+  assert.equal(result.execution_status, "CANCELLED");
+  assert.equal(result.dispatch_status, null);
 });

@@ -5144,7 +5144,8 @@ export default function ChartSnapshotsPage() {
       ) || items[0];
     if (next) {
       setTradeDetailRow(next);
-      setTradeDetailPlan(extractTradePlanFromTrade(next));
+      // Don't overwrite tradeDetailPlan — user's local edits are the source of truth.
+      // The save already sent the correct values to the server.
     }
   }, [tradeDetailRow, tradeDetailPlan]);
 

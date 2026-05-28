@@ -605,6 +605,12 @@ export default function TradesPage() {
         if (t) {
           setSelectedTrade(t);
           selectedTradeIdRef.current = tradeId;
+          // Sync list filter to this trade's status so left panel matches on refresh
+          const tradeStatus = String(t.execution_status || "").toUpperCase();
+          if (tradeStatus && tradeStatus !== filter.execution_status) {
+            setFilter((f) => ({ ...f, execution_status: tradeStatus, page: 1 }));
+            setSearchParams(tradeStatus ? { status: tradeStatus } : {});
+          }
         }
       })
       .catch(() => {});
@@ -622,8 +628,8 @@ export default function TradesPage() {
       loadTradeEvents(ref);
       // Skip re-extraction only for the same trade right after save
       // (preserve user edits without leaking stale plan to other trades).
+      // Guard persists across React StrictMode double-effects.
       if (planSaveGuardRef.current === ref) {
-        planSaveGuardRef.current = "";
         return;
       }
       setDetailPlan(extractTradePlanFromTrade(selectedTrade));
@@ -680,6 +686,7 @@ export default function TradesPage() {
       const lockCore = status === "FILLED";
       const lockAll = status === "CLOSED" || status === "CANCELLED";
       const payload = {
+        direction: lockCore || lockAll ? null : detailPlan.direction,
         side: lockCore || lockAll ? null : detailPlan.direction,
         order_type: lockCore || lockAll ? null : detailPlan.trade_type,
         price: lockCore || lockAll ? null : asFiniteOrNull(detailPlan.entry),
@@ -712,10 +719,12 @@ export default function TradesPage() {
         ),
       };
       await api.saveTradePlan(ref, payload);
-      // Guard only this trade against immediate re-extraction after save
+      // Guard against extract-overwrite during re-fetch
       planSaveGuardRef.current = ref;
       await loadTrades();
       await loadTradeEvents(ref);
+      // Clear guard after all re-fetches complete
+      planSaveGuardRef.current = "";
     } catch (e) {
       setError(e?.message || "Failed to update trade plan");
     } finally {

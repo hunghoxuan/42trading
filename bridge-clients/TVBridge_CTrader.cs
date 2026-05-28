@@ -18,7 +18,7 @@ namespace cAlgo.Robots
     [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class TVBridgeCBot : Robot
     {
-        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:3000/webhook")]
+        [Parameter("Server Base URL", DefaultValue = "http://127.0.0.1:3001/webhook")]
         public string ServerBaseUrl { get; set; }
 
         [Parameter("EA API Key", DefaultValue = "acc_fab38ed32ecde9b28b3dd33d8be10a77da6a")]
@@ -223,7 +223,7 @@ namespace cAlgo.Robots
             _apiStatus = "BOOTING";
             _pollStatus = "STARTING";
             _syncStatus = "STARTING";
-            Timer.Start(PollSeconds);
+            // Timer removed — Watchdog handles everything via BeginInvokeOnMainThread
             _lastTimerTickSeen = DateTime.Now;
             StartTimerWatchdog();
             BeginInvokeOnMainThread(() => OnTimer());
@@ -243,18 +243,8 @@ namespace cAlgo.Robots
                     {
                         await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, PollSeconds)), ct);
                         if (ct.IsCancellationRequested) break;
-                        var now = DateTime.Now;
-                        var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
-                        if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
-                            (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
-                        {
-                            _lastTickFallbackKick = now;
-                            BeginInvokeOnMainThread(() =>
-                            {
-                                if (_pollCount <= 6) Print("[Diag] Watchdog kick (timer stale >= {0}s)", timerStaleSeconds);
-                                OnTimer();
-                            });
-                        }
+                        _lastTickFallbackKick = DateTime.Now;
+                        BeginInvokeOnMainThread(() => OnTimer());
                     }
                     catch (TaskCanceledException) { break; }
                     catch (Exception ex)
@@ -592,21 +582,30 @@ namespace cAlgo.Robots
 
                         double tpPnl = 0;
                         double slPnl = 0;
+                        double distanceTp = 0;
+                        double distanceSl = 0;
+                        double spreadVal = 0;
+                        bool hasTrailing = false;
                         if (s != null)
                         {
+                            spreadVal = double.IsNaN(s.Spread) ? 0 : s.Spread;
                             if (pos.TakeProfit.HasValue)
                             {
                                 double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize;
                                 if (pos.TradeType == TradeType.Sell) pips = -pips;
                                 tpPnl = pips * s.PipValue * pos.VolumeInUnits;
+                                distanceTp = Math.Abs(pips);
                             }
                             if (pos.StopLoss.HasValue)
                             {
                                 double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize;
                                 if (pos.TradeType == TradeType.Sell) pips = -pips;
                                 slPnl = pips * s.PipValue * pos.VolumeInUnits;
+                                distanceSl = Math.Abs(pips);
                             }
                         }
+                        double balanceTp = tpPnl;
+                        double balanceSl = slPnl;
 
                         var ticketKey = pos.Id.ToString();
                         double partialClosedVol = 0;
@@ -632,6 +631,11 @@ namespace cAlgo.Robots
                             ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) +
                             ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) +
                             ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"distance_sl\":" + distanceSl.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"distance_tp\":" + distanceTp.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"balance_sl\":" + balanceSl.ToString("F2", CultureInfo.InvariantCulture) +
+                            ",\"balance_tp\":" + balanceTp.ToString("F2", CultureInfo.InvariantCulture) +
                             ",\"label\":\"" + pos.Label + "\"" +
                             ",\"status\":\"OPEN\"" +
                             ",\"remaining_volume\":" + remainingVol.ToString("F2", CultureInfo.InvariantCulture) +
@@ -648,6 +652,7 @@ namespace cAlgo.Robots
                         if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
                         if (closedList.Count >= 20) break;
                         var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
+                        string closeReason = "MANUAL_CLOSE";
                         closedList.Add("{\"sid\":\"" + sid2 + "\"" +
                             ",\"comment\":\"" + sid2 + "\"" +
                             ",\"ticket\":\"" + deal.PositionId + "\"" +
@@ -660,6 +665,7 @@ namespace cAlgo.Robots
                             ",\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
                             ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) +
                             ",\"status\":\"CLOSED\"" +
+                            ",\"close_reason\":\"" + closeReason + "\"" +
                             ",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\"" +
                             ",\"label\":\"" + deal.Label + "\"}");
                     }
@@ -1053,11 +1059,11 @@ namespace cAlgo.Robots
                             var mRes = ModifyPosition(pos, (sl > 0 ? sl : (double?)null), (tp > 0 ? tp : (double?)null));
                             if (mRes.IsSuccessful)
                             {
-                                _ = AckAsync(id, leaseToken, "OPEN", ticketStr, "modify_ok");
+                                SafeAck(id, leaseToken, "FILLED", ticketStr, "");
                             }
                             else
                             {
-                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
+                                SafeAck(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
                             }
                             return;
                         }
@@ -1071,16 +1077,16 @@ namespace cAlgo.Robots
                             var mRes = ModifyPendingOrder(ord, ord.TargetPrice, slPips, tpPips, ord.ExpirationTime);
                             if (mRes.IsSuccessful)
                             {
-                                _ = AckAsync(id, leaseToken, "PENDING", ticketStr, "modify_ok");
+                                SafeAck(id, leaseToken, "PENDING", ticketStr, "");
                             }
                             else
                             {
-                                _ = AckAsync(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
+                                SafeAck(id, leaseToken, "ERROR", ticketStr, "modify_fail: " + mRes.Error);
                             }
                             return;
                         }
                     }
-                    _ = AckAsync(id, leaseToken, "ERROR", "", "modify_no_ticket");
+                    SafeAck(id, leaseToken, "ERROR", "", "modify_no_ticket");
                     return;
                 }
 

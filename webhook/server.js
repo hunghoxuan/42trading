@@ -963,9 +963,6 @@ const TRADE_STATUS = {
   CLOSED: "CLOSED",
   CANCELLED: "CANCELLED",
   REJECTED: "REJECTED",
-  PENDING_MOD: "PENDING_MOD",
-  PENDING_CLOSE: "PENDING_CLOSE",
-  PENDING_CANCEL: "PENDING_CANCEL",
 };
 
 const BROKER_BARS_DIR = path.resolve(ROOT_DIR, "market_data");
@@ -7514,6 +7511,10 @@ function mt5RenewSignalIdFromExisting(baseId, existingIds) {
 
 let MT5_BACKEND = null;
 
+// In-memory broker price cache (real-time bid/ask from cTrader)
+const brokerPriceCache = {};
+let lastBrokerPricePush = 0;
+
 function mt5MapDbRow(row) {
   if (!row) return null;
   const rawInput = row.raw_json || {};
@@ -7528,9 +7529,9 @@ function mt5MapDbRow(row) {
     raw.entry = null;
   }
   const execEntry =
-    row.entry_price_exec === null || row.entry_price_exec === undefined
+    row.entry_exec === null || row.entry_exec === undefined
       ? null
-      : Number(row.entry_price_exec);
+      : Number(row.entry_exec);
   const execSl =
     asNum(row.sl_exec) ??
     asNum(row.metadata?.sl_exec) ??
@@ -7618,6 +7619,8 @@ function mt5MapDbRow(row) {
     entry_model: normalizedModel,
     status: String(row.status || ""),
     execution_status: String(row.execution_status || ""),
+    dispatch_status: String(row.dispatch_status || ""),
+    rejection_reason: row.rejection_reason || null,
     locked_at: row.locked_at ?? null,
     ack_at: row.ack_at ?? null,
     opened_at: row.opened_at ?? null,
@@ -8729,15 +8732,10 @@ END
         const selTrd = await client.query(
           `
           SELECT * FROM trades
-          WHERE (
-            (execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
-            OR (dispatch_status = 'NEW' AND execution_status = 'PENDING')
-          )
-          AND execution_status <> 'Draft'
-          AND (account_id = $1::TEXT OR account_id IS NULL OR account_id = '')
-          ORDER BY
-            CASE WHEN dispatch_status = 'NEW' THEN 1 ELSE 2 END ASC,
-            created_at ASC
+          WHERE dispatch_status IN ('OPEN', 'MODIFY', 'CLOSE', 'CANCEL')
+            AND execution_status <> 'Draft'
+            AND (account_id = $1::TEXT OR account_id IS NULL OR account_id = '')
+          ORDER BY created_at ASC
           LIMIT 1
           FOR UPDATE SKIP LOCKED
         `,
@@ -8747,11 +8745,7 @@ END
         if (selTrd.rows.length > 0) {
           const row = selTrd.rows[0];
 
-          let taskType = "OPEN";
-          if (row.execution_status === "PENDING_MOD") taskType = "MODIFY";
-          else if (row.execution_status === "PENDING_CLOSE") taskType = "CLOSE";
-          else if (row.execution_status === "PENDING_CANCEL")
-            taskType = "CANCEL";
+          const taskType = syncGuards.brokerTaskTypeForTrade(row);
 
           await client.query(
             `
@@ -8852,7 +8846,7 @@ END
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, estimated_bars, be_trigger,
               rr_planned, risk_money_planned, risk_pct_planned
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'NEW',$30::text,$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'OPEN',$30::text,$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
           `,
             [
               tradeSid,
@@ -8961,22 +8955,12 @@ END
           WHERE account_id = $1
             AND execution_status <> 'Draft'
             AND (
-              (dispatch_status = 'NEW' AND execution_status IN ('PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
-              OR (dispatch_status = 'NEW' AND execution_status = 'PENDING')
-              OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW() AND execution_status IN ('PENDING', 'PENDING_MOD', 'PENDING_CLOSE', 'PENDING_CANCEL'))
+              dispatch_status IN ('OPEN', 'MODIFY', 'CLOSE', 'CANCEL')
+              OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW())
             )
-            AND (
-              $3::text IS NULL
-              OR ($3 = 'OPEN' AND execution_status NOT IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL'))
-              OR ($3 <> 'OPEN' AND execution_status = CASE $3
-                    WHEN 'MODIFY' THEN 'PENDING_MOD'
-                    WHEN 'CLOSE' THEN 'PENDING_CLOSE'
-                    WHEN 'CANCEL' THEN 'PENDING_CANCEL'
-                    ELSE execution_status
-                  END)
-            )
+            AND ($3::text IS NULL OR dispatch_status = $3::text)
           ORDER BY
-            CASE WHEN execution_status IN ('PENDING_MOD','PENDING_CLOSE','PENDING_CANCEL') THEN 0 ELSE 1 END ASC,
+            CASE WHEN dispatch_status = 'LEASED' THEN 1 ELSE 0 END ASC,
             created_at ASC
           LIMIT $2 FOR UPDATE SKIP LOCKED
         `,
@@ -8996,10 +8980,9 @@ END
             await client.query(
               `
               UPDATE trades
-              SET execution_status = 'REJECTED',
-                  dispatch_status = 'CONSUMED',
+              SET dispatch_status = 'REJECTED',
                   rejection_reason = COALESCE(rejection_reason, $2),
-                  metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb - 'last_broker_snapshot_hash',
                   updated_at = NOW()
               WHERE sid = $1
             `,
@@ -9036,9 +9019,9 @@ END
             await client.query(
               `
               UPDATE trades
-              SET execution_status = 'REJECTED',
-                  dispatch_status = 'CONSUMED',
+              SET dispatch_status = 'REJECTED',
                   rejection_reason = COALESCE(rejection_reason, $2),
+                  metadata = COALESCE(metadata, '{}'::jsonb) - 'last_broker_snapshot_hash',
                   updated_at = NOW()
               WHERE sid = $1
             `,
@@ -9156,11 +9139,15 @@ END
 
       const tradeId = payload.sid || payload.trade_id;
       const leaseToken = String(payload.lease_token || "").trim();
+      // Broker error means sync action failed, not the trade. Keep execution_status.
+      const isBrokerError = ["ERROR", "FAIL"].includes(
+        String(payload.execution_status || "").toUpperCase(),
+      );
       const res = await pool.query(
         `
          UPDATE trades
          SET dispatch_status = CASE WHEN $14 = TRUE THEN 'NEW' ELSE 'CONSUMED' END,
-             execution_status = $1,
+             execution_status = CASE WHEN $17 = TRUE THEN execution_status ELSE $1 END,
              broker_trade_id = CASE WHEN $2::text IN ('MANUAL', '') THEN broker_trade_id ELSE $2 END,
              entry_exec = $3,
              pnl_realized = CASE WHEN $10 = TRUE THEN $4 ELSE pnl_realized END,
@@ -9197,6 +9184,7 @@ END
           payload.release_only === true,
           asNum(payload.risk_money_planned),
           leaseToken,
+          isBrokerError,
         ],
       );
       if (res.rowCount > 0) {
@@ -9691,6 +9679,9 @@ END
               entry,
               sl,
               tp,
+              tp1: (tp !== null && !Number.isFinite(Number(raw.tp1))) ? tp : Number.isFinite(Number(raw.tp1)) ? Number(raw.tp1) : null,
+              tp2: Number.isFinite(Number(raw.tp2)) ? Number(raw.tp2) : null,
+              tp3: Number.isFinite(Number(raw.tp3)) ? Number(raw.tp3) : null,
               note,
               status_raw: statusRaw || "UNKNOWN",
               execution_status: executionStatus,
@@ -9725,6 +9716,7 @@ END
             if (entry !== null) prev.entry = entry;
             if (sl !== null) prev.sl = sl;
             if (tp !== null) prev.tp = tp;
+            if (tp !== null && !Number.isFinite(Number(raw.tp1)) && !Number.isFinite(Number(prev.tp1))) prev.tp1 = tp;
             if (note) prev.note = note;
             if (closeReason) prev.close_reason = closeReason;
             if (openedAt) prev.opened_at = openedAt;
@@ -9892,7 +9884,6 @@ END
                 broker_margin = $19::numeric,
                 broker_tp_pnl = $20::numeric,
                 broker_sl_pnl = $21::numeric,
-                entry = COALESCE($22::numeric, entry),
                 entry_exec = COALESCE($22::numeric, entry_exec),
                 order_type = COALESCE($12::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
@@ -9977,7 +9968,6 @@ END
                 broker_margin = $18::numeric,
                 broker_tp_pnl = $19::numeric,
                 broker_sl_pnl = $20::numeric,
-                entry = COALESCE($21::numeric, entry),
                 entry_exec = COALESCE($21::numeric, entry_exec),
                 sl = COALESCE($22::numeric, sl),
                 tp = COALESCE($23::numeric, tp),
@@ -10065,7 +10055,6 @@ END
                 broker_margin = $17::numeric,
                 broker_tp_pnl = $18::numeric,
                 broker_sl_pnl = $19::numeric,
-                entry = COALESCE($20::numeric, entry),
                 entry_exec = COALESCE($20::numeric, entry_exec),
                 sl = COALESCE($21::numeric, sl),
                 tp = COALESCE($22::numeric, tp),
@@ -10815,15 +10804,12 @@ END
         "CLOSED",
         "CANCELLED",
         "REJECTED",
-        "PENDING_MOD",
-        "PENDING_CLOSE",
-        "PENDING_CANCEL",
       ]);
       if (!allowed.has(stRaw)) {
         return {
           ok: false,
           error:
-            "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED, PENDING_MOD, PENDING_CLOSE, PENDING_CANCEL",
+            "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED",
         };
       }
       const lookupParams = [numericId, tid];
@@ -10851,12 +10837,14 @@ END
       if ((currentRes.rowCount || 0) === 0)
         return { ok: false, error: "trade not found" };
       const currentRow = currentRes.rows[0];
-      const appliedStatus = syncGuards.brokerLinkedManualStatus(currentRow, stRaw);
-      const queuedBrokerAction = appliedStatus !== stRaw;
+      const syncResult = syncGuards.brokerLinkedManualStatus(currentRow, stRaw);
+      const appliedExecutionStatus = syncResult.execution_status;
+      const newDispatchStatus = syncResult.dispatch_status;
+      const queuedBrokerAction = newDispatchStatus !== null;
       const pnlRaw = payload.pnl_realized ?? payload.pnl;
       const pnlNum = Number(pnlRaw);
       const pnl =
-        appliedStatus === "PENDING" ? 0 : Number.isFinite(pnlNum) ? pnlNum : null;
+        appliedExecutionStatus === "PENDING" ? 0 : Number.isFinite(pnlNum) ? pnlNum : null;
       const closeReasonRaw = String(
         payload.close_reason || payload.reason || "",
       )
@@ -10865,8 +10853,8 @@ END
       const closeReason = closeReasonRaw || null;
       const manualMeta = JSON.stringify({
         manual_requested_status: stRaw,
-        manual_applied_status: appliedStatus,
-        manual_queued_broker_action: queuedBrokerAction,
+        manual_applied_execution_status: appliedExecutionStatus,
+        manual_new_dispatch_status: newDispatchStatus || null,
         manual_edit_source: "vps",
         manual_edit_at: mt5NowIso(),
       });
@@ -10876,12 +10864,12 @@ END
         SET execution_status = $1::text,
             pnl_realized = CASE WHEN $2::double precision IS NULL THEN pnl_realized ELSE $2::double precision END,
             close_reason = COALESCE($3::text, close_reason),
-            dispatch_status = CASE WHEN $5::boolean THEN 'NEW' ELSE dispatch_status END,
-            lease_token = CASE WHEN $5::boolean THEN NULL ELSE lease_token END,
-            lease_expires_at = CASE WHEN $5::boolean THEN NULL ELSE lease_expires_at END,
+            dispatch_status = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE dispatch_status END,
+            lease_token = CASE WHEN $5::text IS NOT NULL THEN NULL ELSE lease_token END,
+            lease_expires_at = CASE WHEN $5::text IS NOT NULL THEN NULL ELSE lease_expires_at END,
             metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
             closed_at = CASE
-              WHEN $5::boolean THEN closed_at
+              WHEN $5::text IS NOT NULL THEN closed_at
               WHEN $1::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(closed_at, NOW())
               ELSE closed_at
             END
@@ -10889,11 +10877,11 @@ END
         RETURNING id, sid, signal_id, user_id, symbol, execution_status, dispatch_status, pnl_realized, close_reason, closed_at
       `,
         [
-          appliedStatus,
+          appliedExecutionStatus,
           pnl,
           closeReason,
           currentRow.sid,
-          queuedBrokerAction,
+          newDispatchStatus,
           manualMeta,
         ],
       );
@@ -10939,10 +10927,9 @@ END
       const baseOffset = isDelete ? 0 : 2;
       const clauses = [];
       const closeReason = act === "cancel_all" ? "CANCEL" : "MANUAL";
-      // Change: Mark as PENDING_CLOSE/CANCEL so EA can pick it up
-      const nextStatus =
-        act === "cancel_all" ? "PENDING_CANCEL" : "PENDING_CLOSE";
-      const params = isDelete ? [] : [closeReason, nextStatus];
+      // Set dispatch_status so broker pulls the CLOSE/CANCEL action
+      const nextDispatch = act === "cancel_all" ? "CANCEL" : "CLOSE";
+      const params = isDelete ? [] : [closeReason, nextDispatch];
       const tradeIds = Array.isArray(filters.sids)
         ? filters.sids.map((v) => String(v || "").trim()).filter(Boolean)
         : [];
@@ -11026,7 +11013,7 @@ END
       const res = await pool.query(
         `
         UPDATE trades
-        SET execution_status = $2,
+        SET dispatch_status = $2,
             close_reason = COALESCE(close_reason, $1),
             closed_at = COALESCE(closed_at, NOW()),
             updated_at = NOW()
@@ -14469,11 +14456,16 @@ function mt5TicketCandidates(raw = {}) {
 }
 
 function mt5CloseReasonFromSync(raw = {}) {
-  const s = String(
-    raw.status || raw.execution_status || raw.reason || raw.close_reason || "",
-  )
+  const status = String(raw.status || raw.execution_status || "")
     .trim()
     .toUpperCase();
+  // When status is generic CLOSED, use close_reason/reason for specificity (e.g. cTrader bridge sends close_reason=TP|SL|MANUAL_CLOSE)
+  const s =
+    status === "CLOSED" || !status
+      ? String(raw.close_reason || raw.reason || status || "")
+          .trim()
+          .toUpperCase()
+      : status;
   if (s === "TP" || s === "DEAL_REASON_TP") return "TP";
   if (
     s === "SL" ||
@@ -14490,6 +14482,7 @@ function mt5CloseReasonFromSync(raw = {}) {
       "MOBILE",
       "EXPERT",
       "MANUAL",
+      "MANUAL_CLOSE",
       "DEAL_REASON_CLIENT",
       "DEAL_REASON_MOBILE",
       "DEAL_REASON_EXPERT",
@@ -17877,7 +17870,7 @@ const appHandler = async (req, res) => {
         if (tradeRefs.length) {
           const b = await mt5Backend();
           const tradeRes = await b.pool.query(
-            `UPDATE trades SET execution_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'PENDING_CANCEL' ELSE 'CANCELLED' END, closed_at = COALESCE(closed_at, NOW()) WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
+            `UPDATE trades SET dispatch_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'CANCEL' ELSE 'CONSUMED' END, closed_at = COALESCE(closed_at, NOW()) WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
             [tradeRefs],
           );
           if (tradeRes.rowCount > 0) {
@@ -24142,12 +24135,9 @@ const appHandler = async (req, res) => {
             source_id = COALESCE($18, source_id),
             order_type = COALESCE($19, order_type),
             risk_money_planned = COALESCE($20, risk_money_planned),
-            execution_status = CASE
-              WHEN execution_status = 'FILLED' THEN 'PENDING_MOD'
-              ELSE execution_status
-            END,
+            execution_status = execution_status,
             dispatch_status = CASE
-              WHEN execution_status = 'FILLED' THEN 'NEW'
+              WHEN execution_status IN ('FILLED', 'PENDING', 'PENDING_MOD') THEN 'MODIFY'
               ELSE dispatch_status
             END,
             updated_at = NOW()
@@ -24997,6 +24987,37 @@ const appHandler = async (req, res) => {
         },
         items,
       });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // --- Price tick push (POST /v2/broker/prices) ---
+  if (
+    req.method === "POST" &&
+    /^\/(webhook\/)?v2\/broker\/prices$/.test(url.pathname)
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req);
+      const account = await requireV2BrokerAccount(req, res, url, payload);
+      if (!account) return;
+      const ticks = Array.isArray(payload.p) ? payload.p : [];
+      let stored = 0;
+      for (const t of ticks) {
+        const sym = String(t.s || "").trim();
+        const bid = Number(t.b);
+        const ask = Number(t.a);
+        if (!sym || !Number.isFinite(bid) || !Number.isFinite(ask)) continue;
+        brokerPriceCache[sym] = { bid, ask, ts: Date.now() };
+        stored++;
+      }
+      if (stored > 0) lastBrokerPricePush = Date.now();
+      return json(res, 200, { ok: true, stored, source: payload.source_id || null });
     } catch (error) {
       return json(res, 400, {
         ok: false,

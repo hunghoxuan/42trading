@@ -698,9 +698,12 @@ export function extractTradePlanFromTrade(trade = {}) {
   const looksLikeBrokerAccount = /^[A-Z0-9_]{8,}$/.test(rawEntryModel);
   const entryModel =
     source === "manual" && looksLikeBrokerAccount ? "" : rawEntryModel;
-  // Prefer planned values first (raw/plan), then mutable trade fields, then broker telemetry fallback.
-  // This avoids plan editor drift when broker sync updates runtime SL/TP fields.
+  // User-saved values from metadata.trade_plan take priority over AI plan values
   const entry = pickFirstFinite(
+    trade.entry_price_exec,
+    trade.entry_exec,
+    meta?.trade_plan?.entry,
+    meta?.trade_plan?.entry_price,
     plan?.execution_plan?.entry?.price,
     raw?.entry,
     raw?.entry_price,
@@ -712,6 +715,8 @@ export function extractTradePlanFromTrade(trade = {}) {
     meta?.broker_data?.entry,
   );
   const tp = pickFirstFinite(
+    meta?.trade_plan?.tp,
+    meta?.trade_plan?.take_profit,
     raw?.tp,
     raw?.take_profit,
     plan?.tp,
@@ -721,28 +726,33 @@ export function extractTradePlanFromTrade(trade = {}) {
     meta?.broker_data?.tp,
   );
   const tp1 = pickFirstFinite(
+    trade.tp1,
+    meta?.trade_plan?.tp1,
     raw?.tp1,
     planTpLevel(plan, 1),
-    trade.tp1,
     meta?.tp1,
     meta?.tp_targets?.[0],
     tp,
   );
   const tp2 = pickFirstFinite(
+    trade.tp2,
+    meta?.trade_plan?.tp2,
     raw?.tp2,
     planTpLevel(plan, 2),
-    trade.tp2,
     meta?.tp2,
     meta?.tp_targets?.[1],
   );
   const tp3 = pickFirstFinite(
+    trade.tp3,
+    meta?.trade_plan?.tp3,
     raw?.tp3,
     planTpLevel(plan, 3),
-    trade.tp3,
     meta?.tp3,
     meta?.tp_targets?.[2],
   );
   const sl = pickFirstFinite(
+    meta?.trade_plan?.sl,
+    meta?.trade_plan?.stop_loss,
     plan?.execution_plan?.stop_loss?.price,
     raw?.sl,
     raw?.stop_loss,
@@ -752,6 +762,8 @@ export function extractTradePlanFromTrade(trade = {}) {
     meta?.broker_data?.sl,
   );
   const rr =
+    asNum(meta?.trade_plan?.rr) ??
+    asNum(meta?.trade_plan?.risk_reward) ??
     asNum(plan?.execution_plan?.risk_reward) ??
     asNum(trade.rr_planned) ??
     calcRrFromSignal(trade);

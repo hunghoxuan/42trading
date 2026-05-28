@@ -749,7 +749,16 @@ function PlanHeader({
                   </span>
                 ) : null}
                 {brokerIdVal ? (
-                  <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}>
+                  <span className="badge badge-mini" style={{
+                    padding: "2px 6px", fontSize: "9px", fontWeight: 400,
+                    borderColor: (() => {
+                      const d = String(plan.dispatch_status || "").toUpperCase();
+                      if (d === "REJECTED") return "#dc2626";
+                      if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL" || d === "LEASED") return "#16a34a";
+                      return "var(--border)";
+                    })(),
+                    borderWidth: 1.5,
+                  }}>
                     {brokerIdVal}
                   </span>
                 ) : null}
@@ -765,6 +774,13 @@ function PlanHeader({
                 {statusText}
               </span>
             )}
+            {(() => {
+              const d = String(plan.dispatch_status || "").toUpperCase();
+              if (d === "REJECTED") return <span title={plan.rejection_reason || "Sync failed"} style={{cursor:"default", fontSize:11}}>❌</span>;
+              if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL") return <span title={`Sync pending: ${d}`} style={{cursor:"default", fontSize:11}}>⏳</span>;
+              if (d === "LEASED") return <span title="Syncing with broker..." style={{cursor:"default", fontSize:11}}>🔄</span>;
+              return null;
+            })()}
           </div>
         )}
 
