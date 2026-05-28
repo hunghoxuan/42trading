@@ -92,7 +92,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.29 00:20 - tick-thread-fix";
+        private const string BuildVersion = "v2026.05.28 17:35 - status-refresh-fix";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -223,10 +223,10 @@ namespace cAlgo.Robots
             _apiStatus = "BOOTING";
             _pollStatus = "STARTING";
             _syncStatus = "STARTING";
-            // Timer removed — Watchdog handles everything via BeginInvokeOnMainThread
+            Timer.Start(PollSeconds);
             _lastTimerTickSeen = DateTime.Now;
             StartTimerWatchdog();
-            // OnTick handles all periodic work on main thread
+            BeginInvokeOnMainThread(() => OnTimer());
             Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
             RefreshDebugPanel();
         }
@@ -243,8 +243,18 @@ namespace cAlgo.Robots
                     {
                         await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, PollSeconds)), ct);
                         if (ct.IsCancellationRequested) break;
-                        _lastTickFallbackKick = DateTime.Now;
-                        BeginInvokeOnMainThread(() => OnTimer());
+                        var now = DateTime.Now;
+                        var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
+                        if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
+                            (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+                        {
+                            _lastTickFallbackKick = now;
+                            BeginInvokeOnMainThread(() =>
+                            {
+                                if (_pollCount <= 6) Print("[Diag] Watchdog kick (timer stale >= {0}s)", timerStaleSeconds);
+                                OnTimer();
+                            });
+                        }
                     }
                     catch (TaskCanceledException) { break; }
                     catch (Exception ex)
@@ -260,13 +270,16 @@ namespace cAlgo.Robots
             if (SelectedStrategy != ManagementStrategy.None)
                 ManagePositions();
 
-            // Main thread timer: run DoTimerWork every PollSeconds
+            // cTrader timer can occasionally stall on some instances.
+            // Fallback: if no timer tick was seen recently, kick one bridge cycle from OnTick.
             var now = DateTime.Now;
-            if ((now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+            var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
+            if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
+                (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
             {
                 _lastTickFallbackKick = now;
-                _lastTimerTickSeen = now;
-                DoTimerWork();
+                if (_pollCount <= 3) Print("[Diag] OnTick fallback kick (timer stale for >= {0}s)", timerStaleSeconds);
+                BeginInvokeOnMainThread(() => OnTimer());
             }
         }
 
@@ -419,15 +432,9 @@ namespace cAlgo.Robots
             }
         }
 
-        // OnTimer runs on background thread — redirect to OnTick (main thread)
         protected override void OnTimer()
         {
             _lastTimerTickSeen = DateTime.Now;
-        }
-
-        // DoTimerWork runs on main thread via OnTick or OnStart
-        private void DoTimerWork()
-        {
             if (_isBusy) return;
             _isBusy = true;
             try
@@ -588,7 +595,6 @@ namespace cAlgo.Robots
                         double distanceTp = 0;
                         double distanceSl = 0;
                         double spreadVal = 0;
-                        bool hasTrailing = false;
                         if (s != null)
                         {
                             spreadVal = double.IsNaN(s.Spread) ? 0 : s.Spread;
