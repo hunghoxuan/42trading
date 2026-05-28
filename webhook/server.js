@@ -8533,75 +8533,77 @@ END
         signal.sid,
         "SIG",
       );
-      const r = await pool.query(
-        `
-        INSERT INTO signals (
-          sid, created_at, user_id, source, source_id, symbol, side, order_type, entry, sl, tp,
-          strategy, entry_model, signal_tf, chart_tf, rr_planned, risk_money_planned, risk_pct_planned,
-          note, rejection_reason, raw_json, status,
-          profile, confidence_pct, estimated_bars, be_trigger
-        ) VALUES ($1::text,$2::timestamptz,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::numeric,$10::numeric,$11::numeric,$12::text,$13::text,$14::text,$15::text,$16::numeric,$17::numeric,$18::numeric,$19::text,$20::text,$21::jsonb,$22::text,$23::text,$24::numeric,$25::numeric,$26::numeric)
-        ON CONFLICT (sid) DO NOTHING
-        RETURNING sid
-      `,
-        [
-          signalSid,
-          signal.created_at,
-          signal.user_id,
-          signal.source,
-          signal.source_id,
-          signal.symbol,
-          signal.side,
-          signal.order_type || null,
-          signal.entry,
-          signal.sl,
-          signal.tp,
-          signal.strategy || null,
-          signal.entry_model || null,
-          signal.signal_tf,
-          signal.chart_tf,
-          signal.rr_planned,
-          signal.risk_money_planned,
-          signal.risk_pct_planned,
-          signal.note,
-          signal.rejection_reason,
-          (() => {
-            const rj = signal.raw_json || {};
-            if (rj && typeof rj === "object" && rj.prompt) {
-              const { prompt: _, ...rest } = rj;
-              return JSON.stringify(rest);
-            }
-            return JSON.stringify(rj);
-          })(),
-          signal.status || "NEW",
-          signal.profile || null,
-          signal.confidence_pct || null,
-          signal.estimated_bars || null,
-          signal.be_trigger || null,
-        ],
-      );
-      bumpPulse(signal.user_id);
-      return { inserted: (r.rowCount || 0) > 0 };
+      const nowVal = new Date();
+      const values = {
+        sid: signalSid,
+        createdAt: signal.created_at ? new Date(signal.created_at) : nowVal,
+        userId: signal.user_id,
+        source: signal.source || null,
+        sourceId: signal.source_id || null,
+        symbol: signal.symbol,
+        side: signal.side,
+        orderType: signal.order_type || null,
+        entry: signal.entry != null ? Number(signal.entry) : null,
+        sl: signal.sl != null ? Number(signal.sl) : null,
+        tp: signal.tp != null ? Number(signal.tp) : null,
+        strategy: signal.strategy || null,
+        entryModel: signal.entry_model || null,
+        signalTf: signal.signal_tf || null,
+        chartTf: signal.chart_tf || null,
+        rrPlanned: signal.rr_planned != null ? Number(signal.rr_planned) : null,
+        riskMoneyPlanned: signal.risk_money_planned != null ? Number(signal.risk_money_planned) : null,
+        riskPctPlanned: signal.risk_pct_planned != null ? Number(signal.risk_pct_planned) : null,
+        note: signal.note || null,
+        rejectionReason: signal.rejection_reason || null,
+        rawJson: (() => {
+          const rj = signal.raw_json || {};
+          if (rj && typeof rj === "object" && rj.prompt) {
+            const { prompt: _, ...rest } = rj;
+            return JSON.stringify(rest);
+          }
+          return JSON.stringify(rj);
+        })(),
+        status: signal.status || "NEW",
+        profile: signal.profile || null,
+        confidencePct: signal.confidence_pct != null ? Number(signal.confidence_pct) : null,
+        estimatedBars: signal.estimated_bars != null ? Number(signal.estimated_bars) : null,
+        beTrigger: signal.be_trigger != null ? Number(signal.be_trigger) : null,
+      };
+      try {
+        await db.insert(schema.signals).values(values);
+        bumpPulse(signal.user_id);
+        return { inserted: true };
+      } catch (e) {
+        if (e.message?.includes("duplicate key") || e.code === "23505") {
+          return { inserted: false };
+        }
+        throw e;
+      }
     },
     async findSignalById(signalId) {
       const sid = String(signalId || "").trim();
       if (!sid) return null;
-      const res = await pool.query(
-        `
-        SELECT *
-        FROM signals
-        WHERE sid = $1
-           OR raw_json->>'id' = $1
-           OR raw_json->>'sid' = $1
-        ORDER BY CASE WHEN sid = $1 THEN 0 ELSE 1 END, created_at DESC
-        LIMIT 1
-      `,
-        [sid],
-      );
-      const row = res.rows?.[0] || null;
+      const rows = await db
+        .select()
+        .from(schema.signals)
+        .where(
+          or(
+            eq(schema.signals.sid, sid),
+            eq(sql`${schema.signals.rawJson}->>'id'`, sid),
+            eq(sql`${schema.signals.rawJson}->>'sid'`, sid),
+          ),
+        )
+        .orderBy(
+          sql`CASE WHEN ${schema.signals.sid} = ${sid} THEN 0 ELSE 1 END`,
+          desc(schema.signals.createdAt),
+        )
+        .limit(1);
+      const row = rows?.[0] || null;
       if (!row) return null;
-      const raw =
-        row.raw_json && typeof row.raw_json === "object" ? row.raw_json : {};
+      let raw = {};
+      try {
+        raw = JSON.parse(row.rawJson || "{}");
+      } catch {}
       const side = String(
         row.side || raw.action || raw.side || "BUY",
       ).toUpperCase();
@@ -8618,27 +8620,26 @@ END
     async getSignalByTicket(ticket) {
       const tk = String(ticket || "").trim();
       if (!tk) return null;
-      const res = await pool.query(
-        `
-        SELECT s.*
-        FROM trades t
-        LEFT JOIN signals s ON s.sid = t.signal_id
-        WHERE t.broker_trade_id = $1
-        ORDER BY t.updated_at DESC, t.created_at DESC
-        LIMIT 1
-      `,
-        [tk],
-      );
-      const row = res.rows?.[0] || null;
-      if (!row) return null;
-      const raw =
-        row.raw_json && typeof row.raw_json === "object" ? row.raw_json : {};
+      const rows = await db
+        .select()
+        .from(schema.trades)
+        .leftJoin(schema.signals, eq(schema.signals.sid, schema.trades.signalId))
+        .where(eq(schema.trades.brokerTradeId, tk))
+        .orderBy(desc(schema.trades.updatedAt), desc(schema.trades.createdAt))
+        .limit(1);
+      const row = rows?.[0];
+      if (!row || !row.signals) return null;
+      const sig = row.signals;
+      let raw = {};
+      try {
+        raw = JSON.parse(sig.rawJson || "{}");
+      } catch {}
       const side = String(
-        row.side || raw.action || raw.side || "BUY",
+        sig.side || raw.action || raw.side || "BUY",
       ).toUpperCase();
       const volumeRaw = Number(raw.volume ?? raw.lots ?? CFG.mt5DefaultLot);
       return {
-        ...row,
+        ...sig,
         action: side,
         volume:
           Number.isFinite(volumeRaw) && volumeRaw > 0
@@ -9110,108 +9111,108 @@ END
       const isBrokerError = ["ERROR", "FAIL"].includes(
         String(payload.execution_status || "").toUpperCase(),
       );
-      const res = await pool.query(
-        `
-         UPDATE trades
-         SET dispatch_status = CASE WHEN $14 = TRUE THEN 'NEW' ELSE 'CONSUMED' END,
-             execution_status = CASE WHEN $17 = TRUE THEN execution_status ELSE $1 END,
-             broker_trade_id = CASE WHEN $2::text IN ('MANUAL', '') THEN broker_trade_id ELSE $2 END,
-             entry_exec = $3,
-             pnl_realized = CASE WHEN $10 = TRUE THEN $4 ELSE pnl_realized END,
-             volume = COALESCE($11, volume),
-             risk_money_planned = COALESCE($15, risk_money_planned),
-             order_type = COALESCE($13, order_type),
-             metadata = CASE
-               WHEN $12::jsonb = '{}'::jsonb THEN metadata
-               ELSE COALESCE(metadata, '{}'::jsonb) || $12::jsonb
-             END,
-             opened_at = COALESCE($5, opened_at, CASE WHEN $1 = 'OPEN' THEN $6 ELSE NULL END),
-             closed_at = COALESCE($7, CASE WHEN $1 = 'CLOSED' THEN $6 ELSE NULL END),
-             updated_at = $6
-         WHERE sid = $8
-           AND account_id = $9
-           AND dispatch_status = 'LEASED'
-           AND lease_token = $16
-         RETURNING user_id, opened_at, closed_at, symbol, dispatch_status, execution_status
-       `,
-        [
-          payload.execution_status,
-          payload.broker_trade_id,
-          payload.entry_exec,
-          payload.pnl_realized,
-          openedAt,
-          now,
-          closedAt,
-          tradeId,
-          accountId,
-          isClosed,
-          usedVolume,
-          JSON.stringify(telemetryMeta),
-          payload.order_type || null,
-          payload.release_only === true,
-          asNum(payload.risk_money_planned),
-          leaseToken,
-          isBrokerError,
-        ],
-      );
-      if (res.rowCount > 0) {
-        await this.log(
-          payload.sid || payload.trade_id,
-          "trades",
-          {
-            event: "TRADE_ACK",
-            status: payload.execution_status,
-            pnl: isClosed ? payload.pnl_realized : null,
-            requested_volume:
-              payload.requested_volume ?? payload.requestedVolume ?? null,
-            used_volume: usedVolume,
-            sl_pips: telemetryMeta.sl_pips ?? null,
-            tp_pips: telemetryMeta.tp_pips ?? null,
-            risk_money_actual: telemetryMeta.risk_money_actual ?? null,
-            ack_message:
-              telemetryMeta.ack_message || telemetryMeta.ack_note || null,
-            ack_result: telemetryMeta.ack_result || null,
-          },
-          res.rows[0].user_id,
-        );
-        invalidateTradeListCaches().catch(() => {});
-        // Migrate trade folder based on status
-        const newStatus = String(payload.execution_status || "").toUpperCase();
-        const tradeSid = tradeId;
-        if (["PENDING", "FILLED"].includes(newStatus)) {
-          moveTradeFolder(tradeSid, "files", "active");
-        } else if (
-          ["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)
-        ) {
-          // Copy bars + snapshots from market_data before moving to closed
-          archiveTradeStats(tradeSid, res.rows[0]?.symbol);
-          moveTradeFolder(tradeSid, "active", "closed");
-        }
-        // Auto-capture master snapshot on FILLED/CLOSED
-        if (["FILLED", "CLOSED"].includes(newStatus)) {
-          captureStatusSnapshot(tradeSid, res.rows[0]?.symbol, newStatus).catch(
-            () => {},
+      const res = await db
+        .update(schema.trades)
+        .set({
+          dispatchStatus: sql`CASE WHEN ${payload.release_only === true} = TRUE THEN 'NEW' ELSE 'CONSUMED' END`,
+          executionStatus: sql`CASE WHEN ${isBrokerError} = TRUE THEN ${schema.trades.executionStatus} ELSE ${payload.execution_status} END`,
+          brokerTradeId: sql`CASE WHEN ${payload.broker_trade_id}::text IN ('MANUAL', '') THEN ${schema.trades.brokerTradeId} ELSE ${payload.broker_trade_id} END`,
+          entryExec: payload.entry_exec != null ? Number(payload.entry_exec) : undefined,
+          pnlRealized: sql`CASE WHEN ${isClosed} = TRUE THEN ${payload.pnl_realized != null ? Number(payload.pnl_realized) : null} ELSE ${schema.trades.pnlRealized} END`,
+          volume: usedVolume != null ? sql`COALESCE(${usedVolume}, ${schema.trades.volume})` : undefined,
+          riskMoneyPlanned: asNum(payload.risk_money_planned) != null ? sql`COALESCE(${asNum(payload.risk_money_planned)}, ${schema.trades.riskMoneyPlanned})` : undefined,
+          orderType: payload.order_type ? sql`COALESCE(${payload.order_type}, ${schema.trades.orderType})` : undefined,
+          metadata: sql`CASE
+            WHEN ${JSON.stringify(telemetryMeta)}::jsonb = '{}'::jsonb THEN ${schema.trades.metadata}
+            ELSE COALESCE(${schema.trades.metadata}, '{}'::jsonb) || ${JSON.stringify(telemetryMeta)}::jsonb
+          END`,
+          openedAt: openedAt ? sql`COALESCE(${openedAt}, ${schema.trades.openedAt}, CASE WHEN ${payload.execution_status} = 'OPEN' THEN ${now} ELSE NULL END)` : undefined,
+          closedAt: sql`COALESCE(${closedAt}, CASE WHEN ${payload.execution_status} = 'CLOSED' THEN ${now} ELSE NULL END)`,
+          updatedAt: new Date(now),
+        })
+        .where(
+          and(
+            eq(schema.trades.sid, tradeId),
+            eq(schema.trades.accountId, accountId),
+            eq(schema.trades.dispatchStatus, "LEASED"),
+            eq(schema.trades.leaseToken, leaseToken),
+          ),
+        )
+        .returning({
+          userId: schema.trades.userId,
+          openedAt: schema.trades.openedAt,
+          closedAt: schema.trades.closedAt,
+          symbol: schema.trades.symbol,
+          dispatchStatus: schema.trades.dispatchStatus,
+          executionStatus: schema.trades.executionStatus,
+        });
+      const rowCount = res.length;
+        if (rowCount > 0) {
+          await this.log(
+            payload.sid || payload.trade_id,
+            "trades",
+            {
+              event: "TRADE_ACK",
+              status: payload.execution_status,
+              pnl: isClosed ? payload.pnl_realized : null,
+              requested_volume:
+                payload.requested_volume ?? payload.requestedVolume ?? null,
+              used_volume: usedVolume,
+              sl_pips: telemetryMeta.sl_pips ?? null,
+              tp_pips: telemetryMeta.tp_pips ?? null,
+              risk_money_actual: telemetryMeta.risk_money_actual ?? null,
+              ack_message:
+                telemetryMeta.ack_message || telemetryMeta.ack_note || null,
+              ack_result: telemetryMeta.ack_result || null,
+            },
+            res[0].userId,
           );
-        }
+          invalidateTradeListCaches().catch(() => {});
+          // Migrate trade folder based on status
+          const newStatus = String(payload.execution_status || "").toUpperCase();
+          const tradeSid = tradeId;
+          if (["PENDING", "FILLED"].includes(newStatus)) {
+            moveTradeFolder(tradeSid, "files", "active");
+          } else if (
+            ["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)
+          ) {
+            // Copy bars + snapshots from market_data before moving to closed
+            archiveTradeStats(tradeSid, res[0]?.symbol);
+            moveTradeFolder(tradeSid, "active", "closed");
+          }
+          // Auto-capture master snapshot on FILLED/CLOSED
+          if (["FILLED", "CLOSED"].includes(newStatus)) {
+            captureStatusSnapshot(tradeSid, res[0]?.symbol, newStatus).catch(
+              () => {},
+            );
+          }
       } else {
         // Fallback log for tracking orphan/failed acks
-        const existing = await pool.query(
-          `
-          SELECT sid, user_id, dispatch_status, execution_status, broker_trade_id, lease_token
-          FROM trades
-          WHERE sid = $1 AND account_id = $2
-          LIMIT 1
-        `,
-          [tradeId, accountId],
-        );
-        const row = existing.rows?.[0] || null;
+        const existingRows = await db
+          .select({
+            sid: schema.trades.sid,
+            userId: schema.trades.userId,
+            dispatchStatus: schema.trades.dispatchStatus,
+            executionStatus: schema.trades.executionStatus,
+            brokerTradeId: schema.trades.brokerTradeId,
+            leaseToken: schema.trades.leaseToken,
+          })
+          .from(schema.trades)
+          .where(
+            and(
+              eq(schema.trades.sid, tradeId),
+              eq(schema.trades.accountId, accountId),
+            ),
+          )
+          .limit(1);
+        const row = existingRows?.[0] || null;
         const alreadyApplied =
           row &&
-          String(row.dispatch_status || "").toUpperCase() === "CONSUMED" &&
-          String(row.execution_status || "").toUpperCase() ===
+          String(row.dispatchStatus || "").toUpperCase() === "CONSUMED" &&
+          String(row.executionStatus || "").toUpperCase() ===
             String(payload.execution_status || "").toUpperCase() &&
           (!payload.broker_trade_id ||
-            String(row.broker_trade_id || "") ===
+            String(row.brokerTradeId || "") ===
               String(payload.broker_trade_id || ""));
 
         if (alreadyApplied) {
@@ -9219,12 +9220,12 @@ END
             event: "TRADE_ACK_DUPLICATE",
             status: payload.execution_status,
             broker_trade_id: payload.broker_trade_id || null,
-          }, row.user_id || CFG.mt5DefaultUserId).catch(() => {});
+          }, row.userId || CFG.mt5DefaultUserId).catch(() => {});
           return {
             ok: true,
             duplicate: true,
-            dispatch_status: row.dispatch_status,
-            execution_status: row.execution_status,
+            dispatch_status: row.dispatchStatus,
+            execution_status: row.executionStatus,
           };
         }
 
@@ -9233,11 +9234,11 @@ END
           reason: row ? "stale or mismatched lease token" : "trade not found",
           payload_status: payload.execution_status || payload.status,
           account_id: accountId,
-          dispatch_status: row?.dispatch_status || null,
-          execution_status: row?.execution_status || null,
-          broker_trade_id: row?.broker_trade_id || null,
+          dispatch_status: row?.dispatchStatus || null,
+          execution_status: row?.executionStatus || null,
+          broker_trade_id: row?.brokerTradeId || null,
           lease_token_present: Boolean(leaseToken),
-        }, row?.user_id || CFG.mt5DefaultUserId).catch(() => {});
+        }, row?.userId || CFG.mt5DefaultUserId).catch(() => {});
         return {
           ok: false,
           error: row ? "stale or mismatched lease token" : "trade not found",
@@ -9245,8 +9246,8 @@ END
       }
       return {
         ok: true,
-        dispatch_status: res.rows[0]?.dispatch_status,
-        execution_status: res.rows[0]?.execution_status,
+        dispatch_status: res[0]?.dispatchStatus,
+        execution_status: res[0]?.executionStatus,
       };
     },
     async ackSignal(signalId, status, ticket, error, extra = {}) {
@@ -9340,43 +9341,44 @@ END
     async brokerSyncV2(accountId, payload = {}) {
       trackSourceActivity(payload?.source_id || "mt5", true);
       const aid = String(accountId || "").trim();
-      const acc = await pool.query(
-        `
-        SELECT ua.user_id, ua.metadata, u.user_id AS resolved_user_id
-        FROM user_accounts ua
-        LEFT JOIN users u ON u.user_id = ua.user_id
-        WHERE ua.account_id = $1
-      `,
-        [aid],
-      );
-      const accountUserId = String(acc.rows[0]?.user_id || "").trim();
+      const accRows = await db
+        .select({
+          userId: schema.userAccounts.userId,
+          metadata: schema.userAccounts.metadata,
+          status: schema.userAccounts.status,
+          resolvedUserId: schema.users.userId,
+        })
+        .from(schema.userAccounts)
+        .leftJoin(schema.users, eq(schema.users.userId, schema.userAccounts.userId))
+        .where(eq(schema.userAccounts.accountId, aid))
+        .limit(1);
+      const accountUserId = String(accRows[0]?.userId || "").trim();
       let uid = String(
-        acc.rows[0]?.resolved_user_id || accountUserId || CFG.mt5DefaultUserId,
+        accRows[0]?.resolvedUserId || accountUserId || CFG.mt5DefaultUserId,
       ).trim();
-      const existingMeta = acc.rows[0]?.metadata || {};
+      let existingMeta = {};
+      try { existingMeta = JSON.parse(accRows[0]?.metadata || "{}"); } catch {}
 
       // Legacy datasets can contain account rows whose user_id no longer exists.
-      // Re-anchor sync writes to a guaranteed user row so broker snapshots do not
-      // fail with FK violations when auto-updating accounts or discovering trades.
       if (!uid) uid = String(CFG.mt5DefaultUserId || "default").trim();
-      await pool.query(
-        `
-        INSERT INTO users (user_id, role, is_active, created_at, updated_at)
-        VALUES ($1, $2, TRUE, NOW(), NOW())
-        ON CONFLICT (user_id) DO UPDATE SET
-          updated_at = EXCLUDED.updated_at
-      `,
-        [uid, uid === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER],
-      );
+      await db
+        .insert(schema.users)
+        .values({
+          userId: uid,
+          role: uid === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: schema.users.userId,
+          set: { updatedAt: new Date() },
+        });
       if (accountUserId !== uid) {
-        await pool.query(
-          `
-          UPDATE user_accounts
-          SET user_id = $2, updated_at = NOW()
-          WHERE account_id = $1
-        `,
-          [aid, uid],
-        );
+        await db
+          .update(schema.userAccounts)
+          .set({ userId: uid, updatedAt: new Date() })
+          .where(eq(schema.userAccounts.accountId, aid));
       }
 
       // Update metadata and explicit columns
@@ -9408,8 +9410,6 @@ END
           const existing = Array.isArray(existingMeta.symbol_metrics)
             ? existingMeta.symbol_metrics
             : [];
-
-          // Create a map by symbol name for merging
           const map = new Map();
           existing.forEach((m) => {
             if (m.symbol) map.set(m.symbol.toUpperCase(), m);
@@ -9423,51 +9423,41 @@ END
               });
             }
           });
-
           return Array.from(map.values());
         })(),
         health_updated_at: new Date().toISOString(),
       };
 
-      // Only bump updated_at when status actually changes — not on PnL-only syncs.
-      const oldStatus = String(acc.rows[0]?.status || "").toUpperCase();
+      // Only bump updated_at when status actually changes
+      const oldStatus = String(accRows[0]?.status || "").toUpperCase();
       const newStatus = payload.status
         ? String(payload.status).toUpperCase()
         : oldStatus || "ACTIVE";
 
-      await pool.query(
-        `
-        INSERT INTO user_accounts (
-          account_id, user_id, metadata, balance, equity, margin, free_margin, leverage, broker_name, status, updated_at
-        ) VALUES ($1::text, $2::text, $3::jsonb, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9::text, $10::text, NOW())
-        ON CONFLICT (account_id) DO UPDATE SET
-          user_id = EXCLUDED.user_id,
-          metadata = EXCLUDED.metadata,
-          balance = EXCLUDED.balance,
-          equity = EXCLUDED.equity,
-          margin = EXCLUDED.margin,
-          free_margin = EXCLUDED.free_margin,
-          leverage = EXCLUDED.leverage,
-          broker_name = EXCLUDED.broker_name,
-          status = EXCLUDED.status,
-          updated_at = CASE
-            WHEN user_accounts.status IS DISTINCT FROM EXCLUDED.status THEN NOW()
-            ELSE user_accounts.updated_at
-          END
-      `,
-        [
-          aid,
-          uid,
-          JSON.stringify(newMeta),
-          newMeta.balance,
-          newMeta.equity,
-          newMeta.margin,
-          newMeta.free_margin,
-          newMeta.leverage,
-          newMeta.broker_name,
-          newStatus,
-        ],
-      );
+      await db
+        .insert(schema.userAccounts)
+        .values({
+          accountId: aid,
+          userId: uid,
+          metadata: JSON.stringify(newMeta),
+          balance: newMeta.balance,
+          status: newStatus,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: schema.userAccounts.accountId,
+          set: {
+            userId: sql`EXCLUDED.user_id`,
+            metadata: sql`EXCLUDED.metadata`,
+            balance: sql`EXCLUDED.balance`,
+            status: sql`EXCLUDED.status`,
+            updatedAt: sql`CASE
+              WHEN ${schema.userAccounts.status} IS DISTINCT FROM EXCLUDED.status THEN NOW()
+              ELSE ${schema.userAccounts.updatedAt}
+            END`,
+          },
+        });
       await StateRepo.del("USER_ACCOUNTS", uid);
       await this.log(
         aid,
@@ -9723,30 +9713,44 @@ END
           ),
         );
         if (sids.length || tickets.length) {
-          const oldRows = await pool.query(
-            `
-            SELECT
-              sid,
-              broker_trade_id,
-              execution_status,
-              dispatch_status,
-              rejection_reason,
-              sl,
-              tp,
-              broker_pnl AS pnl,
-              metadata,
-              COALESCE(metadata->>'has_partial','false') AS has_partial,
-              COALESCE(metadata->>'last_broker_snapshot_hash','') AS last_broker_snapshot_hash
-            FROM trades
-            WHERE sid = ANY($1::text[])
-               OR broker_trade_id = ANY($2::text[])
-            `,
-            [sids, tickets],
-          );
-          for (const r of oldRows.rows || []) {
-            oldStatusMap.set(r.sid, r);
-            const brokerTradeId = String(r.broker_trade_id || "").trim();
-            if (brokerTradeId) oldTicketMap.set(brokerTradeId, r);
+          const oldRows = await db
+            .select({
+              sid: schema.trades.sid,
+              brokerTradeId: schema.trades.brokerTradeId,
+              executionStatus: schema.trades.executionStatus,
+              dispatchStatus: schema.trades.dispatchStatus,
+              rejectionReason: schema.trades.rejectionReason,
+              sl: schema.trades.sl,
+              tp: schema.trades.tp,
+              pnl: schema.trades.brokerPnl,
+              metadata: schema.trades.metadata,
+            })
+            .from(schema.trades)
+            .where(
+              or(
+                sids.length ? inArray(schema.trades.sid, sids) : undefined,
+                tickets.length ? inArray(schema.trades.brokerTradeId, tickets) : undefined,
+              ),
+            );
+          for (const r of oldRows) {
+            let metaParsed = {};
+            try { metaParsed = JSON.parse(r.metadata || "{}"); } catch {}
+            const rowData = {
+              sid: r.sid,
+              broker_trade_id: r.brokerTradeId,
+              execution_status: r.executionStatus,
+              dispatch_status: r.dispatchStatus,
+              rejection_reason: r.rejectionReason,
+              sl: r.sl,
+              tp: r.tp,
+              pnl: r.pnl,
+              metadata: r.metadata,
+              has_partial: String(metaParsed.has_partial || "false"),
+              last_broker_snapshot_hash: String(metaParsed.last_broker_snapshot_hash || ""),
+            };
+            oldStatusMap.set(r.sid, rowData);
+            const brokerTradeId = String(r.brokerTradeId || "").trim();
+            if (brokerTradeId) oldTicketMap.set(brokerTradeId, rowData);
           }
         }
       }
@@ -10207,59 +10211,61 @@ END
                   : mt5GenerateTimeSid()),
             ).trim();
             if (ticketCandidates[0]) {
-              const dupCheck = await pool.query(
-                `SELECT sid FROM trades WHERE account_id = $1 AND broker_trade_id = $2 LIMIT 1`,
-                [aid, ticketCandidates[0]],
-              );
-              if (dupCheck.rowCount > 0) continue;
+              const dupCheck = await db
+                .select({ sid: schema.trades.sid })
+                .from(schema.trades)
+                .where(
+                  and(
+                    eq(schema.trades.accountId, aid),
+                    eq(schema.trades.brokerTradeId, ticketCandidates[0]),
+                  ),
+                )
+                .limit(1);
+              if (dupCheck.length > 0) continue;
             }
 
             const brokerSource = (payload.broker_name || "BROKER")
               .toUpperCase()
               .replace(/\s+/g, "_");
 
-            await pool.query(
-              `
-            INSERT INTO trades (
-              sid, account_id, user_id,
-              symbol, action, order_type, volume, entry, sl, tp, tp1, tp2, tp3, note,
-              execution_status, dispatch_status, source_id, metadata, broker_trade_id,
-              broker_pips, broker_lots, broker_commission, broker_swap, broker_volume,
-              broker_pnl, broker_margin, broker_tp_pnl, broker_sl_pnl,
-              created_at, updated_at
-            ) VALUES ($1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::numeric, $8::numeric, $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13::numeric, $14::text, $15::text, 'CONSUMED', $16::text, $17::jsonb, $18::text, $19::numeric, $20::numeric, $21::numeric, $22::numeric, $23::numeric, $24::numeric, $25::numeric, $26::numeric, $27::numeric, NOW(), NOW())
-            ON CONFLICT (sid) DO NOTHING
-          `,
-              [
-                discoverySid,
-                aid,
-                uid,
-                syncSymbol,
-                syncAction,
-                it.order_type || null,
-                it.volume || 0,
-                it.entry || 0,
-                it.sl || null,
-                it.tp || null,
-                mt5ParsePriceOrNull(it.tp1 ?? it.tp),
-                mt5ParsePriceOrNull(it.tp2),
-                mt5ParsePriceOrNull(it.tp3),
-                it.note || "",
-                it.execution_status,
-                brokerSource,
-                syncMeta,
-                ticketCandidates[0] || "",
-                it.pips || 0,
-                it.lots || 0,
-                it.commission || 0,
-                it.swap || 0,
-                it.volume || 0,
-                it.pnl || 0,
-                it.margin || 0,
-                it.tp_pnl || 0,
-                it.sl_pnl || 0,
-              ],
-            );
+            try {
+              await db
+                .insert(schema.trades)
+                .values({
+                  sid: discoverySid,
+                  accountId: aid,
+                  userId: uid,
+                  symbol: syncSymbol,
+                  action: syncAction,
+                  orderType: it.order_type || null,
+                  volume: it.volume || 0,
+                  entry: it.entry || 0,
+                  sl: it.sl || null,
+                  tp: it.tp || null,
+                  tp1: mt5ParsePriceOrNull(it.tp1 ?? it.tp),
+                  tp2: mt5ParsePriceOrNull(it.tp2),
+                  tp3: mt5ParsePriceOrNull(it.tp3),
+                  note: it.note || "",
+                  executionStatus: it.execution_status,
+                  dispatchStatus: "CONSUMED",
+                  sourceId: brokerSource,
+                  metadata: syncMeta,
+                  brokerTradeId: ticketCandidates[0] || "",
+                  brokerPips: it.pips || 0,
+                  brokerLots: it.lots || 0,
+                  brokerCommission: it.commission || 0,
+                  brokerSwap: it.swap || 0,
+                  brokerVolume: it.volume || 0,
+                  brokerPnl: it.pnl || 0,
+                  brokerMargin: it.margin || 0,
+                  brokerTpPnl: it.tp_pnl || 0,
+                  brokerSlPnl: it.sl_pnl || 0,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                });
+            } catch (e) {
+              if (!e.message?.includes("duplicate key") && e.code !== "23505") throw e;
+            }
             matched++;
             results.push({
               ticket: it.ticket,
@@ -10314,31 +10320,32 @@ END
           if (!tradeId) continue;
           let resolvedPnl = Number(row?.pnl_realized);
           if (!Number.isFinite(resolvedPnl)) {
-            const pnlRes = await pool.query(
-              `
-              SELECT metadata->>'pnl' AS pnl
-              FROM logs
-              WHERE object_table = 'trades'
-                AND object_id = $1
-                AND metadata->>'event' IN ('SYNC_UPDATE', 'TRADE_SYNC_UPDATE')
-              ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC, log_id DESC
-              LIMIT 1
-            `,
-              [tradeId],
-            );
-            const raw = String(pnlRes.rows?.[0]?.pnl ?? "").trim();
+            const pnlRows = await db
+              .select({ pnl: sql`${schema.logs.metadata}->>'pnl'` })
+              .from(schema.logs)
+              .where(
+                and(
+                  eq(schema.logs.objectType, "trades"),
+                  eq(schema.logs.objectId, tradeId),
+                  or(
+                    eq(sql`${schema.logs.metadata}->>'event'`, "SYNC_UPDATE"),
+                    eq(sql`${schema.logs.metadata}->>'event'`, "TRADE_SYNC_UPDATE"),
+                  ),
+                ),
+              )
+              .orderBy(desc(schema.logs.createdAt))
+              .limit(1);
+            const raw = String(pnlRows[0]?.pnl ?? "").trim();
             const inferred = Number(raw);
             if (Number.isFinite(inferred)) {
               resolvedPnl = inferred;
-              await pool.query(
-                `
-                UPDATE trades
-                SET pnl_realized = COALESCE(pnl_realized, $2::numeric),
-                    updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
-                WHERE sid = $1::text
-              `,
-                [tradeId, inferred],
-              );
+              await db
+                .update(schema.trades)
+                .set({
+                  pnlRealized: sql`COALESCE(${schema.trades.pnlRealized}, ${inferred}::numeric)`,
+                  updatedAt: sql`CASE WHEN ${schema.trades.executionStatus} IS DISTINCT FROM ${tradeId}::text THEN NOW() ELSE ${schema.trades.updatedAt} END`,
+                })
+                .where(eq(schema.trades.sid, tradeId));
             }
           }
           await this.log(
@@ -10364,41 +10371,58 @@ END
       };
       let closed_by_snapshot = 0;
       if (snapshotComplete) {
+        const closeBase = {
+          executionStatus: sql`CASE WHEN ${schema.trades.executionStatus} = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END`,
+          closeReason: sql`COALESCE(${schema.trades.closeReason}, CASE WHEN ${schema.trades.executionStatus} = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END)`,
+          closedAt: sql`COALESCE(${schema.trades.closedAt}, NOW())`,
+        };
         if (seenTickets.size > 0) {
-          const closeRes = await pool.query(
-            `
-            UPDATE trades
-            SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
-                close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
-                closed_at = COALESCE(closed_at, NOW())
-            WHERE account_id = $1::text
-              AND execution_status IN ('FILLED','PENDING')
-              AND broker_trade_id IS NOT NULL
-              AND broker_trade_id <> ''
-              AND NOT (broker_trade_id = ANY($2::text[]))
-            RETURNING sid, symbol, user_id, broker_trade_id, execution_status, close_reason, pnl_realized
-          `,
-            [aid, Array.from(seenTickets)],
-          );
-          closed_by_snapshot = Number(closeRes.rowCount || 0);
-          await finalizeSnapshotClosures(closeRes.rows || []);
+          const closeRes = await db
+            .update(schema.trades)
+            .set(closeBase)
+            .where(
+              and(
+                eq(schema.trades.accountId, aid),
+                inArray(schema.trades.executionStatus, ["FILLED", "PENDING"]),
+                sql`${schema.trades.brokerTradeId} IS NOT NULL`,
+                sql`${schema.trades.brokerTradeId} <> ''`,
+                sql`NOT (${schema.trades.brokerTradeId} = ANY(${Array.from(seenTickets)}::text[]))`,
+              ),
+            )
+            .returning({
+              sid: schema.trades.sid,
+              symbol: schema.trades.symbol,
+              userId: schema.trades.userId,
+              brokerTradeId: schema.trades.brokerTradeId,
+              executionStatus: schema.trades.executionStatus,
+              closeReason: schema.trades.closeReason,
+              pnlRealized: schema.trades.pnlRealized,
+            });
+          closed_by_snapshot = closeRes.length;
+          await finalizeSnapshotClosures(closeRes);
         } else {
-          const closeRes = await pool.query(
-            `
-            UPDATE trades
-            SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE 'CLOSED' END,
-                close_reason = COALESCE(close_reason, CASE WHEN execution_status = 'PENDING' THEN 'CANCEL' ELSE 'MANUAL' END),
-                closed_at = COALESCE(closed_at, NOW())
-            WHERE account_id = $1::text
-              AND execution_status IN ('FILLED','PENDING')
-              AND broker_trade_id IS NOT NULL
-              AND broker_trade_id <> ''
-            RETURNING sid, symbol, user_id, broker_trade_id, execution_status, close_reason, pnl_realized
-          `,
-            [aid],
-          );
-          closed_by_snapshot = Number(closeRes.rowCount || 0);
-          await finalizeSnapshotClosures(closeRes.rows || []);
+          const closeRes = await db
+            .update(schema.trades)
+            .set(closeBase)
+            .where(
+              and(
+                eq(schema.trades.accountId, aid),
+                inArray(schema.trades.executionStatus, ["FILLED", "PENDING"]),
+                sql`${schema.trades.brokerTradeId} IS NOT NULL`,
+                sql`${schema.trades.brokerTradeId} <> ''`,
+              ),
+            )
+            .returning({
+              sid: schema.trades.sid,
+              symbol: schema.trades.symbol,
+              userId: schema.trades.userId,
+              brokerTradeId: schema.trades.brokerTradeId,
+              executionStatus: schema.trades.executionStatus,
+              closeReason: schema.trades.closeReason,
+              pnlRealized: schema.trades.pnlRealized,
+            });
+          closed_by_snapshot = closeRes.length;
+          await finalizeSnapshotClosures(closeRes);
         }
       }
 
@@ -10418,24 +10442,27 @@ END
         const closedRows = [];
         // Collect rows from the inner scope — re-query to get symbol & user_id
         try {
-          const snapshotRes = await pool.query(
-            `
-            SELECT sid, symbol, user_id
-            FROM trades
-            WHERE account_id = $1::text
-              AND execution_status IN ('CLOSED','CANCELLED')
-              AND closed_at >= NOW() - INTERVAL '5 minutes'
-              AND broker_trade_id IS NOT NULL
-              AND broker_trade_id <> ''
-              AND symbol IS NOT NULL
-              AND symbol <> ''
-            ORDER BY closed_at DESC
-            LIMIT $2::int
-          `,
-            [aid, Math.min(closed_by_snapshot + 5, 100)],
-          );
-          if (snapshotRes?.rows?.length) {
-            closedRows.push(...snapshotRes.rows);
+          const snapshotRows = await db
+            .select({
+              sid: schema.trades.sid,
+              symbol: schema.trades.symbol,
+              userId: schema.trades.userId,
+            })
+            .from(schema.trades)
+            .where(
+              and(
+                eq(schema.trades.accountId, aid),
+                inArray(schema.trades.executionStatus, ["CLOSED", "CANCELLED"]),
+                gte(schema.trades.closedAt, sql`NOW() - INTERVAL '5 minutes'`),
+                sql`${schema.trades.brokerTradeId} IS NOT NULL`,
+                sql`${schema.trades.brokerTradeId} <> ''`,
+                sql`${schema.trades.symbol} IS NOT NULL`,
+              ),
+            )
+            .orderBy(desc(schema.trades.closedAt))
+            .limit(Math.min(closed_by_snapshot + 5, 100));
+          if (snapshotRows?.length) {
+            closedRows.push(...snapshotRows);
           }
         } catch {
           /* non-blocking */
@@ -10573,32 +10600,28 @@ END
       const margin = asNum(payload.margin, null);
       const freeMargin = asNum(payload.free_margin, null);
 
-      const acc = await pool.query(
-        `SELECT user_id, metadata FROM user_accounts WHERE account_id = $1`,
-        [aid],
-      );
-      const uid = acc.rows[0]?.user_id || CFG.mt5DefaultUserId;
-      const oldMeta = acc.rows[0]?.metadata || {};
+      const accRows = await db
+        .select({ userId: schema.userAccounts.userId, metadata: schema.userAccounts.metadata })
+        .from(schema.userAccounts)
+        .where(eq(schema.userAccounts.accountId, aid))
+        .limit(1);
+      const uid = accRows[0]?.userId || CFG.mt5DefaultUserId;
+      let oldMeta = {};
+      try { oldMeta = JSON.parse(accRows[0]?.metadata || "{}"); } catch {}
 
-      await pool.query(
-        `
-        UPDATE user_accounts
-        SET balance = COALESCE($1, balance),
-            metadata = $2
-        WHERE account_id = $3
-      `,
-        [
-          balance,
-          JSON.stringify({
+      await db
+        .update(schema.userAccounts)
+        .set({
+          balance: balance != null ? sql`COALESCE(${balance}, ${schema.userAccounts.balance})` : undefined,
+          metadata: JSON.stringify({
             ...oldMeta,
             equity,
             margin,
             free_margin: freeMargin,
             health_updated_at: now,
           }),
-          aid,
-        ],
-      );
+        })
+        .where(eq(schema.userAccounts.accountId, aid));
 
       await this.log(
         aid,
@@ -10609,172 +10632,39 @@ END
       return { ok: true };
     },
     async listSignals(limit, filters = {}, userId = null) {
-      const clauses = ["sid NOT LIKE 'SYSTEM_%'"];
-      const params = [];
+      const conditions = [];
+      conditions.push(sql`${schema.signals.sid} NOT LIKE 'SYSTEM_%'`);
       if (typeof filters === "string") {
-        // Legacy support
         if (filters) {
-          params.push(filters);
-          clauses.push(`status = $${params.length}`);
+          conditions.push(eq(schema.signals.status, filters));
         }
       } else {
         if (filters.status) {
-          params.push(filters.status);
-          clauses.push(`status = $${params.length}`);
+          conditions.push(eq(schema.signals.status, filters.status));
         }
         if (filters.symbol) {
-          params.push(filters.symbol);
-          clauses.push(`symbol = $${params.length}`);
+          conditions.push(eq(schema.signals.symbol, filters.symbol));
         }
         if (filters.q) {
-          params.push(`%${String(filters.q)}%`);
-          const p = `$${params.length}`;
-          clauses.push(`(
-             sid ILIKE ${p}
-             OR sid ILIKE ${p}
-             OR symbol ILIKE ${p}
-             OR note ILIKE ${p}
-           )`);
+          const q = `%${String(filters.q)}%`;
+          conditions.push(
+            sql`(${schema.signals.sid} ILIKE ${q} OR ${schema.signals.symbol} ILIKE ${q} OR ${schema.signals.note} ILIKE ${q})`,
+          );
         }
       }
       if (userId) {
-        params.push(userId);
-        clauses.push(`user_id = $${params.length}`);
+        conditions.push(eq(schema.signals.userId, userId));
       }
-      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-      params.push(limit);
-      const res = await pool.query(
-        `
-        SELECT
-          s.*,
-          t.broker_trade_id AS ack_ticket,
-          t.pnl_realized AS pnl_money_realized,
-          t.opened_at AS opened_at,
-          t.closed_at AS closed_at,
-          t.close_reason AS close_reason,
-          t.execution_status AS execution_status
-        FROM signals s
-        LEFT JOIN LATERAL (
-          SELECT broker_trade_id, pnl_realized, opened_at, closed_at, close_reason, execution_status, updated_at, created_at
-          FROM trades
-          WHERE sid = s.sid
-          ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-          LIMIT 1
-        ) t ON TRUE
-        ${where}
-        ORDER BY s.created_at DESC
-        LIMIT $${params.length}
-      `,
-        params,
-      );
-      return (res.rows || []).map((r) => mt5MapDbRow(r)).filter(Boolean);
+      const rows = await db
+        .select()
+        .from(schema.signals)
+        .where(and(...conditions))
+        .orderBy(desc(schema.signals.createdAt))
+        .limit(Number(limit) || 200);
+      return rows.map((r) => mt5MapDbRow(r)).filter(Boolean);
     },
     async listTradesV2(filters = {}, page = 1, pageSize = 50) {
-      const safePage = Math.max(1, Number(page) || 1);
-      const safePageSize = Math.max(1, Math.min(200, Number(pageSize) || 50));
-      const offset = (safePage - 1) * safePageSize;
-      const clauses = [];
-      const params = [];
-      const tradeIds = Array.isArray(filters.sids)
-        ? filters.sids.map((v) => String(v || "").trim()).filter(Boolean)
-        : [];
-      if (tradeIds.length) {
-        const numericIds = tradeIds
-          .map((v) => mt5ParseNumericId(v))
-          .filter((v) => v != null);
-        const idParts = [];
-        if (numericIds.length) {
-          params.push(numericIds);
-          idParts.push(`t.id = ANY($${params.length}::bigint[])`);
-        }
-        params.push(tradeIds);
-        idParts.push(`t.sid = ANY($${params.length}::text[])`);
-        idParts.push(`t.sid = ANY($${params.length}::text[])`);
-        clauses.push(`(${idParts.join(" OR ")})`);
-      }
-      if (filters.user_id) {
-        params.push(filters.user_id);
-        clauses.push(`t.user_id = $${params.length}`);
-      }
-      if (filters.account_id) {
-        params.push(filters.account_id);
-        clauses.push(`t.account_id = $${params.length}`);
-      }
-      if (filters.source_id) {
-        params.push(filters.source_id);
-        clauses.push(`t.source_id = $${params.length}`);
-      }
-      if (filters.dispatch_status) {
-        params.push(filters.dispatch_status);
-        clauses.push(`t.dispatch_status = $${params.length}`);
-      }
-      if (filters.execution_status) {
-        params.push(filters.execution_status);
-        clauses.push(`t.execution_status = $${params.length}`);
-      }
-      if (filters.created_from) {
-        params.push(filters.created_from);
-        clauses.push(`t.created_at >= $${params.length}`);
-      }
-      if (filters.created_to) {
-        params.push(filters.created_to);
-        clauses.push(`t.created_at <= $${params.length}`);
-      }
-      if (filters.symbol) {
-        params.push(filters.symbol);
-        clauses.push(`t.symbol = $${params.length}`);
-      }
-      const actionFilter = filters.action || filters.side;
-      if (actionFilter) {
-        params.push(actionFilter);
-        clauses.push(`t.action = $${params.length}`);
-      }
-      if (filters.entry_model) {
-        params.push(filters.entry_model);
-        clauses.push(`t.entry_model = $${params.length}`);
-      }
-      if (filters.chart_tf) {
-        params.push(filters.chart_tf);
-        clauses.push(`t.chart_tf = $${params.length}`);
-      }
-      if (filters.q) {
-        params.push(`%${String(filters.q)}%`);
-        const p = `$${params.length}`;
-        clauses.push(`(
-          t.sid ILIKE ${p}
-          OR t.id::text ILIKE ${p}
-          OR t.sid ILIKE ${p}
-          OR t.sid ILIKE ${p}
-          OR t.broker_trade_id ILIKE ${p}
-          OR t.symbol ILIKE ${p}
-          OR t.account_id ILIKE ${p}
-          OR t.source_id ILIKE ${p}
-          OR t.action ILIKE ${p}
-          OR t.entry_model ILIKE ${p}
-          OR t.note ILIKE ${p}
-        )`);
-      }
-      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-      const countRes = await pool.query(
-        `SELECT COUNT(*) FROM trades t ${where}`,
-        params,
-      );
-      params.push(safePageSize, offset);
-      const res = await pool.query(
-        `SELECT t.*, ua.metadata AS account_metadata, ua.broker_name AS account_broker_name
-         FROM trades t
-         LEFT JOIN user_accounts ua ON t.account_id = ua.account_id
-         ${where}
-         ORDER BY COALESCE(t.closed_at, t.updated_at) DESC, t.created_at DESC
-         LIMIT $${params.length - 1} OFFSET $${params.length}`,
-        params,
-      );
-      return {
-        items: res.rows,
-        total: parseInt(countRes.rows[0].count),
-        page: safePage,
-        pageSize: safePageSize,
-      };
+      return dbQueries.listTradesV2(db, filters, page, pageSize);
     },
     async updateTradeManualV2(tradeId, userId = null, payload = {}) {
       const tid = String(tradeId || "").trim();
@@ -10797,32 +10687,34 @@ END
             "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED",
         };
       }
-      const lookupParams = [numericId, tid];
-      const lookupClauses = [];
-      if (userId) {
-        lookupParams.push(String(userId));
-        lookupClauses.push(`user_id = $${lookupParams.length}`);
+      const lookupConds = [];
+      if (numericId != null) {
+        lookupConds.push(eq(schema.trades.id, sql`${numericId}::bigint`));
       }
-      const lookupWhereUser = lookupClauses.length
-        ? ` AND ${lookupClauses.join(" AND ")}`
-        : "";
-      const currentRes = await pool.query(
-        `
-        SELECT id, sid, signal_id, user_id, symbol, execution_status, broker_trade_id
-        FROM trades
-        WHERE (
-          ($1::bigint IS NOT NULL AND id = $1::bigint)
-          OR sid = $2
-        )
-          ${lookupWhereUser}
-        LIMIT 1
-      `,
-        lookupParams,
-      );
-      if ((currentRes.rowCount || 0) === 0)
+      lookupConds.push(eq(schema.trades.sid, tid));
+      if (userId) {
+        lookupConds.push(eq(schema.trades.userId, String(userId)));
+      }
+      const currentRows = await db
+        .select({
+          id: schema.trades.id,
+          sid: schema.trades.sid,
+          signalId: schema.trades.signalId,
+          userId: schema.trades.userId,
+          symbol: schema.trades.symbol,
+          executionStatus: schema.trades.executionStatus,
+          brokerTradeId: schema.trades.brokerTradeId,
+        })
+        .from(schema.trades)
+        .where(or(...lookupConds))
+        .limit(1);
+      if (currentRows.length === 0)
         return { ok: false, error: "trade not found" };
-      const currentRow = currentRes.rows[0];
-      const syncResult = syncGuards.brokerLinkedManualStatus(currentRow, stRaw);
+      const currentRow = currentRows[0];
+      const syncResult = syncGuards.brokerLinkedManualStatus(
+        { sid: currentRow.sid, execution_status: currentRow.executionStatus, broker_trade_id: currentRow.brokerTradeId },
+        stRaw,
+      );
       const appliedExecutionStatus = syncResult.execution_status;
       const newDispatchStatus = syncResult.dispatch_status;
       const queuedBrokerAction = newDispatchStatus !== null;
@@ -10843,38 +10735,41 @@ END
         manual_edit_source: "vps",
         manual_edit_at: mt5NowIso(),
       });
-      const res = await pool.query(
-        `
-        UPDATE trades
-        SET execution_status = $1::text,
-            pnl_realized = CASE WHEN $2::double precision IS NULL THEN pnl_realized ELSE $2::double precision END,
-            close_reason = COALESCE($3::text, close_reason),
-            dispatch_status = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE dispatch_status END,
-            lease_token = CASE WHEN $5::text IS NOT NULL THEN NULL ELSE lease_token END,
-            lease_expires_at = CASE WHEN $5::text IS NOT NULL THEN NULL ELSE lease_expires_at END,
-            metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
-            closed_at = CASE
-              WHEN $5::text IS NOT NULL THEN closed_at
-              WHEN $1::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(closed_at, NOW())
-              ELSE closed_at
-            END
-        WHERE sid = $4
-        RETURNING id, sid, signal_id, user_id, symbol, execution_status, dispatch_status, pnl_realized, close_reason, closed_at
-      `,
-        [
-          appliedExecutionStatus,
-          pnl,
-          closeReason,
-          currentRow.sid,
-          newDispatchStatus,
-          manualMeta,
-        ],
-      );
-      const row = res.rows[0];
+      const udRes = await db
+        .update(schema.trades)
+        .set({
+          executionStatus: appliedExecutionStatus,
+          pnlRealized: pnl != null ? sql`CASE WHEN ${pnl}::double precision IS NULL THEN ${schema.trades.pnlRealized} ELSE ${pnl}::double precision END` : undefined,
+          closeReason: closeReason != null ? sql`COALESCE(${closeReason}::text, ${schema.trades.closeReason})` : undefined,
+          dispatchStatus: newDispatchStatus != null ? newDispatchStatus : undefined,
+          leaseToken: newDispatchStatus != null ? null : undefined,
+          leaseExpiresAt: newDispatchStatus != null ? null : undefined,
+          metadata: sql`COALESCE(${schema.trades.metadata}, '{}'::jsonb) || ${manualMeta}::jsonb`,
+          closedAt: newDispatchStatus != null
+            ? undefined
+            : sql`CASE
+              WHEN ${appliedExecutionStatus}::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(${schema.trades.closedAt}, NOW())
+              ELSE ${schema.trades.closedAt}
+            END`,
+        })
+        .where(eq(schema.trades.sid, currentRow.sid))
+        .returning({
+          id: schema.trades.id,
+          sid: schema.trades.sid,
+          signalId: schema.trades.signalId,
+          userId: schema.trades.userId,
+          symbol: schema.trades.symbol,
+          executionStatus: schema.trades.executionStatus,
+          dispatchStatus: schema.trades.dispatchStatus,
+          pnlRealized: schema.trades.pnlRealized,
+          closeReason: schema.trades.closeReason,
+          closedAt: schema.trades.closedAt,
+        });
+      const row = udRes[0];
       const tradeSymbol = row.symbol || currentRow.symbol || "";
 
       // Archive bars + snapshots on CLOSED/CANCELLED/REJECTED
-      const newStatus = String(row.execution_status || "").toUpperCase();
+      const newStatus = String(row.executionStatus || "").toUpperCase();
       if (["FILLED", "CLOSED"].includes(newStatus)) {
         captureStatusSnapshot(row.sid, tradeSymbol, newStatus).catch((e) =>
           console.error("[status-snapshot] manual update failed:", e.message),
@@ -10891,12 +10786,12 @@ END
         {
           event: "TRADE_MANUAL_EDIT",
           requested_status: stRaw,
-          execution_status: row.execution_status,
+          execution_status: row.executionStatus,
           queued_broker_action: queuedBrokerAction,
-          pnl_realized: row.pnl_realized,
-          close_reason: row.close_reason || null,
+          pnl_realized: row.pnlRealized,
+          close_reason: row.closeReason || null,
         },
-        row.user_id || CFG.mt5DefaultUserId,
+        row.userId || CFG.mt5DefaultUserId,
       );
       return { ok: true, queued_broker_action: queuedBrokerAction, item: row };
     },
@@ -10909,117 +10804,70 @@ END
         return { ok: false, error: "unsupported action" };
       }
       const isDelete = act === "delete_all";
-      const baseOffset = isDelete ? 0 : 2;
-      const clauses = [];
       const closeReason = act === "cancel_all" ? "CANCEL" : "MANUAL";
-      // Set dispatch_status so broker pulls the CLOSE/CANCEL action
       const nextDispatch = act === "cancel_all" ? "CANCEL" : "CLOSE";
-      const params = isDelete ? [] : [closeReason, nextDispatch];
+      const conditions = [];
       const tradeIds = Array.isArray(filters.sids)
         ? filters.sids.map((v) => String(v || "").trim()).filter(Boolean)
         : [];
       if (tradeIds.length) {
-        const numericIds = tradeIds
-          .map((v) => mt5ParseNumericId(v))
-          .filter((v) => v != null);
-        const parts = [];
-        if (numericIds.length) {
-          params.push(numericIds);
-          parts.push(`id = ANY($${baseOffset + params.length}::bigint[])`);
+        const idConds = [];
+        if (tradeIds.length) {
+          idConds.push(inArray(schema.trades.sid, tradeIds));
         }
-        params.push(tradeIds);
-        parts.push(`sid = ANY($${baseOffset + params.length}::text[])`);
-        parts.push(`sid = ANY($${baseOffset + params.length}::text[])`);
-        clauses.push(`(${parts.join(" OR ")})`);
+        conditions.push(or(...idConds));
       }
-      if (filters.user_id) {
-        params.push(filters.user_id);
-        clauses.push(`user_id = $${baseOffset + params.length}`);
-      }
-      if (filters.account_id) {
-        params.push(filters.account_id);
-        clauses.push(`account_id = $${baseOffset + params.length}`);
-      }
-      if (filters.source_id) {
-        params.push(filters.source_id);
-        clauses.push(`source_id = $${baseOffset + params.length}`);
-      }
-      if (filters.execution_status) {
-        params.push(filters.execution_status);
-        clauses.push(`execution_status = $${baseOffset + params.length}`);
-      }
-      if (filters.created_from) {
-        params.push(filters.created_from);
-        clauses.push(`created_at >= $${baseOffset + params.length}`);
-      }
-      if (filters.created_to) {
-        params.push(filters.created_to);
-        clauses.push(`created_at <= $${baseOffset + params.length}`);
-      }
+      if (filters.user_id) conditions.push(eq(schema.trades.userId, filters.user_id));
+      if (filters.account_id) conditions.push(eq(schema.trades.accountId, filters.account_id));
+      if (filters.source_id) conditions.push(eq(schema.trades.sourceId, filters.source_id));
+      if (filters.execution_status) conditions.push(eq(schema.trades.executionStatus, filters.execution_status));
+      if (filters.created_from) conditions.push(gte(schema.trades.createdAt, new Date(filters.created_from)));
+      if (filters.created_to) conditions.push(lte(schema.trades.createdAt, new Date(filters.created_to)));
       if (filters.q) {
-        params.push(`%${String(filters.q)}%`);
-        const p = `$${baseOffset + params.length}`;
-        clauses.push(`(
-          sid ILIKE ${p}
-          OR id::text ILIKE ${p}
-          OR sid ILIKE ${p}
-          OR sid ILIKE ${p}
-          OR broker_trade_id ILIKE ${p}
-          OR symbol ILIKE ${p}
-          OR account_id ILIKE ${p}
-          OR source_id ILIKE ${p}
-          OR action ILIKE ${p}
-          OR entry_model ILIKE ${p}
-          OR note ILIKE ${p}
-        )`);
+        const q = `%${String(filters.q)}%`;
+        conditions.push(
+          sql`(${schema.trades.sid} ILIKE ${q}
+            OR ${schema.trades.brokerTradeId} ILIKE ${q}
+            OR ${schema.trades.symbol} ILIKE ${q}
+            OR ${schema.trades.accountId} ILIKE ${q}
+            OR ${schema.trades.sourceId} ILIKE ${q}
+            OR ${schema.trades.action} ILIKE ${q}
+            OR ${schema.trades.entryModel} ILIKE ${q}
+            OR ${schema.trades.note} ILIKE ${q})`,
+        );
       }
       if (act === "close_all")
-        clauses.push(`execution_status IN ('FILLED','PENDING')`);
-      if (act === "cancel_all") clauses.push(`execution_status = 'PENDING'`);
-      const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+        conditions.push(inArray(schema.trades.executionStatus, ["FILLED", "PENDING"]));
+      if (act === "cancel_all") conditions.push(eq(schema.trades.executionStatus, "PENDING"));
+      const where = conditions.length ? and(...conditions) : undefined;
       if (act === "delete_all") {
-        const delRes = await pool.query(
-          `
-          DELETE FROM trades
-          ${where}
-          RETURNING sid, signal_id
-        `,
-          params,
-        );
-        const rows = delRes.rows || [];
+        const delRes = await db
+          .delete(schema.trades)
+          .where(where)
+          .returning({ sid: schema.trades.sid, signalId: schema.trades.signalId });
+        const rows = delRes || [];
         return {
           ok: true,
-          updated: Number(delRes.rowCount || 0),
+          updated: rows.length,
           action: act,
           sids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
           signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
         };
       }
-      const res = await pool.query(
-        `
-        UPDATE trades
-        SET dispatch_status = $2,
-            close_reason = COALESCE(close_reason, $1),
-            closed_at = COALESCE(closed_at, NOW()),
-            updated_at = NOW()
-        ${where}
-        RETURNING sid, signal_id
-      `,
-        params,
-      );
-      const rows = res.rows || [];
-      // Archive for close_all
-      if (act === "close_all" && preCloseRows) {
-        for (const r of rows) {
-          const sym =
-            r.symbol || preCloseRows.find((p) => p.sid === r.sid)?.symbol || "";
-          archiveTradeStats(r.sid, sym);
-          moveTradeFolder(r.sid, "active", "closed");
-        }
-      }
+      const upRes = await db
+        .update(schema.trades)
+        .set({
+          dispatchStatus: nextDispatch,
+          closeReason: sql`COALESCE(${schema.trades.closeReason}, ${closeReason})`,
+          closedAt: sql`COALESCE(${schema.trades.closedAt}, NOW())`,
+          updatedAt: sql`NOW()`,
+        })
+        .where(where)
+        .returning({ sid: schema.trades.sid, signalId: schema.trades.signalId });
+      const rows = upRes || [];
       return {
         ok: true,
-        updated: Number(res.rowCount || 0),
+        updated: rows.length,
         action: act,
         sids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
         signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
@@ -11063,141 +10911,105 @@ END
     async createAccountV2(payload = {}) {
       const accountId = String(payload.account_id || "").trim();
       if (!accountId) return { ok: false, error: "account_id is required" };
-      const now = mt5NowIso();
+      const now = new Date();
       const plainApiKey = `acc_${crypto.randomBytes(18).toString("hex")}`;
       const apiKeyHash = hashApiKey(plainApiKey);
       const apiKeyLast4 = plainApiKey.slice(-4);
-      const res = await pool.query(
-        `
-        INSERT INTO user_accounts (
-          account_id, user_id, name, balance, status, metadata,
-          api_key_hash, api_key_last4, api_key_rotated_at, source_ids_cache,
-          created_at, updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10::jsonb,$11,$11)
-        ON CONFLICT (account_id) DO UPDATE SET
-          user_id = EXCLUDED.user_id,
-          name = EXCLUDED.name,
-          balance = EXCLUDED.balance,
-          status = EXCLUDED.status,
-          metadata = EXCLUDED.metadata,
-          updated_at = EXCLUDED.updated_at
-        RETURNING *
-      `,
-        [
+      const rows = await db
+        .insert(schema.userAccounts)
+        .values({
           accountId,
-          String(payload.user_id || CFG.mt5DefaultUserId),
-          String(payload.name || accountId),
-          payload.balance === null ||
-          payload.balance === undefined ||
-          Number.isNaN(Number(payload.balance))
-            ? null
-            : Number(payload.balance),
-          String(payload.status || "ACTIVE"),
-          payload.metadata && typeof payload.metadata === "object"
-            ? JSON.stringify(payload.metadata)
-            : "{}",
+          userId: String(payload.user_id || CFG.mt5DefaultUserId),
+          name: String(payload.name || accountId),
+          balance: payload.balance === null || payload.balance === undefined || Number.isNaN(Number(payload.balance)) ? null : Number(payload.balance),
+          status: String(payload.status || "ACTIVE"),
+          metadata: payload.metadata && typeof payload.metadata === "object" ? JSON.stringify(payload.metadata) : "{}",
           apiKeyHash,
           apiKeyLast4,
-          now,
-          payload.source_ids_cache &&
-          typeof payload.source_ids_cache === "object"
-            ? JSON.stringify(payload.source_ids_cache)
-            : "[]",
-          now,
-        ],
-      );
+          apiKeyRotatedAt: now,
+          sourceIdsCache: payload.source_ids_cache && typeof payload.source_ids_cache === "object" ? JSON.stringify(payload.source_ids_cache) : "[]",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: schema.userAccounts.accountId,
+          set: {
+            userId: sql`EXCLUDED.user_id`,
+            name: sql`EXCLUDED.name`,
+            balance: sql`EXCLUDED.balance`,
+            status: sql`EXCLUDED.status`,
+            metadata: sql`EXCLUDED.metadata`,
+            updatedAt: sql`EXCLUDED.updated_at`,
+          },
+        })
+        .returning();
       return {
         ok: true,
-        item: res.rows[0] || null,
+        item: rows[0] || null,
         api_key_plaintext: plainApiKey,
       };
     },
     async listAccountsV2(userId = null) {
-      const params = [];
-      let where = "";
+      const conditions = [];
       if (userId) {
-        params.push(String(userId || ""));
-        where = `WHERE user_id = $1`;
+        conditions.push(eq(schema.userAccounts.userId, String(userId || "")));
       }
-      const res = await pool.query(
-        `SELECT * FROM user_accounts ${where} ORDER BY created_at ASC, account_id ASC`,
-        params,
-      );
-      return res.rows || [];
+      const where = conditions.length ? and(...conditions) : undefined;
+      const rows = await db
+        .select()
+        .from(schema.userAccounts)
+        .where(where)
+        .orderBy(asc(schema.userAccounts.createdAt), asc(schema.userAccounts.accountId));
+      return rows || [];
     },
 
     async updateAccountV2(accountId, patch = {}) {
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
-      const prevRes = await pool.query(
-        `SELECT * FROM user_accounts WHERE account_id = $1 LIMIT 1`,
-        [targetId],
-      );
-      const prev = prevRes.rows[0];
+      const prevRows = await db
+        .select()
+        .from(schema.userAccounts)
+        .where(eq(schema.userAccounts.accountId, targetId))
+        .limit(1);
+      const prev = prevRows[0];
       if (!prev) return { ok: false, error: "account not found" };
-      const res = await pool.query(
-        `
-        UPDATE user_accounts
-        SET user_id = $1,
-            name = $2,
-            balance = $3,
-            status = $4,
-            metadata = $5::jsonb,
-            updated_at = NOW()
-        WHERE account_id = $6
-        RETURNING *
-      `,
-        [
-          String(patch.user_id ?? prev.user_id ?? CFG.mt5DefaultUserId),
-          String(patch.name ?? prev.name ?? targetId),
-          patch.balance === undefined
-            ? prev.balance === null || prev.balance === undefined
-              ? null
-              : Number(prev.balance)
-            : patch.balance === null ||
-                patch.balance === "" ||
-                Number.isNaN(Number(patch.balance))
+      const rows = await db
+        .update(schema.userAccounts)
+        .set({
+          userId: String(patch.user_id ?? prev.userId ?? CFG.mt5DefaultUserId),
+          name: String(patch.name ?? prev.name ?? targetId),
+          balance: patch.balance === undefined
+            ? prev.balance === null || prev.balance === undefined ? null : Number(prev.balance)
+            : patch.balance === null || patch.balance === "" || Number.isNaN(Number(patch.balance))
               ? null
               : Number(patch.balance),
-          String(patch.status ?? prev.status ?? "ACTIVE"),
-          patch.metadata && typeof patch.metadata === "object"
+          status: String(patch.status ?? prev.status ?? "ACTIVE"),
+          metadata: patch.metadata && typeof patch.metadata === "object"
             ? JSON.stringify(patch.metadata)
             : prev.metadata && typeof prev.metadata === "object"
               ? JSON.stringify(prev.metadata)
               : "{}",
-          targetId,
-        ],
-      );
-      return { ok: true, item: res.rows[0] || null };
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.userAccounts.accountId, targetId))
+        .returning();
+      return { ok: true, item: rows[0] || null };
     },
     async archiveAccountV2(accountId) {
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
-      const res = await pool.query(
-        `
-        UPDATE user_accounts
-        SET status = 'ARCHIVED', updated_at = NOW()
-        WHERE account_id = $1
-        RETURNING *
-      `,
-        [targetId],
-      );
-      if (!res.rows[0]) return { ok: false, error: "account not found" };
-      return { ok: true, item: res.rows[0] };
+      const rows = await db
+        .update(schema.userAccounts)
+        .set({ status: "ARCHIVED", updatedAt: new Date() })
+        .where(eq(schema.userAccounts.accountId, targetId))
+        .returning();
+      if (!rows[0]) return { ok: false, error: "account not found" };
+      return { ok: true, item: rows[0] };
     },
     async findAccountByApiKeyHash(apiKeyHash) {
       const h = String(apiKeyHash || "").trim();
       if (!h) return null;
-      const res = await pool.query(
-        `
-        SELECT * FROM user_accounts
-        WHERE api_key_hash = $1 AND status = 'ACTIVE'
-        LIMIT 1
-      `,
-        [h],
-      );
-      return res.rows[0] || null;
+      return dbQueries.findAccountByApiKeyHash(db, h);
     },
     async rotateAccountApiKeyV2(accountId) {
       const targetId = String(accountId || "").trim();
@@ -19605,7 +19417,7 @@ const appHandler = async (req, res) => {
         <head>
           <meta charset="utf-8">
           <title>Grid ${htmlEscape(symbols.join("-"))}</title>
-          <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
           <style>
             body {
               margin: 0;
@@ -19658,6 +19470,10 @@ const appHandler = async (req, res) => {
               transform: translateY(0);
             }
             body.capture-mode .grid-controls {
+              opacity: 0 !important;
+              pointer-events: none !important;
+            }
+            body.snapshot-capturing .grid-controls {
               opacity: 0 !important;
               pointer-events: none !important;
             }
@@ -19811,7 +19627,8 @@ const appHandler = async (req, res) => {
                   .join("")}
               </div>
               <button class="apply-btn" type="submit">Apply</button>
-              <button class="snapshot-btn" id="snapshot-btn" type="button">Snapshot</button>
+              <button class="snapshot-btn" id="snapshot-browser-btn" type="button" title="Browser capture — screenshots your current viewport (zoom, bars, iframes)">📷 Browser</button>
+              <button class="snapshot-btn" id="snapshot-api-btn" type="button" title="API capture — server-side Playwright snapshot">📷 API</button>
               <span class="snapshot-status" id="snapshot-status"></span>
             </form>
           </div>
@@ -19840,10 +19657,11 @@ const appHandler = async (req, res) => {
           <script>
             (function () {
               const form = document.getElementById("grid-controls-form");
-              const btn = document.getElementById("snapshot-btn");
+              const browserBtn = document.getElementById("snapshot-browser-btn");
+              const apiBtn = document.getElementById("snapshot-api-btn");
               const statusEl = document.getElementById("snapshot-status");
               const titleEl = document.querySelector(".grid-meta-badge");
-              if (!form || !btn || !statusEl) return;
+              if (!form || !browserBtn || !apiBtn || !statusEl) return;
 
               // LOCAL timezone must be resolved client-side for browser view.
               try {
@@ -19864,28 +19682,48 @@ const appHandler = async (req, res) => {
                 }
               } catch (_) {}
 
-              btn.addEventListener("click", async () => {
+              function getSymbols() {
+                const fd = new FormData(form);
+                const symbolsRaw = String(fd.get("symbols") || "");
+                return symbolsRaw
+                  .split(/[\s,|;+]+|--|-/g)
+                  .map((s) => String(s || "").trim().toUpperCase())
+                  .filter(Boolean)
+                  .slice(0, 8);
+              }
+
+              function hideToolbar() {
+                document.body.classList.add("snapshot-capturing");
+              }
+
+              function showToolbar() {
+                document.body.classList.remove("snapshot-capturing");
+              }
+
+              // 📷 Browser: Screen Capture API — captures your actual viewport (zoom, bars, iframes)
+              browserBtn.addEventListener("click", async () => {
+                hideToolbar();
                 try {
-                  statusEl.textContent = "Capturing...";
-                  const fd = new FormData(form);
-                  const symbolsRaw = String(fd.get("symbols") || "");
-                  const symbols = symbolsRaw
-                    .split(/[\s,|;+]+|--|-/g)
-                    .map((s) => String(s || "").trim().toUpperCase())
-                    .filter(Boolean)
-                    .slice(0, 8);
+                  statusEl.textContent = "Capturing viewport...";
+                  const symbols = getSymbols();
                   if (!symbols.length) {
                     statusEl.textContent = "Need symbols";
+                    showToolbar();
                     return;
                   }
                   const symbol = symbols[0];
-                  // Browser-native capture using html2canvas
-                  const canvas = await html2canvas(document.body, {
-                    useCORS: true,
-                    allowTaint: true,
-                    scale: 1,
-                    backgroundColor: null,
+                  const stream = await navigator.mediaDevices.getDisplayMedia({
+                    preferCurrentTab: true,
+                    video: { frameRate: 1 },
                   });
+                  const track = stream.getVideoTracks()[0];
+                  const imageCapture = new ImageCapture(track);
+                  const bitmap = await imageCapture.grabFrame();
+                  const canvas = document.createElement("canvas");
+                  canvas.width = bitmap.width;
+                  canvas.height = bitmap.height;
+                  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+                  track.stop();
                   statusEl.textContent = "Uploading...";
                   const dataUrl = canvas.toDataURL("image/png");
                   const res = await fetch("/v2/chart/snapshots-grid/upload", {
@@ -19896,11 +19734,61 @@ const appHandler = async (req, res) => {
                   const data = await res.json().catch(() => ({}));
                   if (!res.ok || data?.ok === false) {
                     statusEl.textContent = "Failed";
+                    showToolbar();
                     return;
                   }
                   statusEl.textContent = "Saved " + (data?.file_name || symbol);
                 } catch (_) {
                   statusEl.textContent = "Failed";
+                } finally {
+                  showToolbar();
+                }
+              });
+
+              // 📷 API: Server-side Playwright batch snapshot
+              apiBtn.addEventListener("click", async () => {
+                hideToolbar();
+                try {
+                  statusEl.textContent = "Sending to API...";
+                  const fd = new FormData(form);
+                  const symbols = getSymbols();
+                  const tfs = fd
+                    .getAll("tfs")
+                    .map((s) => String(s || "").trim())
+                    .filter(Boolean);
+                  const theme = String(fd.get("theme") || "dark").trim() || "dark";
+                  const tz = String(fd.get("tz") || "UTC").trim() || "UTC";
+                  const provider = String(fd.get("provider") || "").trim();
+                  if (!symbols.length || !tfs.length) {
+                    statusEl.textContent = "Need symbols + TFs";
+                    showToolbar();
+                    return;
+                  }
+                  const body = {
+                    symbols,
+                    tfs,
+                    theme,
+                    timezone: tz,
+                    provider,
+                    merge_snapshots: true,
+                  };
+                  const res = await fetch("/v2/chart/snapshot/batch", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok || data?.ok === false) {
+                    statusEl.textContent = "Failed";
+                    showToolbar();
+                    return;
+                  }
+                  const count = Array.isArray(data?.items) ? data.items.length : 0;
+                  statusEl.textContent = "Saved " + count + " via API";
+                } catch (_) {
+                  statusEl.textContent = "Failed";
+                } finally {
+                  showToolbar();
                 }
               });
             })();

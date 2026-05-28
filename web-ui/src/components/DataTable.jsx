@@ -59,9 +59,6 @@ export default function DataTable({
     globalFilterFn: "auto",
   });
 
-  if (loading) return <div className="loading">Loading...</div>;
-  if (!data.length) return <div className="empty-state">{emptyText}</div>;
-
   return (
     <div className="events-table-wrap">
       <table className={`table-dense ${className || ""}`}>
@@ -91,20 +88,34 @@ export default function DataTable({
           ))}
         </thead>
         <tbody>
-          {table.getRowModel().rows.map((row) => (
-            <tr
-              key={row.id}
-              className={rowClassName ? rowClassName(row.original) : undefined}
-              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-              style={onRowClick ? { cursor: "pointer" } : undefined}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
+          {loading ? (
+            <tr>
+              <td colSpan={columns.length} className="loading">
+                Loading...
+              </td>
             </tr>
-          ))}
+          ) : table.getRowModel().rows.length === 0 ? (
+            <tr>
+              <td colSpan={columns.length} className="empty-state">
+                {emptyText}
+              </td>
+            </tr>
+          ) : (
+            table.getRowModel().rows.map((row) => (
+              <tr
+                key={row.id}
+                className={rowClassName ? rowClassName(row.original) : undefined}
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                style={onRowClick ? { cursor: "pointer" } : undefined}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>

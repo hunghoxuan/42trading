@@ -15,6 +15,7 @@ import {
 import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import PnlDisplay from "../../components/PnlDisplay";
 import PaginationBar from "../../components/PaginationBar";
+import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 import {
   asNum,
@@ -309,8 +310,7 @@ export default function TradesPage() {
   }, [searchParams, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
-  const [sortKey, setSortKey] = useState("audit");
-  const [sortDir, setSortDir] = useState("desc");
+  const [sorting, setSorting] = useState({ key: "audit", dir: "desc" });
   const inFlightRef = useRef(false);
   const tradeEventsInFlightRef = useRef(false);
   const selectedTradeIdRef = useRef("");
@@ -778,17 +778,17 @@ export default function TradesPage() {
     const out = [...rows];
     out.sort((a, b) => {
       let cmp = 0;
-      if (sortKey === "symbol") {
+      if (sorting.key === "symbol") {
         cmp = String(a?.symbol || "").localeCompare(String(b?.symbol || ""));
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
-        return sortDir === "asc" ? cmp : -cmp;
+        return sorting.dir === "asc" ? cmp : -cmp;
       }
-      if (sortKey === "strategy") {
+      if (sorting.key === "strategy") {
         cmp = compactStrategy(a).localeCompare(compactStrategy(b));
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
-        return sortDir === "asc" ? cmp : -cmp;
+        return sorting.dir === "asc" ? cmp : -cmp;
       }
-      if (sortKey === "pnl") {
+      if (sorting.key === "pnl") {
         const pa =
           asNum(a?.broker_pnl) ??
           asNum(a?.pnl_realized) ??
@@ -801,11 +801,11 @@ export default function TradesPage() {
           0;
         cmp = pa - pb;
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
-        return sortDir === "asc" ? cmp : -cmp;
+        return sorting.dir === "asc" ? cmp : -cmp;
       }
-      if (sortKey === "status") {
+      if (sorting.key === "status") {
         cmp =
-          sortDir === "asc"
+          sorting.dir === "asc"
             ? statusRankAsc(a?.execution_status) -
               statusRankAsc(b?.execution_status)
             : statusRankDesc(a?.execution_status) -
@@ -814,23 +814,228 @@ export default function TradesPage() {
         return cmp;
       }
       cmp = valueOfAudit(a) - valueOfAudit(b);
-      return sortDir === "asc" ? cmp : -cmp;
+      return sorting.dir === "asc" ? cmp : -cmp;
     });
     return out;
-  }, [rows, sortKey, sortDir]);
+  }, [rows, sorting]);
 
-  const toggleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
-      return;
-    }
-    setSortKey(key);
-    setSortDir(key === "status" ? "asc" : "desc");
-  };
-  const sortMarker = (key) => {
-    if (sortKey !== key) return "";
-    return sortDir === "asc" ? " ↑" : " ↓";
-  };
+  const columns = useMemo(() => {
+    const valueOfAudit = (x) =>
+      new Date(auditTimestampRaw(x) || 0).getTime();
+
+    return [
+      {
+        id: "select",
+        header: () => (
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                rows.forEach((r) => {
+                  if (checked) next.add(tradeKeyOf(r));
+                  else next.delete(tradeKeyOf(r));
+                });
+                return next;
+              });
+            }}
+          />
+        ),
+        cell: ({ row }) => {
+          const t = row.original;
+          return (
+            <input
+              type="checkbox"
+              checked={selectedIds.has(tradeKeyOf(t))}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  if (checked) next.add(tradeKeyOf(t));
+                  else next.delete(tradeKeyOf(t));
+                  return next;
+                });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          );
+        },
+        enableSorting: false,
+        size: 30,
+      },
+      {
+        id: "symbol",
+        header: "POSITION",
+        accessorFn: (row) => String(row?.symbol || ""),
+        sortingFn: (rowA, rowB) => {
+          const a = rowA.original;
+          const b = rowB.original;
+          const cmp = String(a?.symbol || "").localeCompare(
+            String(b?.symbol || ""),
+          );
+          if (cmp === 0) return valueOfAudit(b) - valueOfAudit(a);
+          return cmp;
+        },
+        cell: ({ row }) => {
+          const t = row.original;
+          const action = String(t.action || t.side || "-").toUpperCase();
+          const stRaw = String(t.execution_status || "").toUpperCase();
+          const pnl =
+            asNum(t.broker_pnl) ??
+            asNum(t.pnl_realized) ??
+            asNum(t.net_pnl) ??
+            asNum(t.pnl);
+          const rr = calcRr(t);
+          const rrDisplay = asNum(t.rr_planned) ?? rr;
+          return (
+            <SymbolEntryCell
+              side={action}
+              symbol={t.symbol}
+              orderType={t.order_type || t.metadata?.order_type || "limit"}
+              entry={t.entry || "-"}
+              tp={t.tp || "-"}
+              sl={t.sl || "-"}
+              rr={rrDisplay}
+              status={t.execution_status}
+              pnl={pnl}
+              tpPnl={
+                stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                  ? t.entry_exec || t.entry
+                  : t.broker_tp_pnl
+              }
+              slPnl={
+                stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                  ? t.last_price || t.tp
+                  : t.broker_sl_pnl
+              }
+              showRightPnl={listMode === "compact"}
+            />
+          );
+        },
+      },
+      {
+        id: "info",
+        header: "INFO",
+        accessorFn: (row) => compactStrategy(row),
+        sortingFn: (rowA, rowB) => {
+          const a = rowA.original;
+          const b = rowB.original;
+          const cmp = compactStrategy(a).localeCompare(compactStrategy(b));
+          if (cmp === 0) return valueOfAudit(b) - valueOfAudit(a);
+          return cmp;
+        },
+        cell: ({ row }) => {
+          const t = row.original;
+          const timeValue = showDateTime(auditTimestampRaw(t));
+          return (
+            <PositionAuditCell
+              timeText={timeValue}
+              sid={String(t.sid || "-")}
+              brokerId={getBrokerTicket(t)}
+              dispatchStatus={t.dispatch_status}
+            />
+          );
+        },
+      },
+      {
+        id: "status",
+        header: "STATUS",
+        accessorFn: (row) =>
+          asNum(row?.broker_pnl) ??
+          asNum(row?.pnl_realized) ??
+          asNum(row?.net_pnl) ??
+          0,
+        sortingFn: (rowA, rowB) => {
+          const a = rowA.original;
+          const b = rowB.original;
+          const pa =
+            asNum(a?.broker_pnl) ??
+            asNum(a?.pnl_realized) ??
+            asNum(a?.net_pnl) ??
+            0;
+          const pb =
+            asNum(b?.broker_pnl) ??
+            asNum(b?.pnl_realized) ??
+            asNum(b?.net_pnl) ??
+            0;
+          const cmp = pa - pb;
+          if (cmp === 0) return valueOfAudit(b) - valueOfAudit(a);
+          return cmp;
+        },
+        cell: ({ row }) => {
+          const t = row.original;
+          const status = statusUi(t.execution_status);
+          const pnl =
+            asNum(t.broker_pnl) ??
+            asNum(t.pnl_realized) ??
+            asNum(t.net_pnl) ??
+            asNum(t.pnl);
+          const stRaw = String(t.execution_status || "").toUpperCase();
+          const flashFields =
+            changedFields.get(String(t.sid || "").trim()) || new Set();
+          return (
+            <StatusPnlCell
+              status={t.execution_status}
+              hideStatus={true}
+              statusNode={
+                <span
+                  className={`badge ${status.cls}`}
+                  style={{ cursor: "pointer" }}
+                  title="Edit trade status / PnL"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openTradeEditModal(t);
+                  }}
+                >
+                  {status.label}
+                </span>
+              }
+              pnl={pnl}
+              margin={tradeRiskSize(t)}
+              tpPnl={
+                stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                  ? t.entry_exec || t.entry
+                  : t.broker_tp_pnl
+              }
+              slPnl={
+                stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
+                  ? t.last_price || t.tp
+                  : t.broker_sl_pnl
+              }
+              showFilledDetails={stRaw === "FILLED" || stRaw === "FILLED"}
+              brokerVolume={
+                asNum(t.broker_volume) ??
+                asNum(t.metadata?.broker_data?.volume) ??
+                "-"
+              }
+              brokerLots={
+                asNum(t.broker_lots) ??
+                asNum(t.metadata?.broker_data?.lots) ??
+                "-"
+              }
+              brokerPips={
+                asNum(t.broker_pips) ??
+                asNum(t.metadata?.broker_data?.pips) ??
+                "-"
+              }
+              flashFields={flashFields}
+            />
+          );
+        },
+      },
+    ];
+  }, [
+    rows,
+    allSelected,
+    selectedIds,
+    listMode,
+    changedFields,
+  ]);
+
+  const onSortingChange = (s) =>
+    setSorting(s || { key: "audit", dir: "desc" });
 
   async function onSaveTradeEdit() {
     const selectedRef = tradeKeyOf(selectedTrade);
@@ -1266,237 +1471,23 @@ export default function TradesPage() {
                 })}
               </div>
             ) : (
-              <table
-                className={`events-table${listMode === "compact" ? " compact-list" : ""}`}
-              >
-                <thead>
-                  <tr>
-                    <th style={{ width: 30 }}>
-                      <input
-                        type="checkbox"
-                        checked={allSelected}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setSelectedIds((prev) => {
-                            const next = new Set(prev);
-                            rows.forEach((r) => {
-                              if (checked) next.add(tradeKeyOf(r));
-                              else next.delete(tradeKeyOf(r));
-                            });
-                            return next;
-                          });
-                        }}
-                      />
-                    </th>
-                    <th
-                      onClick={() => toggleSort("symbol")}
-                      style={{ cursor: "pointer" }}
-                    >
-                      POSITION{sortMarker("symbol")}
-                    </th>
-                    <th
-                      onClick={() => toggleSort("strategy")}
-                      style={{ cursor: "pointer" }}
-                    >
-                      INFO{sortMarker("strategy")}
-                    </th>
-                    <th
-                      onClick={() => toggleSort("pnl")}
-                      style={{ cursor: "pointer" }}
-                    >
-                      STATUS{sortMarker("pnl")}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && rows.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="loading">
-                        Loading trades...
-                      </td>
-                    </tr>
-                  ) : sortedRows.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="empty-state">
-                        No trades found.
-                      </td>
-                    </tr>
-                  ) : (
-                    sortedRows.map((t) => {
-                      const status = statusUi(t.execution_status);
-                      const action = String(
-                        t.action || t.side || "-",
-                      ).toUpperCase();
-                      const actionCls =
-                        action === "BUY" ? "side-buy" : "side-sell";
-                      const strategyLabel = compactStrategy(t);
-                      const rr = calcRr(t);
-                      const acc = accountById.get(String(t.account_id || ""));
-                      const accountName = String(
-                        acc?.name || t.account_id || "-",
-                      );
-                      const brokerName = brokerNameFromAccount(acc);
-                      const pnl =
-                        asNum(t.broker_pnl) ??
-                        asNum(t.pnl_realized) ??
-                        asNum(t.net_pnl) ??
-                        asNum(t.pnl);
-                      const stRaw = String(
-                        t.execution_status || "",
-                      ).toUpperCase();
-                      const showPnl =
-                        stRaw !== "PENDING" && pnl != null && pnl !== 0;
-                      const rrDisplay = asNum(t.rr_planned) ?? rr;
-                      const timeValue = showDateTime(auditTimestampRaw(t));
-                      const isSelected =
-                        tradeKeyOf(selectedTrade) === tradeKeyOf(t);
-                      const flashFields =
-                        changedFields.get(String(t.sid || "").trim()) ||
-                        new Set();
-                      return (
-                        <tr
-                          key={tradeKeyOf(t)}
-                          className={isSelected ? "active" : ""}
-                          onClick={() => {
-                            const k = tradeKeyOf(t);
-                            selectedTradeIdRef.current = k;
-                            setSelectedTrade(t);
-                            navigate(`/trades/${k}`, { replace: true });
-                          }}
-                        >
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(tradeKeyOf(t))}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setSelectedIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (checked) next.add(tradeKeyOf(t));
-                                  else next.delete(tradeKeyOf(t));
-                                  return next;
-                                });
-                              }}
-                            />
-                          </td>
-                          <td>
-                            <SymbolEntryCell
-                              side={action}
-                              symbol={t.symbol}
-                              orderType={
-                                t.order_type ||
-                                t.metadata?.order_type ||
-                                "limit"
-                              }
-                              entry={t.entry || "-"}
-                              tp={t.tp || "-"}
-                              sl={t.sl || "-"}
-                              rr={rrDisplay}
-                              status={t.execution_status}
-                              pnl={pnl}
-                              tpPnl={
-                                stRaw === "CLOSED" ||
-                                stRaw === "TP" ||
-                                stRaw === "SL"
-                                  ? t.entry_exec || t.entry
-                                  : t.broker_tp_pnl
-                              }
-                              slPnl={
-                                stRaw === "CLOSED" ||
-                                stRaw === "TP" ||
-                                stRaw === "SL"
-                                  ? t.last_price || t.tp
-                                  : t.broker_sl_pnl
-                              }
-                              showRightPnl={listMode === "compact"}
-                            />
-                          </td>
-                          <td>
-                            <PositionAuditCell
-                              source={displaySource(t)}
-                              strategy={strategyLabel}
-                              timeText={timeValue}
-                              sid={String(t.sid || "-")}
-                              brokerId={getBrokerTicket(t)}
-                              dispatchStatus={t.dispatch_status}
-                              confidence={
-                                t.confidence_pct ||
-                                t.raw_json?.confidence_pct ||
-                                t.raw_json?.confidence
-                              }
-                              riskManagement={
-                                t.raw_json?.risk_management ||
-                                t.metadata?.risk_management
-                              }
-                              riskPct={
-                                asNum(t.risk_pct_planned) ??
-                                asNum(t.metadata?.risk_pct) ??
-                                asNum(t.raw_json?.risk_pct) ??
-                                asNum(t.raw_json?.riskPct) ??
-                                asNum(t.volume)
-                              }
-                            />
-                          </td>
-                          <td style={{ textAlign: "right" }}>
-                            <StatusPnlCell
-                              status={t.execution_status}
-                              hideStatus={true}
-                              statusNode={
-                                <span
-                                  className={`badge ${status.cls}`}
-                                  style={{ cursor: "pointer" }}
-                                  title="Edit trade status / PnL"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openTradeEditModal(t);
-                                  }}
-                                >
-                                  {status.label}
-                                </span>
-                              }
-                              pnl={pnl}
-                              margin={tradeRiskSize(t)}
-                              tpPnl={
-                                stRaw === "CLOSED" ||
-                                stRaw === "TP" ||
-                                stRaw === "SL"
-                                  ? t.entry_exec || t.entry
-                                  : t.broker_tp_pnl
-                              }
-                              slPnl={
-                                stRaw === "CLOSED" ||
-                                stRaw === "TP" ||
-                                stRaw === "SL"
-                                  ? t.last_price || t.tp
-                                  : t.broker_sl_pnl
-                              }
-                              showFilledDetails={
-                                stRaw === "FILLED" || stRaw === "FILLED"
-                              }
-                              brokerVolume={
-                                asNum(t.broker_volume) ??
-                                asNum(t.metadata?.broker_data?.volume) ??
-                                "-"
-                              }
-                              brokerLots={
-                                asNum(t.broker_lots) ??
-                                asNum(t.metadata?.broker_data?.lots) ??
-                                "-"
-                              }
-                              brokerPips={
-                                asNum(t.broker_pips) ??
-                                asNum(t.metadata?.broker_data?.pips) ??
-                                "-"
-                              }
-                              flashFields={flashFields}
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+              <DataTable
+                columns={columns}
+                data={rows}
+                sorting={sorting}
+                onSortingChange={onSortingChange}
+                globalFilter={filter.q}
+                emptyText="No trades found."
+                rowClassName={(t) =>
+                  tradeKeyOf(selectedTrade) === tradeKeyOf(t) ? "active" : ""
+                }
+                onRowClick={(t) => {
+                  const k = tradeKeyOf(t);
+                  selectedTradeIdRef.current = k;
+                  setSelectedTrade(t);
+                  navigate(`/trades/${k}`, { replace: true });
+                }}
+              />
             )}
           </div>
         </div>
