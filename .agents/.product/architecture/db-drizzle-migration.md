@@ -38,16 +38,17 @@ Dropped/legacy tables (not in schema): `accounts`, `ai_templates`, `ui_auth_user
 |--------|---------|-------|-----------------|
 | `listTradesV2` | ✅ `db/queries.js` | ✅ 5 tests | ✅ |
 | `listSignals` | ✅ `db/queries.js` | ✅ 2 tests | ✅ |
-| `listUserAccounts` | ✅ `db/queries.js` | ❌ | — |
-| `upsertSignal` | ✅ `db/queries.js` | ❌ | — |
-| `findAccountByApiKeyHash` | ✅ `db/queries.js` | ❌ | — |
+| `listUserAccounts` | ✅ `db/queries.js` | ✅ 1 test | ✅ |
+| `upsertSignal` | ✅ `db/queries.js` | ⚠️ flaky (works standalone) | — |
+| `findAccountByApiKeyHash` | ✅ `db/queries.js` | ✅ 1 test | ✅ |
+| `upsertUserAccount` | ✅ `db/queries.js` | ❌ | — |
 
 ## Remaining Methods to Migrate (~35 methods)
 
 Priority order:
 
 ### 🔴 High (used frequently)
-- [ ] `upsertUserAccount(userId, account)`
+- [x] `upsertUserAccount(userId, account)`
 - [ ] `listUiUsers()`
 - [ ] `deleteUserAccount(userId, accountId)`
 - [ ] `updateTableRow(table, id, data)`
