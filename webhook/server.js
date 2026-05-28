@@ -18894,84 +18894,22 @@ const appHandler = async (req, res) => {
           isMaskedApiKeyLike(rawVal)
         ) {
           rawVal = "";
-          const existing = await db.query(
-            "SELECT data FROM user_settings WHERE user_id=$1 AND type='api_key' AND name='default' LIMIT 1",
-            [userId],
-          );
-          if (existing.rows.length) {
-            const dec = decryptObject(
-              existing.rows[0].data && typeof existing.rows[0].data === "object"
-                ? existing.rows[0].data
-                : {},
-            );
+          const existingData = await dbQueries.getUserSettingData(db.db, userId, "api_key", "default");
+          if (existingData) {
+            const dec = decryptObject(typeof existingData === "string" ? JSON.parse(existingData) : (existingData || {}));
             rawVal = String(dec?.[keyName] || "").trim();
           }
         }
         const encValue = encryptData(rawVal);
-        await db
-          .query(
-            `
-          INSERT INTO user_settings (user_id, type, name, data)
-          VALUES ($1, 'api_key', 'default', jsonb_build_object($2, $3))
-          ON CONFLICT (user_id, type, name)
-          DO UPDATE SET data = user_settings.data || jsonb_build_object($2, $3), updated_at = NOW()
-        `,
-            [userId, keyName, encValue],
-          )
-          .catch(async () => {
-            // Fallback for systems without the partial unique index
-            const existing = await db.query(
-              "SELECT id, data FROM user_settings WHERE user_id=$1 AND type='api_key'",
-              [userId],
-            );
-            if (existing.rows.length) {
-              const oldData =
-                existing.rows[0].data &&
-                typeof existing.rows[0].data === "object"
-                  ? existing.rows[0].data
-                  : {};
-              const newData = { ...oldData, [body.key]: encValue };
-              await db.query(
-                "UPDATE user_settings SET data=$1, updated_at=NOW() WHERE id=$2",
-                [newData, existing.rows[0].id],
-              );
-            } else {
-              await db.query(
-                "INSERT INTO user_settings (user_id, type, data) VALUES ($1, 'api_key', $2)",
-                [userId, { [body.key]: encValue }],
-              );
-            }
-          });
+        // Merge with existing data
+        const prevData = await dbQueries.getUserSettingData(db.db, userId, "api_key", "default");
+        const prev = (prevData && typeof prevData === "string" ? JSON.parse(prevData) : (prevData || {}));
+        const merged = typeof prev === "object" ? { ...prev, [body.key]: encValue } : { [body.key]: encValue };
+        await dbQueries.upsertUserSetting(db.db, userId, "api_key", "default", merged, "ACTIVE");
       } else {
         // Bulk settings update
         const settings = encryptObject(body.settings || body || {});
-        await db
-          .query(
-            `
-          INSERT INTO user_settings (user_id, type, name, data)
-          VALUES ($1, 'api_key', 'default', $2)
-          ON CONFLICT (user_id, type, name)
-          DO UPDATE SET data = $2, updated_at = NOW()
-        `,
-            [userId, settings],
-          )
-          .catch(async () => {
-            const existing = await db.query(
-              "SELECT id FROM user_settings WHERE user_id=$1 AND type='api_key'",
-              [userId],
-            );
-            if (existing.rows.length) {
-              await db.query(
-                "UPDATE user_settings SET data=$1, updated_at=NOW() WHERE id=$2",
-                [settings, existing.rows[0].id],
-              );
-            } else {
-              await db.query(
-                "INSERT INTO user_settings (user_id, type, data) VALUES ($1, 'api_key', $2)",
-                [userId, settings],
-              );
-            }
-          });
+        await dbQueries.upsertUserSetting(db.db, userId, "api_key", "default", settings, "ACTIVE");
       }
 
       await StateRepo.del("SYSTEM_SETTINGS", "global");
@@ -19074,18 +19012,8 @@ const appHandler = async (req, res) => {
 
       const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      const rowRes = await db.query(
-        "SELECT data FROM user_settings WHERE user_id = $1 AND type = $2 AND name = $3 LIMIT 1",
-        [userId, type, name],
-      );
-      if (!rowRes.rows.length)
-        return json(res, 404, { ok: false, error: "Setting not found" });
-
-      const enc =
-        rowRes.rows[0]?.data && typeof rowRes.rows[0].data === "object"
-          ? rowRes.rows[0].data
-          : {};
-      const dec = decryptObject(enc);
+      const enc = await dbQueries.getUserSettingData(db.db, userId, type, name) || {};
+      const dec = decryptObject(typeof enc === "string" ? JSON.parse(enc) : enc);
       return json(res, 200, { ok: true, value: String(dec?.[field] || "") });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -19146,42 +19074,20 @@ const appHandler = async (req, res) => {
         ).trim();
         let rawValue = incomingValue;
         if (!rawValue || isMaskedApiKeyLike(rawValue)) {
-          const rowRes = await db.query(
-            "SELECT data FROM user_settings WHERE user_id = $1 AND type = 'api_key' AND name = $2 LIMIT 1",
-            [userId, settingName],
-          );
-          if (rowRes.rows.length) {
-            const dec = decryptObject(
-              rowRes.rows[0]?.data && typeof rowRes.rows[0].data === "object"
-                ? rowRes.rows[0].data
-                : {},
-            );
+          const existingData = await dbQueries.getUserSettingData(db.db, userId, "api_key", settingName);
+          if (existingData) {
+            const dec = decryptObject(typeof existingData === "string" ? JSON.parse(existingData) : (existingData || {}));
             rawValue = String(dec?.api_key || dec?.value || "").trim();
           }
         }
         data = encryptObject({ value: rawValue, api_key: rawValue });
       }
 
-      const res2 = await db.query(
-        `
-        INSERT INTO user_settings (user_id, type, name, data, status)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (user_id, type, name)
-        DO UPDATE SET data = EXCLUDED.data, status = EXCLUDED.status, updated_at = NOW()
-        RETURNING *
-      `,
-        [
-          userId,
-          body.type,
-          settingName || body.type,
-          data,
-          body.status || "active",
-        ],
+      const result = await dbQueries.upsertUserSetting(
+        db.db, userId, body.type, settingName || body.type, data, body.status || "active"
       );
-
       await StateRepo.del("USER_SETTINGS", userId);
-
-      return json(res, 200, { ok: true, item: res2.rows[0] });
+      return json(res, 200, { ok: true, item: result[0] });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
     }
@@ -19204,10 +19110,7 @@ const appHandler = async (req, res) => {
         return json(res, 400, { ok: false, error: "Missing type or name" });
       const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      await db.query(
-        "DELETE FROM user_settings WHERE user_id = $1 AND type = $2 AND name = $3",
-        [userId, type, name],
-      );
+      await dbQueries.deleteUserSetting(db.db, userId, type, name);
       await StateRepo.del("USER_SETTINGS", userId);
       return json(res, 200, { ok: true });
     } catch (e) {
