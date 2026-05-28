@@ -35,8 +35,11 @@ const userSettings = pgTable("user_settings", {
 }, (table) => ({ uniqueUserTypeName: uniqueIndex("idx_user_settings_user_type_name").on(table.userId, table.type, table.name) }));
 
 const signals = pgTable("signals", {
+  id: serial("id"),
   sid: text("sid").primaryKey(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
   userId: text("user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),
   source: text("source"), sourceId: text("source_id"), symbol: text("symbol").notNull(), side: text("side").notNull(),
   orderType: text("order_type"), entry: doublePrecision("entry"), entryModel: text("entry_model"), strategy: text("strategy"),

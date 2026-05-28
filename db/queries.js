@@ -184,3 +184,29 @@ async function updateUserMetadata(db, userId, metadata) {
 }
 
 module.exports = Object.assign(module.exports, { getUserSetting, getUserSettingData, listUserSettingsByType, upsertUserSetting, deleteUserSetting, getUserMetadata, updateUserMetadata });
+
+// ── Signal/trade resolution helpers ──
+
+async function resolveSignalRef(db, numericId, sid, userId) {
+  const conditions = [];
+  if (numericId != null) conditions.push(eq(schema.signals.id, sql`${numericId}::bigint`));
+  conditions.push(eq(schema.signals.sid, sid));
+  if (userId) conditions.push(eq(schema.signals.userId, userId));
+  const rows = await db.select({ id: schema.signals.id, sid: schema.signals.sid, userId: schema.signals.userId })
+    .from(schema.signals).where(or(...conditions))
+    .orderBy(desc(sql`COALESCE(${schema.signals.closedAt}, ${schema.signals.updatedAt})`)).limit(1);
+  return rows[0] || null;
+}
+
+async function closeSignal(db, sid) {
+  return db.update(schema.signals).set({ status: "CLOSED", updatedAt: new Date() }).where(eq(schema.signals.sid, sid));
+}
+
+async function promoteDraftTrade(db, tradeRef, userId) {
+  const conditions = [eq(schema.trades.sid, tradeRef)];
+  if (userId) conditions.push(eq(schema.trades.userId, userId));
+  return db.update(schema.trades).set({ executionStatus: "PENDING", dispatchStatus: "NEW", updatedAt: new Date() })
+    .where(and(...conditions)).returning();
+}
+
+module.exports = Object.assign(module.exports, { resolveSignalRef, closeSignal, promoteDraftTrade });

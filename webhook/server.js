@@ -14978,29 +14978,9 @@ async function mt5ResolveSignalRefV2(signalRef, userId = null) {
   const ref = String(signalRef || "").trim();
   if (!ref) return null;
   const b = await mt5Backend();
-  if (!b?.query) return null;
+  if (!b?.db) return null;
   const numericId = mt5ParseNumericId(ref);
-  const params = [numericId, ref];
-  let whereUser = "";
-  if (userId) {
-    params.push(String(userId));
-    whereUser = ` AND user_id = $${params.length}`;
-  }
-  const res = await b.query(
-    `
-    SELECT id, sid, user_id
-    FROM signals
-    WHERE (
-      ($1::bigint IS NOT NULL AND id = $1::bigint)
-      OR sid = $2
-    )
-    ${whereUser}
-    ORDER BY COALESCE(closed_at, updated_at) DESC, created_at DESC
-    LIMIT 1
-  `,
-    params,
-  );
-  return res.rows?.[0] || null;
+  return dbQueries.resolveSignalRef(b.db, numericId, ref, userId || null);
 }
 
 async function mt5ListAccountsV2(userId = null) {
@@ -23767,19 +23747,12 @@ const appHandler = async (req, res) => {
         return json(res, 404, { ok: false, error: "signal not found" });
       const signalId = String(resolvedSignal.sid || "").trim();
       const b = await mt5Backend();
-      const whereUser = userId ? "AND user_id = $2" : "";
-      const signalRes = await b.query(
-        `
-        SELECT * FROM signals WHERE sid = $1 ${whereUser} LIMIT 1
-      `,
-        userId ? [signalId, userId] : [signalId],
-      );
-      const signal = signalRes.rows?.[0];
-      if (!signal)
+      const signal = await dbQueries.getSignalByTicket(b.db, signalId);
+      if (!signal || (userId && signal.userId !== String(userId)))
         return json(res, 404, { ok: false, error: "signal not found" });
       const raw =
-        signal.raw_json && typeof signal.raw_json === "object"
-          ? signal.raw_json
+        signal.rawJson && typeof signal.rawJson === "object"
+          ? signal.rawJson
           : {};
       const sideRaw = String(
         payload.direction || payload.side || signal.side || "",
@@ -23804,7 +23777,7 @@ const appHandler = async (req, res) => {
         side,
       );
       const tp = asNum(tpNorm.tp, NaN);
-      const rr = asNum(payload.rr ?? signal.rr_planned, NaN);
+      const rr = asNum(payload.rr ?? signal.rrPlanned, NaN);
       const note = String(payload.note || signal.note || "").trim();
       const tradeType = String(
         payload.trade_type || payload.order_type || raw.order_type || "limit",
@@ -23812,17 +23785,17 @@ const appHandler = async (req, res) => {
         .trim()
         .toLowerCase();
       const sourceId = String(
-        signal.source_id || mt5SlugId(signal.source || "signal", "signal"),
+        signal.sourceId || mt5SlugId(signal.source || "signal", "signal"),
       ).trim();
       const signalRawJson =
-        signal.raw_json && typeof signal.raw_json === "object"
-          ? signal.raw_json
+        signal.rawJson && typeof signal.rawJson === "object"
+          ? signal.rawJson
           : {};
       const copiedMetadata = {
         ...signalRawJson,
         confidence_pct: asNum(
           payload.confidence_pct ??
-            signal.confidence_pct ??
+            signal.confidencePct ??
             signalRawJson.confidence_pct,
         ),
         invalidation:
@@ -23831,7 +23804,7 @@ const appHandler = async (req, res) => {
           signalRawJson.invalidation,
         estimated_bars: asNum(
           payload.estimated_bars ??
-            signal.estimated_bars ??
+            signal.estimatedBars ??
             signalRawJson.estimated_bars,
         ),
         profile: payload.profile ?? signal.profile ?? signalRawJson.profile,
@@ -23856,7 +23829,7 @@ const appHandler = async (req, res) => {
           signal.confluence_checklist ??
           signalRawJson.confluence_checklist,
         be_trigger: asNum(
-          payload.be_trigger ?? signal.be_trigger ?? signalRawJson.be_trigger,
+          payload.be_trigger ?? signal.beTrigger ?? signalRawJson.be_trigger,
         ),
       };
       if (!copiedMetadata.order_type && !copiedMetadata.orderType) {
@@ -23869,19 +23842,19 @@ const appHandler = async (req, res) => {
       const fanout = await mt5FanoutSignalTradeV2({
         signal_id: signalId,
         source_id: sourceId,
-        user_id: signal.user_id || userId || CFG.mt5DefaultUserId,
+        user_id: signal.userId || userId || CFG.mt5DefaultUserId,
         entry_model:
           mt5NormalizeEntryModel(
-            signal.entry_model ||
+            signal.entryModel ||
               raw.entry_model ||
               raw.entryModel ||
               raw.model ||
               raw.strategy ||
               "",
-            { fallback: signal.source_id || signal.source || "manual" },
+            { fallback: signal.sourceId || signal.source || "manual" },
           ) || null,
-        signal_tf: signal.signal_tf || null,
-        chart_tf: signal.chart_tf || null,
+        signal_tf: signal.signalTf || null,
+        chart_tf: signal.chartTf || null,
         symbol: signal.symbol,
         action: side,
         entry: Number.isFinite(entry) ? entry : null,
@@ -23914,14 +23887,11 @@ const appHandler = async (req, res) => {
              WHERE type = 'execution_profile' AND (data->>'is_active')::boolean IS TRUE
                AND data->'source_ids' ? $1
                AND user_id != $2`,
-            [sourceId, signal.user_id || userId || CFG.mt5DefaultUserId],
+            [sourceId, signal.userId || userId || CFG.mt5DefaultUserId],
           );
           const hasSubscribers = Number(subCheck.rows?.[0]?.cnt || 0) > 0;
           if (!hasSubscribers) {
-            await b.query(
-              `UPDATE signals SET status = 'CLOSED', updated_at = NOW() WHERE sid = $1`,
-              [signalId],
-            );
+            await dbQueries.closeSignal(b.db, signalId);
           }
         } catch (_) {
           // non-critical — don't fail the response
@@ -24170,25 +24140,14 @@ const appHandler = async (req, res) => {
           error: "Only Draft trades can be promoted",
         });
       const b = await mt5Backend();
-      const whereUser = userId ? "AND user_id = $2" : "";
-      const resUpd = await b.query(
-        `
-        UPDATE trades
-        SET execution_status = 'PENDING',
-            updated_at = NOW()
-        WHERE sid = $1
-        ${whereUser}
-        RETURNING *
-      `,
-        [resolvedTrade.sid],
-      );
-      const row = resUpd.rows?.[0];
+      const rows = await dbQueries.promoteDraftTrade(b.db, resolvedTrade.sid, userId || null);
+      const row = Array.isArray(rows) ? rows[0] : null;
       if (!row) return json(res, 404, { ok: false, error: "trade not found" });
       await mt5Log(
         resolvedTrade.sid,
         "trades",
         { event_type: "TRADE_PROMOTED", from: "Draft", to: "PENDING" },
-        row.user_id || userId || CFG.mt5DefaultUserId,
+        row.userId || userId || CFG.mt5DefaultUserId,
       );
       return json(res, 200, { ok: true, item: row });
     } catch (error) {
