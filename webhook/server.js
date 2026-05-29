@@ -8813,6 +8813,9 @@ END
         for (const row of accounts.rows || []) {
           const aid = row.account_id;
           const tradeSid = await allocateUniqueSid(client, "trades", signalId);
+          // Skip if trade with this SID already exists
+          const existing = await client.query("SELECT 1 FROM trades WHERE sid = $1", [tradeSid]);
+          if (existing.rows.length) continue;
           const ins = await client.query(
             `
             INSERT INTO trades (

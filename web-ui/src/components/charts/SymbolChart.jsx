@@ -2005,8 +2005,10 @@ export default function SymbolChart({
                     sw = bitmap.width;
                     sh = bitmap.height;
                   } else {
-                    // Crop to visible portion of this chart card
-                    const rect = rootRef.current?.getBoundingClientRect?.();
+                    // Crop to inner chart grid (the actual chart tiles, not the full card)
+                    const gridEl = rootRef.current?.querySelector?.(".chart-grid-area");
+                    const target = gridEl || rootRef.current;
+                    const rect = target?.getBoundingClientRect?.();
                     sx = rect ? Math.max(0, Math.round(rect.x)) : 0;
                     sy = rect ? Math.max(0, Math.round(rect.y)) : 0;
                     sw = rect ? Math.min(bitmap.width - sx, Math.round(rect.width)) : bitmap.width;
@@ -2043,6 +2045,20 @@ export default function SymbolChart({
           <button
             className="secondary-button"
             style={{
+              height: 22,
+              padding: "0 8px",
+              fontSize: 10,
+              lineHeight: 1,
+              fontWeight: 700,
+            }}
+            onClick={() => window.open("/v2/chart/snapshots-grid/" + encodeURIComponent(String(symbol || "").toUpperCase()) + "?provider=" + encodeURIComponent(String(provider || "")), "_blank")}
+            title="Open snapshots grid"
+          >
+            Snapshot
+          </button>
+          <button
+            className="secondary-button"
+            style={{
               minWidth: 58,
               height: 22,
               padding: "0 8px",
@@ -2064,6 +2080,7 @@ export default function SymbolChart({
           isMasterSnapshotMode && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
         return (
           <div
+            className="chart-grid-area"
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${activeGridCols}, 1fr)`,
