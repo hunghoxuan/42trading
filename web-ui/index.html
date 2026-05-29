@@ -6,11 +6,37 @@
     <title>MT5 Dashboard</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="shortcut icon" href="/favicon.ico" />
+    <script>
+      // Guard against broken browser extensions that monkey-patch JS built-ins.
+      // Save originals and restore them before app modules execute.
+      (function() {
+        var _apply = Reflect.apply.bind(Reflect);
+        var _toString = Function.prototype.toString;
+        var _defProp = Object.defineProperty;
+        // Re-arm: restore originals right before the module script runs
+        var observer = new MutationObserver(function() {
+          if (Function.prototype.toString !== _toString) {
+            Function.prototype.toString = _toString;
+          }
+          if (Reflect.apply !== _apply) {
+            Reflect.apply = _apply;
+          }
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        // Also catch unhandled errors from extensions silently
+        window.addEventListener('error', function(e) {
+          if (e.filename && e.filename.includes('edreader')) {
+            e.preventDefault();
+            return false;
+          }
+        }, true);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
-  
+
   <script>
     // Auto-reload on new deploy: poll /health every 60s, reload if version changed
     (function(){

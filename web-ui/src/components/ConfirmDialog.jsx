@@ -25,6 +25,7 @@ export function ConfirmDialogProvider({ children }) {
     <ConfirmDialogContext.Provider value={confirm}>
       {children}
       <Dialog.Root open={open} onOpenChange={(o) => { if (!o) close(false); }}>
+        {open && (
         <Dialog.Portal>
           <Dialog.Overlay className="dialog-overlay" />
           <Dialog.Content className="panel dialog-content">
@@ -46,6 +47,7 @@ export function ConfirmDialogProvider({ children }) {
             </div>
           </Dialog.Content>
         </Dialog.Portal>
+        )}
       </Dialog.Root>
     </ConfirmDialogContext.Provider>
   );
