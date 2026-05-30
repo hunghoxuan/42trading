@@ -723,6 +723,7 @@ export const api = {
     get(
       `/v2/trades/${encodeURIComponent(tradeId)}/events?limit=${encodeURIComponent(limit)}`,
     ),
+  listTempTrades: () => get("/v2/trades/temp"),
   v2CreateSource: (payload = {}) => post("/v2/sources", payload),
   v2UpdateSource: (sourceId, payload = {}) =>
     put(`/v2/sources/${encodeURIComponent(sourceId)}`, payload),
@@ -882,6 +883,11 @@ export const api = {
   dbCreateRow: (payload = {}) => post("/mt5/db/rows/create", payload),
   dbUpdateRow: (payload = {}) => post("/mt5/db/rows/update", payload),
   dbSchema: (table) => get(`/mt5/db/schema?table=${encodeURIComponent(table)}`),
+  systemSources: () => get("/v2/system/sources"),
+  systemLogFile: (source, id, file, limit = 200) =>
+    get(
+      `/v2/system/logs/file?source=${encodeURIComponent(source)}&id=${encodeURIComponent(id)}&file=${encodeURIComponent(file)}&limit=${limit}`,
+    ),
   storageStats: () => get("/v2/system/storage/stats"),
   storageCleanup: (target, userId = "") =>
     post("/v2/system/storage/cleanup", { target, userId }),
@@ -948,7 +954,9 @@ export const api = {
   chartSnapshotsDelete: (payload = {}) =>
     post("/v2/chart/snapshots/delete", payload),
   brokerBars: (symbol, tf, limit = 300) =>
-    get(`/v2/market-data/broker-bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}`),
+    get(
+      `/v2/market-data/broker-bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}`,
+    ),
   getSettings: () => get("/v2/settings"),
   getSettingSecret: (type, name, field = "value") =>
     get(

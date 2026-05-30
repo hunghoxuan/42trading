@@ -13,7 +13,7 @@ function initDb(config) {
   if (backend === "sqlite") {
     const Database = require("better-sqlite3");
     const { drizzle } = require("drizzle-orm/better-sqlite3");
-    const dbPath = config?.storage?.sqlite?.path || "data/trading.db";
+    const dbPath = config?.storage?.sqlite?.path || "db/trading.db";
     const sqlite = new Database(dbPath);
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");
@@ -26,10 +26,15 @@ function initDb(config) {
     // PostgreSQL (default)
     const { drizzle } = require("drizzle-orm/node-postgres");
     const { Pool } = require("pg");
-    const pool = config?.pool || new Pool({
-      connectionString: config?.storage?.postgres?.url || process.env.POSTGRES_URL,
-      max: 20, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000,
-    });
+    const pool =
+      config?.pool ||
+      new Pool({
+        connectionString:
+          config?.storage?.postgres?.url || process.env.POSTGRES_URL,
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+      });
     _db = drizzle(pool, { schema });
     _backend = "postgres";
     console.log("[DB] PostgreSQL connected");
@@ -43,7 +48,9 @@ function getDb() {
   return _db;
 }
 
-function getBackend() { return _backend; }
+function getBackend() {
+  return _backend;
+}
 
 // SQLite schema migration (internal)
 function _runSqliteMigration(raw) {
@@ -105,11 +112,6 @@ function _runSqliteMigration(raw) {
       pnl_realized REAL, metadata TEXT, raw_json TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS logs (
-      log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      object_id TEXT, object_table TEXT, metadata TEXT, user_id TEXT,
-      created_at TEXT DEFAULT (datetime('now')), symbol TEXT, event_type TEXT
-    );
     CREATE TABLE IF NOT EXISTS market_data (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bars TEXT, source TEXT,
@@ -122,11 +124,12 @@ function _runSqliteMigration(raw) {
     CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
     CREATE INDEX IF NOT EXISTS idx_trades_exec ON trades(execution_status);
     CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id);
-    CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at DESC);
   `);
 
   // Seed default user
-  raw.exec("INSERT OR IGNORE INTO users (user_id, email, role) VALUES ('default', 'System', 'system')");
+  raw.exec(
+    "INSERT OR IGNORE INTO users (user_id, email, role) VALUES ('default', 'System', 'system')",
+  );
   console.log("[DB] SQLite schema migrated");
 }
 

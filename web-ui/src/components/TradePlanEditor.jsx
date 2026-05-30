@@ -348,6 +348,8 @@ const NumericNoSlider = memo(function NumericNoSlider({
 export function TradePlanEditor({
   signalId = null,
   tradeId = null,
+  accountId: propAccountId = "",
+  onAccountChange = null,
   value = {},
   onChange,
   onSave,
@@ -481,6 +483,14 @@ export function TradePlanEditor({
 
   const idPrefix = signalId || tradeId || "tp-editor";
 
+  const [accounts, setAccounts] = useState([]);
+  useEffect(() => {
+    fetch("/v2/accounts")
+      .then((r) => r.json())
+      .then((d) => setAccounts((d?.items || []).filter((a) => String(a?.status || "").toUpperCase() === "ACTIVE")))
+      .catch(() => {});
+  }, []);
+
   return (
     <div
       className={`trade-plan-editor-v5 ${className}`}
@@ -558,6 +568,42 @@ export function TradePlanEditor({
             showList={false}
             showLabel={false}
           />
+          {accounts.length > 0 && (
+            <select
+              value={propAccountId}
+              onChange={async (e) => {
+                const newId = e.target.value;
+                onAccountChange?.(newId);
+                if (newId && tradeId) {
+                  try {
+                    await fetch(`/v2/trades/${encodeURIComponent(tradeId)}/update`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ account_id: newId }),
+                    });
+                  } catch (_) {}
+                }
+              }}
+              style={{
+                width: "100%",
+                height: 24,
+                fontSize: 11,
+                padding: "0 8px",
+                borderRadius: 4,
+                border: "1px solid var(--border)",
+                background: "var(--bg-input, #0f172a)",
+                color: "var(--foreground, #e5e7eb)",
+                marginTop: 4,
+              }}
+            >
+              <option value="">Account: None</option>
+              {accounts.map((a) => (
+                <option key={a.account_id} value={a.account_id || ""}>
+                  {a.name || a.account_id}
+                </option>
+              ))}
+            </select>
+          )}
           {showActionsInView && (
             <div
               style={{
@@ -996,42 +1042,6 @@ export function TradePlanEditor({
               }}
             >
               {showResetButton ? (
-                <>
-                  {typeof onGoTrade === "function" ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={onGoTrade}
-                      disabled={controlsDisabled}
-                      style={{
-                        height: "26px",
-                        fontSize: "11px",
-                        padding: "0 10px",
-                        borderRadius: "4px",
-                      }}
-                    >
-                      Trade &gt;
-                    </button>
-                  ) : null}
-                  {typeof onGoAnalyze === "function" ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      onClick={onGoAnalyze}
-                      disabled={controlsDisabled}
-                      style={{
-                        height: "26px",
-                        fontSize: "11px",
-                        padding: "0 10px",
-                        borderRadius: "4px",
-                      }}
-                    >
-                      Analyze &gt;
-                    </button>
-                  ) : null}
-                </>
-              ) : null}
-              {showResetButton ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -1153,9 +1163,9 @@ export function TradePlanEditor({
                     />
                   ) : (
                     addTradeLabel
-                  )}
-                </button>
-              ) : null}
+                    )}
+                  </button>
+                ) : null}
             </div>
             {error ? (
               <span

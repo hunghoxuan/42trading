@@ -1831,20 +1831,6 @@ export default function SymbolChart({
             <>
               <button
                 className="secondary-button"
-                onClick={() => setShowTvLogin(true)}
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  padding: "3px 7px",
-                  borderRadius: 4,
-                  marginRight: 4,
-                  borderColor: "#60a5fa44",
-                }}
-              >
-                Login
-              </button>
-              <button
-                className="secondary-button"
                 onClick={toggleAllTvSettings}
                 style={{
                   fontSize: 10,
@@ -1949,31 +1935,6 @@ export default function SymbolChart({
               </button>
             </>
           )}
-          <button
-            className="secondary-button"
-            style={{
-              height: 22,
-              padding: "0 8px",
-              fontSize: 10,
-              lineHeight: 1,
-              fontWeight: 700,
-              display:
-                showControls && showTradeButton && typeof onTrade === "function"
-                  ? "block"
-                  : "none",
-            }}
-            onClick={() =>
-              onTrade?.({
-                symbol,
-                timeframes,
-                latestPrice: latestCachedPrice,
-                mode,
-              })
-            }
-            title="Open Trade page"
-          >
-            Trade
-          </button>
           {showSnapshotButton && (
             <button
               className="secondary-button"
@@ -1989,50 +1950,17 @@ export default function SymbolChart({
               onClick={async () => {
                 setBrowserSnapshotBusy(true);
                 try {
-                  const stream = await navigator.mediaDevices.getDisplayMedia({
-                    preferCurrentTab: true,
-                    video: { frameRate: 1 },
+                  const tfs = [...new Set(["1D", "4h", "15m", "5m", ...(timeframes || [])])];
+                  const res = await api.chartSnapshotCreateBatch({
+                    symbol: String(symbol || "").toUpperCase(),
+                    timeframes: tfs,
+                    format: "png",
+                    theme: "dark",
                   });
-                  const track = stream.getVideoTracks()[0];
-                  const imageCapture = new ImageCapture(track);
-                  const bitmap = await imageCapture.grabFrame();
-                  track.stop();
-                  const isFullscreen = fullscreenTf != null;
-                  let sx, sy, sw, sh;
-                  if (isFullscreen) {
-                    // Fullscreen: capture entire viewport (chart fills screen)
-                    sx = 0; sy = 0;
-                    sw = bitmap.width;
-                    sh = bitmap.height;
-                  } else {
-                    // Crop to inner chart grid (the actual chart tiles, not the full card)
-                    const gridEl = rootRef.current?.querySelector?.(".chart-grid-area");
-                    const target = gridEl || rootRef.current;
-                    const rect = target?.getBoundingClientRect?.();
-                    sx = rect ? Math.max(0, Math.round(rect.x)) : 0;
-                    sy = rect ? Math.max(0, Math.round(rect.y)) : 0;
-                    sw = rect ? Math.min(bitmap.width - sx, Math.round(rect.width)) : bitmap.width;
-                    sh = rect ? Math.min(bitmap.height - sy, Math.round(rect.height)) : bitmap.height;
-                  }
-                  const canvas = document.createElement("canvas");
-                  canvas.width = sw;
-                  canvas.height = sh;
-                  canvas.getContext("2d").drawImage(bitmap, sx, sy, sw, sh, 0, 0, sw, sh);
-                  const dataUrl = canvas.toDataURL("image/png");
-                  const res = await fetch("/v2/chart/snapshots-grid/upload", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      symbol: String(symbol || "").toUpperCase(),
-                      image_data: dataUrl,
-                    }),
-                  });
-                  const data = await res.json().catch(() => ({}));
-                  if (res.ok && data?.ok) {
-                    onSnapshot?.(data);
+                  if (res?.ok) {
+                    onSnapshot?.(res);
                   }
                 } catch (_) {
-                  // user cancelled or error
                 } finally {
                   setBrowserSnapshotBusy(false);
                 }
@@ -2051,26 +1979,38 @@ export default function SymbolChart({
               lineHeight: 1,
               fontWeight: 700,
             }}
-            onClick={() => window.open("/v2/chart/snapshots-grid/" + encodeURIComponent(String(symbol || "").toUpperCase()) + "?provider=" + encodeURIComponent(String(provider || "")), "_blank")}
+            onClick={() => window.open("/v2/chart/snapshots-grid/" + encodeURIComponent(String(symbol || "").toUpperCase()) + "?provider=" + encodeURIComponent(String(provider || "")) + "&tfs=" + encodeURIComponent((timeframes || []).join(",")), "_blank")}
             title="Open snapshots grid"
           >
-            Snapshot
+            Snapshots &gt;
           </button>
           <button
             className="secondary-button"
             style={{
-              minWidth: 58,
               height: 22,
               padding: "0 8px",
               fontSize: 10,
               lineHeight: 1,
               fontWeight: 700,
-              display: showAnalyzeButton ? "block" : "none",
             }}
-            onClick={() => onAnalyze?.(symbol, timeframes)}
-            title={analyzeLabel === ">" ? "Open symbol" : "Analyze"}
+            onClick={() => window.open(`/ai/manual/${encodeURIComponent(String(symbol || "").toUpperCase())}`, "_self")}
+            title="Manual trade"
           >
-            {analyzeLabel}
+            Trade &gt;
+          </button>
+          <button
+            className="secondary-button"
+            style={{
+              height: 22,
+              padding: "0 8px",
+              fontSize: 10,
+              lineHeight: 1,
+              fontWeight: 700,
+            }}
+            onClick={() => window.open(`/ai/analyze/${encodeURIComponent(String(symbol || "").toUpperCase())}`, "_self")}
+            title="AI analyze"
+          >
+            AI &gt;
           </button>
         </div>
       </div>

@@ -1,11 +1,13 @@
 // Migrate data from PostgreSQL to SQLite
-// Usage: SQLITE_PATH=data/trading.db node scripts/migrate-to-sqlite.js
+// Usage: SQLITE_PATH=db/trading.db node scripts/migrate-to-sqlite.js
 
 const { Pool } = require("../db/node_modules/pg");
 const Database = require("../db/node_modules/better-sqlite3");
 
-const PG_URL = process.env.POSTGRES_URL || "postgresql://macmini@127.0.0.1:5432/mt5_bridge_local";
-const SQLITE_PATH = process.env.SQLITE_PATH || "data/trading.db";
+const PG_URL =
+  process.env.POSTGRES_URL ||
+  "postgresql://macmini@127.0.0.1:5432/mt5_bridge_local";
+const SQLITE_PATH = process.env.SQLITE_PATH || "db/trading.db";
 
 async function migrate() {
   console.log("📦 PostgreSQL...");
@@ -19,35 +21,55 @@ async function migrate() {
   // Get SQLite columns for each table
   function getSqliteCols(table) {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all();
-    return new Set(cols.map(c => c.name));
+    return new Set(cols.map((c) => c.name));
   }
 
-  const tables = ["users", "user_accounts", "user_templates", "user_settings", "signals", "trades", "logs", "market_data"];
+  const tables = [
+    "users",
+    "user_accounts",
+    "user_templates",
+    "user_settings",
+    "signals",
+    "trades",
+    "market_data",
+  ];
 
   for (const table of tables) {
     console.log(`\n📋 ${table}...`);
     const sqliteCols = getSqliteCols(table);
-    if (!sqliteCols.size) { console.log("   (table missing, skipped)"); continue; }
+    if (!sqliteCols.size) {
+      console.log("   (table missing, skipped)");
+      continue;
+    }
 
     const { rows } = await pg.query(`SELECT * FROM ${table}`);
-    if (!rows.length) { console.log("   (empty, skipped)"); continue; }
+    if (!rows.length) {
+      console.log("   (empty, skipped)");
+      continue;
+    }
 
     // Filter to columns that exist in SQLite
-    const pgCols = Object.keys(rows[0]).filter(c => sqliteCols.has(c));
+    const pgCols = Object.keys(rows[0]).filter((c) => sqliteCols.has(c));
     const placeholders = pgCols.map(() => "?").join(", ");
-    const colNames = pgCols.map(c => `"${c}"`).join(", ");
+    const colNames = pgCols.map((c) => `"${c}"`).join(", ");
 
-    const stmt = sqlite.prepare(`INSERT OR REPLACE INTO ${table} (${colNames}) VALUES (${placeholders})`);
+    const stmt = sqlite.prepare(
+      `INSERT OR REPLACE INTO ${table} (${colNames}) VALUES (${placeholders})`,
+    );
 
     const insert = sqlite.transaction((batch) => {
       for (const row of batch) {
-        const values = pgCols.map(c => {
+        const values = pgCols.map((c) => {
           const v = row[c];
           if (v === null || v === undefined) return null;
           if (typeof v === "object") return JSON.stringify(v);
           return v;
         });
-        try { stmt.run(...values); } catch (e) { console.error(`   ⚠️ row error: ${e.message}`); }
+        try {
+          stmt.run(...values);
+        } catch (e) {
+          console.error(`   ⚠️ row error: ${e.message}`);
+        }
       }
     });
 
@@ -61,4 +83,7 @@ async function migrate() {
   console.log(`\n✅ Done: ${SQLITE_PATH}`);
 }
 
-migrate().catch(e => { console.error("❌", e.message); process.exit(1); });
+migrate().catch((e) => {
+  console.error("❌", e.message);
+  process.exit(1);
+});

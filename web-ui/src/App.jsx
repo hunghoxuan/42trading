@@ -9,6 +9,7 @@ import {
 import DashboardPage from "./pages/DashboardPage";
 const ChartSnapshotsPage = lazy(() => import("./pages/ai/ChartSnapshotsPage"));
 const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
+const TempTradesPage = lazy(() => import("./pages/trades/TempTradesPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
 const ProfilePage = lazy(() => import("./pages/settings/ProfilePage"));
 const CronPage = lazy(() => import("./pages/settings/CronPage"));
@@ -199,12 +200,17 @@ export default function App() {
         >
           Dashboard
         </NavLink>
-        <NavLink
-          to="/ai/analyze"
-          className={({ isActive }) => (isActive ? "active" : "")}
+        <NavDropdown
+          align="start"
+          trigger={
+            <NavLink to="/ai/analyze" className={({ isActive }) => (isActive ? "active" : "")}>
+              AI
+            </NavLink>
+          }
         >
-          AI
-        </NavLink>
+          <NavLink to="/ai/analyze">Analyze</NavLink>
+          <NavLink to="/ai/response">Response</NavLink>
+        </NavDropdown>
         <NavDropdown
           align="start"
           trigger={
@@ -360,6 +366,7 @@ export default function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/trades" element={<TradesPage />} />
             <Route path="/trades/:tradeId" element={<TradesPage />} />
+            <Route path="/trades/:status/:tradeId" element={<TradesPage />} />
             <Route path="/ai" element={<Navigate to="/ai/analyze" replace />} />
             <Route path="/ai/analyze" element={<ChartSnapshotsPage />} />
             <Route
@@ -372,9 +379,10 @@ export default function App() {
             <Route path="/ai/trade/:symbol" element={<ChartSnapshotsPage />} />
             <Route path="/ai/manual" element={<ChartSnapshotsPage />} />
             <Route path="/ai/manual/:symbol" element={<ChartSnapshotsPage />} />
+            <Route path="/ai/response" element={<TempTradesPage />} />
             <Route
               path="/ai/response/:symbol"
-              element={<ChartSnapshotsPage />}
+              element={<TempTradesPage />}
             />
             <Route
               path="/ai/browser"

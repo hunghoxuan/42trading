@@ -177,7 +177,13 @@ export default function ProfilePage({ authUser, onUserUpdate }) {
   // ---------- render ----------
   return (
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
-      <h2 className="page-title">Profile</h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+        <h2 className="page-title" style={{ margin: 0 }}>Profile</h2>
+        <span style={{ fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>
+          {authUser?.name || "—"}
+          {authUser?.user_id ? ` (${authUser.user_id})` : ""}
+        </span>
+      </div>
 
       <div
         style={{

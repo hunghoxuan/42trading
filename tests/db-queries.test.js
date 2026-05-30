@@ -3,21 +3,37 @@ const { initDb } = require("../db");
 const schema = require("../db/schema");
 const queries = require("../db/queries");
 
-const DB_CONFIG = { host: "127.0.0.1", port: 5432, database: "mt5_bridge_local", user: "macmini" };
+const DB_CONFIG = {
+  host: "127.0.0.1",
+  port: 5432,
+  database: "mt5_bridge_local",
+  user: "macmini",
+};
 let pool, db;
 
-async function setup() { pool = new Pool(DB_CONFIG); db = initDb(pool); }
-async function teardown() { await pool.end(); }
+async function setup() {
+  pool = new Pool(DB_CONFIG);
+  db = initDb(pool);
+}
+async function teardown() {
+  await pool.end();
+}
 
 async function test(name, fn) {
-  try { await fn(); console.log("  ✅ " + name); }
-  catch (e) { console.log("  ❌ " + name + ": " + e.message); process.exitCode = 1; }
+  try {
+    await fn();
+    console.log("  ✅ " + name);
+  } catch (e) {
+    console.log("  ❌ " + name + ": " + e.message);
+    process.exitCode = 1;
+  }
 }
 
 async function test_listTradesV2_noFilters() {
   const r = await queries.listTradesV2(db);
   const raw = await pool.query("SELECT COUNT(*) FROM trades");
-  if (r.total !== parseInt(raw.rows[0].count)) throw new Error("total mismatch");
+  if (r.total !== parseInt(raw.rows[0].count))
+    throw new Error("total mismatch");
   if (!Array.isArray(r.items)) throw new Error("items not array");
   if (r.page !== 1) throw new Error("page != 1");
   if (r.items.length > r.pageSize) throw new Error("pageSize exceeded");
@@ -25,15 +41,24 @@ async function test_listTradesV2_noFilters() {
 
 async function test_listTradesV2_bySymbol() {
   const r = await queries.listTradesV2(db, { symbol: "XAUUSD" });
-  const raw = await pool.query("SELECT COUNT(*) FROM trades WHERE symbol = $1", ["XAUUSD"]);
-  if (r.total !== parseInt(raw.rows[0].count)) throw new Error("symbol filter mismatch");
-  if (r.items.some(t => t.symbol !== "XAUUSD")) throw new Error("non-XAUUSD in results");
+  const raw = await pool.query(
+    "SELECT COUNT(*) FROM trades WHERE symbol = $1",
+    ["XAUUSD"],
+  );
+  if (r.total !== parseInt(raw.rows[0].count))
+    throw new Error("symbol filter mismatch");
+  if (r.items.some((t) => t.symbol !== "XAUUSD"))
+    throw new Error("non-XAUUSD in results");
 }
 
 async function test_listTradesV2_byStatus() {
   const r = await queries.listTradesV2(db, { execution_status: "FILLED" });
-  const raw = await pool.query("SELECT COUNT(*) FROM trades WHERE execution_status = $1", ["FILLED"]);
-  if (r.total !== parseInt(raw.rows[0].count)) throw new Error("status filter mismatch");
+  const raw = await pool.query(
+    "SELECT COUNT(*) FROM trades WHERE execution_status = $1",
+    ["FILLED"],
+  );
+  if (r.total !== parseInt(raw.rows[0].count))
+    throw new Error("status filter mismatch");
 }
 
 async function test_listTradesV2_pagination() {
@@ -41,13 +66,14 @@ async function test_listTradesV2_pagination() {
   const p2 = await queries.listTradesV2(db, {}, 2, 2);
   if (p1.items.length > 2) throw new Error("page1 size > 2");
   if (p2.page !== 2) throw new Error("page2 != 2");
-  const ids1 = new Set(p1.items.map(t => t.sid));
-  if (p2.items.some(t => ids1.has(t.sid))) throw new Error("overlap");
+  const ids1 = new Set(p1.items.map((t) => t.sid));
+  if (p2.items.some((t) => ids1.has(t.sid))) throw new Error("overlap");
 }
 
 async function test_listTradesV2_search() {
   const r = await queries.listTradesV2(db, { q: "XAU" });
-  if (!r.items.some(t => String(t.symbol || "").includes("XAU"))) throw new Error("search should find XAUUSD");
+  if (!r.items.some((t) => String(t.symbol || "").includes("XAU")))
+    throw new Error("search should find XAUUSD");
 }
 
 async function test_listSignals_noFilters() {
@@ -58,7 +84,7 @@ async function test_listSignals_noFilters() {
 
 async function test_listSignals_bySymbol() {
   const r = await queries.listSignals(db, { symbol: "XAUUSD" });
-  if (r.some(s => s.symbol !== "XAUUSD")) throw new Error("non-XAUUSD");
+  if (r.some((s) => s.symbol !== "XAUUSD")) throw new Error("non-XAUUSD");
 }
 
 async function test_listUserAccounts() {
@@ -71,13 +97,24 @@ async function test_listUserAccounts() {
 async function test_upsertSignal() {
   const sid = "TEST_DRIZZLE_" + Date.now();
   try {
-    const r = await queries.upsertSignal(db, { sid, created_at: new Date().toISOString(), user_id: "default", symbol: "TESTUSD", side: "BUY", status: "NEW" });
+    const r = await queries.upsertSignal(db, {
+      sid,
+      created_at: new Date().toISOString(),
+      user_id: "default",
+      symbol: "TESTUSD",
+      side: "BUY",
+      status: "NEW",
+    });
     if (!r.sid) throw new Error("no sid");
-    const raw = await pool.query("SELECT sid FROM signals WHERE sid = $1", [sid]);
+    const raw = await pool.query("SELECT sid FROM signals WHERE sid = $1", [
+      sid,
+    ]);
     if (raw.rows.length !== 1) throw new Error("not inserted");
     await pool.query("DELETE FROM signals WHERE sid = $1", [sid]);
   } catch (e) {
-    await pool.query("DELETE FROM signals WHERE sid = $1", [sid]).catch(() => {});
+    await pool
+      .query("DELETE FROM signals WHERE sid = $1", [sid])
+      .catch(() => {});
     throw e;
   }
 }
@@ -94,37 +131,58 @@ async function test_listUiUsers() {
   if (!r[0].userId) throw new Error("missing userId");
 }
 
-async function test_listAllEvents_noFilters() {
-  const r = await queries.listAllEvents(db, {}, 5);
-  if (!Array.isArray(r)) throw new Error("not array");
-}
-
 async function test_upsertUserAccount() {
   const aid = "TEST_ACCT_" + Date.now();
   try {
-    const r = await queries.upsertUserAccount(db, "default", { account_id: aid, name: "Test", balance: 10000, status: "ACTIVE" });
+    const r = await queries.upsertUserAccount(db, "default", {
+      account_id: aid,
+      name: "Test",
+      balance: 10000,
+      status: "ACTIVE",
+    });
     if (!r || r.accountId !== aid) throw new Error("insert failed");
-    const u = await queries.upsertUserAccount(db, "default", { account_id: aid, name: "Updated", balance: 20000 });
+    const u = await queries.upsertUserAccount(db, "default", {
+      account_id: aid,
+      name: "Updated",
+      balance: 20000,
+    });
     if (u.name !== "Updated") throw new Error("upsert update failed");
     await pool.query("DELETE FROM user_accounts WHERE account_id = $1", [aid]);
   } catch (e) {
-    await pool.query("DELETE FROM user_accounts WHERE account_id = $1", [aid]).catch(() => {});
+    await pool
+      .query("DELETE FROM user_accounts WHERE account_id = $1", [aid])
+      .catch(() => {});
     throw e;
   }
 }
 
 async function test_schema_tablesExist() {
-  const names = ["users", "user_accounts", "user_templates", "user_settings", "signals", "trades", "logs", "market_data"];
+  const names = [
+    "users",
+    "user_accounts",
+    "user_templates",
+    "user_settings",
+    "signals",
+    "trades",
+    "market_data",
+  ];
   for (const n of names) {
-    const r = await pool.query("SELECT to_regclass($1) AS exists", ["public." + n]);
+    const r = await pool.query("SELECT to_regclass($1) AS exists", [
+      "public." + n,
+    ]);
     if (!r.rows[0]?.exists) throw new Error("table " + n + " does not exist");
   }
 }
 
 async function test_schema_columnMapping() {
   const dc = Object.keys(schema.trades);
-  const dbc = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_name = 'trades'")).rows.map(r => r.column_name);
-  if (dc.length < dbc.length - 5) throw new Error("Drizzle cols " + dc.length + " << DB cols " + dbc.length);
+  const dbc = (
+    await pool.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'trades'",
+    )
+  ).rows.map((r) => r.column_name);
+  if (dc.length < dbc.length - 5)
+    throw new Error("Drizzle cols " + dc.length + " << DB cols " + dbc.length);
 }
 
 (async () => {
@@ -144,7 +202,6 @@ async function test_schema_columnMapping() {
   await test("upsertSignal", test_upsertSignal);
   await test("findAccountByApiKeyHash", test_findAccountByApiKeyHash);
   await test("listUiUsers", test_listUiUsers);
-  await test("listAllEvents — no filters", test_listAllEvents_noFilters);
   await test("upsertUserAccount", test_upsertUserAccount);
 
   await teardown();

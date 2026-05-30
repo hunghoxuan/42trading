@@ -377,25 +377,36 @@ export default function CronPage() {
   );
 
   const handleSave = useCallback(async () => {
+    console.log("[cron-save] start, selectedCronName=", selectedCronName);
     if (!selectedCronName) return;
     setSaveLoading(true);
     setSaveMsg("");
-    const data = formToDataPayload(form, symbolsGroup);
-    const existing = cronSettings.find((s) => s.name === selectedCronName);
-    const status = existing ? existing.status || "ACTIVE" : "INACTIVE";
-    const payload = {
-      type: "cron",
-      name: cronName,
-      data,
-      status,
-    };
     try {
+      const data = formToDataPayload(form, symbolsGroup);
+      const existing = cronSettings.find((s) => s.name === selectedCronName);
+      const status = existing ? existing.status || "ACTIVE" : "INACTIVE";
+      // Auto-rename if another cron already has this name (avoid duplicates)
+      let finalName = cronName;
+      if (!selectedCronName || selectedCronName !== cronName) {
+        const others = cronSettings.filter((s) => s.name !== selectedCronName);
+        let suffix = 2;
+        while (others.some((s) => s.name === finalName)) {
+          finalName = `${cronName}_${suffix}`;
+          suffix++;
+        }
+      }
+      const payload = {
+        type: "cron",
+        name: finalName,
+        data,
+        status,
+      };
       // If renaming, delete old row first
-      if (selectedCronName && selectedCronName !== cronName) {
+      if (selectedCronName && selectedCronName !== finalName) {
         await api.deleteSetting("cron", selectedCronName).catch(() => {});
       }
       await api.upsertSetting(payload);
-      setSelectedCronName(cronName);
+      setSelectedCronName(finalName);
       const msg = `${CRON_TYPE_LABELS[form.cron_type] || form.cron_type} saved.`;
       setSaveMsg(msg);
       showToast({ message: msg, type: "success" });
@@ -409,6 +420,7 @@ export default function CronPage() {
         Array.isArray(wl?.data?.symbols) ? wl.data.symbols : [],
       );
     } catch (err) {
+      console.error("[cron-save]", err);
       const errMsg = err?.message || String(err || "Save failed");
       setSaveMsg(errMsg);
       showToast({ message: errMsg, type: "error" });
@@ -450,6 +462,7 @@ export default function CronPage() {
   }, [selectedCron, isNewCron]);
 
   const handleToggleStatus = useCallback(async () => {
+    console.log("[cron-toggle] start, selectedCron=", selectedCron?.name);
     if (!selectedCron) return;
     const newStatus =
       String(selectedCron.status || "").toUpperCase() === "ACTIVE"
@@ -467,6 +480,7 @@ export default function CronPage() {
       const res = await api.getSettings();
       setSettings(Array.isArray(res?.settings) ? res.settings : []);
     } catch (err) {
+      console.error("[cron-toggle]", err);
       showToast({ message: err?.message || "Toggle failed.", type: "error" });
     } finally {
       setSaveLoading(false);
@@ -1161,16 +1175,21 @@ export default function CronPage() {
                   borderTop: "1px solid var(--border)",
                 }}
               >
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {selectedCron && (
-                    <button
-                      className={isActive ? "secondary-button" : "primary-button"}
-                      style={{ padding: "12px 24px", fontSize: 14 }}
-                      onClick={handleToggleStatus}
-                      disabled={saveLoading}
-                    >
-                      {isActive ? "DEACTIVATE" : "ACTIVATE"}
-                    </button>
+                    <>
+                      <span className={`badge ${isActive ? "ACTIVE" : "INACTIVE"}`}>
+                        {isActive ? "ACTIVE" : "INACTIVE"}
+                      </span>
+                      <button
+                        className="secondary-button"
+                        style={{ padding: "12px 24px", fontSize: 14 }}
+                        onClick={handleToggleStatus}
+                        disabled={saveLoading}
+                      >
+                        {isActive ? "Turn Off" : "Turn On"}
+                      </button>
+                    </>
                   )}
                   {selectedCron && !isNewCron && (
                     <button

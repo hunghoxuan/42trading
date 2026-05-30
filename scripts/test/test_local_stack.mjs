@@ -73,6 +73,7 @@ async function main() {
     id: signalId,
     action: "BUY",
     symbol: TEST_SYMBOL,
+    price: 70000,
     volume: 0.01,
     sl: 65000,
     tp: 75000,
@@ -89,6 +90,7 @@ async function main() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  console.log("[test] enqueue response:", JSON.stringify(enqueue));
   assert(enqueue.ok === true, "enqueue should return ok=true");
   assert(enqueue.signal_id === signalId, "enqueue signal_id mismatch");
   log("/mt5/tv/webhook enqueue ok");

@@ -5,6 +5,7 @@ import {
   getFilteredRowModel,
   flexRender,
 } from "@tanstack/react-table";
+import { useMemo, useCallback } from "react";
 
 /**
  * Headless data table wrapping @tanstack/react-table.
@@ -35,24 +36,26 @@ export default function DataTable({
   onRowClick,
   className,
 }) {
+  const tableState = useMemo(() => ({
+    sorting: sorting ? [{ id: sorting.key, desc: sorting.dir === "desc" }] : [],
+    globalFilter,
+  }), [sorting?.key, sorting?.dir, globalFilter]);
+
+  const handleSortingChange = useCallback((updater) => {
+    if (!onSortingChange) return;
+    const s = typeof updater === "function" ? updater([]) : updater;
+    if (s.length > 0) {
+      onSortingChange({ key: s[0].id, dir: s[0].desc ? "desc" : "asc" });
+    } else {
+      onSortingChange(null);
+    }
+  }, [onSortingChange]);
+
   const table = useReactTable({
     data,
     columns,
-    state: {
-      sorting: sorting
-        ? [{ id: sorting.key, desc: sorting.dir === "desc" }]
-        : [],
-      globalFilter,
-    },
-    onSortingChange: (updater) => {
-      if (!onSortingChange) return;
-      const state = typeof updater === "function" ? updater([]) : updater;
-      if (state.length > 0) {
-        onSortingChange({ key: state[0].id, dir: state[0].desc ? "desc" : "asc" });
-      } else {
-        onSortingChange(null);
-      }
-    },
+    state: tableState,
+    onSortingChange: handleSortingChange,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

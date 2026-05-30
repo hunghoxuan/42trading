@@ -16,8 +16,7 @@ const dbUrl =
   process.env.SEED_DATABASE_URL ||
   "postgresql://macmini@127.0.0.1:5432/mt5_bridge_local";
 const outputPath =
-  process.env.SEED_OUTPUT ||
-  path.join(__dirname, "mt5_seed_sanitized.sql");
+  process.env.SEED_OUTPUT || path.join(__dirname, "mt5_seed_sanitized.sql");
 
 const { Pool } = pg;
 const pool = new Pool({ connectionString: dbUrl });
@@ -32,7 +31,6 @@ const TABLES = [
   "execution_profiles",
   "signals",
   "trades",
-  "logs",
   "market_data",
   "ea_logs",
 ];
@@ -54,8 +52,10 @@ function quoteIdent(value) {
 
 function sqlValue(value) {
   if (value === null || value === undefined) return "NULL";
-  if (value instanceof Date) return `'${value.toISOString().replace(/'/g, "''")}'`;
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
+  if (value instanceof Date)
+    return `'${value.toISOString().replace(/'/g, "''")}'`;
+  if (typeof value === "number")
+    return Number.isFinite(value) ? String(value) : "NULL";
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "object") {
     return `'${JSON.stringify(value).replace(/'/g, "''")}'::jsonb`;
@@ -86,7 +86,8 @@ function sanitizeJson(value) {
 function sanitizeRow(table, row) {
   const next = { ...row };
   for (const [column, value] of Object.entries(SENSITIVE_COLUMN_DEFAULTS)) {
-    if (Object.prototype.hasOwnProperty.call(next, column)) next[column] = value;
+    if (Object.prototype.hasOwnProperty.call(next, column))
+      next[column] = value;
   }
   if (table === "users") {
     if (next.email) next.email = "local.seed@example.test";
@@ -102,10 +103,6 @@ function sanitizeRow(table, row) {
   }
   if (table === "accounts" || table === "user_accounts") {
     next.metadata = sanitizeJson(next.metadata);
-  }
-  if (table === "logs") {
-    next.metadata = sanitizeJson(next.metadata);
-    next.error = next.error ? "[redacted]" : next.error;
   }
   if (table === "trades" || table === "signals") {
     next.metadata = sanitizeJson(next.metadata);
@@ -135,7 +132,9 @@ async function exportTable(table) {
   for (const rawRow of result.rows) {
     const row = sanitizeRow(table, rawRow);
     const values = fields.map((field) => sqlValue(row[field])).join(", ");
-    lines.push(`INSERT INTO public.${quoteIdent(table)} (${columns}) VALUES (${values});`);
+    lines.push(
+      `INSERT INTO public.${quoteIdent(table)} (${columns}) VALUES (${values});`,
+    );
   }
   return lines;
 }

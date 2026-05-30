@@ -229,8 +229,20 @@ export default function TradesPage() {
   const confirm = useConfirmDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { tradeId } = useParams();
+  const { tradeId, status: routeStatus } = useParams();
+  const statusToPath = (st) => (String(st || "").toLowerCase() === "draft" ? "draft" : String(st || "").toLowerCase());
+  const tradePath = (t) => `/trades/${statusToPath(t?.execution_status || "pending")}/${tradeKeyOf(t)}`;
   const [rows, setRows] = useState([]);
+  const [selectedTrade, setSelectedTrade] = useState(null);
+
+  // Redirect /trades/{sid} to /trades/{status}/{sid}
+  useEffect(() => {
+    if (!tradeId || routeStatus) return;
+    const row = rows.find(r => tradeKeyOf(r) === tradeId);
+    if (row) {
+      navigate(tradePath(row), { replace: true });
+    }
+  }, [tradeId, routeStatus, rows]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -238,7 +250,6 @@ export default function TradesPage() {
   const [accounts, setAccounts] = useState([]);
   const [sources, setSources] = useState([]);
   const [changedFields, setChangedFields] = useState(() => new Map()); // sid -> Set<fieldName>
-  const [selectedTrade, setSelectedTrade] = useState(null);
   const [tradeEvents, setTradeEvents] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkAction, setBulkAction] = useState("");
@@ -252,6 +263,7 @@ export default function TradesPage() {
   const [editForm, setEditForm] = useState({
     execution_status: "PENDING",
     pnl_realized: "0",
+    account_id: "",
   });
   const [detailTfTab, setDetailTfTab] = useState("ENTRY");
   const [detailPlan, setDetailPlan] = useState({
@@ -310,7 +322,7 @@ export default function TradesPage() {
   }, [searchParams, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
-  const [sorting, setSorting] = useState({ key: "audit", dir: "desc" });
+  const [sorting, setSorting] = useState({ key: "symbol", dir: "asc" });
   const inFlightRef = useRef(false);
   const tradeEventsInFlightRef = useRef(false);
   const selectedTradeIdRef = useRef("");
@@ -416,21 +428,7 @@ export default function TradesPage() {
     tradeEventsInFlightRef.current = true;
     try {
       const out = await api.v2TradeEvents(tradeRef, 100);
-      let items = Array.isArray(out?.items) ? out.items : [];
-      if (items.length === 0) {
-        const row = rows.find((r) => tradeKeyOf(r) === String(tradeRef));
-        const signalId = String(row?.sid || "").trim();
-        if (signalId) {
-          const legacy = await api.trade(signalId);
-          const evs = Array.isArray(legacy?.events) ? legacy.events : [];
-          items = evs.map((e, i) => ({
-            log_id: e.id || i,
-            created_at: e.event_time || e.created_at || null,
-            metadata: e.payload_json || e.metadata || {},
-            object_table: "signals",
-          }));
-        }
-      }
+      const items = Array.isArray(out?.items) ? out.items : [];
       setTradeEvents(items);
     } catch {
       setTradeEvents([]);
@@ -1035,7 +1033,7 @@ export default function TradesPage() {
   ]);
 
   const onSortingChange = (s) =>
-    setSorting(s || { key: "audit", dir: "desc" });
+    setSorting(s || { key: "symbol", dir: "asc" });
 
   async function onSaveTradeEdit() {
     const selectedRef = tradeKeyOf(selectedTrade);
@@ -1050,6 +1048,7 @@ export default function TradesPage() {
         execution_status: st,
         pnl_realized:
           st === "PENDING" ? 0 : Number.isFinite(pnlNum) ? pnlNum : null,
+        account_id: String(editForm.account_id || "").trim() || undefined,
       };
       const out = await api.v2UpdateTrade(selectedRef, payload);
       setEditMsg({ type: "success", text: "Trade updated." });
@@ -1092,6 +1091,7 @@ export default function TradesPage() {
           : Number.isFinite(pnlRaw)
             ? String(Number(pnlRaw.toFixed(2)))
             : "",
+      account_id: String(trade?.account_id || ""),
     });
     setEditMsg({ type: "", text: "" });
     setEditModalOpen(true);
@@ -1107,9 +1107,11 @@ export default function TradesPage() {
           gap: 12,
         }}
       >
-        <h2 className="page-title" style={{ margin: 0 }}>
-          Trades
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <h2 className="page-title" style={{ margin: 0 }}>
+            Trades
+          </h2>
+        </div>
         <span className="minor-text">{total} trades</span>
       </div>
 
@@ -1157,8 +1159,8 @@ export default function TradesPage() {
             }
           >
             <option value="">ALL ACCOUNTS</option>
-            {accounts.map((a) => (
-              <option key={a.account_id} value={a.account_id}>
+            {accounts.map((a, i) => (
+              <option key={a.account_id || `acc-${i}`} value={a.account_id}>
                 {a.name || a.account_id}
               </option>
             ))}
@@ -1187,8 +1189,8 @@ export default function TradesPage() {
             }
           >
             <option value="">ALL SOURCES</option>
-            {sources.map((s) => (
-              <option key={s.source_id} value={s.source_id}>
+            {sources.map((s, i) => (
+              <option key={s.source_id || `src-${i}`} value={s.source_id}>
                 {s.name || s.source_id}
               </option>
             ))}
@@ -1348,7 +1350,7 @@ export default function TradesPage() {
           <div className="events-table-wrap">
             {listMode === "compact" ? (
               <div style={{ padding: 4, overflow: "auto", height: "100%" }}>
-                {sortedRows.map((t) => {
+                {sortedRows.map((t, i) => {
                   const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
                   const action = String(t.action || t.side || "").toUpperCase();
                   const statusRaw = t.execution_status || "";
@@ -1372,12 +1374,12 @@ export default function TradesPage() {
                   const rr = asNum(t.rr_planned) ?? calcRr(t);
                   return (
                     <article
-                      key={t.sid || t.id}
+                      key={t.sid || t.id || `row-${i}`}
                       onClick={() => {
                         const k = tradeKeyOf(t);
                         selectedTradeIdRef.current = k;
                         setSelectedTrade(t);
-                        navigate(`/trades/${k}`, { replace: true });
+                        navigate(tradePath(t), { replace: true });
                       }}
                       style={{
                         cursor: "pointer",
@@ -1485,7 +1487,7 @@ export default function TradesPage() {
                   const k = tradeKeyOf(t);
                   selectedTradeIdRef.current = k;
                   setSelectedTrade(t);
-                  navigate(`/trades/${k}`, { replace: true });
+                  navigate(tradePath(t), { replace: true });
                 }}
               />
             )}
@@ -1642,6 +1644,8 @@ export default function TradesPage() {
                                     }),
                                 );
                               await cancelPromise;
+                              navigate(`/trades/pending`, { replace: true });
+                              setSelectedTrade(null);
                               await loadTrades();
                             } catch (e) {
                               setError(e?.message || "Cancel failed");
@@ -1669,6 +1673,8 @@ export default function TradesPage() {
                                     ),
                                 );
                               await closePromise;
+                              navigate(`/trades/filled`, { replace: true });
+                              setSelectedTrade(null);
                               await loadTrades();
                             } catch (e) {
                               setError(e?.message || "Close failed");
@@ -2506,6 +2512,22 @@ export default function TradesPage() {
                 placeholder="PNL realized"
                 disabled={editForm.execution_status === "PENDING"}
               />
+              <select
+                value={editForm.account_id}
+                onChange={(e) =>
+                  setEditForm((p) => ({ ...p, account_id: e.target.value }))
+                }
+                style={{ gridColumn: "1 / -1" }}
+              >
+                <option value="">Account: None</option>
+                {(Array.isArray(accounts) ? accounts : [])
+                  .filter((a) => String(a?.status || "").toUpperCase() === "ACTIVE")
+                  .map((a) => (
+                    <option key={a.account_id || a.name} value={a.account_id || a.name || ""}>
+                      {a.name || a.account_id || "—"}
+                    </option>
+                  ))}
+              </select>
             </div>
             {editMsg.text ? (
               <div

@@ -185,7 +185,7 @@ body {
 .nav-dropdown-menu {
     position: absolute;
     top: 100%;
-    right: 0;
+    left: 50%;
     min-width: 180px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -197,7 +197,7 @@ body {
     flex-direction: column;
     gap: var(--space-xs);
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateX(-50%) translateY(4px);
     pointer-events: none;
     transition:
         opacity 0.12s ease,
@@ -207,7 +207,7 @@ body {
 .nav-dropdown:focus-within .nav-dropdown-menu,
 .nav-dropdown-menu[data-state="open"] {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateX(-50%) translateY(0);
     pointer-events: auto;
 }
 .nav-dropdown-menu a,

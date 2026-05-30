@@ -24,6 +24,9 @@ namespace cAlgo.Robots
         [Parameter("EA API Key", DefaultValue = "acc_fab38ed32ecde9b28b3dd33d8be10a77da6a")]
         public string EaApiKey { get; set; }
 
+        [Parameter("Master Timer (sec)", Group = "Timer", DefaultValue = 1, MinValue = 1)]
+        public int MasterTimerSeconds { get; set; }
+
         [Parameter("Polling Frequency (sec)", DefaultValue = 2, MinValue = 1)]
         public int PollSeconds { get; set; }
 
@@ -92,7 +95,7 @@ namespace cAlgo.Robots
         [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
         public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
 
-        private const string BuildVersion = "v2026.05.29 00:30 - tick-main-thread";
+        private const string BuildVersion = "v2026.05.30 18:45 - master-timer";
 
         private string _serverStatus = "WAITING";
         private string _apiStatus = "WAITING";
@@ -154,6 +157,20 @@ namespace cAlgo.Robots
 
         private HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         private bool _isBusy = false;
+        private bool _syncOnly = false; // When true, DoTimerWork only does sync payload + dispatch
+
+        // Master timer state
+        private DateTime _masterTimerTick = DateTime.MinValue;
+        private long _masterTickCount = 0;
+
+        // Per-subsystem busy flags (one stuck subsystem can't block others)
+        private bool _busyPull = false;
+        private bool _busySync = false;
+        private bool _busyPrice = false;
+        private bool _busyBars = false;
+        private bool _busyIncSync = false;
+        private bool _busyTracked = false;
+
         private CancellationTokenSource _watchdogCts;
 
         private string ResolveSid(string ticket, string commentSid)
@@ -230,18 +247,17 @@ namespace cAlgo.Robots
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
             _serverStatus = "BOOTING";
             _apiStatus = "BOOTING";
-            _pollStatus = "STARTING";
-            _syncStatus = "STARTING";
-            Timer.Start(PollSeconds);
+            _pollStatus = "IDLE";
+            _syncStatus = "IDLE";
+            int interval = Math.Max(1, MasterTimerSeconds);
+            Timer.Start(TimeSpan.FromSeconds(interval));
             _lastTimerTickSeen = DateTime.Now;
-            StartTimerWatchdog();
-            // OnTick handles periodics; DoTimerWork on startup
-            DoTimerWork();
-            Print("[Bridge] Robot Started. Version: {0}", BuildVersion);
+            StartMasterWatchdog(interval);
+            Print("[Bridge] Started. MasterTimer={0}s Ver={1}", interval, BuildVersion);
             RefreshDebugPanelNow();
         }
 
-        private void StartTimerWatchdog()
+        private void StartMasterWatchdog(int intervalSec)
         {
             _watchdogCts = new CancellationTokenSource();
             var ct = _watchdogCts.Token;
@@ -251,26 +267,18 @@ namespace cAlgo.Robots
                 {
                     try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, PollSeconds)), ct);
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Max(2, intervalSec * 2)), ct);
                         if (ct.IsCancellationRequested) break;
                         var now = DateTime.Now;
-                        var timerStaleSeconds = Math.Max(5, PollSeconds * 3);
-                        if ((_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= timerStaleSeconds) &&
-                            (now - _lastTickFallbackKick).TotalSeconds >= Math.Max(1, PollSeconds))
+                        var staleSec = Math.Max(5, intervalSec * 5);
+                        if (_lastTimerTickSeen == DateTime.MinValue || (now - _lastTimerTickSeen).TotalSeconds >= staleSec)
                         {
-                            _lastTickFallbackKick = now;
-                            BeginInvokeOnMainThread(() =>
-                            {
-                                if (_pollCount <= 6) Print("[Diag] Watchdog kick (timer stale >= {0}s)", timerStaleSeconds);
-                                OnTimer();
-                            });
+                            Print("[Watchdog] Master timer stale {0}s — kicking", (int)(now - _lastTimerTickSeen).TotalSeconds);
+                            BeginInvokeOnMainThread(() => OnTimer());
                         }
                     }
                     catch (TaskCanceledException) { break; }
-                    catch (Exception ex)
-                    {
-                        if (_pollCount <= 6) SafePrint("[Diag] Watchdog error: {0}", ex.Message);
-                    }
+                    catch (Exception ex) { SafePrint("[Watchdog] Error: {0}", ex.Message); }
                 }
             }, ct);
         }
@@ -279,15 +287,6 @@ namespace cAlgo.Robots
         {
             if (SelectedStrategy != ManagementStrategy.None)
                 ManagePositions();
-
-            // Run DoTimerWork on main thread every PollSeconds
-            var now = DateTime.Now;
-            if ((now - _lastTickFallbackKick).TotalSeconds >= PollSeconds)
-            {
-                _lastTickFallbackKick = now;
-                _lastTimerTickSeen = now;
-                DoTimerWork();
-            }
         }
 
         private void ManagePositions()
@@ -442,24 +441,156 @@ namespace cAlgo.Robots
         protected override void OnTimer()
         {
             _lastTimerTickSeen = DateTime.Now;
+            _masterTickCount++;
+            _masterTimerTick = DateTime.Now;
+            // Dispatch all cTrader API calls to main thread
+            BeginInvokeOnMainThread(() => MasterTimerTick());
+        }
+
+        private void MasterTimerTick()
+        {
+            RefreshDebugPanelNow();
+
+            if (_masterTickCount % 60 == 0) CleanupOldEntries();
+
+            if (_consecutiveErrors > 0)
+            {
+                int bs = Math.Min(30, (int)Math.Pow(2, _consecutiveErrors - 1));
+                if (bs > PollSeconds && _masterTickCount % Math.Max(1, bs / MasterTimerSeconds) != 0)
+                    return;
+            }
+
+            var accId = Account.UserId.ToString();
+            var now = DateTime.Now;
+
+            // --- Tracked symbols (startup + every 5 min) ---
+            if ((_lastTrackedFetch == DateTime.MinValue || (now - _lastTrackedFetch).TotalMinutes >= 5) && !_busyTracked)
+            {
+                _busyTracked = true; _lastTrackedFetch = now;
+                Task.Run(async () => { try { await FetchTrackedSymbolsAsync(accId); } catch { } finally { _busyTracked = false; } });
+            }
+
+            // --- Price push ---
+            if (PricePushEnabled && !_busyPrice && (_lastPriceTime == DateTime.MinValue || (now - _lastPriceTime).TotalSeconds >= PricePushSeconds))
+            {
+                _busyPrice = true; _priceStatus = "PUSHING";
+                var syms = GetActiveSymbols();
+                if (syms.Count > 0)
+                {
+                    // Read prices NOW on main thread before dispatching to background
+                    var pd = ReadPricesOnMainThread(syms);
+                    if (pd.Count > 0)
+                    {
+                        Task.Run(async () =>
+                        {
+                            try { await PushPricesAsync(accId, pd); }
+                            catch (Exception ex) { _lastPriceErr = ex.Message; _priceStatus = "ERROR"; }
+                            finally { _lastPriceTime = DateTime.Now; _busyPrice = false; }
+                        });
+                    }
+                    else { _priceStatus = "IDLE"; _lastPriceTime = now; _busyPrice = false; }
+                }
+                else { _priceStatus = "IDLE"; _lastPriceTime = now; _busyPrice = false; }
+            }
+
+            // --- Bar push ---
+            if (BarPushEnabled && !_busyBars && (_lastBarTime == DateTime.MinValue || (now - _lastBarTime).TotalSeconds >= BarPushSeconds))
+            {
+                _busyBars = true; _barStatus = "PUSHING";
+                var syms = GetActiveSymbols();
+                if (syms.Count > 0)
+                {
+                    var bs = syms;
+                    Task.Run(async () =>
+                    {
+                        try { await PushBarsAsync(accId, bs); }
+                        catch (Exception ex) { _lastBarErr = ex.Message; _barStatus = "ERROR"; }
+                        finally { _lastBarTime = DateTime.Now; _busyBars = false; }
+                    });
+                }
+                else { _barStatus = "IDLE"; _lastBarTime = now; _busyBars = false; }
+            }
+
+            // --- Incremental bars ---
+            if (EnableIncrementalBars && !_busyIncSync && (_lastIncrementalSync == DateTime.MinValue || (now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds))
+            {
+                _busyIncSync = true; _incrementalStatus = "SYNCING";
+                var syms = GetActiveSymbols();
+                if (syms.Count > 0)
+                {
+                    var iss = syms;
+                    Task.Run(async () =>
+                    {
+                        try { await SyncBarsIncrementalAsync(accId, iss); }
+                        catch (Exception ex) { _lastIncrementalErr = ex.Message; _incrementalStatus = "ERROR"; }
+                        finally { _lastIncrementalSync = DateTime.Now; _busyIncSync = false; }
+                    });
+                }
+                else { _incrementalStatus = "IDLE"; _lastIncrementalSync = now; _busyIncSync = false; }
+            }
+
+            // --- Poll (every tick, non-blocking) ---
+            if (!_busyPull)
+            {
+                _busyPull = true; _pollStatus = "POLLING"; _pollCount++;
+                Task.Run(async () => { try { await PollSignalsAsync(accId); } catch { } finally { _busyPull = false; } });
+            }
+
+            // --- Sync (if interval elapsed, not busy) ---
+            bool doSync = _lastSyncTime == DateTime.MinValue || (now - _lastSyncTime).TotalSeconds >= SyncIntervalSeconds;
+            if (doSync && !_busySync)
+            {
+                _busySync = true; _syncStatus = "SYNCING";
+                _syncOnly = true;
+                DoTimerWork();
+            }
+        }
+
+        private List<string> GetActiveSymbols()
+        {
+            var syms = _trackedSymbols.Count > 0 ? new List<string>(_trackedSymbols) : new List<string>();
+            if (syms.Count == 0)
+            {
+                foreach (var pos in Positions)
+                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName)) syms.Add(pos.SymbolName);
+                foreach (var order in PendingOrders)
+                    if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName)) syms.Add(order.SymbolName);
+                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name)) syms.Add(Symbol.Name);
+            }
+            return syms;
+        }
+
+        // Reads prices on main thread (cTrader API not thread-safe)
+        private List<Tuple<string, double, double>> ReadPricesOnMainThread(List<string> symbols)
+        {
+            var result = new List<Tuple<string, double, double>>();
+            foreach (var sym in symbols)
+            {
+                try
+                {
+                    var s = Symbols.GetSymbol(sym);
+                    if (s == null) continue;
+                    double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
+                    double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
+                    if (bid > 0 && ask > 0) result.Add(Tuple.Create(sym, bid, ask));
+                }
+                catch { }
+            }
+            return result;
         }
 
         private void DoTimerWork()
         {
-            if (_isBusy) return;
-            _isBusy = true;
             try
             {
-                _pollCount++;
-                if (_pollCount <= 3) Print("[Diag] OnTimer tick #" + _pollCount + " isBusy=" + _isBusy);
-                // Perform memory cleanup periodically
-                if (_pollCount % 10 == 0) // Every 10 polls
+                if (!_syncOnly)
                 {
-                    CleanupOldEntries();
+                    _pollCount++;
+                    if (_pollCount <= 3) Print("[Diag] OnTimer tick #" + _pollCount);
+                    if (_pollCount % 10 == 0) CleanupOldEntries();
                 }
 
-                // Apply exponential backoff for consecutive errors
-                if (_consecutiveErrors > 0)
+                if (!_syncOnly && _consecutiveErrors > 0)
                 {
                     int backoffSeconds = Math.Min(30, (int)Math.Pow(2, _consecutiveErrors - 1));
                     if (backoffSeconds > PollSeconds)
@@ -471,339 +602,347 @@ namespace cAlgo.Robots
 
                 var accId = Account.UserId.ToString();
 
-                // --- Fetch tracked symbols (startup + every 5 min) ---
-                if (_lastTrackedFetch == DateTime.MinValue ||
-                    (DateTime.Now - _lastTrackedFetch).TotalMinutes >= 5)
+                if (!_syncOnly)
                 {
-                    _lastTrackedFetch = DateTime.Now;
-                    _ = FetchTrackedSymbolsAsync(accId);
-                }
-
-                // --- Price push (every PricePushSeconds) ---
-                if (PricePushEnabled)
-                {
-                    if (_lastPriceTime == DateTime.MinValue ||
-                        (DateTime.Now - _lastPriceTime).TotalSeconds >= PricePushSeconds)
+                    // --- Fetch tracked symbols (startup + every 5 min) ---
+                    if (_lastTrackedFetch == DateTime.MinValue ||
+                        (DateTime.Now - _lastTrackedFetch).TotalMinutes >= 5)
                     {
-                        // Read prices on MAIN thread (cTrader API not thread-safe)
-                        var priceData = new List<Tuple<string, double, double>>();
-                        var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
-                        if (syms.Count == 0)
+                        _lastTrackedFetch = DateTime.Now;
+                        _ = FetchTrackedSymbolsAsync(accId);
+                    }
+
+                    // --- Price push (every PricePushSeconds) ---
+                    if (PricePushEnabled)
+                    {
+                        if (_lastPriceTime == DateTime.MinValue ||
+                            (DateTime.Now - _lastPriceTime).TotalSeconds >= PricePushSeconds)
                         {
-                            // Fallback auto-detect
-                            foreach (var pos in Positions)
-                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
-                                    syms.Add(pos.SymbolName);
-                            foreach (var order in PendingOrders)
-                                if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
-                                    syms.Add(order.SymbolName);
-                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
-                                syms.Add(Symbol.Name);
-                        }
-                        foreach (var sym in syms)
-                        {
-                            try
+                            // Read prices on MAIN thread (cTrader API not thread-safe)
+                            var priceData = new List<Tuple<string, double, double>>();
+                            var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                            if (syms.Count == 0)
                             {
-                                var s = Symbols.GetSymbol(sym);
-                                if (s == null) continue;
-                                double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
-                                double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
-                                if (bid > 0 && ask > 0)
-                                    priceData.Add(Tuple.Create(sym, bid, ask));
+                                // Fallback auto-detect
+                                foreach (var pos in Positions)
+                                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
+                                        syms.Add(pos.SymbolName);
+                                foreach (var order in PendingOrders)
+                                    if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
+                                        syms.Add(order.SymbolName);
+                                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
+                                    syms.Add(Symbol.Name);
                             }
-                            catch { }
-                        }
-                        if (priceData.Count == 0)
-                        {
-                            _priceStatus = "IDLE"; _lastPriceTime = DateTime.Now;
-                        }
-                        else
-                        {
-                            _priceStatus = "PUSHING";
-                            var pd = priceData; // capture for closure
-                            Task.Run(async () => await PushPricesAsync(accId, pd));
-                        }
-                    }
-                }
-
-                // --- OHLC Bar push (every BarPushSeconds) ---
-                if (BarPushEnabled)
-                {
-                    if (_lastBarTime == DateTime.MinValue ||
-                        (DateTime.Now - _lastBarTime).TotalSeconds >= BarPushSeconds)
-                    {
-                        _barStatus = "PUSHING";
-                        var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
-                        if (syms.Count == 0)
-                        {
-                            foreach (var pos in Positions)
-                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
-                                    syms.Add(pos.SymbolName);
-                            foreach (var order in PendingOrders)
-                                if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
-                                    syms.Add(order.SymbolName);
-                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
-                                syms.Add(Symbol.Name);
-                        }
-                        if (syms.Count > 0)
-                            _ = PushBarsAsync(accId, syms);
-                        else
-                        {
-                            _barStatus = "IDLE";
-                            _lastBarTime = DateTime.Now;
-                        }
-                    }
-                }
-
-                // --- Incremental bars sync (every IncrementalBarsSeconds) ---
-                if (EnableIncrementalBars)
-                {
-                    if (_lastIncrementalSync == DateTime.MinValue ||
-                        (DateTime.Now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds)
-                    {
-                        var incSyms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
-                        if (incSyms.Count == 0)
-                        {
-                            foreach (var pos in Positions)
-                                if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !incSyms.Contains(pos.SymbolName))
-                                    incSyms.Add(pos.SymbolName);
-                            if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !incSyms.Contains(Symbol.Name))
-                                incSyms.Add(Symbol.Name);
-                        }
-                        if (incSyms.Count > 0)
-                            Task.Run(async () => await SyncBarsIncrementalAsync(accId, incSyms));
-                        _lastIncrementalSync = DateTime.Now;
-                    }
-                }
-
-                // --- Sync: build payload + push to VPS (every SyncIntervalSeconds) ---
-                var now = DateTime.Now;
-                var doSync = _lastSyncTime == DateTime.MinValue ||
-                    (now - _lastSyncTime).TotalSeconds >= SyncIntervalSeconds;
-                // Always pull signals on PollSeconds cadence
-
-                string balance = null, equity = null, margin = null, brokerName = null;
-                List<string> posList = null, ordersList = null, closedList = null, metricsList = null;
-                HashSet<string> activeTicketIds = null;
-
-                if (doSync)
-                {
-                    balance = Account.Balance.ToString(CultureInfo.InvariantCulture);
-                    equity = Account.Equity.ToString(CultureInfo.InvariantCulture);
-                    margin = Account.Margin.ToString(CultureInfo.InvariantCulture);
-                    brokerName = Account.BrokerName;
-                    posList = new List<string>();
-                    activeTicketIds = new HashSet<string>(Positions.Select(p => p.Id.ToString()));
-
-                    foreach (var pos in Positions)
-                    {
-                        var sid = ResolveSid(pos.Id.ToString(), pos.Comment).Replace("\"", "'");
-                        var s = Symbols.GetSymbol(pos.SymbolName);
-                        double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
-
-                        double tpPnl = 0;
-                        double slPnl = 0;
-                        double distanceTp = 0;
-                        double distanceSl = 0;
-                        double spreadVal = 0;
-                        if (s != null)
-                        {
-                            spreadVal = double.IsNaN(s.Spread) ? 0 : s.Spread;
-                            if (pos.TakeProfit.HasValue)
+                            foreach (var sym in syms)
                             {
-                                double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize;
-                                if (pos.TradeType == TradeType.Sell) pips = -pips;
-                                tpPnl = pips * s.PipValue * pos.VolumeInUnits;
-                                distanceTp = Math.Abs(pips);
+                                try
+                                {
+                                    var s = Symbols.GetSymbol(sym);
+                                    if (s == null) continue;
+                                    double bid = double.IsNaN(s.Bid) ? 0 : s.Bid;
+                                    double ask = double.IsNaN(s.Ask) ? 0 : s.Ask;
+                                    if (bid > 0 && ask > 0)
+                                        priceData.Add(Tuple.Create(sym, bid, ask));
+                                }
+                                catch { }
                             }
-                            if (pos.StopLoss.HasValue)
+                            if (priceData.Count == 0)
                             {
-                                double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize;
-                                if (pos.TradeType == TradeType.Sell) pips = -pips;
-                                slPnl = pips * s.PipValue * pos.VolumeInUnits;
-                                distanceSl = Math.Abs(pips);
+                                _priceStatus = "IDLE"; _lastPriceTime = DateTime.Now;
+                            }
+                            else
+                            {
+                                _priceStatus = "PUSHING";
+                                var pd = priceData; // capture for closure
+                                Task.Run(async () => await PushPricesAsync(accId, pd));
                             }
                         }
-                        double balanceTp = tpPnl;
-                        double balanceSl = slPnl;
-
-                        var ticketKey = pos.Id.ToString();
-                        double partialClosedVol = 0;
-                        _partialClosedVolumes.TryGetValue(ticketKey, out partialClosedVol);
-                        double remainingVol = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits;
-                        bool hasPartial = partialClosedVol > 0;
-
-                        posList.Add("{\"sid\":\"" + sid + "\"" +
-                            ",\"comment\":\"" + sid + "\"" +
-                            ",\"ticket\":\"" + pos.Id + "\"" +
-                            ",\"symbol\":\"" + pos.SymbolName + "\"" +
-                            ",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\"" +
-                            ",\"type\":\"MARKET\"" +
-                            ",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"distance_sl\":" + distanceSl.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"distance_tp\":" + distanceTp.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"balance_sl\":" + balanceSl.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"balance_tp\":" + balanceTp.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"label\":\"" + pos.Label + "\"" +
-                            ",\"status\":\"OPEN\"" +
-                            ",\"remaining_volume\":" + remainingVol.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"closed_volume_partial\":" + partialClosedVol.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"has_partial\":" + (hasPartial ? "true" : "false") + "}");
                     }
 
-                    closedList = new List<string>();
-                    var historicalDeals = History.OrderByDescending(d => d.ClosingTime).ToList();
-                    var limit = DateTime.UtcNow.AddDays(-2);
-                    foreach (var deal in historicalDeals)
+                    // --- OHLC Bar push (every BarPushSeconds) ---
+                    if (BarPushEnabled)
                     {
-                        if (deal.ClosingTime < limit) continue;
-                        if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
-                        if (closedList.Count >= 20) break;
-                        var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
-                        string closeReason = "MANUAL_CLOSE";
-                        closedList.Add("{\"sid\":\"" + sid2 + "\"" +
-                            ",\"comment\":\"" + sid2 + "\"" +
-                            ",\"ticket\":\"" + deal.PositionId + "\"" +
-                            ",\"symbol\":\"" + deal.SymbolName + "\"" +
-                            ",\"symbol_code\":\"" + deal.SymbolName + "\"" +
-                            ",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\"" +
-                            ",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pips\":0.0" +
-                            ",\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"status\":\"CLOSED\"" +
-                            ",\"close_reason\":\"" + closeReason + "\"" +
-                            ",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\"" +
-                            ",\"label\":\"" + deal.Label + "\"}");
-                    }
-
-                    ordersList = new List<string>();
-
-                    // Build position SID lookup for pending order SID fallback
-                    var posSidLookup = new Dictionary<string, string>();
-                    foreach (var pos in Positions)
-                    {
-                        var posSid = ResolveSid(pos.Id.ToString(), pos.Comment);
-                        if (!string.IsNullOrEmpty(posSid))
+                        if (_lastBarTime == DateTime.MinValue ||
+                            (DateTime.Now - _lastBarTime).TotalSeconds >= BarPushSeconds)
                         {
-                            var key = (pos.SymbolName + "_" + pos.TradeType.ToString()).ToUpper();
-                            if (!posSidLookup.ContainsKey(key))
-                                posSidLookup[key] = posSid;
-                        }
-                    }
-
-                    foreach (var order in PendingOrders)
-                    {
-                        var sid3 = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
-
-                        // Fallback: cTrader may recreate order with new OID on modify, losing comment SID
-                        if (string.IsNullOrEmpty(sid3))
-                        {
-                            var lookupKey = (order.SymbolName + "_" + order.TradeType.ToString()).ToUpper();
-                            if (posSidLookup.TryGetValue(lookupKey, out var posSid))
+                            _barStatus = "PUSHING";
+                            var syms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                            if (syms.Count == 0)
                             {
-                                sid3 = posSid;
-                                // Cache new OID -> SID for future syncs
-                                var oidKey = order.Id.ToString();
-                                if (!_ticketSidMap.ContainsKey(oidKey))
-                                    _ticketSidMap[oidKey] = posSid;
+                                foreach (var pos in Positions)
+                                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !syms.Contains(pos.SymbolName))
+                                        syms.Add(pos.SymbolName);
+                                foreach (var order in PendingOrders)
+                                    if (!string.IsNullOrWhiteSpace(order.SymbolName) && !syms.Contains(order.SymbolName))
+                                        syms.Add(order.SymbolName);
+                                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !syms.Contains(Symbol.Name))
+                                    syms.Add(Symbol.Name);
+                            }
+                            if (syms.Count > 0)
+                                _ = PushBarsAsync(accId, syms);
+                            else
+                            {
+                                _barStatus = "IDLE";
+                                _lastBarTime = DateTime.Now;
                             }
                         }
-                        var s2 = Symbols.GetSymbol(order.SymbolName);
-                        double lotsVal2 = (s2 != null) ? s2.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
-                        double pnlTp = 0, pnlSl = 0;
-                        if (s2 != null)
-                        {
-                            if (order.TakeProfit.HasValue) { double pp = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s2.PipSize; pnlTp = pp * s2.PipValue * order.VolumeInUnits; }
-                            if (order.StopLoss.HasValue) { double pp = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s2.PipSize; pnlSl = -pp * s2.PipValue * order.VolumeInUnits; }
-                        }
-                        ordersList.Add("{\"sid\":\"" + sid3 + "\"" +
-                            ",\"comment\":\"" + sid3 + "\"" +
-                            ",\"ticket\":\"" + order.Id + "\"" +
-                            ",\"symbol\":\"" + order.SymbolName + "\"" +
-                            ",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\"" +
-                            ",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\"" +
-                            ",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"label\":\"" + order.Label + "\"" +
-                            ",\"status\":\"PENDING\"" +
-                            ",\"margin\":0.0" +
-                            ",\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
                     }
 
-                    var symbolsToSync = new HashSet<string>();
-                    if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name)) symbolsToSync.Add(Symbol.Name);
-                    foreach (var pos in Positions) if (!string.IsNullOrWhiteSpace(pos.SymbolName)) symbolsToSync.Add(pos.SymbolName);
-                    foreach (var order in PendingOrders) if (!string.IsNullOrWhiteSpace(order.SymbolName)) symbolsToSync.Add(order.SymbolName);
-
-                    metricsList = new List<string>();
-                    foreach (var symbolName in symbolsToSync.Take(100))
+                    // --- Incremental bars sync (every IncrementalBarsSeconds) ---
+                    if (EnableIncrementalBars)
                     {
-                        Symbol s3 = null;
-                        try { s3 = Symbols.GetSymbol(symbolName); } catch { continue; }
-                        if (s3 == null) continue;
-                        metricsList.Add("{\"symbol\":\"" + s3.Name + "\"" +
-                            ",\"pip_value\":" + (double.IsNaN(s3.PipValue) ? 0 : s3.PipValue).ToString("F5", CultureInfo.InvariantCulture) +
-                            ",\"spread\":" + (double.IsNaN(s3.Spread) ? 0 : s3.Spread).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"min_vol\":" + (double.IsNaN(s3.VolumeInUnitsMin) ? 0 : s3.VolumeInUnitsMin).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"step_vol\":" + (double.IsNaN(s3.VolumeInUnitsStep) ? 0 : s3.VolumeInUnitsStep).ToString("F2", CultureInfo.InvariantCulture) +
-                            ",\"pip_size\":" + (double.IsNaN(s3.PipSize) ? 0 : s3.PipSize).ToString("F8", CultureInfo.InvariantCulture) +
-                            ",\"digits\":" + s3.Digits + "}");
+                        if (_lastIncrementalSync == DateTime.MinValue ||
+                            (DateTime.Now - _lastIncrementalSync).TotalSeconds >= IncrementalBarsSeconds)
+                        {
+                            var incSyms = _trackedSymbols.Count > 0 ? _trackedSymbols : new List<string>();
+                            if (incSyms.Count == 0)
+                            {
+                                foreach (var pos in Positions)
+                                    if (!string.IsNullOrWhiteSpace(pos.SymbolName) && !incSyms.Contains(pos.SymbolName))
+                                        incSyms.Add(pos.SymbolName);
+                                if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name) && !incSyms.Contains(Symbol.Name))
+                                    incSyms.Add(Symbol.Name);
+                            }
+                            if (incSyms.Count > 0)
+                                Task.Run(async () => await SyncBarsIncrementalAsync(accId, incSyms));
+                            _lastIncrementalSync = DateTime.Now;
+                        }
                     }
 
-                    // Show that a new cycle has started, but keep last successful stamps.
-                    _pollStatus = _lastPollTime == DateTime.MinValue ? "POLLING" : _pollStatus;
-                    _syncStatus = _lastSyncTime == DateTime.MinValue ? "SYNCING" : _syncStatus;
+                    // --- Sync: build payload + push to VPS (every SyncIntervalSeconds) ---
+                    var now = DateTime.Now;
+                    var doSync = _lastSyncTime == DateTime.MinValue ||
+                        (now - _lastSyncTime).TotalSeconds >= SyncIntervalSeconds;
+                    // Always pull signals on PollSeconds cadence
+
+                    string balance = null, equity = null, margin = null, brokerName = null;
+                    List<string> posList = null, ordersList = null, closedList = null, metricsList = null;
+                    HashSet<string> activeTicketIds = null;
+
+                    if (doSync)
+                    {
+                        balance = Account.Balance.ToString(CultureInfo.InvariantCulture);
+                        equity = Account.Equity.ToString(CultureInfo.InvariantCulture);
+                        margin = Account.Margin.ToString(CultureInfo.InvariantCulture);
+                        brokerName = Account.BrokerName;
+                        posList = new List<string>();
+                        activeTicketIds = new HashSet<string>(Positions.Select(p => p.Id.ToString()));
+
+                        foreach (var pos in Positions)
+                        {
+                            var sid = ResolveSid(pos.Id.ToString(), pos.Comment).Replace("\"", "'");
+                            var s = Symbols.GetSymbol(pos.SymbolName);
+                            double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
+
+                            double tpPnl = 0;
+                            double slPnl = 0;
+                            double distanceTp = 0;
+                            double distanceSl = 0;
+                            double spreadVal = 0;
+                            if (s != null)
+                            {
+                                spreadVal = double.IsNaN(s.Spread) ? 0 : s.Spread;
+                                if (pos.TakeProfit.HasValue)
+                                {
+                                    double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize;
+                                    if (pos.TradeType == TradeType.Sell) pips = -pips;
+                                    tpPnl = pips * s.PipValue * pos.VolumeInUnits;
+                                    distanceTp = Math.Abs(pips);
+                                }
+                                if (pos.StopLoss.HasValue)
+                                {
+                                    double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize;
+                                    if (pos.TradeType == TradeType.Sell) pips = -pips;
+                                    slPnl = pips * s.PipValue * pos.VolumeInUnits;
+                                    distanceSl = Math.Abs(pips);
+                                }
+                            }
+                            double balanceTp = tpPnl;
+                            double balanceSl = slPnl;
+
+                            var ticketKey = pos.Id.ToString();
+                            double partialClosedVol = 0;
+                            _partialClosedVolumes.TryGetValue(ticketKey, out partialClosedVol);
+                            double remainingVol = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits;
+                            bool hasPartial = partialClosedVol > 0;
+
+                            posList.Add("{\"sid\":\"" + sid + "\"" +
+                                ",\"comment\":\"" + sid + "\"" +
+                                ",\"ticket\":\"" + pos.Id + "\"" +
+                                ",\"symbol\":\"" + pos.SymbolName + "\"" +
+                                ",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\"" +
+                                ",\"type\":\"MARKET\"" +
+                                ",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"distance_sl\":" + distanceSl.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"distance_tp\":" + distanceTp.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"balance_sl\":" + balanceSl.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"balance_tp\":" + balanceTp.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"label\":\"" + pos.Label + "\"" +
+                                ",\"status\":\"OPEN\"" +
+                                ",\"remaining_volume\":" + remainingVol.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"closed_volume_partial\":" + partialClosedVol.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"has_partial\":" + (hasPartial ? "true" : "false") + "}");
+                        }
+
+                        closedList = new List<string>();
+                        var historicalDeals = History.OrderByDescending(d => d.ClosingTime).ToList();
+                        var limit = DateTime.UtcNow.AddDays(-2);
+                        foreach (var deal in historicalDeals)
+                        {
+                            if (deal.ClosingTime < limit) continue;
+                            if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue;
+                            if (closedList.Count >= 20) break;
+                            var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'");
+                            string closeReason = "MANUAL_CLOSE";
+                            closedList.Add("{\"sid\":\"" + sid2 + "\"" +
+                                ",\"comment\":\"" + sid2 + "\"" +
+                                ",\"ticket\":\"" + deal.PositionId + "\"" +
+                                ",\"symbol\":\"" + deal.SymbolName + "\"" +
+                                ",\"symbol_code\":\"" + deal.SymbolName + "\"" +
+                                ",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\"" +
+                                ",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pips\":0.0" +
+                                ",\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"status\":\"CLOSED\"" +
+                                ",\"close_reason\":\"" + closeReason + "\"" +
+                                ",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\"" +
+                                ",\"label\":\"" + deal.Label + "\"}");
+                        }
+
+                        ordersList = new List<string>();
+
+                        // Build position SID lookup for pending order SID fallback
+                        var posSidLookup = new Dictionary<string, string>();
+                        foreach (var pos in Positions)
+                        {
+                            var posSid = ResolveSid(pos.Id.ToString(), pos.Comment);
+                            if (!string.IsNullOrEmpty(posSid))
+                            {
+                                var key = (pos.SymbolName + "_" + pos.TradeType.ToString()).ToUpper();
+                                if (!posSidLookup.ContainsKey(key))
+                                    posSidLookup[key] = posSid;
+                            }
+                        }
+
+                        foreach (var order in PendingOrders)
+                        {
+                            var sid3 = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
+
+                            // Fallback: cTrader may recreate order with new OID on modify, losing comment SID
+                            if (string.IsNullOrEmpty(sid3))
+                            {
+                                var lookupKey = (order.SymbolName + "_" + order.TradeType.ToString()).ToUpper();
+                                if (posSidLookup.TryGetValue(lookupKey, out var posSid))
+                                {
+                                    sid3 = posSid;
+                                    // Cache new OID -> SID for future syncs
+                                    var oidKey = order.Id.ToString();
+                                    if (!_ticketSidMap.ContainsKey(oidKey))
+                                        _ticketSidMap[oidKey] = posSid;
+                                }
+                            }
+                            var s2 = Symbols.GetSymbol(order.SymbolName);
+                            double lotsVal2 = (s2 != null) ? s2.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
+                            double pnlTp = 0, pnlSl = 0;
+                            if (s2 != null)
+                            {
+                                if (order.TakeProfit.HasValue) { double pp = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s2.PipSize; pnlTp = pp * s2.PipValue * order.VolumeInUnits; }
+                                if (order.StopLoss.HasValue) { double pp = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s2.PipSize; pnlSl = -pp * s2.PipValue * order.VolumeInUnits; }
+                            }
+                            ordersList.Add("{\"sid\":\"" + sid3 + "\"" +
+                                ",\"comment\":\"" + sid3 + "\"" +
+                                ",\"ticket\":\"" + order.Id + "\"" +
+                                ",\"symbol\":\"" + order.SymbolName + "\"" +
+                                ",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\"" +
+                                ",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\"" +
+                                ",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"label\":\"" + order.Label + "\"" +
+                                ",\"status\":\"PENDING\"" +
+                                ",\"margin\":0.0" +
+                                ",\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
+                        }
+
+                        var symbolsToSync = new HashSet<string>();
+                        if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name)) symbolsToSync.Add(Symbol.Name);
+                        foreach (var pos in Positions) if (!string.IsNullOrWhiteSpace(pos.SymbolName)) symbolsToSync.Add(pos.SymbolName);
+                        foreach (var order in PendingOrders) if (!string.IsNullOrWhiteSpace(order.SymbolName)) symbolsToSync.Add(order.SymbolName);
+
+                        metricsList = new List<string>();
+                        foreach (var symbolName in symbolsToSync.Take(100))
+                        {
+                            Symbol s3 = null;
+                            try { s3 = Symbols.GetSymbol(symbolName); } catch { continue; }
+                            if (s3 == null) continue;
+                            metricsList.Add("{\"symbol\":\"" + s3.Name + "\"" +
+                                ",\"pip_value\":" + (double.IsNaN(s3.PipValue) ? 0 : s3.PipValue).ToString("F5", CultureInfo.InvariantCulture) +
+                                ",\"spread\":" + (double.IsNaN(s3.Spread) ? 0 : s3.Spread).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"min_vol\":" + (double.IsNaN(s3.VolumeInUnitsMin) ? 0 : s3.VolumeInUnitsMin).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"step_vol\":" + (double.IsNaN(s3.VolumeInUnitsStep) ? 0 : s3.VolumeInUnitsStep).ToString("F2", CultureInfo.InvariantCulture) +
+                                ",\"pip_size\":" + (double.IsNaN(s3.PipSize) ? 0 : s3.PipSize).ToString("F8", CultureInfo.InvariantCulture) +
+                                ",\"digits\":" + s3.Digits + "}");
+                        }
+
+                        // Show that a new cycle has started, but keep last successful stamps.
+                        _pollStatus = _lastPollTime == DateTime.MinValue ? "POLLING" : _pollStatus;
+                        _syncStatus = _lastSyncTime == DateTime.MinValue ? "SYNCING" : _syncStatus;
+                    }
+                    RefreshDebugPanelNow();
+
+                    var bal = balance; var eq = equity; var mar = margin; var brk = brokerName;
+                    var pl = posList; var ol = ordersList; var cl = closedList; var ml = metricsList;
+                    var ati = activeTicketIds;
+
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await PollSignalsAsync(accId);
+                            if (doSync && pl != null)
+                            {
+                                double b, e, m;
+                                if (!double.TryParse(bal, NumberStyles.Any, CultureInfo.InvariantCulture, out b)) b = 0;
+                                if (!double.TryParse(eq, NumberStyles.Any, CultureInfo.InvariantCulture, out e)) e = 0;
+                                if (!double.TryParse(mar, NumberStyles.Any, CultureInfo.InvariantCulture, out m)) m = 0;
+                                await SyncWithVpsAsync(accId, b, e, m, brk, pl, ol, cl, ati, ml);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _lastSyncErr = FormatServerErrorForPanel(ex.Message);
+                            _syncStatus = "ERROR";
+                        }
+                        finally
+                        {
+                            _isBusy = false;
+                            RefreshDebugPanel();
+                        }
+                    });
                 }
-                RefreshDebugPanelNow();
-
-                var bal = balance; var eq = equity; var mar = margin; var brk = brokerName;
-                var pl = posList; var ol = ordersList; var cl = closedList; var ml = metricsList;
-                var ati = activeTicketIds;
-
-                Task.Run(async () =>
+                else
                 {
-                    try
-                    {
-                        await PollSignalsAsync(accId);
-                        if (doSync && pl != null)
-                        {
-                            double b, e, m;
-                            if (!double.TryParse(bal, NumberStyles.Any, CultureInfo.InvariantCulture, out b)) b = 0;
-                            if (!double.TryParse(eq, NumberStyles.Any, CultureInfo.InvariantCulture, out e)) e = 0;
-                            if (!double.TryParse(mar, NumberStyles.Any, CultureInfo.InvariantCulture, out m)) m = 0;
-                            await SyncWithVpsAsync(accId, b, e, m, brk, pl, ol, cl, ati, ml);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _lastSyncErr = FormatServerErrorForPanel(ex.Message);
-                        _syncStatus = "ERROR";
-                    }
-                    finally
-                    {
-                        _isBusy = false;
-                        RefreshDebugPanel();
-                    }
-                });
+                    // Sync-only: build full payload (positions + orders + closed + metrics)
+                    BuildAndDispatchSync(accId);
+                }
             }
             catch (Exception ex)
             {
@@ -822,6 +961,70 @@ namespace cAlgo.Robots
         {
             try { _watchdogCts?.Cancel(); } catch { }
             try { _watchdogCts?.Dispose(); } catch { }
+        }
+
+        // Full sync payload builder: positions + orders + closed + metrics
+        private void BuildAndDispatchSync(string accId)
+        {
+            string bal = Account.Balance.ToString(CultureInfo.InvariantCulture);
+            string eq = Account.Equity.ToString(CultureInfo.InvariantCulture);
+            string mar = Account.Margin.ToString(CultureInfo.InvariantCulture);
+            string brk = Account.BrokerName;
+            var pl = new List<string>();
+            var ati = new HashSet<string>(Positions.Select(p => p.Id.ToString()));
+            foreach (var pos in Positions)
+            {
+                var sid = ResolveSid(pos.Id.ToString(), pos.Comment).Replace("\"", "'");
+                var s = Symbols.GetSymbol(pos.SymbolName);
+                double lotsVal = (s != null) ? s.VolumeInUnitsToQuantity(pos.VolumeInUnits) : (pos.VolumeInUnits / 100000.0);
+                double tpPnl = 0, slPnl = 0, distTp = 0, distSl = 0, spreadVal = 0;
+                if (s != null)
+                {
+                    spreadVal = double.IsNaN(s.Spread) ? 0 : s.Spread;
+                    if (pos.TakeProfit.HasValue) { double pips = (pos.TakeProfit.Value - pos.EntryPrice) / s.PipSize; if (pos.TradeType == TradeType.Sell) pips = -pips; tpPnl = pips * s.PipValue * pos.VolumeInUnits; distTp = Math.Abs(pips); }
+                    if (pos.StopLoss.HasValue) { double pips = (pos.StopLoss.Value - pos.EntryPrice) / s.PipSize; if (pos.TradeType == TradeType.Sell) pips = -pips; slPnl = pips * s.PipValue * pos.VolumeInUnits; distSl = Math.Abs(pips); }
+                }
+                double balTp = tpPnl, balSl = slPnl;
+                var tk = pos.Id.ToString(); double pcv = 0; _partialClosedVolumes.TryGetValue(tk, out pcv);
+                double rv = double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits; bool hp = pcv > 0;
+                pl.Add("{\"sid\":\"" + sid + "\",\"comment\":\"" + sid + "\",\"ticket\":\"" + pos.Id + "\",\"symbol\":\"" + pos.SymbolName + "\",\"side\":\"" + pos.TradeType.ToString().ToUpper() + "\",\"type\":\"MARKET\",\"entry\":" + (double.IsNaN(pos.EntryPrice) ? 0 : pos.EntryPrice).ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (pos.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (pos.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(pos.VolumeInUnits) ? 0 : pos.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal) ? 0 : lotsVal).ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl\":" + (double.IsNaN(pos.NetProfit) ? 0 : pos.NetProfit).ToString("F2", CultureInfo.InvariantCulture) + ",\"pips\":" + (double.IsNaN(pos.Pips) ? 0 : pos.Pips).ToString("F2", CultureInfo.InvariantCulture) + ",\"commission\":" + (double.IsNaN(pos.Commissions) ? 0 : pos.Commissions).ToString("F2", CultureInfo.InvariantCulture) + ",\"swap\":" + (double.IsNaN(pos.Swap) ? 0 : pos.Swap).ToString("F2", CultureInfo.InvariantCulture) + ",\"margin\":" + (double.IsNaN(pos.Margin) ? 0 : pos.Margin).ToString("F2", CultureInfo.InvariantCulture) + ",\"tp_pnl\":" + (double.IsNaN(tpPnl) ? 0 : tpPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"sl_pnl\":" + (double.IsNaN(slPnl) ? 0 : slPnl).ToString("F2", CultureInfo.InvariantCulture) + ",\"spread\":" + spreadVal.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_sl\":" + distSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"distance_tp\":" + distTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_sl\":" + balSl.ToString("F2", CultureInfo.InvariantCulture) + ",\"balance_tp\":" + balTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + pos.Label + "\",\"status\":\"OPEN\",\"remaining_volume\":" + rv.ToString("F2", CultureInfo.InvariantCulture) + ",\"closed_volume_partial\":" + pcv.ToString("F2", CultureInfo.InvariantCulture) + ",\"has_partial\":" + (hp ? "true" : "false") + "}");
+            }
+            // Build orders list
+            var ol = new List<string>();
+            var posSidLookup = new Dictionary<string, string>();
+            foreach (var pos in Positions) { var psid = ResolveSid(pos.Id.ToString(), pos.Comment); if (!string.IsNullOrEmpty(psid)) { var k = (pos.SymbolName + "_" + pos.TradeType.ToString()).ToUpper(); if (!posSidLookup.ContainsKey(k)) posSidLookup[k] = psid; } }
+            foreach (var order in PendingOrders)
+            {
+                var sid3 = ResolveSid(order.Id.ToString(), order.Comment).Replace("\"", "'");
+                if (string.IsNullOrEmpty(sid3)) { var lk = (order.SymbolName + "_" + order.TradeType.ToString()).ToUpper(); string psid2; if (posSidLookup.TryGetValue(lk, out psid2)) { sid3 = psid2; var ok = order.Id.ToString(); if (!_ticketSidMap.ContainsKey(ok)) _ticketSidMap[ok] = psid2; } }
+                var s2 = Symbols.GetSymbol(order.SymbolName); double lotsVal2 = (s2 != null) ? s2.VolumeInUnitsToQuantity(order.VolumeInUnits) : (order.VolumeInUnits / 100000.0);
+                double pnlTp = 0, pnlSl = 0; if (s2 != null) { if (order.TakeProfit.HasValue) { double pp = Math.Abs(order.TargetPrice - order.TakeProfit.Value) / s2.PipSize; pnlTp = pp * s2.PipValue * order.VolumeInUnits; } if (order.StopLoss.HasValue) { double pp = Math.Abs(order.TargetPrice - order.StopLoss.Value) / s2.PipSize; pnlSl = -pp * s2.PipValue * order.VolumeInUnits; } }
+                ol.Add("{\"sid\":\"" + sid3 + "\",\"comment\":\"" + sid3 + "\",\"ticket\":\"" + order.Id + "\",\"symbol\":\"" + order.SymbolName + "\",\"side\":\"" + order.TradeType.ToString().ToUpper() + "\",\"type\":\"" + order.OrderType.ToString().ToUpper() + "\",\"target_price\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"entry\":" + order.TargetPrice.ToString("F5", CultureInfo.InvariantCulture) + ",\"sl\":" + (order.StopLoss ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"tp\":" + (order.TakeProfit ?? 0).ToString("F5", CultureInfo.InvariantCulture) + ",\"volume\":" + (double.IsNaN(order.VolumeInUnits) ? 0 : order.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"lots\":" + (double.IsNaN(lotsVal2) ? 0 : lotsVal2).ToString("F2", CultureInfo.InvariantCulture) + ",\"label\":\"" + order.Label + "\",\"status\":\"PENDING\",\"margin\":0.0,\"pnl_tp\":" + pnlTp.ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl_sl\":" + pnlSl.ToString("F2", CultureInfo.InvariantCulture) + "}");
+            }
+            // Build closed list
+            var cl = new List<string>();
+            var hd = History.OrderByDescending(d => d.ClosingTime).ToList();
+            var lim = DateTime.UtcNow.AddDays(-2);
+            foreach (var deal in hd) { if (deal.ClosingTime < lim) continue; if (_syncedClosedTickets.Contains(deal.PositionId.ToString())) continue; if (cl.Count >= 20) break; var sid2 = ResolveSid(deal.PositionId.ToString(), deal.Comment).Replace("\"", "'"); cl.Add("{\"sid\":\"" + sid2 + "\",\"comment\":\"" + sid2 + "\",\"ticket\":\"" + deal.PositionId + "\",\"symbol\":\"" + deal.SymbolName + "\",\"side\":\"" + deal.TradeType.ToString().ToUpper() + "\",\"volume\":" + (double.IsNaN(deal.VolumeInUnits) ? 0 : deal.VolumeInUnits).ToString("F2", CultureInfo.InvariantCulture) + ",\"pnl\":" + (double.IsNaN(deal.NetProfit) ? 0 : deal.NetProfit).ToString("F2", CultureInfo.InvariantCulture) + ",\"pips\":0.0,\"commission\":" + (double.IsNaN(deal.Commissions) ? 0 : deal.Commissions).ToString("F2", CultureInfo.InvariantCulture) + ",\"swap\":" + (double.IsNaN(deal.Swap) ? 0 : deal.Swap).ToString("F2", CultureInfo.InvariantCulture) + ",\"status\":\"CLOSED\",\"close_reason\":\"MANUAL_CLOSE\",\"closed_at\":\"" + deal.ClosingTime.ToString("O") + "\",\"label\":\"" + deal.Label + "\"}"); }
+            // Build metrics
+            var ml = new List<string>();
+            var ssm = new HashSet<string>(); if (Symbol != null && !string.IsNullOrWhiteSpace(Symbol.Name)) ssm.Add(Symbol.Name); foreach (var pos in Positions) if (!string.IsNullOrWhiteSpace(pos.SymbolName)) ssm.Add(pos.SymbolName); foreach (var order in PendingOrders) if (!string.IsNullOrWhiteSpace(order.SymbolName)) ssm.Add(order.SymbolName);
+            foreach (var sn in ssm.Take(100)) { Symbol s3 = null; try { s3 = Symbols.GetSymbol(sn); } catch { continue; } if (s3 == null) continue; ml.Add("{\"symbol\":\"" + s3.Name + "\",\"pip_value\":" + (double.IsNaN(s3.PipValue) ? 0 : s3.PipValue).ToString("F5", CultureInfo.InvariantCulture) + ",\"spread\":" + (double.IsNaN(s3.Spread) ? 0 : s3.Spread).ToString("F2", CultureInfo.InvariantCulture) + ",\"min_vol\":" + (double.IsNaN(s3.VolumeInUnitsMin) ? 0 : s3.VolumeInUnitsMin).ToString("F2", CultureInfo.InvariantCulture) + ",\"step_vol\":" + (double.IsNaN(s3.VolumeInUnitsStep) ? 0 : s3.VolumeInUnitsStep).ToString("F2", CultureInfo.InvariantCulture) + ",\"pip_size\":" + (double.IsNaN(s3.PipSize) ? 0 : s3.PipSize).ToString("F8", CultureInfo.InvariantCulture) + ",\"digits\":" + s3.Digits + "}"); }
+            // Dispatch
+            _syncOnly = false;
+            Task.Run(async () =>
+            {
+                try
+                {
+                    double b, e, m;
+                    if (!double.TryParse(bal, NumberStyles.Any, CultureInfo.InvariantCulture, out b)) b = 0;
+                    if (!double.TryParse(eq, NumberStyles.Any, CultureInfo.InvariantCulture, out e)) e = 0;
+                    if (!double.TryParse(mar, NumberStyles.Any, CultureInfo.InvariantCulture, out m)) m = 0;
+                    await SyncWithVpsAsync(accId, b, e, m, brk, pl, ol, cl, ati, ml);
+                }
+                catch (Exception ex) { _lastSyncErr = FormatServerErrorForPanel(ex.Message); _syncStatus = "ERROR"; }
+                finally { _busySync = false; RefreshDebugPanel(); }
+            });
         }
 
         private async Task PollSignalsAsync(string accountId)

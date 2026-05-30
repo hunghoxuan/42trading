@@ -47,6 +47,8 @@ export default function TradeFilesTab({
   const [previewFile, setPreviewFile] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const inputRef = useRef(null);
+  const snapshotFilesRef = useRef(snapshotFiles);
+  snapshotFilesRef.current = snapshotFiles;
 
   const loadFiles = useCallback(async () => {
     if (!tradeSid) return;
@@ -60,10 +62,8 @@ export default function TradeFilesTab({
 
       const sidFiles = snapRes.files || snapRes.items || [];
       const uploadFiles = uploadRes.files || [];
-      const propSnapshotFiles = (Array.isArray(snapshotFiles)
-        ? snapshotFiles
-        : []
-      )
+      const sf = snapshotFilesRef.current;
+      const propSnapshotFiles = (Array.isArray(sf) ? sf : [])
         .map((x) => String(x || "").trim())
         .filter(Boolean);
 
@@ -109,23 +109,21 @@ export default function TradeFilesTab({
     } finally {
       setLoading(false);
     }
-  }, [tradeSid, snapshotFiles]);
+  }, [tradeSid]);
 
-  useEffect(() => {
-    loadFiles();
-  }, [loadFiles]);
-
-  // Also reload when tradeSid changes (e.g. after analysis creates snapshots)
   useEffect(() => {
     if (tradeSid) loadFiles();
   }, [tradeSid]);
 
   const takeSnapshots = async () => {
     if (!tradeSid) {
-      setError("Trade SID is required before saving files.");
+      setError("No trade SID available. Save the trade first.");
       return;
     }
-    if (!symbol) return;
+    if (!symbol) {
+      setError("No symbol available.");
+      return;
+    }
     setCapturing(true);
     setError("");
     try {

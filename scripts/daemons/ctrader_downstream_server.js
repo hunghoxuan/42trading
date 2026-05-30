@@ -348,15 +348,24 @@ async function fetchBars(reqBody = {}) {
           continue;
         }
 
-        // Convert to webhook format
-        const barItems = bars.map((b) => ({
-          time: Math.floor(Number(b.timestamp || b.utcTimestampInMinutes || 0) * 60),
-          open: Number(b.open || 0),
-          high: Number(b.high || 0),
-          low: Number(b.low || 0),
-          close: Number(b.close || 0),
-          volume: Number(b.volume || 0),
-        })).filter((b) => Number.isFinite(b.time) && b.time > 0);
+        // Convert to webhook format (prefer utcTimestampInMinutes — guaranteed UTC, in minutes)
+        const barItems = bars.map((b) => {
+          const rawMin = Number(b.utcTimestampInMinutes);
+          const rawSec = Number(b.timestamp);
+          const time = Number.isFinite(rawMin) && rawMin > 0
+            ? Math.floor(rawMin * 60)
+            : Number.isFinite(rawSec) && rawSec > 0
+              ? Math.floor(rawSec)
+              : 0;
+          return {
+            time,
+            open: Number(b.open || 0),
+            high: Number(b.high || 0),
+            low: Number(b.low || 0),
+            close: Number(b.close || 0),
+            volume: Number(b.volume || 0),
+          };
+        }).filter((b) => Number.isFinite(b.time) && b.time > 0);
 
         // Push to webhook
         if (webhookUrl && barItems.length) {
