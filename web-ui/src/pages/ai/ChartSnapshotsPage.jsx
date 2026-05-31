@@ -23,9 +23,11 @@ import { useConfirmDialog } from "../../components/ConfirmDialog";
 import TradeSignalChart from "../../components/TradeSignalChart";
 import AiTradeDetailCard from "../../components/AiTradeDetailCard";
 import { chartFetchManager } from "../../services/chartFetchManager";
-import { extractTradePlanFromTrade, formatNum3 } from "../../utils/signalDetailUtils";
+import {
+  extractTradePlanFromTrade,
+  formatNum3,
+} from "../../utils/signalDetailUtils";
 import { isCurrentAiTradePlan } from "../../utils/tradePlanShape";
-
 
 const SignalDetailCard = lazy(
   () => import("../../components/SignalDetailCard"),
@@ -3541,7 +3543,7 @@ export default function ChartSnapshotsPage() {
     const fields = [position.entry, position.tp, position.sl];
     return fields.some((v) => String(v ?? "").trim() !== "");
   }, [position.entry, position.tp, position.sl]);
-  const autoSavedSignal =
+  const autoSavedDraft =
     autoSaveResult?.enabled === true &&
     autoSaveResult?.saved === true &&
     autoSaveResult?.mode === "signals";
@@ -4308,10 +4310,7 @@ export default function ChartSnapshotsPage() {
       if (out?.session_id) setAnalyzeSessionId(out.session_id);
       const autoMode = String(out?.auto_save_result?.mode || "").toLowerCase();
       if (out?.auto_save_result?.saved) {
-        const autoEntity = resolveCreatedId(
-          out?.auto_save_result,
-          autoMode === "trades" ? "trade" : "signal",
-        );
+        const autoEntity = resolveCreatedId(out?.auto_save_result, "trade");
         if (autoEntity)
           setAddedEntities((prev) => ({ ...prev, main: autoEntity }));
         if (
@@ -5064,8 +5063,14 @@ export default function ChartSnapshotsPage() {
           [submittingPlanId]: createdEntity,
         }));
       // On /ai/response page, redirect to trade detail after successful save
-      if (createdEntity?.kind === "trade" && createdEntity?.id && isResponseRoute) {
-        navigate(`/ai/trade/${encodeURIComponent(createdEntity.id)}`, { replace: true });
+      if (
+        createdEntity?.kind === "trade" &&
+        createdEntity?.id &&
+        isResponseRoute
+      ) {
+        navigate(`/ai/trade/${encodeURIComponent(createdEntity.id)}`, {
+          replace: true,
+        });
         return;
       }
       const msg =
@@ -5806,7 +5811,9 @@ export default function ChartSnapshotsPage() {
               onChange={(e) => setCfgField("htfbias", e.target.value)}
               style={{ width: "100%" }}
             >
-              <option key="auto" value="">Auto</option>
+              <option key="auto" value="">
+                Auto
+              </option>
               <option>Bullish</option>
               <option>Bearish</option>
               <option>Ranging</option>
@@ -5888,7 +5895,9 @@ export default function ChartSnapshotsPage() {
               onChange={(e) => setCfgField("news", e.target.value)}
               style={{ width: "100%" }}
             >
-              <option key="none" value="">None</option>
+              <option key="none" value="">
+                None
+              </option>
               <option>High-impact</option>
               <option>NFP/FOMC</option>
               <option>Earnings</option>
@@ -7309,7 +7318,9 @@ export default function ChartSnapshotsPage() {
 
       <section
         className="panel snapshot-col-v3 snapshot-col-settings-v3"
-        style={isSymbolPanelOpen && !isResponseRoute ? {} : { gridColumn: "1 / -1" }}
+        style={
+          isSymbolPanelOpen && !isResponseRoute ? {} : { gridColumn: "1 / -1" }
+        }
       >
         <div className="fadeIn" style={{ marginBottom: 10 }}>
           <div
@@ -7431,7 +7442,9 @@ export default function ChartSnapshotsPage() {
               }}
               title="Broker for live chart, fixed chart, and snapshots"
             >
-              <option key="auto" value="">Auto</option>
+              <option key="auto" value="">
+                Auto
+              </option>
               <option value="ICMARKETS">IC Markets</option>
               <option value="OANDA">OANDA</option>
               <option value="BINANCE">Binance</option>
@@ -7752,7 +7765,9 @@ export default function ChartSnapshotsPage() {
                     value={templateId}
                     onChange={(e) => handleSelectTemplate(e.target.value)}
                   >
-                    <option key="new" value="">New Template</option>
+                    <option key="new" value="">
+                      New Template
+                    </option>
                     <option value={DEFAULT_TEMPLATE_ID}>
                       Default Template
                     </option>
@@ -7788,8 +7803,11 @@ export default function ChartSnapshotsPage() {
                     }
                     title="Trade account (persists account_id to current trade)"
                   >
-                    {(Array.isArray(userAccounts) ? userAccounts : []).length === 0 && (
-                      <option key="none" value="">No accounts</option>
+                    {(Array.isArray(userAccounts) ? userAccounts : [])
+                      .length === 0 && (
+                      <option key="none" value="">
+                        No accounts
+                      </option>
                     )}
                     {(Array.isArray(userAccounts) ? userAccounts : []).map(
                       (a, ai) => {
@@ -7867,9 +7885,11 @@ export default function ChartSnapshotsPage() {
                       width: "100%",
                     }}
                   >
-                    <option key="none" value="">Auto Save: None</option>
-                    <option value="signals">Auto Save: Signals</option>
-                    <option value="trades">Auto Save: Trades</option>
+                    <option key="none" value="">
+                      Auto Save: None
+                    </option>
+                    <option value="signals">Auto Save: Trade (Draft)</option>
+                    <option value="trades">Auto Save: Trade (Pending)</option>
                   </select>
                   <div
                     style={{
@@ -8530,7 +8550,7 @@ export default function ChartSnapshotsPage() {
                   onChange: updatePositionField,
                   showSaveButton: false,
                   showAddSignalButton:
-                    !autoSavedSignal &&
+                    !autoSavedDraft &&
                     !autoSavedTrades &&
                     !manuallyAddedTrade &&
                     !manuallyAddedSignal,
@@ -8703,7 +8723,9 @@ export default function ChartSnapshotsPage() {
                   onChange={(e) => handleSelectTemplate(e.target.value)}
                   style={{ height: 28, padding: "0 6px", fontSize: 11 }}
                 >
-                  <option key="new" value="">New</option>
+                  <option key="new" value="">
+                    New
+                  </option>
                   <option value={DEFAULT_TEMPLATE_ID}>Default</option>
                   {templates.map((t) => (
                     <option key={t.id} value={t.id}>

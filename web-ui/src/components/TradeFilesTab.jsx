@@ -51,14 +51,30 @@ export default function TradeFilesTab({
   snapshotFilesRef.current = snapshotFiles;
 
   const loadFiles = useCallback(async () => {
-    if (!tradeSid) return;
+    if (!tradeSid && !symbol) return;
     setLoading(true);
     setError("");
     try {
-      const [snapRes, uploadRes] = await Promise.all([
-        api.tradeSnapshots(tradeSid).catch(() => ({ files: [] })),
-        api.listTradeFiles(tradeSid).catch(() => ({ files: [] })),
-      ]);
+      const promises = [];
+      if (tradeSid) {
+        promises.push(
+          api.tradeSnapshots(tradeSid).catch(() => ({ files: [] })),
+        );
+        promises.push(
+          api.listTradeFiles(tradeSid).catch(() => ({ files: [] })),
+        );
+      } else {
+        promises.push(Promise.resolve({ files: [] }));
+        promises.push(Promise.resolve({ files: [] }));
+      }
+      if (symbol) {
+        promises.push(
+          api.marketDataSnapshots(symbol, 3).catch(() => ({ files: [] })),
+        );
+      } else {
+        promises.push(Promise.resolve({ files: [] }));
+      }
+      const [snapRes, uploadRes, mdRes] = await Promise.all(promises);
 
       const sidFiles = snapRes.files || snapRes.items || [];
       const uploadFiles = uploadRes.files || [];
@@ -94,7 +110,27 @@ export default function TradeFilesTab({
           size_bytes: item.size_bytes || item.size || 0,
           source: "upload",
         })),
+        ...(mdRes.files || []).map((item) => ({
+          name: item.name || "snapshot",
+          url: withApiKey(item.url),
+          size_bytes: item.size_bytes || 0,
+          source: "market-data",
+          created_at: item.created_at || null,
+        })),
       ];
+
+      // Sort: trade files first (ASC), market-data always last
+      const sourceOrder = {
+        snapshot: 0,
+        "snapshot-prop": 0,
+        upload: 1,
+        "market-data": 2,
+      };
+      serverFiles.sort((a, b) => {
+        const s = (sourceOrder[a.source] ?? 9) - (sourceOrder[b.source] ?? 9);
+        if (s !== 0) return s;
+        return String(a.name).localeCompare(String(b.name));
+      });
 
       const seen = new Set();
       const all = [];
@@ -109,11 +145,11 @@ export default function TradeFilesTab({
     } finally {
       setLoading(false);
     }
-  }, [tradeSid]);
+  }, [tradeSid, symbol]);
 
   useEffect(() => {
-    if (tradeSid) loadFiles();
-  }, [tradeSid]);
+    if (tradeSid || symbol) loadFiles();
+  }, [tradeSid, symbol]);
 
   const takeSnapshots = async () => {
     if (!tradeSid) {
@@ -214,6 +250,31 @@ export default function TradeFilesTab({
   const preview = previewFile
     ? files.find((f) => f.name === previewFile)
     : null;
+  const previewIdx = previewFile
+    ? files.findIndex((f) => f.name === previewFile)
+    : -1;
+  const goPrev = () => {
+    if (files.length === 0) return;
+    const idx = previewIdx <= 0 ? files.length - 1 : previewIdx - 1;
+    setPreviewFile(files[idx].name);
+  };
+  const goNext = () => {
+    if (files.length === 0) return;
+    const idx = previewIdx >= files.length - 1 ? 0 : previewIdx + 1;
+    setPreviewFile(files[idx].name);
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (!previewFile || files.length <= 1) return;
+    const onKey = (e) => {
+      if (e.key === "ArrowLeft") goPrev();
+      if (e.key === "ArrowRight") goNext();
+      if (e.key === "Escape") setPreviewFile(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewFile, files]);
 
   return (
     <div style={{ padding: "8px 0" }}>
@@ -458,11 +519,7 @@ export default function TradeFilesTab({
           className="minor-text"
           style={{ fontSize: 11, padding: 16, textAlign: "center" }}
         >
-          {loading || capturing
-            ? "Loading..."
-            : tradeSid
-              ? "No files yet. Take snapshots or upload files."
-              : "Save the trade plan first, then files will appear here."}
+          {loading || capturing ? "Loading..." : "No files yet."}
         </div>
       )}
 
@@ -492,9 +549,59 @@ export default function TradeFilesTab({
               flexDirection: "column",
               alignItems: "center",
               gap: 12,
+              position: "relative",
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Left/Right navigation */}
+            {files.length > 1 && (
+              <>
+                <button
+                  onClick={goPrev}
+                  style={{
+                    position: "absolute",
+                    left: -60,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 48,
+                    height: 48,
+                    borderRadius: "50%",
+                    border: "2px solid rgba(255,255,255,0.3)",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
+                    fontSize: 22,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={goNext}
+                  style={{
+                    position: "absolute",
+                    right: -60,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 48,
+                    height: 48,
+                    borderRadius: "50%",
+                    border: "2px solid rgba(255,255,255,0.3)",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
+                    fontSize: 22,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  ›
+                </button>
+              </>
+            )}
             {isImage(preview.name) ? (
               <img
                 src={preview.url}
@@ -511,7 +618,7 @@ export default function TradeFilesTab({
             )}
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <span style={{ color: "#fff", fontSize: 11 }}>
-                {preview.name}
+                {previewIdx + 1}/{files.length} — {preview.name}
               </span>
               <a
                 href={preview.url}

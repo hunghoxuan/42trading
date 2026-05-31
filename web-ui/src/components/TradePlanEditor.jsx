@@ -1,6 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TradeFileUpload } from "./TradeFileUpload";
-import { normalizeOrderTypeValue, formatNum3 } from "../utils/signalDetailUtils";
+import {
+  normalizeOrderTypeValue,
+  formatNum3,
+} from "../utils/signalDetailUtils";
 import { ORDER_SIDES } from "../pages/ai/AiPromptBuilder";
 
 const numericInlineRowStyle = {
@@ -117,16 +120,17 @@ function priceSliderMeta(rawValue, entryValue, slValue, frozenStep) {
   if (!Number.isFinite(n)) {
     return { min: 0, max: 1, step: 0.001, value: 0, enabled: false };
   }
-  const step = Number.isFinite(frozenStep) && frozenStep > 0
-    ? frozenStep
-    : (() => {
-        const entry = parseNum(entryValue);
-        const sl = parseNum(slValue);
-        if (Number.isFinite(entry) && Number.isFinite(sl) && entry !== sl) {
-          return Math.max(0.00001, Math.abs(entry - sl) / 20);
-        }
-        return Math.max(0.00001, (Math.max(Math.abs(n), 1) * 0.5) / 100);
-      })();
+  const step =
+    Number.isFinite(frozenStep) && frozenStep > 0
+      ? frozenStep
+      : (() => {
+          const entry = parseNum(entryValue);
+          const sl = parseNum(slValue);
+          if (Number.isFinite(entry) && Number.isFinite(sl) && entry !== sl) {
+            return Math.max(0.00001, Math.abs(entry - sl) / 20);
+          }
+          return Math.max(0.00001, (Math.max(Math.abs(n), 1) * 0.5) / 100);
+        })();
   const range = (() => {
     const entry = parseNum(entryValue);
     const sl = parseNum(slValue);
@@ -201,22 +205,26 @@ const NumericInline = memo(function NumericInline({
   frozenStep,
 }) {
   const fieldId = `${idPrefix}-${k}`;
-  const sliderMeta = useMemo(
-    () => {
-      if (sliderOverride) return sliderOverride;
-      if (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(k)) {
-        return priceSliderMeta(valueRaw, entryValue, slValue, frozenStep);
-      }
-      if (k === "rr" || k === "rr2" || k === "rr3") {
-        const n = parseNum(valueRaw);
-        if (!Number.isFinite(n)) return { min: 0, max: 10, step: 0.1, value: 0, enabled: false };
-        const span = Math.max(n * 0.5, 1);
-        return { min: Math.max(0, n - span), max: n + span, step: 0.1, value: n, enabled: true };
-      }
-      return calcSliderMeta(valueRaw);
-    },
-    [k, sliderOverride, valueRaw, entryValue, slValue, frozenStep],
-  );
+  const sliderMeta = useMemo(() => {
+    if (sliderOverride) return sliderOverride;
+    if (["entry", "tp", "tp1", "tp2", "tp3", "sl"].includes(k)) {
+      return priceSliderMeta(valueRaw, entryValue, slValue, frozenStep);
+    }
+    if (k === "rr" || k === "rr2" || k === "rr3") {
+      const n = parseNum(valueRaw);
+      if (!Number.isFinite(n))
+        return { min: 0, max: 10, step: 0.1, value: 0, enabled: false };
+      const span = Math.max(n * 0.5, 1);
+      return {
+        min: Math.max(0, n - span),
+        max: n + span,
+        step: 0.1,
+        value: n,
+        enabled: true,
+      };
+    }
+    return calcSliderMeta(valueRaw);
+  }, [k, sliderOverride, valueRaw, entryValue, slValue, frozenStep]);
   const isDisabled = disabled || controlsDisabled;
   const toneColor = labelColorByKey(k);
   const sliderDisabled = disabled
@@ -360,6 +368,7 @@ export function TradePlanEditor({
   onGoAnalyze,
   onCancel,
   onClose,
+  onPromote,
   showSaveButton,
   showSaveDraftButton,
   showAddTradeButton,
@@ -368,6 +377,7 @@ export function TradePlanEditor({
   saveLabel,
   saveDraftLabel = "Save Draft",
   addTradeLabel = "+ Trade",
+  promoteLabel = "Promote → Pending",
   busy = {},
   disabled = false,
   viewOnly = false,
@@ -487,7 +497,13 @@ export function TradePlanEditor({
   useEffect(() => {
     fetch("/v2/accounts")
       .then((r) => r.json())
-      .then((d) => setAccounts((d?.items || []).filter((a) => String(a?.status || "").toUpperCase() === "ACTIVE")))
+      .then((d) =>
+        setAccounts(
+          (d?.items || []).filter(
+            (a) => String(a?.status || "").toUpperCase() === "ACTIVE",
+          ),
+        ),
+      )
       .catch(() => {});
   }, []);
 
@@ -576,11 +592,14 @@ export function TradePlanEditor({
                 onAccountChange?.(newId);
                 if (newId && tradeId) {
                   try {
-                    await fetch(`/v2/trades/${encodeURIComponent(tradeId)}/update`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ account_id: newId }),
-                    });
+                    await fetch(
+                      `/v2/trades/${encodeURIComponent(tradeId)}/update`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ account_id: newId }),
+                      },
+                    );
                   } catch (_) {}
                 }
               }}
@@ -669,9 +688,10 @@ export function TradePlanEditor({
               )}
             </div>
           )}
-          {/* Cancel/Close buttons always visible in view mode if provided */}
+          {/* Cancel/Close/Promote buttons always visible in view mode if provided */}
           {(typeof onCancel === "function" ||
-            typeof onClose === "function") && (
+            typeof onClose === "function" ||
+            typeof onPromote === "function") && (
             <div
               style={{
                 display: "flex",
@@ -680,6 +700,27 @@ export function TradePlanEditor({
                 marginTop: 10,
               }}
             >
+              {typeof onPromote === "function" && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPromote();
+                  }}
+                  disabled={controlsDisabled}
+                  style={{
+                    height: "24px",
+                    fontSize: "11px",
+                    padding: "0 10px",
+                    background: "transparent",
+                    borderColor: "#06b6d4",
+                    color: "#06b6d4",
+                  }}
+                >
+                  {promoteLabel}
+                </button>
+              )}
               {typeof onCancel === "function" && (
                 <button
                   className="secondary-button"
@@ -693,8 +734,8 @@ export function TradePlanEditor({
                     height: "24px",
                     fontSize: "11px",
                     padding: "0 10px",
-                    color: "#ef5350",
-                    borderColor: "#ef5350",
+                    color: "#b91c1c",
+                    borderColor: "#b91c1c",
                   }}
                 >
                   Cancel
@@ -713,8 +754,8 @@ export function TradePlanEditor({
                     height: "24px",
                     fontSize: "11px",
                     padding: "0 10px",
-                    color: "#ff9800",
-                    borderColor: "#ff9800",
+                    color: "#b91c1c",
+                    borderColor: "#b91c1c",
                   }}
                 >
                   Close
@@ -1091,8 +1132,8 @@ export function TradePlanEditor({
                     fontSize: "11px",
                     padding: "0 10px",
                     borderRadius: "4px",
-                    color: "#ef5350",
-                    borderColor: "#ef5350",
+                    color: "#b91c1c",
+                    borderColor: "#b91c1c",
                   }}
                 >
                   Cancel
@@ -1109,8 +1150,8 @@ export function TradePlanEditor({
                     fontSize: "11px",
                     padding: "0 10px",
                     borderRadius: "4px",
-                    color: "#ff9800",
-                    borderColor: "#ff9800",
+                    color: "#b91c1c",
+                    borderColor: "#b91c1c",
                   }}
                 >
                   Close
@@ -1163,9 +1204,28 @@ export function TradePlanEditor({
                     />
                   ) : (
                     addTradeLabel
-                    )}
-                  </button>
-                ) : null}
+                  )}
+                </button>
+              ) : null}
+              {typeof onPromote === "function" ? (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => onPromote()}
+                  disabled={controlsDisabled}
+                  style={{
+                    height: "26px",
+                    fontSize: "11px",
+                    padding: "0 10px",
+                    borderRadius: "4px",
+                    background: "transparent",
+                    borderColor: "#06b6d4",
+                    color: "#06b6d4",
+                  }}
+                >
+                  {promoteLabel}
+                </button>
+              ) : null}
             </div>
             {error ? (
               <span

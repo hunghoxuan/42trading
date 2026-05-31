@@ -5,6 +5,8 @@ import { parseTextList } from "../../utils/textList";
 import MasterDetailLayout from "../../components/MasterDetailLayout";
 import SidebarListItem from "../../components/SidebarListItem";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import CronInterval from "../../components/CronInterval";
+import SymbolGroupSelector from "../../components/SymbolGroupSelector";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -65,6 +67,21 @@ const ORDER_TYPE_OPTIONS = ["market", "limit", "stop"];
 
 const DIRECTION_OPTIONS = ["BUY", "SELL"];
 
+const PROMPT_TEMPLATES = {
+  smc: `Analyze the chart using Smart Money Concepts (SMC).
+Identify: market structure (BOS/CHoCH), liquidity sweeps, order blocks, FVGs, premium/discount zones.
+Return a trade plan with entry at the most recent valid order block, stop loss behind structure, and take profit at the nearest liquidity pool.`,
+  pa: `Analyze the chart using Price Action.
+Identify: key support/resistance levels, candlestick patterns (engulfing, pin bar, inside bar), trend structure (HH/HL or LH/LL).
+Return a trade plan with entry at the pattern confirmation level, stop loss beyond the pattern extreme, and take profit at the next S/R level.`,
+  ict: `Analyze the chart using ICT concepts.
+Identify: killzone session, liquidity sweep, market structure shift (MSS), fair value gap (FVG), optimal trade entry (OTE).
+Return a trade plan with entry at OTE within the FVG, stop loss beyond the recent swing, and take profit at the opposite liquidity pool.`,
+  scalp: `Analyze the chart for a scalp trade setup.
+Focus on the lowest timeframe (5m or 1m). Look for quick momentum moves with tight stops.
+Return a trade plan with entry at breakout/retest, stop loss 5-10 pips, take profit 1:1.5 to 1:2 RR.`,
+};
+
 const SNAPSHOT_FORMAT_OPTIONS = ["png", "jpeg", "webp"];
 
 const SNAPSHOT_THEME_OPTIONS = ["dark", "light"];
@@ -79,11 +96,25 @@ const SYMBOLS_GROUP_PRESETS = {
   watchlist: [],
   all: [], // filled at runtime — all symbols from market_data
   crypto: [
-    "BTCUSD", "ETHUSD", "XRPUSD", "SOLUSD", "DOGEUSD", "ADAUSD", "LTCUSD",
+    "BTCUSD",
+    "ETHUSD",
+    "XRPUSD",
+    "SOLUSD",
+    "DOGEUSD",
+    "ADAUSD",
+    "LTCUSD",
   ],
   forex: [
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF",
-    "GBPJPY", "EURJPY", "EURGBP",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
+    "NZDUSD",
+    "USDCAD",
+    "USDCHF",
+    "GBPJPY",
+    "EURJPY",
+    "EURGBP",
   ],
   indices: ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"],
   metals: ["XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD"],
@@ -142,6 +173,7 @@ function defaultForm(type) {
         profile: "",
         entry_models: "",
         prompt: "",
+        auto_save: "trades",
       };
     case "SNAPSHOT_CRON":
       return {
@@ -168,6 +200,7 @@ function formFromCronData(data) {
     cadence_seconds: Number(data?.cadence_seconds || 60),
     symbols: symbolsToText(data?.symbols),
     timeframes: Array.isArray(data?.timeframes) ? data.timeframes : [],
+    schedule: String(data?.schedule || ""),
   };
   switch (cronType) {
     case "MARKET_DATA_CRON":
@@ -181,12 +214,19 @@ function formFromCronData(data) {
     case "ANALYSIS_CRON":
       return {
         ...base,
-        directions: Array.isArray(data?.directions) ? data.directions : ["BUY", "SELL"],
-        order_types: Array.isArray(data?.order_types) ? data.order_types : ["market", "limit", "stop"],
+        directions: Array.isArray(data?.directions)
+          ? data.directions
+          : ["BUY", "SELL"],
+        order_types: Array.isArray(data?.order_types)
+          ? data.order_types
+          : ["market", "limit", "stop"],
         model: String(data?.model || "claude-sonnet-4-0"),
         profile: String(data?.profile || ""),
-        entry_models: Array.isArray(data?.entry_models) ? data.entry_models.join("\n") : "",
+        entry_models: Array.isArray(data?.entry_models)
+          ? data.entry_models.join("\n")
+          : "",
         prompt: String(data?.prompt || ""),
+        auto_save: String(data?.auto_save || "trades"),
       };
     case "SNAPSHOT_CRON":
       return {
@@ -213,6 +253,7 @@ function formToDataPayload(form, symbolsGroup = "") {
     symbols: symbolsGroup ? [] : symbols, // empty when group selected = dynamic
     symbols_group: symbolsGroup || null,
     timeframes: form.timeframes,
+    schedule: form.schedule || "",
     cadence_seconds: form.cadence_seconds,
   };
   switch (form.cron_type) {
@@ -233,6 +274,7 @@ function formToDataPayload(form, symbolsGroup = "") {
         profile: form.profile,
         entry_models: parseTextList(form.entry_models),
         prompt: form.prompt,
+        auto_save: form.auto_save || "trades",
       };
     case "SNAPSHOT_CRON":
       return {
@@ -323,7 +365,9 @@ export default function CronPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          setLoadError(err?.message || String(err || "Failed to load settings"));
+          setLoadError(
+            err?.message || String(err || "Failed to load settings"),
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -362,19 +406,16 @@ export default function CronPage() {
     setForm((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  const handleNewCron = useCallback(
-    (type) => {
-      setShowNewCronPicker(false);
-      const name = `${CRON_TYPE_LABELS[type] || type}_${Date.now().toString(36)}`;
-      const newForm = defaultForm(type);
-      setForm(newForm);
-      setCronName(name);
-      setSelectedCronName(name);
-      setSymbolsGroup("");
-      setSaveMsg("");
-    },
-    [],
-  );
+  const handleNewCron = useCallback((type) => {
+    setShowNewCronPicker(false);
+    const name = `${CRON_TYPE_LABELS[type] || type}_${Date.now().toString(36)}`;
+    const newForm = defaultForm(type);
+    setForm(newForm);
+    setCronName(name);
+    setSelectedCronName(name);
+    setSymbolsGroup("");
+    setSaveMsg("");
+  }, []);
 
   const handleSave = useCallback(async () => {
     console.log("[cron-save] start, selectedCronName=", selectedCronName);
@@ -487,29 +528,21 @@ export default function CronPage() {
     }
   }, [selectedCron]);
 
-  const handleSymbolsGroupChange = useCallback(
-    (group) => {
-      setSymbolsGroup(group);
-      if (group && availableGroupPresets[group]) {
-        const symbols = availableGroupPresets[group];
-        updateForm({ symbols: symbols.join("\n") });
-      }
-    },
-    [availableGroupPresets, updateForm],
-  );
+  const handleSymbolsGroupChange = useCallback((g) => {
+    setSymbolsGroup(g);
+    // When switching to a group, don't touch form.symbols —
+    // custom selections persist. Group name is stored separately.
+  }, []);
 
-  const handleCheckboxToggle = useCallback(
-    (field, value) => {
-      setForm((prev) => {
-        const arr = prev[field] || [];
-        const next = arr.includes(value)
-          ? arr.filter((x) => x !== value)
-          : [...arr, value];
-        return { ...prev, [field]: next };
-      });
-    },
-    [],
-  );
+  const handleCheckboxToggle = useCallback((field, value) => {
+    setForm((prev) => {
+      const arr = prev[field] || [];
+      const next = arr.includes(value)
+        ? arr.filter((x) => x !== value)
+        : [...arr, value];
+      return { ...prev, [field]: next };
+    });
+  }, []);
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
@@ -598,7 +631,8 @@ export default function CronPage() {
           ) : (
             cronSettings.map((cron) => {
               const data = cron.data || {};
-              const ctLabel = CRON_TYPE_LABELS[data.cron_type] || data.cron_type || "Unknown";
+              const ctLabel =
+                CRON_TYPE_LABELS[data.cron_type] || data.cron_type || "Unknown";
               const isCronActive =
                 String(cron.status || "").toUpperCase() === "ACTIVE";
 
@@ -620,7 +654,11 @@ export default function CronPage() {
         </div>
 
         {/* ── Right: Edit Form ───────────────────────────── */}
-        <div className="panel stack-layout" style={{ gap: 16, padding: 24 }}>
+        <div
+          className="panel stack-layout"
+          style={{ gap: 16, padding: 24 }}
+          key={selectedCronName || "empty"}
+        >
           {!selectedCronName ? (
             <div className="minor-text" style={{ padding: "12px 0" }}>
               Select a cron from the list or create a new one.
@@ -640,10 +678,22 @@ export default function CronPage() {
                     value={cronName}
                     onChange={(e) => setCronName(e.target.value)}
                     placeholder="Cron name..."
-                    style={{ fontSize: 16, fontWeight: 700, border: "none", background: "transparent", color: "inherit", width: "100%", outline: "none", paddingLeft: 0 }}
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 700,
+                      border: "none",
+                      background: "transparent",
+                      color: "inherit",
+                      width: "100%",
+                      outline: "none",
+                      paddingLeft: 0,
+                    }}
                   />
                   {isNewCron && (
-                    <span className="minor-text" style={{ fontSize: 10, fontWeight: 400 }}>
+                    <span
+                      className="minor-text"
+                      style={{ fontSize: 10, fontWeight: 400 }}
+                    >
                       (new)
                     </span>
                   )}
@@ -672,54 +722,14 @@ export default function CronPage() {
                 </span>
 
                 <div className="stack-layout" style={{ gap: 12 }}>
-                  {/* Interval (Cadence) */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      INTERVAL
-                    </span>
-                    <select
-                      value={cadenceOption.label}
-                      onChange={(e) => {
-                        const opt = CADENCE_OPTIONS.find(
-                          (o) => o.label === e.target.value,
-                        );
-                        updateForm({
-                          cadence_seconds: opt ? opt.seconds : 60,
-                        });
-                      }}
-                    >
-                      {CADENCE_OPTIONS.map((opt) => (
-                        <option key={opt.label} value={opt.label}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Symbols Group Selector */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      SYMBOLS GROUP
-                    </span>
-                    <select
-                      value={symbolsGroup}
-                      onChange={(e) => handleSymbolsGroupChange(e.target.value)}
-                    >
-                      <option value="">Custom</option>
-                      <option value="all">All</option>
-                      {Object.keys(SYMBOLS_GROUP_LABELS).map((key) => (
-                        <option key={key} value={key}>
-                          {SYMBOLS_GROUP_LABELS[key]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Interval */}
+                  <CronInterval
+                    value={
+                      form.schedule ||
+                      `every ${Math.round((form.cadence_seconds || 60) / 60)}m`
+                    }
+                    onChange={(schedule) => updateForm({ schedule })}
+                  />
 
                   {/* Symbols */}
                   <div className="stack-layout" style={{ gap: 6 }}>
@@ -727,46 +737,16 @@ export default function CronPage() {
                       className="panel-label"
                       style={{ fontSize: 10, marginBottom: 0 }}
                     >
-                      SYMBOLS (COMMA OR NEWLINE)
+                      SYMBOLS
                     </span>
-                    <textarea
-                      rows={4}
+                    <SymbolGroupSelector
                       value={form.symbols}
-                      onChange={(e) => updateForm({ symbols: e.target.value })}
-                      placeholder="e.g. XAUUSD, EURUSD, BTCUSD"
-                      disabled={symbolsGroup !== ""}
-                      style={symbolsGroup !== "" ? { opacity: 0.5 } : {}}
+                      onChange={(val) => updateForm({ symbols: val })}
+                      group={symbolsGroup}
+                      onGroupChange={(g) => handleSymbolsGroupChange(g)}
+                      watchlist={watchlistSymbols}
+                      compact
                     />
-                  </div>
-
-                  {/* Timeframes (shared) */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      TIMEFRAMES
-                    </span>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                      {TIMEFRAME_OPTIONS.map((tf) => (
-                        <label
-                          key={tf}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={form.timeframes.includes(tf)}
-                            onChange={() => handleCheckboxToggle("timeframes", tf)}
-                          />
-                          <span style={{ fontSize: 13 }}>{tf}</span>
-                        </label>
-                      ))}
-                    </div>
                   </div>
                 </div>
               </div>
@@ -796,6 +776,38 @@ export default function CronPage() {
                 </span>
 
                 <div className="stack-layout" style={{ gap: 12 }}>
+                  {/* Timeframes (all types) */}
+                  <div className="stack-layout" style={{ gap: 6 }}>
+                    <span
+                      className="panel-label"
+                      style={{ fontSize: 10, marginBottom: 0 }}
+                    >
+                      TIMEFRAMES
+                    </span>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                      {TIMEFRAME_OPTIONS.map((tf) => (
+                        <label
+                          key={tf}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.timeframes.includes(tf)}
+                            onChange={() =>
+                              handleCheckboxToggle("timeframes", tf)
+                            }
+                          />
+                          <span style={{ fontSize: 13 }}>{tf}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* MARKET_DATA_CRON fields */}
                   {form.cron_type === "MARKET_DATA_CRON" && (
                     <>
@@ -811,7 +823,9 @@ export default function CronPage() {
                           <span className="minor-text">Provider</span>
                           <select
                             value={form.provider}
-                            onChange={(e) => updateForm({ provider: e.target.value })}
+                            onChange={(e) =>
+                              updateForm({ provider: e.target.value })
+                            }
                           >
                             <option value="twelvedata">Twelve Data</option>
                           </select>
@@ -821,7 +835,9 @@ export default function CronPage() {
                           <span className="minor-text">Display Timezone</span>
                           <select
                             value={form.timezone}
-                            onChange={(e) => updateForm({ timezone: e.target.value })}
+                            onChange={(e) =>
+                              updateForm({ timezone: e.target.value })
+                            }
                           >
                             {DISPLAY_TIMEZONE_OPTIONS.map((opt) => (
                               <option key={opt.value} value={opt.value}>
@@ -898,10 +914,15 @@ export default function CronPage() {
                                   type="checkbox"
                                   checked={form.directions.includes(direction)}
                                   onChange={() =>
-                                    handleCheckboxToggle("directions", direction)
+                                    handleCheckboxToggle(
+                                      "directions",
+                                      direction,
+                                    )
                                   }
                                 />
-                                <span style={{ fontSize: 13 }}>{direction}</span>
+                                <span style={{ fontSize: 13 }}>
+                                  {direction}
+                                </span>
                               </label>
                             ))}
                           </div>
@@ -939,42 +960,72 @@ export default function CronPage() {
                         </div>
                       </div>
 
-                      {/* Model */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          MODEL
-                        </span>
-                        <select
-                          value={form.model}
-                          onChange={(e) => updateForm({ model: e.target.value })}
-                        >
-                          {API_KEY_NAME_OPTIONS.map((opt) => (
-                            <option
-                              key={opt.value}
-                              value={opt.value.replace("_API_KEY", "").toLowerCase()}
-                            >
-                              {opt.label.replace(" API Key", "")}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Profile */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          PROFILE
-                        </span>
-                        <input
-                          value={form.profile}
-                          onChange={(e) => updateForm({ profile: e.target.value })}
-                          placeholder="Optional AI/profile name"
-                        />
+                      {/* Model / Profile / Auto Save — compact row */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            MODEL
+                          </span>
+                          <select
+                            value={form.model}
+                            onChange={(e) =>
+                              updateForm({ model: e.target.value })
+                            }
+                          >
+                            {API_KEY_NAME_OPTIONS.map((opt) => (
+                              <option
+                                key={opt.value}
+                                value={opt.value
+                                  .replace("_API_KEY", "")
+                                  .toLowerCase()}
+                              >
+                                {opt.label.replace(" API Key", "")}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            PROFILE
+                          </span>
+                          <input
+                            value={form.profile}
+                            onChange={(e) =>
+                              updateForm({ profile: e.target.value })
+                            }
+                            placeholder="Profile name"
+                          />
+                        </div>
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            AUTO SAVE
+                          </span>
+                          <select
+                            value={form.auto_save || "trades"}
+                            onChange={(e) =>
+                              updateForm({ auto_save: e.target.value })
+                            }
+                          >
+                            <option value="none">None (files)</option>
+                            <option value="signals">Trade (Draft)</option>
+                            <option value="trades">Trade (Pending)</option>
+                          </select>
+                        </div>
                       </div>
 
                       {/* Entry Models */}
@@ -1001,12 +1052,46 @@ export default function CronPage() {
                           className="panel-label"
                           style={{ fontSize: 10, marginBottom: 0 }}
                         >
+                          PROMPT TEMPLATE
+                        </span>
+                        <select
+                          value={form.prompt_template || "custom"}
+                          onChange={(e) => {
+                            const tpl = e.target.value;
+                            updateForm({
+                              prompt_template: tpl,
+                              prompt:
+                                tpl === "custom"
+                                  ? form.prompt
+                                  : PROMPT_TEMPLATES[tpl] || "",
+                            });
+                          }}
+                        >
+                          <option value="custom">Custom</option>
+                          <option value="smc">SMC Default</option>
+                          <option value="pa">Price Action</option>
+                          <option value="ict">ICT</option>
+                          <option value="scalp">Scalping</option>
+                        </select>
+                      </div>
+
+                      {/* Prompt Text */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
                           PROMPT
                         </span>
                         <textarea
                           rows={6}
                           value={form.prompt}
-                          onChange={(e) => updateForm({ prompt: e.target.value })}
+                          onChange={(e) => {
+                            updateForm({
+                              prompt: e.target.value,
+                              prompt_template: "custom",
+                            });
+                          }}
                           placeholder="Instructions for AI setup detection..."
                         />
                       </div>
@@ -1018,8 +1103,18 @@ export default function CronPage() {
                     <>
                       {/* Broker Select */}
                       <div className="stack-layout" style={{ gap: 6 }}>
-                        <span className="panel-label" style={{ fontSize: 10, marginBottom: 0 }}>BROKER (optional)</span>
-                        <select value={form.broker || ""} onChange={(e) => updateForm({ broker: e.target.value })}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          BROKER (optional)
+                        </span>
+                        <select
+                          value={form.broker || ""}
+                          onChange={(e) =>
+                            updateForm({ broker: e.target.value })
+                          }
+                        >
                           <option value="">Auto (no prefix)</option>
                           <option value="ICMARKETS">IC Markets</option>
                           <option value="OANDA">OANDA</option>
@@ -1043,7 +1138,9 @@ export default function CronPage() {
                           <span className="minor-text">Format</span>
                           <select
                             value={form.format}
-                            onChange={(e) => updateForm({ format: e.target.value })}
+                            onChange={(e) =>
+                              updateForm({ format: e.target.value })
+                            }
                           >
                             {SNAPSHOT_FORMAT_OPTIONS.map((f) => (
                               <option key={f} value={f}>
@@ -1057,7 +1154,9 @@ export default function CronPage() {
                           <span className="minor-text">Quality</span>
                           <select
                             value={form.quality}
-                            onChange={(e) => updateForm({ quality: Number(e.target.value) })}
+                            onChange={(e) =>
+                              updateForm({ quality: Number(e.target.value) })
+                            }
                           >
                             {SNAPSHOT_QUALITY_OPTIONS.map((q) => (
                               <option key={q.value} value={q.value}>
@@ -1071,7 +1170,9 @@ export default function CronPage() {
                           <span className="minor-text">Theme</span>
                           <select
                             value={form.theme}
-                            onChange={(e) => updateForm({ theme: e.target.value })}
+                            onChange={(e) =>
+                              updateForm({ theme: e.target.value })
+                            }
                           >
                             {SNAPSHOT_THEME_OPTIONS.map((t) => (
                               <option key={t} value={t}>
@@ -1124,7 +1225,9 @@ export default function CronPage() {
                             max="10000"
                             value={form.lookback_bars}
                             onChange={(e) =>
-                              updateForm({ lookback_bars: Number(e.target.value) })
+                              updateForm({
+                                lookback_bars: Number(e.target.value),
+                              })
                             }
                           />
                         </label>
@@ -1137,13 +1240,15 @@ export default function CronPage() {
                             max="50"
                             value={form.symbols_per_tick}
                             onChange={(e) =>
-                              updateForm({ symbols_per_tick: Number(e.target.value) })
+                              updateForm({
+                                symbols_per_tick: Number(e.target.value),
+                              })
                             }
                           />
                         </label>
                       </div>
 
-                        {/* Exclude Symbols */}
+                      {/* Exclude Symbols */}
                       <div className="stack-layout" style={{ gap: 6 }}>
                         <span
                           className="panel-label"
@@ -1177,24 +1282,28 @@ export default function CronPage() {
               >
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {selectedCron && (
-                    <>
-                      <span className={`badge ${isActive ? "ACTIVE" : "INACTIVE"}`}>
-                        {isActive ? "ACTIVE" : "INACTIVE"}
-                      </span>
-                      <button
-                        className="secondary-button"
-                        style={{ padding: "12px 24px", fontSize: 14 }}
-                        onClick={handleToggleStatus}
-                        disabled={saveLoading}
-                      >
-                        {isActive ? "Turn Off" : "Turn On"}
-                      </button>
-                    </>
+                    <button
+                      className="secondary-button"
+                      style={{
+                        padding: "10px 20px",
+                        fontSize: 13,
+                        borderColor: isActive
+                          ? "var(--accent)"
+                          : "var(--border)",
+                        borderWidth: 2,
+                      }}
+                      onClick={handleToggleStatus}
+                      disabled={saveLoading}
+                    >
+                      {isActive
+                        ? "● ACTIVE — Click to Turn Off"
+                        : "○ INACTIVE — Click to Turn On"}
+                    </button>
                   )}
                   {selectedCron && !isNewCron && (
                     <button
                       className="danger-button"
-                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      style={{ padding: "10px 20px", fontSize: 13 }}
                       onClick={handleDelete}
                       disabled={saveLoading}
                     >

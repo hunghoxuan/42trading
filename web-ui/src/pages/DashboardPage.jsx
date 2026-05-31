@@ -432,8 +432,6 @@ export default function DashboardPage() {
   const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
   const monthPoints = [];
   for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(calendarYear, calendarMonth, d).getDay();
-    if (dow === 0 || dow === 6) continue; // trading days only (Mon-Fri)
     const dateStr = `${monthKeyPrefix}${String(d).padStart(2, "0")}`;
     const item = calendarData ? calendarData[dateStr] : null;
     const pnl = item ? Number(item.pnl || 0) : 0;
@@ -837,7 +835,8 @@ export default function DashboardPage() {
                 <span style={{ fontSize: 12 }}>
                   {(() => {
                     const pm = calendarMonth === 0 ? 11 : calendarMonth - 1;
-                    const py = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
+                    const py =
+                      calendarMonth === 0 ? calendarYear - 1 : calendarYear;
                     return `${new Date(py, pm).toLocaleString("default", { month: "short" })} — ${new Date(calendarYear, calendarMonth).toLocaleString("default", { month: "short", year: "numeric" })}`;
                   })()}
                 </span>
@@ -856,7 +855,8 @@ export default function DashboardPage() {
               </div>
               {(() => {
                 const prevMonth = calendarMonth === 0 ? 11 : calendarMonth - 1;
-                const prevYear = calendarMonth === 0 ? calendarYear - 1 : calendarYear;
+                const prevYear =
+                  calendarMonth === 0 ? calendarYear - 1 : calendarYear;
                 const renderGrid = (month, year, label) => {
                   const firstDay = new Date(year, month, 1).getDay();
                   const dim = new Date(year, month + 1, 0).getDate();
@@ -973,8 +973,12 @@ export default function DashboardPage() {
                 };
                 return (
                   <div style={{ display: "flex", gap: 16 }}>
-                    <div style={{ flex: 1 }}>{renderGrid(prevMonth, prevYear, "prev")}</div>
-                    <div style={{ flex: 1 }}>{renderGrid(calendarMonth, calendarYear, "curr")}</div>
+                    <div style={{ flex: 1 }}>
+                      {renderGrid(prevMonth, prevYear, "prev")}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      {renderGrid(calendarMonth, calendarYear, "curr")}
+                    </div>
                   </div>
                 );
               })()}

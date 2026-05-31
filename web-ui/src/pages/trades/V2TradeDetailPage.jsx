@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { NotificationHub } from "../../services/NotificationHub";
 
@@ -28,6 +28,7 @@ function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
   if (s === "FILLED" || s === "OPEN") return { cls: "ACTIVE", label: "FILLED" };
   if (s === "CLOSED" || s === "CANCELLED") return { cls: "INACTIVE", label: s };
+  if (s === "REJECTED") return { cls: "FAIL", label: "REJECTED" };
   if (s === "ERROR" || s === "FAIL") return { cls: "FAIL", label: s };
   if (s === "PENDING" || s === "NEW") return { cls: "OTHER", label: "PENDING" };
   return { cls: "OTHER", label: s || "PENDING" };
@@ -70,6 +71,7 @@ function orderTypeRuleError(direction, orderType, entry, lastPrice) {
 
 export default function TradeDetailPage() {
   const { tradeId } = useParams();
+  const navigate = useNavigate();
   const EMPTY_DETAIL_PLAN = useMemo(
     () => ({
       direction: "BUY",
@@ -257,24 +259,75 @@ export default function TradeDetailPage() {
               opacity: 0.95,
             }}
           >
-            <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>{sidText}</span>
+            <span
+              className="badge badge-mini"
+              style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}
+            >
+              {sidText}
+            </span>
             <BrokerTicketBadge
               brokerId={brokerIdText}
               dispatchStatus={trade.dispatch_status}
             />
             <span>|</span>
-            <span className={`badge ${currentStatus.cls}`} style={{ cursor: "default" }}>
+            <span
+              className={`badge ${currentStatus.cls}`}
+              title={
+                trade.execution_status === "REJECTED" && trade.rejection_reason
+                  ? trade.rejection_reason
+                  : undefined
+              }
+              style={{ cursor: trade.rejection_reason ? "help" : "default" }}
+            >
               {currentStatus.label}
             </span>
+            {trade.execution_status === "REJECTED" &&
+              trade.rejection_reason && (
+                <span className="minor-text" style={{ fontSize: 11 }}>
+                  {trade.rejection_reason}
+                </span>
+              )}
             {(() => {
-              const d = trade.dispatch_status || 'OPEN';
-              if (d === 'REJECTED') return <span title={trade.rejection_reason || 'Sync failed'} style={{cursor:'default', fontSize:12}}>❌</span>;
-              if (d === 'MODIFY' || d === 'CLOSE' || d === 'CANCEL') return <span title={`Sync pending: ${d}`} style={{cursor:'default', fontSize:12}}>⏳</span>;
-              if (d === 'LEASED') return <span title="Syncing with broker..." style={{cursor:'default', fontSize:12}}>🔄</span>;
+              const d = trade.dispatch_status || "OPEN";
+              if (d === "REJECTED")
+                return (
+                  <span
+                    title={trade.rejection_reason || "Sync failed"}
+                    style={{ cursor: "default", fontSize: 12 }}
+                  >
+                    ❌
+                  </span>
+                );
+              if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL")
+                return (
+                  <span
+                    title={`Sync pending: ${d}`}
+                    style={{ cursor: "default", fontSize: 12 }}
+                  >
+                    ⏳
+                  </span>
+                );
+              if (d === "LEASED")
+                return (
+                  <span
+                    title="Syncing with broker..."
+                    style={{ cursor: "default", fontSize: 12 }}
+                  >
+                    🔄
+                  </span>
+                );
               return null;
             })()}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              flexWrap: "wrap",
+              justifyContent: "flex-end",
+            }}
+          >
             {aiStrategy && <span style={badgeS("#8b5cf6")}>{aiStrategy}</span>}
             {aiEntry && <span style={badgeS("#6366f1")}>{aiEntry}</span>}
             {aiGrade && (
@@ -450,6 +503,22 @@ export default function TradeDetailPage() {
     }
   }
 
+  async function onApproveDraft() {
+    if (!trade) return;
+    if (!confirm("Approve this draft and move to pending?")) return;
+    try {
+      setLoading(true);
+      await api.promoteDraftTrade(trade.sid || trade.id);
+      navigate(`/trades/pending/${trade.sid || trade.id}`, {
+        replace: true,
+      });
+    } catch (e) {
+      setError(e?.message || "Approve failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (loading) return <div className="loading">Loading trade {tradeId}...</div>;
   if (error) return <div className="error">{error}</div>;
   if (!trade) return <div className="empty-state">Trade not found.</div>;
@@ -483,26 +552,6 @@ export default function TradeDetailPage() {
             }}
           >
             Cancel Trade
-          </button>
-        </div>
-      )}
-      {trade.execution_status === "Draft" && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <button
-            type="button"
-            className="primary-button"
-            style={{ background: "#4caf50", borderColor: "#4caf50" }}
-            onClick={async () => {
-              if (!confirm("Promote this draft to a live trade?")) return;
-              try {
-                await api.promoteDraftTrade(trade.sid || trade.id);
-                window.location.reload();
-              } catch (e) {
-                setError(e?.message || "Promote failed");
-              }
-            }}
-          >
-            + Trade
           </button>
         </div>
       )}
@@ -557,7 +606,9 @@ export default function TradeDetailPage() {
               value: detailPlan,
               onChange: (k, v) => applyPlanChange(k, v),
               onSave: onUpdateTradePlan,
-              onAddTrade: onReEntryTrade,
+              onAddTrade: !isDraft ? onReEntryTrade : undefined,
+              onPromote: isDraft ? onApproveDraft : undefined,
+              promoteLabel: "Approve",
               showSaveDraftButton: false,
               showSaveButton: !isTerminal,
               viewOnly: isTerminal,
@@ -581,7 +632,10 @@ export default function TradeDetailPage() {
               symbol: trade.symbol,
               interval: trade.signal_tf || trade.chart_tf || "1h",
               live: true,
-              entryPrice: asNum(trade.entry_price_exec) || asNum(detailPlan.entry) || asNum(trade.entry),
+              entryPrice:
+                asNum(trade.entry_price_exec) ||
+                asNum(detailPlan.entry) ||
+                asNum(trade.entry),
               slPrice: asNum(detailPlan.sl) || asNum(trade.sl),
               tpPrice: asNum(detailPlan.tp) || asNum(trade.tp),
               tp1Price:
@@ -594,7 +648,10 @@ export default function TradeDetailPage() {
               openedAt: trade.opened_at,
               closedAt: trade.closed_at,
               provider:
-                trade.provider || trade.metadata?.provider || "ICMARKETS",
+                trade.account_provider_code ||
+                trade.provider ||
+                trade.metadata?.provider ||
+                "ICMARKETS",
               sessionPrefix:
                 trade.session_prefix || trade.metadata?.session_prefix || "",
               tradeId: trade.sid || trade.id || "",
@@ -628,7 +685,8 @@ export default function TradeDetailPage() {
               },
               {
                 label: "Source",
-                value: detailPlan.source || trade.source_id || trade.source || "-",
+                value:
+                  detailPlan.source || trade.source_id || trade.source || "-",
               },
               {
                 label: "Profile",
@@ -642,7 +700,10 @@ export default function TradeDetailPage() {
                   trade.metadata?.session_prefix ||
                   "-",
               },
-              { label: "Entry", value: trade.entry_price_exec || trade.entry || "-" },
+              {
+                label: "Entry",
+                value: trade.entry_price_exec || trade.entry || "-",
+              },
               { label: "TP", value: detailPlan.tp || trade.tp || "-" },
               { label: "SL", value: detailPlan.sl || trade.sl || "-" },
               { label: "RR", value: detailPlan.rr || trade.rr_planned || "-" },
@@ -677,14 +738,106 @@ export default function TradeDetailPage() {
                 label: "Status",
                 value: statusUi(trade.execution_status).label,
               },
-              trade.dispatch_status && trade.dispatch_status !== 'CONSUMED' && trade.dispatch_status !== 'OPEN' ? {
-                label: "Sync Status",
-                value: `${trade.dispatch_status}${trade.rejection_reason ? ' — ' + trade.rejection_reason : ''}`,
-                cls: trade.dispatch_status === 'REJECTED' ? 'warn' : '',
-              } : null,
+              trade.dispatch_status &&
+              trade.dispatch_status !== "CONSUMED" &&
+              trade.dispatch_status !== "OPEN"
+                ? {
+                    label: "Sync Status",
+                    value: `${trade.dispatch_status}${trade.rejection_reason ? " — " + trade.rejection_reason : ""}`,
+                    cls: trade.dispatch_status === "REJECTED" ? "warn" : "",
+                  }
+                : null,
               { label: "Broker Ticket", value: getBrokerTicket(trade) },
               { label: "Account", value: trade.account_id || "-" },
-              { label: "Volume", value: `${trade.volume ?? "-"} lots` },
+              trade.account_broker_name || trade.account_metadata?.broker_name
+                ? {
+                    label: "Broker Name",
+                    value:
+                      trade.account_broker_name ||
+                      trade.account_metadata?.broker_name ||
+                      "-",
+                    group: "identity",
+                  }
+                : null,
+              {
+                label: "Provider",
+                value:
+                  trade.account_provider_code ||
+                  trade.account_metadata?.provider_code ||
+                  trade.metadata?.provider_code ||
+                  "-",
+                group: "identity",
+              },
+              trade.pnl_realized != null
+                ? {
+                    label: "Broker PnL",
+                    value: `$${Number(trade.pnl_realized).toFixed(2)}`,
+                    group: "pnl",
+                  }
+                : null,
+              asNum(trade.broker_pnl)
+                ? {
+                    label: "Broker Net Profit",
+                    value: `$${asNum(trade.broker_pnl).toFixed(2)}`,
+                    group: "pnl",
+                  }
+                : null,
+              asNum(trade.broker_tp_pnl)
+                ? {
+                    label: "Planned TP Profit",
+                    value: `$${asNum(trade.broker_tp_pnl).toFixed(2)}`,
+                    group: "pnl",
+                  }
+                : null,
+              asNum(trade.broker_sl_pnl)
+                ? {
+                    label: "Planned SL Profit",
+                    value: `$${asNum(trade.broker_sl_pnl).toFixed(2)}`,
+                    group: "pnl",
+                  }
+                : null,
+              asNum(trade.broker_margin)
+                ? {
+                    label: "Broker Margin",
+                    value: `$${asNum(trade.broker_margin).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              trade.margin != null
+                ? {
+                    label: "Margin",
+                    value: `$${Number(trade.margin).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_volume)
+                ? {
+                    label: "Vol",
+                    value: `${Number(trade.broker_volume).toLocaleString()} units`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_lots)
+                ? {
+                    label: "Lots",
+                    value: `${asNum(trade.broker_lots).toFixed(2)} lots`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_swap)
+                ? {
+                    label: "Swap",
+                    value: `$${asNum(trade.broker_swap).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_commission)
+                ? {
+                    label: "Commission",
+                    value: `$${asNum(trade.broker_commission).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
               {
                 label: "Signal TF",
                 value: formatTimeframe(trade.signal_tf || trade.tf || "-"),
@@ -699,6 +852,18 @@ export default function TradeDetailPage() {
                   trade.only_signal != null ? String(trade.only_signal) : "-",
               },
               { label: "Created", value: showDateTime(trade.created_at) },
+              {
+                label: "Updated",
+                value: trade.updated_at ? showDateTime(trade.updated_at) : "-",
+              },
+              {
+                label: "Opened",
+                value: trade.opened_at ? showDateTime(trade.opened_at) : "-",
+              },
+              {
+                label: "Closed",
+                value: trade.closed_at ? showDateTime(trade.closed_at) : "-",
+              },
               {
                 label: "Entry Condition",
                 value: detailPlan.entry_condition || "-",

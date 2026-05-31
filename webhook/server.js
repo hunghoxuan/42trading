@@ -167,6 +167,57 @@ loadEnvFile();
 const ROOT_DIR = envStr(process.env.ROOT_FOLDER, __dirname);
 // Global data dirs (not user-specific)
 const GLOBAL_DATA_DIR = path.resolve(ROOT_DIR, "..", "data");
+const CONFIG_GUIDE_DIR = path.resolve(ROOT_DIR, "..", "config", "guide");
+// Load the AI system guide + strategy templates — used as default prompt
+// for cron AI analysis when no custom prompt is provided (matches manual UI).
+let DEFAULT_AI_SYSTEM_PROMPT = "";
+let DEFAULT_AI_STRATEGIES = "";
+try {
+  DEFAULT_AI_SYSTEM_PROMPT = fs.readFileSync(
+    path.join(CONFIG_GUIDE_DIR, "system.md"),
+    "utf8",
+  );
+  DEFAULT_AI_STRATEGIES = fs.readFileSync(
+    path.join(CONFIG_GUIDE_DIR, "strategies.md"),
+    "utf8",
+  );
+} catch (_) {
+  console.warn(
+    "[startup] Could not load config/guide/system.md or strategies.md — default AI prompt will be bare",
+  );
+}
+
+// Build a rich default prompt matching what the manual UI produces.
+// Used when no custom prompt is provided (e.g., cron AI analysis).
+function buildDefaultRichPrompt(symbol, tfs) {
+  const tfList = (tfs || ["D", "4H", "15m", "5m"]).map((x) =>
+    String(x).toUpperCase(),
+  );
+  return `## SESSION CONFIG
+Asset: Auto detect | Session: Any | Profile: daily
+Symbols: ${symbol}
+MinTrades: 0 | MaxTrades: 2 | MinRR: 2 | MaxRisk: 1% | NarrativeLanguage: English
+HTF: D, 4H
+Execution: 15M
+Confirmation: 5M
+Active Strategies: SMC, Price Action, Market Structure
+
+${DEFAULT_AI_STRATEGIES}
+
+## ANALYSIS INSTRUCTIONS
+${DEFAULT_AI_SYSTEM_PROMPT}
+
+## PRICE PRECISION RULE (MANDATORY)
+For each symbol, detect the market price precision from the provided chart/current price values and keep it consistent.
+If current price uses N decimals, all price outputs in trade_plan must also use exactly N decimals:
+- entry_price / entry
+- stop_loss / sl
+- take_profit / tp
+- multiple_exits.tp1.price / tp2.price / tp3.price
+- breakeven_trigger / be_trigger
+Do not round to fewer decimals than the symbol precision.`;
+}
+
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
   "v2026.05.28 12:18 - d008212f",
@@ -9352,6 +9403,7 @@ END
               `
               UPDATE trades
               SET dispatch_status = 'REJECTED',
+                  execution_status = 'REJECTED',
                   rejection_reason = COALESCE(rejection_reason, $2),
                   metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb - 'last_broker_snapshot_hash',
                   updated_at = NOW()
@@ -9395,7 +9447,7 @@ END
               `
               UPDATE trades
               SET dispatch_status = $4::text,
-                  execution_status = CASE WHEN $4::text = 'CANCEL' THEN 'CANCELLED' ELSE execution_status END,
+                  execution_status = CASE WHEN $4::text = 'CANCEL' THEN 'CANCELLED' ELSE 'REJECTED' END,
                   rejection_reason = COALESCE(rejection_reason, $2),
                   metadata = (COALESCE(metadata, '{}'::jsonb) || $3::jsonb) - 'last_broker_snapshot_hash',
                   updated_at = NOW()
@@ -9524,15 +9576,22 @@ END
 
       const tradeId = payload.sid || payload.trade_id;
       const leaseToken = String(payload.lease_token || "").trim();
-      // Broker error means sync action failed, not the trade. Keep execution_status.
-      const isBrokerError = ["ERROR", "FAIL"].includes(
+      // Broker FAIL/ERROR means the order could not be executed on broker side (e.g.
+      // symbol not found, no quotes). Treat as REJECTED with the error message.
+      const isBrokerFail = ["ERROR", "FAIL"].includes(
         String(payload.execution_status || "").toUpperCase(),
       );
+      const failReason = isBrokerFail
+        ? String(
+            payload.message || payload.msg || payload.note || "Broker failed",
+          ).trim()
+        : null;
       const res = await db
         .update(schema.trades)
         .set({
           dispatchStatus: sql`CASE WHEN ${payload.release_only === true} = TRUE THEN 'NEW' ELSE 'CONSUMED' END`,
-          executionStatus: sql`CASE WHEN ${isBrokerError} = TRUE THEN ${schema.trades.executionStatus} ELSE ${payload.execution_status} END`,
+          executionStatus: sql`CASE WHEN ${isBrokerFail} = TRUE THEN 'REJECTED' WHEN ${isClosed} = TRUE THEN ${payload.execution_status} ELSE ${payload.execution_status} END`,
+          rejectionReason: sql`CASE WHEN ${isBrokerFail} = TRUE THEN ${failReason || "Broker failed"} ELSE ${schema.trades.rejectionReason} END`,
           brokerTradeId: sql`CASE WHEN ${payload.broker_trade_id}::text IN ('MANUAL', '') THEN ${schema.trades.brokerTradeId} ELSE ${payload.broker_trade_id} END`,
           entryExec:
             payload.entry_exec != null ? Number(payload.entry_exec) : undefined,
@@ -11969,7 +12028,7 @@ END
           name = EXCLUDED.name,
           balance = EXCLUDED.balance,
           status = EXCLUDED.status,
-          metadata = EXCLUDED.metadata,
+          metadata = COALESCE(user_accounts.metadata, '{}'::jsonb) || EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at
         RETURNING account_id, user_id, name, balance, status, metadata, created_at, updated_at
       `,
@@ -22322,6 +22381,12 @@ const appHandler = async (req, res) => {
 
       let finalPrompt =
         String(body.prompt || "").trim() ||
+        (DEFAULT_AI_SYSTEM_PROMPT && DEFAULT_AI_STRATEGIES
+          ? buildDefaultRichPrompt(
+              requestedSymbol,
+              requestedTfs || ["D", "4H", "15m", "5m"],
+            )
+          : DEFAULT_AI_SYSTEM_PROMPT) ||
         "Analyze these chart snapshots and return only JSON.";
       finalPrompt = buildTradesReviewPrompt(finalPrompt, tradesText);
       finalPrompt += `\n\nMULTI_SYMBOL_INPUT=${JSON.stringify({
@@ -23954,6 +24019,36 @@ const appHandler = async (req, res) => {
     });
   }
 
+  if (req.method === "GET" && url.pathname === "/v2/trades/counts") {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    if (!requireAdminKey(req, res, url)) return;
+    try {
+      const b = await mt5Backend();
+      const userId = uiEffectiveUserId(req, url);
+      const params = [];
+      let userWhere = "";
+      if (userId) {
+        params.push(userId);
+        userWhere = " WHERE user_id = $1";
+      }
+      const rows = await b.pool.query(
+        `SELECT execution_status, COUNT(*) as c FROM trades${userWhere} GROUP BY execution_status`,
+        params,
+      );
+      const counts = {};
+      for (const r of rows.rows || []) {
+        counts[r.execution_status] = Number(r.c);
+      }
+      return json(res, 200, { ok: true, counts });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === "GET" && url.pathname === "/v2/trades") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
@@ -24009,32 +24104,72 @@ const appHandler = async (req, res) => {
       const buildResponse = async () => {
         const out = await mt5ListTradesV2(filters, page, pageSize);
         const total = Number(out?.total || 0);
-        const items = Array.isArray(out?.items)
-          ? out.items.map((item) => {
-              const metadata =
-                item?.metadata && typeof item.metadata === "object"
-                  ? item.metadata
-                  : {};
-              const rawEntryModel =
-                item?.entry_model ||
-                metadata?.entry_model ||
-                metadata?.entry_model_raw ||
-                "";
-              return {
-                ...item,
-                metadata: {
-                  ...metadata,
-                  order_type: mt5NormalizeOrderTypeValue(
-                    item?.order_type || metadata?.order_type,
-                    "limit",
-                  ),
-                },
-                entry_model: mt5NormalizeEntryModel(rawEntryModel, {
-                  fallback: item?.source_id || "manual",
-                }),
-              };
-            })
-          : [];
+        // Enrich trades with account broker_name (one batch query, not per-trade)
+        const rawItems = Array.isArray(out?.items) ? out.items : [];
+        const accountIds = [
+          ...new Set(
+            rawItems
+              .map((t) => String(t.account_id || "").trim())
+              .filter(Boolean),
+          ),
+        ];
+        const accountMap = new Map(); // account_id -> { broker_name, provider_code }
+        if (accountIds.length) {
+          try {
+            const b = await mt5Backend();
+            const acctRows = await b.pool.query(
+              `SELECT account_id, metadata FROM user_accounts WHERE account_id = ANY($1::text[])`,
+              [accountIds],
+            );
+            for (const r of acctRows.rows || []) {
+              let meta = {};
+              try {
+                meta =
+                  r.metadata && typeof r.metadata === "object"
+                    ? r.metadata
+                    : typeof r.metadata === "string"
+                      ? JSON.parse(r.metadata)
+                      : {};
+              } catch (_) {}
+              accountMap.set(r.account_id, {
+                broker_name:
+                  meta.broker_name || meta.name || r.account_id || null,
+                provider_code: resolveProviderCode(
+                  meta.broker_name || meta.name || "",
+                ),
+              });
+            }
+          } catch (_) {}
+        }
+        const items = rawItems.map((item) => {
+          const acc = accountMap.get(String(item.account_id || "").trim());
+          const metadata =
+            item?.metadata && typeof item.metadata === "object"
+              ? item.metadata
+              : {};
+          const rawEntryModel =
+            item?.entry_model ||
+            metadata?.entry_model ||
+            metadata?.entry_model_raw ||
+            "";
+          return {
+            ...item,
+            account_broker_name: acc?.broker_name || null,
+            account_provider_code: acc?.provider_code || null,
+            metadata: {
+              ...metadata,
+              provider_code: acc?.provider_code || metadata?.provider_code || null,
+              broker_name: acc?.broker_name || metadata?.broker_name || null,
+              order_type: mt5NormalizeOrderTypeValue(
+                item?.order_type || metadata?.order_type,
+                "limit",
+              ),
+            },
+            entry_model: mt5NormalizeEntryModel(rawEntryModel, {
+              fallback: item?.source_id || "manual",
+            }),
+          };
+        });
         const result = {
           ok: true,
           items,
@@ -24815,7 +24950,9 @@ const appHandler = async (req, res) => {
       );
       if (!resolvedTrade?.sid)
         return json(res, 404, { ok: false, error: "trade not found" });
-      if (resolvedTrade.execution_status !== "Draft")
+      if (
+        String(resolvedTrade.execution_status || "").toUpperCase() !== "DRAFT"
+      )
         return json(res, 400, {
           ok: false,
           error: "Only Draft trades can be promoted",
@@ -27798,11 +27935,13 @@ async function mt5RunAiAnalysisCron() {
             );
           }
         }
-        // Call the same manual AI analyze endpoint — no code duplication
+        // Call the same manual AI analyze endpoint — no code duplication.
+        // When no custom prompt is in cron config, the endpoint will use
+        // the rich system.md guide as default (same as manual UI).
         try {
           const analyzePayload = JSON.stringify({
             symbol,
-            timeframes: tfs.length ? tfs : ["D", "240", "15", "5"],
+            timeframes: tfs.length ? tfs : ["D", "4H", "15m", "5m"],
             model: data.model || "claude-sonnet-4-0",
             auto_save: data.auto_save || "trades",
             prompt: data.prompt || "",

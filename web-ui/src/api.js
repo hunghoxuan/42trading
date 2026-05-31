@@ -719,6 +719,7 @@ export const api = {
     post(`/v2/trades/${encodeURIComponent(tradeId)}/update`, payload),
   v2TradesBulkAction: (action, filters = {}) =>
     post("/v2/trades/bulk-action", { action, ...filters }),
+  v2TradeCounts: () => get("/v2/trades/counts"),
   v2TradeEvents: (tradeId, limit = 200) =>
     get(
       `/v2/trades/${encodeURIComponent(tradeId)}/events?limit=${encodeURIComponent(limit)}`,
@@ -953,6 +954,10 @@ export const api = {
     get(`/v2/trades/${encodeURIComponent(tradeSid)}/snapshots`),
   chartSnapshotsDelete: (payload = {}) =>
     post("/v2/chart/snapshots/delete", payload),
+  marketDataSnapshots: (symbol, limit = 5) =>
+    get(
+      `/v2/market-data/snapshots/${encodeURIComponent(symbol)}?limit=${encodeURIComponent(limit)}`,
+    ),
   brokerBars: (symbol, tf, limit = 300) =>
     get(
       `/v2/market-data/broker-bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}`,

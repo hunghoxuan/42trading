@@ -44,6 +44,7 @@ export default function App() {
   );
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState(null);
+  const [tradeCounts, setTradeCounts] = useState({});
   const [, setRelativeTimeTick] = useState(0);
   const [tzUiTick, setTzUiTick] = useState(0);
   const location = useLocation();
@@ -96,6 +97,27 @@ export default function App() {
     return () =>
       window.removeEventListener("ui-timezone-changed", onTimezoneUiChanged);
   }, []);
+
+  // Fetch trade counts for nav badges (single GROUP BY query, cached 30s)
+  useEffect(() => {
+    const fetch = () => {
+      api
+        .v2TradeCounts()
+        .then((d) => {
+          if (d?.ok) setTradeCounts(d.counts || {});
+        })
+        .catch(() => {});
+    };
+    fetch();
+    const iv = setInterval(fetch, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const countBadge = (key) => {
+    const n = tradeCounts[key];
+    if (n == null) return "";
+    return ` (${n})`;
+  };
 
   useEffect(() => {
     Promise.allSettled([api.health(), api.authMe()])
@@ -175,9 +197,7 @@ export default function App() {
           <span className="brand-version">v{serverVersion}</span>
         ) : null}
         {getRuntimeActiveUserId() && (
-          <span
-            style={{ marginLeft: 10, fontSize: "11px", color: "#f39c12" }}
-          >
+          <span style={{ marginLeft: 10, fontSize: "11px", color: "#f39c12" }}>
             (Acting as {getRuntimeActiveUserId()})
             <button
               type="button"
@@ -203,7 +223,10 @@ export default function App() {
         <NavDropdown
           align="start"
           trigger={
-            <NavLink to="/ai/analyze" className={({ isActive }) => (isActive ? "active" : "")}>
+            <NavLink
+              to="/ai/analyze"
+              className={({ isActive }) => (isActive ? "active" : "")}
+            >
               AI
             </NavLink>
           }
@@ -214,57 +237,44 @@ export default function App() {
         <NavDropdown
           align="start"
           trigger={
-            <NavLink to="/trades" className={({ isActive }) => (isActive ? "active" : "")}>
+            <NavLink
+              to="/trades"
+              className={({ isActive }) => (isActive ? "active" : "")}
+            >
               Trades
             </NavLink>
           }
         >
           <NavLink
-            to="/trades?status=PENDING"
-            className={({ isActive }) =>
-              isActive && location.pathname === "/trades" && new URLSearchParams(location.search).get("status") === "PENDING" ? "active" : ""
-            }
+            to="/trades/pending"
+            className={({ isActive }) => (isActive ? "active" : "")}
           >
-            Pending
+            Pending{countBadge("PENDING")}
           </NavLink>
-            <NavLink
-              to="/trades?status=FILLED"
-              className={({ isActive }) =>
-                isActive &&
-                location.pathname === "/trades" &&
-                new URLSearchParams(location.search).get("status") ===
-                  "FILLED"
-                  ? "active"
-                  : ""
-              }
-            >
-              Filled
-            </NavLink>
-            <NavLink
-              to="/trades?status=CLOSED"
-              className={({ isActive }) =>
-                isActive &&
-                location.pathname === "/trades" &&
-                new URLSearchParams(location.search).get("status") ===
-                  "CLOSED"
-                  ? "active"
-                  : ""
-              }
-            >
-              Closed
-            </NavLink>
-            <NavLink
-              to="/trades?status=Draft"
-              className={({ isActive }) =>
-                isActive &&
-                location.pathname === "/trades" &&
-                new URLSearchParams(location.search).get("status") === "Draft"
-                  ? "active"
-                  : ""
-              }
-            >
-              Draft
-            </NavLink>
+          <NavLink
+            to="/trades/filled"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Filled{countBadge("FILLED")}
+          </NavLink>
+          <NavLink
+            to="/trades/closed"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Closed{countBadge("CLOSED")}
+          </NavLink>
+          <NavLink
+            to="/trades/rejected"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Rejected{countBadge("REJECTED")}
+          </NavLink>
+          <NavLink
+            to="/trades/draft"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Draft{countBadge("DRAFT")}
+          </NavLink>
         </NavDropdown>
 
         <div style={{ flex: 1 }} />
@@ -272,43 +282,21 @@ export default function App() {
         {canAccessSystemPages && (
           <NavDropdown
             trigger={
-              <button type="button" className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}>
+              <button
+                type="button"
+                className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}
+              >
                 System
               </button>
             }
           >
-              <NavLink to="/system/files">Files</NavLink>
-              <NavLink to="/system/storage">Storage</NavLink>
-              <NavLink to="/system/cache">Cache</NavLink>
-              <NavLink to="/system/logs">Logs</NavLink>
-              <NavLink to="/system/db">DB</NavLink>
-              <NavLink to="/system/health">Health</NavLink>
-              <NavLink to="/system/users">Users</NavLink>
-              <hr
-                style={{
-                  border: "0",
-                  borderTop: "1px solid rgba(255,255,255,0.1)",
-                  margin: "4px 0",
-                }}
-              />
-              <NavLink to="/tools">🛠 Tools</NavLink>
-          </NavDropdown>
-        )}
-        <NavDropdown
-          trigger={
-            <button type="button" className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}>
-              User
-            </button>
-          }
-        >
-            <NavLink to="/settings/profile">Profile</NavLink>
-            <NavLink to="/settings/notifications">Notifications</NavLink>
-            <NavLink to="/settings/accounts">Accounts</NavLink>
-            <NavLink to="/settings/crons">Cron</NavLink>
-            <NavLink to="/settings/providers">Providers</NavLink>
-            <NavLink to="/settings" end>
-              Settings
-            </NavLink>
+            <NavLink to="/system/files">Files</NavLink>
+            <NavLink to="/system/storage">Storage</NavLink>
+            <NavLink to="/system/cache">Cache</NavLink>
+            <NavLink to="/system/logs">Logs</NavLink>
+            <NavLink to="/system/db">DB</NavLink>
+            <NavLink to="/system/health">Health</NavLink>
+            <NavLink to="/system/users">Users</NavLink>
             <hr
               style={{
                 border: "0",
@@ -316,22 +304,50 @@ export default function App() {
                 margin: "4px 0",
               }}
             />
+            <NavLink to="/tools">🛠 Tools</NavLink>
+          </NavDropdown>
+        )}
+        <NavDropdown
+          trigger={
             <button
-              onClick={handleLogout}
-              className="nav-item-button danger-text"
-              style={{
-                width: "100%",
-                textAlign: "left",
-                background: "none",
-                border: "none",
-                color: "#ff4d4f",
-                padding: "8px 12px",
-                fontSize: "11px",
-                cursor: "pointer",
-              }}
+              type="button"
+              className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}
             >
-              Logout
+              User
             </button>
+          }
+        >
+          <NavLink to="/settings/profile">Profile</NavLink>
+          <NavLink to="/settings/notifications">Notifications</NavLink>
+          <NavLink to="/settings/accounts">Accounts</NavLink>
+          <NavLink to="/settings/crons">Cron</NavLink>
+          <NavLink to="/settings/providers">Providers</NavLink>
+          <NavLink to="/settings" end>
+            Settings
+          </NavLink>
+          <hr
+            style={{
+              border: "0",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              margin: "4px 0",
+            }}
+          />
+          <button
+            onClick={handleLogout}
+            className="nav-item-button danger-text"
+            style={{
+              width: "100%",
+              textAlign: "left",
+              background: "none",
+              border: "none",
+              color: "#ff4d4f",
+              padding: "8px 12px",
+              fontSize: "11px",
+              cursor: "pointer",
+            }}
+          >
+            Logout
+          </button>
         </NavDropdown>
         <NotificationDot />
         <button
@@ -353,222 +369,235 @@ export default function App() {
   return (
     <AppShell topbar={topbarContent}>
       <ConfirmDialogProvider>
-      <NotificationWatcher />
-      <ToastContainer />
-      <SessionClockBar displayTimezone={displayTimezone} />
-      <TickerBar />
-      <main className="page-wrap">
-        <Suspense
-          fallback={<div className="loading-container">Loading page...</div>}
-        >
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/trades" element={<TradesPage />} />
-            <Route path="/trades/:tradeId" element={<TradesPage />} />
-            <Route path="/trades/:status/:tradeId" element={<TradesPage />} />
-            <Route path="/ai" element={<Navigate to="/ai/analyze" replace />} />
-            <Route path="/ai/analyze" element={<ChartSnapshotsPage />} />
-            <Route
-              path="/ai/analyze/:symbol"
-              element={<ChartSnapshotsPage />}
-            />
-            <Route path="/ai/result" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/result/:symbol" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/trade" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/trade/:symbol" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/manual" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/manual/:symbol" element={<ChartSnapshotsPage />} />
-            <Route path="/ai/response" element={<TempTradesPage />} />
-            <Route
-              path="/ai/response/:symbol"
-              element={<TempTradesPage />}
-            />
-            <Route
-              path="/ai/browser"
-              element={<Navigate to="/ai/analyze" replace />}
-            />
-            <Route
-              path="/ai/browser/:symbol"
-              element={<ChartSnapshotsPage />}
-            />
-            <Route
-              path="/settings/profile"
-              element={
-                <ProfilePage
-                  authUser={authUser}
-                  onUserUpdate={handleUserUpdate}
-                />
-              }
-            />
-            <Route path="/settings/crons" element={<CronPage />} />
-            <Route path="/settings/providers" element={<ProvidersPage />} />
-            <Route path="/settings/accounts" element={<AccountsV2Page />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route
-              path="/system/files"
-              element={
-                canAccessSystemPages ? (
-                  <SnapshotsPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/snapshots"
-              element={<Navigate to="/system/files" replace />}
-            />
-            <Route
-              path="/system/storage"
-              element={
-                canAccessSystemPages ? (
-                  <StoragePage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/cache"
-              element={
-                canAccessSystemPages ? (
-                  <CachePage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/logs/:logId"
-              element={
-                canAccessSystemPages ? (
-                  <LogsPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/logs"
-              element={
-                canAccessSystemPages ? (
-                  <LogsPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/db/:tableName"
-              element={
-                canAccessSystemPages ? (
-                  <DatabasePage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/db"
-              element={
-                canAccessSystemPages ? (
-                  <DatabasePage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/health"
-              element={
-                canAccessSystemPages ? (
-                  <HealthPage />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/users/:userId"
-              element={
-                canAccessSystemPages ? (
-                  <UsersPage authUser={authUser} />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/users"
-              element={
-                canAccessSystemPages ? (
-                  <UsersPage authUser={authUser} />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/accounts/:accountId"
-              element={
-                canAccessSystemPages ? (
-                  <AccountsV2Page />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route
-              path="/system/accounts"
-              element={
-                canAccessSystemPages ? (
-                  <AccountsV2Page />
-                ) : (
-                  <Navigate to="/dashboard" replace />
-                )
-              }
-            />
-            <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/tools/notification" element={<EventsPage />} />
-            <Route path="/settings/notifications" element={<EventsPage />} />
-            <Route
-              path="/snapshots"
-              element={<Navigate to="/system/files" replace />}
-            />
-            <Route
-              path="/storage"
-              element={<Navigate to="/system/storage" replace />}
-            />
-            <Route
-              path="/cache"
-              element={<Navigate to="/system/cache" replace />}
-            />
-            <Route
-              path="/logs"
-              element={<Navigate to="/system/logs" replace />}
-            />
-            <Route path="/db" element={<Navigate to="/system/db" replace />} />
-            <Route
-              path="/users"
-              element={<Navigate to="/system/users" replace />}
-            />
-            <Route
-              path="/accounts-v2"
-              element={<Navigate to="/system/accounts" replace />}
-            />
-            <Route path="/sources" />
-            <Route
-              path="/profile"
-              element={<Navigate to="/settings/profile" replace />}
-            />
-            <Route
-              path="/login"
-              element={<Navigate to="/dashboard" replace />}
-            />
-          </Routes>
-        </Suspense>
-      </main>
+        <NotificationWatcher />
+        <ToastContainer />
+        <SessionClockBar displayTimezone={displayTimezone} />
+        <TickerBar />
+        <main className="page-wrap">
+          <Suspense
+            fallback={<div className="loading-container">Loading page...</div>}
+          >
+            <Routes>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/trades" element={<TradesPage />} />
+              <Route path="/trades/:status" element={<TradesPage />} />
+              <Route path="/trades/:tradeId" element={<TradesPage />} />
+              <Route path="/trades/:status/:tradeId" element={<TradesPage />} />
+              <Route
+                path="/ai"
+                element={<Navigate to="/ai/analyze" replace />}
+              />
+              <Route path="/ai/analyze" element={<ChartSnapshotsPage />} />
+              <Route
+                path="/ai/analyze/:symbol"
+                element={<ChartSnapshotsPage />}
+              />
+              <Route path="/ai/result" element={<ChartSnapshotsPage />} />
+              <Route
+                path="/ai/result/:symbol"
+                element={<ChartSnapshotsPage />}
+              />
+              <Route path="/ai/trade" element={<ChartSnapshotsPage />} />
+              <Route
+                path="/ai/trade/:symbol"
+                element={<ChartSnapshotsPage />}
+              />
+              <Route path="/ai/manual" element={<ChartSnapshotsPage />} />
+              <Route
+                path="/ai/manual/:symbol"
+                element={<ChartSnapshotsPage />}
+              />
+              <Route path="/ai/response" element={<TempTradesPage />} />
+              <Route path="/ai/response/:symbol" element={<TempTradesPage />} />
+              <Route
+                path="/ai/browser"
+                element={<Navigate to="/ai/analyze" replace />}
+              />
+              <Route
+                path="/ai/browser/:symbol"
+                element={<ChartSnapshotsPage />}
+              />
+              <Route
+                path="/settings/profile"
+                element={
+                  <ProfilePage
+                    authUser={authUser}
+                    onUserUpdate={handleUserUpdate}
+                  />
+                }
+              />
+              <Route path="/settings/crons" element={<CronPage />} />
+              <Route path="/settings/providers" element={<ProvidersPage />} />
+              <Route path="/settings/accounts" element={<AccountsV2Page />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route
+                path="/system/files"
+                element={
+                  canAccessSystemPages ? (
+                    <SnapshotsPage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/snapshots"
+                element={<Navigate to="/system/files" replace />}
+              />
+              <Route
+                path="/system/storage"
+                element={
+                  canAccessSystemPages ? (
+                    <StoragePage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/cache"
+                element={
+                  canAccessSystemPages ? (
+                    <CachePage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/logs/:logId"
+                element={
+                  canAccessSystemPages ? (
+                    <LogsPage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/logs"
+                element={
+                  canAccessSystemPages ? (
+                    <LogsPage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/db/:tableName"
+                element={
+                  canAccessSystemPages ? (
+                    <DatabasePage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/db"
+                element={
+                  canAccessSystemPages ? (
+                    <DatabasePage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/health"
+                element={
+                  canAccessSystemPages ? (
+                    <HealthPage />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/users/:userId"
+                element={
+                  canAccessSystemPages ? (
+                    <UsersPage authUser={authUser} />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/users"
+                element={
+                  canAccessSystemPages ? (
+                    <UsersPage authUser={authUser} />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/accounts/:accountId"
+                element={
+                  canAccessSystemPages ? (
+                    <AccountsV2Page />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route
+                path="/system/accounts"
+                element={
+                  canAccessSystemPages ? (
+                    <AccountsV2Page />
+                  ) : (
+                    <Navigate to="/dashboard" replace />
+                  )
+                }
+              />
+              <Route path="/tools" element={<ToolsPage />} />
+              <Route path="/tools/notification" element={<EventsPage />} />
+              <Route path="/settings/notifications" element={<EventsPage />} />
+              <Route
+                path="/snapshots"
+                element={<Navigate to="/system/files" replace />}
+              />
+              <Route
+                path="/storage"
+                element={<Navigate to="/system/storage" replace />}
+              />
+              <Route
+                path="/cache"
+                element={<Navigate to="/system/cache" replace />}
+              />
+              <Route
+                path="/logs"
+                element={<Navigate to="/system/logs" replace />}
+              />
+              <Route
+                path="/db"
+                element={<Navigate to="/system/db" replace />}
+              />
+              <Route
+                path="/users"
+                element={<Navigate to="/system/users" replace />}
+              />
+              <Route
+                path="/accounts-v2"
+                element={<Navigate to="/system/accounts" replace />}
+              />
+              <Route path="/sources" />
+              <Route
+                path="/profile"
+                element={<Navigate to="/settings/profile" replace />}
+              />
+              <Route
+                path="/login"
+                element={<Navigate to="/dashboard" replace />}
+              />
+            </Routes>
+          </Suspense>
+        </main>
       </ConfirmDialogProvider>
     </AppShell>
   );

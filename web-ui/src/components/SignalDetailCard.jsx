@@ -16,6 +16,7 @@ import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
 import { api } from "../api";
 import { NotificationHub } from "../services/NotificationHub";
 import { BrokerTicketBadge } from "./BrokerTicketBadge";
+import { StatusBadge } from "./StatusBadge";
 import { isCurrentAiTradePlan } from "../utils/tradePlanShape";
 
 import { TF_WEIGHTS, DEFAULT_TF_TABS } from "../pages/ai/AiPromptBuilder";
@@ -646,8 +647,8 @@ function PlanHeader({
               letterSpacing: "0.01em",
               opacity: 0.9,
             }}
-            >
-              {plan.entry || "-"} →{" "}
+          >
+            {plan.entry || "-"} →{" "}
             <span style={{ color: "var(--accent)" }}>
               {plan.tp || fallbackTp || "-"}
             </span>{" "}
@@ -730,33 +731,42 @@ function PlanHeader({
             }}
           >
             {(sidVal || brokerIdVal) && (
-              <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                {sidVal ? (
-                  <span className="badge badge-mini" style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}>
-                    {sidVal}
-                  </span>
-                ) : null}
-                <BrokerTicketBadge
-                  brokerId={brokerIdVal}
-                  dispatchStatus={plan.dispatch_status}
-                />
-              </span>
-            )}
-            {statusText && <span>|</span>}
-            {statusText && (
               <span
-                className={`badge ${statusCls} badge-mini`}
-                title="Current trade status"
-                style={{ padding: "2px 6px", fontSize: "9px", fontWeight: 400 }}
+                style={{ display: "inline-flex", gap: 6, alignItems: "center" }}
               >
-                {statusText}
+                <StatusBadge id={sidVal} status={plan.execution_status} />
+                <StatusBadge id={brokerIdVal} status={plan.dispatch_status} />
               </span>
             )}
             {(() => {
               const d = String(plan.dispatch_status || "").toUpperCase();
-              if (d === "REJECTED") return <span title={plan.rejection_reason || "Sync failed"} style={{cursor:"default", fontSize:11}}>❌</span>;
-              if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL") return <span title={`Sync pending: ${d}`} style={{cursor:"default", fontSize:11}}>⏳</span>;
-              if (d === "LEASED") return <span title="Syncing with broker..." style={{cursor:"default", fontSize:11}}>🔄</span>;
+              if (d === "REJECTED")
+                return (
+                  <span
+                    title={plan.rejection_reason || "Sync failed"}
+                    style={{ cursor: "default", fontSize: 11 }}
+                  >
+                    ❌
+                  </span>
+                );
+              if (d === "MODIFY" || d === "CLOSE" || d === "CANCEL")
+                return (
+                  <span
+                    title={`Sync pending: ${d}`}
+                    style={{ cursor: "default", fontSize: 11 }}
+                  >
+                    ⏳
+                  </span>
+                );
+              if (d === "LEASED")
+                return (
+                  <span
+                    title="Syncing with broker..."
+                    style={{ cursor: "default", fontSize: 11 }}
+                  >
+                    🔄
+                  </span>
+                );
               return null;
             })()}
           </div>
@@ -1092,8 +1102,9 @@ export default function SignalDetailCard({
     const trulyHasData = hasRaw || hasPlans;
 
     if (chart?.enabled) tabs.push("chart");
-    if (trulyHasData || metaItems?.length || tradePlan?.enabled) tabs.push("info");
-    if (mode === "trade" || tradePlan?.enabled) tabs.push("broker");
+    if (trulyHasData || metaItems?.length || tradePlan?.enabled)
+      tabs.push("analysis");
+    if (mode === "trade" || tradePlan?.enabled) tabs.push("info");
     if (mode === "trade" || mode === "ai") tabs.push("files");
     tabs.push("json");
     if (history?.enabled) tabs.push("history");
@@ -1110,7 +1121,15 @@ export default function SignalDetailCard({
     tradePlan?.enabled,
   ]);
 
-  const [mainTab, setMainTab] = useState("chart");
+  const [mainTab, setMainTab] = useState(() => {
+    const hash = window.location.hash?.replace("#", "");
+    return hash || "chart";
+  });
+
+  const handleTabChange = (t) => {
+    setMainTab(t);
+    window.location.hash = t;
+  };
   const [selectedTfs, setSelectedTfs] = useState([]);
   const [chartModes, setChartModes] = useState(["static", "live"]);
   const [multiChartData, setMultiChartData] = useState({});
@@ -1136,7 +1155,9 @@ export default function SignalDetailCard({
       if (k.startsWith("__")) continue;
       // prompt is a huge AI system prompt — show truncated for readability
       if (k === "prompt" && typeof v === "string" && v.length > 500) {
-        cleaned[k] = v.slice(0, 500) + ` ... (${v.length - 500} more chars — full text in DB)`;
+        cleaned[k] =
+          v.slice(0, 500) +
+          ` ... (${v.length - 500} more chars — full text in DB)`;
       } else {
         cleaned[k] = v;
       }
@@ -1977,6 +1998,7 @@ export default function SignalDetailCard({
                       onCancel={tradePlan.onCancel}
                       onClose={tradePlan.onClose}
                       onSave={tradePlan.onSave}
+                      onPromote={tradePlan.onPromote}
                       onAddSignal={(pos) =>
                         tradePlan.onAddSignal?.(pos || planValue, planId)
                       }
@@ -1988,6 +2010,7 @@ export default function SignalDetailCard({
                       showAddTradeButton={tradePlan.showAddTradeButton}
                       showActionsInView={mode === "ai"}
                       addTradeLabel={tradePlan.addTradeLabel}
+                      promoteLabel={tradePlan.promoteLabel}
                       showResetButton={tradePlan.showResetButton !== false}
                       busy={tradePlan.busy || {}}
                       disabled={Boolean(tradePlan.disabled)}
@@ -1998,6 +2021,7 @@ export default function SignalDetailCard({
                   ) : (
                     <TradePlanEditor
                       value={planValue}
+                      onPromote={tradePlan.onPromote}
                       onAddSignal={(pos) =>
                         tradePlan.onAddSignal?.(pos || planValue, planId)
                       }
@@ -2012,6 +2036,7 @@ export default function SignalDetailCard({
                         mode === "ai" && tradePlan.showAddTradeButton
                       }
                       showActionsInView={mode === "ai"}
+                      promoteLabel={tradePlan.promoteLabel}
                       showResetButton={false}
                       busy={tradePlan.busy || {}}
                       disabled={true}
@@ -2040,7 +2065,7 @@ export default function SignalDetailCard({
               key={t}
               type="button"
               className={`secondary-button ${mainTab === t ? "active" : ""}`}
-              onClick={() => setMainTab(t)}
+              onClick={() => handleTabChange(t)}
             >
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -2067,8 +2092,8 @@ export default function SignalDetailCard({
         </div>
       ) : null}
 
-      {/* INFO TAB (Fields + Analysis) */}
-      <div style={{ display: mainTab === "info" ? "block" : "none" }}>
+      {/* ANALYSIS TAB (Fields + Analysis) */}
+      <div style={{ display: mainTab === "analysis" ? "block" : "none" }}>
         {(mode === "trade" || (mode === "ai" && response?.hasData)) &&
           chart?.symbol && (
             <div style={{ marginBottom: 16 }}>
@@ -3190,8 +3215,8 @@ export default function SignalDetailCard({
         })()}
       </div>
 
-      {/* BROKER TAB (Trades only) */}
-      <div style={{ display: mainTab === "broker" ? "block" : "none" }}>
+      {/* INFO TAB (Trades only) */}
+      <div style={{ display: mainTab === "info" ? "block" : "none" }}>
         {metaItems.length > 0 &&
           (() => {
             const hasVal = (x) =>
@@ -3203,12 +3228,18 @@ export default function SignalDetailCard({
               x.label === "Metadata" ||
               x.label === "Raw Metadata" ||
               x.label === "Raw JSON";
-            const brokerGroups = new Set(["account", "identity", "pnl", "sizing"]);
+            const brokerGroups = new Set([
+              "account",
+              "identity",
+              "pnl",
+              "sizing",
+            ]);
             const accountItems = metaItems.filter(
-              (x) => brokerGroups.has(x?.group) && !isMeta(x) && hasVal(x),
+              (x) => x && brokerGroups.has(x?.group) && !isMeta(x) && hasVal(x),
             );
             const rawJsonItem = metaItems.find(
               (x) =>
+                x &&
                 (x.label === "Metadata" ||
                   x.label === "Raw Metadata" ||
                   x.label === "Raw JSON") &&

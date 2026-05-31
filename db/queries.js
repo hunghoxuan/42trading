@@ -438,7 +438,7 @@ async function promoteDraftTrade(db, tradeRef, userId) {
     .update(schema.trades)
     .set({
       executionStatus: "PENDING",
-      dispatchStatus: "NEW",
+      dispatchStatus: "OPEN",
       updatedAt: new Date(),
     })
     .where(and(...c))

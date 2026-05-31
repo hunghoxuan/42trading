@@ -31,11 +31,12 @@ import { getBrokerTicket } from "../../utils/tradeRow";
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
-  { value: "Draft", label: "DRAFT" },
+  { value: "DRAFT", label: "DRAFT" },
   { value: "PENDING", label: "PENDING" },
   { value: "FILLED", label: "FILLED" },
   { value: "CLOSED", label: "CLOSED" },
   { value: "CANCELLED", label: "CANCELLED" },
+  { value: "REJECTED", label: "REJECTED" },
   { value: "ERROR", label: "ERROR" },
 ];
 const BULK_ACTIONS = [
@@ -74,7 +75,7 @@ function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
   if (s === "Draft") return { cls: "DRAFT", label: "DRAFT" };
   if (s === "FILLED") return { cls: "ACTIVE", label: "FILLED" };
-  if (s === "FILLED") return { cls: "ACTIVE", label: "FILLED" };
+  if (s === "REJECTED") return { cls: "FAIL", label: "REJECTED" };
   if (s === "CLOSED" || s === "CANCELLED") return { cls: "INACTIVE", label: s };
   if (s === "ERROR") return { cls: "FAIL", label: s };
   return { cls: "OTHER", label: s || "PENDING" };
@@ -230,15 +231,21 @@ export default function TradesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { tradeId, status: routeStatus } = useParams();
-  const statusToPath = (st) => (String(st || "").toLowerCase() === "draft" ? "draft" : String(st || "").toLowerCase());
-  const tradePath = (t) => `/trades/${statusToPath(t?.execution_status || "pending")}/${tradeKeyOf(t)}`;
+  const statusToPath = (st) =>
+    String(st || "").toLowerCase() === "draft"
+      ? "draft"
+      : String(st || "").toLowerCase();
+  const tradePath = (t) => {
+    const path = `/trades/${statusToPath(t?.execution_status || "pending")}/${tradeKeyOf(t)}`;
+    return path + (window.location.hash || "");
+  };
   const [rows, setRows] = useState([]);
   const [selectedTrade, setSelectedTrade] = useState(null);
 
   // Redirect /trades/{sid} to /trades/{status}/{sid}
   useEffect(() => {
     if (!tradeId || routeStatus) return;
-    const row = rows.find(r => tradeKeyOf(r) === tradeId);
+    const row = rows.find((r) => tradeKeyOf(r) === tradeId);
     if (row) {
       navigate(tradePath(row), { replace: true });
     }
@@ -247,6 +254,7 @@ export default function TradesPage() {
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notFound, setNotFound] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [sources, setSources] = useState([]);
   const [changedFields, setChangedFields] = useState(() => new Map()); // sid -> Set<fieldName>
@@ -304,22 +312,28 @@ export default function TradesPage() {
     side: "",
     entry_model: "",
     chart_tf: "",
-    execution_status: searchParams.get("status") || "FILLED",
+    execution_status: routeStatus
+      ? routeStatus.toUpperCase()
+      : (searchParams.get("status") || "FILLED").toUpperCase(),
     range: "all",
     page: 1,
     pageSize: 50,
   });
 
-  // Sync filter when sub-menu (URL param) changes (skip when trade detail open)
+  // Sync filter when sub-menu (URL path) changes (skip when trade detail open)
   useEffect(() => {
-    if (tradeId) return; // keep current filter when viewing a trade
-    const status = searchParams.get("status") || "FILLED";
+    if (tradeId) return;
+    const status = (
+      routeStatus ||
+      searchParams.get("status") ||
+      "FILLED"
+    ).toUpperCase();
     setFilter((f) =>
       f.execution_status !== status
         ? { ...f, execution_status: status, page: 1 }
         : f,
     );
-  }, [searchParams, tradeId]);
+  }, [routeStatus, searchParams, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
   const [sorting, setSorting] = useState({ key: "symbol", dir: "asc" });
@@ -581,23 +595,34 @@ export default function TradesPage() {
       selectedTradeIdRef.current = tradeId;
     }
     // Always refresh trade detail by SID to avoid stale cached row shape.
+    setNotFound(false);
     api
       .v2Trades({ q: tradeId })
       .then((data) => {
         const t =
-          Array.isArray(data?.items) && data.items.length ? data.items[0] : null;
+          Array.isArray(data?.items) && data.items.length
+            ? data.items[0]
+            : null;
         if (t) {
           setSelectedTrade(t);
           selectedTradeIdRef.current = tradeId;
-          // Sync list filter to this trade's status so left panel matches on refresh
+          setNotFound(false);
           const tradeStatus = String(t.execution_status || "").toUpperCase();
           if (tradeStatus && tradeStatus !== filter.execution_status) {
-            setFilter((f) => ({ ...f, execution_status: tradeStatus, page: 1 }));
+            setFilter((f) => ({
+              ...f,
+              execution_status: tradeStatus,
+              page: 1,
+            }));
             setSearchParams(tradeStatus ? { status: tradeStatus } : {});
           }
+        } else {
+          setNotFound(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setNotFound(true);
+      });
   }, [tradeId, rows.length]);
 
   useEffect(() => {
@@ -606,6 +631,8 @@ export default function TradesPage() {
   useEffect(() => {
     selectedTradeIdRef.current = tradeKeyOf(selectedTrade);
   }, [selectedTrade?.id, selectedTrade?.sid]);
+  const isDraftSelected =
+    String(selectedTrade?.execution_status || "").toUpperCase() === "DRAFT";
   useEffect(() => {
     const ref = tradeKeyOf(selectedTrade);
     if (ref) {
@@ -755,6 +782,24 @@ export default function TradesPage() {
     }
   }
 
+  async function onApproveDraft() {
+    if (!selectedTrade) return;
+    if (!confirm("Approve this draft and move to pending?")) return;
+    try {
+      setEditBusy(true);
+      await api.promoteDraftTrade(selectedTrade.sid || selectedTrade.id);
+      navigate(`/trades/pending/${selectedTrade.sid || selectedTrade.id}`, {
+        replace: true,
+      });
+      setSelectedTrade(null);
+      await loadTrades();
+    } catch (e) {
+      setError(e?.message || "Approve failed");
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
   const allSelected =
     rows.length > 0 && rows.every((r) => selectedIds.has(tradeKeyOf(r)));
   const sortedRows = useMemo(() => {
@@ -818,8 +863,7 @@ export default function TradesPage() {
   }, [rows, sorting]);
 
   const columns = useMemo(() => {
-    const valueOfAudit = (x) =>
-      new Date(auditTimestampRaw(x) || 0).getTime();
+    const valueOfAudit = (x) => new Date(auditTimestampRaw(x) || 0).getTime();
 
     return [
       {
@@ -1024,16 +1068,9 @@ export default function TradesPage() {
         },
       },
     ];
-  }, [
-    rows,
-    allSelected,
-    selectedIds,
-    listMode,
-    changedFields,
-  ]);
+  }, [rows, allSelected, selectedIds, listMode, changedFields]);
 
-  const onSortingChange = (s) =>
-    setSorting(s || { key: "symbol", dir: "asc" });
+  const onSortingChange = (s) => setSorting(s || { key: "symbol", dir: "asc" });
 
   async function onSaveTradeEdit() {
     const selectedRef = tradeKeyOf(selectedTrade);
@@ -1212,7 +1249,9 @@ export default function TradesPage() {
             onChange={(e) => {
               const v = e.target.value;
               setFilter((f) => ({ ...f, execution_status: v, page: 1 }));
-              setSearchParams(v ? { status: v } : {});
+              navigate(v ? `/trades/${v.toLowerCase()}` : "/trades", {
+                replace: true,
+              });
             }}
           >
             {STATUS_OPTIONS.map((s) => (
@@ -1355,7 +1394,12 @@ export default function TradesPage() {
                   const action = String(t.action || t.side || "").toUpperCase();
                   const statusRaw = t.execution_status || "";
                   const stRaw = String(statusRaw).toUpperCase().trim();
-                  const pnl = asNum(t.broker_pnl) ?? asNum(t.pnl_realized) ?? asNum(t.net_pnl) ?? asNum(t.pnl) ?? asNum(t.pnl_money);
+                  const pnl =
+                    asNum(t.broker_pnl) ??
+                    asNum(t.pnl_realized) ??
+                    asNum(t.net_pnl) ??
+                    asNum(t.pnl) ??
+                    asNum(t.pnl_money);
                   const tpPnl = asNum(
                     stRaw === "CLOSED" || stRaw === "TP" || stRaw === "SL"
                       ? t.entry_exec || t.entry
@@ -1416,9 +1460,7 @@ export default function TradesPage() {
                             fontWeight: 700,
                             fontSize: 10,
                             color:
-                              pnl != null && pnl >= 0
-                                ? "#10b981"
-                                : "#ef4444",
+                              pnl != null && pnl >= 0 ? "#10b981" : "#ef4444",
                           }}
                         >
                           {showCompactPnl ? (
@@ -1429,9 +1471,16 @@ export default function TradesPage() {
                                     +{Math.abs(tpPnl).toFixed(0)}
                                   </span>
                                 ) : (
-                                  <span style={{ color: "var(--muted)" }}>-</span>
+                                  <span style={{ color: "var(--muted)" }}>
+                                    -
+                                  </span>
                                 )}
-                                <span style={{ color: "var(--muted)", margin: "0 3px" }}>
+                                <span
+                                  style={{
+                                    color: "var(--muted)",
+                                    margin: "0 3px",
+                                  }}
+                                >
                                   /
                                 </span>
                                 {slPnl != null ? (
@@ -1439,7 +1488,9 @@ export default function TradesPage() {
                                     -{Math.abs(slPnl).toFixed(0)}
                                   </span>
                                 ) : (
-                                  <span style={{ color: "var(--muted)" }}>-</span>
+                                  <span style={{ color: "var(--muted)" }}>
+                                    -
+                                  </span>
                                 )}
                               </span>
                             ) : pnl != null ? (
@@ -1504,7 +1555,17 @@ export default function TradesPage() {
               <span>UPDATING...</span>
             </div>
           )}
-          {!selectedTrade ? (
+          {notFound ? (
+            <div className="empty-state" style={{ color: "var(--text)" }}>
+              <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>
+                404
+              </div>
+              <div>Trade not found.</div>
+              <div className="minor-text" style={{ marginTop: 4 }}>
+                The trade may have been deleted or the ID is invalid.
+              </div>
+            </div>
+          ) : !selectedTrade ? (
             <div className="empty-state">SELECT A TRADE TO INSPECT DETAILS</div>
           ) : (
             <>
@@ -1601,7 +1662,7 @@ export default function TradesPage() {
                           String(selectedTrade.symbol || "").toUpperCase(),
                         )}`,
                       ),
-                    onAddTrade: onReEntryTrade,
+                    onAddTrade: !isDraftSelected ? onReEntryTrade : undefined,
                     showAddSignalButton: false,
                     showSaveButton: !["TP", "SL", "FAIL", "EXPIRED"].includes(
                       String(
@@ -1624,6 +1685,8 @@ export default function TradesPage() {
                     saveLabel: "Save",
                     showResetButton: true,
                     resetLabel: "Reset",
+                    onPromote: isDraftSelected ? onApproveDraft : undefined,
+                    promoteLabel: "Approve",
                     onCancel:
                       String(
                         selectedTrade.execution_status || "",
@@ -1765,11 +1828,34 @@ export default function TradesPage() {
                             color: "var(--muted)",
                           }}
                         >
-                          <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>
-                            {String(selectedTrade.sid || selectedTrade.signal_sid || "-").trim() || "-"}
+                          <span
+                            className="badge badge-mini"
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 400,
+                              padding: "2px 6px",
+                            }}
+                          >
+                            {String(
+                              selectedTrade.sid ||
+                                selectedTrade.signal_sid ||
+                                "-",
+                            ).trim() || "-"}
                           </span>
-                          <span className="badge badge-mini" style={{ fontSize: 9, fontWeight: 400, padding: "2px 6px" }}>
-                            {String(selectedTrade.broker_trade_id || selectedTrade.ticket || selectedTrade.broker_id || "-").trim() || "-"}
+                          <span
+                            className="badge badge-mini"
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 400,
+                              padding: "2px 6px",
+                            }}
+                          >
+                            {String(
+                              selectedTrade.broker_trade_id ||
+                                selectedTrade.ticket ||
+                                selectedTrade.broker_id ||
+                                "-",
+                            ).trim() || "-"}
                           </span>
                           <span>|</span>
                           <span
@@ -1897,25 +1983,30 @@ export default function TradesPage() {
                       group: "identity",
                     },
                     {
-                      label: "Broker PnL",
-                      value: selectedTrade.broker_pnl != null
-                        ? `$${Number(selectedTrade.broker_pnl).toFixed(2)}`
-                        : "-",
-                      group: "pnl",
+                      label: "Created",
+                      value: showDateTime(selectedTrade.created_at),
+                      group: "identity",
                     },
                     {
-                      label: "Broker Margin",
-                      value: selectedTrade.broker_margin != null
-                        ? `$${Number(selectedTrade.broker_margin).toFixed(2)}`
+                      label: "Updated",
+                      value: selectedTrade.updated_at
+                        ? showDateTime(selectedTrade.updated_at)
                         : "-",
-                      group: "pnl",
+                      group: "identity",
                     },
                     {
-                      label: "Broker Vol",
-                      value: selectedTrade.broker_volume != null
-                        ? Number(selectedTrade.broker_volume).toFixed(2)
+                      label: "Opened",
+                      value: selectedTrade.opened_at
+                        ? showDateTime(selectedTrade.opened_at)
                         : "-",
-                      group: "sizing",
+                      group: "identity",
+                    },
+                    {
+                      label: "Closed",
+                      value: selectedTrade.closed_at
+                        ? showDateTime(selectedTrade.closed_at)
+                        : "-",
+                      group: "identity",
                     },
                     {
                       label: "Chart TF",
@@ -2201,71 +2292,70 @@ export default function TradesPage() {
                             asNum(bData.sl_pnl);
 
                           return [
-                            {
-                              label: "Broker Volume",
-                              value:
-                                bVol != null
-                                  ? `${bVol.toLocaleString()} units`
-                                  : null,
-                              group: "sizing",
-                            },
-                            {
-                              label: "Broker Lots",
-                              value:
-                                bLots != null
-                                  ? `${bLots.toFixed(2)} lots`
-                                  : null,
-                              group: "sizing",
-                            },
-                            {
-                              label: "Broker Pips",
-                              value:
-                                bPips != null
-                                  ? `${bPips.toFixed(1)} pips`
-                                  : null,
-                              group: "sizing",
-                            },
-                            {
-                              label: "Broker Net Profit",
-                              value:
-                                bProfit != null
-                                  ? `$${bProfit.toFixed(2)}`
-                                  : null,
-                              group: "pnl",
-                            },
-                            {
-                              label: "Commission",
-                              value:
-                                bComm != null ? `$${bComm.toFixed(2)}` : null,
-                              group: "pnl",
-                            },
-                            {
-                              label: "Swap",
-                              value:
-                                bSwap != null ? `$${bSwap.toFixed(2)}` : null,
-                              group: "pnl",
-                            },
-                            {
-                              label: "Margin",
-                              value:
-                                bMargin != null
-                                  ? `$${bMargin.toFixed(2)}`
-                                  : null,
-                              group: "pnl",
-                            },
-                            {
-                              label: "Planned TP Profit",
-                              value:
-                                bTpPnl != null ? `$${bTpPnl.toFixed(2)}` : null,
-                              group: "pnl",
-                            },
-                            {
-                              label: "Planned SL Profit",
-                              value:
-                                bSlPnl != null ? `$${bSlPnl.toFixed(2)}` : null,
-                              group: "pnl",
-                            },
-                          ].filter((x) => x.value !== null);
+                            bProfit != null
+                              ? {
+                                  label: "Broker PnL",
+                                  value: `$${bProfit.toFixed(2)}`,
+                                  group: "pnl",
+                                }
+                              : null,
+                            bTpPnl != null
+                              ? {
+                                  label: "Planned TP Profit",
+                                  value: `$${bTpPnl.toFixed(2)}`,
+                                  group: "pnl",
+                                }
+                              : null,
+                            bSlPnl != null
+                              ? {
+                                  label: "Planned SL Profit",
+                                  value: `$${bSlPnl.toFixed(2)}`,
+                                  group: "pnl",
+                                }
+                              : null,
+                            bMargin != null
+                              ? {
+                                  label: "Broker Margin",
+                                  value: `$${bMargin.toFixed(2)}`,
+                                  group: "sizing",
+                                }
+                              : null,
+                            selectedTrade.margin != null
+                              ? {
+                                  label: "Margin",
+                                  value: `$${Number(selectedTrade.margin).toFixed(2)}`,
+                                  group: "sizing",
+                                }
+                              : null,
+                            bVol != null
+                              ? {
+                                  label: "Vol",
+                                  value: `${bVol.toLocaleString()} units`,
+                                  group: "sizing",
+                                }
+                              : null,
+                            bLots != null
+                              ? {
+                                  label: "Lots",
+                                  value: `${bLots.toFixed(2)} lots`,
+                                  group: "sizing",
+                                }
+                              : null,
+                            bSwap != null
+                              ? {
+                                  label: "Swap",
+                                  value: `$${bSwap.toFixed(2)}`,
+                                  group: "sizing",
+                                }
+                              : null,
+                            bComm != null
+                              ? {
+                                  label: "Commission",
+                                  value: `$${bComm.toFixed(2)}`,
+                                  group: "sizing",
+                                }
+                              : null,
+                          ].filter(Boolean);
                         })()
                       : []),
                     {
@@ -2521,9 +2611,14 @@ export default function TradesPage() {
               >
                 <option value="">Account: None</option>
                 {(Array.isArray(accounts) ? accounts : [])
-                  .filter((a) => String(a?.status || "").toUpperCase() === "ACTIVE")
+                  .filter(
+                    (a) => String(a?.status || "").toUpperCase() === "ACTIVE",
+                  )
                   .map((a) => (
-                    <option key={a.account_id || a.name} value={a.account_id || a.name || ""}>
+                    <option
+                      key={a.account_id || a.name}
+                      value={a.account_id || a.name || ""}
+                    >
                       {a.name || a.account_id || "—"}
                     </option>
                   ))}
