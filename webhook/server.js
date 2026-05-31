@@ -325,6 +325,46 @@ const SYMBOLS_GROUP_MAP = {
   ],
 };
 
+// Parse cron schedule string and check if it should fire now.
+// Schedule formats:
+//   "every 5m" → interval-based (handled by cadence_seconds fallback)
+//   "at 11:20 on Mon,Wed,Fri" → specific days + time
+function cronScheduleShouldRun(schedule, nowMs, lastRunMs) {
+  const s = String(schedule || "").trim();
+  if (!s) return false;
+
+  // Event mode: "at HH:MM on Day1,Day2,..."
+  const atMatch = s.match(/^at (\d{1,2}):(\d{2})\s+on\s+(.+)$/i);
+  if (atMatch) {
+    const targetHour = parseInt(atMatch[1], 10);
+    const targetMin = parseInt(atMatch[2], 10);
+    const targetDays = atMatch[3].split(",").map((d) => d.trim().toLowerCase());
+
+    const now = new Date(nowMs);
+    const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+    const currentDay = dayNames[now.getDay()];
+    const currentHour = now.getHours();
+    const currentMin = now.getMinutes();
+
+    // Check day
+    if (!targetDays.includes(currentDay)) return false;
+
+    // Check time: within the past minute (cron loop runs every 60s)
+    const targetTotalMins = targetHour * 60 + targetMin;
+    const currentTotalMins = currentHour * 60 + currentMin;
+    if (currentTotalMins < targetTotalMins) return false;
+    if (currentTotalMins - targetTotalMins > 1) return false;
+
+    // Don't re-run if already ran in the last 2 minutes
+    if (lastRunMs && nowMs - lastRunMs < 120000) return false;
+
+    return true;
+  }
+
+  // Interval mode: handled by cadence_seconds fallback, not here
+  return false;
+}
+
 function resolveCronSymbols(data = {}) {
   const group = String(data.symbols_group || "").trim();
   if (group === "all") return discoverAllMarketSymbols();
@@ -391,32 +431,35 @@ function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
     .trim()
     .toUpperCase();
   const tfKey = normalizeCsvTfKey(tf);
+  const tfSeconds = Math.max(60, parseTfTokenToSeconds(tfKey));
   if (!sym || !tfKey) return [];
   const csvPath = resolveBrokerCsvPath(sym, tfKey);
   if (!csvPath || !fs.existsSync(csvPath)) return [];
   try {
     const raw = fs.readFileSync(csvPath, "utf8");
     const lines = raw.trim().split(/\r?\n/);
-    const rows = [];
+    const dedup = new Map(); // normalize + dedupe by UTC-aligned time
     for (let i = 1; i < lines.length; i += 1) {
       const cols = String(lines[i] || "").split(",");
       if (cols.length < 5) continue;
-      const t = Number(cols[0]);
+      const rawTime = Number(cols[0]);
       const o = Number(cols[1]);
       const h = Number(cols[2]);
       const l = Number(cols[3]);
       const c = Number(cols[4]);
       const v = Number(cols[5]) || 0;
       if (
-        !Number.isFinite(t) ||
+        !Number.isFinite(rawTime) ||
         !Number.isFinite(o) ||
         !Number.isFinite(h) ||
         !Number.isFinite(l) ||
         !Number.isFinite(c)
       )
         continue;
-      rows.push({
-        time: Math.floor(t),
+      // Align to UTC boundary (source-of-truth: UTC)
+      const t = normalizeBarTimeToUTC(rawTime, tfSeconds);
+      dedup.set(t, {
+        time: t,
         open: o,
         high: h,
         low: l,
@@ -424,17 +467,29 @@ function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
         volume: v,
       });
     }
-    rows.sort((a, b) => a.time - b.time);
+    const rows = [...dedup.values()].sort((a, b) => a.time - b.time);
     return rows.slice(-Math.max(50, Math.min(Number(limit) || 300, 5000)));
   } catch {
     return [];
   }
 }
 
-function mergeBarsIntoCSV(symbol, tf, newBars) {
+// Snap bar timestamp to UTC-aligned boundary for the timeframe.
+// No matter the source, bar timestamps MUST be UTC epoch aligned to their
+// timeframe period (e.g. daily bars at midnight UTC, 1m at minute boundaries).
+// This prevents timezone-offset duplicates when cTrader sends broker-local times.
+function normalizeBarTimeToUTC(time, tfSeconds) {
+  if (!Number.isFinite(time) || !tfSeconds || tfSeconds < 60) return time;
+  const aligned = Math.floor(time / tfSeconds) * tfSeconds;
+  return aligned;
+}
+
+function mergeBarsIntoCSV(symbol, tf, newBars, opts = {}) {
   if (!symbol || !tf || !newBars.length) return 0;
+  const appendOnly = opts.appendOnly === true; // if true, never overwrite existing bars
   const sym = String(symbol).toUpperCase();
   const tfKey = normalizeCsvTfKey(tf);
+  const tfSeconds = Math.max(60, parseTfTokenToSeconds(tfKey));
   const csvDir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "bars");
   if (!fs.existsSync(csvDir)) fs.mkdirSync(csvDir, { recursive: true });
   // Always use canonical path ({tfKey}.csv), never alias
@@ -472,20 +527,31 @@ function mergeBarsIntoCSV(symbol, tf, newBars) {
     }
   }
 
-  // Read existing bars into Map (time -> csv line)
+  // Read existing bars into Map (time -> csv line).
+  // Normalize existing times to UTC boundaries — cleans up stale non-aligned bars
+  // from before the UTC normalization fix.
   const existing = new Map();
   if (fs.existsSync(csvPath)) {
     const lines = fs.readFileSync(csvPath, "utf8").trim().split("\n");
     for (let i = 1; i < lines.length; i++) {
       const parts = lines[i].split(",");
-      const t = Number(parts[0]);
-      if (Number.isFinite(t)) existing.set(t, lines[i]);
+      const rawTime = Number(parts[0]);
+      if (Number.isFinite(rawTime)) {
+        const t = normalizeBarTimeToUTC(rawTime, tfSeconds);
+        // Build normalized line with corrected time
+        const normalizedLine = t + "," + parts.slice(1).join(",");
+        existing.set(t, normalizedLine);
+      }
     }
   }
 
   let added = 0;
   for (const b of newBars) {
-    const t = Number(b.t || b.time);
+    const rawTime = Number(b.t || b.time);
+    // Align to UTC timeframe boundary (source-of-truth: UTC)
+    const t = normalizeBarTimeToUTC(rawTime, tfSeconds);
+    // Append-only mode: skip bars that already exist (cTrader must not overwrite API data)
+    if (appendOnly && existing.has(t)) continue;
     const o = Number(b.o || b.open);
     const h = Number(b.h || b.high);
     const l = Number(b.l || b.low);
@@ -6772,9 +6838,17 @@ function extractJsonFromAiText(rawText) {
       const idx = text.indexOf(`,${key}:`);
       if (idx < 0) continue;
       const before = text.slice(Math.max(0, idx - 5), idx);
-      // Fix }},"key": (3 braces) → }"key": (2 braces — remove one extra })
+      // Fix }}},"key": (3 braces) → }}"key": (remove one extra })
       if (before.endsWith("}}}")) {
         const fixed = text.slice(0, idx - 3) + text.slice(idx - 2);
+        try {
+          JSON.parse(fixed);
+          return fixed;
+        } catch (_) {}
+      }
+      // Fix }},"key": (2 braces — orphan key outside parent) → },"key":
+      if (before.endsWith("}}")) {
+        const fixed = text.slice(0, idx - 2) + text.slice(idx - 1);
         try {
           JSON.parse(fixed);
           return fixed;
@@ -9133,7 +9207,7 @@ END
               dispatch_status, execution_status, metadata, raw_json, created_at, updated_at,
               profile, confidence_pct, estimated_bars, be_trigger,
               rr_planned, risk_money_planned, risk_pct_planned
-            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,'OPEN',$30::text,$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
+            ) VALUES ($1::text,$2::text,$3::text,$4::text,$5::text,$6::text,$7::text,$8::text,$9::text,$10::text,$11::text,$12::numeric,$13::numeric,$14::numeric,$15::numeric,$16::numeric,$17::numeric,$18::numeric,$19::text,$30::text,$31::text,$20::jsonb,$21::jsonb,$22::timestamptz,$22::timestamptz,$23::text,$24::numeric,$25::numeric,$26::numeric,$27::numeric,$28::numeric,$29::numeric)
           `,
             [
               tradeSid,
@@ -9192,6 +9266,8 @@ END
               payload.rr_planned || null,
               payload.risk_money_planned || null,
               payload.risk_pct_planned || null,
+              payload.dispatch_status ||
+                (payload.execution_status === "DRAFT" ? "NEW" : "OPEN"),
               payload.execution_status || "PENDING",
             ],
           );
@@ -9249,7 +9325,9 @@ END
               dispatch_status IN ('OPEN', 'MODIFY', 'CLOSE', 'CANCEL')
               OR (dispatch_status = 'LEASED' AND lease_expires_at < NOW())
             )
-            AND ($3::text IS NULL OR dispatch_status = $3::text)
+            AND (
+              $3::text IS NULL OR $3::text = '' OR dispatch_status = $3::text
+            )
           ORDER BY
             CASE WHEN dispatch_status = 'LEASED' THEN 1 ELSE 0 END ASC,
             created_at ASC
@@ -9258,7 +9336,9 @@ END
           [
             aid,
             Math.max(1, Math.min(100, Number(maxItems) || 1)),
-            taskTypeFilter || null,
+            taskTypeFilter && String(taskTypeFilter).trim()
+              ? String(taskTypeFilter).trim()
+              : "",
           ],
         );
         const out = [];
@@ -9308,16 +9388,28 @@ END
           // Auto-reject trades that have been re-leased too many times without ack
           const retryCount = syncGuards.nextLeaseRetryCount(row);
           if (syncGuards.shouldAutoRejectLeasedTrade(row, 3)) {
+            const hasBroker =
+              row.broker_trade_id &&
+              String(row.broker_trade_id || "").trim() !== "";
             await client.query(
               `
               UPDATE trades
-              SET dispatch_status = 'REJECTED',
+              SET dispatch_status = $4::text,
+                  execution_status = CASE WHEN $4::text = 'CANCEL' THEN 'CANCELLED' ELSE execution_status END,
                   rejection_reason = COALESCE(rejection_reason, $2),
-                  metadata = COALESCE(metadata, '{}'::jsonb) - 'last_broker_snapshot_hash',
+                  metadata = (COALESCE(metadata, '{}'::jsonb) || $3::jsonb) - 'last_broker_snapshot_hash',
                   updated_at = NOW()
               WHERE sid = $1
             `,
-              [row.sid, "broker ack lease retry limit exceeded"],
+              [
+                row.sid,
+                "broker ack lease retry limit exceeded",
+                JSON.stringify({
+                  stale_pull_rejected_at: mt5NowIso(),
+                  stale_pull_max_age_hours: CFG.mt5V2BrokerPullMaxAgeHours,
+                }),
+                hasBroker ? "CANCEL" : "REJECTED",
+              ],
             );
             await this.log(
               row.sid,
@@ -9460,10 +9552,8 @@ END
             WHEN ${JSON.stringify(telemetryMeta)}::jsonb = '{}'::jsonb THEN ${schema.trades.metadata}
             ELSE COALESCE(${schema.trades.metadata}, '{}'::jsonb) || ${JSON.stringify(telemetryMeta)}::jsonb
           END`,
-          openedAt: openedAt
-            ? sql`COALESCE(${openedAt}, ${schema.trades.openedAt}, CASE WHEN ${payload.execution_status} = 'OPEN' THEN ${now} ELSE NULL END)`
-            : undefined,
-          closedAt: sql`COALESCE(${closedAt}, CASE WHEN ${payload.execution_status} = 'CLOSED' THEN ${now} ELSE NULL END)`,
+          openedAt: sql`COALESCE(${openedAt}, ${schema.trades.openedAt}, CASE WHEN ${payload.execution_status} IN ('FILLED','OPEN') THEN ${now} ELSE NULL END)`,
+          closedAt: sql`COALESCE(${closedAt}, CASE WHEN ${isClosed} = TRUE THEN ${now} ELSE NULL END)`,
           updatedAt: new Date(now),
         })
         .where(
@@ -9673,6 +9763,7 @@ END
     async brokerSyncV2(accountId, payload = {}) {
       trackSourceActivity(payload?.source_id || "unknown", true);
       const aid = String(accountId || "").trim();
+      if (!aid) return { ok: false, error: "account_id is required" };
       const accRows = await db
         .select({
           userId: schema.userAccounts.userId,
@@ -10294,7 +10385,7 @@ END
                 rejection_reason = CASE WHEN $30::boolean THEN NULL ELSE rejection_reason END,
                 note = COALESCE(NULLIF($25::text, ''), note),
                 metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
-                opened_at = COALESCE($5::timestamptz, opened_at),
+                opened_at = COALESCE($5::timestamptz, opened_at, CASE WHEN $1::text IN ('FILLED','OPEN') THEN NOW() ELSE NULL END),
                 closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $30::boolean THEN NOW() ELSE updated_at END
             WHERE account_id = $3
@@ -10380,7 +10471,7 @@ END
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
                 metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
-                opened_at = COALESCE($9::timestamptz, opened_at),
+                opened_at = COALESCE($9::timestamptz, opened_at, CASE WHEN $1::text IN ('FILLED','OPEN') THEN NOW() ELSE NULL END),
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10::timestamptz, closed_at, NOW()) ELSE closed_at END,
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $29::boolean THEN NOW() ELSE updated_at END
             WHERE sid = (
@@ -10607,6 +10698,24 @@ END
             it.execution_status === "FILLED" ||
             it.execution_status === "PENDING"
           ) {
+            // Before creating M_ duplicate, check if a CANCELLED/REJECTED trade
+            // already exists with the same broker comment SID
+            if (it.sid && ticketCandidates[0]) {
+              const existingCancelled = await pool.query(
+                `UPDATE trades SET broker_trade_id = COALESCE(NULLIF($1::text, ''), broker_trade_id), metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE sid = $3 AND execution_status IN ('CANCELLED','REJECTED') AND (broker_trade_id IS NULL OR broker_trade_id = '' OR broker_trade_id != $1) RETURNING sid`,
+                [ticketCandidates[0], syncMeta, it.sid],
+              );
+              if (existingCancelled.rowCount > 0) {
+                results.push({
+                  ticket: it.ticket,
+                  sid: it.sid,
+                  status: "Linked",
+                  symbol: it.symbol,
+                  action: it.action,
+                });
+                continue;
+              }
+            }
             if (!syncSymbol || !syncAction) {
               results.push({
                 ticket: it.ticket,
@@ -10624,18 +10733,24 @@ END
                   ? `M_${ticketCandidates[0]}`
                   : mt5GenerateTimeSid()),
             ).trim();
+            // Dedup by broker_trade_id — never create duplicate for the same ticket
             if (ticketCandidates[0]) {
-              const dupCheck = await db
-                .select({ sid: schema.trades.sid })
-                .from(schema.trades)
-                .where(
-                  and(
-                    eq(schema.trades.accountId, aid),
-                    eq(schema.trades.brokerTradeId, ticketCandidates[0]),
-                  ),
-                )
-                .limit(1);
-              if (dupCheck.length > 0) continue;
+              const dupCheck = await pool.query(
+                `SELECT sid, execution_status FROM trades WHERE broker_trade_id = $1 AND account_id = $2 LIMIT 1`,
+                [ticketCandidates[0], aid],
+              );
+              if (dupCheck.rowCount > 0) {
+                const existing = dupCheck.rows[0];
+                results.push({
+                  ticket: it.ticket,
+                  sid: existing.sid,
+                  status: "Skip",
+                  symbol: it.symbol,
+                  action: it.action,
+                  reason: `duplicate_broker_ticket_${existing.execution_status}`,
+                });
+                continue;
+              }
             }
 
             const brokerSource = (payload.broker_name || "BROKER")
@@ -11843,6 +11958,7 @@ END
     async upsertUserAccount(userId, account) {
       const targetUser = String(userId || "");
       const accountId = String(account?.account_id || "");
+      if (!accountId) return { ok: false, error: "account_id is required" };
       const now = mt5NowIso();
       const res = await pool.query(
         `
@@ -15124,9 +15240,17 @@ async function mt5ListTradeEventsV2(tradeId, limit = 200) {
   const safeSid = String(tradeId || "")
     .trim()
     .replace(/[^A-Za-z0-9_.-]/g, "_");
-  const logDir = tradeLogsDir(safeSid);
   const events = [];
-  if (fs.existsSync(logDir)) {
+
+  // Read from both old (TRADE_FILES_DIR) and new (SERVER_LOG_DIR) locations
+  const dirsToScan = [];
+  const oldDir = tradeLogsDir(safeSid);
+  if (fs.existsSync(oldDir)) dirsToScan.push(oldDir);
+  const newDir = path.join(SERVER_LOG_DIR, "trades", safeSid);
+  if (fs.existsSync(newDir)) dirsToScan.push(newDir);
+
+  for (const logDir of dirsToScan) {
+    if (events.length >= limit) break;
     const files = fs
       .readdirSync(logDir)
       .filter((f) => f.endsWith(".log"))
@@ -15153,24 +15277,24 @@ async function mt5ResolveTradeRefV2(tradeRef, userId = null) {
   const ref = String(tradeRef || "").trim();
   if (!ref) return null;
   const b = await mt5Backend();
-  if (!b?.db) return null;
+  if (!b?.pool) return null;
   const numericId = mt5ParseNumericId(ref);
-  const conditions = [];
-  if (numericId != null)
-    conditions.push(eq(schema.trades.id, sql`${numericId}::bigint`));
-  conditions.push(eq(schema.trades.sid, ref));
-  if (userId) conditions.push(eq(schema.trades.userId, userId));
-  const rows = await b.db
-    .select({
-      id: schema.trades.id,
-      sid: schema.trades.sid,
-      userId: schema.trades.userId,
-    })
-    .from(schema.trades)
-    .where(or(...conditions))
-    .orderBy(desc(schema.trades.updatedAt), desc(schema.trades.createdAt))
-    .limit(1);
-  return rows[0] || null;
+  const params = [ref];
+  let idClause = "";
+  if (numericId != null) {
+    idClause = "OR id = $2::bigint";
+    params.push(numericId);
+  }
+  let userClause = "";
+  if (userId) {
+    userClause = "AND user_id = $" + (params.length + 1) + "::text";
+    params.push(userId);
+  }
+  const rows = await b.pool.query(
+    `SELECT id, sid, user_id, execution_status, action, entry, sl, tp, tp1, tp2, tp3, symbol, order_type, broker_trade_id, note, dispatch_status FROM trades WHERE (sid = $1::text ${idClause}) ${userClause} ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+    params,
+  );
+  return rows.rows[0] || null;
 }
 
 async function mt5ResolveSignalRefV2(signalRef, userId = null) {
@@ -17470,8 +17594,8 @@ const appHandler = async (req, res) => {
         if (!Number.isFinite(d.getTime())) continue;
         const key =
           seriesBucket === "hour"
-            ? `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:00`
-            : `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+            ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`
+            : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         seriesMap.set(key, (seriesMap.get(key) || 0) + pnl);
       }
       const pnlSeries = [...seriesMap.entries()]
@@ -17741,6 +17865,10 @@ const appHandler = async (req, res) => {
       ].sort();
       return json(res, 200, { ok: true, symbols });
     } catch (error) {
+      console.error(
+        "[mt5/filters/symbols] ERROR",
+        error instanceof Error ? error.message : String(error),
+      );
       const message = error instanceof Error ? error.message : "Unknown error";
       return json(res, 400, { ok: false, error: message });
     }
@@ -18996,20 +19124,22 @@ const appHandler = async (req, res) => {
   if (req.method === "GET" && url.pathname === "/v2/accounts") {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
+    if (!requireAuthForUi(req, res)) return;
     try {
       const userId = uiEffectiveUserId(req, url);
       const raw = await mt5ListAccountsV2(userId);
-      const items = (raw || []).map((r) => ({
-        account_id: r.accountId || r.account_id || null,
-        user_id: r.userId || r.user_id || null,
-        name: r.name || null,
-        balance: r.balance || null,
-        status: r.status || null,
-        metadata: r.metadata || {},
-        created_at: r.createdAt || r.created_at || null,
-        updated_at: r.updatedAt || r.updated_at || null,
-      }));
+      const items = (raw || [])
+        .filter((r) => (r.status || "").toUpperCase() !== "ARCHIVED")
+        .map((r) => ({
+          account_id: r.accountId || r.account_id || null,
+          user_id: r.userId || r.user_id || null,
+          name: r.name || null,
+          balance: r.balance || null,
+          status: r.status || null,
+          metadata: r.metadata || {},
+          created_at: r.createdAt || r.created_at || null,
+          updated_at: r.updatedAt || r.updated_at || null,
+        }));
       return json(res, 200, { ok: true, items });
     } catch (error) {
       return json(res, 400, { ok: false, error: error.message });
@@ -19091,7 +19221,7 @@ const appHandler = async (req, res) => {
   if (req.method === "DELETE" && /^\/v2\/accounts\/[^/]+$/.test(url.pathname)) {
     if (!CFG.mt5Enabled)
       return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
-    if (!requireAdminKey(req, res, url)) return;
+    if (!requireAuthForUi(req, res)) return;
     try {
       const m = url.pathname.match(/^\/v2\/accounts\/([^/]+)$/);
       const accountId = String(m?.[1] ? decodeURIComponent(m[1]) : "").trim();
@@ -20851,6 +20981,62 @@ const appHandler = async (req, res) => {
     }
   }
 
+  // GET /v2/market-data/snapshots/{symbol}/{filename}/content
+  if (
+    req.method === "GET" &&
+    url.pathname.startsWith("/v2/market-data/snapshots/") &&
+    url.pathname.endsWith("/content")
+  ) {
+    const parts = url.pathname
+      .replace("/v2/market-data/snapshots/", "")
+      .split("/");
+    const symbol = decodeURIComponent(parts[0] || "").toUpperCase();
+    const fileName = decodeURIComponent(parts.slice(1, -1).join("/") || "");
+    if (!symbol || !fileName)
+      return json(res, 400, {
+        ok: false,
+        error: "symbol and filename required",
+      });
+    const filePath = path.join(CHART_SNAPSHOT_DIR, symbol, fileName);
+    if (!fs.existsSync(filePath))
+      return json(res, 404, { ok: false, error: "file not found" });
+    const ext = path.extname(fileName).toLowerCase();
+    const mime =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : "application/octet-stream";
+    res.writeHead(200, {
+      "Content-Type": mime,
+      "Cache-Control": "public, max-age=3600",
+    });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  // GET /v2/market-data/snapshots/{symbol} — latest snapshots for a symbol
+  if (
+    req.method === "GET" &&
+    url.pathname.startsWith("/v2/market-data/snapshots/")
+  ) {
+    const symbol = decodeURIComponent(
+      url.pathname.replace("/v2/market-data/snapshots/", ""),
+    ).toUpperCase();
+    if (!symbol) return json(res, 400, { ok: false, error: "symbol required" });
+    const limit = Math.max(
+      1,
+      Math.min(20, Number(url.searchParams.get("limit") || 5)),
+    );
+    const files = listLatestSnapshotFilesForSymbol(symbol, limit);
+    const items = files.map((f) => ({
+      name: typeof f === "string" ? f : f.file_name || f.name,
+      url: `/v2/market-data/snapshots/${encodeURIComponent(symbol)}/${encodeURIComponent(typeof f === "string" ? f : f.file_name || f.name)}/content`,
+      size_bytes: typeof f === "object" ? f.size || 0 : 0,
+    }));
+    return json(res, 200, { ok: true, symbol, files: items });
+  }
+
   // GET /v2/market-data/broker-bars — read OHLCV bars from broker CSV
   if (req.method === "GET" && url.pathname === "/v2/market-data/broker-bars") {
     const sess = getUiSessionFromReq(req);
@@ -20883,18 +21069,25 @@ const appHandler = async (req, res) => {
       }
       const raw = fs.readFileSync(csvPath, "utf8");
       const lines = raw.trim().split(/\r?\n/);
+      const tfSeconds = Math.max(60, parseTfTokenToSeconds(tf));
       const bars = [];
+      const dedup = new Map();
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(",");
         if (cols.length < 5) continue;
-        const t = Number(cols[0]);
+        const rawTime = Number(cols[0]);
         const o = Number(cols[1]);
         const h = Number(cols[2]);
         const l = Number(cols[3]);
         const c = Number(cols[4]);
         const v = Number(cols[5]) || 0;
-        if (!Number.isFinite(t) || !Number.isFinite(o)) continue;
-        bars.push({ t: Math.floor(t), o, h, l, c, v });
+        if (!Number.isFinite(rawTime) || !Number.isFinite(o)) continue;
+        const t = normalizeBarTimeToUTC(rawTime, tfSeconds);
+        // Deduplicate by UTC-aligned time, keep latest value per key
+        dedup.set(t, { t, o, h, l, c, v });
+      }
+      for (const bar of [...dedup.values()].sort((a, b) => a.t - b.t)) {
+        bars.push(bar);
       }
       const sliced = bars.slice(-limit);
       return json(res, 200, {
@@ -21351,86 +21544,58 @@ const appHandler = async (req, res) => {
             trade_plan: picks.map((x) => x.plan),
           };
           if (mode === "signals") {
-            const savedSignals = [];
+            // Create trade with DRAFT status (no dispatch to broker)
+            const savedTrades = [];
             for (const pick of picks) {
               const plan = pick.plan || {};
-              const tradePlanRawJson =
-                plan && typeof plan === "object" ? { ...plan } : {};
               const planSymbol = String(pick.symbol || symbol)
                 .trim()
                 .toUpperCase();
               if (!planSymbol) continue;
-              const signalId = mt5GenerateTimeSid();
-              const signalSid = normalizePublicSidBase(
-                `${planSymbol}_AI`,
-                "SIG",
-              );
-              const orderType = mt5NormalizeOrderType({
-                order_type: plan?.type || "limit",
-              });
-              const entryModel = String(plan?.entry_model || "").trim() || null;
-              const note = String(
-                plan?.note || parsedJson?.final_verdict?.note || "",
-              ).trim();
-              await mt5UpsertSignal({
-                signal_id: signalId,
-                sid: signalSid,
-                created_at: mt5NowIso(),
+              const sourceId = mt5SlugId(source, "tradingview");
+              const fanout = await mt5FanoutSignalTradeV2({
+                signal_id: null,
+                source_id: sourceId,
                 user_id: userId,
-                source,
-                source_id: mt5SlugId(source, "tradingview"),
+                entry_model: String(plan?.entry_model || "").trim() || null,
                 symbol: planSymbol,
-                side: mt5MapActionToSide(
-                  normalizeDirectionToAction(plan?.direction || action),
-                ),
+                action: normalizeDirectionToAction(plan?.direction),
                 entry: pick.entry,
-                strategy:
-                  String(plan?.strategy || "AI_AUTO_SAVE").trim() || null,
-                entry_model: entryModel,
                 sl: pick.sl,
                 tp: pick.tp,
-                rr_planned: asNum(plan?.rr ?? plan?.risk_reward, null),
-                signal_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-                chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-                note,
-                order_type: orderType,
-                raw_json: tradePlanRawJson,
-                status: "NEW",
-              });
-              await mt5Log(
-                signalId,
-                "signals",
-                {
-                  event_type: "AI_ANALYZE_AUTO_SAVE_SIGNAL",
-                  data: {
-                    ...sharedRawJson,
-                    trade_plan: plan,
-                    symbol: planSymbol,
-                  },
+                volume: asNum(body?.volume ?? body?.lots, null),
+                rr_planned: asNum(plan?.rr, null),
+                note: String(
+                  plan?.note || parsedJson?.final_verdict?.note || "",
+                ).trim(),
+                sid: sessionId,
+                execution_status: "DRAFT",
+                metadata: {
+                  event_type: "AI_ANALYZE_AUTO_SAVE_DRAFT",
+                  raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+                  ...sharedRawJson,
                 },
-                userId,
-              ).catch(() => null);
-              savedSignals.push({
-                signal_id: signalId,
-                sid: signalSid,
-                symbol: planSymbol,
               });
+              const tradeSid =
+                Array.isArray(fanout?.sids) && fanout.sids[0]
+                  ? fanout.sids[0]
+                  : sessionId;
+              savedTrades.push({ sid: tradeSid, symbol: planSymbol });
             }
-            if (!savedSignals.length) {
+            if (!savedTrades.length) {
               return {
                 enabled: true,
                 mode,
                 saved: false,
-                error: "No valid symbol for auto_save signals",
+                error: "No valid trade plan for draft",
               };
             }
             return {
               enabled: true,
               mode,
               saved: true,
-              created: savedSignals.length,
-              signals: savedSignals,
-              signal: savedSignals[0],
+              created: savedTrades.length,
+              trades: savedTrades,
             };
           }
           const pick = picks[0];
@@ -22259,6 +22424,13 @@ const appHandler = async (req, res) => {
           timeframe: body.timeframe || "",
           timeframes: requestedTfs || [],
           prompt_len: finalPrompt.length,
+          prompt: finalPrompt,
+          settings: {
+            auto_save: autoSave,
+            profile: body.profile || "",
+            directions: body.directions || [],
+            model: body.model || "",
+          },
           files_count: snapshotFiles.length,
           files: snapshotFiles.map((f) => f.fileName || f),
         };
@@ -24580,11 +24752,31 @@ const appHandler = async (req, res) => {
         tradeId,
         "trades",
         { event_type: "TRADE_PLAN_SAVED", data: metaPatch },
-        row.userId || userId || CFG.mt5DefaultUserId,
+        row.userId || row.user_id || userId || CFG.mt5DefaultUserId,
       );
+      // If this is a pending order with a broker ticket, dispatch MODIFY so cBot updates it
+      const newStatus = String(row.execution_status || "").toUpperCase();
+      const hasBrokerTicket =
+        row.broker_trade_id && String(row.broker_trade_id || "").trim() !== "";
+      if (
+        (newStatus === "PENDING" || newStatus === "FILLED") &&
+        hasBrokerTicket
+      ) {
+        await b.pool.query(
+          `UPDATE trades SET dispatch_status = 'MODIFY', updated_at = NOW() WHERE sid = $1 AND dispatch_status = 'CONSUMED'`,
+          [tradeId],
+        );
+      }
       invalidateTradeListCaches().catch(() => {});
       return json(res, 200, { ok: true, item: row });
     } catch (error) {
+      console.error(
+        "[trade-plan/save] ERROR",
+        error instanceof Error ? error.message : String(error),
+      );
+      if (error instanceof Error && error.stack) {
+        console.error("[trade-plan/save] STACK", error.stack);
+      }
       return json(res, 400, {
         ok: false,
         error:
@@ -25645,16 +25837,32 @@ const appHandler = async (req, res) => {
       const bars = Array.isArray(payload.bars) ? payload.bars : [];
       if (!bars.length) return json(res, 200, { ok: true, inserted: 0 });
 
-      // Merge into CSV (unified source of truth) + L1/Redis cache
-      let inserted = 0;
-      const symbolsSeen = new Set();
+      // Group bars by symbol+tf and merge in batches (single CSV read/write per group).
+      // Use appendOnly mode: cTrader bars only fill gaps, never overwrite API data.
+      // Timestamps are normalized to UTC boundaries via normalizeBarTimeToUTC.
+      // Skip crypto pairs entirely — cTrader CFD prices are consistently wrong
+      // vs real exchange data (Binance). Binance cron handles all crypto.
+      const grouped = new Map();
+      let skippedCrypto = 0;
       for (const bar of bars) {
         const symbol = String(bar.s || "")
           .trim()
           .toUpperCase();
         const tf = String(bar.tf || "").trim();
         if (!symbol || !tf) continue;
-        const n = mergeBarsIntoCSV(symbol, tf, [bar]);
+        if (isCryptoPair(symbol)) {
+          skippedCrypto++;
+          continue;
+        }
+        const key = `${symbol}|${tf}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(bar);
+      }
+      let inserted = 0;
+      const symbolsSeen = new Set();
+      for (const [key, groupBars] of grouped) {
+        const [symbol, tf] = key.split("|");
+        const n = mergeBarsIntoCSV(symbol, tf, groupBars, { appendOnly: true });
         inserted += n;
         if (n > 0) {
           symbolsSeen.add(symbol);
@@ -25678,8 +25886,14 @@ const appHandler = async (req, res) => {
             source_id: payload.source_id || "unknown",
             bar_count: inserted,
             symbols: [...symbolsSeen],
+            skipped_crypto: skippedCrypto,
           },
           CFG.mt5DefaultUserId,
+        );
+      }
+      if (skippedCrypto > 0) {
+        console.log(
+          `[broker/bars] Skipped ${skippedCrypto} crypto bars (Binance handles these)`,
         );
       }
 
@@ -27150,12 +27364,20 @@ async function mt5RunSnapshotsCron() {
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     if (!filteredSymbols.length || !tfs.length) continue;
     const cadenceSec = Number(data.cadence_seconds || 3600);
+    const schedule = String(data.schedule || "").trim();
     const batchSize = Math.max(1, Number(data.symbols_per_tick || 1));
     const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
-    if (now - lastRun < cadenceSec * 1000 - 5000) {
-      summary.skipped++;
-      continue;
+
+    let shouldRun = false;
+    if (schedule) {
+      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
+    }
+    if (!shouldRun && !schedule) {
+      if (now - lastRun < cadenceSec * 1000 - 5000) {
+        summary.skipped++;
+        continue;
+      }
     }
     // Round-robin: rotate through symbols across ticks
     const rrKey = `${userId}_${conf.name}_rr`;
@@ -27427,10 +27649,17 @@ async function mt5RunMarketDataCron() {
     // Cadence: use cadence_seconds from config, fall back to first TF period
     const defaultCadence = tfs.length ? parseTfTokenToSeconds(tfs[0]) : 60;
     const cadenceSec = Number(data.cadence_seconds || defaultCadence);
+    const schedule = String(data.schedule || "").trim();
     const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastMarketDataRun[stateKey] || 0;
 
-    if (now - lastRun < cadenceSec * 1000 - 5000) continue;
+    let shouldRun = false;
+    if (schedule) {
+      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
+    }
+    if (!shouldRun && !schedule) {
+      if (now - lastRun < cadenceSec * 1000 - 5000) continue;
+    }
 
     CRON_STATE.lastMarketDataRun[stateKey] = now;
 
@@ -27532,11 +27761,25 @@ async function mt5RunAiAnalysisCron() {
     const symbols = resolveCronSymbols(data);
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     const cadenceSec = Number(data.cadence_seconds || 3600);
+    const schedule = String(data.schedule || "").trim();
 
     const stateKey = `${userId}_${conf.name}`;
     const lastRun = CRON_STATE.lastAiAnalysisRun[stateKey] || 0;
 
-    if (now - lastRun >= cadenceSec * 1000 - 5000) {
+    // Check if this cron should run now
+    let shouldRun = false;
+    const hasSchedule = schedule && schedule.startsWith("at ");
+    if (hasSchedule) {
+      // Event mode: strict — only fire at scheduled time, no fallback
+      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
+    } else {
+      // Interval mode: cadence-based
+      if (now - lastRun >= cadenceSec * 1000 - 5000) {
+        shouldRun = true;
+      }
+    }
+
+    if (shouldRun) {
       console.log(
         `[Cron][AiAnalysis] Running userId=${userId} name=${conf.name} symbols=${symbols.length}`,
       );
@@ -27555,221 +27798,60 @@ async function mt5RunAiAnalysisCron() {
             );
           }
         }
-        // Run AI analysis once per symbol
+        // Call the same manual AI analyze endpoint — no code duplication
         try {
-          try {
-            fs.appendFileSync(
-              "/tmp/ai_cron_error.log",
-              new Date().toISOString() +
-                " Starting analysis for " +
-                symbol +
-                "\n",
-            );
-          } catch (_) {}
-          const snapDir = snapshotSymbolDir(symbol);
-          const snapFiles = fs.existsSync(snapDir)
-            ? fs.readdirSync(snapDir).filter((f) => /\.(png|jpe?g)$/i.test(f))
-            : [];
-          let latestSnapAge = Infinity;
-          const masterSnap = snapFiles.find((f) => f.includes("MASTER"));
-          if (masterSnap) {
-            try {
-              const st = fs.statSync(path.join(snapDir, masterSnap));
-              latestSnapAge = (Date.now() - st.mtimeMs) / 60000;
-            } catch {}
-          }
-          if (!snapFiles.length || latestSnapAge > 3) {
-            console.log(
-              `[Cron][AiAnalysis] Snapshot ${latestSnapAge > 3 ? "stale (" + Math.round(latestSnapAge) + "m old)" : "missing"} for ${symbol}, capturing...`,
-            );
-            await captureTradingViewSnapshotsBatch({
-              symbols: [symbol],
-              provider: data.broker || "ICMARKETS",
-              tfs: tfs.length ? tfs : ["D", "240", "15", "5"],
-              format: "png",
-              theme: "dark",
-            });
-          }
-          const sessionId = `CRN${Date.now().toString(36).toUpperCase()}`;
-          const tfsLabel = (tfs.length ? tfs : ["D", "240", "15", "5"]).join(
-            ",",
-          );
-          // Build prompt with recent bar data
-          let barsContext = "";
-          for (const tf of tfs.length ? tfs : ["1D", "4h", "15m", "5m"]) {
-            const csvPath = resolveBrokerCsvPath(symbol, tf);
-            if (csvPath && fs.existsSync(csvPath)) {
-              const lines = fs
-                .readFileSync(csvPath, "utf8")
-                .trim()
-                .split("\n")
-                .slice(-30);
-              const tfClean = tf.replace(/^1/, "").toUpperCase();
-              barsContext += `\n${tfClean} bars (timestamp,open,high,low,close,volume):\n${lines.join("\n")}\n`;
-            }
-          }
-          const prompt = `Analyze ${symbol} with timeframes ${tfsLabel}.\n\nRecent price data:${barsContext}\n\nReturn only valid JSON in this exact structure:
-{"symbol":"${symbol}","direction":"BUY","entry":12345.67,"stop_loss":12300,"tp":12400,"tp2":12500,"tp3":12600,"strategy":"SMC","entry_model":"OB_Mitigation","confidence_pct":80,"risk_pct":1.5,"note":"brief analysis"}
-
-Include: direction (BUY/SELL), entry, stop_loss, tp (primary), tp2 (optional), tp3 (optional), strategy (e.g. SMC, PA, ICT), entry_model, confidence_pct (0-100), risk_pct (0-5), and a short note explaining the setup.`;
-          try {
-            fs.appendFileSync(
-              "/tmp/ai_cron_error.log",
-              new Date().toISOString() + " Prompt len=" + prompt.length + "\n",
-            );
-          } catch (_) {}
-          const analysisResult = await callAiProvider({
-            model: data.model || "claude-sonnet-4-0",
-            messages: [{ role: "user", content: prompt }],
-            maxTokens: 8000,
-            timeoutMs: 120000,
-            userId,
-          });
-          if (!analysisResult?.rawText) {
-            try {
-              fs.appendFileSync(
-                "/tmp/ai_cron_error.log",
-                new Date().toISOString() + " No rawText in response\n",
-              );
-            } catch (_) {}
-            continue;
-          }
-          try {
-            fs.appendFileSync(
-              "/tmp/ai_cron_error.log",
-              new Date().toISOString() +
-                " Got rawText len=" +
-                analysisResult.rawText.length +
-                "\n",
-            );
-            fs.writeFileSync("/tmp/ai_cron_raw.txt", analysisResult.rawText);
-          } catch (_) {}
-          const extracted = extractJsonFromAiText(analysisResult.rawText);
-          let parsed = extracted.parsed;
-          if (Array.isArray(parsed) && parsed.length > 0) parsed = parsed[0];
-          if (!parsed || typeof parsed !== "object") {
-            try {
-              fs.appendFileSync(
-                "/tmp/ai_cron_error.log",
-                new Date().toISOString() + " Failed to parse JSON\n",
-              );
-            } catch (_) {}
-            continue;
-          }
-          try {
-            fs.appendFileSync(
-              "/tmp/ai_cron_error.log",
-              new Date().toISOString() +
-                " Parsed keys: " +
-                Object.keys(parsed).join(",") +
-                "\n",
-            );
-          } catch (_) {}
-          // Extract entry/sl/tp from various AI response formats
-          const plan = Array.isArray(parsed.trade_plan)
-            ? parsed.trade_plan[0]
-            : parsed.trade_plan || parsed.execution_plan || parsed;
-          const side = String(
-            plan?.direction || parsed.direction || "BUY",
-          ).toUpperCase();
-          const entry =
-            asNum(plan?.entry?.price) ||
-            asNum(plan?.entry_price) ||
-            asNum(plan?.entry) ||
-            asNum(parsed?.entry) ||
-            0;
-          const sl =
-            asNum(plan?.stop_loss?.price) ||
-            asNum(plan?.stop_loss) ||
-            asNum(plan?.sl) ||
-            asNum(parsed?.sl) ||
-            0;
-          const tp =
-            asNum(plan?.tp1?.price) ||
-            asNum(plan?.tp) ||
-            asNum(parsed?.tp) ||
-            0;
-          // Save response to trade_files AFTER we know the actual trade SID (fanout generates it)
-          const cronLogPayload = {
-            timestamp: new Date().toISOString(),
-            session_id: sessionId,
-            model: analysisResult.modelUsed,
-            provider: "claude",
-            raw_response: analysisResult.rawText,
-            parsed_json: parsed,
-          };
-          if (!entry || !sl) {
-            try {
-              fs.appendFileSync(
-                "/tmp/ai_cron_error.log",
-                new Date().toISOString() +
-                  " Missing entry/sl: entry=" +
-                  entry +
-                  " sl=" +
-                  sl +
-                  "\n",
-              );
-            } catch (_) {}
-            console.log(
-              `[Cron][AiAnalysis] ${symbol} — missing entry/sl in response`,
-            );
-            continue;
-          }
-          const fanout = await mt5FanoutSignalTradeV2({
-            signal_id: null,
-            source_id: "cron_ai",
-            user_id: userId || CFG.mt5DefaultUserId,
-            entry_model: parsed.entry_model || "AI_CRON",
+          const analyzePayload = JSON.stringify({
             symbol,
-            action: side === "SELL" ? "SELL" : "BUY",
-            entry,
-            sl,
-            tp,
-            volume: null,
-            note: `Cron AI — ${symbol} ${tfsLabel}`,
-            sid: sessionId,
-            trade_sid: sessionId,
-            execution_status: "PENDING",
-            metadata: { event_type: "CRON_AI_ANALYSIS", raw_json: parsed },
+            timeframes: tfs.length ? tfs : ["D", "240", "15", "5"],
+            model: data.model || "claude-sonnet-4-0",
+            auto_save: data.auto_save || "trades",
+            prompt: data.prompt || "",
+            profile: data.profile || "",
+            provider: data.broker || "ICMARKETS",
           });
-          const tradeSid =
-            Array.isArray(fanout?.sids) && fanout.sids[0]
-              ? fanout.sids[0]
-              : sessionId;
-          // Save logs to actual trade folder
-          const logsDir = tradeLogsDir(tradeSid, symbol);
-          fs.writeFileSync(
-            path.join(logsDir, "response.json"),
-            JSON.stringify(cronLogPayload, null, 2),
-          );
-          if (parsed && typeof parsed === "object") {
-            fs.writeFileSync(
-              path.join(logsDir, "ai_response.json"),
-              JSON.stringify(parsed, null, 2),
+          const http = require("http");
+          await new Promise((resolve, reject) => {
+            const req = http.request(
+              {
+                hostname: "127.0.0.1",
+                port: 3001,
+                path: "/v2/chart/snapshots/analyze",
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": CFG.signalApiKey || "",
+                  "Content-Length": Buffer.byteLength(analyzePayload),
+                },
+                timeout: 180000,
+              },
+              (res) => {
+                let body = "";
+                res.on("data", (chunk) => (body += chunk));
+                res.on("end", () => {
+                  console.log(
+                    `[Cron][AiAnalysis] API response ${res.statusCode} for ${symbol}`,
+                  );
+                  resolve();
+                });
+              },
             );
-          }
-          copySnapshotsToTradeSidFolder(tradeSid, [], symbol, "pending");
-          console.log(
-            `[Cron][AiAnalysis] Created trade ${tradeSid} for ${symbol}`,
-          );
-          triggered++;
-          if (notificationManager)
-            notificationManager.handle("SYSTEM_EVENT", "ai_analysis", {
-              message: "AI Cron: new trade " + tradeSid + " for " + symbol,
-              user_id: userId || CFG.mt5DefaultUserId,
-              ticker: true,
-              console_log: true,
-              notification: true,
+            req.on("error", (e) => {
+              console.error(
+                `[Cron][AiAnalysis] API call failed for ${symbol}:`,
+                e.message,
+              );
+              reject(e);
             });
+            req.on("timeout", () => {
+              req.destroy();
+              reject(new Error("timeout"));
+            });
+            req.write(analyzePayload);
+            req.end();
+          });
+          triggered++;
         } catch (err) {
-          const msg = `[Cron][AiAnalysis] Failed ${symbol}: ${err.message}`;
-          console.error(msg);
-          try {
-            fs.appendFileSync(
-              "/tmp/ai_cron_error.log",
-              new Date().toISOString() + " " + msg + "\n",
-            );
-          } catch (_) {}
+          console.error(`[Cron][AiAnalysis] Failed ${symbol}: ${err.message}`);
         }
       }
       // Log cron-level summary
