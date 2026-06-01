@@ -1,6 +1,17 @@
 # Deploy Rules
 
-Canonical deploy policy:
+## Architecture
+```
+# Local dev
+Vite :3000 (web-ui) + webhook :3001 (API)
+
+# Production (VPS)
+Browser → :443 (nginx)
+  → /, /assets/* → web-ui/dist/ (static)
+  → /v2/*, /health, /auth/* → proxy → 127.0.0.1:3001 (webhook)
+```
+
+## Canonical deploy policy
 - Deploy source of truth is `origin/main`.
 - Never deploy local-only/unpushed commits.
 - Single deploy owner lock via `.agents/sync/MAILBOX.md`.
@@ -147,3 +158,13 @@ Canonical deploy policy:
   - separate DB/schema or dedicated staging DB
   - separate Redis DB index or key prefix namespace
 - Shared prod-like data is allowed only with explicit user approval.
+
+## Deploy Checklist & Troubleshooting
+See `.agents/wiki/deploy-checklist.md` for step-by-step deploy guide and common issues.
+
+## VPS Quick Reference
+- Host: `root@139.59.211.192`
+- App dir: `/opt/trading`
+- Webhook env: `/opt/trading/webhook/.env` (PORT=3001, MT5_POSTGRES_URL=...)
+- PM2 process: `webhook` (pm2 restart webhook)
+- Nginx config: `/etc/nginx/sites-enabled/trading.conf`
