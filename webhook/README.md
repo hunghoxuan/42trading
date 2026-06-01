@@ -271,6 +271,7 @@ Header auth alternative (recommended for non-TV clients):
 - `GET /mt5/ea/pull?account=...` (auth via `x-api-key` header)
 - `POST /mt5/ea/ack`
 - `GET /mt5/health`
+- `GET /v2/bullmq/status`
 - `GET /mt5/trades?limit=200&status=NEW` (admin API, add `apiKey` or `x-api-key`)
 - `GET /mt5/dashboard/summary` (admin API; KPI cards + latest unprocessed)
 - `GET /mt5/dashboard/pnl-series?period=today|week|month` (admin API)
@@ -291,6 +292,21 @@ Header auth alternative (recommended for non-TV clients):
 - `GET /v2/accounts/{account_id}/subscriptions` (v2 admin subscription list)
 - `PUT /v2/accounts/{account_id}/subscriptions` (v2 admin replace subscriptions)
 - `POST /v2/accounts/{account_id}/api-key/rotate` (v2, admin protected)
+
+## Cron + BullMQ architecture
+
+- Master scheduler: one in-process loop (`mt5CronLoop`) runs every ~60s and orchestrates all active cron rows in DB.
+- `ANALYSIS_CRON` and `SNAPSHOT_CRON` execute inline in the webhook process (no BullMQ queue).
+- `MARKET_DATA_CRON` can execute via BullMQ queue `market-data-bars` when Redis + queue mode are enabled.
+- BullMQ disabled does not stop analysis/snapshot cron; it only affects market-data queue execution mode.
+
+### Health status semantics (UI)
+
+- Green: enabled and healthy (`ok`)
+- Gray: intentionally disabled (`disabled`)
+- Red: enabled but unhealthy (`error`)
+
+`/health` and `/v2/bullmq/status` are the source of truth for these states.
 
 Open UI:
 - `https://<your-domain>/mt5/ui?apiKey=<SIGNAL_API_KEY>`

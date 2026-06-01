@@ -1,7 +1,15 @@
 import { useState, useEffect } from "react";
 import { api } from "../../api";
 
-function StatusDot({ ok }) {
+function StatusDot({ state = "unknown" }) {
+  const color =
+    state === "ok"
+      ? "#22c55e"
+      : state === "disabled"
+        ? "#666"
+        : state === "error"
+          ? "#ef4444"
+          : "#666";
   return (
     <span
       style={{
@@ -9,7 +17,7 @@ function StatusDot({ ok }) {
         width: 8,
         height: 8,
         borderRadius: "50%",
-        background: ok ? "#22c55e" : "#666",
+        background: color,
         flexShrink: 0,
         marginRight: 8,
       }}
@@ -101,7 +109,7 @@ export default function HealthPage() {
     (k) => logSources[k] && Object.keys(logSources[k]).length,
   );
 
-  const Row = ({ ok, label, right }) => (
+  const Row = ({ state, label, right }) => (
     <div
       style={{
         display: "flex",
@@ -110,7 +118,7 @@ export default function HealthPage() {
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <StatusDot ok={ok} />
+      <StatusDot state={state} />
       <span style={{ fontWeight: 600, fontSize: 12 }}>{label}</span>
       <span className="minor-text" style={{ marginLeft: "auto", fontSize: 11 }}>
         {right}
@@ -122,6 +130,44 @@ export default function HealthPage() {
     const data = logSources[srcKey];
     if (!data || !Object.keys(data).length) return null;
     const labels = sourceLabels[srcKey] || srcKey;
+    const resolveRowState = (source, id, lastActivityIso) => {
+      if (source === "cron") {
+        const idUpper = String(id || "").toUpperCase();
+        if (idUpper === "BULLMQ") {
+          if (health?.bullmq) {
+            if (health?.bullmq?.enabled === false) return "disabled";
+            return health?.bullmq?.ok ? "ok" : "error";
+          }
+          const qEnabled = Boolean(health?.diagnostics?.cron?.queue_enabled);
+          const qReady = Boolean(health?.diagnostics?.cron?.queue_ready);
+          if (!qEnabled) return "disabled";
+          return qReady ? "ok" : "error";
+        }
+        const st = String(health?.cronStatusByName?.[id]?.status || "").toUpperCase();
+        if (st) return st === "ACTIVE" ? "ok" : "disabled";
+        if (idUpper.includes("ANALYSIS") || idUpper.includes("CRON_AI")) {
+          return Number(health?.diagnostics?.cron?.configs?.analysis_active || 0) >
+            0
+            ? "ok"
+            : "disabled";
+        }
+        if (idUpper.includes("SNAPSHOT")) {
+          return Number(health?.diagnostics?.cron?.configs?.snapshots_active || 0) >
+            0
+            ? "ok"
+            : "disabled";
+        }
+        if (idUpper.includes("MARKET_DATA") || idUpper.includes("CRON_MD")) {
+          return Number(
+            health?.diagnostics?.cron?.configs?.market_data_active || 0,
+          ) > 0
+            ? "ok"
+            : "disabled";
+        }
+      }
+      return isRecent(lastActivityIso) ? "ok" : "error";
+    };
+
     return (
       <div key={srcKey} style={{ marginBottom: 14 }}>
         <div
@@ -152,7 +198,7 @@ export default function HealthPage() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  padding: "3px 8px",
+                  padding: "3px 0",
                   borderBottom: "1px solid var(--border)",
                   fontSize: 10,
                   cursor: "pointer",
@@ -160,7 +206,9 @@ export default function HealthPage() {
                   borderRadius: 2,
                 }}
               >
-                <StatusDot ok={isRecent(idData?.last_activity)} />
+                <StatusDot
+                  state={resolveRowState(srcKey, idKey, idData?.last_activity)}
+                />
                 <span
                   style={{
                     fontWeight: 600,
@@ -186,7 +234,9 @@ export default function HealthPage() {
                   padding: "3px 0",
                 }}
               >
-                <StatusDot ok={isRecent(idData?.last_activity)} />
+                <StatusDot
+                  state={resolveRowState(srcKey, idKey, idData?.last_activity)}
+                />
                 <span style={{ fontWeight: 600, fontSize: 11 }}>{idKey}</span>
                 <span
                   className="minor-text"
@@ -264,19 +314,40 @@ export default function HealthPage() {
               STATUS
             </div>
             <Row
-              ok={health?.ok}
+              state={health?.ok ? "ok" : "error"}
               label="Server"
               right={health?.ok ? "Online" : "Offline"}
             />
             <Row
-              ok={health?.postgres === "ok"}
+              state={health?.postgres === "ok" ? "ok" : "error"}
               label="PostgreSQL"
               right={health?.postgres || "-"}
             />
             <Row
-              ok={health?.redis === "ok" || health?.redis === "disabled"}
+              state={
+                health?.redis === "ok"
+                  ? "ok"
+                  : health?.redis === "disabled"
+                    ? "disabled"
+                    : "error"
+              }
               label="Redis"
               right={health?.redis || "-"}
+            />
+            <Row
+              state={
+                health?.bullmq?.enabled === false
+                  ? "disabled"
+                  : health?.bullmq?.ok
+                    ? "ok"
+                    : "error"
+              }
+              label="BullMQ"
+              right={
+                health?.bullmq?.enabled === false
+                  ? "disabled"
+                  : `q:${health?.bullmq?.queue_name || "market-data-bars"} w:${health?.bullmq?.counts?.waiting || 0} a:${health?.bullmq?.counts?.active || 0} f:${health?.bullmq?.counts?.failed || 0}`
+              }
             />
           </div>
           {hasLogData ? (

@@ -7930,6 +7930,27 @@ async function healthCronConfigDiagnostics() {
   }
 }
 
+async function healthCronStatusesByName() {
+  try {
+    const b = await mt5Backend();
+    if (!b?.db) return {};
+    const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+    const out = {};
+    for (const r of rows || []) {
+      const name = String(r?.name || "").trim();
+      if (!name) continue;
+      const d = typeof r.data === "string" ? JSON.parse(r.data) : r.data || {};
+      out[name] = {
+        status: String(r?.status || "").toUpperCase() || "UNKNOWN",
+        cron_type: String(d?.cron_type || ""),
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function mt5ParsePriceOrNull(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -17513,6 +17534,8 @@ const appHandler = async (req, res) => {
       }
     } catch {}
     const cronConfigs = await healthCronConfigDiagnostics();
+    const cronStatusByName = await healthCronStatusesByName();
+    const bullmq = await getBullmqStatus();
     const overallOk = postgresOk && (redisOk || !CFG.redisEnabled);
     const cronDiag = {
       scheduler_running: Boolean(CRON_STATE.isRunning),
@@ -17554,6 +17577,8 @@ const appHandler = async (req, res) => {
       cronSnapshotsEnabled: true,
       cronDetails: global._cronDetails || {},
       cronEvents: global._cronEvents || [],
+      cronStatusByName,
+      bullmq,
       log_sources: scanLogSources(),
       sources: {
         ctrader: {
@@ -17602,6 +17627,11 @@ const appHandler = async (req, res) => {
         },
       },
     });
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/bullmq/status") {
+    const bullmq = await getBullmqStatus();
+    return json(res, 200, bullmq);
   }
 
   if (req.method === "GET" && url.pathname === "/v2/cron/snapshots/latest") {
@@ -19741,6 +19771,7 @@ const appHandler = async (req, res) => {
         {
           cron_type: "ANALYSIS_CRON",
           enabled: false,
+          refresh_snapshot: false,
           symbols: [],
           timeframes: ["15m", "1h"],
           cadence_minutes: 60,
@@ -27794,6 +27825,8 @@ async function start() {
   if (CFG.mt5Enabled) {
     // Start Cron Loop
     initMarketDataQueue();
+    initAiAnalysisCronQueue();
+    initSnapshotsCronQueue();
     mt5CronLoop().catch((err) =>
       console.error("[Cron] Loop failed to start:", err),
     );
@@ -27825,6 +27858,80 @@ const CRON_STATE = {
 };
 let MARKET_DATA_QUEUE = null;
 let MARKET_DATA_WORKER = null;
+let SNAPSHOTS_CRON_QUEUE = null;
+let SNAPSHOTS_CRON_WORKER = null;
+let AI_ANALYSIS_CRON_QUEUE = null;
+let AI_ANALYSIS_CRON_WORKER = null;
+
+async function getBullmqStatus() {
+  const queueName = "market-data-bars";
+  const base = {
+    ok: false,
+    enabled: Boolean(
+      CFG.marketDataCronEnabled &&
+        CFG.marketDataCronQueueEnabled &&
+        CFG.redisEnabled &&
+        BullQueue &&
+        BullWorker,
+    ),
+    queue_name: queueName,
+    queue_initialized: Boolean(MARKET_DATA_QUEUE),
+    worker_initialized: Boolean(MARKET_DATA_WORKER),
+    redis_enabled: Boolean(CFG.redisEnabled),
+    redis_url: CFG.redisUrl || "",
+    counts: {
+      waiting: 0,
+      active: 0,
+      completed: 0,
+      failed: 0,
+      delayed: 0,
+      paused: 0,
+    },
+    workers: [],
+    error: null,
+  };
+  if (!base.enabled) return base;
+  let queue = MARKET_DATA_QUEUE;
+  let shouldClose = false;
+  try {
+    if (!queue) {
+      queue = new BullQueue(queueName, {
+        connection: bullConnectionFromRedisUrl(CFG.redisUrl),
+      });
+      shouldClose = true;
+    }
+    base.counts = await queue.getJobCounts(
+      "waiting",
+      "active",
+      "completed",
+      "failed",
+      "delayed",
+      "paused",
+    );
+    if (typeof queue.getWorkers === "function") {
+      const workers = await queue.getWorkers();
+      base.workers = Array.isArray(workers)
+        ? workers.map((w) => ({
+            id: w.id || "",
+            addr: w.addr || "",
+            name: w.name || "",
+            age: Number(w.age || 0),
+          }))
+        : [];
+    }
+    base.ok = true;
+    return base;
+  } catch (error) {
+    base.error = error instanceof Error ? error.message : String(error);
+    return base;
+  } finally {
+    if (shouldClose && queue && typeof queue.close === "function") {
+      try {
+        await queue.close();
+      } catch {}
+    }
+  }
+}
 
 function bullConnectionFromRedisUrl(redisUrl) {
   try {
@@ -28009,7 +28116,79 @@ function initMarketDataQueue() {
   return true;
 }
 
-async function mt5RunSnapshotsCron() {
+function initSnapshotsCronQueue() {
+  if (!CFG.redisEnabled || !BullQueue || !BullWorker) {
+    console.log(`[Cron][Snapshots] queue enabled=false`);
+    return false;
+  }
+  if (SNAPSHOTS_CRON_QUEUE || SNAPSHOTS_CRON_WORKER) return true;
+  const connection = bullConnectionFromRedisUrl(CFG.redisUrl);
+  SNAPSHOTS_CRON_QUEUE = new BullQueue("snapshots-cron", {
+    connection,
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 200,
+      removeOnFail: 500,
+    },
+  });
+  const concurrency = Math.max(
+    1,
+    Math.min(4, Math.round(asNum(process.env.SNAPSHOTS_CRON_CONCURRENCY, 1))),
+  );
+  SNAPSHOTS_CRON_WORKER = new BullWorker(
+    "snapshots-cron",
+    async () => mt5RunSnapshotsCronInline(),
+    { connection, concurrency },
+  );
+  SNAPSHOTS_CRON_WORKER.on("failed", (job, err) => {
+    console.error(
+      `[Cron][Snapshots] BullMQ job failed id=${job?.id || ""}: ${err?.message || err}`,
+    );
+  });
+  console.log(
+    `[Cron][Snapshots] BullMQ enabled=true concurrency=${concurrency}`,
+  );
+  return true;
+}
+
+function initAiAnalysisCronQueue() {
+  if (!CFG.redisEnabled || !BullQueue || !BullWorker) {
+    console.log(`[Cron][AiAnalysis] queue enabled=false`);
+    return false;
+  }
+  if (AI_ANALYSIS_CRON_QUEUE || AI_ANALYSIS_CRON_WORKER) return true;
+  const connection = bullConnectionFromRedisUrl(CFG.redisUrl);
+  AI_ANALYSIS_CRON_QUEUE = new BullQueue("ai-analysis-cron", {
+    connection,
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 200,
+      removeOnFail: 500,
+    },
+  });
+  const concurrency = Math.max(
+    1,
+    Math.min(4, Math.round(asNum(process.env.AI_ANALYSIS_CRON_CONCURRENCY, 1))),
+  );
+  AI_ANALYSIS_CRON_WORKER = new BullWorker(
+    "ai-analysis-cron",
+    async () => mt5RunAiAnalysisCronInline(),
+    { connection, concurrency },
+  );
+  AI_ANALYSIS_CRON_WORKER.on("failed", (job, err) => {
+    console.error(
+      `[Cron][AiAnalysis] BullMQ job failed id=${job?.id || ""}: ${err?.message || err}`,
+    );
+  });
+  console.log(
+    `[Cron][AiAnalysis] BullMQ enabled=true concurrency=${concurrency}`,
+  );
+  return true;
+}
+
+async function mt5RunSnapshotsCronInline() {
   const b = await mt5Backend();
   const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
   const configs = (rows || []).filter((r) => {
@@ -28185,6 +28364,24 @@ async function mt5RunSnapshotsCron() {
     }
   }
   return summary;
+}
+async function mt5RunSnapshotsCron() {
+  const queueReady = Boolean(SNAPSHOTS_CRON_QUEUE && SNAPSHOTS_CRON_WORKER);
+  if (!queueReady) return mt5RunSnapshotsCronInline();
+  try {
+    const bucket = Math.floor(Date.now() / 60000);
+    await SNAPSHOTS_CRON_QUEUE.add(
+      "run-snapshots-cron",
+      { bucket },
+      { jobId: `snapshots_cron_${bucket}` },
+    );
+    return { queued: 1 };
+  } catch (err) {
+    console.error(
+      `[Cron][Snapshots] BullMQ enqueue failed, fallback inline: ${err?.message || err}`,
+    );
+    return mt5RunSnapshotsCronInline();
+  }
 }
 async function mt5CronLoop() {
   console.log("[Cron] Initializing master loop (1min cadence)");
@@ -28409,7 +28606,7 @@ async function mt5RunMarketDataCron() {
   return { queued: 1 };
 }
 
-async function mt5RunAiAnalysisCron() {
+async function mt5RunAiAnalysisCronInline() {
   const b = await mt5Backend();
   const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
   const configs = (rows || []).filter((r) => {
@@ -28471,14 +28668,42 @@ async function mt5RunAiAnalysisCron() {
         // When no custom prompt is in cron config, the endpoint will use
         // the rich system.md guide as default (same as manual UI).
         try {
+          const runTimeframes = tfs.length ? tfs : ["D", "4H", "15m", "5m"];
+          const forceRefreshSnapshots =
+            data.refresh_snapshot === true || data.snapshot_refresh === true;
+          let shouldRefreshSnapshots = forceRefreshSnapshots;
+          if (!shouldRefreshSnapshots) {
+            const recent = findRecentChartSnapshots({
+              symbol,
+              provider: String(data.broker || "ICMARKETS"),
+              timeframes: runTimeframes,
+              maxAgeMs: 5 * 60 * 1000,
+            });
+            shouldRefreshSnapshots =
+              !Array.isArray(recent.items) ||
+              recent.items.length < recent.target_timeframes.length;
+          }
+          if (shouldRefreshSnapshots) {
+            await captureTradingViewSnapshotsBatch({
+              symbol,
+              provider: String(data.broker || "ICMARKETS"),
+              timeframes: runTimeframes,
+              lookbackBars: Number(data.lookback_bars || 300),
+              format: "png",
+              quality: 70,
+              theme: "dark",
+              merge_snapshots: false,
+            });
+          }
           const analyzePayload = JSON.stringify({
             symbol,
-            timeframes: tfs.length ? tfs : ["D", "4H", "15m", "5m"],
+            timeframes: runTimeframes,
             model: data.model || "claude-sonnet-4-0",
             auto_save: data.auto_save || "trades",
             prompt: data.prompt || "",
             profile: data.profile || "",
             provider: data.broker || "ICMARKETS",
+            snapshot_refresh: shouldRefreshSnapshots,
           });
           const http = require("http");
           const { statusCode, body } = await new Promise((resolve, reject) => {
@@ -28584,6 +28809,26 @@ async function mt5RunAiAnalysisCron() {
     }
   }
   return { triggered };
+}
+async function mt5RunAiAnalysisCron() {
+  const queueReady = Boolean(
+    AI_ANALYSIS_CRON_QUEUE && AI_ANALYSIS_CRON_WORKER,
+  );
+  if (!queueReady) return mt5RunAiAnalysisCronInline();
+  try {
+    const bucket = Math.floor(Date.now() / 60000);
+    await AI_ANALYSIS_CRON_QUEUE.add(
+      "run-ai-analysis-cron",
+      { bucket },
+      { jobId: `ai_analysis_cron_${bucket}` },
+    );
+    return { queued: 1 };
+  } catch (err) {
+    console.error(
+      `[Cron][AiAnalysis] BullMQ enqueue failed, fallback inline: ${err?.message || err}`,
+    );
+    return mt5RunAiAnalysisCronInline();
+  }
 }
 
 start().catch((err) => {

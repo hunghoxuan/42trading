@@ -173,6 +173,7 @@ function defaultForm(type) {
       return {
         ...base,
         pickup_mode: "all",
+        refresh_snapshot: false,
         directions: ["BUY", "SELL"],
         order_types: ["market", "limit", "stop"],
         model: "claude-sonnet-4-0",
@@ -221,6 +222,8 @@ function formFromCronData(data) {
       return {
         ...base,
         pickup_mode: String(data?.pickup_mode || "all"),
+        refresh_snapshot:
+          data?.refresh_snapshot === true || data?.snapshot_refresh === true,
         directions: Array.isArray(data?.directions)
           ? data.directions
           : ["BUY", "SELL"],
@@ -276,6 +279,7 @@ function formToDataPayload(form, symbolsGroup = "") {
       return {
         ...data,
         pickup_mode: form.pickup_mode || "all",
+        refresh_snapshot: form.refresh_snapshot === true,
         directions: form.directions,
         order_types: form.order_types,
         model: form.model,
@@ -477,7 +481,7 @@ export default function CronPage() {
       setSaveLoading(false);
       setTimeout(() => setSaveMsg(""), 5000);
     }
-  }, [selectedCronName, form, cronSettings]);
+  }, [selectedCronName, cronName, form, symbolsGroup, cronSettings]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedCron || isNewCron) return;
@@ -923,6 +927,41 @@ export default function CronPage() {
                               Random — pick 1 random symbol
                             </option>
                           </select>
+                        </div>
+                      </div>
+
+                      {/* Snapshot behavior */}
+                      <div className="stack-layout" style={{ gap: 6 }}>
+                        <span
+                          className="panel-label"
+                          style={{ fontSize: 10, marginBottom: 0 }}
+                        >
+                          SNAPSHOT SETTING
+                        </span>
+                        <label
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.refresh_snapshot === true}
+                            onChange={(e) =>
+                              updateForm({
+                                refresh_snapshot: e.target.checked,
+                              })
+                            }
+                          />
+                          <span style={{ fontSize: 13 }}>
+                            Always refresh snapshot before analysis
+                          </span>
+                        </label>
+                        <div className="minor-text" style={{ fontSize: 11 }}>
+                          Off: use existing snapshot only if age is 5m or less;
+                          otherwise auto-refresh before analysis.
                         </div>
                       </div>
 
