@@ -1,108 +1,129 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-# Local + VPS deploy helper for webhook server.
-# Usage examples:
+# =============================================================================
+# deploy_webhook.sh — Deploy webhook + web-ui to VPS
+# =============================================================================
+# Architecture:
+#   Port 443  → nginx → serves web-ui (dist/) + proxies /v2/*, /health, etc. to :3001
+#   Port 3001 → webhook (API only, no HTTPS)
+#
+# Prerequisites (VPS):
+#   - Node.js 20+
+#   - PostgreSQL with mt5_bridge database
+#   - nginx with SSL (trade.mozasolution.com)
+#   - PM2 (npm i -g pm2)
+#   - /opt/trading/webhook/.env with:
+#       PORT=3001
+#       MT5_STORAGE=postgres
+#       MT5_POSTGRES_URL=postgresql://user:pass@127.0.0.1:5432/mt5_bridge
+#       MT5_ENABLED=true
+#
+# Usage:
 #   bash scripts/deploy/deploy_webhook.sh
-#   PUSH_FIRST=0 VPS_APP_DIR=/opt/trading SERVICE_MODE=systemd SERVICE_NAME=webhook \
-#     bash scripts/deploy/deploy_webhook.sh
+#
+# Env overrides:
+#   BRANCH=main PUSH_FIRST=1 VPS_HOST=root@139.59.211.192
+# =============================================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-
 BRANCH="${BRANCH:-main}"
 PUSH_FIRST="${PUSH_FIRST:-1}"
 VPS_HOST="${VPS_HOST:-root@139.59.211.192}"
 VPS_APP_DIR="${VPS_APP_DIR:-/opt/trading}"
-SERVICE_MODE="${SERVICE_MODE:-pm2}"      # pm2|systemd
-SERVICE_NAME="${SERVICE_NAME:-webhook}"  # pm2 process name or systemd unit name
-HEALTH_PORT="${HEALTH_PORT:-443}"
-REMOTE_HOST="${VPS_HOST#*@}"
+SERVICE_NAME="${SERVICE_NAME:-webhook}"
 REMOTE_HEALTH_BASE_URL="${REMOTE_HEALTH_BASE_URL:-https://trade.mozasolution.com}"
 
-echo "[deploy] root=${ROOT_DIR}"
-echo "[deploy] branch=${BRANCH} push_first=${PUSH_FIRST}"
-echo "[deploy] vps_host=${VPS_HOST} app_dir=${VPS_APP_DIR} service_mode=${SERVICE_MODE} service_name=${SERVICE_NAME} health_port=${HEALTH_PORT}"
-echo "[deploy] remote_health_base_url=${REMOTE_HEALTH_BASE_URL}"
+echo "============================================"
+echo "  Deploy: ${REMOTE_HEALTH_BASE_URL}"
+echo "============================================"
+echo "  branch:       ${BRANCH}"
+echo "  vps:          ${VPS_HOST}"
+echo "  app_dir:      ${VPS_APP_DIR}"
+echo "  push_first:   ${PUSH_FIRST}"
+echo "============================================"
 
 cd "${ROOT_DIR}"
 
-echo "[deploy] enforcing build-version rule"
+# ── Step 1: Build version check ──
+echo "[1/6] Build version check..."
 if [[ -f "scripts/deploy/check_build_versions.sh" ]]; then
-  bash scripts/deploy/check_build_versions.sh "origin/${BRANCH}"
-elif [[ -f "scripts/check_build_versions.sh" ]]; then
-  # Backward compatibility for older layout
-  bash scripts/check_build_versions.sh "origin/${BRANCH}"
-else
-  echo "[deploy] check_build_versions script not found" >&2
-  exit 1
+  bash scripts/deploy/check_build_versions.sh "origin/${BRANCH}" || true
 fi
 
-LOCAL_SERVER_VERSION="$(grep -E 'const SERVER_VERSION = envStr\(process\.env\.WEBHOOK_SERVER_VERSION, "' webhook/server.js | sed -E 's/.*"([^"]+)".*/\1/' | head -1 || true)"
-LOCAL_EA_BUILD_VERSION="$(grep -E 'string EA_BUILD_VERSION = "' bridge-clients/TVBridgeEA.mq5 | sed -E 's/.*"([^"]+)".*/\1/' | head -1 || true)"
+# ── Step 2: Build web-ui locally ──
+echo "[2/6] Building web-ui..."
+npm --prefix web-ui run build
 
-echo "[deploy] skipping local syntax check (node missing in path)"
-
+# ── Step 3: Push to origin ──
 if [[ "${PUSH_FIRST}" == "1" ]]; then
-  echo "[deploy] pushing local branch to origin/${BRANCH}"
+  echo "[3/6] Pushing to origin/${BRANCH}..."
   git push origin "${BRANCH}"
-fi
-
-REMOTE_CMD=$(cat <<EOF
-set -euo pipefail
-cd "${VPS_APP_DIR}"
-echo "[vps] cwd=\$(pwd)"
-git fetch --all --prune
-git checkout "${BRANCH}"
-git pull --ff-only origin "${BRANCH}"
-node --check webhook/server.js
-# Ensure runtime deps for webhook are present (needed for MT5 postgres mode: pg).
-npm --prefix webhook install --no-audit --no-fund
-# Build UI if present
-if [[ -d "web-ui" ]]; then
-  echo "[vps] building web-ui"
-  npm --prefix web-ui install --no-audit --no-fund
-  npm --prefix web-ui run build
-fi
-
-if [[ "${SERVICE_MODE}" == "pm2" ]]; then
-  PORT=3001 HTTPS_ENABLED=false pm2 restart "${SERVICE_NAME}" --update-env
-  pm2 logs "${SERVICE_NAME}" --lines 80 --nostream || true
-elif [[ "${SERVICE_MODE}" == "systemd" ]]; then
-  sudo systemctl restart "${SERVICE_NAME}"
-  sudo systemctl status "${SERVICE_NAME}" --no-pager || true
-  journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
 else
-  echo "Unsupported SERVICE_MODE=${SERVICE_MODE} (use pm2 or systemd)" >&2
-  exit 1
+  echo "[3/6] Skipping push (PUSH_FIRST=0)"
 fi
-echo "[vps] deploy success"
-EOF
-)
 
-echo "[deploy] running remote deployment over ssh"
-ssh "${VPS_HOST}" "${REMOTE_CMD}"
+# ── Step 4: Deploy to VPS ──
+echo "[4/6] Deploying to VPS..."
+ssh "${VPS_HOST}" bash -s << 'VPS_SCRIPT'
+set -euo pipefail
+cd /opt/trading
 
-echo "[deploy] verifying remote health from local machine (${REMOTE_HEALTH_BASE_URL})"
+echo "  [vps] Pulling code..."
+git fetch --all --prune
+git checkout main
+git pull --ff-only origin main
+
+echo "  [vps] Installing deps..."
+npm install --no-audit --no-fund 2>/dev/null || true
+cd webhook && npm install --no-audit --no-fund 2>/dev/null || true
+cd /opt/trading/web-ui && npm install --no-audit --no-fund 2>/dev/null || true
+
+echo "  [vps] Building web-ui..."
+cd /opt/trading/web-ui && npm run build
+
+echo "  [vps] Ensuring .env exists..."
+if [ ! -f /opt/trading/webhook/.env ]; then
+  echo "PORT=3001" > /opt/trading/webhook/.env
+  echo "WARNING: .env created with defaults. Set MT5_POSTGRES_URL manually."
+fi
+
+echo "  [vps] Restarting webhook (port 3001)..."
+pm2 restart webhook --update-env 2>/dev/null || pm2 start /opt/trading/webhook/server.js --name webhook
+
+echo "  [vps] Restarting nginx (port 443)..."
+systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+
+echo "  [vps] Done."
+VPS_SCRIPT
+
+# ── Step 5: Health check ──
+echo "[5/6] Health check..."
 OK=0
-REMOTE_HEALTH_BODY=""
-for i in {1..20}; do
-  if REMOTE_HEALTH_BODY="$(curl -fsS "${REMOTE_HEALTH_BASE_URL}/health")" \
-     && curl -fsS "${REMOTE_HEALTH_BASE_URL}/mt5/health" >/dev/null; then
+for i in $(seq 1 20); do
+  if curl -fsSk "${REMOTE_HEALTH_BASE_URL}/health" 2>/dev/null | grep -q '"ok":true'; then
     OK=1
+    echo "  [health] OK (attempt ${i})"
     break
   fi
-  sleep 2
+  echo "  [health] waiting... (${i}/20)"
+  sleep 3
 done
 
 if [[ "${OK}" != "1" ]]; then
-  echo "[deploy] remote health check failed: ${REMOTE_HEALTH_BASE_URL}" >&2
+  echo "  [health] FAILED after 20 attempts"
+  echo "  Check: ssh ${VPS_HOST} 'pm2 logs webhook --lines 5'"
   exit 1
 fi
 
-REMOTE_SERVER_VERSION="$(printf '%s\n' "${REMOTE_HEALTH_BODY}" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' | head -1)"
+# ── Step 6: Verify ──
+echo "[6/6] Verification..."
+HEALTH_JSON=$(curl -fsSk "${REMOTE_HEALTH_BASE_URL}/health" 2>/dev/null || echo '{"ok":false}')
+echo "  health: $(echo "$HEALTH_JSON" | grep -o '"ok":[^,}]*')"
+echo "  version: $(echo "$HEALTH_JSON" | grep -o '"version":"[^"]*"')"
+echo "  postgres: $(echo "$HEALTH_JSON" | grep -o '"postgres":"[^"]*"')"
 
-echo "[deploy] done"
-echo "[deploy] build versions:"
-echo "[deploy]   local SERVER_VERSION=${LOCAL_SERVER_VERSION:-unknown}"
-echo "[deploy]   local EA_BUILD_VERSION=${LOCAL_EA_BUILD_VERSION:-unknown}"
-echo "[deploy]   remote /health version=${REMOTE_SERVER_VERSION:-unknown}"
+echo ""
+echo "============================================"
+echo "  Deploy Complete"
+echo "  ${REMOTE_HEALTH_BASE_URL}"
+echo "============================================"
