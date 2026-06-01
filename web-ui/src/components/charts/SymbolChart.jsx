@@ -1979,7 +1979,18 @@ export default function SymbolChart({
               lineHeight: 1,
               fontWeight: 700,
             }}
-            onClick={() => window.open("/v2/chart/snapshots-grid/" + encodeURIComponent(String(symbol || "").toUpperCase()) + "?provider=" + encodeURIComponent(String(provider || "")) + "&tfs=" + encodeURIComponent((timeframes || []).join(",")), "_blank")}
+            onClick={() => {
+              const fixedTfs = ["1D", "4h", "15m", "5m"];
+              window.open(
+                "/v2/chart/snapshots-grid/" +
+                  encodeURIComponent(String(symbol || "").toUpperCase()) +
+                  "?provider=" +
+                  encodeURIComponent(String(provider || "")) +
+                  "&tfs=" +
+                  encodeURIComponent(fixedTfs.join(",")),
+                "_blank",
+              );
+            }}
             title="Open snapshots grid"
           >
             Snapshots &gt;

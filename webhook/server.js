@@ -20465,7 +20465,12 @@ const appHandler = async (req, res) => {
       indices: allSymbolsPool.filter((s) => isIndexSym(s)).sort(),
     };
     // In watchlist/no-symbol mode, default to single TF 4h unless explicitly provided.
-    const tfsRaw = tfsExplicitRaw || (noSymbolInput ? "4h" : "D,240,15,5");
+    // For single-symbol mode, always force the 6-TF layout.
+    const forcedSingleSymbolTfs = "1W,1D,4h,15m,5m,1m";
+    const tfsRaw =
+      symbols.length === 1
+        ? forcedSingleSymbolTfs
+        : tfsExplicitRaw || (noSymbolInput ? "4h" : "D,240,15,5");
 
     // Canonicalize, dedup, sort descending
     const tfs = canonicalizeTfList(tfsRaw.split(",").filter(Boolean));
