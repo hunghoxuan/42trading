@@ -270,6 +270,12 @@ export default function App() {
             Rejected{countBadge("REJECTED")}
           </NavLink>
           <NavLink
+            to="/trades/cancelled"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Cancelled{countBadge("CANCELLED")}
+          </NavLink>
+          <NavLink
             to="/trades/draft"
             className={({ isActive }) => (isActive ? "active" : "")}
           >

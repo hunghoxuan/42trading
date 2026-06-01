@@ -48,7 +48,7 @@ input int    InpDedupKeepSeconds     = 86400; // Duplicate Cache Duration (Secon
 input int    InpStopRetrySeconds     = 5;    // SL/TP Retry Interval
 input int    InpStopRetryMaxAttempts = 24;   // SL/TP Max Retries
 input int    InpSyncSeconds         = 10;   // PnL/SL/Sync Interval (seconds)
-input string InpOnSlTpError        = "Reject"; // Reject=close position, Continue=keep without SL/TP
+input string InpOnSlTpError        = "Adjust"; // Reject=close, Adjust=auto-widen, Continue=keep without SL/TP
 input double InpMinStopPips        = 15;   // Min SL/TP distance from entry
 
 //--- 6.1 PRICE STREAMING
@@ -2431,13 +2431,53 @@ bool ExecuteSignal(const string signalId,
             double slDist = MathAbs(entry - slUse) / pipSize;
             if(slDist < InpMinStopPips)
             {
-               string rejectMsg = "SL too close: " + DoubleToString(slDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
-               Print("[Reject] ", rejectMsg, " for ", signalId);
-               g_dbgLastStatus = "SLTP_REJECTED";
-               g_dbgLastError = rejectMsg;
-               Ack(signalId, "FAIL", "", rejectMsg);
-               RefreshDebugPanel();
-               return false;
+               string sltpMode = InpOnSlTpError;
+               StringToUpper(sltpMode);
+               if(sltpMode == "ADJUST")
+               {
+                  double reqSl = (action == "SELL") ? entry + InpMinStopPips * pipSize : entry - InpMinStopPips * pipSize;
+                  double reqPips = MathAbs(reqSl - entry) / pipSize;
+                  double newVol = volumeUse;
+                  double minVol = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+                  if(InpMaxRiskPercent > 0)
+                  {
+                     double riskPerPip = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE) * pipSize / SymbolInfoDouble(symbol, SYMBOL_POINT);
+                     double maxRiskVol = (AccountInfoDouble(ACCOUNT_EQUITY) * InpMaxRiskPercent / 100.0) / (reqPips * riskPerPip);
+                     if(maxRiskVol < newVol) newVol = maxRiskVol;
+                  }
+                  if(InpMaxRiskMoney > 0)
+                  {
+                     double riskPerPip = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE) * pipSize / SymbolInfoDouble(symbol, SYMBOL_POINT);
+                     double maxRiskVol2 = InpMaxRiskMoney / (reqPips * riskPerPip);
+                     if(maxRiskVol2 < newVol) newVol = maxRiskVol2;
+                  }
+                  if(newVol < minVol)
+                  {
+                     string rejectMsg = "SL adjusted (" + DoubleToString(reqPips,0) + " pips) exceeds max risk";
+                     Print("[Reject] ", rejectMsg, " for ", signalId);
+                     g_dbgLastStatus = "SLTP_REJECTED";
+                     g_dbgLastError = rejectMsg;
+                     Ack(signalId, "FAIL", "", rejectMsg);
+                     RefreshDebugPanel();
+                     return false;
+                  }
+                  if(newVol < volumeUse)
+                     Print("[Adjust] SL widened from ", DoubleToString(slUse, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " to ", DoubleToString(reqSl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " (", DoubleToString(slDist,1), " to ", DoubleToString(reqPips,0), " pips), vol ", DoubleToString(volumeUse,2), " to ", DoubleToString(newVol,2));
+                  else
+                     Print("[Adjust] SL widened from ", DoubleToString(slUse, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " to ", DoubleToString(reqSl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " (", DoubleToString(slDist,1), " to ", DoubleToString(reqPips,0), " pips)");
+                  slUse = reqSl;
+                  volumeUse = newVol;
+               }
+               else
+               {
+                  string rejectMsg = "SL too close: " + DoubleToString(slDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
+                  Print("[Reject] ", rejectMsg, " for ", signalId);
+                  g_dbgLastStatus = "SLTP_REJECTED";
+                  g_dbgLastError = rejectMsg;
+                  Ack(signalId, "FAIL", "", rejectMsg);
+                  RefreshDebugPanel();
+                  return false;
+               }
             }
          }
          if(tpUse > 0)
@@ -2445,13 +2485,25 @@ bool ExecuteSignal(const string signalId,
             double tpDist = MathAbs(tpUse - entry) / pipSize;
             if(tpDist < InpMinStopPips)
             {
-               string rejectMsg = "TP too close: " + DoubleToString(tpDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
-               Print("[Reject] ", rejectMsg, " for ", signalId);
-               g_dbgLastStatus = "SLTP_REJECTED";
-               g_dbgLastError = rejectMsg;
-               Ack(signalId, "FAIL", "", rejectMsg);
-               RefreshDebugPanel();
-               return false;
+               string sltpMode = InpOnSlTpError;
+               StringToUpper(sltpMode);
+               if(sltpMode == "ADJUST")
+               {
+                  double reqTp = (action == "SELL") ? entry - InpMinStopPips * pipSize : entry + InpMinStopPips * pipSize;
+                  double reqPips = MathAbs(reqTp - entry) / pipSize;
+                  Print("[Adjust] TP widened from ", DoubleToString(tpUse, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " to ", DoubleToString(reqTp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)), " (", DoubleToString(tpDist,1), " to ", DoubleToString(reqPips,0), " pips)");
+                  tpUse = reqTp;
+               }
+               else
+               {
+                  string rejectMsg = "TP too close: " + DoubleToString(tpDist, 1) + " pips (min " + DoubleToString(InpMinStopPips, 0) + ")";
+                  Print("[Reject] ", rejectMsg, " for ", signalId);
+                  g_dbgLastStatus = "SLTP_REJECTED";
+                  g_dbgLastError = rejectMsg;
+                  Ack(signalId, "FAIL", "", rejectMsg);
+                  RefreshDebugPanel();
+                  return false;
+               }
             }
          }
       }
@@ -2752,7 +2804,7 @@ bool ExecuteSignal(const string signalId,
             // Check OnSlTpError behavior
             string sltpMode = InpOnSlTpError;
             StringToUpper(sltpMode);
-            if(sltpMode == "REJECT")
+            if(sltpMode == "REJECT" || sltpMode == "ADJUST")
             {
                // Close position immediately, no naked positions
                Print("[FATAL] SL/TP rejected for ", signalId, ", closing position ", IntegerToString((int)posTicket));

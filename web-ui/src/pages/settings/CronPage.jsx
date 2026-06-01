@@ -19,7 +19,7 @@ const API_KEY_NAME_OPTIONS = [
   { value: "TWELVE_DATA_API_KEY", label: "Twelve Data API Key" },
 ];
 
-const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1W"];
 
 const DISPLAY_TIMEZONE_OPTIONS = [
   { value: "Local", label: "Local (Browser)" },
@@ -35,7 +35,12 @@ const CADENCE_OPTIONS = [
   { label: "15m", seconds: 900 },
   { label: "30m", seconds: 1800 },
   { label: "1h", seconds: 3600 },
+  { label: "2h", seconds: 7200 },
+  { label: "3h", seconds: 10800 },
   { label: "4h", seconds: 14400 },
+  { label: "6h", seconds: 21600 },
+  { label: "8h", seconds: 28800 },
+  { label: "12h", seconds: 43200 },
   { label: "1d", seconds: 86400 },
 ];
 
@@ -167,6 +172,7 @@ function defaultForm(type) {
     case "ANALYSIS_CRON":
       return {
         ...base,
+        pickup_mode: "all",
         directions: ["BUY", "SELL"],
         order_types: ["market", "limit", "stop"],
         model: "claude-sonnet-4-0",
@@ -214,6 +220,7 @@ function formFromCronData(data) {
     case "ANALYSIS_CRON":
       return {
         ...base,
+        pickup_mode: String(data?.pickup_mode || "all"),
         directions: Array.isArray(data?.directions)
           ? data.directions
           : ["BUY", "SELL"],
@@ -268,6 +275,7 @@ function formToDataPayload(form, symbolsGroup = "") {
     case "ANALYSIS_CRON":
       return {
         ...data,
+        pickup_mode: form.pickup_mode || "all",
         directions: form.directions,
         order_types: form.order_types,
         model: form.model,
@@ -884,6 +892,40 @@ export default function CronPage() {
                   {/* ANALYSIS_CRON fields */}
                   {form.cron_type === "ANALYSIS_CRON" && (
                     <>
+                      {/* Pickup Mode */}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: 12,
+                        }}
+                      >
+                        <div className="stack-layout" style={{ gap: 6 }}>
+                          <span
+                            className="panel-label"
+                            style={{ fontSize: 10, marginBottom: 0 }}
+                          >
+                            PICKUP MODE
+                          </span>
+                          <select
+                            value={form.pickup_mode || "all"}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                pickup_mode: e.target.value,
+                              }))
+                            }
+                          >
+                            <option value="all">
+                              All — run on every selected symbol
+                            </option>
+                            <option value="random">
+                              Random — pick 1 random symbol
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+
                       {/* Row: Directions / Order Types */}
                       <div
                         style={{

@@ -643,7 +643,11 @@ export default function TradesPage() {
       if (planSaveGuardRef.current === ref) {
         return;
       }
-      setDetailPlan(extractTradePlanFromTrade(selectedTrade));
+      setDetailPlan({
+        ...extractTradePlanFromTrade(selectedTrade),
+        close_reason: selectedTrade?.close_reason || "",
+        rejection_reason: selectedTrade?.rejection_reason || "",
+      });
     } else {
       setTradeEvents([]);
       setDetailPlan({
@@ -654,6 +658,8 @@ export default function TradesPage() {
         sl: "",
         rr: "",
         note: "",
+        close_reason: "",
+        rejection_reason: "",
       });
     }
   }, [selectedTrade]);
@@ -730,6 +736,19 @@ export default function TradesPage() {
         ),
       };
       await api.saveTradePlan(ref, payload);
+      if (["CLOSED", "CANCELLED", "CANCEL", "REJECTED"].includes(status)) {
+        const reasonPayload =
+          status === "REJECTED"
+            ? {
+                execution_status: status,
+                rejection_reason: String(detailPlan.rejection_reason || "").trim(),
+              }
+            : {
+                execution_status: status,
+                close_reason: String(detailPlan.close_reason || "").trim(),
+              };
+        await api.v2UpdateTrade(ref, reasonPayload);
+      }
       // Guard against extract-overwrite during re-fetch
       planSaveGuardRef.current = ref;
       await loadTrades();
@@ -795,6 +814,37 @@ export default function TradesPage() {
       await loadTrades();
     } catch (e) {
       setError(e?.message || "Approve failed");
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function onCancelDraft() {
+    if (!selectedTrade) return;
+    const ask = await confirm({
+      title: "Cancel Draft Trade",
+      message: "Cancel this draft trade?",
+      confirmLabel: "Cancel Trade",
+      cancelLabel: "Keep Draft",
+      tone: "danger",
+      input: true,
+      inputPlaceholder: "Reason (optional)",
+    });
+    if (!ask || ask?.ok !== true) return;
+    const reason = String(ask?.value || "").trim();
+    try {
+      setEditBusy(true);
+      await api.v2UpdateTrade(selectedTrade.sid || selectedTrade.id, {
+        execution_status: "CANCELLED",
+        close_reason: reason || "CANCEL",
+      });
+      navigate(`/trades/cancelled/${selectedTrade.sid || selectedTrade.id}`, {
+        replace: true,
+      });
+      setSelectedTrade(null);
+      await loadTrades();
+    } catch (e) {
+      setError(e?.message || "Cancel failed");
     } finally {
       setEditBusy(false);
     }
@@ -1649,7 +1699,11 @@ export default function TradesPage() {
                     onSave: onUpdateTradePlan,
                     onReset: () =>
                       selectedTrade &&
-                      setDetailPlan(extractTradePlanFromTrade(selectedTrade)),
+                      setDetailPlan({
+                        ...extractTradePlanFromTrade(selectedTrade),
+                        close_reason: selectedTrade?.close_reason || "",
+                        rejection_reason: selectedTrade?.rejection_reason || "",
+                      }),
                     onGoTrade: () =>
                       navigate(
                         `/ai/trade/${encodeURIComponent(
@@ -1692,7 +1746,17 @@ export default function TradesPage() {
                         selectedTrade.execution_status || "",
                       ).toUpperCase() === "PENDING"
                         ? async () => {
-                            if (!confirm("Cancel this trade?")) return;
+                            const ask = await confirm({
+                              title: "Cancel Trade",
+                              message: "Cancel this trade?",
+                              confirmLabel: "Cancel Trade",
+                              cancelLabel: "Keep Trade",
+                              tone: "danger",
+                              input: true,
+                              inputPlaceholder: "Reason (optional)",
+                            });
+                            if (!ask || ask?.ok !== true) return;
+                            const reason = String(ask?.value || "").trim();
                             try {
                               const { promise: cancelPromise } =
                                 NotificationHub.track(
@@ -1704,6 +1768,7 @@ export default function TradesPage() {
                                   () =>
                                     api.cancelTrades({
                                       q: selectedTrade.sid || selectedTrade.id,
+                                      reason: reason || "CANCEL",
                                     }),
                                 );
                               await cancelPromise;
@@ -1714,13 +1779,27 @@ export default function TradesPage() {
                               setError(e?.message || "Cancel failed");
                             }
                           }
+                        : String(
+                              selectedTrade.execution_status || "",
+                            ).toUpperCase() === "DRAFT"
+                          ? onCancelDraft
                         : null,
                     onClose:
                       String(
                         selectedTrade.execution_status || "",
                       ).toUpperCase() === "FILLED"
                         ? async () => {
-                            if (!confirm("Close this trade?")) return;
+                            const ask = await confirm({
+                              title: "Close Trade",
+                              message: "Close this trade?",
+                              confirmLabel: "Close Trade",
+                              cancelLabel: "Keep Open",
+                              tone: "danger",
+                              input: true,
+                              inputPlaceholder: "Reason (optional)",
+                            });
+                            if (!ask || ask?.ok !== true) return;
+                            const reason = String(ask?.value || "").trim();
                             try {
                               const { promise: closePromise } =
                                 NotificationHub.track(
@@ -1732,7 +1811,10 @@ export default function TradesPage() {
                                   () =>
                                     api.v2UpdateTrade(
                                       selectedTrade.sid || selectedTrade.id,
-                                      { execution_status: "CLOSED" },
+                                      {
+                                        execution_status: "CLOSED",
+                                        close_reason: reason || "MANUAL",
+                                      },
                                     ),
                                 );
                               await closePromise;

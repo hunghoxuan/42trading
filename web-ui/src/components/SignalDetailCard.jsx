@@ -1316,6 +1316,8 @@ export default function SignalDetailCard({
             estimated_bars: tradePlan?.value?.estimated_bars,
             symbol: tradePlan?.value?.symbol || chart?.symbol || "",
             note: tradePlan?.value?.note || "",
+            close_reason: tradePlan?.value?.close_reason || "",
+            rejection_reason: tradePlan?.value?.rejection_reason || "",
           },
         ]
       : hasMeaningfulResponsePlans
@@ -2017,10 +2019,12 @@ export default function SignalDetailCard({
                       lockTradeFields={Boolean(tradePlan.lockTradeFields)}
                       viewOnly={Boolean(tradePlan.viewOnly)}
                       error={tradePlan.error || ""}
+                      tradeStatus={tradePlan.execution_status || ""}
                     />
                   ) : (
                     <TradePlanEditor
                       value={planValue}
+                      onCancel={tradePlan.onCancel}
                       onPromote={tradePlan.onPromote}
                       onAddSignal={(pos) =>
                         tradePlan.onAddSignal?.(pos || planValue, planId)
@@ -2042,6 +2046,7 @@ export default function SignalDetailCard({
                       disabled={true}
                       viewOnly={true}
                       lockTradeFields={true}
+                      tradeStatus={tradePlan.execution_status || ""}
                     />
                   )}
                   {isMain && tradePlan.successMessage && (

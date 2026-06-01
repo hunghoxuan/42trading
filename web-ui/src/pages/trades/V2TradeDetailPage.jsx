@@ -23,6 +23,7 @@ import { showToast } from "../../components/ToastContainer";
 import { BrokerTicketBadge } from "../../components/BrokerTicketBadge";
 import PnlDisplay from "../../components/PnlDisplay";
 import { getBrokerTicket } from "../../utils/tradeRow";
+import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
@@ -72,6 +73,7 @@ function orderTypeRuleError(direction, orderType, entry, lastPrice) {
 export default function TradeDetailPage() {
   const { tradeId } = useParams();
   const navigate = useNavigate();
+  const confirmDialog = useConfirmDialog();
   const EMPTY_DETAIL_PLAN = useMemo(
     () => ({
       direction: "BUY",
@@ -81,6 +83,8 @@ export default function TradeDetailPage() {
       sl: "",
       rr: "",
       note: "",
+      close_reason: "",
+      rejection_reason: "",
     }),
     [],
   );
@@ -151,7 +155,11 @@ export default function TradeDetailPage() {
         const t = pickExactTrade(data?.items || [], requestTradeId);
         setTrade(t);
         if (t) {
-          setDetailPlan(extractTradePlanFromTrade(t));
+          setDetailPlan({
+            ...extractTradePlanFromTrade(t),
+            close_reason: t?.close_reason || "",
+            rejection_reason: t?.rejection_reason || "",
+          });
         } else {
           setError(`Trade not found for id: ${requestTradeId}`);
           setDetailPlan(EMPTY_DETAIL_PLAN);
@@ -444,6 +452,20 @@ export default function TradeDetailPage() {
         ),
       };
       await api.saveTradePlan(tradeId, payload);
+      const status = String(trade.execution_status || "").toUpperCase();
+      if (["CLOSED", "CANCELLED", "CANCEL", "REJECTED"].includes(status)) {
+        const reasonPayload =
+          status === "REJECTED"
+            ? {
+                execution_status: status,
+                rejection_reason: String(detailPlan.rejection_reason || "").trim(),
+              }
+            : {
+                execution_status: status,
+                close_reason: String(detailPlan.close_reason || "").trim(),
+              };
+        await api.v2UpdateTrade(tradeId, reasonPayload);
+      }
       // Reload trade events and trade data (but keep user-edited plan intact)
       const [evs, data] = await Promise.all([
         api.v2TradeEvents(tradeId),
@@ -505,7 +527,13 @@ export default function TradeDetailPage() {
 
   async function onApproveDraft() {
     if (!trade) return;
-    if (!confirm("Approve this draft and move to pending?")) return;
+    const ok = await confirmDialog({
+      title: "Approve Draft",
+      message: "Approve this draft and move to pending?",
+      confirmLabel: "Approve",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
     try {
       setLoading(true);
       await api.promoteDraftTrade(trade.sid || trade.id);
@@ -514,6 +542,55 @@ export default function TradeDetailPage() {
       });
     } catch (e) {
       setError(e?.message || "Approve failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onRejectDraft() {
+    if (!trade) return;
+    const reason = prompt("Rejection reason (optional):") || "Rejected";
+    if (!confirm(`Reject this draft? (${reason})`)) return;
+    try {
+      setLoading(true);
+      await api.v2UpdateTrade(trade.sid || trade.id, {
+        execution_status: "REJECTED",
+        rejection_reason: reason,
+      });
+      navigate(`/trades/rejected/${trade.sid || trade.id}`, {
+        replace: true,
+      });
+    } catch (e) {
+      setError(e?.message || "Reject failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onCancelDraft() {
+    if (!trade) return;
+    const ask = await confirmDialog({
+      title: "Cancel Draft Trade",
+      message: "Cancel this draft trade?",
+      confirmLabel: "Cancel Trade",
+      cancelLabel: "Keep Draft",
+      tone: "danger",
+      input: true,
+      inputPlaceholder: "Reason (optional)",
+    });
+    if (!ask || ask?.ok !== true) return;
+    const reason = String(ask?.value || "").trim();
+    try {
+      setLoading(true);
+      await api.v2UpdateTrade(trade.sid || trade.id, {
+        execution_status: "CANCELLED",
+        close_reason: reason || "CANCEL",
+      });
+      navigate(`/trades/cancelled/${trade.sid || trade.id}`, {
+        replace: true,
+      });
+    } catch (e) {
+      setError(e?.message || "Cancel failed");
     } finally {
       setLoading(false);
     }
@@ -537,12 +614,26 @@ export default function TradeDetailPage() {
             className="primary-button"
             style={{ background: "#ef5350", borderColor: "#ef5350" }}
             onClick={async () => {
-              if (!confirm("Cancel this trade?")) return;
+              const ask = await confirmDialog({
+                title: "Cancel Trade",
+                message: "Cancel this trade?",
+                confirmLabel: "Cancel Trade",
+                cancelLabel: "Keep Trade",
+                tone: "danger",
+                input: true,
+                inputPlaceholder: "Reason (optional)",
+              });
+              if (!ask || ask?.ok !== true) return;
+              const reason = String(ask?.value || "").trim();
               try {
                 const { promise: cp } = NotificationHub.track(
                   "cancel_trade",
                   { symbol: trade.symbol, sid: trade.sid || trade.id },
-                  () => api.cancelTrades({ ids: [trade.sid || trade.id] }),
+                  () =>
+                    api.cancelTrades({
+                      ids: [trade.sid || trade.id],
+                      reason: reason || "CANCEL",
+                    }),
                 );
                 await cp;
                 window.location.reload();
@@ -555,6 +646,32 @@ export default function TradeDetailPage() {
           </button>
         </div>
       )}
+      {isDraft && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button
+            type="button"
+            className="primary-button"
+            style={{ background: "#06b6d4", borderColor: "#06b6d4" }}
+            onClick={onApproveDraft}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onCancelDraft}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={onRejectDraft}
+          >
+            Reject
+          </button>
+        </div>
+      )}
       {trade.execution_status === "FILLED" && (
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
           <button
@@ -562,7 +679,17 @@ export default function TradeDetailPage() {
             className="primary-button"
             style={{ background: "#ff9800", borderColor: "#ff9800" }}
             onClick={async () => {
-              if (!confirm("Close this trade?")) return;
+              const ask = await confirmDialog({
+                title: "Close Trade",
+                message: "Close this trade?",
+                confirmLabel: "Close Trade",
+                cancelLabel: "Keep Open",
+                tone: "danger",
+                input: true,
+                inputPlaceholder: "Reason (optional)",
+              });
+              if (!ask || ask?.ok !== true) return;
+              const reason = String(ask?.value || "").trim();
               try {
                 const { promise: clp } = NotificationHub.track(
                   "close_trade",
@@ -570,6 +697,7 @@ export default function TradeDetailPage() {
                   () =>
                     api.v2UpdateTrade(trade.sid || trade.id, {
                       execution_status: "CLOSED",
+                      close_reason: reason || "MANUAL",
                     }),
                 );
                 await clp;
@@ -608,6 +736,7 @@ export default function TradeDetailPage() {
               onSave: onUpdateTradePlan,
               onAddTrade: !isDraft ? onReEntryTrade : undefined,
               onPromote: isDraft ? onApproveDraft : undefined,
+              onCancel: isDraft ? onCancelDraft : undefined,
               promoteLabel: "Approve",
               showSaveDraftButton: false,
               showSaveButton: !isTerminal,
@@ -738,6 +867,13 @@ export default function TradeDetailPage() {
                 label: "Status",
                 value: statusUi(trade.execution_status).label,
               },
+              trade.rejection_reason
+                ? {
+                    label: "Reason",
+                    value: trade.rejection_reason,
+                    cls: "warn",
+                  }
+                : null,
               trade.dispatch_status &&
               trade.dispatch_status !== "CONSUMED" &&
               trade.dispatch_status !== "OPEN"

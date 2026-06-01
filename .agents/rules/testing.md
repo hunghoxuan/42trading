@@ -3,6 +3,8 @@
 - Run checks matching touched code.
 - Backend:
   - `node --check webhook/server.js`
+  - After any `webhook/` edit: `bash scripts/start/restart_webhook.sh manual`
+  - Verify until healthy: `bash scripts/test/verify_webhook_local.sh`
 - UI:
   - `npm --prefix web-ui run build`
 - Remote API:

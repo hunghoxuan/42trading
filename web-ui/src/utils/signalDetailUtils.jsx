@@ -898,6 +898,20 @@ export function extractTradePlanFromTrade(trade = {}) {
         plan.skip_recommendation ||
         "",
     ),
+    close_reason: String(
+      trade.close_reason ||
+        trade.closeReason ||
+        meta.close_reason ||
+        raw.close_reason ||
+        "",
+    ),
+    rejection_reason: String(
+      trade.rejection_reason ||
+        trade.rejectionReason ||
+        meta.rejection_reason ||
+        raw.rejection_reason ||
+        "",
+    ),
     risk_management: String(
       plan?.risk_management?.grade ||
         meta.risk_management ||

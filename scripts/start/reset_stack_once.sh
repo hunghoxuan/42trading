@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+WEBHOOK_LABEL="${WEBHOOK_LABEL:-trading-webhook-raw}"
+WEBUI_LABEL="${WEBUI_LABEL:-trading-webui-raw}"
+WEBHOOK_LOG="${WEBHOOK_LOG:-/tmp/webhook.raw.launchd.out}"
+WEBUI_LOG="${WEBUI_LOG:-/tmp/web-ui.raw.launchd.out}"
+
+echo "[reset] killing stale processes/ports..."
+launchctl remove "${WEBHOOK_LABEL}" 2>/dev/null || true
+launchctl remove "${WEBUI_LABEL}" 2>/dev/null || true
+launchctl remove trading-webhook-local 2>/dev/null || true
+launchctl remove trading-web-ui-local 2>/dev/null || true
+pkill -f "/Users/macmini/Trade/Bot/trading/webhook/server.js" 2>/dev/null || true
+pkill -f "vite --host 127.0.0.1 --port 3000" 2>/dev/null || true
+lsof -ti tcp:3001 | xargs kill -9 2>/dev/null || true
+lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true
+sleep 1
+
+echo "[reset] starting webhook :3001 via launchctl submit..."
+launchctl submit -l "${WEBHOOK_LABEL}" -- /bin/zsh -lc \
+  "cd ${ROOT} && PORT=3001 MT5_ENABLED=true SNAPSHOTS_CRON_ENABLED=0 MARKET_DATA_CRON_ENABLED=0 node webhook/server.js >> ${WEBHOOK_LOG} 2>&1"
+
+echo "[reset] verifying webhook before UI..."
+ok_webhook=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  curl -sS --max-time 4 http://127.0.0.1:3001/health >/tmp/reset_h.json && ok_webhook=1 && break || true
+  sleep 1
+done
+if [ "${ok_webhook}" != "1" ]; then
+  echo "[reset] FAIL webhook did not become healthy"
+  tail -n 80 "${WEBHOOK_LOG}" 2>/dev/null || true
+  exit 1
+fi
+
+echo "[reset] starting web-ui :3000 via launchctl submit..."
+launchctl submit -l "${WEBUI_LABEL}" -- /bin/zsh -lc \
+  "cd ${ROOT} && npm --prefix web-ui run dev -- --host 127.0.0.1 --port 3000 --strictPort >> ${WEBUI_LOG} 2>&1"
+
+echo "[reset] verifying ui..."
+ok_webui=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  curl -sS --max-time 4 http://127.0.0.1:3000/ >/tmp/reset_u.html && ok_webui=1 || true
+  if [ "$ok_webui" = "1" ]; then
+    break
+  fi
+  sleep 1
+done
+
+if [ "$ok_webhook" != "1" ] || [ "$ok_webui" != "1" ]; then
+  echo "[reset] FAIL webhook=$ok_webhook webui=$ok_webui"
+  echo "--- webhook log tail ---"
+  tail -n 80 "${WEBHOOK_LOG}" 2>/dev/null || true
+  echo "--- web-ui log tail ---"
+  tail -n 80 "${WEBUI_LOG}" 2>/dev/null || true
+  exit 1
+fi
+
+echo "[reset] OK"
+echo "[reset] health: $(head -c 120 /tmp/reset_h.json)"
+echo "[reset] ui: $(head -n 1 /tmp/reset_u.html)"

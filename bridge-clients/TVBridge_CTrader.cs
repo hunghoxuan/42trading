@@ -92,8 +92,8 @@ namespace cAlgo.Robots
         [Parameter("Min Stop Distance (pips)", Group = "Safety", DefaultValue = 15, MinValue = 5)]
         public double MinStopPips { get; set; }
 
-        [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Reject")]
-        public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Continue" = keep position without SL/TP
+        [Parameter("On SL/TP Error", Group = "Safety", DefaultValue = "Adjust")]
+        public string OnSlTpError { get; set; }  // "Reject" = cancel trade, "Adjust" = auto-widen to meet minimum, "Continue" = keep position without SL/TP
 
         private const string BuildVersion = "v2026.05.30 18:45 - master-timer";
 
@@ -1488,11 +1488,46 @@ namespace cAlgo.Robots
                         double slDistPips = Math.Abs(executionPrice - sl) / symbol.PipSize;
                         if (slDistPips < MinStopPips)
                         {
-                            var rejectMsg = string.Format("SL too close: {0:F1} pips (min {1}). E={2:F5} SL={3:F5}", slDistPips, MinStopPips, executionPrice, sl);
-                            Print("[Reject] {0}", rejectMsg);
-                            UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
-                            return;
+                            var adj = String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase);
+                            if (adj)
+                            {
+                                var reqSl = action == "SELL" ? executionPrice + MinStopPips * symbol.PipSize : executionPrice - MinStopPips * symbol.PipSize;
+                                var reqPips = Math.Abs(reqSl - executionPrice) / symbol.PipSize;
+                                var newVolume = volumeUnits;
+                                // Cap volume to respect MaxRisk settings after SL adjustment
+                                if (MaxRiskPercent > 0)
+                                {
+                                    var maxRiskVol = Symbol.QuantityToVolumeInUnits((Account.Equity * MaxRiskPercent / 100) / (reqPips * symbol.PipValue));
+                                    if (maxRiskVol < volumeUnits) newVolume = maxRiskVol;
+                                }
+                                if (MaxRiskAmount > 0)
+                                {
+                                    var maxRiskVol2 = Symbol.QuantityToVolumeInUnits(MaxRiskAmount / (reqPips * symbol.PipValue));
+                                    if (maxRiskVol2 < newVolume) newVolume = maxRiskVol2;
+                                }
+                                if (newVolume < symbol.VolumeInUnitsMin)
+                                {
+                                    var rejectMsg = string.Format("SL adjusted ({0:F0} pips) exceeds max risk — volume would be below minimum", reqPips);
+                                    Print("[Reject] {0}", rejectMsg);
+                                    UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
+                                    SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
+                                    return;
+                                }
+                                if (newVolume < volumeUnits)
+                                    Print("[Adjust] SL widened from {0:F5} to {1:F5} ({2:F1} → {3:F0} pips), vol reduced from {4} to {5} to respect max risk", sl, reqSl, slDistPips, reqPips, volumeUnits, newVolume);
+                                else
+                                    Print("[Adjust] SL widened from {0:F5} to {1:F5} ({2:F1} → {3:F0} pips)", sl, reqSl, slDistPips, reqPips);
+                                sl = reqSl;
+                                volumeUnits = newVolume;
+                            }
+                            else
+                            {
+                                var rejectMsg = string.Format("SL too close: {0:F1} pips (min {1}). E={2:F5} SL={3:F5}", slDistPips, MinStopPips, executionPrice, sl);
+                                Print("[Reject] {0}", rejectMsg);
+                                UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
+                                SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
+                                return;
+                            }
                         }
                     }
                     if (tp > 0)
@@ -1500,11 +1535,21 @@ namespace cAlgo.Robots
                         double tpDistPips = Math.Abs(tp - executionPrice) / symbol.PipSize;
                         if (tpDistPips < MinStopPips)
                         {
-                            var rejectMsg = string.Format("TP too close: {0:F1} pips (min {1}). E={2:F5} TP={3:F5}", tpDistPips, MinStopPips, executionPrice, tp);
-                            Print("[Reject] {0}", rejectMsg);
-                            UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
-                            SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
-                            return;
+                            var adj = String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase);
+                            if (adj)
+                            {
+                                var newTp = action == "SELL" ? executionPrice - MinStopPips * symbol.PipSize : executionPrice + MinStopPips * symbol.PipSize;
+                                Print("[Adjust] TP widened from {0:F5} to {1:F5} ({2:F1} pips → {3:F0} min)", tp, newTp, tpDistPips, MinStopPips);
+                                tp = newTp;
+                            }
+                            else
+                            {
+                                var rejectMsg = string.Format("TP too close: {0:F1} pips (min {1}). E={2:F5} TP={3:F5}", tpDistPips, MinStopPips, executionPrice, tp);
+                                Print("[Reject] {0}", rejectMsg);
+                                UpdateSignalHistory(id, action + " " + symbolCode + " (REJECT: " + rejectMsg + ")");
+                                SafeAck(id, leaseToken, "FAIL", "", rejectMsg);
+                                return;
+                            }
                         }
                     }
                 }
@@ -1542,7 +1587,7 @@ namespace cAlgo.Robots
                             else
                             {
                                 var errDetail = string.Format("SL/TP rejected: {0} (SL={1} TP={2})", mRes.Error, sl, tp);
-                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase);
+                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase) || String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase);
                                 if (reject)
                                 {
                                     Print("[FATAL] {0} for {1} #{2}. Closing position.", errDetail, symbolCode, ticket);
@@ -1584,7 +1629,7 @@ namespace cAlgo.Robots
                             else
                             {
                                 var errDetail = string.Format("SL/TP rejected for pending order: {0}", mRes.Error);
-                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase);
+                                var reject = String.Equals(OnSlTpError, "Reject", StringComparison.OrdinalIgnoreCase) || String.Equals(OnSlTpError, "Adjust", StringComparison.OrdinalIgnoreCase);
                                 if (reject)
                                 {
                                     Print("[FATAL] {0}. Cancelling order.", errDetail);

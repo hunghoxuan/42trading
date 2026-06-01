@@ -2,6 +2,21 @@
 
 Purpose: run remote/local smoke tests for webhook and UI.
 
+## Local Webhook Health Verification (Agent-safe)
+
+Script: `scripts/test/verify_webhook_local.sh`
+
+What it does:
+- Polls `http://127.0.0.1:3001/health` (or `BASE_URL`) until timeout
+- Exits `0` only when `"ok":true` is observed
+- Exits non-zero on timeout/failure
+
+Run:
+```bash
+bash scripts/test/verify_webhook_local.sh
+PORT=3001 TIMEOUT_SEC=20 bash scripts/test/verify_webhook_local.sh
+```
+
 ## Analyze Parse Mapping Check
 
 Script: `scripts/test/test_analyze_parse_mapping.sh`

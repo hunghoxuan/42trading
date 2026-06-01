@@ -33,3 +33,7 @@ Read on every new chat:
 - Test real code changes.
 - Bump matched server/EA versions for backend, EA, UI, or script changes.
 - After any change, MUST auto test locally until fully fixed. Only ask before prod deploy.
+- After editing any file under `webhook/`, MUST run backend recovery flow without waiting for user:
+  1) `node --check webhook/server.js`
+  2) `bash scripts/start/reset_stack_once.sh`
+  3) verify pass from `bash scripts/test/verify_webhook_local.sh`

@@ -22,7 +22,7 @@ All agents must start here:
 
 ### Local development (Vite + Node)
 ```bash
-bash scripts/start/start_local.sh
+bash scripts/start/reset_stack_once.sh
 # → http://localhost:3000  (UI with HMR)
 # → http://localhost:3001  (API)
 ```
@@ -46,6 +46,31 @@ scripts\start\start_docker.bat
 ```bash
 bash scripts/start/start_server.sh
 # pushes main → pulls on VPS → builds UI → restarts webhook → reloads nginx
+```
+
+## 🔁 Webhook Restart (Local)
+
+Preferred full local recovery (recommended):
+```bash
+bash scripts/start/reset_stack_once.sh
+```
+
+Webhook-only restart:
+```bash
+bash scripts/start/restart_webhook.sh manual
+bash scripts/test/verify_webhook_local.sh
+```
+
+Manual (foreground/background shell run):
+```bash
+bash scripts/start/restart_webhook.sh manual
+bash scripts/test/verify_webhook_local.sh
+```
+
+Verification for agents:
+```bash
+bash scripts/test/verify_webhook_local.sh
+# checks /health until timeout; exits non-zero on failure
 ```
 
 ## 🐳 Docker build

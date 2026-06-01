@@ -86,7 +86,12 @@ const INTERVAL_OPTIONS = [
   { label: "15m", seconds: 900 },
   { label: "30m", seconds: 1800 },
   { label: "1h", seconds: 3600 },
+  { label: "2h", seconds: 7200 },
+  { label: "3h", seconds: 10800 },
   { label: "4h", seconds: 14400 },
+  { label: "6h", seconds: 21600 },
+  { label: "8h", seconds: 28800 },
+  { label: "12h", seconds: 43200 },
   { label: "1d", seconds: 86400 },
 ];
 

@@ -36,3 +36,19 @@ Environment: (Production)
 - [ ] Versions bumped and committed.
 - [ ] VPS /health returns 200 OK.
 - [ ] Dashboard shows correct build ID.
+
+## Local Restart Runbook (Webhook)
+
+Use this when local webhook is flaky or after backend edits.
+
+1. Preferred full stack reset (`3001` first, then `3000`):
+```bash
+bash scripts/start/reset_stack_once.sh
+```
+2. Webhook-only restart:
+```bash
+bash scripts/start/restart_webhook.sh manual
+bash scripts/test/verify_webhook_local.sh
+```
+
+Rule: prefer health-check scripts over browser checks for backend restart verification.

@@ -8,6 +8,7 @@ This folder contains operational, deploy, install, test, migration, and utility 
 - `test/`: local and remote verification scripts
 - `install/`: machine/setup helpers
 - `ops/`: operational helpers for approvals/runbooks
+- `start/`: local/restart entrypoints for webhook + web-ui
 - `db/`, `utils/`, `daemons/`: focused subsystem scripts
 
 ## Local Hosting
@@ -39,6 +40,28 @@ Safety notes:
 - `local_host_db.sh` uses local Postgres.
 - `local_host_remote_db.sh` can mutate remote VPS production data.
 - Both scripts bind local app servers only through the underlying Node/Vite defaults.
+
+## Webhook Restart + Verify
+
+Full local stack restart (recommended, `3001` first then `3000`):
+
+```bash
+bash scripts/start/reset_stack_once.sh
+```
+
+Webhook-only restart:
+
+```bash
+bash scripts/start/restart_webhook.sh manual
+bash scripts/test/verify_webhook_local.sh
+```
+
+Manual restart (non-persistent shell mode):
+
+```bash
+bash scripts/start/restart_webhook.sh manual
+bash scripts/test/verify_webhook_local.sh
+```
 
 ## Usage Rule
 

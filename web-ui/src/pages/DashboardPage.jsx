@@ -140,6 +140,23 @@ function calendarScopeKey(filters = {}, userId = "") {
   });
 }
 
+function toDateKeyLocal(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function sumCalendarPnlInRange(calendarData, startDate, endDate) {
+  if (!calendarData || !startDate || !endDate) return 0;
+  let sum = 0;
+  const cur = new Date(startDate);
+  while (cur <= endDate) {
+    const key = toDateKeyLocal(cur);
+    const pnl = Number(calendarData[key]?.pnl || 0);
+    if (Number.isFinite(pnl)) sum += pnl;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return sum;
+}
+
 function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
   const [sortKey, setSortKey] = useState("WR");
   const [sortDir, setSortDir] = useState("DESC");
@@ -428,27 +445,71 @@ export default function DashboardPage() {
       String(a.name || a.account_id || ""),
     ]),
   );
-  const monthKeyPrefix = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-`;
-  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
-  const monthPoints = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${monthKeyPrefix}${String(d).padStart(2, "0")}`;
+  // Last ~2 months PnL points
+  const today = new Date();
+  const dayPoints = [];
+  for (let i = 59; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const item = calendarData ? calendarData[dateStr] : null;
     const pnl = item ? Number(item.pnl || 0) : 0;
-    monthPoints.push({
+    dayPoints.push({
       date: dateStr,
       pnl: Number.isFinite(pnl) ? pnl : 0,
-      day: d,
       hasPnl: item != null && Number.isFinite(pnl) && pnl !== 0,
     });
   }
-  const dailyPnlTotal = monthPoints.reduce((acc, x) => acc + x.pnl, 0);
-  const monthMaxAbsPnl = Math.max(
-    1,
-    ...monthPoints.map((x) => Math.abs(Number(x.pnl || 0))),
+  const dailyPnlTotal = dayPoints.reduce((acc, x) => acc + x.pnl, 0);
+  const maxPnl = dayPoints.reduce(
+    (m, x) => Math.max(m, Number(x?.pnl || 0)),
+    0,
   );
-  const yAxisMax = Math.max(1000, Math.ceil(monthMaxAbsPnl / 100) * 100);
-  const yAxisSteps = [200, 400, 600, 800, 1000].filter((v) => v <= yAxisMax);
+  const minPnl = dayPoints.reduce(
+    (m, x) => Math.min(m, Number(x?.pnl || 0)),
+    0,
+  );
+  const roundUpNiceUnit = (v) => {
+    const n = Math.max(1, Number(v) || 1);
+    const p = 10 ** Math.floor(Math.log10(n));
+    const m = n / p;
+    const base =
+      m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
+    return base * p;
+  };
+  const posStep = roundUpNiceUnit(Math.max(1, maxPnl / 5));
+  const negStep = roundUpNiceUnit(Math.max(1, Math.abs(minPnl) / 5));
+  const yAxisPosMax = maxPnl > 0 ? posStep * 5 : 0;
+  const yAxisNegMin = minPnl < 0 ? -(negStep * 5) : 0;
+  const yAxisPosScale = yAxisPosMax > 0 ? yAxisPosMax : 1;
+  const yAxisNegScale = yAxisNegMin < 0 ? Math.abs(yAxisNegMin) : 1;
+  const yAxisPosSteps = Array.from({ length: 5 }, (_, i) =>
+    Math.round(posStep * (i + 1)),
+  ).filter((v) => v > 0);
+  const yAxisNegSteps = Array.from({ length: 5 }, (_, i) =>
+    Math.round(negStep * (i + 1)),
+  ).filter((v) => v > 0);
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekStart = new Date(todayStart);
+  weekStart.setDate(todayStart.getDate() - ((todayStart.getDay() + 6) % 7));
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const displayPeriodTotals = {
+    ...periodTotals,
+    today: {
+      ...(periodTotals.today || {}),
+      total_pnl: sumCalendarPnlInRange(calendarData, todayStart, todayStart),
+    },
+    week: {
+      ...(periodTotals.week || {}),
+      total_pnl: sumCalendarPnlInRange(calendarData, weekStart, todayStart),
+    },
+    month: {
+      ...(periodTotals.month || {}),
+      total_pnl: sumCalendarPnlInRange(calendarData, monthStart, todayStart),
+    },
+  };
 
   return (
     <section className="stack-layout fadeIn">
@@ -725,7 +786,7 @@ export default function DashboardPage() {
             }}
           >
             {PERIOD_DISPLAY.map((conf) => {
-              const v = periodTotals[conf.key] || {};
+              const v = displayPeriodTotals[conf.key] || {};
               const winrate =
                 v.total_wins + v.total_losses > 0
                   ? (v.total_wins / (v.total_wins + v.total_losses)) * 100
@@ -858,6 +919,8 @@ export default function DashboardPage() {
                 const prevYear =
                   calendarMonth === 0 ? calendarYear - 1 : calendarYear;
                 const renderGrid = (month, year, label) => {
+                  const todayLocal = new Date();
+                  todayLocal.setHours(0, 0, 0, 0);
                   const firstDay = new Date(year, month, 1).getDay();
                   const dim = new Date(year, month + 1, 0).getDate();
                   const prefix = `${year}-${String(month + 1).padStart(2, "0")}-`;
@@ -866,6 +929,8 @@ export default function DashboardPage() {
                     cells.push(<span key={"e" + i} />);
                   for (let d = 1; d <= dim; d++) {
                     const dateStr = `${prefix}${String(d).padStart(2, "0")}`;
+                    const cellDate = new Date(`${dateStr}T00:00:00`);
+                    const isPastDay = cellDate < todayLocal;
                     const item = calendarData ? calendarData[dateStr] : null;
                     const pnl = item
                       ? Number(item.pnl || item.pnl_money || 0)
@@ -908,7 +973,11 @@ export default function DashboardPage() {
                         <div
                           style={{
                             fontSize: 9,
-                            color: pnl != null ? "var(--text)" : "var(--muted)",
+                            color: isPastDay
+                              ? "rgba(148,163,184,0.62)"
+                              : pnl != null
+                                ? "var(--text)"
+                                : "var(--muted)",
                           }}
                         >
                           {d}
@@ -920,6 +989,7 @@ export default function DashboardPage() {
                                 pnl > 0 ? "var(--success)" : "var(--error)",
                               fontSize: 9,
                               letterSpacing: "0.1px",
+                              opacity: isPastDay ? 0.78 : 1,
                             }}
                           >
                             {pnl > 0 ? "+" : ""}
@@ -984,7 +1054,7 @@ export default function DashboardPage() {
               })()}
             </div>
 
-            {/* Daily PnL bar chart */}
+            {/* Last ~2 months PnL bar chart */}
             <div className="panel fadeIn" style={{ padding: 12 }}>
               <div
                 style={{
@@ -995,7 +1065,7 @@ export default function DashboardPage() {
                 }}
               >
                 <div className="panel-label" style={{ margin: 0 }}>
-                  Daily PnL
+                  Last 2 Months
                 </div>
                 <div
                   className={moneyClass(dailyPnlTotal)}
@@ -1027,15 +1097,15 @@ export default function DashboardPage() {
                     pointerEvents: "none",
                   }}
                 >
-                  {yAxisSteps.map((v) => (
+                  {yAxisPosSteps.map((v) => (
                     <span
                       key={`pos_${v}`}
                       style={{
                         position: "absolute",
                         right: 0,
-                        top: `${50 - (v / yAxisMax) * 50}%`,
+                        top: `${50 - (v / yAxisPosScale) * 50}%`,
                         transform: "translateY(-50%)",
-                        fontSize: 10,
+                        fontSize: 9,
                         color: "rgba(16,185,129,0.85)",
                         opacity: 0.45,
                       }}
@@ -1049,22 +1119,22 @@ export default function DashboardPage() {
                       right: 0,
                       top: "50%",
                       transform: "translateY(-50%)",
-                      fontSize: 10,
+                      fontSize: 9,
                       color: "var(--muted)",
                       opacity: 0.9,
                     }}
                   >
                     0
                   </span>
-                  {yAxisSteps.map((v) => (
+                  {yAxisNegSteps.map((v) => (
                     <span
                       key={`neg_${v}`}
                       style={{
                         position: "absolute",
                         right: 0,
-                        top: `${50 + (v / yAxisMax) * 50}%`,
+                        top: `${50 + (v / yAxisNegScale) * 50}%`,
                         transform: "translateY(-50%)",
-                        fontSize: 10,
+                        fontSize: 9,
                         color: "rgba(239,68,68,0.85)",
                         opacity: 0.45,
                       }}
@@ -1087,22 +1157,37 @@ export default function DashboardPage() {
                   style={{
                     height: "100%",
                     display: "grid",
-                    gridTemplateColumns: `repeat(${Math.max(monthPoints.length, 1)}, 1fr)`,
-                    gap: 5,
+                    gridTemplateColumns: `repeat(${Math.max(dayPoints.length, 1)}, 1fr)`,
+                    gap: 1,
                     alignItems: "stretch",
                   }}
                 >
-                  {monthPoints.map((p, idx) => {
+                  {dayPoints.map((p, idx) => {
                     const pnlNum = Number(p.pnl || 0);
                     const absRatio = p.hasPnl
-                      ? Math.min(1, Math.abs(pnlNum) / Math.max(1, yAxisMax))
+                      ? Math.min(
+                          1,
+                          Math.abs(pnlNum) /
+                            (pnlNum >= 0 ? yAxisPosScale : yAxisNegScale),
+                        )
                       : 0;
                     const hPct = absRatio * 49;
                     const isPos = pnlNum >= 0;
                     const barTop = isPos ? 50 - hPct : 50;
+                    const shortLabel = p.date ? p.date.slice(8) : ""; // DD
+                    const pDate = p.date ? new Date(`${p.date}T00:00:00`) : null;
+                    const isPrevMonth =
+                      pDate != null &&
+                      (pDate.getFullYear() !== today.getFullYear() ||
+                        pDate.getMonth() !== today.getMonth());
+                    const isCurrMonthFirstDay =
+                      pDate != null &&
+                      pDate.getFullYear() === today.getFullYear() &&
+                      pDate.getMonth() === today.getMonth() &&
+                      pDate.getDate() === 1;
                     return (
                       <div
-                        key={`${p.day}_${idx}`}
+                        key={p.date}
                         style={{
                           position: "relative",
                           display: "flex",
@@ -1110,15 +1195,15 @@ export default function DashboardPage() {
                         }}
                         title={
                           p.hasPnl
-                            ? `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: $${pnlNum.toFixed(2)}`
-                            : `${monthKeyPrefix}${String(p.day).padStart(2, "0")}: no trades`
+                            ? `${p.date}: $${pnlNum.toFixed(2)}`
+                            : `${p.date}: no trades`
                         }
                       >
                         {p.hasPnl ? (
                           <div
                             style={{
                               position: "absolute",
-                              width: "72%",
+                              width: "92%",
                               height: `${hPct}%`,
                               top: `${barTop}%`,
                               borderRadius: isPos
@@ -1135,11 +1220,15 @@ export default function DashboardPage() {
                           style={{
                             position: "absolute",
                             bottom: -18,
-                            fontSize: 10,
-                            color: "var(--muted)",
+                            fontSize: 8,
+                            color: isPrevMonth
+                              ? "rgba(148,163,184,0.40)"
+                              : "rgba(148,163,184,0.88)",
+                            fontWeight: isCurrMonthFirstDay ? 800 : 600,
+                            letterSpacing: 0,
                           }}
                         >
-                          {String(p.day).padStart(2, "0")}
+                          {shortLabel}
                         </div>
                       </div>
                     );

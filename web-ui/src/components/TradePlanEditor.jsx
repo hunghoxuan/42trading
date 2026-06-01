@@ -386,6 +386,7 @@ export function TradePlanEditor({
   showActionsInView = false,
   error = "",
   className = "",
+  tradeStatus = "",
 }) {
   // Freeze initial entry/SL for slider step (computed once, never changes while editing)
   const frozenStepRef = useRef(null);
@@ -421,6 +422,21 @@ export function TradePlanEditor({
       .trim()
       .toLowerCase()
       .includes("save trade");
+  const normalizedTradeStatus = String(
+    tradeStatus || value?.execution_status || value?.status || "",
+  )
+    .trim()
+    .toUpperCase();
+  const showCloseAction =
+    typeof onClose === "function" && normalizedTradeStatus === "FILLED";
+  const showCancelAction =
+    typeof onCancel === "function" && normalizedTradeStatus !== "FILLED";
+  const showReasonField = ["CLOSED", "CANCELLED", "CANCEL", "REJECTED"].includes(
+    normalizedTradeStatus,
+  );
+  const reasonKey = normalizedTradeStatus === "REJECTED" ? "rejection_reason" : "close_reason";
+  const reasonLabel = normalizedTradeStatus === "REJECTED" ? "Reject Reason" : "Close/Cancel Reason";
+  const reasonValue = String(value?.[reasonKey] || "");
 
   const normalizedLockMode =
     lockMode === "core" || lockMode === "all"
@@ -1076,12 +1092,39 @@ export function TradePlanEditor({
             <div
               style={{
                 display: "flex",
-                justifyContent: "flex-end",
+                justifyContent: "space-between",
                 gap: "6px",
                 alignItems: "center",
                 marginTop: "4px",
               }}
             >
+              {showReasonField ? (
+                <input
+                  type="text"
+                  className="text-input"
+                  aria-label={reasonLabel}
+                  placeholder={reasonLabel}
+                  value={reasonValue}
+                  onChange={(e) => update(reasonKey, e.target.value)}
+                  disabled={controlsDisabled}
+                  style={{
+                    width: "220px",
+                    height: "26px",
+                    fontSize: "11px",
+                    color: "#b91c1c",
+                    borderColor: "#7f1d1d",
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "6px",
+                  alignItems: "center",
+                  marginLeft: "auto",
+                }}
+              >
               {showResetButton ? (
                 <button
                   className="secondary-button"
@@ -1121,25 +1164,7 @@ export function TradePlanEditor({
                   )}
                 </button>
               ) : null}
-              {typeof onCancel === "function" ? (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={onCancel}
-                  disabled={controlsDisabled}
-                  style={{
-                    height: "26px",
-                    fontSize: "11px",
-                    padding: "0 10px",
-                    borderRadius: "4px",
-                    color: "#b91c1c",
-                    borderColor: "#b91c1c",
-                  }}
-                >
-                  Cancel
-                </button>
-              ) : null}
-              {typeof onClose === "function" ? (
+              {showCloseAction ? (
                 <button
                   className="secondary-button"
                   type="button"
@@ -1226,6 +1251,27 @@ export function TradePlanEditor({
                   {promoteLabel}
                 </button>
               ) : null}
+              {showCancelAction ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    if (typeof onCancel === "function") onCancel();
+                  }}
+                  disabled={controlsDisabled}
+                  style={{
+                    height: "26px",
+                    fontSize: "11px",
+                    padding: "0 10px",
+                    borderRadius: "4px",
+                    color: "#b91c1c",
+                    borderColor: "#b91c1c",
+                  }}
+                >
+                  Cancel
+                </button>
+              ) : null}
+              </div>
             </div>
             {error ? (
               <span

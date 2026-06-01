@@ -5,17 +5,24 @@ const ConfirmDialogContext = createContext(null);
 
 export function ConfirmDialogProvider({ children }) {
   const [state, setState] = useState(null);
+  const [inputValue, setInputValue] = useState("");
 
   const confirm = useCallback((options = {}) => {
     return new Promise((resolve) => {
+      setInputValue(String(options?.inputDefaultValue || ""));
       setState({ ...options, resolve });
     });
   }, []);
 
   const close = (value) => {
     const resolver = state?.resolve;
+    const result =
+      state?.input && value === true
+        ? { ok: true, value: String(inputValue || "") }
+        : value;
     setState(null);
-    resolver?.(value);
+    setInputValue("");
+    resolver?.(result);
   };
 
   const open = !!state;
@@ -35,6 +42,18 @@ export function ConfirmDialogProvider({ children }) {
             <Dialog.Description className="minor-text dialog-description">
               {state?.message || "Are you sure?"}
             </Dialog.Description>
+            {state?.input ? (
+              <div style={{ marginTop: 10 }}>
+                <input
+                  type="text"
+                  className="text-input"
+                  placeholder={state?.inputPlaceholder || ""}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            ) : null}
             <div className="dialog-actions">
               <Dialog.Close asChild>
                 <button type="button" className="secondary-button">
@@ -56,8 +75,19 @@ export function ConfirmDialogProvider({ children }) {
 export function useConfirmDialog() {
   const ctx = useContext(ConfirmDialogContext);
   if (!ctx) {
-    return async (options = {}) =>
-      window.confirm(options.message || options.title || "Are you sure?");
+    return async (options = {}) => {
+      if (options?.input) {
+        const val = window.prompt(
+          options?.inputPlaceholder || options?.message || options?.title || "Reason",
+          options?.inputDefaultValue || "",
+        );
+        if (val == null) return false;
+        const ok = window.confirm(options.message || options.title || "Are you sure?");
+        if (!ok) return false;
+        return { ok: true, value: String(val || "") };
+      }
+      return window.confirm(options.message || options.title || "Are you sure?");
+    };
   }
   return ctx;
 }
