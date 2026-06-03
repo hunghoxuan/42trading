@@ -20339,7 +20339,7 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
 
     try {
-      const db = await mt5InitBackend(""); // always use default backend for settings
+      const db = await mt5InitBackend();
       console.log("[settings] GET backend source=", currentMt5DbSourceId() || "(default)");
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       console.log(
@@ -20445,7 +20445,7 @@ const appHandler = async (req, res) => {
       const body = await readJson(req);
       if (!body.type)
         return json(res, 400, { ok: false, error: "Missing type" });
-      const db = await mt5InitBackend(""); // always use default backend for settings
+      const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       let payloadData = body.data;
       if (!payloadData || typeof payloadData !== "object") {
@@ -24457,7 +24457,7 @@ const appHandler = async (req, res) => {
     if (!requireAuthForUi(req, res)) return;
     try {
       const sess = getUiSessionFromReq(req);
-      const db = await mt5InitBackend(""); // notifications always use default backend
+      const db = await mt5InitBackend();
       let data = {};
       const setting = await dbQueries.getUserSetting(
         db.db,
@@ -24479,7 +24479,7 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       const sess = getUiSessionFromReq(req);
       const settings = payload.settings || payload;
-      const db = await mt5InitBackend(""); // notifications always use default backend
+      const db = await mt5InitBackend();
       // Save each event type as a separate notification_config row
       for (const [eventName, config] of Object.entries(settings)) {
         const eventKey = String(eventName)
