@@ -45,16 +45,43 @@ const pools = new Map();
 
 function readConfig() {
   const env = loadEnvFile();
-  const url = env.MT5_POSTGRES_URL || env.POSTGRES_URL || env.POSTGRE_URL;
-  if (url) {
-    return [{
-      id: "env",
-      name: "Webhook DB",
-      connectionString: url,
-      note: "From webhook/.env",
-    }];
+  const connections = [];
+  const seen = new Set();
+  const addConnection = (conn) => {
+    const id = String(conn?.id || "").trim();
+    const connectionString = String(conn?.connectionString || "").trim();
+    if (!id || !connectionString || seen.has(id)) return;
+    seen.add(id);
+    connections.push({
+      id,
+      name: String(conn?.name || id).trim(),
+      connectionString,
+      note: String(conn?.note || "").trim(),
+    });
+  };
+
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+      for (const conn of parsed?.connections || []) addConnection(conn);
+    } catch (err) {
+      console.error("[db-manager] Failed to read config:", err.message);
+    }
   }
-  return [];
+
+  addConnection({
+    id: "local",
+    name: "Local DB",
+    connectionString: env.MT5_POSTGRES_URL_LOCAL,
+    note: "From webhook/.env MT5_POSTGRES_URL_LOCAL",
+  });
+  addConnection({
+    id: "vps",
+    name: "VPS DB",
+    connectionString: env.MT5_POSTGRES_URL_REMOTE,
+    note: "From webhook/.env MT5_POSTGRES_URL_REMOTE",
+  });
+  return connections;
 }
 
 function getConnection(id) {
@@ -157,6 +184,142 @@ async function getTableSchema(pool, schema, table) {
   `;
   const result = await pool.query(sql, [schema, table]);
   return result.rows;
+}
+
+function pickSyncKey(schemaRows = []) {
+  const columns = schemaRows.map((row) => row.column_name);
+  if (columns.includes("sid")) return "sid";
+  const pk = schemaRows.find((row) => row.is_primary_key)?.column_name;
+  if (pk) return pk;
+  if (columns.includes("id")) return "id";
+  return "";
+}
+
+function isGeneratedIdentityColumn(col = {}) {
+  const name = String(col.column_name || "").toLowerCase();
+  const def = String(col.column_default || "").toLowerCase();
+  return name === "id" && def.includes("nextval(");
+}
+
+function syncInsertColumns(schemaRows = [], keyCol = "") {
+  return schemaRows
+    .filter((col) => {
+      if (keyCol !== "id" && isGeneratedIdentityColumn(col)) return false;
+      return true;
+    })
+    .map((col) => col.column_name);
+}
+
+function syncUpdateColumns(schemaRows = [], keyCol = "") {
+  return schemaRows
+    .filter((col) => col.column_name !== keyCol)
+    .filter((col) => {
+      if (keyCol !== "id" && isGeneratedIdentityColumn(col)) return false;
+      return true;
+    })
+    .map((col) => col.column_name);
+}
+
+function commonColumns(sourceSchema = [], targetSchema = []) {
+  const targetCols = new Set(targetSchema.map((col) => col.column_name));
+  return sourceSchema.filter((col) => targetCols.has(col.column_name));
+}
+
+async function syncTableRows({
+  sourcePool,
+  targetPool,
+  sourceConn,
+  targetConn,
+  schema,
+  table,
+}) {
+  if (sourceConn === targetConn) {
+    throw new Error("Source and target connections must be different");
+  }
+  const sourceSchema = await getTableSchema(sourcePool, schema, table);
+  const targetSchema = await getTableSchema(targetPool, schema, table);
+  if (!sourceSchema.length) throw new Error(`Source table not found: ${schema}.${table}`);
+  if (!targetSchema.length) throw new Error(`Target table not found: ${schema}.${table}`);
+
+  const sharedSchema = commonColumns(sourceSchema, targetSchema);
+  const keyCol = pickSyncKey(sharedSchema);
+  if (!keyCol) {
+    throw new Error(`No sync key found for ${schema}.${table}; expected sid, primary key, or id`);
+  }
+
+  const sourceColumns = sharedSchema.map((col) => col.column_name);
+  const insertColumns = syncInsertColumns(sharedSchema, keyCol);
+  const updateColumns = syncUpdateColumns(sharedSchema, keyCol);
+  if (!insertColumns.includes(keyCol)) insertColumns.unshift(keyCol);
+
+  const sourceSql =
+    `SELECT ${sourceColumns.map(quoteIdent).join(", ")} ` +
+    `FROM ${quoteIdent(schema)}.${quoteIdent(table)} ` +
+    `ORDER BY ${quoteIdent(keyCol)} ASC`;
+  const sourceRows = (await sourcePool.query(sourceSql)).rows || [];
+
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  const targetClient = await targetPool.connect();
+  try {
+    await targetClient.query("BEGIN");
+    for (const row of sourceRows) {
+      const keyVal = row[keyCol];
+      if (keyVal === null || keyVal === undefined || keyVal === "") {
+        skipped += 1;
+        continue;
+      }
+
+      const existsSql =
+        `SELECT 1 FROM ${quoteIdent(schema)}.${quoteIdent(table)} ` +
+        `WHERE ${quoteIdent(keyCol)} = $1 LIMIT 1`;
+      const exists = await targetClient.query(existsSql, [keyVal]);
+      if ((exists.rowCount || 0) > 0) {
+        if (!updateColumns.length) {
+          skipped += 1;
+          continue;
+        }
+        const values = updateColumns.map((col) => row[col]);
+        values.push(keyVal);
+        const setSql = updateColumns
+          .map((col, index) => `${quoteIdent(col)} = $${index + 1}`)
+          .join(", ");
+        const updateSql =
+          `UPDATE ${quoteIdent(schema)}.${quoteIdent(table)} ` +
+          `SET ${setSql} WHERE ${quoteIdent(keyCol)} = $${values.length}`;
+        await targetClient.query(updateSql, values);
+        updated += 1;
+        continue;
+      }
+
+      const values = insertColumns.map((col) => row[col]);
+      const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
+      const insertSql =
+        `INSERT INTO ${quoteIdent(schema)}.${quoteIdent(table)} ` +
+        `(${insertColumns.map(quoteIdent).join(", ")}) VALUES (${placeholders})`;
+      await targetClient.query(insertSql, values);
+      inserted += 1;
+    }
+    await targetClient.query("COMMIT");
+  } catch (err) {
+    await targetClient.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    targetClient.release();
+  }
+
+  return {
+    sourceConn,
+    targetConn,
+    schema,
+    table,
+    keyCol,
+    scanned: sourceRows.length,
+    inserted,
+    updated,
+    skipped,
+  };
 }
 
 function buildSearchClause(columns, term, params) {
@@ -310,6 +473,31 @@ async function handleApi(req, res, url) {
         rows: Array.isArray(result.rows) ? result.rows : [],
         elapsedMs: Date.now() - started,
       });
+    }
+
+    if (req.method === "POST" && parts[2] === "sync" && parts[3] && parts[4]) {
+      const body = await readBody(req);
+      const otherConnId = String(body.otherConnId || "").trim();
+      const direction = String(body.direction || "").trim().toLowerCase();
+      if (!otherConnId) {
+        return sendJson(res, 400, { ok: false, error: "otherConnId is required" });
+      }
+      if (!["to", "from"].includes(direction)) {
+        return sendJson(res, 400, { ok: false, error: "direction must be to or from" });
+      }
+      const schema = decodeURIComponent(parts[3]);
+      const table = decodeURIComponent(parts[4]);
+      const sourceConn = direction === "to" ? connId : otherConnId;
+      const targetConn = direction === "to" ? otherConnId : connId;
+      const result = await syncTableRows({
+        sourcePool: getPool(sourceConn),
+        targetPool: getPool(targetConn),
+        sourceConn,
+        targetConn,
+        schema,
+        table,
+      });
+      return sendJson(res, 200, { ok: true, result });
     }
 
     if (parts[2] === "write" && parts[3] && parts[4]) {
@@ -833,6 +1021,48 @@ const INDEX_HTML = `<!doctype html>
       color: var(--muted);
       white-space: nowrap;
     }
+    .sync-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(34, 211, 238, 0.08);
+      color: var(--text);
+      font-size: 12px;
+    }
+    .sync-status.success {
+      background: rgba(36, 227, 143, 0.08);
+      color: #bbf7d0;
+    }
+    .sync-status.error {
+      background: rgba(255, 90, 90, 0.1);
+      color: #fecaca;
+    }
+    .sync-progress {
+      position: relative;
+      width: 160px;
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(142, 160, 181, 0.18);
+      flex: 0 0 auto;
+    }
+    .sync-progress::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -45%;
+      width: 45%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: sync-progress 1.1s linear infinite;
+    }
+    @keyframes sync-progress {
+      from { transform: translateX(0); }
+      to { transform: translateX(360%); }
+    }
     .hidden { display: none !important; }
     @media (max-width: 1180px) {
       .pane-grid {
@@ -865,6 +1095,9 @@ const INDEX_HTML = `<!doctype html>
       <div class="header-controls">
         <select id="connection" class="control"></select>
         <button id="refreshTables" class="ghost-button" type="button">Refresh</button>
+        <select id="syncConnection" class="control" title="Other DB for table sync"></select>
+        <button id="syncTo" class="ghost-button" type="button" title="Copy selected table from current DB to other DB">Sync To</button>
+        <button id="syncFrom" class="ghost-button" type="button" title="Copy selected table from other DB to current DB">Sync From</button>
         <span id="headerStatus" class="status-line"></span>
       </div>
     </header>
@@ -880,6 +1113,10 @@ const INDEX_HTML = `<!doctype html>
         <ul id="tableList" class="table-list"></ul>
       </aside>
       <section class="main">
+        <div id="syncStatus" class="sync-status hidden">
+          <div id="syncProgress" class="sync-progress" aria-hidden="true"></div>
+          <span id="syncStatusText"></span>
+        </div>
         <div class="toolbar">
           <div class="toolbar-group">
             <button id="toggleSqlMode" class="ghost-button" type="button">SQL</button>
@@ -954,6 +1191,8 @@ const INDEX_HTML = `<!doctype html>
     const state = {
       connections: [],
       connection: "",
+      syncConnection: "",
+      syncing: false,
       tables: [],
       tableSearch: "",
       selectedSchema: "",
@@ -1091,6 +1330,22 @@ const INDEX_HTML = `<!doctype html>
         state.connection = state.connections[0].id;
       }
       el("connection").value = state.connection || "";
+
+      const syncChoices = state.connections.filter((c) => c.id !== state.connection);
+      el("syncConnection").innerHTML = syncChoices.map((c) => {
+        return '<option value="' + escapeHtml(c.id) + '">' + escapeHtml(c.name) + "</option>";
+      }).join("");
+      if (!syncChoices.some((c) => c.id === state.syncConnection)) {
+        state.syncConnection = syncChoices[0] ? syncChoices[0].id : "";
+      }
+      el("syncConnection").value = state.syncConnection || "";
+      const canSync = Boolean(state.connection && state.syncConnection);
+      el("syncTo").disabled = !canSync || state.syncing;
+      el("syncFrom").disabled = !canSync || state.syncing;
+      el("syncConnection").disabled = state.syncing;
+      el("connection").disabled = state.syncing;
+      el("syncTo").textContent = state.syncing ? "Syncing..." : "Sync To";
+      el("syncFrom").textContent = state.syncing ? "Syncing..." : "Sync From";
     }
 
     function filteredTables() {
@@ -1308,6 +1563,16 @@ const INDEX_HTML = `<!doctype html>
       }
     }
 
+    function setSyncStatus(message, mode) {
+      const box = el("syncStatus");
+      const progress = el("syncProgress");
+      box.classList.toggle("hidden", !message);
+      box.classList.toggle("success", mode === "success");
+      box.classList.toggle("error", mode === "error");
+      progress.classList.toggle("hidden", mode !== "progress");
+      el("syncStatusText").textContent = message || "";
+    }
+
     async function loadConnections() {
       const data = await api("/api/connections");
       state.connections = data.connections || [];
@@ -1434,6 +1699,61 @@ const INDEX_HTML = `<!doctype html>
       }
     }
 
+    async function syncSelectedTable(direction) {
+      if (!state.connection || !state.syncConnection) {
+        setHeaderStatus("Choose another DB first");
+        return;
+      }
+      if (!state.selectedSchema || !state.selectedTable) {
+        setHeaderStatus("Select a table first");
+        return;
+      }
+      const label = state.selectedSchema + "." + state.selectedTable;
+      const other = state.connections.find((c) => c.id === state.syncConnection);
+      const otherName = other ? other.name : state.syncConnection;
+      const verb = direction === "to" ? "to" : "from";
+      if (!confirm("Sync " + label + " " + verb + " " + otherName + "? Source rows win; destination-only rows are kept.")) {
+        return;
+      }
+      state.syncing = true;
+      renderConnections();
+      setHeaderStatus("Syncing " + label + " " + verb + " " + otherName + "...");
+      setSyncStatus("Syncing " + label + " " + verb + " " + otherName + ". This can take a moment.", "progress");
+      showRowsError("");
+      try {
+        const data = await api(
+          "/api/" + encodeURIComponent(state.connection) + "/sync/" +
+          encodeURIComponent(state.selectedSchema) + "/" +
+          encodeURIComponent(state.selectedTable),
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              otherConnId: state.syncConnection,
+              direction,
+            }),
+          },
+        );
+        const r = data.result || {};
+        const summary =
+          "Sync " + r.sourceConn + " → " + r.targetConn +
+          " · key " + r.keyCol +
+          " · inserted " + r.inserted +
+          " · updated " + r.updated +
+          " · skipped " + r.skipped;
+        setHeaderStatus(summary);
+        setSyncStatus(summary, "success");
+        await loadRows();
+      } catch (err) {
+        setHeaderStatus("Sync failed");
+        setSyncStatus(err.message || "Sync failed", "error");
+        showRowsError(err.message || "Sync failed");
+      } finally {
+        state.syncing = false;
+        renderConnections();
+      }
+    }
+
     function toggleSort(column) {
       if (!column) return;
       if (state.sortCol === column) {
@@ -1451,12 +1771,26 @@ const INDEX_HTML = `<!doctype html>
         state.connection = ev.target.value;
         state.page = 1;
         state.selectedRowIndex = -1;
+        renderConnections();
         updateUrl();
         await loadTables();
       });
 
+      el("syncConnection").addEventListener("change", (ev) => {
+        state.syncConnection = ev.target.value || "";
+        renderConnections();
+      });
+
       el("refreshTables").addEventListener("click", () => {
         loadTables().catch((err) => setHeaderStatus(err.message || "Refresh failed"));
+      });
+
+      el("syncTo").addEventListener("click", () => {
+        syncSelectedTable("to").catch((err) => showRowsError(err.message || "Sync failed"));
+      });
+
+      el("syncFrom").addEventListener("click", () => {
+        syncSelectedTable("from").catch((err) => showRowsError(err.message || "Sync failed"));
       });
 
       el("tableSearch").addEventListener("input", (ev) => {

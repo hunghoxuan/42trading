@@ -29,9 +29,7 @@ async function migrate() {
     "user_accounts",
     "user_templates",
     "user_settings",
-    "signals",
     "trades",
-    "market_data",
   ];
 
   for (const table of tables) {

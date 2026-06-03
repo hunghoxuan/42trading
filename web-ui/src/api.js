@@ -99,6 +99,19 @@ export function setRuntimeActiveUserId(value) {
   localStorage.setItem("tvbridge_active_user_id", v);
 }
 
+export function getRuntimeDbSource() {
+  return (localStorage.getItem("tvbridge_db_source") || "").trim();
+}
+
+export function setRuntimeDbSource(value) {
+  const v = String(value || "").trim();
+  if (!v) {
+    localStorage.removeItem("tvbridge_db_source");
+    return;
+  }
+  localStorage.setItem("tvbridge_db_source", v);
+}
+
 export function getRuntimeApiBase() {
   return runtimeApiBase();
 }
@@ -114,6 +127,16 @@ export function setRuntimeApiBase(value) {
 
 function buildUrl(base, path) {
   return new URL(path, `${base.replace(/\/+$/, "")}/`).toString();
+}
+
+function applyRuntimeHeaders(headers = {}) {
+  const API_KEY = runtimeApiKey();
+  const activeUserId = getRuntimeActiveUserId();
+  const dbSource = getRuntimeDbSource();
+  if (API_KEY) headers["x-api-key"] = API_KEY;
+  if (activeUserId) headers["x-active-user-id"] = activeUserId;
+  if (dbSource) headers["x-db-source"] = dbSource;
+  return headers;
 }
 
 function isAuthFailure(status, data) {
@@ -145,7 +168,6 @@ function redirectToLogin() {
 }
 
 async function get(path) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -153,10 +175,8 @@ async function get(path) {
   async function doFetch(url) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), DEFAULT_API_TIMEOUT_MS);
-    const activeUserId = getRuntimeActiveUserId();
     const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
-    if (API_KEY) headers["x-api-key"] = API_KEY;
-    if (activeUserId) headers["x-active-user-id"] = activeUserId;
+    applyRuntimeHeaders(headers);
     try {
       return await fetch(url, {
         signal: ctrl.signal,
@@ -222,7 +242,6 @@ async function get(path) {
 }
 
 async function getBlob(path) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -230,10 +249,8 @@ async function getBlob(path) {
   async function doFetch(url) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), DEFAULT_API_TIMEOUT_MS);
-    const activeUserId = getRuntimeActiveUserId();
     const headers = { "Cache-Control": "no-cache", Pragma: "no-cache" };
-    if (API_KEY) headers["x-api-key"] = API_KEY;
-    if (activeUserId) headers["x-active-user-id"] = activeUserId;
+    applyRuntimeHeaders(headers);
     try {
       return await fetch(url, {
         signal: ctrl.signal,
@@ -292,7 +309,6 @@ async function getBlob(path) {
 }
 
 async function post(path, body = {}) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -301,14 +317,12 @@ async function post(path, body = {}) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), DEFAULT_API_TIMEOUT_MS);
     try {
-      const activeUserId = getRuntimeActiveUserId();
       const headers = {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
       };
-      if (API_KEY) headers["x-api-key"] = API_KEY;
-      if (activeUserId) headers["x-active-user-id"] = activeUserId;
+      applyRuntimeHeaders(headers);
       return await fetch(url, {
         method: "POST",
         signal: ctrl.signal,
@@ -378,7 +392,6 @@ async function postWithTimeout(
   body = {},
   timeoutMs = DEFAULT_API_TIMEOUT_MS,
 ) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -387,14 +400,12 @@ async function postWithTimeout(
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const activeUserId = getRuntimeActiveUserId();
       const headers = {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
       };
-      if (API_KEY) headers["x-api-key"] = API_KEY;
-      if (activeUserId) headers["x-active-user-id"] = activeUserId;
+      applyRuntimeHeaders(headers);
       return await fetch(url, {
         method: "POST",
         signal: ctrl.signal,
@@ -460,7 +471,6 @@ async function postWithTimeout(
 }
 
 async function put(path, body = {}) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -469,12 +479,10 @@ async function put(path, body = {}) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), DEFAULT_API_TIMEOUT_MS);
     try {
-      const activeUserId = getRuntimeActiveUserId();
       const headers = {
         "Content-Type": "application/json",
       };
-      if (API_KEY) headers["x-api-key"] = API_KEY;
-      if (activeUserId) headers["x-active-user-id"] = activeUserId;
+      applyRuntimeHeaders(headers);
       return await fetch(url, {
         method: "PUT",
         signal: ctrl.signal,
@@ -539,7 +547,6 @@ async function put(path, body = {}) {
 }
 
 async function del(path) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const primaryUrl = buildUrl(base, path);
   const fallbackUrl = buildUrl(window.location.origin, path);
@@ -548,10 +555,8 @@ async function del(path) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), DEFAULT_API_TIMEOUT_MS);
     try {
-      const activeUserId = getRuntimeActiveUserId();
       const headers = {};
-      if (API_KEY) headers["x-api-key"] = API_KEY;
-      if (activeUserId) headers["x-active-user-id"] = activeUserId;
+      applyRuntimeHeaders(headers);
       return await fetch(url, {
         method: "DELETE",
         signal: ctrl.signal,
@@ -613,7 +618,6 @@ async function del(path) {
 }
 
 async function downloadCsv(path, params = {}) {
-  const API_KEY = runtimeApiKey();
   const base = runtimeApiBase();
   const q = new URLSearchParams();
   Object.entries(params || {}).forEach(([k, v]) => {
@@ -629,10 +633,8 @@ async function downloadCsv(path, params = {}) {
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => ctrl.abort(), 20000);
     try {
-      const activeUserId = getRuntimeActiveUserId();
       const headers = {};
-      if (API_KEY) headers["x-api-key"] = API_KEY;
-      if (activeUserId) headers["x-active-user-id"] = activeUserId;
+      applyRuntimeHeaders(headers);
       return await fetch(url, {
         signal: ctrl.signal,
         credentials: "include",
@@ -760,6 +762,7 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     post("/auth/password", { currentPassword, newPassword }),
   health: () => get("/health"),
+  dbSources: () => get("/v2/db-sources"),
   healthActivity: (params = {}) => {
     const q = new URLSearchParams();
     Object.entries(params || {}).forEach(([k, v]) => {
@@ -820,14 +823,11 @@ export const api = {
   saveTradePlan: (tradeId, payload = {}) =>
     post(`/v2/trades/${encodeURIComponent(tradeId)}/trade-plan/save`, payload),
   uploadTradeFile: async (tradeId, file) => {
-    const API_KEY = runtimeApiKey();
     const base = runtimeApiBase();
     const form = new FormData();
     form.append("file", file);
     const headers = {};
-    const activeUserId = getRuntimeActiveUserId();
-    if (API_KEY) headers["x-api-key"] = API_KEY;
-    if (activeUserId) headers["x-active-user-id"] = activeUserId;
+    applyRuntimeHeaders(headers);
     const res = await fetch(
       `${base}/v2/trades/${encodeURIComponent(tradeId)}/files/upload`,
       { method: "POST", headers, body: form, credentials: "include" },

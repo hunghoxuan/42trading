@@ -22,7 +22,13 @@ const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
 const StoragePage = lazy(() => import("./pages/system/StoragePage"));
 const CachePage = lazy(() => import("./pages/system/CachePage"));
 const EventsPage = lazy(() => import("./pages/system/EventsPage"));
-import { api, getRuntimeActiveUserId, setRuntimeActiveUserId } from "./api";
+import {
+  api,
+  getRuntimeActiveUserId,
+  getRuntimeDbSource,
+  setRuntimeActiveUserId,
+  setRuntimeDbSource,
+} from "./api";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
 import NotificationWatcher from "./components/NotificationWatcher";
@@ -44,6 +50,10 @@ export default function App() {
   );
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState(null);
+  const [dbSources, setDbSources] = useState([]);
+  const [activeDbSource, setActiveDbSource] = useState(() =>
+    getRuntimeDbSource(),
+  );
   const [tradeCounts, setTradeCounts] = useState({});
   const [, setRelativeTimeTick] = useState(0);
   const [tzUiTick, setTzUiTick] = useState(0);
@@ -81,6 +91,24 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("ui_theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    api
+      .dbSources()
+      .then((data) => {
+        const sources = Array.isArray(data?.sources) ? data.sources : [];
+        setDbSources(sources);
+        const stored = getRuntimeDbSource();
+        const next = sources.some((source) => source.id === stored)
+          ? stored
+          : data?.active || sources[0]?.id || "";
+        setActiveDbSource(next);
+        if (next && next !== stored) setRuntimeDbSource(next);
+      })
+      .catch(() => {
+        setDbSources([]);
+      });
+  }, []);
 
   useEffect(() => {
     // Keep "x mins ago" labels moving forward without requiring data refetches.
@@ -194,6 +222,26 @@ export default function App() {
         <span>📈 Trading</span>
         {serverVersion ? (
           <span className="brand-version">v{serverVersion}</span>
+        ) : null}
+        {dbSources.length >= 2 ? (
+          <label className="db-source-switcher" title="DB Source">
+            <span>DB</span>
+            <select
+              value={activeDbSource}
+              onChange={(event) => {
+                const next = event.target.value;
+                setActiveDbSource(next);
+                setRuntimeDbSource(next);
+                window.location.reload();
+              }}
+            >
+              {dbSources.map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name || source.id}
+                </option>
+              ))}
+            </select>
+          </label>
         ) : null}
         {getRuntimeActiveUserId() && (
           <span style={{ marginLeft: 10, fontSize: "11px", color: "#f39c12" }}>

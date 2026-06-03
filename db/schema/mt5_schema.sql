@@ -51,15 +51,6 @@ CREATE FUNCTION public.gen_sid(prefix text DEFAULT ''::text, chars_limit integer
     $$;
 
 
---
--- Name: signals_sync_action_side(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.signals_sync_action_side() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$ BEGIN IF NEW.action IS NULL THEN NEW.action := NEW.side; END IF; IF NEW.side IS NULL THEN NEW.side := NEW.action; END IF; RETURN NEW; END; $$;
-
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -476,4 +467,3 @@ ALTER TABLE ONLY public.user_templates
 --
 -- PostgreSQL database dump complete
 --
-

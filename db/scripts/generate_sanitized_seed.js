@@ -29,9 +29,7 @@ const TABLES = [
   "user_templates",
   "sources",
   "execution_profiles",
-  "signals",
   "trades",
-  "market_data",
   "ea_logs",
 ];
 
@@ -104,7 +102,7 @@ function sanitizeRow(table, row) {
   if (table === "accounts" || table === "user_accounts") {
     next.metadata = sanitizeJson(next.metadata);
   }
-  if (table === "trades" || table === "signals") {
+  if (table === "trades") {
     next.metadata = sanitizeJson(next.metadata);
     next.raw_json = sanitizeJson(next.raw_json);
   }

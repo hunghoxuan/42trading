@@ -85,7 +85,7 @@ function _runSqliteMigration(raw) {
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      signal_id TEXT REFERENCES signals(sid) ON DELETE SET NULL,
+      signal_id TEXT,
       source_id TEXT, strategy TEXT, entry_model TEXT, signal_tf TEXT, chart_tf TEXT,
       symbol TEXT NOT NULL, action TEXT NOT NULL, order_type TEXT,
       volume REAL, entry REAL, sl REAL, tp REAL, tp1 REAL, tp2 REAL, tp3 REAL,

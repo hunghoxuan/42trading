@@ -8,6 +8,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const { AsyncLocalStorage } = require("async_hooks");
 const dbQueries = require("../db/queries");
 const {
   eq,
@@ -8613,18 +8614,114 @@ function mt5MapDbRow(row) {
 }
 
 let MT5_INIT_PROMISE = null;
+const MT5_BACKENDS = new Map();
+const MT5_INIT_PROMISES = new Map();
+const MT5_DB_SOURCE_CONTEXT = new AsyncLocalStorage();
 
-async function mt5InitBackend() {
-  if (MT5_BACKEND) return MT5_BACKEND;
-  if (MT5_INIT_PROMISE) return MT5_INIT_PROMISE;
-  MT5_INIT_PROMISE = _mt5InitBackendInternal().catch((e) => {
-    MT5_INIT_PROMISE = null;
-    throw e;
-  });
-  return MT5_INIT_PROMISE;
+function maskDbUrl(url) {
+  return String(url || "").replace(/:[^:@/]+@/, ":***@");
 }
 
-async function _mt5InitBackendInternal() {
+function sameDbTarget(a, b) {
+  try {
+    const ua = new URL(String(a || ""));
+    const ub = new URL(String(b || ""));
+    return (
+      ua.protocol === ub.protocol &&
+      ua.hostname === ub.hostname &&
+      (ua.port || "5432") === (ub.port || "5432") &&
+      ua.pathname === ub.pathname &&
+      ua.username === ub.username
+    );
+  } catch {
+    return false;
+  }
+}
+
+function mt5DbSources() {
+  const out = [];
+  const add = (id, name, url, note = "") => {
+    const cleanId = envStr(id).toLowerCase();
+    const cleanUrl = envStr(url);
+    if (!cleanId || !cleanUrl) return;
+    if (out.some((s) => s.id === cleanId || sameDbTarget(s.url, cleanUrl))) {
+      return;
+    }
+    out.push({ id: cleanId, name, url: cleanUrl, note });
+  };
+  const dbManagerConfig = path.resolve(
+    __dirname,
+    "../db/.local/db-manager/connections.json",
+  );
+  if (fs.existsSync(dbManagerConfig)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(dbManagerConfig, "utf8"));
+      for (const conn of parsed?.connections || []) {
+        add(conn?.id, conn?.name || conn?.id, conn?.connectionString, conn?.note);
+      }
+    } catch (err) {
+      console.warn("[db-source] failed to read db-manager config:", err.message);
+    }
+  }
+  add("local", "Local DB", process.env.MT5_POSTGRES_URL_LOCAL, "Local Postgres");
+  add(
+    "vps",
+    "VPS DB",
+    process.env.MT5_POSTGRES_URL_REMOTE,
+    "VPS Postgres via local tunnel",
+  );
+  add("active", "Active DB", CFG.mt5PostgresUrl, "Webhook default DB");
+  return out;
+}
+
+function resolveMt5DbSource(sourceId = "") {
+  const sources = mt5DbSources();
+  const id = envStr(sourceId).toLowerCase();
+  const found = sources.find((s) => s.id === id);
+  if (found) return found;
+  const active =
+    sources.find((s) => sameDbTarget(s.url, CFG.mt5PostgresUrl)) || sources[0];
+  if (active) return active;
+  return CFG.mt5PostgresUrl
+    ? {
+        id: "active",
+        name: "Active DB",
+        url: CFG.mt5PostgresUrl,
+        note: "Webhook default DB",
+      }
+    : null;
+}
+
+function currentMt5DbSourceId() {
+  return envStr(MT5_DB_SOURCE_CONTEXT.getStore()?.sourceId).toLowerCase();
+}
+
+async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
+  const source = resolveMt5DbSource(sourceId);
+  const cacheKey =
+    CFG.mt5StorageBackend === "sqlite"
+      ? `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}`
+      : source?.id || "active";
+  if (MT5_BACKENDS.has(cacheKey)) return MT5_BACKENDS.get(cacheKey);
+  if (MT5_INIT_PROMISES.has(cacheKey)) return MT5_INIT_PROMISES.get(cacheKey);
+  const promise = _mt5InitBackendInternal(source)
+    .then((backend) => {
+      MT5_BACKENDS.set(cacheKey, backend);
+      if (!MT5_BACKEND || !sourceId) MT5_BACKEND = backend;
+      return backend;
+    })
+    .catch((e) => {
+      MT5_INIT_PROMISES.delete(cacheKey);
+      if (!sourceId) MT5_INIT_PROMISE = null;
+      throw e;
+    });
+  MT5_INIT_PROMISES.set(cacheKey, promise);
+  if (!sourceId) MT5_INIT_PROMISE = promise;
+  return promise;
+}
+
+async function _mt5InitBackendInternal(source = null) {
+  const postgresUrl = source?.url || CFG.mt5PostgresUrl;
   // SQLite mode — skip all PostgreSQL DDL, use Drizzle directly
   if (CFG.mt5StorageBackend === "sqlite") {
     const { initDb } = require("../db");
@@ -8635,8 +8732,10 @@ async function _mt5InitBackendInternal() {
         sqlite: { path: CFG.mt5SqlitePath || "data/trading.db" },
       },
     });
-    MT5_BACKEND = {
+    return {
       storage: "sqlite",
+      source_id: source?.id || "sqlite",
+      source_name: source?.name || "SQLite",
       db,
       schema: s,
       query: (q, p) => {
@@ -8645,10 +8744,9 @@ async function _mt5InitBackendInternal() {
       info: { url: `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}` },
       pool: null,
     };
-    return MT5_BACKEND;
   }
 
-  if (!CFG.mt5PostgresUrl) {
+  if (!postgresUrl) {
     throw new Error(
       "MT5_STORAGE=postgres but POSTGRES_URL/POSTGRE_URL/MT5_POSTGRES_URL is empty",
     );
@@ -8665,7 +8763,7 @@ async function _mt5InitBackendInternal() {
 
   const { Pool } = pgModule;
   const pool = new Pool({
-    connectionString: CFG.mt5PostgresUrl,
+    connectionString: postgresUrl,
     max: 20, // Allow up to 20 concurrent connections
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
@@ -8751,36 +8849,11 @@ async function _mt5InitBackendInternal() {
     -- Keep old tables for safe migration then drop
     DROP TABLE IF EXISTS ai_configs;
 
-    CREATE TABLE IF NOT EXISTS signals (
-      sid TEXT PRIMARY KEY,
-      created_at TIMESTAMPTZ NOT NULL,
-      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      source TEXT,
-      source_id TEXT,
-      symbol TEXT NOT NULL,
-      side TEXT NOT NULL,
-      order_type TEXT NULL, -- market, limit, stop
-      entry DOUBLE PRECISION NULL,
-      entry_model TEXT NULL,
-      strategy TEXT NULL,
-      sl DOUBLE PRECISION NULL,
-      tp DOUBLE PRECISION NULL,
-      signal_tf TEXT NULL,
-      chart_tf TEXT NULL,
-      rr_planned DOUBLE PRECISION NULL,
-      risk_money_planned DOUBLE PRECISION NULL,
-      risk_pct_planned DOUBLE PRECISION NULL,
-      note TEXT,
-      rejection_reason TEXT,
-      raw_json JSONB,
-      status TEXT NOT NULL DEFAULT 'NEW'
-    );
-
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY,
       account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      signal_id TEXT NULL REFERENCES signals(sid) ON DELETE SET NULL,
+      signal_id TEXT NULL,
       source_id TEXT NULL,
       strategy TEXT NULL,
       entry_model TEXT NULL,
@@ -8828,11 +8901,6 @@ async function _mt5InitBackendInternal() {
       be_trigger FLOAT8 NULL
     );
 
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS profile TEXT;
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS confidence_pct FLOAT8;
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS estimated_bars INT;
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS be_trigger FLOAT8;
-
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS profile TEXT;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS confidence_pct FLOAT8;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS estimated_bars INT;
@@ -8844,16 +8912,9 @@ async function _mt5InitBackendInternal() {
 
 
     -- DDL Migrations
-    ALTER TABLE signals ADD COLUMN IF NOT EXISTS order_type TEXT NULL;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS order_type TEXT NULL;
   `);
 
-  await pool.query(
-    `ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry DOUBLE PRECISION NULL`,
-  );
-  await pool.query(
-    `ALTER TABLE signals ADD COLUMN IF NOT EXISTS strategy TEXT NULL`,
-  );
   await pool.query(
     `ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy TEXT NULL`,
   );
@@ -8872,41 +8933,6 @@ async function _mt5InitBackendInternal() {
   await pool.query(
     `ALTER TABLE trades ADD COLUMN IF NOT EXISTS planned_sl_pnl DOUBLE PRECISION NULL`,
   );
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS market_data (
-      id BIGSERIAL PRIMARY KEY,
-      symbol TEXT NOT NULL,
-      tf TEXT NOT NULL,
-      bar_start BIGINT NOT NULL,
-      bar_end BIGINT NOT NULL,
-      data TEXT NOT NULL,
-      metadata JSONB NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      CONSTRAINT market_data_symbol_tf_range_key UNIQUE (symbol, tf, bar_start, bar_end)
-    );
-  `);
-  await pool
-    .query(
-      `ALTER TABLE market_data ADD COLUMN IF NOT EXISTS metadata JSONB NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(
-      `ALTER TABLE market_data ADD COLUMN IF NOT EXISTS last_price DOUBLE PRECISION NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(
-      `ALTER TABLE market_data ADD COLUMN IF NOT EXISTS last_price_at TIMESTAMPTZ NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(
-      `CREATE INDEX IF NOT EXISTS idx_market_data_symbol_tf_bar ON market_data(symbol, tf, bar_start, bar_end)`,
-    )
-    .catch(() => {});
 
   await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).catch(() => {});
   await pool
@@ -8950,59 +8976,9 @@ async function _mt5InitBackendInternal() {
     .query(`ALTER TABLE users RENAME COLUMN user_name TO name`)
     .catch(() => {});
 
-  // Migration: Strip legacy columns from signals/trades that Postgres persists despite IF NOT EXISTS definitions
-  const legacySigCols = [
-    "pnl_money_realized",
-    "entry_price_exec",
-    "sl_exec",
-    "tp_exec",
-    "sl_pips",
-    "tp_pips",
-    "pip_value_per_lot",
-    "risk_money_actual",
-    "reward_money_planned",
-    "reward_money_actual",
-    "ack_status",
-    "ack_ticket",
-    "ack_error",
-    "locked_at",
-    "ack_at",
-    "opened_at",
-    "closed_at",
-  ];
-  for (const col of legacySigCols) {
-    await pool
-      .query(`ALTER TABLE signals DROP COLUMN IF EXISTS ${col}`)
-      .catch(() => {});
-  }
-
   // Migration: keep schema simple and aligned with v2.2 fields.
   await pool
     .query(`ALTER TABLE users DROP COLUMN IF EXISTS balance_start`)
-    .catch(() => {});
-  await pool
-    .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS source_id TEXT NULL`)
-    .catch(() => {});
-  await pool
-    .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS sid TEXT NULL`)
-    .catch(() => {});
-  await pool
-    .query(
-      `ALTER TABLE signals ADD COLUMN IF NOT EXISTS risk_money_planned DOUBLE PRECISION NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(
-      `ALTER TABLE signals ADD COLUMN IF NOT EXISTS risk_pct_planned DOUBLE PRECISION NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(
-      `ALTER TABLE signals ADD COLUMN IF NOT EXISTS rejection_reason TEXT NULL`,
-    )
-    .catch(() => {});
-  await pool
-    .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS id BIGSERIAL`)
     .catch(() => {});
 
   await pool
@@ -9031,9 +9007,6 @@ async function _mt5InitBackendInternal() {
     .query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS sid TEXT NULL`)
     .catch(() => {});
 
-  await pool
-    .query(`ALTER TABLE signals ADD COLUMN IF NOT EXISTS entry_model TEXT NULL`)
-    .catch(() => {});
   await pool
     .query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS name TEXT`)
     .catch(() => {});
@@ -9268,11 +9241,6 @@ async function _mt5InitBackendInternal() {
 
   // Performance Indexes
   const idxSql = [
-    // Signals
-    `CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol)`,
-    `CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(status)`,
-    `CREATE INDEX IF NOT EXISTS idx_signals_sid ON signals(sid)`,
     // Trades
     `CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades(created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol)`,
@@ -9280,7 +9248,6 @@ async function _mt5InitBackendInternal() {
     `CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_broker_ticket ON trades(broker_trade_id)`,
-    `CREATE INDEX IF NOT EXISTS idx_signals_user ON signals(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)`,
   ];
   for (const sql of idxSql) {
@@ -9288,19 +9255,6 @@ async function _mt5InitBackendInternal() {
       .query(sql)
       .catch((e) => console.error(`[db-idx] failed: ${sql}`, e.message));
   }
-  await pool
-    .query(
-      `
-    UPDATE trades t
-    SET entry_model = COALESCE(NULLIF(t.entry_model, ''), NULLIF(s.entry_model, ''), s.raw_json->>'entry_model'),
-        signal_tf = COALESCE(NULLIF(t.signal_tf, ''), s.signal_tf),
-        chart_tf = COALESCE(NULLIF(t.chart_tf, ''), s.chart_tf)
-    FROM signals s
-    WHERE t.signal_id = s.sid
-  `,
-    )
-    .catch(() => {});
-
   const idSidMigrations = [
     { table: "users", legacy: "user_id", prefix: "USR" },
     { table: "accounts", legacy: "account_id", prefix: "ACC" },
@@ -9503,24 +9457,23 @@ END
     ALTER TABLE user_accounts ALTER COLUMN source_ids_cache TYPE TEXT USING source_ids_cache::text;
     ALTER TABLE user_templates ALTER COLUMN data TYPE TEXT USING data::text;
     ALTER TABLE user_settings ALTER COLUMN data TYPE TEXT USING data::text;
-    ALTER TABLE signals ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
-    ALTER TABLE signals ALTER COLUMN metadata TYPE TEXT USING metadata::text;
     ALTER TABLE trades ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
     ALTER TABLE trades ALTER COLUMN metadata TYPE TEXT USING metadata::text;
     ALTER TABLE trades ALTER COLUMN confluence_checklist TYPE TEXT USING confluence_checklist::text;
     ALTER TABLE trades ALTER COLUMN risk_management TYPE TEXT USING risk_management::text;
-    ALTER TABLE market_data ALTER COLUMN bars TYPE TEXT USING bars::text;
   `,
     )
     .catch(() => {}); // ignore if already TEXT
 
-  MT5_BACKEND = {
+  const backend = {
     storage,
+    source_id: source?.id || "active",
+    source_name: source?.name || "Active DB",
     pool,
     db,
     schema,
     query: (q, p) => pool.query(q, p),
-    info: { url: CFG.mt5PostgresUrl.replace(/:[^:@/]+@/, ":***@") },
+    info: { url: maskDbUrl(postgresUrl) },
     async log(objectId, objectTable, metadata = {}, userId = null) {
       return backendLog(objectId, objectTable, metadata, userId);
     },
@@ -12446,10 +12399,8 @@ END
       return [
         "users",
         "user_accounts",
-        "signals",
         "trades",
         "user_settings",
-        "market_data",
         "user_templates",
       ];
     },
@@ -13283,7 +13234,7 @@ END
       err.message,
     ),
   );
-  return MT5_BACKEND;
+  return backend;
 }
 
 async function mt5Backend() {
@@ -17482,7 +17433,7 @@ const appHandler = async (req, res) => {
     );
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, x-api-key, x-active-user-id, Cache-Control, Pragma",
+      "Content-Type, x-api-key, x-active-user-id, x-db-source, Cache-Control, Pragma",
     );
     res.setHeader("Access-Control-Allow-Credentials", "true");
   }
@@ -17514,6 +17465,11 @@ const appHandler = async (req, res) => {
     notifyPulse(null, "webhook");
   }
   const url = incomingUrl;
+  const requestedDbSource =
+    envStr(req.headers["x-db-source"]) ||
+    envStr(url.searchParams.get("db_source")) ||
+    envStr(url.searchParams.get("dbSource"));
+  MT5_DB_SOURCE_CONTEXT.enterWith({ sourceId: requestedDbSource });
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   console.log(
     `[REQUEST] ${req.method} ${req.url} -> ${url.pathname} (IP: ${ip})`,
@@ -18102,6 +18058,21 @@ const appHandler = async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/v2/db-sources") {
+    const active = resolveMt5DbSource(currentMt5DbSourceId());
+    const sources = mt5DbSources().map((source) => ({
+      id: source.id,
+      name: source.name,
+      note: source.note,
+      active: Boolean(active && source.id === active.id),
+    }));
+    return json(res, 200, {
+      ok: true,
+      active: active?.id || "",
+      sources,
+    });
+  }
+
   if (req.method === "GET" && url.pathname === "/health") {
     res.setHeader("Cache-Control", "no-store");
     let postgresOk = false;
@@ -18227,6 +18198,18 @@ const appHandler = async (req, res) => {
   if (req.method === "GET" && url.pathname === "/v2/bullmq/status") {
     const bullmq = await getBullmqStatus();
     return json(res, 200, bullmq);
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/cron/master/toggle") {
+    const body = await readJson(req);
+    if (typeof body.active === "boolean") {
+      CRON_STATE.masterActive = body.active;
+      console.log("[Cron] Master", body.active ? "ACTIVATED" : "PAUSED");
+    } else {
+      CRON_STATE.masterActive = !CRON_STATE.masterActive;
+      console.log("[Cron] Master toggled:", CRON_STATE.masterActive ? "ACTIVE" : "PAUSED");
+    }
+    return json(res, 200, { ok: true, active: CRON_STATE.masterActive });
   }
 
   if (req.method === "GET" && url.pathname === "/v2/cron/snapshots/latest") {
@@ -19262,7 +19245,7 @@ const appHandler = async (req, res) => {
           ok: false,
           error: "Not supported by this backend",
         });
-      const table = envStr(url.searchParams.get("table") || "signals");
+      const table = envStr(url.searchParams.get("table") || "trades");
       if (table.toLowerCase() === "ui_auth_users")
         return json(res, 403, { ok: false, error: "table access forbidden" });
       const schema = await b.getTableSchema(table);
@@ -19408,7 +19391,7 @@ const appHandler = async (req, res) => {
           error: "Not supported by this backend",
         });
 
-      const table = envStr(url.searchParams.get("table") || "signals");
+      const table = envStr(url.searchParams.get("table") || "trades");
       if (table.toLowerCase() === "ui_auth_users") {
         return json(res, 403, { ok: false, error: "table access forbidden" });
       }
@@ -28394,6 +28377,7 @@ const CRON_STATE = {
   lastAiAnalysisRun: {}, // { [userId_name]: timestamp }
   lastSnapshotsRun: {}, // { [userId_name]: timestamp }
   isRunning: false,
+  masterActive: true,
 };
 let MARKET_DATA_QUEUE = null;
 let MARKET_DATA_WORKER = null;
@@ -28928,6 +28912,10 @@ async function mt5CronLoop() {
   global._cronStatus = "running";
 
   const run = async () => {
+    if (!CRON_STATE.masterActive) {
+      global._cronStatus = "paused";
+      return;
+    }
     if (CRON_STATE.isRunning) return;
     CRON_STATE.isRunning = true;
     const startMs = Date.now();
