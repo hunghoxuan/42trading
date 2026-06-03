@@ -24,6 +24,7 @@ function initDb(config) {
     _raw = sqlite;
     const inst = drizzle(sqlite, { schema });
     _dbInstances.set(key, inst);
+    if (!_db) _db = inst;
     _backend = "sqlite";
     _runSqliteMigration(sqlite);
     console.log(`[DB] SQLite connected: ${dbPath}`);
@@ -43,6 +44,7 @@ function initDb(config) {
       });
     const inst = drizzle(pool, { schema });
     _dbInstances.set(key, inst);
+    if (!_db) _db = inst;
     _backend = "postgres";
     console.log("[DB] PostgreSQL connected");
     return inst;
@@ -50,9 +52,8 @@ function initDb(config) {
 }
 
 function getDb() {
-  const first = _dbInstances.values().next().value;
-  if (!first) throw new Error("DB not initialized. Call initDb(config) first.");
-  return first;
+  if (!_db) throw new Error("DB not initialized. Call initDb(config) first.");
+  return _db;
 }
 
 function getBackend() {
