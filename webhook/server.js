@@ -8709,6 +8709,7 @@ async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
     CFG.mt5StorageBackend === "sqlite"
       ? `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}`
       : source?.id || "active";
+  console.log("[db-source] mt5InitBackend sourceId=", sourceId, "source=", source?.id, "cacheKey=", cacheKey);
   if (MT5_BACKENDS.has(cacheKey)) return MT5_BACKENDS.get(cacheKey);
   if (MT5_INIT_PROMISES.has(cacheKey)) return MT5_INIT_PROMISES.get(cacheKey);
   const promise = _mt5InitBackendInternal(source)
@@ -20339,6 +20340,7 @@ const appHandler = async (req, res) => {
 
     try {
       const db = await mt5InitBackend(""); // always use default backend for settings
+      console.log("[settings] GET backend source=", currentMt5DbSourceId() || "(default)");
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       console.log(
         `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
