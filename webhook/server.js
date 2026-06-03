@@ -20345,45 +20345,27 @@ const appHandler = async (req, res) => {
       console.log(
         `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
       );
-      await dbQueries.upsertUserSetting(
-        db.db,
-        userId,
-        "cron",
-        "CRON_MD_DEFAULT",
-        {
-          cron_type: "MARKET_DATA_CRON",
-          enabled: false,
-          provider: "twelvedata",
-          timezone: CFG.marketDataDefaultTimezone,
-          symbols: [],
-          timeframes: ["1m", "5m", "15m"],
-          batch_size: CFG.marketDataCronBatchSize,
-          last_sync: {},
-        },
-        "INACTIVE",
-      );
-      await dbQueries.upsertUserSetting(
-        db.db,
-        userId,
-        "cron",
-        "CRON_AI_DEFAULT",
-        {
-          cron_type: "ANALYSIS_CRON",
-          enabled: false,
-          refresh_snapshot: false,
-          symbols: [],
-          timeframes: ["15m", "1h"],
-          cadence_minutes: 60,
-          model: "claude-sonnet-4-0",
-          profile: "",
-          entry_models: [],
-          directions: ["BUY", "SELL"],
-          order_types: ["market", "limit", "stop"],
-          prompt: "",
-          last_sync: {},
-        },
-        "INACTIVE",
-      );
+      // Seed default cron templates only if they don't exist yet
+      const existingCron = await dbQueries.getUserSettingData(
+        db.db, userId, "cron", "CRON_MD_DEFAULT",
+      ).catch(() => null);
+      if (!existingCron || Object.keys(existingCron).length === 0) {
+        await dbQueries.upsertUserSetting(
+          db.db, userId, "cron", "CRON_MD_DEFAULT",
+          { cron_type: "MARKET_DATA_CRON", enabled: false, provider: "twelvedata", timezone: CFG.marketDataDefaultTimezone, symbols: [], timeframes: ["1m", "5m", "15m"], batch_size: CFG.marketDataCronBatchSize, last_sync: {} },
+          "INACTIVE",
+        );
+      }
+      const existingAiCron = await dbQueries.getUserSettingData(
+        db.db, userId, "cron", "CRON_AI_DEFAULT",
+      ).catch(() => null);
+      if (!existingAiCron || Object.keys(existingAiCron).length === 0) {
+        await dbQueries.upsertUserSetting(
+          db.db, userId, "cron", "CRON_AI_DEFAULT",
+          { cron_type: "ANALYSIS_CRON", enabled: false, refresh_snapshot: false, symbols: [], timeframes: ["15m", "1h"], cadence_minutes: 60, model: "claude-sonnet-4-0", profile: "", entry_models: [], directions: ["BUY", "SELL"], order_types: ["market", "limit", "stop"], prompt: "", last_sync: {} },
+          "INACTIVE",
+        );
+      }
       const rows = await repoListUserSettings(userId);
       const settings = rows.map((r) => {
         let d = r.data;
