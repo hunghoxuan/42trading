@@ -9950,7 +9950,7 @@ END
               SET dispatch_status = 'REJECTED',
                   execution_status = 'REJECTED',
                   rejection_reason = COALESCE(rejection_reason, $2),
-                  metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb - 'last_broker_snapshot_hash',
+                  metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $3::jsonb - 'last_broker_snapshot_hash',
                   updated_at = NOW()
               WHERE sid = $1
             `,
@@ -10006,7 +10006,7 @@ END
               SET dispatch_status = $4::text,
                   execution_status = CASE WHEN $4::text = 'CANCEL' THEN 'CANCELLED' ELSE 'REJECTED' END,
                   rejection_reason = COALESCE(rejection_reason, $2),
-                  metadata = (COALESCE(metadata, '{}'::jsonb) || $3::jsonb) - 'last_broker_snapshot_hash',
+                  metadata = (COALESCE(metadata::jsonb, '{}'::jsonb) || $3::jsonb) - 'last_broker_snapshot_hash',
                   updated_at = NOW()
               WHERE sid = $1
             `,
@@ -10186,7 +10186,7 @@ END
             : undefined,
           metadata: sql`CASE
             WHEN ${JSON.stringify(telemetryMeta)}::jsonb = '{}'::jsonb THEN ${schema.trades.metadata}
-            ELSE COALESCE(${schema.trades.metadata}, '{}'::jsonb) || ${JSON.stringify(telemetryMeta)}::jsonb
+            ELSE COALESCE(${schema.trades.metadata}::jsonb, '{}'::jsonb) || ${JSON.stringify(telemetryMeta)}::jsonb
           END`,
           openedAt: sql`COALESCE(${openedAt}::timestamptz, ${schema.trades.openedAt}, CASE WHEN ${payload.execution_status} IN ('FILLED','OPEN') THEN ${now}::timestamptz ELSE NULL END)`,
           closedAt: sql`COALESCE(${closedAt}::timestamptz, CASE WHEN ${isClosed} = TRUE THEN ${now}::timestamptz ELSE NULL END)`,
@@ -10347,7 +10347,7 @@ END
               broker_trade_id = COALESCE(NULLIF($3, ''), broker_trade_id),
               pnl_realized = CASE WHEN $4 = TRUE THEN COALESCE($5, pnl_realized) ELSE pnl_realized END,
               order_type = COALESCE($7, order_type),
-              metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
+              metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $6::jsonb,
               closed_at = CASE WHEN $4 = TRUE THEN NOW() ELSE closed_at END,
               updated_at = NOW()
           WHERE sid = $2
@@ -10988,7 +10988,7 @@ END
               UPDATE trades
               SET broker_trade_id = NULL,
                   execution_status = CASE WHEN execution_status = 'FILLED' THEN 'PENDING' ELSE execution_status END,
-                  metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+                  metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $4::jsonb,
                   updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
               WHERE account_id = $1
                 AND broker_trade_id = ANY($2::text[])
@@ -11050,7 +11050,7 @@ END
                 dispatch_status = CASE WHEN $30::boolean OR dispatch_status = 'LEASED' THEN 'CONSUMED' ELSE dispatch_status END,
                 rejection_reason = CASE WHEN $30::boolean THEN NULL ELSE rejection_reason END,
                 note = COALESCE(NULLIF($25::text, ''), note),
-                metadata = COALESCE(metadata, '{}'::jsonb) || $10::jsonb,
+                metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $10::jsonb,
                 opened_at = COALESCE($5::timestamptz, opened_at, CASE WHEN $1::text IN ('FILLED','OPEN') THEN NOW() ELSE NULL END),
                 closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $30::boolean THEN NOW() ELSE updated_at END
@@ -11136,7 +11136,7 @@ END
                 note = COALESCE(NULLIF($24::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($7::text, close_reason) ELSE close_reason END,
-                metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
+                metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $8::jsonb,
                 opened_at = COALESCE($9::timestamptz, opened_at, CASE WHEN $1::text IN ('FILLED','OPEN') THEN NOW() ELSE NULL END),
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($10::timestamptz, closed_at, NOW()) ELSE closed_at END,
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $29::boolean THEN NOW() ELSE updated_at END
@@ -11224,7 +11224,7 @@ END
                 note = COALESCE(NULLIF($23::text, ''), note),
                 order_type = COALESCE($11::text, order_type),
                 close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($6::text, close_reason) ELSE close_reason END,
-                metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
+                metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $7::jsonb,
                 closed_at = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::timestamptz, closed_at, NOW()) ELSE closed_at END,
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text THEN NOW() ELSE updated_at END
             WHERE sid = (
@@ -11373,7 +11373,7 @@ END
             if (resolvedSid && ticketCandidates[0]) {
               // Try to link to any existing trade with this SID (not just CANCELLED/REJECTED)
               const linked = await pool.query(
-                `UPDATE trades SET broker_trade_id = COALESCE(NULLIF($1::text, ''), broker_trade_id), execution_status = CASE WHEN $4::text IN ('FILLED','PENDING') AND execution_status IN ('CANCELLED','REJECTED') THEN $4::text ELSE execution_status END, metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE sid = $3 AND (broker_trade_id IS NULL OR broker_trade_id = '' OR broker_trade_id != $1) RETURNING sid`,
+                `UPDATE trades SET broker_trade_id = COALESCE(NULLIF($1::text, ''), broker_trade_id), execution_status = CASE WHEN $4::text IN ('FILLED','PENDING') AND execution_status IN ('CANCELLED','REJECTED') THEN $4::text ELSE execution_status END, metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE sid = $3 AND (broker_trade_id IS NULL OR broker_trade_id = '' OR broker_trade_id != $1) RETURNING sid`,
                 [
                   ticketCandidates[0],
                   syncMeta,
@@ -11961,7 +11961,7 @@ END
                   leaseExpiresAt: null,
                 }
               : {}),
-            metadata: sql`COALESCE(${schema.trades.metadata}, '{}'::jsonb) || ${manualMeta}::jsonb`,
+            metadata: sql`COALESCE(${schema.trades.metadata}::jsonb, '{}'::jsonb) || ${manualMeta}::jsonb`,
             ...(newDispatchStatus != null
               ? {}
               : {
@@ -12672,7 +12672,7 @@ END
           name = EXCLUDED.name,
           balance = EXCLUDED.balance,
           status = EXCLUDED.status,
-          metadata = COALESCE(user_accounts.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+          metadata = COALESCE(user_accounts.metadata::jsonb, '{}'::jsonb) || EXCLUDED.metadata,
           equity = COALESCE(EXCLUDED.equity, user_accounts.equity),
           margin = COALESCE(EXCLUDED.margin, user_accounts.margin),
           free_margin = COALESCE(EXCLUDED.free_margin, user_accounts.free_margin),
@@ -26096,7 +26096,7 @@ const appHandler = async (req, res) => {
           tp2 = COALESCE($6::double precision, tp2),
           tp3 = COALESCE($7::double precision, tp3),
           note = COALESCE($8::text, note),
-          metadata = COALESCE(metadata, '{}'::jsonb) || $9::jsonb,
+          metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $9::jsonb,
           confidence_pct = COALESCE($10::double precision, confidence_pct),
           estimated_bars = COALESCE($11::double precision, estimated_bars),
           profile = COALESCE($12::text, profile),
