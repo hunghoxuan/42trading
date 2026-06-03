@@ -221,7 +221,7 @@ Do not round to fewer decimals than the symbol precision.`;
 
 const SERVER_VERSION = envStr(
   process.env.WEBHOOK_SERVER_VERSION,
-  "v2026.05.28 12:18 - d008212f",
+  "v2026.06.03 22:08 - 0478cba92",
 ); // broker live price stream, tracked-symbols api, timer-split sync+price
 
 const SERVER_LOG_DIR = envStr(

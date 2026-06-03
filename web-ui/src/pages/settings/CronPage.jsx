@@ -447,7 +447,7 @@ export default function CronPage() {
       return;
     }
     if (selectedCron) {
-      const d = selectedCron.data || {};
+      const d = typeof selectedCron.data === "string" ? JSON.parse(selectedCron.data) : (selectedCron.data || {});
       setForm(formFromCronData(d));
       setCronName(selectedCron.name || "");
       setSymbolsGroup(d.symbols_group || "");
