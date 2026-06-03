@@ -5,10 +5,14 @@ let _db = null;
 let _backend = null;
 let _raw = null;
 
-function initDb(config) {
-  if (_db) return _db;
+const _dbInstances = new Map();
 
+function initDb(config) {
   const backend = config?.storage?.backend || "postgres";
+  const key = backend === "sqlite"
+    ? `sqlite:${config?.storage?.sqlite?.path || "./trading.db"}`
+    : `postgres:${config?.pool?.options?.connectionString || ""}`;
+  if (_dbInstances.has(key)) return _dbInstances.get(key);
 
   if (backend === "sqlite") {
     const Database = require("better-sqlite3");
@@ -18,10 +22,12 @@ function initDb(config) {
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");
     _raw = sqlite;
-    _db = drizzle(sqlite, { schema });
+    const inst = drizzle(sqlite, { schema });
+    _dbInstances.set(key, inst);
     _backend = "sqlite";
     _runSqliteMigration(sqlite);
     console.log(`[DB] SQLite connected: ${dbPath}`);
+    return inst;
   } else {
     // PostgreSQL (default)
     const { drizzle } = require("drizzle-orm/node-postgres");
@@ -35,17 +41,18 @@ function initDb(config) {
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
       });
-    _db = drizzle(pool, { schema });
+    const inst = drizzle(pool, { schema });
+    _dbInstances.set(key, inst);
     _backend = "postgres";
     console.log("[DB] PostgreSQL connected");
+    return inst;
   }
-
-  return _db;
 }
 
 function getDb() {
-  if (!_db) throw new Error("DB not initialized. Call initDb(config) first.");
-  return _db;
+  const first = _dbInstances.values().next().value;
+  if (!first) throw new Error("DB not initialized. Call initDb(config) first.");
+  return first;
 }
 
 function getBackend() {

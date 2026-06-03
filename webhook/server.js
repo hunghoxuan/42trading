@@ -8681,6 +8681,7 @@ function mt5DbSources() {
 function resolveMt5DbSource(sourceId = "") {
   const sources = mt5DbSources();
   const id = envStr(sourceId).toLowerCase();
+  console.log("[db-source] resolveMt5DbSource id=", id, "sources=", sources.map(s => s.id));
   const found = sources.find((s) => s.id === id);
   if (found) return found;
   const active =
@@ -8697,7 +8698,9 @@ function resolveMt5DbSource(sourceId = "") {
 }
 
 function currentMt5DbSourceId() {
-  return envStr(MT5_DB_SOURCE_CONTEXT.getStore()?.sourceId).toLowerCase();
+  return envStr(
+    MT5_DB_SOURCE_CONTEXT.getStore()?.sourceId || global._requestDbSource,
+  ).toLowerCase();
 }
 
 async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
@@ -8726,6 +8729,7 @@ async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
 
 async function _mt5InitBackendInternal(source = null) {
   const postgresUrl = source?.url || CFG.mt5PostgresUrl;
+  console.log("[db-source] _mt5InitBackendInternal url=", postgresUrl?.replace(/:[^:@]+@/, ":***@"));
   // SQLite mode — skip all PostgreSQL DDL, use Drizzle directly
   if (CFG.mt5StorageBackend === "sqlite") {
     const { initDb } = require("../db");
@@ -13242,6 +13246,8 @@ END
 }
 
 async function mt5Backend() {
+  const srcId = currentMt5DbSourceId();
+  console.log("[db-source] mt5Backend called, source=", srcId || "default");
   return mt5InitBackend();
 }
 
@@ -17474,6 +17480,9 @@ const appHandler = async (req, res) => {
     envStr(url.searchParams.get("db_source")) ||
     envStr(url.searchParams.get("dbSource"));
   MT5_DB_SOURCE_CONTEXT.enterWith({ sourceId: requestedDbSource });
+  // Also set global for async callbacks that lose the context
+  global._requestDbSource = requestedDbSource;
+  console.log("[db-source] request set global._requestDbSource =", requestedDbSource || "(empty)");
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   console.log(
     `[REQUEST] ${req.method} ${req.url} -> ${url.pathname} (IP: ${ip})`,
