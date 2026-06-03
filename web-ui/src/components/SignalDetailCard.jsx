@@ -558,18 +558,6 @@ function PlanHeader({
     statusText === "DRAFT" ||
     statusText === "PLANNED";
   const pnlText = typeof pnl === "string" && pnl.trim() ? pnl.trim() : "";
-  const plannedWinText = fmtMoney(
-    plan?.broker_tp_pnl ??
-      plan?.tp_pnl ??
-      plan?.planned_tp_profit ??
-      plan?.planned_win,
-  );
-  const plannedLoseText = fmtMoney(
-    plan?.broker_sl_pnl ??
-      plan?.sl_pnl ??
-      plan?.planned_sl_profit ??
-      plan?.planned_lose,
-  );
   const estimatedBars =
     plan.estimated_bars ?? plan.estimate_bars_that_entry_happens ?? null;
   const confidenceLevel = (plan.confidence_level || "").toLowerCase();
@@ -678,9 +666,8 @@ function PlanHeader({
           textAlign: "right",
         }}
       >
-        {/* Row 1: pnl/planned metrics */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {!isPendingLike && pnlText && (
+        {!isPendingLike && pnlText && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span
               title="Realized/Live PnL for filled/open trade"
               style={{
@@ -691,32 +678,8 @@ function PlanHeader({
             >
               PnL: {pnlText}
             </span>
-          )}
-          {isPendingLike && plannedWinText && (
-            <span
-              title="Planned take-profit outcome if TP is hit"
-              style={{
-                fontSize: "10px",
-                fontWeight: 400,
-                color: "#22c55e",
-              }}
-            >
-              Win: {plannedWinText}
-            </span>
-          )}
-          {isPendingLike && plannedLoseText && (
-            <span
-              title="Planned stop-loss outcome if SL is hit"
-              style={{
-                fontSize: "10px",
-                fontWeight: 400,
-                color: "#ef4444",
-              }}
-            >
-              Lose: {plannedLoseText}
-            </span>
-          )}
-        </div>
+          </div>
+        )}
 
         {(sidVal || brokerIdVal || statusText) && (
           <div
@@ -1126,6 +1089,16 @@ export default function SignalDetailCard({
     return hash || "chart";
   });
 
+  useEffect(() => {
+    const syncTabFromHash = () => {
+      const hash = window.location.hash?.replace("#", "") || "chart";
+      setMainTab(hash);
+    };
+    window.addEventListener("hashchange", syncTabFromHash);
+    syncTabFromHash();
+    return () => window.removeEventListener("hashchange", syncTabFromHash);
+  }, []);
+
   const handleTabChange = (t) => {
     setMainTab(t);
     window.location.hash = t;
@@ -1300,10 +1273,18 @@ export default function SignalDetailCard({
             broker_trade_id:
               response?.broker_trade_id || response?.ticket || "",
             confidence: tradePlan?.value?.confidence_pct,
+            volume: tradePlan?.value?.volume,
+            volume_basis_lots: tradePlan?.value?.volume_basis_lots,
+            volume_units: tradePlan?.value?.volume_units,
+            broker_lots: tradePlan?.value?.broker_lots,
             risk_money_planned:
               tradePlan?.value?.risk_money_planned ??
               tradePlan?.value?.risk_money,
             risk_money: tradePlan?.value?.risk_money,
+            planned_tp_pnl: tradePlan?.value?.planned_tp_pnl,
+            planned_sl_pnl: tradePlan?.value?.planned_sl_pnl,
+            broker_tp_pnl: tradePlan?.value?.broker_tp_pnl,
+            broker_sl_pnl: tradePlan?.value?.broker_sl_pnl,
             risk_management: tradePlan?.value?.risk_management,
             entry_condition: tradePlan?.value?.entry_condition,
             exit_condition: tradePlan?.value?.exit_condition,
@@ -1340,10 +1321,18 @@ export default function SignalDetailCard({
                 entryModel: tradePlan?.value?.entry_model,
                 source_id: tradePlan?.value?.source_id,
                 source: tradePlan?.value?.source,
+                volume: tradePlan?.value?.volume,
+                volume_basis_lots: tradePlan?.value?.volume_basis_lots,
+                volume_units: tradePlan?.value?.volume_units,
+                broker_lots: tradePlan?.value?.broker_lots,
                 risk_money_planned:
                   tradePlan?.value?.risk_money_planned ??
                   tradePlan?.value?.risk_money,
                 risk_money: tradePlan?.value?.risk_money,
+                planned_tp_pnl: tradePlan?.value?.planned_tp_pnl,
+                planned_sl_pnl: tradePlan?.value?.planned_sl_pnl,
+                broker_tp_pnl: tradePlan?.value?.broker_tp_pnl,
+                broker_sl_pnl: tradePlan?.value?.broker_sl_pnl,
                 sid: response?.sid || response?.id || tradePlan?.tradeId || "",
                 broker_trade_id:
                   response?.broker_trade_id || response?.ticket || "",
@@ -1924,7 +1913,7 @@ export default function SignalDetailCard({
                     border: isSelected
                       ? "2px solid var(--accent)"
                       : "1px solid var(--accent-soft)",
-                    padding: "8px 12px",
+                    padding: "14px 12px",
                     borderRadius: 10,
                     background: isSelected
                       ? "rgba(255,255,255,0.05)"
@@ -2118,6 +2107,8 @@ export default function SignalDetailCard({
                   provider={chart?.provider || ""}
                   timeframes={effectiveTfs}
                   defaultMode="cache"
+                  enableChartObjects={true}
+                  showEventMarkers={true}
                   initialGridCols={2}
                   entryPrice={chart?.entryPrice}
                   slPrice={chart?.slPrice}
@@ -2125,6 +2116,10 @@ export default function SignalDetailCard({
                   tp1Price={chart?.tp1Price}
                   tp2Price={chart?.tp2Price}
                   tp3Price={chart?.tp3Price}
+                  createdAt={chart?.createdAt}
+                  openedAt={chart?.openedAt}
+                  closedAt={chart?.closedAt}
+                  closeStatus={tradePlan?.execution_status || ""}
                   tradeSid={
                     chart?.tradeId || response?.sid || response?.id || ""
                   }
@@ -2930,12 +2925,35 @@ export default function SignalDetailCard({
                               : null,
                         },
                         {
-                          l: "Risk %",
+                          l: "Volume",
                           v:
-                            rm.risk_percent != null
-                              ? `${rm.risk_percent}%`
+                            plan?.volume != null
+                              ? `${Number(plan.volume).toFixed(2)} lots`
                               : null,
                         },
+                        (() => {
+                          const tpPnl =
+                            plan?.broker_tp_pnl ??
+                            plan?.planned_tp_pnl ??
+                            plan?.tp_pnl;
+                          const slPnl =
+                            plan?.broker_sl_pnl ??
+                            plan?.planned_sl_pnl ??
+                            plan?.sl_pnl;
+                          const fmtPnl = (v) => {
+                            const n = Number(v);
+                            if (!Number.isFinite(n)) return null;
+                            const abs = Math.abs(n).toLocaleString(undefined, {
+                              minimumFractionDigits: 0,
+                              maximumFractionDigits: 2,
+                            });
+                            return `${n >= 0 ? "+" : "-"}$${abs}`;
+                          };
+                          return [
+                            { l: "PnL TP", v: fmtPnl(tpPnl), cls: "money-pos" },
+                            { l: "PnL SL", v: fmtPnl(slPnl), cls: "money-neg" },
+                          ];
+                        })(),
                         { l: "Grade", v: rm.grade },
                         {
                           l: "Skip",
@@ -2958,7 +2976,9 @@ export default function SignalDetailCard({
                             : rm.skip_reasons,
                           f: 1,
                         },
-                      ].filter((r) => r.v != null && String(r.v) !== "");
+                      ]
+                        .flat()
+                        .filter((r) => r.v != null && String(r.v) !== "");
                       if (!rows.length) return null;
                       return (
                         <div key={`rm-${pi}`} style={sec}>
@@ -2986,11 +3006,12 @@ export default function SignalDetailCard({
                                 </span>
                                 <div style={{ fontSize: 11, marginTop: 1 }}>
                                   <span
+                                    className={r.cls || ""}
                                     style={{
                                       display: "inline-block",
                                       padding: "1px 6px",
                                       borderRadius: 999,
-                                      ...semanticBadgeStyle(r.v),
+                                      ...(r.cls ? {} : semanticBadgeStyle(r.v)),
                                     }}
                                   >
                                     {r.v}
@@ -3291,11 +3312,9 @@ export default function SignalDetailCard({
             return (
               <div style={{ padding: "0 4px" }}>
                 <div
-                  className="fields-grid"
+                  className="fields-grid trade-info-grid"
                   style={{
                     display: "grid",
-                    gridTemplateColumns:
-                      "repeat(auto-fill, minmax(180px, 1fr))",
                     gap: 16,
                     padding: 20,
                     background: "rgba(255,255,255,0.02)",
@@ -3361,6 +3380,8 @@ export default function SignalDetailCard({
             provider={chart?.provider || ""}
             timeframes={effectiveTfs}
             defaultMode={chart?.mode || "live"}
+            enableChartObjects={false}
+            showEventMarkers={false}
             initialGridCols={
               Number.isFinite(Number(chart?.initialGridCols)) &&
               Number(chart?.initialGridCols) > 0

@@ -1,6 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
-import { asNumValue, showDateTime } from "../utils/format";
+import {
+  asNumValue,
+  formatChartDateTime,
+  getEffectiveDisplayTimezone,
+} from "../utils/format";
 import { chartFetchManager } from "../services/chartFetchManager";
 import { normalizePlanLinePrice } from "../utils/tradePlanDrafts";
 
@@ -87,6 +91,29 @@ function ensureValidBars(bars, minBars) {
   return clean.length >= min ? clean : [];
 }
 
+function countPriceDecimals(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  const normalized = n.toFixed(10).replace(/0+$/, "").replace(/\.$/, "");
+  const idx = normalized.indexOf(".");
+  return idx >= 0 ? normalized.length - idx - 1 : 0;
+}
+
+function inferPricePrecision(values = []) {
+  let precision = 0;
+  for (const value of values) {
+    precision = Math.max(precision, countPriceDecimals(value));
+  }
+  return Math.min(Math.max(precision, 0), 8);
+}
+
+function formatPriceWithPrecision(value, precision) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  const safePrecision = Math.min(Math.max(Number(precision) || 0, 0), 8);
+  return n.toFixed(safePrecision);
+}
+
 function parsePdZoneBounds(item) {
   const localAsNum = (v) => {
     const n = Number(v);
@@ -158,6 +185,32 @@ function extractAnalysisSnapshot(analysisSnapshot) {
   if (analysisSnapshot && typeof analysisSnapshot === "object")
     return analysisSnapshot;
   return null;
+}
+
+function toEpochSec(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n > 100000000000 ? Math.floor(n / 1000) : Math.floor(n);
+}
+
+function lineStyleToChartValue(styleRaw) {
+  const style = String(styleRaw || "").trim().toLowerCase();
+  if (style === "dotted" || style === "dot") return 1;
+  if (style === "dashed" || style === "dash") return 2;
+  return 0;
+}
+
+function formatSharedObjectLabel(type, rawLabel) {
+  const typeText = String(type || "").trim();
+  const labelText = String(rawLabel || "").trim();
+  if (!typeText && !labelText) return "";
+  if (!typeText) return labelText;
+  if (!labelText) return typeText;
+  const lowerType = typeText.toLowerCase();
+  const lowerLabel = labelText.toLowerCase();
+  if (lowerLabel === lowerType) return typeText;
+  if (lowerLabel.startsWith(`${lowerType} `)) return labelText;
+  return `${typeText} ${labelText}`;
 }
 
 /**
@@ -303,6 +356,89 @@ class SignalCreationLinePrimitive {
   }
 }
 
+class TimeRangeBoxPrimitive {
+  constructor({
+    startTimeSec,
+    endTimeSec = null,
+    priceLow,
+    priceHigh,
+    lineColor = "#60a5fa",
+    fillColor = "rgba(96,165,250,0.14)",
+    extendRight = false,
+  }) {
+    this._startTime = startTimeSec;
+    this._endTime = endTimeSec;
+    this._priceLow = priceLow;
+    this._priceHigh = priceHigh;
+    this._lineColor = lineColor;
+    this._fillColor = fillColor;
+    this._extendRight = extendRight;
+    this._series = null;
+    this._chart = null;
+  }
+
+  attached({ series, chart }) {
+    this._series = series;
+    this._chart = chart;
+  }
+
+  detached() {
+    this._series = null;
+    this._chart = null;
+  }
+
+  updateAllViews() {}
+
+  priceAxisViews() {
+    return [];
+  }
+
+  paneViews() {
+    const self = this;
+    return [
+      {
+        renderer() {
+          return {
+            draw: (target) => {
+              if (!self._series || !self._chart) return;
+              target.useBitmapCoordinateSpace((scope) => {
+                const ctx = scope.context;
+                const r = scope.bitmapSize;
+                const ts = self._chart.timeScale();
+                const ps = self._series;
+                const yHigh = ps.priceToCoordinate(self._priceHigh);
+                const yLow = ps.priceToCoordinate(self._priceLow);
+                if (yHigh == null || yLow == null) return;
+                const xStart = ts.timeToCoordinate(self._startTime);
+                if (xStart == null) return;
+                const xEnd = self._endTime
+                  ? ts.timeToCoordinate(self._endTime)
+                  : null;
+                const pixelRatioX = scope.horizontalPixelRatio || 1;
+                const pixelRatioY = scope.verticalPixelRatio || 1;
+                const x0 = Math.max(0, Math.round(xStart * pixelRatioX));
+                const x1 = self._extendRight || xEnd == null
+                  ? r.width
+                  : Math.min(r.width, Math.round(xEnd * pixelRatioX));
+                const y0 = Math.round(Math.min(yHigh, yLow) * pixelRatioY);
+                const y1 = Math.round(Math.max(yHigh, yLow) * pixelRatioY);
+                if (x1 <= x0 || y1 <= y0) return;
+                ctx.save();
+                ctx.fillStyle = self._fillColor;
+                ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+                ctx.strokeStyle = self._lineColor;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+                ctx.restore();
+              });
+            },
+          };
+        },
+      },
+    ];
+  }
+}
+
 export default function TradeSignalChart({
   chartId = "",
   symbol = "BTCUSDT",
@@ -319,6 +455,7 @@ export default function TradeSignalChart({
   createdAt = null,
   openedAt = null,
   closedAt = null,
+  closeStatus = "",
   analysisSnapshot = null,
   showPrimaryPlan = true,
   showExtraPlans = true,
@@ -329,6 +466,7 @@ export default function TradeSignalChart({
   onCrosshairSync = null,
   onBarsLoaded = null,
   sharedLines = [],
+  sharedObjects = [],
   onContextRequest = null,
   onViewportChange = null,
   initialViewport = null,
@@ -337,8 +475,14 @@ export default function TradeSignalChart({
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const suppressCrosshairSyncRef = useRef(false);
+  const pricePrecisionRef = useRef(5);
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState("");
+  const [timezoneTick, setTimezoneTick] = useState(0);
+  const displayTimezone = useMemo(
+    () => getEffectiveDisplayTimezone(),
+    [timezoneTick],
+  );
   const tvSymbol = toTradingViewSymbol(symbol);
   const tvInterval = toTradingViewInterval(interval);
   const lwTimeToMs = useCallback((v) => {
@@ -358,6 +502,13 @@ export default function TradeSignalChart({
       }
     }
     return null;
+  }, []);
+
+  useEffect(() => {
+    const onTimezoneUiChanged = () => setTimezoneTick((n) => n + 1);
+    window.addEventListener("ui-timezone-changed", onTimezoneUiChanged);
+    return () =>
+      window.removeEventListener("ui-timezone-changed", onTimezoneUiChanged);
   }, []);
 
   useEffect(() => {
@@ -385,6 +536,8 @@ export default function TradeSignalChart({
           borderColor: "rgba(197, 203, 206, 0.4)",
           timeVisible: true,
           secondsVisible: false,
+          tickMarkFormatter: (time) =>
+            formatChartDateTime(Number(time) * 1000, displayTimezone),
         },
         rightPriceScale: {
           borderColor: "rgba(197, 203, 206, 0.3)",
@@ -393,11 +546,10 @@ export default function TradeSignalChart({
         },
         localization: {
           priceFormatter: (price) => {
-            if (price >= 1000) return price.toFixed(1);
-            if (price >= 100) return price.toFixed(2);
-            if (price >= 1) return price.toFixed(3);
-            return price.toFixed(5);
+            return formatPriceWithPrecision(price, pricePrecisionRef.current);
           },
+          timeFormatter: (time) =>
+            formatChartDateTime(Number(time) * 1000, displayTimezone),
         },
       });
 
@@ -584,6 +736,36 @@ export default function TradeSignalChart({
             return;
           }
 
+          const precisionCandidates = [];
+          for (const bar of candles) {
+            precisionCandidates.push(bar?.open, bar?.high, bar?.low, bar?.close);
+          }
+          precisionCandidates.push(
+            entryPrice,
+            slPrice,
+            tpPrice,
+            tp1Price,
+            tp2Price,
+            tp3Price,
+          );
+          const nextPrecision = inferPricePrecision(precisionCandidates);
+          pricePrecisionRef.current = nextPrecision;
+          candleSeries.applyOptions({
+            priceFormat: {
+              type: "price",
+              precision: nextPrecision,
+              minMove: 1 / 10 ** nextPrecision,
+            },
+          });
+          chart.applyOptions({
+            localization: {
+              priceFormatter: (price) =>
+                formatPriceWithPrecision(price, pricePrecisionRef.current),
+              timeFormatter: (time) =>
+                formatChartDateTime(Number(time) * 1000, displayTimezone),
+            },
+          });
+
           if (isMounted) {
             try {
               candleSeries.setData(candles);
@@ -596,8 +778,18 @@ export default function TradeSignalChart({
               onBarsLoaded(interval, candles.length);
             }
 
-            // --- MARKERS: creation/open/close arrows, NO text overlays ---
+            // --- MARKERS: creation/open/close markers ---
             const markers = [];
+            const normalizedCloseStatus = String(closeStatus || "")
+              .trim()
+              .toUpperCase();
+            const closeMarkerColor = ["TP"].includes(normalizedCloseStatus)
+              ? "#10b981"
+              : ["SL", "REJECTED", "FAIL", "ERROR", "CANCELLED"].includes(
+                    normalizedCloseStatus,
+                  )
+                ? "#ef4444"
+                : "#f59e0b";
             let createdTs = null;
             if (createdAt) {
               createdTs = Math.floor(new Date(createdAt).getTime() / 1000);
@@ -607,8 +799,14 @@ export default function TradeSignalChart({
                   position: "belowBar",
                   color: "#9ca3af",
                   shape: "arrowUp",
-                  text: "",
+                  text: "Created",
                 });
+                candleSeries.attachPrimitive(
+                  new SignalCreationLinePrimitive(
+                    createdTs,
+                    "rgba(156, 163, 175, 0.45)",
+                  ),
+                );
               }
             }
             if (openedAt) {
@@ -616,35 +814,47 @@ export default function TradeSignalChart({
               const nearCreated =
                 Number.isFinite(createdTs) &&
                 Math.abs(openTs - createdTs) <= 60;
-              if (!nearCreated) {
+              if (nearCreated && markers.length) {
+                markers[markers.length - 1] = {
+                  ...markers[markers.length - 1],
+                  color: "#60a5fa",
+                  text: "Created/Open",
+                };
+              } else {
                 markers.push({
                   time: openTs,
                   position: "belowBar",
                   color: "#2196f3",
                   shape: "arrowUp",
-                  text: "",
+                  text: "Opened",
                 });
               }
-
-              // Vertical line at creation
-              const creationLine = new SignalCreationLinePrimitive(
+              const openedLine = new SignalCreationLinePrimitive(
                 openTs,
                 "rgba(33, 150, 243, 0.5)",
               );
-              candleSeries.attachPrimitive(creationLine);
+              candleSeries.attachPrimitive(openedLine);
             }
             if (closedAt) {
               const closeTs = Math.floor(new Date(closedAt).getTime() / 1000);
               markers.push({
                 time: closeTs,
                 position: "aboveBar",
-                color: "#f68410",
+                color: closeMarkerColor,
                 shape: "arrowDown",
-                text: "",
+                text: "Close",
               });
+              candleSeries.attachPrimitive(
+                new SignalCreationLinePrimitive(
+                  closeTs,
+                  closeMarkerColor === "#10b981"
+                    ? "rgba(16, 185, 129, 0.45)"
+                    : closeMarkerColor === "#ef4444"
+                      ? "rgba(239, 68, 68, 0.45)"
+                      : "rgba(245, 158, 11, 0.45)",
+                ),
+              );
             }
-            if (markers.length > 0) candleSeries.setMarkers(markers);
-            emitViewport();
 
             // --- ENTRY / TP / SL for all plans ---
             const boxAnchorTs = openedAt
@@ -707,7 +917,10 @@ export default function TradeSignalChart({
               priceLinesRef.lines.push({
                 price: ep,
                 label: actionLabel,
-                priceText: ep.toFixed(2),
+                priceText: formatPriceWithPrecision(
+                  ep,
+                  pricePrecisionRef.current,
+                ),
               });
               if (isPrimary) levelPriceMap.entry = ep;
               // SL line: dashed, always RED
@@ -723,7 +936,10 @@ export default function TradeSignalChart({
                 priceLinesRef.lines.push({
                   price: sp,
                   label: "SL",
-                  priceText: sp.toFixed(2),
+                  priceText: formatPriceWithPrecision(
+                    sp,
+                    pricePrecisionRef.current,
+                  ),
                 });
               }
               if (isPrimary && sp) levelPriceMap.sl = sp;
@@ -744,7 +960,10 @@ export default function TradeSignalChart({
                 priceLinesRef.lines.push({
                   price: Number(lvl.value),
                   label: lvl.key,
-                  priceText: Number(lvl.value).toFixed(2),
+                  priceText: formatPriceWithPrecision(
+                    Number(lvl.value),
+                    pricePrecisionRef.current,
+                  ),
                 });
               });
               if (isPrimary)
@@ -865,6 +1084,97 @@ export default function TradeSignalChart({
                 });
               });
             }
+
+            if (Array.isArray(sharedObjects) && sharedObjects.length > 0) {
+              const firstCandleTime = candles.length
+                ? toEpochSec(candles[0]?.time)
+                : null;
+              const lastCandleTime = candles.length
+                ? toEpochSec(candles[candles.length - 1]?.time)
+                : null;
+              sharedObjects.forEach((obj, idx) => {
+                if (!obj || obj.visible === false) return;
+                const label = formatSharedObjectLabel(obj.type, obj.label || "");
+                const lineColor = String(obj.color || "#60a5fa");
+                const lineWidth = Math.max(1, Number(obj.line_width) || 1);
+                const lineStyle = lineStyleToChartValue(obj.line_style);
+                if (obj.kind === "line") {
+                  const price = Number(obj.price ?? obj.anchorPrice);
+                  if (!Number.isFinite(price)) return;
+                  candleSeries.createPriceLine({
+                    price,
+                    color: lineColor,
+                    lineWidth,
+                    lineStyle,
+                    axisLabelVisible: true,
+                    title: label || `L${idx + 1}`,
+                  });
+                  priceLinesRef.lines.push({
+                    price,
+                    label: label || `L${idx + 1}`,
+                    priceText: price.toFixed(2),
+                  });
+                  return;
+                }
+                if (obj.kind === "point") {
+                  const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
+                  const price = Number(obj.price ?? obj.anchorPrice);
+                  if (Number.isFinite(price) && Number.isFinite(timeSec)) {
+                    markers.push({
+                      time: timeSec,
+                      position: "inBar",
+                      color: lineColor,
+                      shape: "circle",
+                      text: label || obj.type || "Point",
+                    });
+                  } else if (Number.isFinite(price)) {
+                    candleSeries.createPriceLine({
+                      price,
+                      color: lineColor,
+                      lineWidth,
+                      lineStyle,
+                      axisLabelVisible: true,
+                      title: label || obj.type || `P${idx + 1}`,
+                    });
+                    priceLinesRef.lines.push({
+                      price,
+                      label: label || obj.type || `P${idx + 1}`,
+                      priceText: price.toFixed(2),
+                    });
+                  }
+                  return;
+                }
+                if (obj.kind === "zone") {
+                  const top = Number(
+                    obj.price_top ?? obj.anchorPrice ?? obj.price,
+                  );
+                  const bottom = Number(
+                    obj.price_bottom ?? obj.anchorPrice2 ?? obj.price,
+                  );
+                  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
+                  const startTimeSec =
+                    toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
+                  const endTimeSec =
+                    toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
+                  if (!Number.isFinite(startTimeSec)) return;
+                  candleSeries.attachPrimitive(
+                    new TimeRangeBoxPrimitive({
+                      startTimeSec,
+                      endTimeSec,
+                      priceLow: Math.min(top, bottom),
+                      priceHigh: Math.max(top, bottom),
+                      lineColor,
+                      fillColor:
+                        String(obj.bg_color || "").trim() || `${lineColor}22`,
+                      extendRight: !Number.isFinite(endTimeSec),
+                    }),
+                  );
+                  return;
+                }
+              });
+            }
+
+            if (markers.length > 0) candleSeries.setMarkers(markers);
 
             const enableLevelDrag =
               typeof onPlanLevelChange === "function" &&
@@ -1096,7 +1406,11 @@ export default function TradeSignalChart({
               });
             }
 
-            // --- VIEWPORT --- restore saved state if available, otherwise fit to data
+            // --- VIEWPORT --- restore saved state if available, otherwise
+            // default to the full loaded candle span. Snapshot bar_start/bar_end
+            // can be intentionally tight around the event window, which makes
+            // lower timeframes open zoomed into only a few bars even when we
+            // already loaded a much larger broker/cache series.
             if (
               initialViewport &&
               Number.isFinite(Number(initialViewport.timeStartMs)) &&
@@ -1108,19 +1422,44 @@ export default function TradeSignalChart({
                 chart.timeScale().setVisibleRange({ from, to });
               }
             } else {
-              const snapshotStart = Number(snapshot?.bar_start);
-              const snapshotEnd = Number(snapshot?.bar_end);
+              const loadedStart = toEpochSec(candles[0]?.time);
+              const loadedEnd = toEpochSec(candles[candles.length - 1]?.time);
+              const prevLoadedEnd =
+                candles.length > 1
+                  ? toEpochSec(candles[candles.length - 2]?.time)
+                  : null;
               if (
-                Number.isFinite(snapshotStart) &&
-                Number.isFinite(snapshotEnd) &&
-                snapshotEnd > snapshotStart
+                Number.isFinite(loadedStart) &&
+                Number.isFinite(loadedEnd) &&
+                loadedEnd > loadedStart
               ) {
-                const dur = snapshotEnd - snapshotStart;
+                const inferredBarSec =
+                  Number.isFinite(prevLoadedEnd) && loadedEnd > prevLoadedEnd
+                    ? loadedEnd - prevLoadedEnd
+                    : Math.max(
+                        60,
+                        Math.round((loadedEnd - loadedStart) / Math.max(1, candles.length - 1)),
+                      );
+                const dur = loadedEnd - loadedStart;
+                const pad = Math.max(inferredBarSec * 2, dur * 0.04);
                 chart.timeScale().setVisibleRange({
-                  from: snapshotStart - dur * 0.06,
-                  to: snapshotEnd + dur * 0.06,
+                  from: loadedStart - pad,
+                  to: loadedEnd + pad,
                 });
-              } else if (createdAt) {
+              } else {
+                const snapshotStart = Number(snapshot?.bar_start);
+                const snapshotEnd = Number(snapshot?.bar_end);
+                if (
+                  Number.isFinite(snapshotStart) &&
+                  Number.isFinite(snapshotEnd) &&
+                  snapshotEnd > snapshotStart
+                ) {
+                  const dur = snapshotEnd - snapshotStart;
+                  chart.timeScale().setVisibleRange({
+                    from: snapshotStart - dur * 0.06,
+                    to: snapshotEnd + dur * 0.06,
+                  });
+                } else if (createdAt) {
                 const rangeStart = Math.floor(
                   new Date(createdAt).getTime() / 1000,
                 );
@@ -1133,18 +1472,26 @@ export default function TradeSignalChart({
                   from: rangeStart - dur * 0.1,
                   to: rangeEnd + dur * 0.1,
                 });
-              } else if (openedAt && closedAt) {
-                const rangeStart = Math.floor(
-                  new Date(openedAt).getTime() / 1000,
-                );
-                const rangeEnd = Math.floor(new Date(closedAt).getTime() / 1000);
-                const dur = rangeEnd - rangeStart;
-                chart.timeScale().setVisibleRange({
-                  from: rangeStart - dur * 0.2,
-                  to: rangeEnd + dur * 0.2,
-                });
+                } else if (openedAt && closedAt) {
+                  const rangeStart = Math.floor(
+                    new Date(openedAt).getTime() / 1000,
+                  );
+                  const rangeEnd = Math.floor(
+                    new Date(closedAt).getTime() / 1000,
+                  );
+                  const dur = rangeEnd - rangeStart;
+                  chart.timeScale().setVisibleRange({
+                    from: rangeStart - dur * 0.2,
+                    to: rangeEnd + dur * 0.2,
+                  });
+                } else {
+                  chart.timeScale().fitContent();
+                }
               }
             }
+            requestAnimationFrame(() => {
+              emitViewport();
+            });
           }
         } catch (err) {
           console.error("Chart data fetch failed:", err);
@@ -1189,6 +1536,7 @@ export default function TradeSignalChart({
     openedAt,
     createdAt,
     closedAt,
+    closeStatus,
     entryPrice,
     slPrice,
     tpPrice,
@@ -1201,6 +1549,7 @@ export default function TradeSignalChart({
     showKeyLevels,
     onPlanLevelChange,
     JSON.stringify(sharedLines || []),
+    JSON.stringify(sharedObjects || []),
     JSON.stringify(analysisSnapshot),
     JSON.stringify(historicalData),
     live,
@@ -1208,6 +1557,7 @@ export default function TradeSignalChart({
     onViewportChange,
     chartId,
     lwTimeToMs,
+    displayTimezone,
   ]);
 
   useEffect(() => {

@@ -13,7 +13,7 @@ function initDb(config) {
   if (backend === "sqlite") {
     const Database = require("better-sqlite3");
     const { drizzle } = require("drizzle-orm/better-sqlite3");
-    const dbPath = config?.storage?.sqlite?.path || "db/trading.db";
+    const dbPath = config?.storage?.sqlite?.path || "./trading.db";
     const sqlite = new Database(dbPath);
     sqlite.pragma("journal_mode = WAL");
     sqlite.pragma("foreign_keys = ON");
@@ -65,6 +65,7 @@ function _runSqliteMigration(raw) {
       account_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
       name TEXT, balance REAL, api_key_hash TEXT, api_key_last4 TEXT,
       api_key_rotated_at TEXT, source_ids_cache TEXT, metadata TEXT, status TEXT,
+      equity REAL, margin REAL, free_margin REAL, leverage REAL, broker_name TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -80,17 +81,6 @@ function _runSqliteMigration(raw) {
       status TEXT DEFAULT 'ACTIVE',
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
       UNIQUE(user_id, type, name)
-    );
-    CREATE TABLE IF NOT EXISTS signals (
-      sid TEXT PRIMARY KEY, id INTEGER,
-      created_at TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      source TEXT, source_id TEXT, symbol TEXT NOT NULL, side TEXT NOT NULL,
-      order_type TEXT, entry REAL, entry_model TEXT, strategy TEXT,
-      sl REAL, tp REAL, signal_tf TEXT, chart_tf TEXT,
-      rr_planned REAL, risk_pct_planned REAL, risk_money_planned REAL,
-      note TEXT, rejection_reason TEXT, raw_json TEXT, status TEXT DEFAULT 'NEW',
-      profile TEXT, confidence_pct REAL, estimated_bars INTEGER, be_trigger REAL,
-      metadata TEXT, updated_at TEXT, closed_at TEXT
     );
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
@@ -108,18 +98,11 @@ function _runSqliteMigration(raw) {
       close_reason TEXT, rejection_reason TEXT, broker_trade_id TEXT,
       entry_exec REAL, broker_pips REAL, broker_lots REAL, broker_commission REAL,
       broker_swap REAL, broker_volume REAL, broker_pnl REAL, broker_margin REAL,
+      planned_tp_pnl REAL, planned_sl_pnl REAL,
       broker_tp_pnl REAL, broker_sl_pnl REAL, opened_at TEXT, closed_at TEXT,
       pnl_realized REAL, metadata TEXT, raw_json TEXT,
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS market_data (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bars TEXT, source TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
-    CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(status);
     CREATE INDEX IF NOT EXISTS idx_trades_created ON trades(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
     CREATE INDEX IF NOT EXISTS idx_trades_exec ON trades(execution_status);

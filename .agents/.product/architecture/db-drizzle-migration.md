@@ -37,7 +37,9 @@ trading/
 | `logs` | ✅ Mapped | |
 | `market_data` | ✅ Mapped | |
 
-Dropped/legacy tables (not in schema): `accounts`, `ai_templates`, `ui_auth_users`, `signal_events`, `trade_events`
+Dropped/legacy tables (not in schema): `ai_templates`, `ui_auth_users`, `signal_events`, `trade_events`
+
+`accounts` has been retired in favor of canonical `user_accounts`; local active schema has been migrated off `accounts`.
 
 ## Completed Queries
 

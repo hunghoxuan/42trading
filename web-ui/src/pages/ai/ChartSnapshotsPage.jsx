@@ -55,6 +55,22 @@ const STORAGE_KEY = "chart_prompt_builder_templates_v2";
 
 const DEFAULT_TEMPLATE_ID = "__default__";
 
+function toTradeVolumeUnits(plan = {}) {
+  const displayLots = Number(plan?.volume);
+  if (!Number.isFinite(displayLots)) return null;
+  const basisUnits = Number(plan?.volume_units);
+  const basisLots = Number(plan?.broker_lots ?? plan?.volume);
+  if (
+    Number.isFinite(basisUnits) &&
+    basisUnits > 0 &&
+    Number.isFinite(basisLots) &&
+    basisLots > 0
+  ) {
+    return Number((displayLots * (basisUnits / basisLots)).toFixed(8));
+  }
+  return displayLots;
+}
+
 // DEFAULT_WATCHLIST now from config.json via AiPromptBuilder
 
 // Fixed default sets for asset-type filter tabs
@@ -2807,6 +2823,10 @@ export default function ChartSnapshotsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { symbol: paramSymbol } = useParams();
+  const withCurrentHash = useCallback((path) => {
+    const hash = window.location.hash || "";
+    return `${path}${hash}`;
+  }, []);
   const [cfg, setCfg] = useState(DEFAULT_CONFIG);
 
   // Load ANALYSE_SETTINGS from user_settings on mount
@@ -4318,7 +4338,7 @@ export default function ChartSnapshotsPage() {
           autoEntity?.kind === "trade" &&
           autoEntity?.id
         ) {
-          navigate(`/ai/trade/${encodeURIComponent(autoEntity.id)}`, {
+          navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(autoEntity.id)}`), {
             replace: true,
           });
         }
@@ -5068,7 +5088,7 @@ export default function ChartSnapshotsPage() {
         createdEntity?.id &&
         isResponseRoute
       ) {
-        navigate(`/ai/trade/${encodeURIComponent(createdEntity.id)}`, {
+        navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(createdEntity.id)}`), {
           replace: true,
         });
         return;
@@ -5119,6 +5139,8 @@ export default function ChartSnapshotsPage() {
       tp3: toNum(tradeDetailPlan.tp3),
       sl: toNum(tradeDetailPlan.sl),
       rr: toNum(tradeDetailPlan.rr),
+      volume: toNum(tradeDetailPlan.volume),
+      lots: toNum(tradeDetailPlan.volume),
       note: tradeDetailPlan.note || "",
       strategy: tradeDetailPlan.strategy || "",
       entry_model: tradeDetailPlan.entry_model || "",
@@ -6117,9 +6139,9 @@ export default function ChartSnapshotsPage() {
       }
       setSelectedSymbols([sym]);
       setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
-      navigate(`/ai/trade/${encodeURIComponent(sym)}`, { replace: false });
+      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(sym)}`), { replace: false });
     },
-    [cfg.symbol, paramSymbol, tvSymbol, navigate],
+    [cfg.symbol, paramSymbol, tvSymbol, navigate, withCurrentHash],
   );
 
   const chartPdArrays = useMemo(() => {
@@ -7090,7 +7112,7 @@ export default function ChartSnapshotsPage() {
                             onClick={() => {
                               if (ref)
                                 navigate(
-                                  `/ai/trade/${encodeURIComponent(ref)}`,
+                                  withCurrentHash(`/ai/trade/${encodeURIComponent(ref)}`),
                                 );
                             }}
                           >
@@ -7224,7 +7246,7 @@ export default function ChartSnapshotsPage() {
                             onClick={() => {
                               if (ref)
                                 navigate(
-                                  `/ai/trade/${encodeURIComponent(ref)}`,
+                                  withCurrentHash(`/ai/trade/${encodeURIComponent(ref)}`),
                                 );
                             }}
                           >
@@ -8181,7 +8203,7 @@ export default function ChartSnapshotsPage() {
               }
               onGoTrade={() =>
                 navigate(
-                  `/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`,
+                  withCurrentHash(`/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`),
                 )
               }
               onGoAnalyze={() =>
@@ -8579,7 +8601,7 @@ export default function ChartSnapshotsPage() {
                   onAddTrade: (pos, planId = "main") => {
                     const ent = addedEntities[planId];
                     if (ent?.kind === "trade" && ent?.id) {
-                      navigate(`/ai/trade/${encodeURIComponent(ent.id)}`);
+                      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(ent.id)}`));
                       return;
                     }
                     addBySelection("trade", pos, planId);
@@ -8635,7 +8657,7 @@ export default function ChartSnapshotsPage() {
               className="primary-button"
               onClick={() =>
                 navigate(
-                  `/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`,
+                  withCurrentHash(`/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`),
                 )
               }
             >

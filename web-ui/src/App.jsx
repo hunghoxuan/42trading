@@ -15,7 +15,6 @@ const ProfilePage = lazy(() => import("./pages/settings/ProfilePage"));
 const CronPage = lazy(() => import("./pages/settings/CronPage"));
 const ProvidersPage = lazy(() => import("./pages/settings/ProvidersPage"));
 const LogsPage = lazy(() => import("./pages/system/LogsPage"));
-const DatabasePage = lazy(() => import("./pages/system/DatabasePage"));
 const HealthPage = lazy(() => import("./pages/system/HealthPage"));
 const UsersPage = lazy(() => import("./pages/system/UsersPage"));
 const AccountsV2Page = lazy(() => import("./pages/system/AccountsV2Page"));
@@ -23,7 +22,6 @@ const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
 const StoragePage = lazy(() => import("./pages/system/StoragePage"));
 const CachePage = lazy(() => import("./pages/system/CachePage"));
 const EventsPage = lazy(() => import("./pages/system/EventsPage"));
-const ToolsPage = lazy(() => import("./pages/tools/ToolsPage"));
 import { api, getRuntimeActiveUserId, setRuntimeActiveUserId } from "./api";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 import SessionClockBar from "./components/SessionClockBar";
@@ -36,6 +34,8 @@ import AppShell from "./components/AppShell";
 import NavDropdown from "./components/NavDropdown";
 import { normalizeDisplayTimezone } from "./utils/format";
 import { ConfirmDialogProvider } from "./components/ConfirmDialog";
+
+const LOCAL_DB_MANAGER_URL = "http://127.0.0.1:8088";
 
 export default function App() {
   const [serverVersion, setServerVersion] = useState("");
@@ -59,7 +59,6 @@ export default function App() {
     return (
       p.startsWith("/system") ||
       p.startsWith("/logs") ||
-      p.startsWith("/db") ||
       p.startsWith("/users") ||
       p.startsWith("/snapshots") ||
       p.startsWith("/storage") ||
@@ -300,17 +299,8 @@ export default function App() {
             <NavLink to="/system/storage">Storage</NavLink>
             <NavLink to="/system/cache">Cache</NavLink>
             <NavLink to="/system/logs">Logs</NavLink>
-            <NavLink to="/system/db">DB</NavLink>
             <NavLink to="/system/health">Health</NavLink>
             <NavLink to="/system/users">Users</NavLink>
-            <hr
-              style={{
-                border: "0",
-                borderTop: "1px solid rgba(255,255,255,0.1)",
-                margin: "4px 0",
-              }}
-            />
-            <NavLink to="/tools">🛠 Tools</NavLink>
           </NavDropdown>
         )}
         <NavDropdown
@@ -492,24 +482,8 @@ export default function App() {
                 }
               />
               <Route
-                path="/system/db/:tableName"
-                element={
-                  canAccessSystemPages ? (
-                    <DatabasePage />
-                  ) : (
-                    <Navigate to="/dashboard" replace />
-                  )
-                }
-              />
-              <Route
                 path="/system/db"
-                element={
-                  canAccessSystemPages ? (
-                    <DatabasePage />
-                  ) : (
-                    <Navigate to="/dashboard" replace />
-                  )
-                }
+                element={<Navigate to="/dashboard" replace />}
               />
               <Route
                 path="/system/health"
@@ -561,8 +535,8 @@ export default function App() {
                   )
                 }
               />
-              <Route path="/tools" element={<ToolsPage />} />
-              <Route path="/tools/notification" element={<EventsPage />} />
+              <Route path="/tools" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/tools/notification" element={<Navigate to="/dashboard" replace />} />
               <Route path="/settings/notifications" element={<EventsPage />} />
               <Route
                 path="/snapshots"
@@ -582,7 +556,7 @@ export default function App() {
               />
               <Route
                 path="/db"
-                element={<Navigate to="/system/db" replace />}
+                element={<Navigate to="/dashboard" replace />}
               />
               <Route
                 path="/users"

@@ -31,6 +31,21 @@ function pickFirstFinite(...vals) {
   return null;
 }
 
+function resolveDisplayLots({
+  plannedLots = null,
+  volumeUnits = null,
+  brokerLots = null,
+  rawLots = null,
+}) {
+  const planned = pickFirstFinite(plannedLots);
+  if (planned != null && planned > 0) return planned;
+  const lots = pickFirstFinite(brokerLots, rawLots);
+  if (lots != null && lots > 0) return lots;
+  const units = asNum(volumeUnits);
+  if (units != null && units > 0 && units <= 1000) return units;
+  return null;
+}
+
 export function formatDetailDateTime(v) {
   return showDateTime(v);
 }
@@ -92,11 +107,14 @@ export function buildRrVolRiskText({
     asNum(riskPctRaw) ??
     (volumeSizeRaw != null ? volumeSizeRaw / 100 : null) ??
     plannedVol;
-  const riskText =
-    volVal != null ? `risk ${Number((volVal * 100).toFixed(2))}%` : "risk -";
+  const volsText =
+    vol != null
+      ? `vol ${Number(vol.toFixed(3))} lots`
+      : plannedVol != null
+        ? `vol ${Number(plannedVol.toFixed(3))} lots`
+        : "vol -";
 
-  const lotsText = vol != null ? `${Number(vol.toFixed(3))} lots` : "- lots";
-  const rrText = rr != null ? `${rr.toFixed(1)} rr` : "- rr";
+  const rrText = rr != null ? `${rr.toFixed(1)}r` : "-r";
 
   return (
     <div
@@ -108,17 +126,15 @@ export function buildRrVolRiskText({
       }}
     >
       <span>{rrText}</span>
-      <span>{riskText}</span>
-      <span>|</span>
-      <span>{lotsText}</span>
+      <span>{volsText}</span>
       {(reward != null || loss != null) && (
         <span style={{ display: "flex", gap: "8px" }}>
-          <span className="money-pos">
-            +{reward != null ? `$${reward.toFixed(2)}` : "$-"}
-          </span>
-          <span className="money-neg">
-            -{loss != null ? `$${loss.toFixed(2)}` : "$-"}
-          </span>
+          {reward != null && (
+            <span className="money-pos">+${reward.toFixed(2)}</span>
+          )}
+          {loss != null && (
+            <span className="money-neg">-${loss.toFixed(2)}</span>
+          )}
         </span>
       )}
     </div>
@@ -144,6 +160,7 @@ export function buildHeaderMeta({
     typeof statusUi === "function"
       ? statusUi(statusRaw)
       : { cls: "OTHER", label: String(statusRaw || "PENDING").toUpperCase() };
+
   return {
     showPnl,
     pnlText: `$${pnl != null ? pnl.toFixed(2) : "0.00"}`,
@@ -206,7 +223,9 @@ export function applyLinkedPlanChange(prevPlan, key, rawVal) {
     if (val != null) {
       const precRef2 = prevPlan.entry || prevPlan.tp || prevPlan.sl || "";
       next[key] =
-        key === "rr" ? String(Number(val.toFixed(1))) : formatNumPrec(val, precRef2);
+        key === "rr"
+          ? String(Number(val.toFixed(1)))
+          : formatNumPrec(val, precRef2);
     }
   }
 
@@ -477,6 +496,25 @@ export function extractTradePlanFromSignal(signal = {}) {
     asNum(effectivePlan?.rr ?? effectivePlan?.risk_reward) ??
     asNum(signal?.rr_planned) ??
     calcRrFromSignal(signal);
+  const displayLots = resolveDisplayLots({
+    plannedLots:
+      signal?.volume_basis_lots ??
+      effectivePlan?.volume_basis_lots ??
+      raw.volume_basis_lots ??
+      effectivePlan?.trade_plan?.lots ??
+      effectivePlan?.lots,
+    volumeUnits:
+      signal.volume ??
+      effectivePlan?.volume ??
+      raw.volume ??
+      effectivePlan?.used_volume ??
+      raw.used_volume,
+    brokerLots:
+      signal.broker_lots ??
+      effectivePlan?.broker_lots ??
+      raw.broker_lots,
+    rawLots: effectivePlan?.lots ?? raw.lots,
+  });
 
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
@@ -517,6 +555,44 @@ export function extractTradePlanFromSignal(signal = {}) {
         raw.riskMoney ??
         effectivePlan?.risk_money ??
         effectivePlan.riskMoney,
+    ),
+    volume: displayLots,
+    volume_basis_lots: displayLots,
+    volume_units: asNum(
+      signal.volume ??
+        effectivePlan?.volume ??
+        raw.volume ??
+        effectivePlan?.used_volume ??
+        raw.used_volume,
+    ),
+    broker_lots: asNum(
+      signal.broker_lots ??
+        effectivePlan?.broker_lots ??
+        raw.broker_lots ??
+        effectivePlan?.lots ??
+        raw.lots,
+    ),
+    planned_tp_pnl: asNum(
+      signal.planned_tp_pnl ??
+        effectivePlan?.planned_tp_pnl ??
+        raw.planned_tp_pnl ??
+        effectivePlan?.tp_pnl,
+    ),
+    planned_sl_pnl: asNum(
+      signal.planned_sl_pnl ??
+        effectivePlan?.planned_sl_pnl ??
+        raw.planned_sl_pnl ??
+        effectivePlan?.sl_pnl,
+    ),
+    broker_tp_pnl: asNum(
+      signal.broker_tp_pnl ??
+        effectivePlan?.broker_tp_pnl ??
+        raw.broker_tp_pnl,
+    ),
+    broker_sl_pnl: asNum(
+      signal.broker_sl_pnl ??
+        effectivePlan?.broker_sl_pnl ??
+        raw.broker_sl_pnl,
     ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(tp ?? NaN),
@@ -680,10 +756,15 @@ export function extractTradePlanFromTrade(trade = {}) {
     return "manual";
   };
   const source = resolveSource();
-  const sourceId = String(trade.source_id || meta.source_id || raw.source_id || "")
-    .trim();
+  const sourceId = String(
+    trade.source_id || meta.source_id || raw.source_id || "",
+  ).trim();
   const rawEntryModel = String(
-    raw.entry_model || plan.entry_model || meta.entry_model || trade.entry_model || "",
+    raw.entry_model ||
+      plan.entry_model ||
+      meta.entry_model ||
+      trade.entry_model ||
+      "",
   ).trim();
   const looksLikeBrokerAccount = /^[A-Z0-9_]{8,}$/.test(rawEntryModel);
   const entryModel =
@@ -767,6 +848,31 @@ export function extractTradePlanFromTrade(trade = {}) {
   const normalizedTpPrimary = asNum(normalized.tp);
   const normalizedSl = asNum(normalized.sl);
 
+  const displayLots = resolveDisplayLots({
+    plannedLots:
+      trade.volume_basis_lots ??
+      meta.volume_basis_lots ??
+      raw.volume_basis_lots ??
+      plan?.volume_basis_lots ??
+      meta?.trade_plan?.lots ??
+      plan?.trade_plan?.lots ??
+      plan?.lots,
+    volumeUnits:
+      trade.volume ??
+      meta.volume ??
+      meta.used_volume ??
+      raw.volume ??
+      raw.used_volume,
+    brokerLots:
+      trade.broker_lots ??
+      meta.broker_lots ??
+      raw.broker_lots,
+    rawLots:
+      meta?.broker_data?.lots ??
+      raw.lots ??
+      plan?.lots,
+  });
+
   return {
     direction: sideRaw.includes("SELL") ? "SELL" : "BUY",
     trade_type: normalizeOrderTypeValue(
@@ -805,6 +911,49 @@ export function extractTradePlanFromTrade(trade = {}) {
         raw.riskMoneyPlanned ??
         raw.riskMoney ??
         raw.risk_money,
+    ),
+    volume: displayLots,
+    volume_basis_lots: displayLots,
+    volume_units: asNum(
+      trade.volume ??
+        meta.volume ??
+        meta.used_volume ??
+        raw.volume ??
+        raw.used_volume,
+    ),
+    broker_lots: asNum(
+      trade.broker_lots ??
+        meta.broker_lots ??
+        raw.broker_lots ??
+        meta?.broker_data?.lots ??
+        raw.lots ??
+        plan?.lots,
+    ),
+    planned_tp_pnl: asNum(
+      trade.planned_tp_pnl ??
+        meta.planned_tp_pnl ??
+        raw.planned_tp_pnl ??
+        plan?.planned_tp_pnl ??
+        plan?.tp_pnl,
+    ),
+    planned_sl_pnl: asNum(
+      trade.planned_sl_pnl ??
+        meta.planned_sl_pnl ??
+        raw.planned_sl_pnl ??
+        plan?.planned_sl_pnl ??
+        plan?.sl_pnl,
+    ),
+    broker_tp_pnl: asNum(
+      trade.broker_tp_pnl ??
+        meta.broker_tp_pnl ??
+        raw.broker_tp_pnl ??
+        plan?.broker_tp_pnl,
+    ),
+    broker_sl_pnl: asNum(
+      trade.broker_sl_pnl ??
+        meta.broker_sl_pnl ??
+        raw.broker_sl_pnl ??
+        plan?.broker_sl_pnl,
     ),
     entry: formatNum3(entry ?? NaN),
     tp: formatNum3(normalizedTpPrimary ?? tp1 ?? tp ?? NaN),

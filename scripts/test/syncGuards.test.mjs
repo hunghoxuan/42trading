@@ -24,6 +24,26 @@ test("brokerTaskTypeForTrade maps dispatch_status to broker actions", () => {
   );
 });
 
+test("brokerTaskTypeForTrade preserves original action for leased modify retries", () => {
+  assert.equal(
+    guards.brokerTaskTypeForTrade({
+      dispatch_status: "LEASED",
+      metadata: { leased_dispatch_status: "MODIFY" },
+    }),
+    "MODIFY",
+  );
+});
+
+test("nullableIsoTimestamp treats blank broker timestamps as null", () => {
+  assert.equal(guards.nullableIsoTimestamp(""), null);
+  assert.equal(guards.nullableIsoTimestamp("   "), null);
+  assert.equal(guards.nullableIsoTimestamp(null), null);
+  assert.equal(
+    guards.nullableIsoTimestamp("2026-06-02T13:58:58.976Z"),
+    "2026-06-02T13:58:58.976Z",
+  );
+});
+
 test("shouldAutoRejectLeasedTrade rejects expired leases after retry budget", () => {
   const now = new Date("2026-05-28T10:00:00.000Z");
   assert.equal(
@@ -37,6 +57,25 @@ test("shouldAutoRejectLeasedTrade rejects expired leases after retry budget", ()
       now,
     ),
     true,
+  );
+});
+
+test("shouldAutoRejectLeasedTrade preserves expired leased modify tasks", () => {
+  const now = new Date("2026-05-28T10:00:00.000Z");
+  assert.equal(
+    guards.shouldAutoRejectLeasedTrade(
+      {
+        dispatch_status: "LEASED",
+        lease_expires_at: "2026-05-28T09:59:00.000Z",
+        metadata: {
+          lease_retry_count: 99,
+          leased_dispatch_status: "MODIFY",
+        },
+      },
+      3,
+      now,
+    ),
+    false,
   );
 });
 

@@ -6,6 +6,8 @@ node_modules/
 tradingview/.backup/
 .backup/
 data/
+data.db
+db/.local/
 
 web-ui/dist/
 web-ui/playwright-report/

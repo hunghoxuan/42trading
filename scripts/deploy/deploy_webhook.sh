@@ -73,6 +73,10 @@ git fetch --all --prune
 git checkout main
 git pull --ff-only origin main
 
+echo "  [vps] Removing local-only DB tooling..."
+rm -rf /opt/trading/db/db-manager
+rm -f /opt/trading/db/start_db.sh
+
 echo "  [vps] Installing deps..."
 npm install --no-audit --no-fund 2>/dev/null || true
 cd webhook && npm install --no-audit --no-fund 2>/dev/null || true

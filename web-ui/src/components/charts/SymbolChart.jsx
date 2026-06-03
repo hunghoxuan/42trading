@@ -492,8 +492,11 @@ export default function SymbolChart({
   createdAt = null,
   openedAt = null,
   closedAt = null,
+  closeStatus = "",
   onPlanLevelChange = null,
   analysisSnapshot = null,
+  enableChartObjects = false,
+  showEventMarkers = false,
   hasTradePlan = false,
   hasAnalysis = false,
   barsStatus = null,
@@ -633,6 +636,7 @@ export default function SymbolChart({
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
   const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
+  const [timezoneTick, setTimezoneTick] = useState(0);
 
   useEffect(() => {
     setAnnotations([]);
@@ -641,6 +645,13 @@ export default function SymbolChart({
     parentDrivenSelectionRef.current = null;
     lastIncomingPlanGroupRef.current = null;
   }, [cleanSym]);
+
+  useEffect(() => {
+    const onTimezoneUiChanged = () => setTimezoneTick((n) => n + 1);
+    window.addEventListener("ui-timezone-changed", onTimezoneUiChanged);
+    return () =>
+      window.removeEventListener("ui-timezone-changed", onTimezoneUiChanged);
+  }, []);
 
   const toggleOverlay = (key) => setOverlays((p) => ({ ...p, [key]: !p[key] }));
 
@@ -663,6 +674,17 @@ export default function SymbolChart({
       setLocalBarsCount(Number(initialBarsCount));
     }
   }, [initialBarsCount]);
+
+  useEffect(() => {
+    setViewports({});
+  }, [
+    cleanSym,
+    mode,
+    provider,
+    tradeSid,
+    localBarsCount,
+    (timeframes || []).join("|"),
+  ]);
 
   useEffect(() => {
     if (!rootRef.current) return;
@@ -734,7 +756,9 @@ export default function SymbolChart({
       }
     };
     fetchBroker();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [cleanSym, sortedTfs.join(","), localBarsCount, mode]);
 
   const barsCachedAt = useMemo(() => {
@@ -1304,7 +1328,7 @@ export default function SymbolChart({
   }, [activeGridCols, containerWidth]);
 
   const showControls = !(hasTradePlan && hasAnalysis);
-  const tvTimezone = toTradingViewTimezone();
+  const tvTimezone = useMemo(() => toTradingViewTimezone(), [timezoneTick]);
   const overlayButtons = [
     { key: "plan1", label: "P1" },
     { key: "plan2", label: "P2" },
@@ -2170,42 +2194,17 @@ export default function SymbolChart({
                   return true;
                 });
 
-              // ANNOTATION_LINES_CONVERSION
-              const annotationLines = [];
-              for (const a of projectedAnnotations) {
-                if (a.visible === false) continue;
-                const p = a.price ?? a.anchorPrice;
-                const c = a.color || "#60a5fa";
-                const lb = formatObjectLabel(a.type, a.label || "");
-                if (a.kind === "line" && Number.isFinite(Number(p)))
-                  annotationLines.push({
-                    price: Number(p),
-                    color: c,
-                    label: lb,
-                  });
-                else if (a.kind === "point" && Number.isFinite(Number(p)))
-                  annotationLines.push({
-                    price: Number(p),
-                    color: c,
-                    label: lb || "\u25CF",
-                  });
-                else if (a.kind === "zone") {
-                  const t = a.price_top ?? a.anchorPrice;
-                  const b = a.price_bottom ?? a.anchorPrice2;
-                  if (Number.isFinite(Number(t)))
-                    annotationLines.push({
-                      price: Number(t),
-                      color: c,
-                      label: lb ? lb + " T" : "ZT",
-                    });
-                  if (Number.isFinite(Number(b)))
-                    annotationLines.push({
-                      price: Number(b),
-                      color: c,
-                      label: lb ? lb + " B" : "ZB",
-                    });
-                }
-              }
+              const annotationObjects = (annotations || [])
+                .filter(
+                  (a) =>
+                    a?.visible !== false &&
+                    (!a.tf ||
+                      String(a.tf).toLowerCase() === String(tf).toLowerCase()),
+                )
+                .map((a) => ({
+                  ...a,
+                  label: formatObjectLabel(a.type, a.label || ""),
+                }));
               const isActiveTf = activeChartId === chartId;
 
               return (
@@ -2358,9 +2357,10 @@ export default function SymbolChart({
                         tp1Price={overlays.plan1 ? tp1Price : null}
                         tp2Price={overlays.plan1 ? tp2Price : null}
                         tp3Price={overlays.plan1 ? tp3Price : null}
-                        createdAt={createdAt}
-                        openedAt={openedAt}
-                        closedAt={closedAt}
+                        createdAt={showEventMarkers ? createdAt : null}
+                        openedAt={showEventMarkers ? openedAt : null}
+                        closedAt={showEventMarkers ? closedAt : null}
+                        closeStatus={showEventMarkers ? closeStatus : ""}
                         showPrimaryPlan={overlays.plan1}
                         showExtraPlans={overlays.plan2}
                         showPdArrays={overlays.pdArrays}
@@ -2373,7 +2373,7 @@ export default function SymbolChart({
                           mode === "cache" ? handleCrosshairSync : undefined
                         }
                         onBarsLoaded={handleBarsLoaded}
-                        sharedLines={annotationLines}
+                        sharedObjects={enableChartObjects ? annotationObjects : []}
                         onContextRequest={
                           mode === "cache" ? handleContextRequest : undefined
                         }

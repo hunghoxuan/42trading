@@ -28,6 +28,10 @@ import {
   formatNum3,
 } from "../../utils/signalDetailUtils";
 import { getBrokerTicket } from "../../utils/tradeRow";
+import {
+  plannedPnlValueStyle,
+  resolveDisplayedPlannedPnl,
+} from "../../utils/tradePlannedPnl";
 
 const STATUS_OPTIONS = [
   { value: "", label: "ALL STATUSES" },
@@ -57,7 +61,7 @@ const RANGE_OPTIONS = [
 ];
 const PAGE_SIZE_OPTIONS = [50, 100, 200];
 
-import { showDateTime } from "../../utils/format";
+import { formatDateTimeWithDuration, showDateTime } from "../../utils/format";
 
 function formatTimeframe(min) {
   if (!min || min === "manual") return min || "-";
@@ -122,6 +126,22 @@ function tradeKeyOf(t) {
   const idNum = Number(t?.id);
   if (Number.isInteger(idNum) && idNum > 0) return String(idNum);
   return "";
+}
+
+function toTradeVolumeUnits(plan = {}) {
+  const displayLots = asFiniteOrNull(plan.volume);
+  if (!Number.isFinite(displayLots)) return null;
+  const basisUnits = asFiniteOrNull(plan.volume_units);
+  const basisLots = asFiniteOrNull(plan.broker_lots ?? plan.volume);
+  if (
+    Number.isFinite(basisUnits) &&
+    basisUnits > 0 &&
+    Number.isFinite(basisLots) &&
+    basisLots > 0
+  ) {
+    return Number((displayLots * (basisUnits / basisLots)).toFixed(8));
+  }
+  return displayLots;
 }
 
 function auditTimestampRaw(t) {
@@ -202,6 +222,14 @@ function tradeRiskSize(t) {
   if (entry == null || sl == null || vol == null) return null;
   const est = Math.abs(entry - sl) * vol;
   return Number.isFinite(est) ? est : null;
+}
+
+function formatClosedWithDuration(openedAt, closedAt) {
+  return formatDateTimeWithDuration(closedAt, openedAt);
+}
+
+function formatOpenedWithDuration(createdAt, openedAt) {
+  return formatDateTimeWithDuration(openedAt, createdAt);
 }
 
 function compactStrategy(item = {}) {
@@ -336,7 +364,7 @@ export default function TradesPage() {
   }, [routeStatus, searchParams, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
-  const [sorting, setSorting] = useState({ key: "symbol", dir: "asc" });
+  const [sorting, setSorting] = useState({ key: "info", dir: "desc" });
   const inFlightRef = useRef(false);
   const tradeEventsInFlightRef = useRef(false);
   const selectedTradeIdRef = useRef("");
@@ -727,6 +755,8 @@ export default function TradesPage() {
         skip_recommendation: detailPlan.skip_recommendation,
         confluence_checklist: detailPlan.confluence_checklist,
         be_trigger: asFiniteOrNull(detailPlan.be_trigger),
+        volume: lockAll ? null : asFiniteOrNull(detailPlan.volume),
+        lots: lockAll ? null : asFiniteOrNull(detailPlan.volume),
         risk_pct: asFiniteOrNull(detailPlan.risk_pct),
         risk_money: asFiniteOrNull(
           detailPlan.risk_money_planned ?? detailPlan.risk_money,
@@ -881,6 +911,10 @@ export default function TradesPage() {
         if (cmp === 0) cmp = valueOfAudit(b) - valueOfAudit(a);
         return sorting.dir === "asc" ? cmp : -cmp;
       }
+      if (sorting.key === "info") {
+        cmp = valueOfAudit(a) - valueOfAudit(b);
+        return sorting.dir === "asc" ? cmp : -cmp;
+      }
       if (sorting.key === "pnl") {
         const pa =
           asNum(a?.broker_pnl) ??
@@ -1010,13 +1044,11 @@ export default function TradesPage() {
       {
         id: "info",
         header: "INFO",
-        accessorFn: (row) => compactStrategy(row),
+        accessorFn: (row) => auditTimestampRaw(row) || "",
         sortingFn: (rowA, rowB) => {
           const a = rowA.original;
           const b = rowB.original;
-          const cmp = compactStrategy(a).localeCompare(compactStrategy(b));
-          if (cmp === 0) return valueOfAudit(b) - valueOfAudit(a);
-          return cmp;
+          return valueOfAudit(a) - valueOfAudit(b);
         },
         cell: ({ row }) => {
           const t = row.original;
@@ -1120,7 +1152,7 @@ export default function TradesPage() {
     ];
   }, [rows, allSelected, selectedIds, listMode, changedFields]);
 
-  const onSortingChange = (s) => setSorting(s || { key: "symbol", dir: "asc" });
+  const onSortingChange = (s) => setSorting(s || { key: "info", dir: "desc" });
 
   async function onSaveTradeEdit() {
     const selectedRef = tradeKeyOf(selectedTrade);
@@ -1576,7 +1608,7 @@ export default function TradesPage() {
             ) : (
               <DataTable
                 columns={columns}
-                data={rows}
+                data={sortedRows}
                 sorting={sorting}
                 onSortingChange={onSortingChange}
                 globalFilter={filter.q}
@@ -2070,24 +2102,37 @@ export default function TradesPage() {
                       group: "identity",
                     },
                     {
-                      label: "Updated",
-                      value: selectedTrade.updated_at
-                        ? showDateTime(selectedTrade.updated_at)
-                        : "-",
-                      group: "identity",
-                    },
-                    {
                       label: "Opened",
-                      value: selectedTrade.opened_at
-                        ? showDateTime(selectedTrade.opened_at)
-                        : "-",
+                      value: formatOpenedWithDuration(
+                        selectedTrade.created_at,
+                        selectedTrade.opened_at,
+                      ),
                       group: "identity",
                     },
                     {
                       label: "Closed",
-                      value: selectedTrade.closed_at
-                        ? showDateTime(selectedTrade.closed_at)
-                        : "-",
+                      value: formatClosedWithDuration(
+                        selectedTrade.opened_at,
+                        selectedTrade.closed_at,
+                      ),
+                      group: "identity",
+                    },
+                    {
+                      label: "Broker PnL",
+                      value:
+                        asNum(selectedTrade.broker_pnl) ??
+                        asNum(selectedTrade.pnl_realized) ??
+                        asNum(selectedTrade.metadata?.broker_data?.net_pnl) ??
+                        asNum(selectedTrade.metadata?.broker_data?.pnl) ??
+                        null
+                          ? `$${(
+                              asNum(selectedTrade.broker_pnl) ??
+                              asNum(selectedTrade.pnl_realized) ??
+                              asNum(selectedTrade.metadata?.broker_data?.net_pnl) ??
+                              asNum(selectedTrade.metadata?.broker_data?.pnl) ??
+                              0
+                            ).toFixed(2)}`
+                          : "-",
                       group: "identity",
                     },
                     {
@@ -2366,19 +2411,22 @@ export default function TradesPage() {
                           const bMargin =
                             asNum(selectedTrade.broker_margin) ??
                             asNum(bData.margin);
-                          const bTpPnl =
-                            asNum(selectedTrade.broker_tp_pnl) ??
-                            asNum(bData.tp_pnl);
-                          const bSlPnl =
-                            asNum(selectedTrade.broker_sl_pnl) ??
-                            asNum(bData.sl_pnl);
+                          const bTpPnl = resolveDisplayedPlannedPnl(
+                            selectedTrade,
+                            "tp",
+                          );
+                          const bSlPnl = resolveDisplayedPlannedPnl(
+                            selectedTrade,
+                            "sl",
+                          );
 
                           return [
-                            bProfit != null
+                            bSlPnl != null
                               ? {
-                                  label: "Broker PnL",
-                                  value: `$${bProfit.toFixed(2)}`,
+                                  label: "Planned SL Profit",
+                                  value: `$${bSlPnl.toFixed(2)}`,
                                   group: "pnl",
+                                  valueStyle: plannedPnlValueStyle("sl"),
                                 }
                               : null,
                             bTpPnl != null
@@ -2386,13 +2434,21 @@ export default function TradesPage() {
                                   label: "Planned TP Profit",
                                   value: `$${bTpPnl.toFixed(2)}`,
                                   group: "pnl",
+                                  valueStyle: plannedPnlValueStyle("tp"),
                                 }
                               : null,
-                            bSlPnl != null
+                            {
+                              label: "Last Synced",
+                              value: selectedTrade.updated_at
+                                ? showDateTime(selectedTrade.updated_at)
+                                : "-",
+                              group: "sizing",
+                            },
+                            bSwap != null
                               ? {
-                                  label: "Planned SL Profit",
-                                  value: `$${bSlPnl.toFixed(2)}`,
-                                  group: "pnl",
+                                  label: "Swap",
+                                  value: `$${bSwap.toFixed(2)}`,
+                                  group: "sizing",
                                 }
                               : null,
                             bMargin != null
@@ -2409,6 +2465,13 @@ export default function TradesPage() {
                                   group: "sizing",
                                 }
                               : null,
+                            bComm != null
+                              ? {
+                                  label: "Commission",
+                                  value: `$${bComm.toFixed(2)}`,
+                                  group: "sizing",
+                                }
+                              : null,
                             bVol != null
                               ? {
                                   label: "Vol",
@@ -2420,20 +2483,6 @@ export default function TradesPage() {
                               ? {
                                   label: "Lots",
                                   value: `${bLots.toFixed(2)} lots`,
-                                  group: "sizing",
-                                }
-                              : null,
-                            bSwap != null
-                              ? {
-                                  label: "Swap",
-                                  value: `$${bSwap.toFixed(2)}`,
-                                  group: "sizing",
-                                }
-                              : null,
-                            bComm != null
-                              ? {
-                                  label: "Commission",
-                                  value: `$${bComm.toFixed(2)}`,
                                   group: "sizing",
                                 }
                               : null,

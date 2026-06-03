@@ -2128,3 +2128,13 @@ button:disabled {
     font-size: var(--font-2xs);
     padding: 2px 4px;
 }
+
+.trade-info-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+@media (max-width: 768px) {
+    .trade-info-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}

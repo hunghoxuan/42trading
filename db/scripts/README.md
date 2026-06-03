@@ -4,24 +4,24 @@ Postgres schema and sanitized seed helpers for local development.
 
 ## Files
 
-- `mt5_schema.sql` - schema-only dump from the restored local database.
-- `mt5_seed_sanitized.sql` - data seed with production secrets redacted.
-- `generate_sanitized_seed.js` - regenerates the sanitized seed from a local Postgres database.
+- `db/schema/mt5_schema.sql` - schema-only dump from the restored local database.
+- `db/schema/mt5_seed_sanitized.sql` - data seed with production secrets redacted.
+- `db/scripts/generate_sanitized_seed.js` - regenerates the sanitized seed from a local Postgres database.
 
 ## Generate Seed
 
 Default source:
 
 ```bash
-node scripts/db/generate_sanitized_seed.js
+node db/scripts/generate_sanitized_seed.js
 ```
 
 Override source or output:
 
 ```bash
 SEED_DATABASE_URL=postgresql://macmini@127.0.0.1:5432/mt5_bridge_local \
-SEED_OUTPUT=scripts/db/mt5_seed_sanitized.sql \
-node scripts/db/generate_sanitized_seed.js
+SEED_OUTPUT=db/schema/mt5_seed_sanitized.sql \
+node db/scripts/generate_sanitized_seed.js
 ```
 
 ## Restore Locally
@@ -30,8 +30,8 @@ Example:
 
 ```bash
 createdb mt5_bridge_local
-psql -d mt5_bridge_local -f scripts/db/mt5_schema.sql
-psql -d mt5_bridge_local -f scripts/db/mt5_seed_sanitized.sql
+psql -d mt5_bridge_local -f db/schema/mt5_schema.sql
+psql -d mt5_bridge_local -f db/schema/mt5_seed_sanitized.sql
 ```
 
 ## Safety

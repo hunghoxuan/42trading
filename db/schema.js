@@ -36,6 +36,11 @@ const userAccounts = pgTable("user_accounts", {
   sourceIdsCache: text("source_ids_cache"),
   metadata: text("metadata"),
   status: text("status"),
+  equity: doublePrecision("equity"),
+  margin: doublePrecision("margin"),
+  freeMargin: doublePrecision("free_margin"),
+  leverage: doublePrecision("leverage"),
+  brokerName: text("broker_name"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -79,41 +84,6 @@ const userSettings = pgTable(
   }),
 );
 
-const signals = pgTable("signals", {
-  sid: text("sid").primaryKey(),
-  id: serial("id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.userId, { onDelete: "cascade" }),
-  source: text("source"),
-  sourceId: text("source_id"),
-  symbol: text("symbol").notNull(),
-  side: text("side").notNull(),
-  orderType: text("order_type"),
-  entry: doublePrecision("entry"),
-  entryModel: text("entry_model"),
-  strategy: text("strategy"),
-  sl: doublePrecision("sl"),
-  tp: doublePrecision("tp"),
-  signalTf: text("signal_tf"),
-  chartTf: text("chart_tf"),
-  rrPlanned: doublePrecision("rr_planned"),
-  riskPctPlanned: doublePrecision("risk_pct_planned"),
-  riskMoneyPlanned: doublePrecision("risk_money_planned"),
-  note: text("note"),
-  rejectionReason: text("rejection_reason"),
-  rawJson: text("raw_json"),
-  status: text("status").default("NEW"),
-  profile: text("profile"),
-  confidencePct: doublePrecision("confidence_pct"),
-  estimatedBars: integer("estimated_bars"),
-  beTrigger: doublePrecision("be_trigger"),
-  metadata: text("metadata"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }),
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-});
-
 const trades = pgTable("trades", {
   sid: text("sid").primaryKey(),
   accountId: text("account_id")
@@ -122,9 +92,7 @@ const trades = pgTable("trades", {
   userId: text("user_id")
     .notNull()
     .references(() => users.userId, { onDelete: "cascade" }),
-  signalId: text("signal_id").references(() => signals.sid, {
-    onDelete: "set null",
-  }),
+  signalId: text("signal_id"),
   sourceId: text("source_id"),
   strategy: text("strategy"),
   entryModel: text("entry_model"),
@@ -169,6 +137,8 @@ const trades = pgTable("trades", {
   brokerVolume: doublePrecision("broker_volume"),
   brokerPnl: doublePrecision("broker_pnl"),
   brokerMargin: doublePrecision("broker_margin"),
+  plannedTpPnl: doublePrecision("planned_tp_pnl"),
+  plannedSlPnl: doublePrecision("planned_sl_pnl"),
   brokerTpPnl: doublePrecision("broker_tp_pnl"),
   brokerSlPnl: doublePrecision("broker_sl_pnl"),
   openedAt: timestamp("opened_at", { withTimezone: true }),
@@ -180,21 +150,10 @@ const trades = pgTable("trades", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
-const marketData = pgTable("market_data", {
-  id: serial("id").primaryKey(),
-  symbol: text("symbol").notNull(),
-  timeframe: text("timeframe").notNull(),
-  bars: text("bars"),
-  source: text("source"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
-
 module.exports = {
   users,
   userAccounts,
   userTemplates,
   userSettings,
-  signals,
   trades,
-  marketData,
 };

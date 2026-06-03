@@ -18,12 +18,16 @@ import {
   normalizeOrderTypeValue,
   validateTradePlan,
 } from "../../utils/signalDetailUtils";
-import { showDateTime } from "../../utils/format";
+import { formatDateTimeWithDuration, showDateTime } from "../../utils/format";
 import { showToast } from "../../components/ToastContainer";
 import { BrokerTicketBadge } from "../../components/BrokerTicketBadge";
 import PnlDisplay from "../../components/PnlDisplay";
 import { getBrokerTicket } from "../../utils/tradeRow";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import {
+  plannedPnlValueStyle,
+  resolveDisplayedPlannedPnl,
+} from "../../utils/tradePlannedPnl";
 
 function statusUi(statusRaw) {
   const s = String(statusRaw || "").toUpperCase();
@@ -68,6 +72,30 @@ function orderTypeRuleError(direction, orderType, entry, lastPrice) {
   if (side === "SELL" && typ === "stop" && !(entry < lastPrice))
     return "Sell Stop requires Entry < last price.";
   return "";
+}
+
+function formatClosedWithDuration(openedAt, closedAt) {
+  return formatDateTimeWithDuration(closedAt, openedAt);
+}
+
+function formatOpenedWithDuration(createdAt, openedAt) {
+  return formatDateTimeWithDuration(openedAt, createdAt);
+}
+
+function toTradeVolumeUnits(plan = {}) {
+  const displayLots = asFiniteOrNull(plan.volume);
+  if (!Number.isFinite(displayLots)) return null;
+  const basisUnits = asFiniteOrNull(plan.volume_units);
+  const basisLots = asFiniteOrNull(plan.broker_lots ?? plan.volume);
+  if (
+    Number.isFinite(basisUnits) &&
+    basisUnits > 0 &&
+    Number.isFinite(basisLots) &&
+    basisLots > 0
+  ) {
+    return Number((displayLots * (basisUnits / basisLots)).toFixed(8));
+  }
+  return displayLots;
 }
 
 export default function TradeDetailPage() {
@@ -444,6 +472,8 @@ export default function TradeDetailPage() {
         entry_model: detailPlan.entry_model,
         source_id: detailPlan.source_id,
         note: detailPlan.note,
+        volume: asFiniteOrNull(detailPlan.volume),
+        lots: asFiniteOrNull(detailPlan.volume),
         risk_money: asFiniteOrNull(
           detailPlan.risk_money_planned ?? detailPlan.risk_money,
         ),
@@ -458,7 +488,9 @@ export default function TradeDetailPage() {
           status === "REJECTED"
             ? {
                 execution_status: status,
-                rejection_reason: String(detailPlan.rejection_reason || "").trim(),
+                rejection_reason: String(
+                  detailPlan.rejection_reason || "",
+                ).trim(),
               }
             : {
                 execution_status: status,
@@ -844,21 +876,29 @@ export default function TradeDetailPage() {
                     : detailPlan.confidence_level || "-",
               },
               {
-                label: "Risk Level",
+                label: "Volume",
                 value:
-                  detailPlan.risk_level || trade.metadata?.risk_level || "-",
+                  trade.volume != null
+                    ? `${Number(trade.volume).toFixed(2)} lots`
+                    : detailPlan.volume != null
+                      ? `${Number(detailPlan.volume).toFixed(2)} lots`
+                      : "-",
               },
               {
-                label: "Risk %",
+                label: "PnL TP",
                 value:
-                  detailPlan.risk_pct != null ? `${detailPlan.risk_pct}%` : "-",
-              },
-              {
-                label: "Risk $",
-                value:
-                  detailPlan.risk_money != null
-                    ? `$${Number(detailPlan.risk_money).toFixed(2)}`
+                  trade.broker_tp_pnl != null
+                    ? `+$${Number(trade.broker_tp_pnl).toFixed(2)}`
                     : "-",
+                cls: "money-pos",
+              },
+              {
+                label: "PnL SL",
+                value:
+                  trade.broker_sl_pnl != null
+                    ? `-$${Math.abs(Number(trade.broker_sl_pnl)).toFixed(2)}`
+                    : "-",
+                cls: "money-neg",
               },
               { label: "Invalidation", value: detailPlan.invalidation || "-" },
               { label: "BE Trigger", value: detailPlan.be_trigger || "-" },
@@ -904,74 +944,20 @@ export default function TradeDetailPage() {
                   "-",
                 group: "identity",
               },
-              trade.pnl_realized != null
-                ? {
-                    label: "Broker PnL",
-                    value: `$${Number(trade.pnl_realized).toFixed(2)}`,
-                    group: "pnl",
-                  }
-                : null,
-              asNum(trade.broker_pnl)
-                ? {
-                    label: "Broker Net Profit",
-                    value: `$${asNum(trade.broker_pnl).toFixed(2)}`,
-                    group: "pnl",
-                  }
-                : null,
-              asNum(trade.broker_tp_pnl)
-                ? {
-                    label: "Planned TP Profit",
-                    value: `$${asNum(trade.broker_tp_pnl).toFixed(2)}`,
-                    group: "pnl",
-                  }
-                : null,
-              asNum(trade.broker_sl_pnl)
+              resolveDisplayedPlannedPnl(trade, "sl") != null
                 ? {
                     label: "Planned SL Profit",
-                    value: `$${asNum(trade.broker_sl_pnl).toFixed(2)}`,
+                    value: `$${resolveDisplayedPlannedPnl(trade, "sl").toFixed(2)}`,
                     group: "pnl",
+                    valueStyle: plannedPnlValueStyle("sl"),
                   }
                 : null,
-              asNum(trade.broker_margin)
+              resolveDisplayedPlannedPnl(trade, "tp") != null
                 ? {
-                    label: "Broker Margin",
-                    value: `$${asNum(trade.broker_margin).toFixed(2)}`,
-                    group: "sizing",
-                  }
-                : null,
-              trade.margin != null
-                ? {
-                    label: "Margin",
-                    value: `$${Number(trade.margin).toFixed(2)}`,
-                    group: "sizing",
-                  }
-                : null,
-              asNum(trade.broker_volume)
-                ? {
-                    label: "Vol",
-                    value: `${Number(trade.broker_volume).toLocaleString()} units`,
-                    group: "sizing",
-                  }
-                : null,
-              asNum(trade.broker_lots)
-                ? {
-                    label: "Lots",
-                    value: `${asNum(trade.broker_lots).toFixed(2)} lots`,
-                    group: "sizing",
-                  }
-                : null,
-              asNum(trade.broker_swap)
-                ? {
-                    label: "Swap",
-                    value: `$${asNum(trade.broker_swap).toFixed(2)}`,
-                    group: "sizing",
-                  }
-                : null,
-              asNum(trade.broker_commission)
-                ? {
-                    label: "Commission",
-                    value: `$${asNum(trade.broker_commission).toFixed(2)}`,
-                    group: "sizing",
+                    label: "Planned TP Profit",
+                    value: `$${resolveDisplayedPlannedPnl(trade, "tp").toFixed(2)}`,
+                    group: "pnl",
+                    valueStyle: plannedPnlValueStyle("tp"),
                   }
                 : null,
               {
@@ -989,17 +975,82 @@ export default function TradeDetailPage() {
               },
               { label: "Created", value: showDateTime(trade.created_at) },
               {
-                label: "Updated",
-                value: trade.updated_at ? showDateTime(trade.updated_at) : "-",
-              },
-              {
                 label: "Opened",
-                value: trade.opened_at ? showDateTime(trade.opened_at) : "-",
+                value: formatOpenedWithDuration(
+                  trade.created_at,
+                  trade.opened_at,
+                ),
               },
               {
                 label: "Closed",
-                value: trade.closed_at ? showDateTime(trade.closed_at) : "-",
+                value: formatClosedWithDuration(
+                  trade.opened_at,
+                  trade.closed_at,
+                ),
               },
+              {
+                label: "Broker PnL",
+                value:
+                  trade.pnl_realized != null || asNum(trade.broker_pnl) != null
+                    ? `$${Number(
+                        asNum(trade.broker_pnl) ?? Number(trade.pnl_realized),
+                      ).toFixed(2)}`
+                    : "-",
+              },
+              asNum(trade.broker_pnl)
+                ? {
+                    label: "Broker Net Profit",
+                    value: `$${asNum(trade.broker_pnl).toFixed(2)}`,
+                    group: "pnl",
+                  }
+                : null,
+              {
+                label: "Last Synced",
+                value: trade.updated_at ? showDateTime(trade.updated_at) : "-",
+                group: "sizing",
+              },
+              asNum(trade.broker_swap)
+                ? {
+                    label: "Swap",
+                    value: `$${asNum(trade.broker_swap).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_margin)
+                ? {
+                    label: "Broker Margin",
+                    value: `$${asNum(trade.broker_margin).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              trade.margin != null
+                ? {
+                    label: "Margin",
+                    value: `$${Number(trade.margin).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_commission)
+                ? {
+                    label: "Commission",
+                    value: `$${asNum(trade.broker_commission).toFixed(2)}`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_volume)
+                ? {
+                    label: "Vol",
+                    value: `${Number(trade.broker_volume).toLocaleString()} units`,
+                    group: "sizing",
+                  }
+                : null,
+              asNum(trade.broker_lots)
+                ? {
+                    label: "Lots",
+                    value: `${asNum(trade.broker_lots).toFixed(2)} lots`,
+                    group: "sizing",
+                  }
+                : null,
               {
                 label: "Entry Condition",
                 value: detailPlan.entry_condition || "-",

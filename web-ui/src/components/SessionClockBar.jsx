@@ -2,8 +2,10 @@ import React, { useEffect, useState, useMemo, useRef } from "react";
 import "./SessionClockBar.css";
 import { playSound, SoundEvents } from "../utils/SoundManager";
 import Tooltip from "./Tooltip";
+import { api } from "../api";
 import {
   getDisplayTimezoneMode,
+  normalizeDisplayTimezone,
   setDisplayTimezoneMode,
 } from "../utils/format";
 
@@ -76,6 +78,7 @@ export default function SessionClockBar({ displayTimezone }) {
   );
   const [tzMode, setTzMode] = useState(() => getDisplayTimezoneMode());
   const [news, setNews] = useState([]);
+  const saveSeqRef = useRef(0);
 
   const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const currentTz =
@@ -362,6 +365,16 @@ export default function SessionClockBar({ displayTimezone }) {
     setTz(next);
     setTzMode(mode);
     window.dispatchEvent(new Event("ui-timezone-changed"));
+    const seq = ++saveSeqRef.current;
+    api
+      .updateMetadata({
+        settings: {
+          display_timezone: normalizeDisplayTimezone(next),
+        },
+      })
+      .catch(() => {
+        if (saveSeqRef.current !== seq) return;
+      });
   };
 
   return (

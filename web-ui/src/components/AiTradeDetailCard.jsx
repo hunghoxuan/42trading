@@ -1,5 +1,10 @@
 import SignalDetailCard from "./SignalDetailCard";
 import { applyLinkedPlanChange } from "../utils/signalDetailUtils";
+import { formatDateTimeWithDuration, showDateTime } from "../utils/format";
+import {
+  plannedPnlValueStyle,
+  resolveDisplayedPlannedPnl,
+} from "../utils/tradePlannedPnl";
 
 function parseRawJson(raw) {
   try {
@@ -25,6 +30,14 @@ function tradePlansFromTrade(trade) {
       sl: trade?.sl,
     },
   ];
+}
+
+function formatClosedWithDuration(openedAt, closedAt) {
+  return formatDateTimeWithDuration(closedAt, openedAt);
+}
+
+function formatOpenedWithDuration(createdAt, openedAt) {
+  return formatDateTimeWithDuration(openedAt, createdAt);
 }
 
 export default function AiTradeDetailCard({
@@ -57,8 +70,8 @@ export default function AiTradeDetailCard({
   const bSwap = bd(trade.broker_swap, "swap");
   const bMargin = bd(trade.broker_margin, "margin");
   const bLots = bd(trade.broker_lots, "lots");
-  const bTpPnl = bd(trade.broker_tp_pnl, "tp_pnl") ?? asNum(broker.pnl_tp);
-  const bSlPnl = bd(trade.broker_sl_pnl, "sl_pnl") ?? asNum(broker.pnl_sl);
+  const bTpPnl = resolveDisplayedPlannedPnl(trade, "tp");
+  const bSlPnl = resolveDisplayedPlannedPnl(trade, "sl");
   const brokerItems = [
     // Identity
     {
@@ -94,57 +107,41 @@ export default function AiTradeDetailCard({
       value: trade.execution_status || broker.status || "-",
       group: "identity",
     },
-    broker.last_sync_at
-      ? {
-          label: "Last Sync",
-          value: new Date(broker.last_sync_at).toLocaleTimeString(),
-          group: "identity",
-        }
-      : null,
     {
       label: "Created",
-      value: trade.created_at
-        ? new Date(trade.created_at).toLocaleString()
-        : "-",
-      group: "identity",
-    },
-    {
-      label: "Updated",
-      value: trade.updated_at
-        ? new Date(trade.updated_at).toLocaleString()
-        : "-",
+      value: showDateTime(trade.created_at),
       group: "identity",
     },
     {
       label: "Opened",
-      value: trade.opened_at ? new Date(trade.opened_at).toLocaleString() : "-",
+      value: formatOpenedWithDuration(trade.created_at, trade.opened_at),
       group: "identity",
     },
     {
       label: "Closed",
-      value: trade.closed_at ? new Date(trade.closed_at).toLocaleString() : "-",
+      value: formatClosedWithDuration(trade.opened_at, trade.closed_at),
       group: "identity",
     },
-    // PnL
     {
       label: "Broker PnL",
       value:
         trade.pnl_realized != null
           ? `$${Number(trade.pnl_realized).toFixed(2)}`
           : "-",
-      group: "pnl",
+      group: "identity",
     },
+    broker.last_sync_at
+      ? {
+          label: "Broker Last Synced",
+          value: showDateTime(broker.last_sync_at),
+          group: "identity",
+        }
+      : null,
+    // PnL
     bProfit != null
       ? {
           label: "Broker Net Profit",
           value: `$${bProfit.toFixed(2)}`,
-          group: "pnl",
-        }
-      : null,
-    bTpPnl != null
-      ? {
-          label: "Planned TP Profit",
-          value: `$${bTpPnl.toFixed(2)}`,
           group: "pnl",
         }
       : null,
@@ -153,9 +150,26 @@ export default function AiTradeDetailCard({
           label: "Planned SL Profit",
           value: `$${bSlPnl.toFixed(2)}`,
           group: "pnl",
+          valueStyle: plannedPnlValueStyle("sl"),
+        }
+      : null,
+    bTpPnl != null
+      ? {
+          label: "Planned TP Profit",
+          value: `$${bTpPnl.toFixed(2)}`,
+          group: "pnl",
+          valueStyle: plannedPnlValueStyle("tp"),
         }
       : null,
     // Costs
+    {
+      label: "Last Synced",
+      value: showDateTime(trade.updated_at),
+      group: "sizing",
+    },
+    bSwap != null
+      ? { label: "Swap", value: `$${bSwap.toFixed(2)}`, group: "sizing" }
+      : null,
     bMargin != null
       ? {
           label: "Broker Margin",
@@ -169,6 +183,9 @@ export default function AiTradeDetailCard({
           value: `$${Number(trade.margin).toFixed(2)}`,
           group: "sizing",
         }
+      : null,
+    bComm != null
+      ? { label: "Commission", value: `$${bComm.toFixed(2)}`, group: "sizing" }
       : null,
     bVol != null
       ? {
@@ -186,12 +203,6 @@ export default function AiTradeDetailCard({
       : null,
     bLots != null
       ? { label: "Lots", value: `${bLots.toFixed(2)} lots`, group: "sizing" }
-      : null,
-    bSwap != null
-      ? { label: "Swap", value: `$${bSwap.toFixed(2)}`, group: "sizing" }
-      : null,
-    bComm != null
-      ? { label: "Commission", value: `$${bComm.toFixed(2)}`, group: "sizing" }
       : null,
   ].filter(Boolean);
   return (

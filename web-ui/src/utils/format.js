@@ -93,8 +93,10 @@ export function getEffectiveDisplayTimezone() {
   return selected;
 }
 
-function getSafeTimezoneConfig() {
-  const normalized = getEffectiveDisplayTimezone();
+export function resolveDisplayTimezone(timezone) {
+  const normalized = normalizeDisplayTimezone(
+    timezone || getEffectiveDisplayTimezone(),
+  );
   if (normalized === "Local") {
     return { storageValue: "Local", intlTimeZone: getBrowserTimezone() || "UTC" };
   }
@@ -104,7 +106,62 @@ function getSafeTimezoneConfig() {
   return { storageValue: "Local", intlTimeZone: getBrowserTimezone() || "UTC" };
 }
 
-export function showDateTime(val) {
+function getSafeTimezoneConfig(timezone) {
+  return resolveDisplayTimezone(timezone);
+}
+
+function formatDateParts(date, timezone) {
+  const tzConfig = getSafeTimezoneConfig(timezone);
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tzConfig.intlTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const getPart = (type) => parts.find((p) => p.type === type)?.value;
+  const d = getPart("day");
+  const m = getPart("month");
+  const y = getPart("year");
+  const hh = getPart("hour");
+  const mm = getPart("minute");
+  return { tzConfig, d, m, y, hh, mm };
+}
+
+export function formatChartDateTime(val, timezone) {
+  if (!val) return "-";
+  const date = new Date(val);
+  if (Number.isNaN(date.getTime())) return String(val);
+  try {
+    const { tzConfig, d, m, y, hh, mm } = formatDateParts(date, timezone);
+    const now = new Date();
+    const fmtShort = new Intl.DateTimeFormat("en-GB", {
+      timeZone: tzConfig.intlTimeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const nowParts = fmtShort.formatToParts(now);
+    const todayDay = nowParts.find((p) => p.type === "day")?.value;
+    const todayMonth = nowParts.find((p) => p.type === "month")?.value;
+    const todayYear = nowParts.find((p) => p.type === "year")?.value;
+    if (d === todayDay && m === todayMonth && y === todayYear) {
+      return `${hh}:${mm}`;
+    }
+    if (y === todayYear) {
+      return `${d}.${m} ${hh}:${mm}`;
+    }
+    return `${d}.${m}.${y} ${hh}:${mm}`;
+  } catch (err) {
+    console.error("Format error with timezone:", timezone, err);
+    return date.toISOString().replace("T", " ").substring(0, 16);
+  }
+}
+
+export function showDateTime(val, timezone) {
   if (!val) return "-";
   const date = new Date(val);
   if (isNaN(date.getTime())) return String(val);
@@ -115,42 +172,25 @@ export function showDateTime(val) {
     return `${mins}'`;
   }
 
-  const tzConfig = getSafeTimezoneConfig();
+  const tzConfig = getSafeTimezoneConfig(timezone);
 
   try {
-    const fmt = new Intl.DateTimeFormat('en-GB', {
-      timeZone: tzConfig.intlTimeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
-
-    const parts = fmt.formatToParts(date);
-    const getPart = (type) => parts.find(p => p.type === type)?.value;
-
-    const d = getPart('day');
-    const m = getPart('month');
-    const y = getPart('year');
-    const hh = getPart('hour');
-    const mm = getPart('minute');
+    const { d, m, y, hh, mm } = formatDateParts(date, timezone);
 
     const now = new Date();
-    const fmtShort = new Intl.DateTimeFormat('en-GB', {
+    const fmtShort = new Intl.DateTimeFormat("en-GB", {
       timeZone: tzConfig.intlTimeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
     });
-    
+
     const nowParts = fmtShort.formatToParts(now);
-    const todayDay = nowParts.find(p => p.type === 'day').value;
-    const todayMonth = nowParts.find(p => p.type === 'month').value;
-    const todayYear = nowParts.find(p => p.type === 'year').value;
-    
-    const isToday = (d === todayDay && m === todayMonth && y === todayYear);
+    const todayDay = nowParts.find((p) => p.type === "day").value;
+    const todayMonth = nowParts.find((p) => p.type === "month").value;
+    const todayYear = nowParts.find((p) => p.type === "year").value;
+
+    const isToday = d === todayDay && m === todayMonth && y === todayYear;
 
     if (isToday) {
       return `${hh}:${mm}`;
@@ -161,8 +201,28 @@ export function showDateTime(val) {
     }
   } catch (err) {
     console.error("Format error with timezone:", tzConfig.storageValue, err);
-    return date.toISOString().replace('T', ' ').substring(0, 16);
+    return date.toISOString().replace("T", " ").substring(0, 16);
   }
+}
+
+export function formatDurationLabel(startVal, endVal) {
+  if (!startVal || !endVal) return "";
+  const start = new Date(startVal);
+  const end = new Date(endVal);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
+  const diffMs = end.getTime() - start.getTime();
+  if (diffMs < 0) return "";
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${minutes}m`;
+}
+
+export function formatDateTimeWithDuration(value, fromValue, timezone) {
+  if (!value) return "-";
+  const label = showDateTime(value, timezone);
+  const duration = formatDurationLabel(fromValue, value);
+  return duration ? `${label} (${duration})` : label;
 }
 
 /**

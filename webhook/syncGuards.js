@@ -14,6 +14,18 @@ const DISPATCH_ACTION_TO_TASK = Object.freeze({
 
 function brokerTaskTypeForTrade(row = {}) {
   const dispatch = String(row.dispatch_status || "").trim().toUpperCase();
+  if (dispatch === "LEASED") {
+    const metadata =
+      row?.metadata && typeof row.metadata === "object" ? row.metadata : {};
+    const leasedDispatch = String(
+      metadata.leased_dispatch_status || metadata.leasedDispatchStatus || "",
+    )
+      .trim()
+      .toUpperCase();
+    if (DISPATCH_ACTION_TO_TASK[leasedDispatch]) {
+      return DISPATCH_ACTION_TO_TASK[leasedDispatch];
+    }
+  }
   return DISPATCH_ACTION_TO_TASK[dispatch] || "OPEN";
 }
 
@@ -45,6 +57,7 @@ function nextLeaseRetryCount(row = {}, now = new Date()) {
 }
 
 function shouldAutoRejectLeasedTrade(row = {}, maxRetries = 3, now = new Date()) {
+  if (brokerTaskTypeForTrade(row) !== "OPEN") return false;
   return nextLeaseRetryCount(row, now) >= Math.max(1, Number(maxRetries) || 3);
 }
 
@@ -68,6 +81,15 @@ function normNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
   return Number(n.toFixed(8));
+}
+
+function nullableIsoTimestamp(value) {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
 function brokerSnapshotFingerprint(item = {}) {
@@ -155,6 +177,7 @@ module.exports = {
   brokerSnapshotFingerprint,
   brokerSnapshotHash,
   brokerTaskTypeForTrade,
+  nullableIsoTimestamp,
   shouldClearRejectedDispatchFromBrokerSnapshot,
   leaseRetryCount,
   nextLeaseRetryCount,

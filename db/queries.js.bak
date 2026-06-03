@@ -97,6 +97,26 @@ async function listTradesV2(db, filters = {}, page = 1, pageSize = 50) {
   };
 }
 
+async function listSignals(db, filters = {}) {
+  const conditions = [];
+  if (filters.symbol)
+    conditions.push(eq(schema.signals.symbol, filters.symbol));
+  if (filters.status)
+    conditions.push(eq(schema.signals.status, filters.status));
+  if (filters.source)
+    conditions.push(eq(schema.signals.source, filters.source));
+  if (filters.side) conditions.push(eq(schema.signals.side, filters.side));
+  const where = conditions.length ? and(...conditions) : undefined;
+  return rowsSnake(
+    await db
+      .select()
+      .from(schema.signals)
+      .where(where)
+      .orderBy(desc(schema.signals.createdAt))
+      .limit(200),
+  );
+}
+
 async function listUserAccounts(db, userId) {
   return rowsSnake(
     await db
@@ -105,6 +125,52 @@ async function listUserAccounts(db, userId) {
       .where(eq(schema.userAccounts.userId, String(userId || "")))
       .orderBy(schema.userAccounts.createdAt, schema.userAccounts.accountId),
   );
+}
+
+async function upsertSignal(db, signal) {
+  const v = {
+    sid: signal.sid,
+    createdAt: signal.created_at ? new Date(signal.created_at) : new Date(),
+    userId: signal.user_id,
+    symbol: signal.symbol,
+    side: signal.side,
+    source: signal.source || null,
+    sourceId: signal.source_id || null,
+    orderType: signal.order_type || null,
+    entry: signal.entry != null ? Number(signal.entry) : null,
+    sl: signal.sl != null ? Number(signal.sl) : null,
+    tp: signal.tp != null ? Number(signal.tp) : null,
+    strategy: signal.strategy || null,
+    entryModel: signal.entry_model || null,
+    signalTf: signal.signal_tf || null,
+    chartTf: signal.chart_tf || null,
+    rrPlanned: signal.rr_planned != null ? Number(signal.rr_planned) : null,
+    riskMoneyPlanned:
+      signal.risk_money_planned != null
+        ? Number(signal.risk_money_planned)
+        : null,
+    riskPctPlanned:
+      signal.risk_pct_planned != null ? Number(signal.risk_pct_planned) : null,
+    note: signal.note || null,
+    rejectionReason: signal.rejection_reason || null,
+    rawJson: jsonField(signal.raw_json),
+    metadata: jsonField(signal.metadata),
+    status: signal.status || "NEW",
+    profile: signal.profile || null,
+    confidencePct:
+      signal.confidence_pct != null ? Number(signal.confidence_pct) : null,
+    estimatedBars:
+      signal.estimated_bars != null ? Number(signal.estimated_bars) : null,
+    beTrigger: signal.be_trigger != null ? Number(signal.be_trigger) : null,
+  };
+  try {
+    await db.insert(schema.signals).values(v);
+    return { sid: signal.sid };
+  } catch (e) {
+    if (e.message?.includes("duplicate key") || e.code === "23505")
+      return { sid: signal.sid, existed: true };
+    throw e;
+  }
 }
 
 async function findAccountByApiKeyHash(db, apiKeyHash) {
@@ -164,6 +230,72 @@ async function deleteUserAccount(db, userId, accountId) {
       and(
         eq(schema.userAccounts.userId, String(userId || "")),
         eq(schema.userAccounts.accountId, String(accountId || "")),
+      ),
+    );
+}
+
+async function listActiveSignals(db, userId) {
+  return rowsSnake(
+    await db
+      .select()
+      .from(schema.signals)
+      .where(
+        and(
+          eq(schema.signals.userId, String(userId || "")),
+          eq(schema.signals.status, "ACTIVE"),
+        ),
+      )
+      .orderBy(desc(schema.signals.createdAt)),
+  );
+}
+
+async function getSignalByTicket(db, ticket) {
+  const rows = await db
+    .select()
+    .from(schema.signals)
+    .where(eq(schema.signals.sid, String(ticket || "")))
+    .limit(1);
+  return toSnake(rows[0]) || null;
+}
+
+async function bulkAckSignals(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db
+    .update(schema.signals)
+    .set({ status: "ACKED" })
+    .where(inArray(schema.signals.sid, ids));
+}
+
+async function cancelSignalsByIds(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db
+    .update(schema.signals)
+    .set({ status: "CANCELLED" })
+    .where(inArray(schema.signals.sid, ids));
+}
+
+async function deleteSignalsByIds(db, ids) {
+  if (!Array.isArray(ids) || !ids.length) return { count: 0 };
+  return db.delete(schema.signals).where(inArray(schema.signals.sid, ids));
+}
+
+async function findSignalById(db, id) {
+  const rows = await db
+    .select()
+    .from(schema.signals)
+    .where(eq(schema.signals.sid, String(id || "")))
+    .limit(1);
+  return toSnake(rows[0]) || null;
+}
+
+async function pruneOldSignals(db, days = 14) {
+  const cutoff = new Date(Date.now() - days * 86400000);
+  return db
+    .delete(schema.signals)
+    .where(
+      and(
+        lte(schema.signals.createdAt, cutoff),
+        eq(schema.signals.status, "CANCELLED"),
       ),
     );
 }
@@ -269,6 +401,36 @@ async function updateUserMetadata(db, userId, metadata) {
     .where(eq(schema.users.userId, userId));
 }
 
+async function resolveSignalRef(db, numericId, sid, userId) {
+  const conditions = [];
+  if (numericId != null)
+    conditions.push(eq(schema.signals.id, sql`${numericId}::bigint`));
+  conditions.push(eq(schema.signals.sid, sid));
+  if (userId) conditions.push(eq(schema.signals.userId, userId));
+  const rows = await db
+    .select({
+      id: schema.signals.id,
+      sid: schema.signals.sid,
+      userId: schema.signals.userId,
+    })
+    .from(schema.signals)
+    .where(or(...conditions))
+    .orderBy(
+      desc(
+        sql`COALESCE(${schema.signals.closedAt}, ${schema.signals.updatedAt})`,
+      ),
+    )
+    .limit(1);
+  return toSnake(rows[0]) || null;
+}
+
+async function closeSignal(db, sid) {
+  return db
+    .update(schema.signals)
+    .set({ status: "CLOSED", updatedAt: new Date() })
+    .where(eq(schema.signals.sid, sid));
+}
+
 async function promoteDraftTrade(db, tradeRef, userId) {
   const c = [eq(schema.trades.sid, tradeRef)];
   if (userId) c.push(eq(schema.trades.userId, userId));
@@ -324,11 +486,20 @@ function parseJsonField(val) {
 
 module.exports = {
   listTradesV2,
+  listSignals,
   listUserAccounts,
+  upsertSignal,
   findAccountByApiKeyHash,
   upsertUserAccount,
   listUiUsers,
   deleteUserAccount,
+  listActiveSignals,
+  getSignalByTicket,
+  bulkAckSignals,
+  cancelSignalsByIds,
+  deleteSignalsByIds,
+  findSignalById,
+  pruneOldSignals,
   getUserSetting,
   getUserSettingData,
   listUserSettingsByType,
@@ -336,6 +507,8 @@ module.exports = {
   deleteUserSetting,
   getUserMetadata,
   updateUserMetadata,
+  resolveSignalRef,
+  closeSignal,
   promoteDraftTrade,
   deleteUserTemplate,
   getUserTemplate,

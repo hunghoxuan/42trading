@@ -1293,6 +1293,48 @@ namespace cAlgo.Robots
                         var ord = PendingOrders.FirstOrDefault(o => o.Id == ticketNum);
                         if (ord != null)
                         {
+                            double requestedLots = ParseDouble(GetJsonValue(json, "lots"));
+                            if (requestedLots <= 0) requestedLots = ParseDouble(GetJsonValue(json, "volume"));
+                            double currentLots = symbol.VolumeInUnitsToQuantity(ord.VolumeInUnits);
+                            bool wantsVolumeChange = requestedLots > 0 && Math.Abs(requestedLots - currentLots) > 0.0001;
+
+                            if (wantsVolumeChange)
+                            {
+                                double newVolumeUnits = symbol.QuantityToVolumeInUnits(requestedLots);
+                                newVolumeUnits = symbol.NormalizeVolumeInUnits(newVolumeUnits, RoundingMode.Down);
+                                if (newVolumeUnits < symbol.VolumeInUnitsMin)
+                                {
+                                    SafeAck(id, leaseToken, "ERROR", ticketStr, "modify_volume_too_small");
+                                    return;
+                                }
+
+                                var cancelRes = CancelPendingOrder(ord);
+                                if (!cancelRes.IsSuccessful)
+                                {
+                                    SafeAck(id, leaseToken, "ERROR", ticketStr, "modify_cancel_fail: " + cancelRes.Error);
+                                    return;
+                                }
+
+                                TradeResult replaceRes = null;
+                                if (ord.OrderType == PendingOrderType.Limit)
+                                {
+                                    replaceRes = PlaceLimitOrder(ord.TradeType, symbol.Name, newVolumeUnits, ord.TargetPrice, ord.Label, null, null, ord.ExpirationTime, id);
+                                }
+                                else
+                                {
+                                    replaceRes = PlaceStopOrder(ord.TradeType, symbol.Name, newVolumeUnits, ord.TargetPrice, ord.Label, null, null, ord.ExpirationTime, id);
+                                }
+
+                                if (!replaceRes.IsSuccessful || replaceRes.PendingOrder == null)
+                                {
+                                    SafeAck(id, leaseToken, "ERROR", ticketStr, "modify_replace_fail: " + (replaceRes != null ? replaceRes.Error.ToString() : "unknown"));
+                                    return;
+                                }
+
+                                ord = replaceRes.PendingOrder;
+                                ticketStr = ord.Id.ToString();
+                            }
+
                             double? slPips = null;
                             double? tpPips = null;
                             if (sl > 0) slPips = Math.Round((action == "BUY" ? (ord.TargetPrice - sl) : (sl - ord.TargetPrice)) / symbol.PipSize, 2);
@@ -2182,7 +2224,13 @@ namespace cAlgo.Robots
             }
         }
 
-        private long ToUnixTime(DateTime dt) { return new DateTimeOffset(dt).ToUnixTimeSeconds(); }
+        private long ToUnixTime(DateTime dt)
+        {
+            var normalized = dt.Kind == DateTimeKind.Unspecified
+                ? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+                : dt.ToUniversalTime();
+            return new DateTimeOffset(normalized).ToUnixTimeSeconds();
+        }
 
         private string FormatServerErrorForPanel(string raw)
         {

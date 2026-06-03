@@ -8,14 +8,14 @@ import { ORDER_SIDES } from "../pages/ai/AiPromptBuilder";
 
 const numericInlineRowStyle = {
   display: "grid",
-  gridTemplateColumns: "42px minmax(84px, 0.75fr) minmax(132px, 1.25fr)",
+  gridTemplateColumns: "42px minmax(126px, 1fr) minmax(72px, 1fr)",
   alignItems: "center",
-  gap: 8,
+  gap: 4,
   minWidth: 0,
 };
 const numericNoSliderRowStyle = {
   display: "grid",
-  gridTemplateColumns: "42px minmax(84px, 1fr)",
+  gridTemplateColumns: "42px minmax(126px, 1fr)",
   alignItems: "center",
   gap: 8,
   minWidth: 0,
@@ -49,29 +49,33 @@ const stepButtonStyle = {
 const sliderWrapStyle = {
   display: "flex",
   alignItems: "center",
-  gap: 4,
+  gap: 0,
   minWidth: 0,
-  paddingRight: 2,
+  paddingRight: 0,
+  width: "100%",
+  justifyContent: "flex-end",
 };
 const sliderStyle = {
   accentColor: "var(--muted)",
   height: "8px",
   margin: 0,
-  flex: 1,
-  minWidth: 0,
+  width: "100%",
+  maxWidth: 72,
+  minWidth: 56,
 };
 const selectInlineRowStyle = {
   display: "grid",
-  gridTemplateColumns: "42px minmax(84px, 0.75fr) minmax(132px, 1.25fr)",
+  gridTemplateColumns: "42px auto minmax(96px, 1fr) auto auto",
   alignItems: "center",
   gap: 8,
   minWidth: 0,
 };
-const selectSpacerStyle = {
-  height: 18,
-  border: "1px solid rgba(255,255,255,0.08)",
-  borderRadius: 999,
-  opacity: 0.35,
+const sideSelectRowStyle = {
+  display: "grid",
+  gridTemplateColumns: "42px minmax(0, 1fr) minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 8,
+  minWidth: 0,
 };
 const labelColorByKey = (k) => {
   const key = String(k || "").toLowerCase();
@@ -92,6 +96,47 @@ function parseNum(v) {
   if (!raw) return null;
   const n = Number(raw.replace(",", "."));
   return Number.isFinite(n) ? n : null;
+}
+
+function formatCompactPnl(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+  return `${n >= 0 ? "+" : "-"}$${abs}`;
+}
+
+function formatCompactPnlSigned(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.round(Math.abs(n)).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+  return `${n >= 0 ? "+" : "-"}${abs}`;
+}
+
+function scalePnlByLots(basePnl, currentLots, basisLots) {
+  const pnl = Number(basePnl);
+  const lots = Number(currentLots);
+  const baseLotsNum = Number(basisLots);
+  if (!Number.isFinite(pnl)) return null;
+  if (
+    Number.isFinite(lots) &&
+    lots > 0 &&
+    Number.isFinite(baseLotsNum) &&
+    baseLotsNum > 0
+  ) {
+    return Number(((pnl * lots) / baseLotsNum).toFixed(2));
+  }
+  return pnl;
+}
+
+function nextNonNegativeLots(currentValue, delta) {
+  const next = (parseNum(currentValue) ?? 0) + delta;
+  return formatNum3(Math.max(0, next));
 }
 
 function cleanFieldValue(v) {
@@ -258,20 +303,15 @@ const NumericInline = memo(function NumericInline({
       >
         {label}
       </label>
-      <input
-        id={fieldId}
-        name={k}
-        style={{ ...numericInputStyle, color: toneColor }}
-        type="number"
-        step={step}
-        inputMode="decimal"
-        min={min}
-        max={max}
-        value={cleanFieldValue(valueRaw)}
-        onChange={(e) => onUpdate(k, e.target.value)}
-        disabled={isDisabled}
-      />
-      <div style={sliderWrapStyle}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto minmax(0, 1fr) auto",
+          gap: 4,
+          alignItems: "center",
+          minWidth: 0,
+        }}
+      >
         <button
           type="button"
           className="secondary-button"
@@ -282,6 +322,31 @@ const NumericInline = memo(function NumericInline({
         >
           -
         </button>
+        <input
+          id={fieldId}
+          name={k}
+          style={{ ...numericInputStyle, color: toneColor }}
+          type="number"
+          step={step}
+          inputMode="decimal"
+          min={min}
+          max={max}
+          value={cleanFieldValue(valueRaw)}
+          onChange={(e) => onUpdate(k, e.target.value)}
+          disabled={isDisabled}
+        />
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => adjustByStep(1)}
+          disabled={sliderDisabled}
+          style={stepButtonStyle}
+          title="+1 step"
+        >
+          +
+        </button>
+      </div>
+      <div style={sliderWrapStyle}>
         <input
           id={`${fieldId}-range`}
           className="snapshot-number-slider-v4"
@@ -294,16 +359,6 @@ const NumericInline = memo(function NumericInline({
           disabled={sliderDisabled}
           onChange={(e) => onUpdate(k, formatNum3(Number(e.target.value)))}
         />
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => adjustByStep(1)}
-          disabled={sliderDisabled}
-          style={stepButtonStyle}
-          title="+1 step"
-        >
-          +
-        </button>
       </div>
     </div>
   );
@@ -334,21 +389,55 @@ const NumericNoSlider = memo(function NumericNoSlider({
       >
         {label}
       </label>
-      <input
-        id={fieldId}
-        name={k}
-        style={{ ...numericInputStyle, opacity: readOnly ? 0.85 : 1 }}
-        type="number"
-        step={step}
-        inputMode="decimal"
-        min={min}
-        max={max}
-        value={cleanFieldValue(
-          valueOverride == null ? valueRaw : valueOverride,
-        )}
-        onChange={(e) => onUpdate(k, e.target.value)}
-        disabled={isDisabled}
-      />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "auto minmax(0, 1fr) auto",
+          gap: 4,
+          alignItems: "center",
+          minWidth: 0,
+        }}
+      >
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() =>
+            onUpdate(k, formatNum3((parseNum(valueRaw) ?? 0) - Number(step || 0.01)))
+          }
+          disabled={isDisabled}
+          style={stepButtonStyle}
+          title="-1 step"
+        >
+          -
+        </button>
+        <input
+          id={fieldId}
+          name={k}
+          style={{ ...numericInputStyle, opacity: readOnly ? 0.85 : 1 }}
+          type="number"
+          step={step}
+          inputMode="decimal"
+          min={min}
+          max={max}
+          value={cleanFieldValue(
+            valueOverride == null ? valueRaw : valueOverride,
+          )}
+          onChange={(e) => onUpdate(k, e.target.value)}
+          disabled={isDisabled}
+        />
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() =>
+            onUpdate(k, formatNum3((parseNum(valueRaw) ?? 0) + Number(step || 0.01)))
+          }
+          disabled={isDisabled}
+          style={stepButtonStyle}
+          title="+1 step"
+        >
+          +
+        </button>
+      </div>
     </div>
   );
 });
@@ -427,6 +516,21 @@ export function TradePlanEditor({
   )
     .trim()
     .toUpperCase();
+  const plannedTpPnl =
+    parseNum(value?.broker_tp_pnl) ??
+    parseNum(value?.planned_tp_pnl) ??
+    parseNum(value?.tp_pnl);
+  const plannedSlPnl =
+    parseNum(value?.broker_sl_pnl) ??
+    parseNum(value?.planned_sl_pnl) ??
+    parseNum(value?.sl_pnl);
+  const currentLots = parseNum(value?.volume);
+  const basisLots =
+    parseNum(value?.broker_lots) ??
+    parseNum(value?.volume_basis_lots) ??
+    currentLots;
+  const previewTpPnl = scalePnlByLots(plannedTpPnl, currentLots, basisLots);
+  const previewSlPnl = scalePnlByLots(plannedSlPnl, currentLots, basisLots);
   const showCloseAction =
     typeof onClose === "function" && normalizedTradeStatus === "FILLED";
   const showCancelAction =
@@ -793,7 +897,7 @@ export function TradePlanEditor({
           >
             <Row2
               left={
-                <div style={selectInlineRowStyle}>
+                <div style={sideSelectRowStyle}>
                   <label
                     htmlFor={`${signalId || tradeId || "tp-editor"}-direction`}
                     className="minor-text"
@@ -854,34 +958,75 @@ export function TradePlanEditor({
               right={
                 <div style={selectInlineRowStyle}>
                   <label
-                    htmlFor={`${signalId || tradeId || "tp-editor"}-risk_money_planned`}
+                    htmlFor={`${signalId || tradeId || "tp-editor"}-volume`}
                     className="minor-text"
                     style={{
                       ...labelStyle,
                       opacity: tradeFieldsDisabled ? 0.4 : 0.9,
                     }}
                   >
-                    Risk
+                    Lots
                   </label>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      update("volume", nextNonNegativeLots(value.volume, -0.01))
+                    }
+                    disabled={tradeFieldsDisabled || controlsDisabled}
+                    style={stepButtonStyle}
+                    title="-0.01 lot"
+                  >
+                    -
+                  </button>
                   <input
-                    id={`${signalId || tradeId || "tp-editor"}-risk_money_planned`}
-                    name="risk_money_planned"
+                    id={`${signalId || tradeId || "tp-editor"}-volume`}
+                    name="volume"
                     style={numericInputStyle}
                     type="number"
                     step="0.01"
                     inputMode="decimal"
-                    value={cleanFieldValue(
-                      value.risk_money_actual ??
-                        value.risk_money_planned ??
-                        value.risk_money ??
-                        "",
-                    )}
-                    onChange={(e) =>
-                      update("risk_money_planned", e.target.value)
-                    }
+                    value={cleanFieldValue(value.volume ?? value.broker_lots ?? "")}
+                    onChange={(e) => update("volume", e.target.value)}
                     disabled={tradeFieldsDisabled || controlsDisabled}
                   />
-                  <div style={selectSpacerStyle} />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      update("volume", nextNonNegativeLots(value.volume, 0.01))
+                    }
+                    disabled={tradeFieldsDisabled || controlsDisabled}
+                    style={stepButtonStyle}
+                    title="+0.01 lot"
+                  >
+                    +
+                  </button>
+                  <div
+                    style={{
+                      minHeight: 18,
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      borderRadius: 999,
+                      opacity: tradeFieldsDisabled ? 0.55 : 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      padding: "0 10px",
+                      fontSize: 11,
+                      overflow: "hidden",
+                      width: "fit-content",
+                      minWidth: 78,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span style={{ color: "#22c55e", fontWeight: 700, whiteSpace: "nowrap" }}>
+                      {formatCompactPnlSigned(previewTpPnl)}
+                    </span>
+                    <span style={{ color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>
+                      {formatCompactPnlSigned(previewSlPnl)}
+                    </span>
+                  </div>
                 </div>
               }
             />
