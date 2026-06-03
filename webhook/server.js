@@ -3169,7 +3169,9 @@ async function getTradeListFromCache(status) {
   try {
     const client = await getRedisClient();
     if (!client) return null;
-    const cacheKey = status === "PENDING" ? "trades:pending" : "trades:filled";
+    const src = resolveMt5DbSource(currentMt5DbSourceId());
+    const srcId = src?.id || "active";
+    const cacheKey = `trades:${status.toLowerCase()}:${srcId}`;
     const raw = await client.get(cacheKey);
     if (raw) return JSON.parse(raw);
   } catch {}
@@ -3181,7 +3183,9 @@ async function setTradeListCache(status, items) {
   try {
     const client = await getRedisClient();
     if (!client) return;
-    const cacheKey = status === "PENDING" ? "trades:pending" : "trades:filled";
+    const src = resolveMt5DbSource(currentMt5DbSourceId());
+    const srcId = src?.id || "active";
+    const cacheKey = `trades:${status.toLowerCase()}:${srcId}`;
     await client
       .set(cacheKey, JSON.stringify(Array.isArray(items) ? items : []), {
         EX: TRADE_LIST_CACHE_TTL,
@@ -25275,7 +25279,7 @@ const appHandler = async (req, res) => {
 
       const cacheKey = hasFilters
         ? null
-        : JSON.stringify({ userId, filters, page, pageSize });
+        : JSON.stringify({ src: currentMt5DbSourceId(), userId, filters, page, pageSize });
 
       const buildResponse = async () => {
         const out = await mt5ListTradesV2(filters, page, pageSize);
