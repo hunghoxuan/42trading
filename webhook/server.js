@@ -11060,8 +11060,8 @@ END
                 sid = ANY($4::text[])
                 OR (sid = $18::text AND $18::text <> '')
                 OR broker_trade_id = ANY($4::text[])
-                OR metadata->>'broker_position_id' = ANY($4::text[])
-                OR metadata->>'position_ticket' = ANY($4::text[])
+                OR metadata::jsonb->>'broker_position_id' = ANY($4::text[])
+                OR metadata::jsonb->>'position_ticket' = ANY($4::text[])
               )
             AND execution_status NOT IN ('CANCELLED', 'PENDING_CANCEL')
           RETURNING sid, pnl_realized
