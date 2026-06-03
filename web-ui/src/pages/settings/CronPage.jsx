@@ -308,6 +308,48 @@ function formToDataPayload(form, symbolsGroup = "") {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
+function MasterCronToggle() {
+  const [active, setActive] = useState(null);
+
+  const fetchStatus = async () => {
+    try {
+      const r = await (await fetch("/health")).json();
+      setActive(r.cron !== "paused");
+    } catch {}
+  };
+
+  useEffect(() => { fetchStatus(); }, []);
+
+  const toggle = async () => {
+    try {
+      const r = await (await fetch("/v2/cron/master/toggle", { method: "POST" })).json();
+      setActive(r.active);
+      showToast(r.active ? "Cron master ACTIVATED" : "Cron master PAUSED");
+    } catch (e) {
+      showToast("Toggle failed: " + e.message, "error");
+    }
+  };
+
+  if (active === null) return null;
+
+  return (
+    <div className="panel" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 8 }}>
+      <span style={{ fontWeight: 700, fontSize: 13 }}>BullMQ Master Cron</span>
+      <span className={`status-dot ${active ? "online" : "offline"}`} />
+      <span style={{ fontSize: 11, color: "var(--muted)" }}>
+        {active ? "Running" : "Paused"}
+      </span>
+      <button
+        className={active ? "danger-button" : "primary-button"}
+        style={{ marginLeft: "auto", padding: "4px 12px", fontSize: 11 }}
+        onClick={toggle}
+      >
+        {active ? "Pause" : "Resume"}
+      </button>
+    </div>
+  );
+}
+
 export default function CronPage() {
   const confirm = useConfirmDialog();
   const [settings, setSettings] = useState([]);
@@ -588,6 +630,8 @@ export default function CronPage() {
   return (
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
       <h1 className="page-title">Cron Jobs</h1>
+
+      <MasterCronToggle />
 
       <MasterDetailLayout>
         {/* ── Left: Cron List ─────────────────────────────── */}
