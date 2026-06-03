@@ -11040,7 +11040,7 @@ END
                 broker_sl_pnl = $21::numeric,
                 entry_exec = COALESCE($22::numeric, entry_exec),
                 order_type = COALESCE($12::text, order_type),
-                close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) ELSE close_reason END,
+                close_reason = CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN COALESCE($8::text, close_reason) WHEN $1::text IN ('FILLED','PENDING') THEN NULL ELSE close_reason END,
                 broker_trade_id = COALESCE(NULLIF($9::text, ''), broker_trade_id),
                 sl = COALESCE(NULLIF(NULLIF($23::numeric, 0), -1), sl),
                 tp = COALESCE(NULLIF(NULLIF($24::numeric, 0), -1), tp),
@@ -11052,7 +11052,7 @@ END
                 note = COALESCE(NULLIF($25::text, ''), note),
                 metadata = COALESCE(metadata::jsonb, '{}'::jsonb) || $10::jsonb,
                 opened_at = COALESCE($5::timestamptz, opened_at, CASE WHEN $1::text IN ('FILLED','OPEN') THEN NOW() ELSE NULL END),
-                closed_at = COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END),
+                closed_at = CASE WHEN $1::text IN ('FILLED','PENDING') THEN NULL ELSE COALESCE($6::timestamptz, CASE WHEN $1::text IN ('CLOSED','CANCELLED','TP','SL') THEN NOW() ELSE closed_at END) END,
                 updated_at = CASE WHEN execution_status IS DISTINCT FROM $1::text OR $30::boolean THEN NOW() ELSE updated_at END
             WHERE account_id = $3
               AND ($11::text = '' OR symbol = $11::text)
