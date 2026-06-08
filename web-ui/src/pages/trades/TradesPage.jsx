@@ -442,12 +442,8 @@ export default function TradesPage() {
         );
         if (updated) {
           setSelectedTrade(updated);
-        } else if (items.length > 0) {
-          setSelectedTrade(items[0]);
-          selectedTradeIdRef.current = tradeKeyOf(items[0]);
         } else {
           setSelectedTrade(null);
-          selectedTradeIdRef.current = "";
         }
       } else if (items.length > 0) {
         setSelectedTrade(items[0]);
@@ -1782,13 +1778,15 @@ export default function TradesPage() {
                               title: "Cancel Trade",
                               message: "Cancel this trade?",
                               confirmLabel: "Cancel Trade",
-                              cancelLabel: "Keep Trade",
+                              secondaryConfirmLabel: "Cancel & stay",
+                              cancelLabel: "Cancel",
                               tone: "danger",
                               input: true,
                               inputPlaceholder: "Reason (optional)",
                             });
                             if (!ask || ask?.ok !== true) return;
                             const reason = String(ask?.value || "").trim();
+                            const stay = ask?.action === "secondary";
                             try {
                               const { promise: cancelPromise } =
                                 NotificationHub.track(
@@ -1802,9 +1800,19 @@ export default function TradesPage() {
                                       q: selectedTrade.sid || selectedTrade.id,
                                       reason: reason || "CANCEL",
                                     }),
-                                );
+                              );
                               await cancelPromise;
-                              navigate(`/trades/pending`, { replace: true });
+                              if (stay) {
+                                selectedTradeIdRef.current = "";
+                                navigate(`/trades/pending`, {
+                                  replace: true,
+                                });
+                              } else {
+                                navigate(
+                                  `/trades/cancelled/${selectedTrade.sid || selectedTrade.id}`,
+                                  { replace: true },
+                                );
+                              }
                               setSelectedTrade(null);
                               await loadTrades();
                             } catch (e) {
@@ -1825,13 +1833,15 @@ export default function TradesPage() {
                               title: "Close Trade",
                               message: "Close this trade?",
                               confirmLabel: "Close Trade",
-                              cancelLabel: "Keep Open",
+                              secondaryConfirmLabel: "Close & stay",
+                              cancelLabel: "Cancel",
                               tone: "danger",
                               input: true,
                               inputPlaceholder: "Reason (optional)",
                             });
                             if (!ask || ask?.ok !== true) return;
                             const reason = String(ask?.value || "").trim();
+                            const stay = ask?.action === "secondary";
                             try {
                               const { promise: closePromise } =
                                 NotificationHub.track(
@@ -1850,7 +1860,15 @@ export default function TradesPage() {
                                     ),
                                 );
                               await closePromise;
-                              navigate(`/trades/filled`, { replace: true });
+                              if (stay) {
+                                selectedTradeIdRef.current = "";
+                                navigate(`/trades/filled`, { replace: true });
+                              } else {
+                                navigate(
+                                  `/trades/closed/${selectedTrade.sid || selectedTrade.id}`,
+                                  { replace: true },
+                                );
+                              }
                               setSelectedTrade(null);
                               await loadTrades();
                             } catch (e) {

@@ -26,6 +26,15 @@ bash scripts/start/reset_stack_once.sh
 # → http://localhost:3000  (UI with HMR)
 # → http://localhost:3001  (API)
 ```
+If you switch the UI DB dropdown to `VPS DB`, the local backend will auto-open the SSH tunnel to `127.0.0.1:15432` during development.
+
+### Open the local UI on your phone
+```bash
+bash scripts/start/start_mobile_access.sh tailscale
+bash scripts/start/start_mobile_access.sh cloudflare
+bash scripts/start/start_mobile_access.sh both
+```
+See [scripts/start/mobile_access.md](./scripts/start/mobile_access.md) for setup and usage details.
 
 ### Local via Docker
 ```bash

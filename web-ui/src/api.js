@@ -940,9 +940,10 @@ export const api = {
     timeframe = "15m",
     bars = 300,
     refresh = false,
+    tradeSid = "",
   ) =>
     get(
-      `/v2/chart/twelve/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${refresh ? "&refresh=1" : ""}`,
+      `/v2/chart/twelve/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${refresh ? "&refresh=1" : ""}${String(tradeSid || "").trim() ? `&trade_sid=${encodeURIComponent(tradeSid)}` : ""}`,
     ),
   chartSymbols: (q = "", provider = "ICMARKETS", limit = 20) =>
     get(

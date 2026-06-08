@@ -14,15 +14,18 @@ export function ConfirmDialogProvider({ children }) {
     });
   }, []);
 
-  const close = (value) => {
+  const close = (value, action = "primary") => {
     const resolver = state?.resolve;
-    const result =
-      state?.input && value === true
-        ? { ok: true, value: String(inputValue || "") }
+    const normalized = state?.input
+      ? value === true || (value && typeof value === "object")
+        ? { ok: true, action, value: String(inputValue || "") }
+        : value
+      : value === true && action !== "primary"
+        ? { ok: true, action }
         : value;
     setState(null);
     setInputValue("");
-    resolver?.(result);
+    resolver?.(normalized);
   };
 
   const open = !!state;
@@ -60,6 +63,15 @@ export function ConfirmDialogProvider({ children }) {
                   {state?.cancelLabel || "Cancel"}
                 </button>
               </Dialog.Close>
+              {state?.secondaryConfirmLabel ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => close(true, "secondary")}
+                >
+                  {state.secondaryConfirmLabel}
+                </button>
+              ) : null}
               <button type="button" className={confirmClass} onClick={() => close(true)}>
                 {state?.confirmLabel || "Confirm"}
               </button>

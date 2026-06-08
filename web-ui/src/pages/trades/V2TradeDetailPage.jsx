@@ -650,13 +650,15 @@ export default function TradeDetailPage() {
                 title: "Cancel Trade",
                 message: "Cancel this trade?",
                 confirmLabel: "Cancel Trade",
-                cancelLabel: "Keep Trade",
+                secondaryConfirmLabel: "Cancel & stay",
+                cancelLabel: "Cancel",
                 tone: "danger",
                 input: true,
                 inputPlaceholder: "Reason (optional)",
               });
               if (!ask || ask?.ok !== true) return;
               const reason = String(ask?.value || "").trim();
+              const stay = ask?.action === "secondary";
               try {
                 const { promise: cp } = NotificationHub.track(
                   "cancel_trade",
@@ -668,7 +670,13 @@ export default function TradeDetailPage() {
                     }),
                 );
                 await cp;
-                window.location.reload();
+                if (stay) {
+                  navigate(`/trades/pending`, { replace: true });
+                } else {
+                  navigate(`/trades/cancelled/${trade.sid || trade.id}`, {
+                    replace: true,
+                  });
+                }
               } catch (e) {
                 setError(e?.message || "Cancel failed");
               }
@@ -715,13 +723,15 @@ export default function TradeDetailPage() {
                 title: "Close Trade",
                 message: "Close this trade?",
                 confirmLabel: "Close Trade",
-                cancelLabel: "Keep Open",
+                secondaryConfirmLabel: "Close & stay",
+                cancelLabel: "Cancel",
                 tone: "danger",
                 input: true,
                 inputPlaceholder: "Reason (optional)",
               });
               if (!ask || ask?.ok !== true) return;
               const reason = String(ask?.value || "").trim();
+              const stay = ask?.action === "secondary";
               try {
                 const { promise: clp } = NotificationHub.track(
                   "close_trade",
@@ -733,7 +743,13 @@ export default function TradeDetailPage() {
                     }),
                 );
                 await clp;
-                window.location.reload();
+                if (stay) {
+                  navigate(`/trades/filled`, { replace: true });
+                } else {
+                  navigate(`/trades/closed/${trade.sid || trade.id}`, {
+                    replace: true,
+                  });
+                }
               } catch (e) {
                 setError(e?.message || "Close failed");
               }

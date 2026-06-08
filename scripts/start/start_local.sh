@@ -66,6 +66,7 @@ WEBHOOK_DIR="${ROOT}/webhook"
 WEB_UI_DIR="${ROOT}/web-ui"
 VITE_PORT=3000
 WEBHOOK_PORT=3001
+VITE_ALLOWED_HOSTS="${VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS:-}"
 
 cleanup() {
   echo "[local] shutting down..."
@@ -103,6 +104,9 @@ start_webhook() {
   fi
   echo "[local] starting webhook on :${WEBHOOK_PORT}..."
   PORT="${WEBHOOK_PORT}" \
+    REMOTE_DB_AUTO_TUNNEL=1 \
+    MT5_REMOTE_DB_SSH_HOST="${MT5_REMOTE_DB_SSH_HOST:-root@139.59.211.192}" \
+    MT5_REMOTE_DB_LOCAL_PORT="${MT5_REMOTE_DB_LOCAL_PORT:-15432}" \
     MT5_ENABLED="${mt5_enabled}" \
     SNAPSHOTS_CRON_ENABLED=0 \
     MARKET_DATA_CRON_ENABLED=0 \
@@ -120,7 +124,11 @@ start_vite() {
   local kill_first="${1:-yes}"
   [ "$kill_first" = "yes" ] && free_port "${VITE_PORT}"
   echo "[local] starting Vite on :${VITE_PORT}..."
-  (cd "${WEB_UI_DIR}" && VITE_API_PROXY_TARGET="http://127.0.0.1:${WEBHOOK_PORT}" npx vite --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) &
+  if [ -n "${VITE_ALLOWED_HOSTS}" ]; then
+    (cd "${WEB_UI_DIR}" && VITE_API_PROXY_TARGET="http://127.0.0.1:${WEBHOOK_PORT}" VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${VITE_ALLOWED_HOSTS}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${VITE_ALLOWED_HOSTS}" npx vite --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) &
+  else
+    (cd "${WEB_UI_DIR}" && VITE_API_PROXY_TARGET="http://127.0.0.1:${WEBHOOK_PORT}" npx vite --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) &
+  fi
   VITE_PID=$!
 }
 

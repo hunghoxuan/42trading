@@ -289,7 +289,13 @@ export function useSymbolChartData({
                   };
                 }
               }
-              const out = await api.chartTwelveCandles(sym, tf, barsForTf(tf, barsCount, profile), force);
+              const out = await api.chartTwelveCandles(
+                sym,
+                tf,
+                barsForTf(tf, barsCount, profile),
+                force,
+                tradeSid,
+              );
               const snap = out?.snapshot && typeof out.snapshot === "object" ? out.snapshot : null;
               const tfData = {
                 bars: Array.isArray(snap?.bars) ? snap.bars : [],
@@ -341,7 +347,7 @@ export function useSymbolChartData({
       if (!hasAny) throw new Error("No data from provider");
       return { symbol: sym, entries };
     },
-    [sym, tfs, mode, provider, sessionPrefix, profile, attachedSnapshotFiles],
+    [sym, tfs, mode, provider, sessionPrefix, profile, attachedSnapshotFiles, tradeSid],
   );
 
   const refresh = useCallback(
@@ -411,6 +417,7 @@ export function useSymbolChartData({
             tfKey,
             barsForTf(tfKey, barsCount, profile),
             force,
+            tradeSid,
           );
           const snap =
             out?.snapshot && typeof out.snapshot === "object"
@@ -454,7 +461,7 @@ export function useSymbolChartData({
         return null;
       }
     },
-    [sym, mode, skipFetch, refresh, barsCount, profile, tfs],
+    [sym, mode, skipFetch, refresh, barsCount, profile, tfs, tradeSid],
   );
 
   useEffect(() => {

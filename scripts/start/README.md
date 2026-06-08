@@ -41,3 +41,16 @@ Start Vite directly:
 ```bash
 bash scripts/start/start_vite.sh
 ```
+
+## Mobile Access
+
+Expose the local UI to a phone over Tailscale, Cloudflare, or both:
+
+```bash
+bash scripts/start/start_mobile_access.sh tailscale
+bash scripts/start/start_mobile_access.sh cloudflare
+bash scripts/start/start_mobile_access.sh both
+```
+
+Full usage notes:
+- [mobile_access.md](./mobile_access.md)

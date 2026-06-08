@@ -8,8 +8,15 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
 const { AsyncLocalStorage } = require("async_hooks");
 const dbQueries = require("../db/queries");
+const settingsStore = require("./settingsStore");
+const tradeArtifactSync = require("./tradeArtifactSync");
+const {
+  createUserObjectStore,
+  parseJsonField: parseUserObjectJsonField,
+} = require("./userObjectStore");
 const {
   eq,
   and,
@@ -25,7 +32,7 @@ const {
 } = require("drizzle-orm");
 const schema = require("../db/schema.js");
 const syncGuards = require("./syncGuards");
-const { execFileSync, spawnSync } = require("child_process");
+const { execFileSync, spawnSync, spawn } = require("child_process");
 const { URL, URLSearchParams } = require("url");
 let createRedisClient = null;
 let BullQueue = null;
@@ -933,6 +940,27 @@ function findExistingTradeDir(safeSid) {
   return null;
 }
 
+function findTradeFolderCategory(safeSid) {
+  const sid = String(safeSid || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_.-]/g, "_");
+  if (!sid) return null;
+  for (const cat of ["active", "closed", "files"]) {
+    const baseDir = TRADE_CATEGORY_DIRS[cat];
+    if (!fs.existsSync(baseDir)) continue;
+    try {
+      const entries = fs.readdirSync(baseDir);
+      const match = entries.find(
+        (e) =>
+          (e.startsWith(sid + "-") || e === sid) &&
+          fs.statSync(path.join(baseDir, e)).isDirectory(),
+      );
+      if (match) return cat;
+    } catch {}
+  }
+  return null;
+}
+
 // Log routing — one file per event type, grouped by source (see .local/log_routing.js)
 const EVENT_FILE_MAP = {
   SYSTEM_EVENT: ["SYSTEM", "events"],
@@ -1306,8 +1334,9 @@ class NotificationManager {
   async loadSettings() {
     if (!this._pool) return;
     try {
-      const { rows } = await this._pool.query(
-        `SELECT name, data FROM user_settings WHERE type = 'notification_config'`,
+      const rows = await settingsStore.listUserSettingsByType(
+        null,
+        "notification_config",
       );
       this.settingsCache.clear();
       for (const row of rows) {
@@ -2416,9 +2445,7 @@ const StateRepo = {
  */
 async function repoGetSystemSettings() {
   return await StateRepo.get("SYSTEM_SETTINGS", "global", async () => {
-    const db = await mt5InitBackend();
-    const raw = await dbQueries.getUserSettingData(
-      db.db,
+    const raw = await settingsStore.getUserSettingData(
       CFG.mt5DefaultUserId,
       "api_key",
       "default",
@@ -2468,8 +2495,9 @@ setTimeout(refreshEconomicCalendar, 5000); // Initial boot
 
 async function repoGetUserAccounts(userId) {
   return await StateRepo.get("USER_ACCOUNTS", userId, async () => {
-    const db = await mt5InitBackend();
-    return await dbQueries.listUserAccounts(db.db, userId);
+    const b = await mt5Backend();
+    if (b?.listUserAccounts) return await b.listUserAccounts(userId);
+    return [];
   });
 }
 
@@ -2591,15 +2619,15 @@ async function repoGetUserTemplates(userId) {
 }
 
 async function repoListUserSettings(userId) {
-  const db = await mt5InitBackend();
-  const rows = await dbQueries.listUserSettingsByType(db.db, userId, null);
+  const rows = await settingsStore.listUserSettingsByType(userId, null);
   return rows.map((r) => ({
     type: r.type,
     name: r.name,
     data: r.data,
-    value: null,
+    value: r.value ?? null,
     status: r.status,
-    created_at: r.createdAt,
+    created_at: r.created_at || r.createdAt,
+    updated_at: r.updated_at || r.updatedAt,
   }));
 }
 
@@ -4290,7 +4318,9 @@ function ensureTradeDir(sid, symbol = "", category = "files") {
           try {
             // Merge contents from old to new (if different categories), then remove old
             if (catBase !== baseDir) {
-              for (const entry of fs.readdirSync(oldDir, { withFileTypes: true })) {
+              for (const entry of fs.readdirSync(oldDir, {
+                withFileTypes: true,
+              })) {
                 const s = path.join(oldDir, entry.name);
                 const d = path.join(dir, entry.name);
                 if (!fs.existsSync(d)) {
@@ -4305,7 +4335,12 @@ function ensureTradeDir(sid, symbol = "", category = "files") {
             } else {
               fs.renameSync(oldDir, dir);
             }
-            console.log("[trade-folder] migrated bare", oldName, "->", `${safeSid}-${safeSymbol}`);
+            console.log(
+              "[trade-folder] migrated bare",
+              oldName,
+              "->",
+              `${safeSid}-${safeSymbol}`,
+            );
             break;
           } catch {}
         }
@@ -4355,7 +4390,9 @@ function safeTradeFolderSid(value = "") {
 function resolveTradeDirForCreate(sid, symbol = "", category = "files") {
   const safeSid = safeTradeFolderSid(sid);
   if (!safeSid) return TRADE_CATEGORY_DIRS[category] || TRADE_FILES_DIR;
-  const sym = normalizeTradeFolderSymbol(symbol || inferSymbolFromTradeFolder(safeSid));
+  const sym = normalizeTradeFolderSymbol(
+    symbol || inferSymbolFromTradeFolder(safeSid),
+  );
   if (sym) return ensureTradeDir(safeSid, sym, category);
   const existing = findExistingTradeDir(safeSid);
   if (existing) return existing;
@@ -4369,7 +4406,10 @@ function tradeLogsDir(sid, symbol = "") {
 }
 
 function tradeSnapshotDir(sid, symbol = "") {
-  const dir = path.join(resolveTradeDirForCreate(sid, symbol, "files"), "snapshots");
+  const dir = path.join(
+    resolveTradeDirForCreate(sid, symbol, "files"),
+    "snapshots",
+  );
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -4451,7 +4491,12 @@ function repairBareTradeDirSync(baseDir, safeSid, bareDir) {
   const fixedDir = path.join(baseDir, `${safeSid}-${sym}`);
   try {
     mergeTradeFolderSync(bareDir, fixedDir);
-    console.log("[trade-folder] repaired bare", safeSid, "->", `${safeSid}-${sym}`);
+    console.log(
+      "[trade-folder] repaired bare",
+      safeSid,
+      "->",
+      `${safeSid}-${sym}`,
+    );
     return fixedDir;
   } catch (error) {
     console.error("[trade-folder] repair bare error:", error.message);
@@ -4573,9 +4618,6 @@ function readTradeBars(safeSid, tf, symbol = "") {
 function archiveTradeStats(sid, symbol) {
   if (!sid || !symbol) return;
   const sym = String(symbol).toUpperCase();
-  const srcBarsDir = path.join(GLOBAL_DATA_DIR, "market_data", sym, "bars");
-  const srcSnapDir = path.join(GLOBAL_DATA_DIR, "market_data", sym);
-  // Use existing trade folder (any category) or create in trade_files
   let tradeDir = resolveTradeDir(sid, symbol);
   if (!tradeDir) {
     tradeDir = path.join(
@@ -4587,36 +4629,61 @@ function archiveTradeStats(sid, symbol) {
     );
     if (!fs.existsSync(tradeDir)) fs.mkdirSync(tradeDir, { recursive: true });
   }
+  tradeArtifactSync.copyAllMarketDataBarsToTradeDir({
+    marketDataRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+    tradeDir,
+    symbol: sym,
+  });
+  tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
+    snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+    tradeDir,
+    symbol: sym,
+    files: [],
+    rename: false,
+  });
+}
 
-  // Copy bars CSV files
-  if (fs.existsSync(srcBarsDir)) {
-    const dstBarsDir = path.join(tradeDir, "bars");
-    if (!fs.existsSync(dstBarsDir))
-      fs.mkdirSync(dstBarsDir, { recursive: true });
-    const barFiles = fs
-      .readdirSync(srcBarsDir)
-      .filter((f) => f.endsWith(".csv"));
-    for (const f of barFiles) {
-      try {
-        fs.copyFileSync(path.join(srcBarsDir, f), path.join(dstBarsDir, f));
-      } catch {}
-    }
-  }
+function mirrorTradeBarsFromMarketData(sid, symbol, timeframe) {
+  const tradeSid = String(sid || "").trim();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
+  const tf = String(timeframe || "").trim();
+  if (!tradeSid || !sym || !tf) return false;
+  const tradeDir =
+    resolveTradeDir(tradeSid, sym) ||
+    ensureTradeDir(tradeSid.replace(/[^A-Za-z0-9_.-]/g, "_"), sym, "files");
+  return tradeArtifactSync.copyMarketDataBarCsvToTradeDir({
+    marketDataRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+    tradeDir,
+    symbol: sym,
+    timeframe: tf,
+  });
+}
 
-  // Copy snapshots (jpg/png files that are NOT in bars/ subdir)
-  if (fs.existsSync(srcSnapDir)) {
-    const dstSnapDir = path.join(tradeDir, "snapshots");
-    if (!fs.existsSync(dstSnapDir))
-      fs.mkdirSync(dstSnapDir, { recursive: true });
-    const snapFiles = fs
-      .readdirSync(srcSnapDir)
-      .filter((f) => /.(jpg|jpeg|png)$/i.test(f));
-    for (const f of snapFiles) {
-      try {
-        fs.copyFileSync(path.join(srcSnapDir, f), path.join(dstSnapDir, f));
-      } catch {}
-    }
-  }
+function mirrorTradeSnapshotsFromMarketData(
+  sid,
+  symbol,
+  files = [],
+  status = "pending",
+) {
+  const tradeSid = String(sid || "").trim();
+  const sym = String(symbol || "")
+    .trim()
+    .toUpperCase();
+  if (!tradeSid || !sym) return [];
+  const tradeDir =
+    resolveTradeDir(tradeSid, sym) ||
+    ensureTradeDir(tradeSid.replace(/[^A-Za-z0-9_.-]/g, "_"), sym, "files");
+  const copied = tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
+    snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+    tradeDir,
+    symbol: sym,
+    files,
+    status,
+    rename: true,
+  });
+  return copied;
 }
 
 function moveTradeFolder(sid, fromCategory, toCategory, symbol = "") {
@@ -4676,12 +4743,62 @@ function moveTradeFolder(sid, fromCategory, toCategory, symbol = "") {
     }
     if (!fs.existsSync(toDir)) fs.mkdirSync(toDir, { recursive: true });
     fs.renameSync(src, dst);
-    console.log("[trade-folder] moved", match, fromCategory, "->", toCategory, dstName);
+    console.log(
+      "[trade-folder] moved",
+      match,
+      fromCategory,
+      "->",
+      toCategory,
+      dstName,
+    );
     return true;
   } catch (e) {
     console.error("[trade-folder] move error:", e.message);
     return false;
   }
+}
+
+const MT5_TERMINAL_TRADE_STATUSES = new Set([
+  "CLOSED",
+  "CANCELLED",
+  "REJECTED",
+  "TP",
+  "SL",
+]);
+
+function mt5NormalizeTradeStatus(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+async function archiveTradeTerminalArtifacts(
+  tradeRow = {},
+  { captureSnapshot = false, statusOverride = null } = {},
+) {
+  const sid = String(tradeRow?.sid || tradeRow?.trade_id || "").trim();
+  const symbol = String(tradeRow?.symbol || "").trim();
+  const status = mt5NormalizeTradeStatus(
+    statusOverride || tradeRow?.executionStatus || tradeRow?.execution_status,
+  );
+  if (!sid || !symbol || !status) {
+    return { archived: false, status, sid, symbol };
+  }
+
+  if (captureSnapshot && ["FILLED", "CLOSED"].includes(status)) {
+    await captureStatusSnapshot(sid, symbol, status).catch((e) =>
+      console.error("[status-snapshot] archive failed:", e.message),
+    );
+  }
+
+  if (MT5_TERMINAL_TRADE_STATUSES.has(status)) {
+    archiveTradeStats(sid, symbol);
+    moveTradeFolder(sid, "active", "closed", symbol);
+    moveTradeFolder(sid, "files", "closed", symbol);
+    return { archived: true, status, sid, symbol };
+  }
+
+  return { archived: false, status, sid, symbol };
 }
 
 // Periodic reconciliation: move trade folders to correct category based on DB status
@@ -4691,39 +4808,47 @@ async function reconcileTradeFolders(pool) {
     const { rows } = await pool.query(
       `SELECT sid, symbol, execution_status FROM trades`,
     );
-    const statusMap = new Map();
+    const stats = { moved: 0, archived: 0, created: 0, total: rows.length };
     for (const r of rows) {
-      statusMap.set(r.sid, {
-        symbol: r.symbol,
-        execution_status: r.execution_status,
-      });
-    }
+      const sid = String(r?.sid || "").trim();
+      if (!sid) continue;
+      const symbol = String(r?.symbol || "").trim();
+      const status = String(r?.execution_status || "").toUpperCase();
+      const currentCat = findTradeFolderCategory(sid);
+      const isActive = ["PENDING", "FILLED"].includes(status);
+      const isTerminal = MT5_TERMINAL_TRADE_STATUSES.has(status);
 
-    let moved = 0;
-    for (const [cat, catDir] of Object.entries(TRADE_CATEGORY_DIRS)) {
-      if (!fs.existsSync(catDir)) continue;
-      for (const name of fs.readdirSync(catDir)) {
-        const full = path.join(catDir, name);
-        if (!fs.statSync(full).isDirectory()) continue;
-        const m = name.match(/^([A-Za-z0-9_.]+?)(?:-([A-Za-z0-9]+))?$/);
-        const cleanSid = m ? m[1] : name;
-        const rowInfo = statusMap.get(cleanSid);
-        if (!rowInfo) continue; // orphan folder — skip
-        const s = String(rowInfo.execution_status || "").toUpperCase();
-        let target = "files";
-        if (["FILLED", "PENDING"].includes(s)) target = "active";
-        else if (["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(s))
-          target = "closed";
-        if (cat === target) continue;
-        try {
-          moveTradeFolder(cleanSid, cat, target, rowInfo.symbol || "");
-          moved++;
-        } catch {}
+      if (isActive) {
+        if (!currentCat) {
+          ensureTradeDir(sid, symbol, "active");
+          stats.created++;
+          continue;
+        }
+        if (currentCat !== "active") {
+          moveTradeFolder(sid, currentCat, "active", symbol);
+          stats.moved++;
+        }
+        continue;
+      }
+
+      if (isTerminal) {
+        const res = await archiveTradeTerminalArtifacts(
+          { sid, symbol, execution_status: status },
+          {
+            captureSnapshot: false,
+            statusOverride: status,
+          },
+        );
+        if (res.archived) stats.archived++;
       }
     }
-    if (moved > 0) console.log("[trade-folder] reconciled", moved, "folders");
+    if (stats.moved + stats.archived + stats.created > 0) {
+      console.log("[trade-folder] reconciled", JSON.stringify(stats));
+    }
+    return { ok: true, ...stats };
   } catch (e) {
     console.error("[trade-folder] reconcile error:", e.message);
+    return { ok: false, error: e.message || String(e) };
   }
 }
 
@@ -4877,15 +5002,6 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
   return sorted.map((x) => x.file_name);
 }
 
-function snapshotTimestampToken(date = new Date()) {
-  return date
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace("T", "_")
-    .replace("Z", "UTC")
-    .replace(".", "_");
-}
-
 function copySnapshotsToTradeSidFolder(
   tradeSid,
   files = [],
@@ -4894,39 +5010,23 @@ function copySnapshotsToTradeSidFolder(
 ) {
   const sid = String(tradeSid || "").trim();
   if (!sid) return [];
-  ensureChartSnapshotDir();
   const sym = String(symbol || inferSymbolFromTradeFolder(sid) || "")
     .trim()
     .toUpperCase()
     .replace(/^[A-Z0-9_-]+:/, "")
     .replace(/[^A-Z0-9]/g, "");
   if (!sym) return [];
-  const destDir = tradeSnapshotDir(sid, sym);
-  if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-  const requested = (Array.isArray(files) ? files : [])
-    .map((f) => normalizeSnapshotFileName(f))
-    .filter(Boolean);
-  const fallback = requested.length
-    ? []
-    : listLatestSnapshotFilesForSymbol(symbol, 12);
-  const sourceFiles = requested.length ? requested : fallback;
-  const copied = [];
-  const srcDir = snapshotSymbolDir(symbol);
-  for (const fileName of sourceFiles) {
-    const safe = normalizeSnapshotFileName(fileName);
-    if (!safe) continue;
-    const src = path.join(srcDir, safe);
-    if (!src || !fs.existsSync(src)) continue;
-    const ext = path.extname(safe);
-    const base = path.basename(safe, ext);
-    const destName = `${base}_${snapshotTimestampToken()}_${status}${ext}`;
-    const dest = path.join(destDir, destName);
-    try {
-      fs.copyFileSync(src, dest);
-      copied.push(destName);
-    } catch {}
-  }
-  return copied;
+  return tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
+    snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+    tradeDir: tradeSnapshotDir(sid, sym),
+    symbol: sym,
+    files:
+      Array.isArray(files) && files.length
+        ? files
+        : listLatestSnapshotFilesForSymbol(sym, 12),
+    status,
+    rename: true,
+  });
 }
 
 function copyAnalyzeSnapshotToTradeSession(tradeSid, symbol = "") {
@@ -6322,24 +6422,17 @@ async function anthropicListFiles(apiKey) {
 }
 
 async function loadClaudeApiKeyForUser(userId) {
-  const db = await mt5InitBackend();
-  // Try specific userId first, then fallback to null (global keys)
-  for (const uid of [userId, null]) {
-    const cfgRows = await db.query(
-      "SELECT name, data FROM user_settings WHERE " +
-        (uid === null ? "user_id IS NULL" : "user_id = $1") +
-        " AND type = 'api_key'",
-      uid === null ? [] : [uid],
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const rows = await settingsStore.listUserSettingsByType(uid, "api_key");
+  for (const row of rows || []) {
+    const name = normalizeAiApiKeyName(row?.name);
+    if (name !== "CLAUDE_API_KEY") continue;
+    const dec = decryptObject(
+      row?.data && typeof row.data === "object" ? row.data : {},
     );
-    for (const row of cfgRows.rows || []) {
-      const name = normalizeAiApiKeyName(row?.name);
-      if (name !== "CLAUDE_API_KEY") continue;
-      const dec = decryptObject(
-        row?.data && typeof row.data === "object" ? row.data : {},
-      );
-      const value = String(dec?.value || dec?.api_key || "").trim();
-      if (value) return value;
-    }
+    const value = String(dec?.value || dec?.api_key || "").trim();
+    if (value) return value;
   }
   return "";
 }
@@ -7749,10 +7842,9 @@ function sanitizeRuntimeApiKey(raw) {
 }
 
 async function loadAiConfig(userId = "") {
-  const db = await mt5InitBackend();
   const uid =
     String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
-  const rows = await dbQueries.listUserSettingsByType(db.db, uid, "api_key");
+  const rows = await settingsStore.listUserSettingsByType(uid, "api_key");
   const cfg = {};
   for (const row of rows) {
     const name = normalizeAiApiKeyName(row?.name);
@@ -8262,9 +8354,7 @@ async function healthCronConfigDiagnostics() {
     db_error: null,
   };
   try {
-    const b = await mt5Backend();
-    if (!b?.db) return empty;
-    const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+    const rows = await settingsStore.listUserSettingsByType(null, "cron");
     let md = 0,
       ai = 0,
       snap = 0;
@@ -8292,9 +8382,7 @@ async function healthCronConfigDiagnostics() {
 
 async function healthCronStatusesByName() {
   try {
-    const b = await mt5Backend();
-    if (!b?.db) return {};
-    const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+    const rows = await settingsStore.listUserSettingsByType(null, "cron");
     const out = {};
     for (const r of rows || []) {
       const name = String(r?.name || "").trim();
@@ -8469,6 +8557,177 @@ function mt5RenewSignalIdFromExisting(baseId, existingIds) {
 }
 
 let MT5_BACKEND = null;
+let USER_ACCOUNT_OBJECT_STORE = null;
+const LEGACY_USER_ACCOUNT_MIGRATIONS = new Set();
+
+function getUserAccountObjectStore() {
+  if (!USER_ACCOUNT_OBJECT_STORE) {
+    USER_ACCOUNT_OBJECT_STORE = createUserObjectStore({
+      redisEnabled: CFG.redisEnabled,
+      getRedisClient,
+      logger: console,
+    });
+  }
+  return USER_ACCOUNT_OBJECT_STORE;
+}
+
+async function migrateLegacyUserAccountsToUnifiedStore(
+  pool,
+  migrationKey = "default",
+) {
+  const key = String(migrationKey || "default");
+  if (LEGACY_USER_ACCOUNT_MIGRATIONS.has(key)) return;
+  const rows = await pool.query(
+    `
+      SELECT account_id, user_id, name, balance, status, metadata,
+             api_key_hash, api_key_last4, api_key_rotated_at,
+             source_ids_cache, equity, margin, free_margin, leverage,
+             broker_name, created_at, updated_at
+      FROM user_accounts
+    `,
+  );
+  await getUserAccountObjectStore().migrateLegacyUserAccounts(rows.rows || []);
+  LEGACY_USER_ACCOUNT_MIGRATIONS.add(key);
+}
+
+async function upsertLegacyUserAccountShadow(pool, account = {}) {
+  const accountId = String(
+    account?.account_id || account?.accountId || "",
+  ).trim();
+  const userId =
+    String(
+      account?.user_id || account?.userId || CFG.mt5DefaultUserId,
+    ).trim() || CFG.mt5DefaultUserId;
+  if (!accountId || !userId) return;
+  await pool.query(
+    `
+      INSERT INTO users (user_id, role, is_active, created_at, updated_at)
+      VALUES ($1, $2, TRUE, NOW(), NOW())
+      ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
+    `,
+    [userId, userId === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER],
+  );
+  const metadataValue =
+    account?.metadata && typeof account.metadata === "object"
+      ? JSON.stringify(account.metadata)
+      : typeof account?.metadata === "string"
+        ? account.metadata
+        : "{}";
+  const sourceIdsValue = Array.isArray(account?.source_ids_cache)
+    ? JSON.stringify(account.source_ids_cache)
+    : account?.source_ids_cache && typeof account.source_ids_cache === "object"
+      ? JSON.stringify(account.source_ids_cache)
+      : "[]";
+  const createdAt = normalizeIsoTimestamp(account?.created_at, mt5NowIso());
+  const updatedAt = normalizeIsoTimestamp(account?.updated_at, mt5NowIso());
+  await pool.query(
+    `
+      INSERT INTO user_accounts (
+        account_id, user_id, name, balance, api_key_hash, api_key_last4,
+        api_key_rotated_at, source_ids_cache, metadata, status,
+        equity, margin, free_margin, leverage, broker_name,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17)
+      ON CONFLICT (account_id) DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        name = EXCLUDED.name,
+        balance = EXCLUDED.balance,
+        api_key_hash = EXCLUDED.api_key_hash,
+        api_key_last4 = EXCLUDED.api_key_last4,
+        api_key_rotated_at = EXCLUDED.api_key_rotated_at,
+        source_ids_cache = EXCLUDED.source_ids_cache,
+        metadata = EXCLUDED.metadata,
+        status = EXCLUDED.status,
+        equity = EXCLUDED.equity,
+        margin = EXCLUDED.margin,
+        free_margin = EXCLUDED.free_margin,
+        leverage = EXCLUDED.leverage,
+        broker_name = EXCLUDED.broker_name,
+        updated_at = EXCLUDED.updated_at
+    `,
+    [
+      accountId,
+      userId,
+      String(account?.name || accountId),
+      account?.balance == null || Number.isNaN(Number(account.balance))
+        ? null
+        : Number(account.balance),
+      account?.api_key_hash ? String(account.api_key_hash) : null,
+      account?.api_key_last4 ? String(account.api_key_last4) : null,
+      account?.api_key_rotated_at
+        ? normalizeIsoTimestamp(account.api_key_rotated_at, updatedAt)
+        : null,
+      sourceIdsValue,
+      metadataValue,
+      String(account?.status || "ACTIVE"),
+      account?.equity == null || Number.isNaN(Number(account.equity))
+        ? null
+        : Number(account.equity),
+      account?.margin == null || Number.isNaN(Number(account.margin))
+        ? null
+        : Number(account.margin),
+      account?.free_margin == null || Number.isNaN(Number(account.free_margin))
+        ? null
+        : Number(account.free_margin),
+      account?.leverage == null || Number.isNaN(Number(account.leverage))
+        ? null
+        : Number(account.leverage),
+      String(account?.broker_name || ""),
+      createdAt,
+      updatedAt,
+    ],
+  );
+}
+
+async function deleteLegacyUserAccountShadow(pool, userId, accountId) {
+  await pool.query(
+    `DELETE FROM user_accounts WHERE user_id = $1 AND account_id = $2`,
+    [String(userId || ""), String(accountId || "")],
+  );
+}
+
+async function findUnifiedUserAccountById(accountId, userId = null) {
+  const aid = String(accountId || "").trim();
+  if (!aid) return null;
+  const store = getUserAccountObjectStore();
+  if (userId) {
+    const direct = await store.getUnifiedObject(userId, "user_accounts", aid);
+    if (direct) return direct;
+  }
+  return store.findUnifiedObjectByStaticField(
+    "user_accounts",
+    "account_id",
+    aid,
+    userId,
+  );
+}
+
+async function getDynamicUserAccountRecord(userId, accountId) {
+  if (!userId || !accountId) return null;
+  return getUserAccountObjectStore().getDynamicObject(
+    userId,
+    "user_accounts",
+    String(accountId || ""),
+  );
+}
+
+function normalizeAccountSourceIdsCache(value) {
+  if (Array.isArray(value))
+    return value.map((item) => String(item || "")).filter(Boolean);
+  if (typeof value === "string") {
+    const parsed = parseUserObjectJsonField(value, []);
+    return Array.isArray(parsed)
+      ? parsed.map((item) => String(item || "")).filter(Boolean)
+      : [];
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value)
+      .map((item) => String(item || ""))
+      .filter(Boolean);
+  }
+  return [];
+}
 
 // In-memory broker price cache (real-time bid/ask from cTrader)
 const brokerPriceCache = {};
@@ -8541,13 +8800,13 @@ function mt5MapDbRow(row) {
     volume: Number(row.volume),
     volume_basis_lots:
       row.volume_basis_lots === null || row.volume_basis_lots === undefined
-        ? asNum(row.metadata?.volume_basis_lots) ?? null
+        ? (asNum(row.metadata?.volume_basis_lots) ?? null)
         : Number(row.volume_basis_lots),
     broker_lots:
       row.broker_lots === null || row.broker_lots === undefined
-        ? asNum(row.metadata?.broker_lots) ??
+        ? (asNum(row.metadata?.broker_lots) ??
           asNum(row.metadata?.broker_data?.lots) ??
-          null
+          null)
         : Number(row.broker_lots),
     sl: row.sl === null || row.sl === undefined ? null : Number(row.sl),
     tp: row.tp === null || row.tp === undefined ? null : Number(row.tp),
@@ -8661,13 +8920,26 @@ function mt5DbSources() {
     try {
       const parsed = JSON.parse(fs.readFileSync(dbManagerConfig, "utf8"));
       for (const conn of parsed?.connections || []) {
-        add(conn?.id, conn?.name || conn?.id, conn?.connectionString, conn?.note);
+        add(
+          conn?.id,
+          conn?.name || conn?.id,
+          conn?.connectionString,
+          conn?.note,
+        );
       }
     } catch (err) {
-      console.warn("[db-source] failed to read db-manager config:", err.message);
+      console.warn(
+        "[db-source] failed to read db-manager config:",
+        err.message,
+      );
     }
   }
-  add("local", "Local DB", process.env.MT5_POSTGRES_URL_LOCAL, "Local Postgres");
+  add(
+    "local",
+    "Local DB",
+    process.env.MT5_POSTGRES_URL_LOCAL,
+    "Local Postgres",
+  );
   add(
     "vps",
     "VPS DB",
@@ -8681,7 +8953,12 @@ function mt5DbSources() {
 function resolveMt5DbSource(sourceId = "") {
   const sources = mt5DbSources();
   const id = envStr(sourceId).toLowerCase();
-  console.log("[db-source] resolveMt5DbSource id=", id, "sources=", sources.map(s => s.id));
+  console.log(
+    "[db-source] resolveMt5DbSource id=",
+    id,
+    "sources=",
+    sources.map((s) => s.id),
+  );
   const found = sources.find((s) => s.id === id);
   if (found) return found;
   const active =
@@ -8709,7 +8986,14 @@ async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
     CFG.mt5StorageBackend === "sqlite"
       ? `sqlite:${CFG.mt5SqlitePath || "data/trading.db"}`
       : source?.id || "active";
-  console.log("[db-source] mt5InitBackend sourceId=", sourceId, "source=", source?.id, "cacheKey=", cacheKey);
+  console.log(
+    "[db-source] mt5InitBackend sourceId=",
+    sourceId,
+    "source=",
+    source?.id,
+    "cacheKey=",
+    cacheKey,
+  );
   if (MT5_BACKENDS.has(cacheKey)) return MT5_BACKENDS.get(cacheKey);
   if (MT5_INIT_PROMISES.has(cacheKey)) return MT5_INIT_PROMISES.get(cacheKey);
   const promise = _mt5InitBackendInternal(source)
@@ -8730,7 +9014,10 @@ async function mt5InitBackend(sourceId = currentMt5DbSourceId()) {
 
 async function _mt5InitBackendInternal(source = null) {
   const postgresUrl = source?.url || CFG.mt5PostgresUrl;
-  console.log("[db-source] _mt5InitBackendInternal url=", postgresUrl?.replace(/:[^:@]+@/, ":***@"));
+  console.log(
+    "[db-source] _mt5InitBackendInternal url=",
+    postgresUrl?.replace(/:[^:@]+@/, ":***@"),
+  );
   // SQLite mode — skip all PostgreSQL DDL, use Drizzle directly
   if (CFG.mt5StorageBackend === "sqlite") {
     const { initDb } = require("../db");
@@ -8760,6 +9047,9 @@ async function _mt5InitBackendInternal(source = null) {
       "MT5_STORAGE=postgres but POSTGRES_URL/POSTGRE_URL/MT5_POSTGRES_URL is empty",
     );
   }
+
+  await ensureRemoteDbTunnel(postgresUrl);
+
   let pgModule;
 
   try {
@@ -8828,16 +9118,16 @@ async function _mt5InitBackendInternal(source = null) {
     );
 
     CREATE TABLE IF NOT EXISTS user_settings (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      name TEXT,
-      type TEXT NOT NULL,
-      data JSONB NOT NULL,
-      status TEXT DEFAULT 'ACTIVE',
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT 'default',
+        type TEXT NOT NULL,
+        data JSONB NOT NULL,
+        status TEXT DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
     );
-
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_type_name ON user_settings (user_id, type, name);
 
     -- DDL Migration for existing installations
     ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS equity NUMERIC NULL;
@@ -8846,14 +9136,8 @@ async function _mt5InitBackendInternal(source = null) {
     ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS leverage NUMERIC NULL;
     ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS broker_name TEXT NULL;
 
-    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'default';
-    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ACTIVE';
-    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
-    ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS value TEXT;
     DROP INDEX IF EXISTS idx_user_settings_singleton;
     DROP INDEX IF EXISTS idx_user_settings_user_type_name;
-    ALTER TABLE user_settings DROP CONSTRAINT IF EXISTS user_settings_user_type_name_key;
-    ALTER TABLE user_settings ADD CONSTRAINT user_settings_user_type_name_key UNIQUE (user_id, type, name);
 
     -- Keep old tables for safe migration then drop
     DROP TABLE IF EXISTS ai_configs;
@@ -9081,27 +9365,32 @@ async function _mt5InitBackendInternal(source = null) {
   }
 
   try {
-    await pool.query(`
-      INSERT INTO user_templates (user_id, name, data, status, created_at, updated_at)
-      SELECT
-        s.user_id,
-        COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6)) AS name,
-        COALESCE(s.data, '{}'::jsonb) AS data,
-        COALESCE(NULLIF(s.status, ''), 'ACTIVE') AS status,
-        COALESCE(s.created_at, NOW()) AS created_at,
-        COALESCE(s.updated_at, NOW()) AS updated_at
-      FROM user_settings s
-      WHERE s.type = 'ai_template'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM user_templates ut
-          WHERE ut.user_id = s.user_id
-            AND ut.name = COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6))
-        )
-    `);
-    await pool
-      .query(`DELETE FROM user_settings WHERE type = 'ai_template'`)
-      .catch(() => {});
+    const legacyUserSettingsTable = await pool.query(
+      `SELECT to_regclass('public.user_settings') AS table_name`,
+    );
+    if (legacyUserSettingsTable.rows?.[0]?.table_name) {
+      await pool.query(`
+        INSERT INTO user_templates (user_id, name, data, status, created_at, updated_at)
+        SELECT
+          s.user_id,
+          COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6)) AS name,
+          COALESCE(s.data, '{}'::jsonb) AS data,
+          COALESCE(NULLIF(s.status, ''), 'ACTIVE') AS status,
+          COALESCE(s.created_at, NOW()) AS created_at,
+          COALESCE(s.updated_at, NOW()) AS updated_at
+        FROM user_settings s
+        WHERE s.type = 'ai_template'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM user_templates ut
+            WHERE ut.user_id = s.user_id
+              AND ut.name = COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6))
+          )
+      `);
+      await pool
+        .query(`DELETE FROM user_settings WHERE type = 'ai_template'`)
+        .catch(() => {});
+    }
   } catch (e) {
     console.warn(
       "[mt5-db] user_settings ai_template migration skipped:",
@@ -9339,7 +9628,7 @@ END
         (SELECT COUNT(*) FROM user_accounts WHERE user_id = $1) AS accounts_count,
         (SELECT COUNT(*) FROM signals WHERE user_id = $1) AS signals_count,
         (SELECT COUNT(*) FROM trades WHERE user_id = $1) AS trades_count,
-        (SELECT COUNT(*) FROM user_settings WHERE user_id = $1) AS settings_count
+        0 AS settings_count
     `,
         [oldUserId],
       )
@@ -9465,7 +9754,6 @@ END
     ALTER TABLE user_accounts ALTER COLUMN metadata TYPE TEXT USING metadata::text;
     ALTER TABLE user_accounts ALTER COLUMN source_ids_cache TYPE TEXT USING source_ids_cache::text;
     ALTER TABLE user_templates ALTER COLUMN data TYPE TEXT USING data::text;
-    ALTER TABLE user_settings ALTER COLUMN data TYPE TEXT USING data::text;
     ALTER TABLE trades ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
     ALTER TABLE trades ALTER COLUMN metadata TYPE TEXT USING metadata::text;
     ALTER TABLE trades ALTER COLUMN confluence_checklist TYPE TEXT USING confluence_checklist::text;
@@ -9473,6 +9761,16 @@ END
   `,
     )
     .catch(() => {}); // ignore if already TEXT
+
+  await migrateLegacyUserAccountsToUnifiedStore(
+    pool,
+    source?.id || postgresUrl || "active",
+  ).catch((err) => {
+    console.warn(
+      "[user-accounts] legacy migration skipped:",
+      err?.message || err,
+    );
+  });
 
   const backend = {
     storage,
@@ -9988,11 +10286,9 @@ END
             console.log(
               `[Pull] Auto-rejected stale broker task ${row.sid} ${row.symbol || ""}`,
             );
-            // Move folder to closed + archive stats
-            if (row.symbol) {
-              archiveTradeStats(row.sid, row.symbol);
-              moveTradeFolder(row.sid, "active", "closed", row.symbol);
-            }
+            await archiveTradeTerminalArtifacts(row, {
+              statusOverride: "REJECTED",
+            });
             continue;
           }
 
@@ -10045,11 +10341,9 @@ END
             console.log(
               `[Pull] Auto-rejected ${row.sid} after ${retryCount} failed lease retries`,
             );
-            // Move folder to closed + archive stats
-            if (row.symbol) {
-              archiveTradeStats(row.sid, row.symbol);
-              moveTradeFolder(row.sid, "active", "closed", row.symbol);
-            }
+            await archiveTradeTerminalArtifacts(row, {
+              statusOverride: hasBroker ? "CANCELLED" : "REJECTED",
+            });
             continue;
           }
           const leaseToken = mt5GenerateTimeSid();
@@ -10186,10 +10480,9 @@ END
             usedVolume != null
               ? sql`COALESCE(${usedVolume}, ${schema.trades.volume})`
               : undefined,
-          riskMoneyPlanned:
-            Number.isFinite(riskMoneyPlannedAck)
-              ? sql`COALESCE(${riskMoneyPlannedAck}, ${schema.trades.riskMoneyPlanned})`
-              : undefined,
+          riskMoneyPlanned: Number.isFinite(riskMoneyPlannedAck)
+            ? sql`COALESCE(${riskMoneyPlannedAck}, ${schema.trades.riskMoneyPlanned})`
+            : undefined,
           orderType: payload.order_type
             ? sql`COALESCE(${payload.order_type}, ${schema.trades.orderType})`
             : undefined,
@@ -10238,18 +10531,11 @@ END
         const tradeSymbol = res[0]?.symbol || payload.symbol || "";
         if (["PENDING", "FILLED"].includes(newStatus)) {
           moveTradeFolder(tradeSid, "files", "active", tradeSymbol);
-        } else if (
-          ["CLOSED", "CANCELLED", "REJECTED", "TP", "SL"].includes(newStatus)
-        ) {
-          // Copy bars + snapshots from market_data before moving to closed
-          archiveTradeStats(tradeSid, tradeSymbol);
-          moveTradeFolder(tradeSid, "active", "closed", tradeSymbol);
-        }
-        // Auto-capture master snapshot on FILLED/CLOSED
-        if (["FILLED", "CLOSED"].includes(newStatus)) {
-          captureStatusSnapshot(tradeSid, res[0]?.symbol, newStatus).catch(
-            () => {},
-          );
+        } else if (MT5_TERMINAL_TRADE_STATUSES.has(newStatus)) {
+          await archiveTradeTerminalArtifacts(res[0], {
+            captureSnapshot: ["FILLED", "CLOSED"].includes(newStatus),
+            statusOverride: newStatus,
+          });
         }
       } else {
         // Fallback log for tracking orphan/failed acks
@@ -10410,64 +10696,78 @@ END
       trackSourceActivity(payload?.source_id || "unknown", true);
       const aid = String(accountId || "").trim();
       if (!aid) return { ok: false, error: "account_id is required" };
-      const accRows = await db
-        .select({
-          userId: schema.userAccounts.userId,
-          metadata: schema.userAccounts.metadata,
-          status: schema.userAccounts.status,
-          resolvedUserId: schema.users.userId,
-        })
-        .from(schema.userAccounts)
-        .leftJoin(
-          schema.users,
-          eq(schema.users.userId, schema.userAccounts.userId),
-        )
-        .where(eq(schema.userAccounts.accountId, aid))
-        .limit(1);
-      const accountUserId = String(accRows[0]?.userId || "").trim();
+      const store = getUserAccountObjectStore();
+      let existingAccount = await findUnifiedUserAccountById(aid);
       let uid = String(
-        accRows[0]?.resolvedUserId || accountUserId || CFG.mt5DefaultUserId,
+        existingAccount?.user_id || payload.user_id || CFG.mt5DefaultUserId,
       ).trim();
-      let existingMeta = {};
-      try {
-        existingMeta = JSON.parse(accRows[0]?.metadata || "{}");
-      } catch {}
-
-      // Legacy datasets can contain account rows whose user_id no longer exists.
       if (!uid) uid = String(CFG.mt5DefaultUserId || "default").trim();
-      await db
-        .insert(schema.users)
-        .values({
-          userId: uid,
-          role: uid === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER,
-          isActive: true,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: schema.users.userId,
-          set: { updatedAt: new Date() },
-        });
-      if (accountUserId !== uid) {
-        await db
-          .update(schema.userAccounts)
-          .set({ userId: uid, updatedAt: new Date() })
-          .where(eq(schema.userAccounts.accountId, aid));
+      let existingStatic = existingAccount
+        ? await store.getStaticObject(uid, "user_accounts", aid)
+        : null;
+      let existingDynamic = existingAccount
+        ? await getDynamicUserAccountRecord(uid, aid)
+        : null;
+      let existingMeta = existingDynamic?.metadata || {};
+      const nowIso = mt5NowIso();
+
+      if (!existingAccount) {
+        const seededStatic = {
+          account_id: aid,
+          user_id: uid,
+          name: String(payload.name || aid),
+          broker_name: String(payload.broker_name || ""),
+          status: String(payload.status || "ACTIVE"),
+          metadata: {},
+          created_at: nowIso,
+          updated_at: nowIso,
+        };
+        await store.upsertStaticObject(
+          uid,
+          "user_accounts",
+          aid,
+          seededStatic,
+          {
+            created_at: nowIso,
+            updated_at: nowIso,
+          },
+        );
+        existingStatic = seededStatic;
+        existingAccount = await store.getUnifiedObject(
+          uid,
+          "user_accounts",
+          aid,
+        );
+      } else if (
+        existingStatic &&
+        ((payload.broker_name && !existingStatic.broker_name) ||
+          (payload.name && !existingStatic.name))
+      ) {
+        existingStatic = await store.upsertStaticObject(
+          uid,
+          "user_accounts",
+          aid,
+          {
+            ...existingStatic,
+            name: existingStatic.name || String(payload.name || aid),
+            broker_name:
+              existingStatic.broker_name || String(payload.broker_name || ""),
+            updated_at: nowIso,
+          },
+          {
+            created_at: existingStatic.created_at,
+            updated_at: nowIso,
+          },
+        );
       }
 
-      // Update metadata and explicit columns
       const newMeta = {
         ...existingMeta,
-        balance: Number(payload.balance || existingMeta.balance || 0),
-        equity: Number(payload.equity || existingMeta.equity || 0),
-        margin: Number(payload.margin || existingMeta.margin || 0),
-        free_margin: Number(
-          payload.free_margin || existingMeta.free_margin || 0,
-        ),
-        leverage: Number(payload.leverage || existingMeta.leverage || 0),
-        broker_name: String(
-          payload.broker_name || existingMeta.broker_name || "",
-        ),
+        balance: asNum(payload.balance, existingMeta.balance ?? 0),
+        equity: asNum(payload.equity, existingMeta.equity ?? 0),
+        margin: asNum(payload.margin, existingMeta.margin ?? 0),
+        free_margin: asNum(payload.free_margin, existingMeta.free_margin ?? 0),
+        leverage: asNum(payload.leverage, existingMeta.leverage ?? 0),
         provider_code: String(
           payload.provider_code ||
             existingMeta.provider_code ||
@@ -10477,6 +10777,10 @@ END
         build_version: String(
           payload.build_version || existingMeta.build_version || "",
         ),
+        source_ids_cache:
+          payload.source_ids_cache !== undefined
+            ? normalizeAccountSourceIdsCache(payload.source_ids_cache)
+            : normalizeAccountSourceIdsCache(existingMeta.source_ids_cache),
         symbol_metrics: (() => {
           const incoming = Array.isArray(payload.symbol_metrics)
             ? payload.symbol_metrics
@@ -10486,12 +10790,12 @@ END
             : [];
           const map = new Map();
           existing.forEach((m) => {
-            if (m.symbol) map.set(m.symbol.toUpperCase(), m);
+            if (m.symbol) map.set(String(m.symbol).toUpperCase(), m);
           });
           incoming.forEach((m) => {
-            if (m.symbol) {
-              map.set(m.symbol.toUpperCase(), {
-                ...map.get(m.symbol.toUpperCase()),
+            if (m?.symbol) {
+              map.set(String(m.symbol).toUpperCase(), {
+                ...map.get(String(m.symbol).toUpperCase()),
                 ...m,
                 updated_at: new Date().toISOString(),
               });
@@ -10501,37 +10805,51 @@ END
         })(),
         health_updated_at: new Date().toISOString(),
       };
-
-      // Only bump updated_at when status actually changes
-      const oldStatus = String(accRows[0]?.status || "").toUpperCase();
       const newStatus = payload.status
         ? String(payload.status).toUpperCase()
-        : oldStatus || "ACTIVE";
+        : existingDynamic?.status || existingStatic?.status || "ACTIVE";
 
-      await db
-        .insert(schema.userAccounts)
-        .values({
-          accountId: aid,
-          userId: uid,
-          metadata: JSON.stringify(newMeta),
-          balance: newMeta.balance,
-          status: newStatus,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: schema.userAccounts.accountId,
-          set: {
-            userId: sql`EXCLUDED.user_id`,
-            metadata: sql`EXCLUDED.metadata`,
-            balance: sql`EXCLUDED.balance`,
-            status: sql`EXCLUDED.status`,
-            updatedAt: sql`CASE
-              WHEN ${schema.userAccounts.status} IS DISTINCT FROM EXCLUDED.status THEN NOW()
-              ELSE ${schema.userAccounts.updatedAt}
-            END`,
-          },
-        });
+      existingDynamic = await store.upsertDynamicObject(
+        uid,
+        "user_accounts",
+        aid,
+        newMeta,
+        newStatus,
+        {
+          created_at:
+            existingDynamic?.created_at ||
+            existingAccount?.created_at ||
+            nowIso,
+          updated_at: nowIso,
+        },
+      );
+      const mergedAccount = await store.getUnifiedObject(
+        uid,
+        "user_accounts",
+        aid,
+      );
+      await upsertLegacyUserAccountShadow(pool, {
+        ...(mergedAccount || {}),
+        account_id: aid,
+        user_id: uid,
+        name:
+          mergedAccount?.name ||
+          existingStatic?.name ||
+          String(payload.name || aid),
+        broker_name:
+          mergedAccount?.broker_name || existingStatic?.broker_name || "",
+        status: mergedAccount?.status || existingStatic?.status || "ACTIVE",
+        balance: newMeta.balance,
+        equity: newMeta.equity,
+        margin: newMeta.margin,
+        free_margin: newMeta.free_margin,
+        leverage: newMeta.leverage,
+        source_ids_cache: newMeta.source_ids_cache,
+        metadata: mergedAccount?.metadata || newMeta,
+        created_at:
+          mergedAccount?.created_at || existingAccount?.created_at || nowIso,
+        updated_at: nowIso,
+      });
       await StateRepo.del("USER_ACCOUNTS", uid);
       await this.log(
         aid,
@@ -10956,7 +11274,8 @@ END
 
           const syncMeta = JSON.stringify({
             order_type: mt5NormalizeOrderTypeValue(it.order_type, "limit"),
-            broker_name: existingMeta.broker_name || "",
+            broker_name:
+              mergedAccount?.broker_name || existingStatic?.broker_name || "",
             provider_code: existingMeta.provider_code || "",
             last_change_origin: "broker",
             last_inbound_event_id: `broker:${aid}:${snapshotHash}`,
@@ -11569,15 +11888,10 @@ END
             uid,
           );
 
-          // Archive bars + snapshots + move folder to closed
-          const tradeSymbol = row?.symbol || "";
-          if (tradeSymbol) {
-            archiveTradeStats(tradeId, tradeSymbol);
-            moveTradeFolder(tradeId, "active", "closed", tradeSymbol);
-            captureStatusSnapshot(tradeId, tradeSymbol, "CLOSED").catch(
-              () => {},
-            );
-          }
+          await archiveTradeTerminalArtifacts(row, {
+            captureSnapshot: true,
+            statusOverride: "CLOSED",
+          });
         }
       };
       let closed_by_snapshot = 0;
@@ -11801,36 +12115,46 @@ END
       const margin = asNum(payload.margin, null);
       const freeMargin = asNum(payload.free_margin, null);
 
-      const accRows = await db
-        .select({
-          userId: schema.userAccounts.userId,
-          metadata: schema.userAccounts.metadata,
-        })
-        .from(schema.userAccounts)
-        .where(eq(schema.userAccounts.accountId, aid))
-        .limit(1);
-      const uid = accRows[0]?.userId || CFG.mt5DefaultUserId;
-      let oldMeta = {};
-      try {
-        oldMeta = JSON.parse(accRows[0]?.metadata || "{}");
-      } catch {}
-
-      await db
-        .update(schema.userAccounts)
-        .set({
-          balance:
-            balance != null
-              ? sql`COALESCE(${balance}, ${schema.userAccounts.balance})`
-              : undefined,
-          metadata: JSON.stringify({
-            ...oldMeta,
-            equity,
-            margin,
-            free_margin: freeMargin,
-            health_updated_at: now,
-          }),
-        })
-        .where(eq(schema.userAccounts.accountId, aid));
+      const store = getUserAccountObjectStore();
+      const existing = await findUnifiedUserAccountById(aid);
+      if (!existing) return { ok: false, error: "account not found" };
+      const uid = existing.user_id || CFG.mt5DefaultUserId;
+      const currentDynamic = await getDynamicUserAccountRecord(uid, aid);
+      const nextMeta = {
+        ...(currentDynamic?.metadata || {}),
+        ...(balance != null ? { balance } : {}),
+        ...(equity != null ? { equity } : {}),
+        ...(margin != null ? { margin } : {}),
+        ...(freeMargin != null ? { free_margin: freeMargin } : {}),
+        health_updated_at: now,
+      };
+      await store.upsertDynamicObject(
+        uid,
+        "user_accounts",
+        aid,
+        nextMeta,
+        currentDynamic?.status || existing.status || "ACTIVE",
+        {
+          created_at: currentDynamic?.created_at || existing.created_at || now,
+          updated_at: now,
+        },
+      );
+      const merged = await store.getUnifiedObject(uid, "user_accounts", aid);
+      await upsertLegacyUserAccountShadow(pool, {
+        ...(merged || existing),
+        account_id: aid,
+        user_id: uid,
+        balance: nextMeta.balance ?? merged?.balance ?? null,
+        equity: nextMeta.equity ?? merged?.equity ?? null,
+        margin: nextMeta.margin ?? merged?.margin ?? null,
+        free_margin: nextMeta.free_margin ?? merged?.free_margin ?? null,
+        leverage: nextMeta.leverage ?? merged?.leverage ?? null,
+        source_ids_cache:
+          nextMeta.source_ids_cache ?? merged?.source_ids_cache ?? [],
+        metadata: merged?.metadata || nextMeta,
+        updated_at: now,
+      });
+      await StateRepo.del("USER_ACCOUNTS", uid);
 
       await this.log(
         aid,
@@ -11876,153 +12200,7 @@ END
       return dbQueries.listTradesV2(db, filters, page, pageSize);
     },
     async updateTradeManualV2(tradeId, userId = null, payload = {}) {
-      try {
-        const tid = String(tradeId || "").trim();
-        if (!tid) return { ok: false, error: "sid (trade_id) is required" };
-        const stRaw = String(payload.execution_status || payload.status || "")
-          .trim()
-          .toUpperCase();
-        const accountOnly = !stRaw && String(payload.account_id || "").trim();
-        if (accountOnly) {
-          await pool.query(`UPDATE trades SET account_id = $1 WHERE sid = $2`, [
-            String(payload.account_id || "").trim(),
-            tid,
-          ]);
-          return { ok: true, sid: tid, account_id: payload.account_id };
-        }
-        if (!stRaw) {
-          return {
-            ok: false,
-            error: "execution_status or account_id is required",
-          };
-        }
-        const allowed = new Set([
-          "PENDING",
-          "FILLED",
-          "CLOSED",
-          "CANCELLED",
-          "REJECTED",
-        ]);
-        if (!allowed.has(stRaw)) {
-          return {
-            ok: false,
-            error:
-              "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED",
-          };
-        }
-        const currentRows = await pool
-          .query(`SELECT * FROM trades WHERE sid = $1 LIMIT 1`, [tid])
-          .then((r) => r.rows);
-        if (currentRows.length === 0)
-          return { ok: false, error: "trade not found" };
-        const currentRow = currentRows[0];
-        const newAccountId =
-          String(payload.account_id || "").trim() || undefined;
-        const syncResult = syncGuards.brokerLinkedManualStatus(
-          {
-            sid: currentRow.sid,
-            execution_status: currentRow.execution_status,
-            broker_trade_id: currentRow.broker_trade_id,
-          },
-          stRaw,
-        );
-        const appliedExecutionStatus = syncResult.execution_status;
-        const newDispatchStatus = syncResult.dispatch_status;
-        const queuedBrokerAction = newDispatchStatus !== null;
-        const pnlRaw = payload.pnl_realized ?? payload.pnl;
-        const pnlNum = Number(pnlRaw);
-        const pnl =
-          appliedExecutionStatus === "PENDING"
-            ? 0
-            : Number.isFinite(pnlNum)
-              ? pnlNum
-              : null;
-        const closeReasonRaw = String(
-          payload.close_reason || payload.reason || "",
-        ).trim();
-        const closeReason = closeReasonRaw || null;
-        const manualMeta = JSON.stringify({
-          manual_requested_status: stRaw,
-          manual_applied_execution_status: appliedExecutionStatus,
-          manual_new_dispatch_status: newDispatchStatus || null,
-          manual_edit_source: "vps",
-          manual_edit_at: mt5NowIso(),
-        });
-        const udRes = await db
-          .update(schema.trades)
-          .set({
-            executionStatus: appliedExecutionStatus,
-            ...(newAccountId != null ? { accountId: newAccountId } : {}),
-            ...(pnl != null
-              ? {
-                  pnlRealized: sql`CASE WHEN ${pnl}::double precision IS NULL THEN ${schema.trades.pnlRealized} ELSE ${pnl}::double precision END`,
-                }
-              : {}),
-            ...(closeReason != null
-              ? {
-                  closeReason: sql`COALESCE(${closeReason}::text, ${schema.trades.closeReason})`,
-                }
-              : {}),
-            ...(newDispatchStatus != null
-              ? {
-                  dispatchStatus: newDispatchStatus,
-                  leaseToken: null,
-                  leaseExpiresAt: null,
-                }
-              : {}),
-            metadata: sql`COALESCE(${schema.trades.metadata}::jsonb, '{}'::jsonb) || ${manualMeta}::jsonb`,
-            ...(newDispatchStatus != null
-              ? {}
-              : {
-                  closedAt: sql`CASE
-              WHEN ${appliedExecutionStatus}::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(${schema.trades.closedAt}, NOW())
-              ELSE ${schema.trades.closedAt}
-            END`,
-                }),
-          })
-          .where(eq(schema.trades.sid, currentRow.sid))
-          .returning();
-        const row = udRes[0];
-        const tradeSymbol = row.symbol || currentRow.symbol || "";
-
-        // Archive bars + snapshots on CLOSED/CANCELLED/REJECTED
-        const newStatus = String(row.executionStatus || "").toUpperCase();
-        if (["FILLED", "CLOSED"].includes(newStatus)) {
-          captureStatusSnapshot(row.sid, tradeSymbol, newStatus).catch((e) =>
-            console.error("[status-snapshot] manual update failed:", e.message),
-          );
-        }
-        if (["CLOSED", "CANCELLED", "REJECTED"].includes(newStatus)) {
-          archiveTradeStats(row.sid, tradeSymbol);
-          moveTradeFolder(row.sid, "active", "closed", tradeSymbol);
-        }
-
-        await this.log(
-          row.sid,
-          "trades",
-          {
-            event: "TRADE_MANUAL_EDIT",
-            requested_status: stRaw,
-            execution_status: row.executionStatus,
-            queued_broker_action: queuedBrokerAction,
-            pnl_realized: row.pnlRealized,
-            close_reason: row.closeReason || null,
-          },
-          row.userId || CFG.mt5DefaultUserId,
-        );
-        return {
-          ok: true,
-          queued_broker_action: queuedBrokerAction,
-          item: row,
-        };
-      } catch (e) {
-        console.error(
-          "[updateTradeManualV2] error:",
-          e?.message || e,
-          e?.stack,
-        );
-        return { ok: false, error: e?.message || String(e) };
-      }
+      return mt5ChangeTradeStatusV2(tradeId, userId, payload);
     },
     async bulkActionTradesV2(action, filters = {}) {
       const act = String(action || "")
@@ -12098,26 +12276,41 @@ END
           signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
         };
       }
-      const upRes = await db
-        .update(schema.trades)
-        .set({
-          dispatchStatus: nextDispatch,
-          closeReason: sql`COALESCE(${schema.trades.closeReason}, ${closeReason})`,
-          closedAt: sql`COALESCE(${schema.trades.closedAt}, NOW())`,
-          updatedAt: sql`NOW()`,
-        })
-        .where(where)
-        .returning({
+      const rows = await db
+        .select({
           sid: schema.trades.sid,
           signalId: schema.trades.signalId,
-        });
-      const rows = upRes || [];
+          executionStatus: schema.trades.executionStatus,
+        })
+        .from(schema.trades)
+        .where(where);
+      const rowsToProcess = Array.isArray(rows) ? rows : [];
+      const updatedRows = [];
+      for (const row of rowsToProcess) {
+        const sid = String(row?.sid || "").trim();
+        if (!sid) continue;
+        const out =
+          act === "cancel_all"
+            ? await mt5CancelTradeV2(sid, filters.user_id || null, {
+                close_reason: closeReason,
+                reason: closeReason,
+              })
+            : await mt5CloseTradeV2(sid, filters.user_id || null, {
+                close_reason: closeReason,
+                reason: closeReason,
+              });
+        if (out?.ok && out?.item?.sid) {
+          updatedRows.push(out.item);
+        }
+      }
       return {
         ok: true,
-        updated: rows.length,
+        updated: updatedRows.length,
         action: act,
-        sids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
-        signal_ids: rows.map((r) => String(r?.sid || "")).filter(Boolean),
+        sids: updatedRows.map((r) => String(r?.sid || "")).filter(Boolean),
+        signal_ids: updatedRows
+          .map((r) => String(r?.sid || ""))
+          .filter(Boolean),
       };
     },
     async rotateSourceSecretV2(sourceId) {
@@ -12156,199 +12349,401 @@ END
       return { ok: true };
     },
     async createAccountV2(payload = {}) {
+      const store = getUserAccountObjectStore();
       const accountId = String(payload.account_id || "").trim();
       if (!accountId) return { ok: false, error: "account_id is required" };
-      const now = new Date();
+      const userId =
+        String(payload.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const nowIso = mt5NowIso();
       const plainApiKey = `acc_${crypto.randomBytes(18).toString("hex")}`;
       const apiKeyHash = hashApiKey(plainApiKey);
       const apiKeyLast4 = plainApiKey.slice(-4);
-      const rows = await db
-        .insert(schema.userAccounts)
-        .values({
-          accountId,
-          userId: String(payload.user_id || CFG.mt5DefaultUserId),
-          name: String(payload.name || accountId),
-          balance:
-            payload.balance === null ||
-            payload.balance === undefined ||
-            Number.isNaN(Number(payload.balance))
-              ? null
-              : Number(payload.balance),
-          status: String(payload.status || "ACTIVE"),
-          metadata:
-            payload.metadata && typeof payload.metadata === "object"
-              ? JSON.stringify(payload.metadata)
-              : "{}",
-          apiKeyHash,
-          apiKeyLast4,
-          apiKeyRotatedAt: now,
-          sourceIdsCache:
-            payload.source_ids_cache &&
-            typeof payload.source_ids_cache === "object"
-              ? JSON.stringify(payload.source_ids_cache)
-              : "[]",
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: schema.userAccounts.accountId,
-          set: {
-            userId: sql`EXCLUDED.user_id`,
-            name: sql`EXCLUDED.name`,
-            balance: sql`EXCLUDED.balance`,
-            status: sql`EXCLUDED.status`,
-            metadata: sql`EXCLUDED.metadata`,
-            updatedAt: sql`EXCLUDED.updated_at`,
-          },
-        })
-        .returning();
+      const staticObject = {
+        account_id: accountId,
+        user_id: userId,
+        name: String(payload.name || accountId),
+        broker_name: String(payload.broker_name || ""),
+        status: String(payload.status || "ACTIVE"),
+        api_key_hash: apiKeyHash,
+        api_key_last4: apiKeyLast4,
+        api_key_rotated_at: nowIso,
+        metadata:
+          payload.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : {},
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+      const dynamicMetadata = {
+        balance:
+          payload.balance === null ||
+          payload.balance === undefined ||
+          Number.isNaN(Number(payload.balance))
+            ? null
+            : Number(payload.balance),
+        equity:
+          payload.equity === null ||
+          payload.equity === undefined ||
+          Number.isNaN(Number(payload.equity))
+            ? null
+            : Number(payload.equity),
+        margin:
+          payload.margin === null ||
+          payload.margin === undefined ||
+          Number.isNaN(Number(payload.margin))
+            ? null
+            : Number(payload.margin),
+        free_margin:
+          payload.free_margin === null ||
+          payload.free_margin === undefined ||
+          Number.isNaN(Number(payload.free_margin))
+            ? null
+            : Number(payload.free_margin),
+        leverage:
+          payload.leverage === null ||
+          payload.leverage === undefined ||
+          Number.isNaN(Number(payload.leverage))
+            ? null
+            : Number(payload.leverage),
+        source_ids_cache: normalizeAccountSourceIdsCache(
+          payload.source_ids_cache,
+        ),
+        health_updated_at: nowIso,
+      };
+      await store.upsertStaticObject(
+        userId,
+        "user_accounts",
+        accountId,
+        staticObject,
+        { created_at: nowIso, updated_at: nowIso },
+      );
+      await store.upsertDynamicObject(
+        userId,
+        "user_accounts",
+        accountId,
+        dynamicMetadata,
+        String(payload.status || "ACTIVE"),
+        { created_at: nowIso, updated_at: nowIso },
+      );
+      const item = await store.getUnifiedObject(
+        userId,
+        "user_accounts",
+        accountId,
+      );
+      await upsertLegacyUserAccountShadow(pool, {
+        ...(item || {}),
+        account_id: accountId,
+        user_id: userId,
+        source_ids_cache: dynamicMetadata.source_ids_cache,
+      });
       return {
         ok: true,
-        item: rows[0] || null,
+        item,
         api_key_plaintext: plainApiKey,
       };
     },
     async listAccountsV2(userId = null) {
-      const conditions = [];
+      const store = getUserAccountObjectStore();
       if (userId) {
-        conditions.push(eq(schema.userAccounts.userId, String(userId || "")));
+        return store.listUnifiedObjects(String(userId || ""), "user_accounts");
       }
-      const where = conditions.length ? and(...conditions) : undefined;
-      const rows = await db
-        .select({
-          accountId: schema.userAccounts.accountId,
-          userId: schema.userAccounts.userId,
-          name: schema.userAccounts.name,
-          balance: schema.userAccounts.balance,
-          status: schema.userAccounts.status,
-          metadata: schema.userAccounts.metadata,
-          createdAt: schema.userAccounts.createdAt,
-          updatedAt: schema.userAccounts.updatedAt,
-        })
-        .from(schema.userAccounts)
-        .where(where)
-        .orderBy(
-          asc(schema.userAccounts.createdAt),
-          asc(schema.userAccounts.accountId),
-        );
-      return rows || [];
+      const users =
+        await store.staticDal.listUsersWithObjectType("user_accounts");
+      const out = [];
+      for (const uid of users) {
+        out.push(...(await store.listUnifiedObjects(uid, "user_accounts")));
+      }
+      out.sort((a, b) => {
+        const ak = `${a.user_id || ""}:${a.created_at || ""}:${a.account_id || ""}`;
+        const bk = `${b.user_id || ""}:${b.created_at || ""}:${b.account_id || ""}`;
+        return ak.localeCompare(bk);
+      });
+      return out;
     },
 
     async updateAccountV2(accountId, patch = {}) {
+      const store = getUserAccountObjectStore();
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
-      const prevRows = await db
-        .select()
-        .from(schema.userAccounts)
-        .where(eq(schema.userAccounts.accountId, targetId))
-        .limit(1);
-      const prev = prevRows[0];
-      if (!prev) return { ok: false, error: "account not found" };
-      const rows = await db
-        .update(schema.userAccounts)
-        .set({
-          userId: String(patch.user_id ?? prev.userId ?? CFG.mt5DefaultUserId),
-          name: String(patch.name ?? prev.name ?? targetId),
-          balance:
-            patch.balance === undefined
-              ? prev.balance === null || prev.balance === undefined
-                ? null
-                : Number(prev.balance)
-              : patch.balance === null ||
-                  patch.balance === "" ||
-                  Number.isNaN(Number(patch.balance))
-                ? null
-                : Number(patch.balance),
-          status: String(patch.status ?? prev.status ?? "ACTIVE"),
-          metadata:
-            patch.metadata && typeof patch.metadata === "object"
-              ? JSON.stringify(patch.metadata)
-              : prev.metadata && typeof prev.metadata === "object"
-                ? JSON.stringify(prev.metadata)
-                : "{}",
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.userAccounts.accountId, targetId))
-        .returning();
-      return { ok: true, item: rows[0] || null };
+      const existing = await findUnifiedUserAccountById(targetId);
+      if (!existing) return { ok: false, error: "account not found" };
+      const existingUserId =
+        String(existing.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const targetUserId =
+        String(patch.user_id ?? existingUserId).trim() || existingUserId;
+      const existingDynamic = await getDynamicUserAccountRecord(
+        existingUserId,
+        targetId,
+      );
+      const existingStatic = await store.getStaticObject(
+        existingUserId,
+        "user_accounts",
+        targetId,
+      );
+      const staticObject = {
+        ...(existingStatic || existing),
+        account_id: targetId,
+        user_id: targetUserId,
+        name: String(patch.name ?? existing.name ?? targetId),
+        broker_name: String(
+          patch.broker_name ??
+            existing.broker_name ??
+            existingStatic?.broker_name ??
+            "",
+        ),
+        status: String(patch.status ?? existing.status ?? "ACTIVE"),
+        metadata:
+          patch.metadata && typeof patch.metadata === "object"
+            ? patch.metadata
+            : existingStatic?.metadata &&
+                typeof existingStatic.metadata === "object"
+              ? existingStatic.metadata
+              : existing.metadata && typeof existing.metadata === "object"
+                ? existing.metadata
+                : {},
+        api_key_hash:
+          existing.api_key_hash || existingStatic?.api_key_hash || null,
+        api_key_last4:
+          existing.api_key_last4 || existingStatic?.api_key_last4 || null,
+        api_key_rotated_at:
+          existing.api_key_rotated_at ||
+          existingStatic?.api_key_rotated_at ||
+          null,
+        created_at: existing.created_at,
+        updated_at: mt5NowIso(),
+      };
+      const dynamicMetadata = {
+        ...(existingDynamic?.metadata || {}),
+      };
+      if (patch.balance !== undefined) {
+        dynamicMetadata.balance =
+          patch.balance === null ||
+          patch.balance === "" ||
+          Number.isNaN(Number(patch.balance))
+            ? null
+            : Number(patch.balance);
+      }
+      if (patch.equity !== undefined) {
+        dynamicMetadata.equity =
+          patch.equity === null || Number.isNaN(Number(patch.equity))
+            ? null
+            : Number(patch.equity);
+      }
+      if (patch.margin !== undefined) {
+        dynamicMetadata.margin =
+          patch.margin === null || Number.isNaN(Number(patch.margin))
+            ? null
+            : Number(patch.margin);
+      }
+      if (patch.free_margin !== undefined) {
+        dynamicMetadata.free_margin =
+          patch.free_margin === null || Number.isNaN(Number(patch.free_margin))
+            ? null
+            : Number(patch.free_margin);
+      }
+      if (patch.leverage !== undefined) {
+        dynamicMetadata.leverage =
+          patch.leverage === null || Number.isNaN(Number(patch.leverage))
+            ? null
+            : Number(patch.leverage);
+      }
+      if (patch.source_ids_cache !== undefined) {
+        dynamicMetadata.source_ids_cache = normalizeAccountSourceIdsCache(
+          patch.source_ids_cache,
+        );
+      }
+      await store.upsertStaticObject(
+        targetUserId,
+        "user_accounts",
+        targetId,
+        staticObject,
+        {
+          created_at: staticObject.created_at,
+          updated_at: staticObject.updated_at,
+        },
+      );
+      await store.upsertDynamicObject(
+        targetUserId,
+        "user_accounts",
+        targetId,
+        dynamicMetadata,
+        existingDynamic?.status || staticObject.status || "ACTIVE",
+        {
+          created_at: existingDynamic?.created_at || staticObject.created_at,
+          updated_at: mt5NowIso(),
+        },
+      );
+      const item = await store.getUnifiedObject(
+        targetUserId,
+        "user_accounts",
+        targetId,
+      );
+      if (targetUserId !== existingUserId) {
+        await store.deleteUnifiedObject(
+          existingUserId,
+          "user_accounts",
+          targetId,
+        );
+        await deleteLegacyUserAccountShadow(pool, existingUserId, targetId);
+      }
+      await upsertLegacyUserAccountShadow(pool, {
+        ...(item || {}),
+        account_id: targetId,
+        user_id: targetUserId,
+        source_ids_cache: dynamicMetadata.source_ids_cache,
+      });
+      return { ok: true, item };
     },
     async archiveAccountV2(accountId) {
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
-      const rows = await db
-        .update(schema.userAccounts)
-        .set({ status: "ARCHIVED", updatedAt: new Date() })
-        .where(eq(schema.userAccounts.accountId, targetId))
-        .returning();
-      if (!rows[0]) return { ok: false, error: "account not found" };
-      return { ok: true, item: rows[0] };
+      const res = await this.updateAccountV2(targetId, { status: "ARCHIVED" });
+      if (!res?.ok || !res?.item)
+        return { ok: false, error: "account not found" };
+      return { ok: true, item: res.item };
     },
     async findAccountByApiKeyHash(apiKeyHash) {
       const h = String(apiKeyHash || "").trim();
       if (!h) return null;
-      return dbQueries.findAccountByApiKeyHash(db, h);
+      return findUnifiedUserAccountById(
+        (
+          await getUserAccountObjectStore().findUnifiedObjectByStaticField(
+            "user_accounts",
+            "api_key_hash",
+            h,
+          )
+        )?.account_id,
+      );
     },
     async rotateAccountApiKeyV2(accountId) {
+      const store = getUserAccountObjectStore();
       const targetId = String(accountId || "").trim();
       if (!targetId) return null;
+      const existing = await findUnifiedUserAccountById(targetId);
+      if (!existing) return null;
+      const userId =
+        String(existing.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const currentStatic = await store.getStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
+      );
       const plainApiKey = `acc_${crypto.randomBytes(18).toString("hex")}`;
       const apiKeyHash = hashApiKey(plainApiKey);
       const apiKeyLast4 = plainApiKey.slice(-4);
-      const res = await pool.query(
-        `
-        UPDATE user_accounts
-        SET api_key_hash = $1, api_key_last4 = $2, api_key_rotated_at = NOW(), updated_at = NOW()
-        WHERE account_id = $3
-        RETURNING account_id
-      `,
-        [apiKeyHash, apiKeyLast4, targetId],
+      await store.upsertStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
+        {
+          ...(currentStatic || existing),
+          api_key_hash: apiKeyHash,
+          api_key_last4: apiKeyLast4,
+          api_key_rotated_at: mt5NowIso(),
+          updated_at: mt5NowIso(),
+        },
+        {
+          created_at: currentStatic?.created_at || existing.created_at,
+          updated_at: mt5NowIso(),
+        },
       );
-      if (!res.rows[0]) return null;
+      const item = await store.getUnifiedObject(
+        userId,
+        "user_accounts",
+        targetId,
+      );
+      await upsertLegacyUserAccountShadow(pool, item || existing);
       return { account_id: targetId, api_key_plaintext: plainApiKey };
     },
     async revokeAccountApiKeyV2(accountId) {
+      const store = getUserAccountObjectStore();
       const targetId = String(accountId || "").trim();
       if (!targetId) return { ok: false, error: "account_id is required" };
-      const res = await pool.query(
-        `
-        UPDATE user_accounts
-        SET api_key_hash = NULL, api_key_last4 = NULL, api_key_rotated_at = NOW(), updated_at = NOW()
-        WHERE account_id = $1
-      `,
-        [targetId],
+      const existing = await findUnifiedUserAccountById(targetId);
+      if (!existing) return { ok: false, error: "account not found" };
+      const userId =
+        String(existing.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const currentStatic = await store.getStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
       );
-      if ((res.rowCount || 0) === 0)
-        return { ok: false, error: "account not found" };
+      await store.upsertStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
+        {
+          ...(currentStatic || existing),
+          api_key_hash: null,
+          api_key_last4: null,
+          api_key_rotated_at: mt5NowIso(),
+          updated_at: mt5NowIso(),
+        },
+        {
+          created_at: currentStatic?.created_at || existing.created_at,
+          updated_at: mt5NowIso(),
+        },
+      );
+      const item = await store.getUnifiedObject(
+        userId,
+        "user_accounts",
+        targetId,
+      );
+      await upsertLegacyUserAccountShadow(pool, item || existing);
       return { ok: true, account_id: targetId };
     },
     async updateAccountApiKeyV2(accountId, plainApiKey) {
+      const store = getUserAccountObjectStore();
       const targetId = String(accountId || "").trim();
       const plain = String(plainApiKey || "").trim();
       if (!targetId || !plain) return null;
+      const existing = await findUnifiedUserAccountById(targetId);
+      if (!existing) return null;
+      const userId =
+        String(existing.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const currentStatic = await store.getStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
+      );
       const apiKeyHash = hashApiKey(plain);
       const apiKeyLast4 = plain.slice(-4);
-      const res = await pool.query(
-        `
-        UPDATE user_accounts
-        SET api_key_hash = $1, api_key_last4 = $2, api_key_rotated_at = NOW(), updated_at = NOW()
-        WHERE account_id = $3
-        RETURNING account_id
-      `,
-        [apiKeyHash, apiKeyLast4, targetId],
+      await store.upsertStaticObject(
+        userId,
+        "user_accounts",
+        targetId,
+        {
+          ...(currentStatic || existing),
+          api_key_hash: apiKeyHash,
+          api_key_last4: apiKeyLast4,
+          api_key_rotated_at: mt5NowIso(),
+          updated_at: mt5NowIso(),
+        },
+        {
+          created_at: currentStatic?.created_at || existing.created_at,
+          updated_at: mt5NowIso(),
+        },
       );
-      return res.rowCount > 0
-        ? { account_id: targetId, api_key_last4: apiKeyLast4 }
-        : null;
+      const item = await store.getUnifiedObject(
+        userId,
+        "user_accounts",
+        targetId,
+      );
+      await upsertLegacyUserAccountShadow(pool, item || existing);
+      return { account_id: targetId, api_key_last4: apiKeyLast4 };
     },
     async getAccountSubscriptionsV2(accountId) {
       const targetId = String(accountId || "").trim();
       if (!targetId) return [];
-      const res = await pool.query(
-        `SELECT source_ids_cache FROM user_accounts WHERE account_id = $1 LIMIT 1`,
-        [targetId],
+      const account = await findUnifiedUserAccountById(targetId);
+      const arr = normalizeAccountSourceIdsCache(
+        account?.source_ids_cache ?? account?.metadata?.source_ids_cache ?? [],
       );
-      const cache = res.rows?.[0]?.source_ids_cache;
-      const arr = Array.isArray(cache) ? cache : [];
       return arr
         .map((sourceId) => ({
           source_id: String(sourceId || ""),
@@ -12405,13 +12800,7 @@ END
       return res.rows[0]?.column_name || null;
     },
     async listTables() {
-      return [
-        "users",
-        "user_accounts",
-        "trades",
-        "user_settings",
-        "user_templates",
-      ];
+      return ["users", "user_accounts", "trades", "user_templates"];
     },
     async listTableRows(
       table,
@@ -12650,86 +13039,170 @@ END
       return { ok: true };
     },
     async listUserAccounts(userId) {
-      const res = await pool.query(
-        `
-        SELECT account_id, user_id, name, balance, status, metadata,
-               equity, margin, free_margin, leverage, broker_name,
-               created_at, updated_at
-        FROM user_accounts
-        WHERE user_id = $1
-        ORDER BY created_at ASC, account_id ASC
-      `,
-        [String(userId || "")],
+      const targetUser = String(userId || "").trim();
+      if (!targetUser) return [];
+      return getUserAccountObjectStore().listUnifiedObjects(
+        targetUser,
+        "user_accounts",
       );
-      return res.rows || [];
     },
     async upsertUserAccount(userId, account) {
-      const targetUser = String(userId || "");
-      const accountId = String(account?.account_id || "");
+      const store = getUserAccountObjectStore();
+      const targetUser =
+        String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+      const accountId = String(account?.account_id || "").trim();
       if (!accountId) return { ok: false, error: "account_id is required" };
-      const now = mt5NowIso();
-      const res = await pool.query(
-        `
-        INSERT INTO user_accounts (
-          account_id, user_id, name, balance, status, metadata,
-          equity, margin, free_margin, leverage, broker_name,
-          created_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT (account_id) DO UPDATE SET
-          user_id = EXCLUDED.user_id,
-          name = EXCLUDED.name,
-          balance = EXCLUDED.balance,
-          status = EXCLUDED.status,
-          metadata = COALESCE(user_accounts.metadata::jsonb, '{}'::jsonb) || EXCLUDED.metadata,
-          equity = COALESCE(EXCLUDED.equity, user_accounts.equity),
-          margin = COALESCE(EXCLUDED.margin, user_accounts.margin),
-          free_margin = COALESCE(EXCLUDED.free_margin, user_accounts.free_margin),
-          leverage = COALESCE(EXCLUDED.leverage, user_accounts.leverage),
-          broker_name = COALESCE(NULLIF(EXCLUDED.broker_name, ''), user_accounts.broker_name),
-          updated_at = EXCLUDED.updated_at
-        RETURNING account_id, user_id, name, balance, status, metadata,
-                  equity, margin, free_margin, leverage, broker_name,
-                  created_at, updated_at
-      `,
-        [
-          accountId,
+      const existing =
+        (await store.getUnifiedObject(
           targetUser,
-          String(account?.name || ""),
-          account?.balance === null ||
-          account?.balance === undefined ||
+          "user_accounts",
+          accountId,
+        )) || (await findUnifiedUserAccountById(accountId));
+      const existingUserId =
+        String(existing?.user_id || targetUser).trim() || targetUser;
+      const existingStatic = existing
+        ? await store.getStaticObject(
+            existingUserId,
+            "user_accounts",
+            accountId,
+          )
+        : null;
+      const existingDynamic = existing
+        ? await getDynamicUserAccountRecord(existingUserId, accountId)
+        : null;
+      const nowIso = mt5NowIso();
+      const staticObject = {
+        ...(existingStatic || existing || {}),
+        account_id: accountId,
+        user_id: targetUser,
+        name: String(account?.name || existing?.name || accountId),
+        broker_name: String(
+          account?.broker_name ||
+            existing?.broker_name ||
+            existingStatic?.broker_name ||
+            "",
+        ),
+        status: String(account?.status || existing?.status || "ACTIVE"),
+        metadata:
+          account?.metadata && typeof account.metadata === "object"
+            ? account.metadata
+            : existingStatic?.metadata &&
+                typeof existingStatic.metadata === "object"
+              ? existingStatic.metadata
+              : existing?.metadata && typeof existing.metadata === "object"
+                ? existing.metadata
+                : {},
+        api_key_hash:
+          account?.api_key_hash ||
+          existing?.api_key_hash ||
+          existingStatic?.api_key_hash ||
+          null,
+        api_key_last4:
+          account?.api_key_last4 ||
+          existing?.api_key_last4 ||
+          existingStatic?.api_key_last4 ||
+          null,
+        api_key_rotated_at:
+          account?.api_key_rotated_at ||
+          existing?.api_key_rotated_at ||
+          existingStatic?.api_key_rotated_at ||
+          null,
+        created_at: existing?.created_at || nowIso,
+        updated_at: nowIso,
+      };
+      const dynamicMetadata = {
+        ...(existingDynamic?.metadata || {}),
+      };
+      if (account?.balance !== undefined) {
+        dynamicMetadata.balance =
+          account.balance === null ||
+          account.balance === "" ||
           Number.isNaN(Number(account.balance))
             ? null
-            : Number(account.balance),
-          String(account?.status || ""),
-          account?.metadata && typeof account.metadata === "object"
-            ? JSON.stringify(account.metadata)
-            : null,
-          account?.equity == null || Number.isNaN(Number(account.equity))
+            : Number(account.balance);
+      }
+      if (account?.equity !== undefined) {
+        dynamicMetadata.equity =
+          account.equity == null || Number.isNaN(Number(account.equity))
             ? null
-            : Number(account.equity),
-          account?.margin == null || Number.isNaN(Number(account.margin))
+            : Number(account.equity);
+      }
+      if (account?.margin !== undefined) {
+        dynamicMetadata.margin =
+          account.margin == null || Number.isNaN(Number(account.margin))
             ? null
-            : Number(account.margin),
-          account?.free_margin == null ||
+            : Number(account.margin);
+      }
+      if (account?.free_margin !== undefined) {
+        dynamicMetadata.free_margin =
+          account.free_margin == null ||
           Number.isNaN(Number(account.free_margin))
             ? null
-            : Number(account.free_margin),
-          account?.leverage == null || Number.isNaN(Number(account.leverage))
+            : Number(account.free_margin);
+      }
+      if (account?.leverage !== undefined) {
+        dynamicMetadata.leverage =
+          account.leverage == null || Number.isNaN(Number(account.leverage))
             ? null
-            : Number(account.leverage),
-          String(account?.broker_name || ""),
-          now,
-          now,
-        ],
+            : Number(account.leverage);
+      }
+      if (account?.source_ids_cache !== undefined) {
+        dynamicMetadata.source_ids_cache = normalizeAccountSourceIdsCache(
+          account.source_ids_cache,
+        );
+      }
+      await store.upsertStaticObject(
+        targetUser,
+        "user_accounts",
+        accountId,
+        staticObject,
+        {
+          created_at: staticObject.created_at,
+          updated_at: nowIso,
+        },
       );
-      return res.rows[0] || null;
+      await store.upsertDynamicObject(
+        targetUser,
+        "user_accounts",
+        accountId,
+        dynamicMetadata,
+        existingDynamic?.status || staticObject.status || "ACTIVE",
+        {
+          created_at: existingDynamic?.created_at || staticObject.created_at,
+          updated_at: nowIso,
+        },
+      );
+      const item = await store.getUnifiedObject(
+        targetUser,
+        "user_accounts",
+        accountId,
+      );
+      if (existing && existingUserId !== targetUser) {
+        await store.deleteUnifiedObject(
+          existingUserId,
+          "user_accounts",
+          accountId,
+        );
+        await deleteLegacyUserAccountShadow(pool, existingUserId, accountId);
+      }
+      await upsertLegacyUserAccountShadow(pool, {
+        ...(item || {}),
+        account_id: accountId,
+        user_id: targetUser,
+        source_ids_cache: dynamicMetadata.source_ids_cache,
+      });
+      return item;
     },
     async deleteUserAccount(userId, accountId) {
-      await pool.query(
-        `DELETE FROM user_accounts WHERE user_id = $1 AND account_id = $2`,
-        [String(userId || ""), String(accountId || "")],
+      const targetUser = String(userId || "").trim();
+      const targetAccountId = String(accountId || "").trim();
+      if (!targetUser || !targetAccountId) return;
+      await getUserAccountObjectStore().deleteUnifiedObject(
+        targetUser,
+        "user_accounts",
+        targetAccountId,
       );
+      await deleteLegacyUserAccountShadow(pool, targetUser, targetAccountId);
     },
     async pruneOldSignals(days) {
       const res = await pool.query(
@@ -13286,6 +13759,146 @@ function mt5NormalizeVolume(payload) {
   }
   return n;
 }
+
+const REMOTE_DB_TUNNEL_STATE =
+  global._remoteDbTunnelState || (global._remoteDbTunnelState = {});
+
+function isLoopbackHost(hostname = "") {
+  const host = String(hostname || "")
+    .trim()
+    .toLowerCase();
+  return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function remoteDbTunnelEnabled() {
+  return asBool(process.env.REMOTE_DB_AUTO_TUNNEL, false);
+}
+
+function remoteDbSshHost() {
+  return (
+    envStr(process.env.MT5_REMOTE_DB_SSH_HOST) ||
+    envStr(process.env.REMOTE_HOST) ||
+    "root@139.59.211.192"
+  );
+}
+
+function remoteDbLocalPort() {
+  return Math.max(
+    1,
+    asNum(process.env.MT5_REMOTE_DB_LOCAL_PORT, 15432) || 15432,
+  );
+}
+
+function probeTcpPort(host, port, timeoutMs = 1000) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.once("timeout", () => finish(false));
+    socket.connect({ host, port });
+  });
+}
+
+async function waitForTcpPort(host, port, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await probeTcpPort(host, port, 700)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
+async function ensureRemoteDbTunnel(postgresUrl) {
+  if (!remoteDbTunnelEnabled()) return false;
+  let parsed;
+  try {
+    parsed = new URL(postgresUrl);
+  } catch {
+    return false;
+  }
+  if (!isLoopbackHost(parsed.hostname)) return false;
+  const port = Number(parsed.port || remoteDbLocalPort());
+  if (port !== remoteDbLocalPort()) return false;
+  if (await probeTcpPort("127.0.0.1", port, 400)) return true;
+
+  if (REMOTE_DB_TUNNEL_STATE.promise) {
+    return REMOTE_DB_TUNNEL_STATE.promise;
+  }
+
+  REMOTE_DB_TUNNEL_STATE.promise = (async () => {
+    if (await probeTcpPort("127.0.0.1", port, 400)) return true;
+
+    const sshHost = remoteDbSshHost();
+    if (!sshHost) {
+      throw new Error(
+        "REMOTE_DB_AUTO_TUNNEL is enabled but MT5_REMOTE_DB_SSH_HOST is empty",
+      );
+    }
+
+    const sshArgs = [
+      "-N",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      "-o",
+      "ServerAliveInterval=30",
+      "-o",
+      "ServerAliveCountMax=3",
+      "-L",
+      `${port}:127.0.0.1:5432`,
+      sshHost,
+    ];
+
+    const child = spawn("ssh", sshArgs, {
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    REMOTE_DB_TUNNEL_STATE.child = child;
+    child.stderr.on("data", (chunk) => {
+      const text = String(chunk || "").trim();
+      if (text) console.warn("[remote-db-tunnel]", text);
+    });
+    child.on("exit", (code, signal) => {
+      if (REMOTE_DB_TUNNEL_STATE.child === child) {
+        REMOTE_DB_TUNNEL_STATE.child = null;
+      }
+      console.warn(
+        `[remote-db-tunnel] exited code=${code ?? "?"} signal=${signal ?? "?"}`,
+      );
+    });
+    child.unref();
+
+    const ready = await waitForTcpPort("127.0.0.1", port, 15000);
+    if (!ready) {
+      throw new Error(
+        `Remote DB tunnel did not become ready on 127.0.0.1:${port}. Check SSH access to ${sshHost}.`,
+      );
+    }
+
+    return true;
+  })().finally(() => {
+    REMOTE_DB_TUNNEL_STATE.promise = null;
+  });
+
+  return REMOTE_DB_TUNNEL_STATE.promise;
+}
+
+process.once("exit", () => {
+  if (REMOTE_DB_TUNNEL_STATE.child?.pid) {
+    try {
+      process.kill(REMOTE_DB_TUNNEL_STATE.child.pid);
+    } catch {
+      // ignore
+    }
+  }
+});
 
 function mt5NormalizeOrderTypeValue(rawInput, fallback = "limit") {
   const fallbackNorm = String(fallback || "limit")
@@ -14630,9 +15243,8 @@ function parseTimeToUnixSec(raw) {
 }
 
 async function loadUserApiKeysMap(userId) {
-  const db = await mt5InitBackend();
   const out = {};
-  const rows = await dbQueries.listUserSettingsByType(db.db, userId, "api_key");
+  const rows = await settingsStore.listUserSettingsByType(userId, "api_key");
   for (const row of rows || []) {
     const name = normalizeAiApiKeyName(row?.name);
     const dec = decryptObject(
@@ -14657,16 +15269,14 @@ async function loadUserApiKeysMap(userId) {
 // ── Provider schema migration ──
 async function migrateProviderSchema() {
   try {
-    const db = await mt5InitBackend();
-    const { and, eq } = require("drizzle-orm");
-    const rows = await dbQueries.listUserSettingsByType(db.db, null, "api_key");
+    const rows = await settingsStore.listUserSettingsByType(null, "api_key");
     const filtered = (rows || []).filter((r) => {
-      const d = dbQueries.parseJsonField(r.data) || {};
+      const d = settingsStore.parseJsonField(r.data) || {};
       return !d.api_key;
     });
     let migrated = 0;
     for (const row of filtered) {
-      const parsed = dbQueries.parseJsonField(row.data) || {};
+      const parsed = settingsStore.parseJsonField(row.data) || {};
       const dec = decryptObject(parsed);
       const oldKey = String(dec?.value || dec?.api_key || "").trim();
       const newData = {
@@ -14677,16 +15287,13 @@ async function migrateProviderSchema() {
           : 0,
       };
       const enc = encryptObject(newData);
-      await db.db
-        .update(db.schema.userSettings)
-        .set({ data: dbQueries.jsonField(enc), updatedAt: new Date() })
-        .where(
-          and(
-            eq(db.schema.userSettings.userId, row.userId),
-            eq(db.schema.userSettings.type, "api_key"),
-            eq(db.schema.userSettings.name, row.name),
-          ),
-        );
+      await settingsStore.upsertUserSetting(
+        row.user_id || row.userId || CFG.mt5DefaultUserId,
+        "api_key",
+        row.name,
+        enc,
+        row.status || "ACTIVE",
+      );
       migrated++;
     }
     if (migrated > 0) {
@@ -15717,6 +16324,10 @@ async function mt5GetSignalByTicket(ticket) {
   return b.getSignalByTicket(ticket);
 }
 
+async function mt5CreateTradeV2(payload = {}) {
+  return mt5FanoutSignalTradeV2(payload);
+}
+
 async function mt5AckSignal(signalId, status, ticket, error, extra = {}) {
   const b = await mt5Backend();
   return b.ackSignal(signalId, status, ticket, error, extra);
@@ -15943,10 +16554,207 @@ async function mt5BulkActionTradesV2(action, filters = {}) {
   return b.bulkActionTradesV2(action, filters);
 }
 
-async function mt5UpdateTradeManualV2(tradeId, userId = null, payload = {}) {
+async function mt5LoadTradeV2(tradeId, userId = null) {
+  const tid = String(tradeId || "").trim();
+  if (!tid) return null;
   const b = await mt5Backend();
-  if (!b.updateTradeManualV2) return { ok: false, error: "not supported" };
-  return b.updateTradeManualV2(tradeId, userId, payload);
+  if (!b?.pool && !b?.db) return null;
+  if (b?.db && !b?.pool) {
+    const conditions = [eq(b.schema.trades.sid, tid)];
+    if (userId) conditions.push(eq(b.schema.trades.userId, String(userId)));
+    const rows = await b.db
+      .select()
+      .from(b.schema.trades)
+      .where(and(...conditions))
+      .orderBy(desc(b.schema.trades.updatedAt), desc(b.schema.trades.createdAt))
+      .limit(1);
+    return rows?.[0] || null;
+  }
+  const params = [tid];
+  let userClause = "";
+  if (userId) {
+    userClause = " AND user_id = $2::text";
+    params.push(String(userId || "").trim());
+  }
+  const res = await b.pool.query(
+    `SELECT * FROM trades WHERE sid = $1::text${userClause} ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+    params,
+  );
+  return res.rows?.[0] || null;
+}
+
+async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
+  try {
+    const tid = String(tradeId || "").trim();
+    if (!tid) return { ok: false, error: "sid (trade_id) is required" };
+    const stRaw = String(payload.execution_status || payload.status || "")
+      .trim()
+      .toUpperCase();
+    const accountOnly = !stRaw && String(payload.account_id || "").trim();
+    if (accountOnly) {
+      const b = await mt5Backend();
+      if (b?.pool) {
+        await b.pool.query(`UPDATE trades SET account_id = $1 WHERE sid = $2`, [
+          String(payload.account_id || "").trim(),
+          tid,
+        ]);
+      } else {
+        await b.db
+          .update(b.schema.trades)
+          .set({ accountId: String(payload.account_id || "").trim() })
+          .where(eq(b.schema.trades.sid, tid));
+      }
+      return { ok: true, sid: tid, account_id: payload.account_id };
+    }
+    if (!stRaw) {
+      return {
+        ok: false,
+        error: "execution_status or account_id is required",
+      };
+    }
+    const allowed = new Set([
+      "PENDING",
+      "FILLED",
+      "CLOSED",
+      "CANCELLED",
+      "REJECTED",
+    ]);
+    if (!allowed.has(stRaw)) {
+      return {
+        ok: false,
+        error:
+          "execution_status must be one of: PENDING, FILLED, CLOSED, CANCELLED, REJECTED",
+      };
+    }
+
+    const currentRow =
+      (await mt5LoadTradeV2(tid, userId || null)) ||
+      (await mt5LoadTradeV2(tid, null));
+    if (!currentRow) return { ok: false, error: "trade not found" };
+    const b = await mt5Backend();
+    const newAccountId = String(payload.account_id || "").trim() || undefined;
+    const syncResult = syncGuards.brokerLinkedManualStatus(
+      {
+        sid: currentRow.sid,
+        execution_status: currentRow.execution_status,
+        broker_trade_id: currentRow.broker_trade_id,
+      },
+      stRaw,
+    );
+    const appliedExecutionStatus = stRaw;
+    const newDispatchStatus = syncResult.dispatch_status;
+    const queuedBrokerAction = newDispatchStatus !== null;
+    const pnlRaw = payload.pnl_realized ?? payload.pnl;
+    const pnlNum = Number(pnlRaw);
+    const pnl =
+      appliedExecutionStatus === "PENDING"
+        ? 0
+        : Number.isFinite(pnlNum)
+          ? pnlNum
+          : null;
+    const closeReasonRaw = String(
+      payload.close_reason || payload.reason || "",
+    ).trim();
+    const closeReason = closeReasonRaw || null;
+    const manualMeta = JSON.stringify({
+      manual_requested_status: stRaw,
+      manual_applied_execution_status: appliedExecutionStatus,
+      manual_new_dispatch_status: newDispatchStatus || null,
+      manual_edit_source: "vps",
+      manual_edit_at: mt5NowIso(),
+    });
+    const udRes = await b.db
+      .update(b.schema.trades)
+      .set({
+        executionStatus: appliedExecutionStatus,
+        ...(newAccountId != null ? { accountId: newAccountId } : {}),
+        ...(pnl != null
+          ? {
+              pnlRealized: sql`CASE WHEN ${pnl}::double precision IS NULL THEN ${b.schema.trades.pnlRealized} ELSE ${pnl}::double precision END`,
+            }
+          : {}),
+        ...(closeReason != null
+          ? {
+              closeReason: sql`COALESCE(${closeReason}::text, ${b.schema.trades.closeReason})`,
+            }
+          : {}),
+        ...(newDispatchStatus != null
+          ? {
+              dispatchStatus: newDispatchStatus,
+              leaseToken: null,
+              leaseExpiresAt: null,
+            }
+          : {}),
+        metadata: sql`COALESCE(${b.schema.trades.metadata}::jsonb, '{}'::jsonb) || ${manualMeta}::jsonb`,
+        ...(newDispatchStatus != null
+          ? {}
+          : {
+              closedAt: sql`CASE
+              WHEN ${appliedExecutionStatus}::text IN ('CLOSED', 'CANCELLED', 'REJECTED') THEN COALESCE(${b.schema.trades.closedAt}, NOW())
+              ELSE ${b.schema.trades.closedAt}
+            END`,
+            }),
+      })
+      .where(eq(b.schema.trades.sid, currentRow.sid))
+      .returning();
+    const row = udRes[0];
+    const newStatus = mt5NormalizeTradeStatus(row.executionStatus || "");
+    if (["FILLED", "CLOSED"].includes(newStatus)) {
+      await archiveTradeTerminalArtifacts(row, {
+        captureSnapshot: true,
+        statusOverride: newStatus,
+      });
+    } else if (MT5_TERMINAL_TRADE_STATUSES.has(newStatus)) {
+      await archiveTradeTerminalArtifacts(row, { statusOverride: newStatus });
+    }
+
+    await b.log(
+      row.sid,
+      "trades",
+      {
+        event: "TRADE_MANUAL_EDIT",
+        requested_status: stRaw,
+        execution_status: row.executionStatus,
+        queued_broker_action: queuedBrokerAction,
+        pnl_realized: row.pnlRealized,
+        close_reason: row.closeReason || null,
+      },
+      row.userId || CFG.mt5DefaultUserId,
+    );
+    return {
+      ok: true,
+      queued_broker_action: queuedBrokerAction,
+      item: row,
+    };
+  } catch (e) {
+    console.error("[mt5ChangeTradeStatusV2] error:", e?.message || e, e?.stack);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+async function mt5CloseTradeV2(tradeId, userId = null, payload = {}) {
+  return mt5ChangeTradeStatusV2(tradeId, userId, {
+    ...payload,
+    execution_status: "CLOSED",
+  });
+}
+
+async function mt5CancelTradeV2(tradeId, userId = null, payload = {}) {
+  return mt5ChangeTradeStatusV2(tradeId, userId, {
+    ...payload,
+    execution_status: "CANCELLED",
+  });
+}
+
+async function mt5RejectTradeV2(tradeId, userId = null, payload = {}) {
+  return mt5ChangeTradeStatusV2(tradeId, userId, {
+    ...payload,
+    execution_status: "REJECTED",
+  });
+}
+
+async function mt5UpdateTradeManualV2(tradeId, userId = null, payload = {}) {
+  return mt5ChangeTradeStatusV2(tradeId, userId, payload);
 }
 
 // Parse a single log line into an event object for backward-compat APIs.
@@ -16076,21 +16884,17 @@ async function mt5ListAccountsV2(userId = null) {
 }
 
 async function mt5ListExecutionProfilesV2(userId) {
-  const b = await mt5Backend();
   if (!userId) return [];
-  const rows = await dbQueries.listUserSettingsByType(
-    b.db,
+  const rows = await settingsStore.listUserSettingsByType(
     userId,
-    "execution_profiles",
+    "execution_profile",
   );
   return (rows || []).map(mt5NormalizeExecutionProfileRow);
 }
 
 async function mt5GetActiveExecutionProfileV2(userId) {
-  const b = await mt5Backend();
   if (!userId) return null;
-  const rows = await dbQueries.listUserSettingsByType(
-    b.db,
+  const rows = await settingsStore.listUserSettingsByType(
     userId,
     "execution_profile",
   );
@@ -16139,8 +16943,6 @@ function mt5NormalizeExecutionProfileRow(row = {}) {
 }
 
 async function mt5SaveExecutionProfileV2(payload = {}) {
-  const b = await mt5Backend();
-  const db = b?.query ? b : await mt5InitBackend();
   const profileId = String(payload.profile_id || "default").trim() || "default";
   const userId =
     String(payload.user_id || CFG.mt5DefaultUserId).trim() ||
@@ -16176,35 +16978,23 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
       ? payload.metadata
       : {};
 
-  const backend = await mt5Backend();
-  const be = backend?.db ? backend : await mt5InitBackend();
-  const { eq, and } = require("drizzle-orm");
-  const schema = be.schema || require("../db/schema");
-
   if (isActive) {
     // Set all other execution_profiles for this user to inactive
-    const existingRows = await dbQueries.listUserSettingsByType(
-      b.db,
+    const existingRows = await settingsStore.listUserSettingsByType(
       userId,
       "execution_profile",
     );
     for (const row of existingRows || []) {
-      const d = dbQueries.parseJsonField(row.data) || {};
+      const d = settingsStore.parseJsonField(row.data) || {};
       if (d.is_active) {
         const updated = { ...d, is_active: false };
-        await b.db
-          .update(schema.userSettings)
-          .set({
-            data: dbQueries.jsonField(updated),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(schema.userSettings.userId, userId),
-              eq(schema.userSettings.type, "execution_profile"),
-              eq(schema.userSettings.name, row.name),
-            ),
-          );
+        await settingsStore.upsertUserSetting(
+          userId,
+          "execution_profile",
+          row.name,
+          updated,
+          row.status || "ACTIVE",
+        );
       }
     }
   }
@@ -16220,8 +17010,7 @@ async function mt5SaveExecutionProfileV2(payload = {}) {
     metadata,
   };
 
-  await dbQueries.upsertUserSetting(
-    b.db,
+  await settingsStore.upsertUserSetting(
     userId,
     "execution_profile",
     profileId,
@@ -17483,7 +18272,10 @@ const appHandler = async (req, res) => {
   MT5_DB_SOURCE_CONTEXT.enterWith({ sourceId: requestedDbSource });
   // Also set global for async callbacks that lose the context
   global._requestDbSource = requestedDbSource;
-  console.log("[db-source] request set global._requestDbSource =", requestedDbSource || "(empty)");
+  console.log(
+    "[db-source] request set global._requestDbSource =",
+    requestedDbSource || "(empty)",
+  );
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   console.log(
     `[REQUEST] ${req.method} ${req.url} -> ${url.pathname} (IP: ${ip})`,
@@ -17688,7 +18480,11 @@ const appHandler = async (req, res) => {
       return json(res, 200, { ok: true, user: out.user });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
-      return json(res, 400, { ok: false, error: message });
+      return json(res, 400, {
+        ok: false,
+        error: message,
+        stack: error instanceof Error ? error.stack : String(error || ""),
+      });
     }
   }
 
@@ -18221,7 +19017,10 @@ const appHandler = async (req, res) => {
       console.log("[Cron] Master", body.active ? "ACTIVATED" : "PAUSED");
     } else {
       CRON_STATE.masterActive = !CRON_STATE.masterActive;
-      console.log("[Cron] Master toggled:", CRON_STATE.masterActive ? "ACTIVE" : "PAUSED");
+      console.log(
+        "[Cron] Master toggled:",
+        CRON_STATE.masterActive ? "ACTIVE" : "PAUSED",
+      );
     }
     return json(res, 200, { ok: true, active: CRON_STATE.masterActive });
   }
@@ -18999,7 +19798,7 @@ const appHandler = async (req, res) => {
         },
       }).catch(() => null);
 
-      const fanout = await mt5FanoutSignalTradeV2({
+      const fanout = await mt5CreateTradeV2({
         signal_id: null,
         source_id: sourceId,
         user_id: effectiveUserId,
@@ -19073,10 +19872,10 @@ const appHandler = async (req, res) => {
       const copiedBySid = {};
       const persistedBySid = {};
       for (const sid of createdSids) {
-        const copied = copySnapshotsToTradeSidFolder(
+        const copied = mirrorTradeSnapshotsFromMarketData(
           sid,
-          Array.isArray(payload?.snapshot_files) ? payload.snapshot_files : [],
           symbol,
+          Array.isArray(payload?.snapshot_files) ? payload.snapshot_files : [],
         );
         const analyzeFile = copyAnalyzeSnapshotToTradeSession(sid, symbol);
         // Copy session files from analyze session folder if SIDs differ
@@ -19190,46 +19989,56 @@ const appHandler = async (req, res) => {
         payload,
         50000,
       );
-      const ids = rows.map((r) => String(r.sid || "")).filter(Boolean);
-      // Also check trades table for direct trade IDs
-      if (payload.ids || payload.sids || payload.q) {
-        const tradeRefs = Array.isArray(payload.ids || payload.sids)
-          ? payload.ids || payload.sids
-          : [String(payload.q || "").trim()].filter(Boolean);
-        if (tradeRefs.length) {
-          const b = await mt5Backend();
-          const tradeRes = await b.pool.query(
-            `UPDATE trades SET execution_status = CASE WHEN execution_status = 'PENDING' THEN 'CANCELLED' ELSE execution_status END, dispatch_status = CASE WHEN broker_trade_id IS NOT NULL AND broker_trade_id <> '' THEN 'CANCEL' ELSE 'CONSUMED' END, close_reason = COALESCE($2::text, close_reason), closed_at = COALESCE(closed_at, NOW()) WHERE sid = ANY($1::text[]) RETURNING sid, execution_status AS new_status`,
-            [tradeRefs, effectiveCloseReason],
-          );
-          if (tradeRes.rowCount > 0) {
-            const tradeSids = tradeRes.rows.map((r) => r.sid);
-            ids.push(...tradeSids.filter((s) => !ids.includes(s)));
-          }
-        }
-      }
-      // Cancel trades directly (not through old signals table)
-      let updated = 0;
-      let updatedIds = [];
-      if (ids.length) {
-        const b2 = await mt5Backend();
-        const cancelRes = await b2.pool.query(
-          `UPDATE trades SET execution_status = 'CANCELLED', close_reason = COALESCE($2::text, close_reason), closed_at = COALESCE(closed_at, NOW()) WHERE sid = ANY($1::text[]) AND execution_status = 'PENDING' RETURNING sid`,
-          [ids, effectiveCloseReason],
-        );
-        updated = cancelRes.rowCount;
-        updatedIds = cancelRes.rows.map((r) => r.sid);
-        invalidateTradeListCaches().catch(() => {});
-      }
-      const cleanup = await mt5CleanupSignalTradeArtifacts({
-        signalRows: rows,
-        signalIds: ids,
-      });
-      for (const signalId of updatedIds) {
-        await mt5AppendSignalEvent(signalId, "SIGNAL_MANUAL_CANCEL", {
-          via: "ui_bulk_cancel",
+      const tradeRefs = new Set(
+        [
+          ...(Array.isArray(payload.ids || payload.sids)
+            ? payload.ids || payload.sids
+            : []),
+          ...rows.map((r) => r.sid),
+          ...(payload.q ? [String(payload.q || "").trim()] : []),
+        ]
+          .map((v) => String(v || "").trim())
+          .filter(Boolean),
+      );
+      const updatedRows = [];
+      for (const tradeRef of tradeRefs) {
+        const out = await mt5CancelTradeV2(tradeRef, null, {
+          reason: effectiveCloseReason,
           close_reason: effectiveCloseReason,
         });
+        if (out?.ok && out?.item?.sid) {
+          updatedRows.push(out.item);
+        }
+      }
+      const updated = updatedRows.length;
+      const updatedIds = updatedRows.map((r) => r.sid);
+      if (updated > 0) invalidateTradeListCaches().catch(() => {});
+      let cleanup = { logs_deleted: 0, files_deleted: 0 };
+      try {
+        cleanup = await mt5CleanupSignalTradeArtifacts({
+          signalRows: rows,
+          tradeRows: updatedRows,
+          signalIds: [...tradeRefs],
+          tradeIds: updatedIds,
+        });
+      } catch (cleanupError) {
+        console.error(
+          "[mt5/trades/cancel] cleanup failed:",
+          cleanupError instanceof Error ? cleanupError.stack : cleanupError,
+        );
+      }
+      for (const signalId of updatedIds) {
+        try {
+          await mt5AppendSignalEvent(signalId, "SIGNAL_MANUAL_CANCEL", {
+            via: "ui_bulk_cancel",
+            close_reason: effectiveCloseReason,
+          });
+        } catch (eventError) {
+          console.error(
+            "[mt5/trades/cancel] event append failed:",
+            eventError instanceof Error ? eventError.stack : eventError,
+          );
+        }
       }
       return json(res, 200, {
         ok: true,
@@ -19237,10 +20046,32 @@ const appHandler = async (req, res) => {
         updated_ids: updatedIds,
         logs_deleted: cleanup.logs_deleted || 0,
         files_deleted: cleanup.files_deleted || 0,
-        matched: ids.length,
+        matched: tradeRefs.size,
         filters,
         scanned_limit: limit,
         target_status: "CANCEL",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    url.pathname === "/mt5/trades/reconcile-folders"
+  ) {
+    if (!CFG.mt5Enabled)
+      return json(res, 400, { ok: false, error: "MT5 bridge disabled" });
+    try {
+      const payload = await readJson(req).catch(() => ({}));
+      if (!requireAdminKey(req, res, url, payload)) return;
+      const b = await mt5Backend();
+      const result = await reconcileTradeFolders(b.pool || b.db);
+      return json(res, result?.ok ? 200 : 400, {
+        ok: Boolean(result?.ok),
+        ...result,
+        db_source: currentMt5DbSourceId() || "active",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -20186,21 +21017,11 @@ const appHandler = async (req, res) => {
   // AI HUB API
   // =========================
   // =========================
-  // AI HUB API — Templates stored in user_settings (type='ai_template')
+  // AI HUB API — Templates stored in user_templates
   if (req.method === "GET" && url.pathname === "/v2/ai/templates") {
     if (!requireAdminKey(req, res, url)) return;
     try {
-      const db = await mt5InitBackend();
-      const rows = await dbQueries.listUserSettingsByType(
-        db.db,
-        CFG.mt5DefaultUserId,
-        "ai_template",
-      );
-      const templates = rows.map((r) => ({
-        template_id: r.name,
-        name: r.name,
-        ...(r.data && typeof r.data === "object" ? r.data : {}),
-      }));
+      const templates = await repoGetUserTemplates(CFG.mt5DefaultUserId);
       return json(res, 200, { ok: true, templates });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -20215,20 +21036,20 @@ const appHandler = async (req, res) => {
       const { template_id, name, ...rest } = payload;
       const config = rest.config || rest;
       const templateName = String(name || config?.name || "Unnamed").trim();
-      const settingData = {
+      const templateData = {
         config,
         _guide: config._guide,
         _schema: config._schema,
         saved: rest.saved || new Date().toISOString(),
       };
-      await dbQueries.upsertUserSetting(
-        db.db,
-        CFG.mt5DefaultUserId,
-        "ai_template",
-        templateName,
-        settingData,
-        "ACTIVE",
-      );
+      await db.db.insert(schema.userTemplates).values({
+        userId: CFG.mt5DefaultUserId,
+        name: templateName,
+        data: dbQueries.jsonField(templateData),
+        status: "ACTIVE",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
       await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
       return json(res, 201, {
         ok: true,
@@ -20244,12 +21065,14 @@ const appHandler = async (req, res) => {
     try {
       const templateName = decodeURIComponent(url.pathname.split("/").pop());
       const db = await mt5InitBackend();
-      await dbQueries.deleteUserSetting(
-        db.db,
-        CFG.mt5DefaultUserId,
-        "ai_template",
-        templateName,
-      );
+      await db.db
+        .delete(schema.userTemplates)
+        .where(
+          and(
+            eq(schema.userTemplates.userId, CFG.mt5DefaultUserId),
+            eq(schema.userTemplates.name, templateName),
+          ),
+        );
       return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -20272,8 +21095,7 @@ const appHandler = async (req, res) => {
           isMaskedApiKeyLike(rawVal)
         ) {
           rawVal = "";
-          const existingData = await dbQueries.getUserSettingData(
-            db.db,
+          const existingData = await settingsStore.getUserSettingData(
             userId,
             "api_key",
             "default",
@@ -20289,8 +21111,7 @@ const appHandler = async (req, res) => {
         }
         const encValue = encryptData(rawVal);
         // Merge with existing data
-        const prevData = await dbQueries.getUserSettingData(
-          db.db,
+        const prevData = await settingsStore.getUserSettingData(
           userId,
           "api_key",
           "default",
@@ -20303,8 +21124,7 @@ const appHandler = async (req, res) => {
           typeof prev === "object"
             ? { ...prev, [body.key]: encValue }
             : { [body.key]: encValue };
-        await dbQueries.upsertUserSetting(
-          db.db,
+        await settingsStore.upsertUserSetting(
           userId,
           "api_key",
           "default",
@@ -20314,8 +21134,7 @@ const appHandler = async (req, res) => {
       } else {
         // Bulk settings update
         const settings = encryptObject(body.settings || body || {});
-        await dbQueries.upsertUserSetting(
-          db.db,
+        await settingsStore.upsertUserSetting(
           userId,
           "api_key",
           "default",
@@ -20339,30 +21158,59 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
 
     try {
-      const db = await mt5InitBackend();
-      console.log("[settings] GET backend source=", currentMt5DbSourceId() || "(default)");
+      console.log(
+        "[settings] GET json source=",
+        settingsStore.settingsDirForUser(sess.user_id || CFG.mt5DefaultUserId),
+      );
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       console.log(
         `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
       );
       // Seed default cron templates only if they don't exist yet
-      const existingCron = await dbQueries.getUserSettingData(
-        db.db, userId, "cron", "CRON_MD_DEFAULT",
-      ).catch(() => null);
+      const existingCron = await settingsStore
+        .getUserSettingData(userId, "cron", "CRON_MD_DEFAULT")
+        .catch(() => null);
       if (!existingCron || Object.keys(existingCron).length === 0) {
-        await dbQueries.upsertUserSetting(
-          db.db, userId, "cron", "CRON_MD_DEFAULT",
-          { cron_type: "MARKET_DATA_CRON", enabled: false, provider: "twelvedata", timezone: CFG.marketDataDefaultTimezone, symbols: [], timeframes: ["1m", "5m", "15m"], batch_size: CFG.marketDataCronBatchSize, last_sync: {} },
+        await settingsStore.upsertUserSetting(
+          userId,
+          "cron",
+          "CRON_MD_DEFAULT",
+          {
+            cron_type: "MARKET_DATA_CRON",
+            enabled: false,
+            provider: "twelvedata",
+            timezone: CFG.marketDataDefaultTimezone,
+            symbols: [],
+            timeframes: ["1m", "5m", "15m"],
+            batch_size: CFG.marketDataCronBatchSize,
+            last_sync: {},
+          },
           "INACTIVE",
         );
       }
-      const existingAiCron = await dbQueries.getUserSettingData(
-        db.db, userId, "cron", "CRON_AI_DEFAULT",
-      ).catch(() => null);
+      const existingAiCron = await settingsStore
+        .getUserSettingData(userId, "cron", "CRON_AI_DEFAULT")
+        .catch(() => null);
       if (!existingAiCron || Object.keys(existingAiCron).length === 0) {
-        await dbQueries.upsertUserSetting(
-          db.db, userId, "cron", "CRON_AI_DEFAULT",
-          { cron_type: "ANALYSIS_CRON", enabled: false, refresh_snapshot: false, symbols: [], timeframes: ["15m", "1h"], cadence_minutes: 60, model: "claude-sonnet-4-0", profile: "", entry_models: [], directions: ["BUY", "SELL"], order_types: ["market", "limit", "stop"], prompt: "", last_sync: {} },
+        await settingsStore.upsertUserSetting(
+          userId,
+          "cron",
+          "CRON_AI_DEFAULT",
+          {
+            cron_type: "ANALYSIS_CRON",
+            enabled: false,
+            refresh_snapshot: false,
+            symbols: [],
+            timeframes: ["15m", "1h"],
+            cadence_minutes: 60,
+            model: "claude-sonnet-4-0",
+            profile: "",
+            entry_models: [],
+            directions: ["BUY", "SELL"],
+            order_types: ["market", "limit", "stop"],
+            prompt: "",
+            last_sync: {},
+          },
           "INACTIVE",
         );
       }
@@ -20420,10 +21268,9 @@ const appHandler = async (req, res) => {
           error: "Secret reveal is only supported for api_key type",
         });
 
-      const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       const enc =
-        (await dbQueries.getUserSettingData(db.db, userId, type, name)) || {};
+        (await settingsStore.getUserSettingData(userId, type, name)) || {};
       const dec = decryptObject(
         typeof enc === "string" ? JSON.parse(enc) : enc,
       );
@@ -20445,7 +21292,6 @@ const appHandler = async (req, res) => {
       const body = await readJson(req);
       if (!body.type)
         return json(res, 400, { ok: false, error: "Missing type" });
-      const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
       let payloadData = body.data;
       if (!payloadData || typeof payloadData !== "object") {
@@ -20487,8 +21333,7 @@ const appHandler = async (req, res) => {
         ).trim();
         let rawValue = incomingValue;
         if (!rawValue || isMaskedApiKeyLike(rawValue)) {
-          const existingData = await dbQueries.getUserSettingData(
-            db.db,
+          const existingData = await settingsStore.getUserSettingData(
             userId,
             "api_key",
             settingName,
@@ -20505,8 +21350,7 @@ const appHandler = async (req, res) => {
         data = encryptObject({ value: rawValue, api_key: rawValue });
       }
 
-      const result = await dbQueries.upsertUserSetting(
-        db.db,
+      const result = await settingsStore.upsertUserSetting(
         userId,
         body.type,
         settingName || body.type,
@@ -20535,9 +21379,8 @@ const appHandler = async (req, res) => {
 
       if (!type || !name)
         return json(res, 400, { ok: false, error: "Missing type or name" });
-      const db = await mt5InitBackend();
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      await dbQueries.deleteUserSetting(db.db, userId, type, name);
+      await settingsStore.deleteUserSetting(userId, type, name);
       await StateRepo.del("USER_SETTINGS", userId);
       return json(res, 200, { ok: true });
     } catch (e) {
@@ -20911,10 +21754,10 @@ const appHandler = async (req, res) => {
           tradeSid,
           body.symbol || item?.symbol || "",
         );
-        const copied = copySnapshotsToTradeSidFolder(
+        const copied = mirrorTradeSnapshotsFromMarketData(
           tradeSid,
-          [item?.file_name],
           tradeSymbol,
+          [item?.file_name],
         );
         const persisted = await persistTradeSnapshotFiles(
           tradeSid,
@@ -20971,12 +21814,12 @@ const appHandler = async (req, res) => {
               ? body.symbols[0]
               : ""),
         );
-        const copied = copySnapshotsToTradeSidFolder(
+        const copied = mirrorTradeSnapshotsFromMarketData(
           tradeSid,
+          tradeSymbol,
           (Array.isArray(items) ? items : [])
             .map((x) => x?.file_name)
             .filter(Boolean),
-          tradeSymbol,
         );
         const persisted = await persistTradeSnapshotFiles(
           tradeSid,
@@ -22083,6 +22926,11 @@ const appHandler = async (req, res) => {
           url.searchParams.get("tf") ||
           "15m",
       ).trim();
+      const tradeSid = String(
+        url.searchParams.get("trade_sid") ||
+          url.searchParams.get("tradeSid") ||
+          "",
+      ).trim();
       const bars = Math.max(
         50,
         Math.min(Number(url.searchParams.get("bars") || 300) || 300, 1000),
@@ -22103,6 +22951,14 @@ const appHandler = async (req, res) => {
           error: snapshot?.reason || "twelve_data_failed",
           snapshot,
         });
+      }
+      let tradeBarsCopied = false;
+      if (tradeSid) {
+        tradeBarsCopied = mirrorTradeBarsFromMarketData(
+          tradeSid,
+          symbol,
+          timeframe,
+        );
       }
 
       // Add UI metadata fields
@@ -22125,6 +22981,8 @@ const appHandler = async (req, res) => {
         source: displaySource,
         updated_time,
         auto_refresh,
+        trade_sid: tradeSid || null,
+        trade_bars_copied: tradeBarsCopied,
         cache_debug: {
           redis_key: redisKey,
           ttl_sec: ttlSec,
@@ -23290,10 +24148,10 @@ const appHandler = async (req, res) => {
         .trim()
         .toUpperCase();
       // Copy snapshots to trade folder (sessionId will become trade SID)
-      copySnapshotsToTradeSidFolder(
+      mirrorTradeSnapshotsFromMarketData(
         sessionId,
-        listLatestSnapshotFilesForSymbol(requestedSymbol, 20),
         requestedSymbol,
+        listLatestSnapshotFilesForSymbol(requestedSymbol, 20),
       );
       const pickSnapshotFiles = (items) => {
         if (!items.length) return [];
@@ -24457,10 +25315,8 @@ const appHandler = async (req, res) => {
     if (!requireAuthForUi(req, res)) return;
     try {
       const sess = getUiSessionFromReq(req);
-      const db = await mt5InitBackend();
       let data = {};
-      const setting = await dbQueries.getUserSetting(
-        db.db,
+      const setting = await settingsStore.getUserSetting(
         sess.user_id,
         "notification_config",
         "preferences",
@@ -24479,15 +25335,13 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       const sess = getUiSessionFromReq(req);
       const settings = payload.settings || payload;
-      const db = await mt5InitBackend();
-      // Save each event type as a separate notification_config row
+      // Save each event type as a separate notification_config file
       for (const [eventName, config] of Object.entries(settings)) {
         const eventKey = String(eventName)
           .toUpperCase()
           .replace(/[^A-Z_]/g, "");
         if (!eventKey) continue;
-        await dbQueries.upsertUserSetting(
-          db.db,
+        await settingsStore.upsertUserSetting(
           sess.user_id,
           "notification_config",
           eventKey,
@@ -25272,7 +26126,13 @@ const appHandler = async (req, res) => {
 
       const cacheKey = hasFilters
         ? null
-        : JSON.stringify({ src: currentMt5DbSourceId(), userId, filters, page, pageSize });
+        : JSON.stringify({
+            src: currentMt5DbSourceId(),
+            userId,
+            filters,
+            page,
+            pageSize,
+          });
 
       const buildResponse = async () => {
         const out = await mt5ListTradesV2(filters, page, pageSize);
@@ -26038,12 +26898,15 @@ const appHandler = async (req, res) => {
       if (!existingTrade.rows.length)
         return json(res, 404, { ok: false, error: "trade not found" });
       const existingTradeRow = existingTrade.rows[0];
-      const existingMeta = dbQueries.parseJsonField(existingTradeRow.metadata) || {};
+      const existingMeta =
+        dbQueries.parseJsonField(existingTradeRow.metadata) || {};
       const accountRes = await b.pool.query(
         `SELECT metadata FROM user_accounts WHERE account_id = $1 LIMIT 1`,
         [existingTradeRow.account_id],
       );
-      const accountMeta = mt5ParseAccountMetadata(accountRes.rows?.[0]?.metadata);
+      const accountMeta = mt5ParseAccountMetadata(
+        accountRes.rows?.[0]?.metadata,
+      );
       const symbolMetric = mt5FindSymbolMetric(
         accountMeta,
         existingTradeRow.symbol,
@@ -26062,12 +26925,11 @@ const appHandler = async (req, res) => {
             ? editableEntry
             : existingTradeRow.entry,
           sl: Number.isFinite(editableSl) ? editableSl : existingTradeRow.sl,
-          tp:
-            Number.isFinite(editableTp1)
-              ? editableTp1
-              : Number.isFinite(editableTp)
-                ? editableTp
-                : existingTradeRow.tp1 ?? existingTradeRow.tp,
+          tp: Number.isFinite(editableTp1)
+            ? editableTp1
+            : Number.isFinite(editableTp)
+              ? editableTp
+              : (existingTradeRow.tp1 ?? existingTradeRow.tp),
         },
         symbolMetric,
       );
@@ -26079,8 +26941,10 @@ const appHandler = async (req, res) => {
         payload.planned_sl_pnl ?? existingTradeRow.planned_sl_pnl,
         plannedPnlFallback.slPnl,
       );
-      if (Number.isFinite(plannedTpPnl)) metaPatch.planned_tp_pnl = plannedTpPnl;
-      if (Number.isFinite(plannedSlPnl)) metaPatch.planned_sl_pnl = plannedSlPnl;
+      if (Number.isFinite(plannedTpPnl))
+        metaPatch.planned_tp_pnl = plannedTpPnl;
+      if (Number.isFinite(plannedSlPnl))
+        metaPatch.planned_sl_pnl = plannedSlPnl;
       const mergedMeta = { ...existingMeta, ...metaPatch };
 
       const resUpd = await b.pool.query(
@@ -26222,7 +27086,12 @@ const appHandler = async (req, res) => {
       const row = Array.isArray(rows) ? rows[0] : null;
       if (!row) return json(res, 404, { ok: false, error: "trade not found" });
       // Move trade folder from files to active (same as cTrader ack flow)
-      moveTradeFolder(resolvedTrade.sid, "files", "active", resolvedTrade.symbol || row.symbol || "");
+      moveTradeFolder(
+        resolvedTrade.sid,
+        "files",
+        "active",
+        resolvedTrade.symbol || row.symbol || "",
+      );
       await mt5Log(
         resolvedTrade.sid,
         "trades",
@@ -26846,8 +27715,8 @@ const appHandler = async (req, res) => {
             null;
           const taskLots =
             type === "MODIFY"
-              ? plannedLots ?? asNum(t.volume) ?? brokerLots
-              : asNum(t.volume) ?? plannedLots ?? brokerLots;
+              ? (plannedLots ?? asNum(t.volume) ?? brokerLots)
+              : (asNum(t.volume) ?? plannedLots ?? brokerLots);
           return {
             sid: t.sid,
             type,
@@ -28140,13 +29009,13 @@ const appHandler = async (req, res) => {
       if (status === "FAIL") {
         // Broker rejected the trade (e.g. SL/TP too close) — cancel trade with error
         try {
-          const b2 = await mt5Backend();
           const failReason =
             ackErrorCombined || ackMessage || "broker rejected";
-          await b2.pool.query(
-            `UPDATE trades SET execution_status = 'CANCEL', close_reason = $2, closed_at = COALESCE(closed_at, NOW()) WHERE sid = $1::text`,
-            [signalId, failReason],
-          );
+          await mt5RejectTradeV2(signalId, null, {
+            close_reason: failReason,
+            rejection_reason: failReason,
+            reason: failReason,
+          });
           await mt5Log(signalId, "trades", {
             event: "TRADE_FAILED",
             error: failReason,
@@ -28501,10 +29370,8 @@ async function marketDataUpdateCronState({
   tf,
   patch,
 }) {
-  const b = await mt5Backend();
   const key = `${normalizeMarketDataSymbol(symbol)}:${normalizeMarketDataTf(tf)}`;
-  const setting = await dbQueries.getUserSetting(
-    b.db,
+  const setting = await settingsStore.getUserSetting(
     userId,
     "cron",
     settingName,
@@ -28515,13 +29382,12 @@ async function marketDataUpdateCronState({
   const sync =
     data.last_sync && typeof data.last_sync === "object" ? data.last_sync : {};
   sync[key] = { ...(sync[key] || {}), ...patch };
-  await dbQueries.upsertUserSetting(
-    b.db,
+  await settingsStore.upsertUserSetting(
     userId,
     "cron",
     settingName,
     { ...data, last_sync: sync },
-    "ACTIVE",
+    setting.status || "ACTIVE",
   );
 }
 
@@ -28709,10 +29575,9 @@ function initAiAnalysisCronQueue() {
 }
 
 async function mt5RunSnapshotsCronInline() {
-  const b = await mt5Backend();
-  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const rows = await settingsStore.listUserSettingsByType(null, "cron");
   const configs = (rows || []).filter((r) => {
-    const d = dbQueries.parseJsonField(r.data) || {};
+    const d = settingsStore.parseJsonField(r.data) || {};
     return (
       ["SNAPSHOTS_CRON", "SNAPSHOT_CRON"].includes(d.cron_type) &&
       String(r.status || "").toUpperCase() === "ACTIVE"
@@ -28728,8 +29593,8 @@ async function mt5RunSnapshotsCronInline() {
     errors: [],
   };
   for (const conf of configs) {
-    const userId = conf.userId;
-    const data = dbQueries.parseJsonField(conf.data) || {};
+    const userId = conf.userId || conf.user_id;
+    const data = settingsStore.parseJsonField(conf.data) || {};
     if (!asBool(data.enabled ?? true, true)) continue;
     summary.configs++;
     const symbols = resolveCronSymbols(data);
@@ -29006,10 +29871,9 @@ async function mt5CronLoop() {
 
 async function mt5RunMarketDataCron() {
   if (!CFG.marketDataCronEnabled) return;
-  const b = await mt5Backend();
-  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const rows = await settingsStore.listUserSettingsByType(null, "cron");
   const configs = (rows || []).filter((r) => {
-    const d = dbQueries.parseJsonField(r.data) || {};
+    const d = settingsStore.parseJsonField(r.data) || {};
     return (
       d.cron_type === "MARKET_DATA_CRON" &&
       String(r.status || "").toUpperCase() === "ACTIVE"
@@ -29020,8 +29884,8 @@ async function mt5RunMarketDataCron() {
   const now = Date.now();
 
   for (const conf of configs) {
-    const userId = conf.userId;
-    const data = dbQueries.parseJsonField(conf.data) || {};
+    const userId = conf.userId || conf.user_id;
+    const data = settingsStore.parseJsonField(conf.data) || {};
     if (!marketDataCronSettingEnabled(data)) continue;
     const symbols = resolveCronSymbols(data);
     const excludeSymbols = new Set(
@@ -29131,10 +29995,9 @@ async function mt5RunMarketDataCron() {
 }
 
 async function mt5RunAiAnalysisCronInline() {
-  const b = await mt5Backend();
-  const rows = await dbQueries.listUserSettingsByType(b.db, null, "cron");
+  const rows = await settingsStore.listUserSettingsByType(null, "cron");
   const configs = (rows || []).filter((r) => {
-    const d = dbQueries.parseJsonField(r.data) || {};
+    const d = settingsStore.parseJsonField(r.data) || {};
     return (
       d.cron_type === "ANALYSIS_CRON" &&
       String(r.status || "").toUpperCase() === "ACTIVE"
@@ -29145,8 +30008,8 @@ async function mt5RunAiAnalysisCronInline() {
   const now = Date.now();
   let triggered = 0;
   for (const conf of configs) {
-    const userId = conf.userId;
-    const data = dbQueries.parseJsonField(conf.data) || {};
+    const userId = conf.userId || conf.user_id;
+    const data = settingsStore.parseJsonField(conf.data) || {};
     const confName = String(conf.name || "ANALYSIS_CRON");
     const symbols = resolveCronSymbols(data);
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];

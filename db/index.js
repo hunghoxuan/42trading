@@ -9,9 +9,10 @@ const _dbInstances = new Map();
 
 function initDb(config) {
   const backend = config?.storage?.backend || "postgres";
-  const key = backend === "sqlite"
-    ? `sqlite:${config?.storage?.sqlite?.path || "./trading.db"}`
-    : `postgres:${config?.pool?.options?.connectionString || ""}`;
+  const key =
+    backend === "sqlite"
+      ? `sqlite:${config?.storage?.sqlite?.path || "./trading.db"}`
+      : `postgres:${config?.pool?.options?.connectionString || ""}`;
   if (_dbInstances.has(key)) return _dbInstances.get(key);
 
   if (backend === "sqlite") {
@@ -82,13 +83,6 @@ function _runSqliteMigration(raw) {
       user_id TEXT REFERENCES users(user_id) ON DELETE CASCADE,
       name TEXT NOT NULL, data TEXT NOT NULL, status TEXT DEFAULT 'ACTIVE',
       created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
-    );
-    CREATE TABLE IF NOT EXISTS user_settings (
-      id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      name TEXT NOT NULL DEFAULT 'default', type TEXT NOT NULL, data TEXT NOT NULL,
-      status TEXT DEFAULT 'ACTIVE',
-      created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(user_id, type, name)
     );
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,

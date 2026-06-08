@@ -24,13 +24,7 @@ async function migrate() {
     return new Set(cols.map((c) => c.name));
   }
 
-  const tables = [
-    "users",
-    "user_accounts",
-    "user_templates",
-    "user_settings",
-    "trades",
-  ];
+  const tables = ["users", "user_accounts", "user_templates", "trades"];
 
   for (const table of tables) {
     console.log(`\n📋 ${table}...`);

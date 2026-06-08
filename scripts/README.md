@@ -25,6 +25,13 @@ Run webhook + web UI against remote VPS Postgres through an SSH tunnel:
 bash scripts/local_host_remote_db.sh
 ```
 
+Local dev note:
+- The standard local stack (`bash scripts/start/reset_stack_once.sh`) now auto-opens the VPS DB SSH tunnel when the UI selects `VPS DB`.
+- Tunnel defaults:
+  - `MT5_REMOTE_DB_SSH_HOST=root@139.59.211.192`
+  - `MT5_REMOTE_DB_LOCAL_PORT=15432`
+- Override them with env vars if your SSH host or tunnel port differs.
+
 Required local env files:
 
 - `webhook/.env`

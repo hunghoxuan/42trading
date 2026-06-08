@@ -6,6 +6,7 @@ WEBHOOK_LABEL="${WEBHOOK_LABEL:-trading-webhook-raw}"
 WEBUI_LABEL="${WEBUI_LABEL:-trading-webui-raw}"
 WEBHOOK_LOG="${WEBHOOK_LOG:-/tmp/webhook.raw.launchd.out}"
 WEBUI_LOG="${WEBUI_LOG:-/tmp/web-ui.raw.launchd.out}"
+VITE_ALLOWED_HOSTS="${VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS:-}"
 
 echo "[reset] killing stale processes/ports..."
 launchctl remove "${WEBHOOK_LABEL}" 2>/dev/null || true
@@ -20,7 +21,7 @@ sleep 1
 
 echo "[reset] starting webhook :3001 via launchctl submit..."
 launchctl submit -l "${WEBHOOK_LABEL}" -- /bin/zsh -lc \
-  "cd ${ROOT} && PORT=3001 MT5_ENABLED=true SNAPSHOTS_CRON_ENABLED=0 MARKET_DATA_CRON_ENABLED=0 node webhook/server.js >> ${WEBHOOK_LOG} 2>&1"
+  "cd ${ROOT} && PORT=3001 REMOTE_DB_AUTO_TUNNEL=1 MT5_REMOTE_DB_SSH_HOST='${MT5_REMOTE_DB_SSH_HOST:-root@139.59.211.192}' MT5_REMOTE_DB_LOCAL_PORT='${MT5_REMOTE_DB_LOCAL_PORT:-15432}' MT5_ENABLED=true SNAPSHOTS_CRON_ENABLED=0 MARKET_DATA_CRON_ENABLED=0 node webhook/server.js >> ${WEBHOOK_LOG} 2>&1"
 
 echo "[reset] verifying webhook before UI..."
 ok_webhook=0
@@ -35,8 +36,13 @@ if [ "${ok_webhook}" != "1" ]; then
 fi
 
 echo "[reset] starting web-ui :3000 via launchctl submit..."
-launchctl submit -l "${WEBUI_LABEL}" -- /bin/zsh -lc \
-  "cd ${ROOT} && npm --prefix web-ui run dev -- --host 127.0.0.1 --port 3000 --strictPort >> ${WEBUI_LOG} 2>&1"
+if [ -n "${VITE_ALLOWED_HOSTS}" ]; then
+  launchctl submit -l "${WEBUI_LABEL}" -- /bin/zsh -lc \
+    "cd ${ROOT} && env VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS='${VITE_ALLOWED_HOSTS}' __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS='${VITE_ALLOWED_HOSTS}' npm --prefix web-ui run dev -- --host 127.0.0.1 --port 3000 --strictPort >> ${WEBUI_LOG} 2>&1"
+else
+  launchctl submit -l "${WEBUI_LABEL}" -- /bin/zsh -lc \
+    "cd ${ROOT} && npm --prefix web-ui run dev -- --host 127.0.0.1 --port 3000 --strictPort >> ${WEBUI_LOG} 2>&1"
+fi
 
 echo "[reset] verifying ui..."
 ok_webui=0
