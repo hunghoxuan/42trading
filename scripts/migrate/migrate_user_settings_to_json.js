@@ -15,7 +15,10 @@ function loadEnvFile(filePath) {
     const idx = trimmed.indexOf("=");
     if (idx <= 0) continue;
     const key = trimmed.slice(0, idx).trim();
-    const value = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, "");
+    const value = trimmed
+      .slice(idx + 1)
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
     if (process.env[key] === undefined) process.env[key] = value;
   }
 }
@@ -29,7 +32,7 @@ Env:
   SETTINGS_DATA_ROOT optional, default: ./data
 
 Output:
-  data/{user_id}/settings/{type}/{name}.json
+  data/users/{user_id}/settings/{type}/{name}.json
 
 Flags:
   --delete-db   delete rows from public.user_settings after JSON export succeeds
@@ -58,7 +61,9 @@ async function main() {
   loadEnvFile(path.join(__dirname, "..", "..", ".env"));
 
   const connectionString =
-    process.env.MT5_POSTGRES_URL || process.env.POSTGRES_URL || process.env.POSTGRE_URL;
+    process.env.MT5_POSTGRES_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRE_URL;
   if (!connectionString) {
     throw new Error("Missing MT5_POSTGRES_URL/POSTGRES_URL/POSTGRE_URL");
   }
@@ -72,7 +77,9 @@ async function main() {
       `SELECT to_regclass('public.user_settings') AS table_name`,
     );
     if (!tableRes.rows?.[0]?.table_name) {
-      console.log("[settings-migrate] public.user_settings does not exist; nothing to migrate.");
+      console.log(
+        "[settings-migrate] public.user_settings does not exist; nothing to migrate.",
+      );
       return;
     }
 
@@ -126,6 +133,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[settings-migrate] failed:", err && err.message ? err.message : err);
+  console.error(
+    "[settings-migrate] failed:",
+    err && err.message ? err.message : err,
+  );
   process.exit(1);
 });

@@ -5,6 +5,12 @@ const fsp = fs.promises;
 const path = require("path");
 const crypto = require("crypto");
 const { DatabaseSync } = require("node:sqlite");
+const {
+  objectDir: sharedObjectDir,
+  objectDataPath: sharedObjectDataPath,
+  objectLogsDir: sharedObjectLogsDir,
+  safePathPart: sharedSafePathPart,
+} = require("./objectStore");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const USERS_ROOT = path.join(PROJECT_ROOT, "data", "users");
@@ -20,9 +26,7 @@ function nowIso() {
 }
 
 function safePathPart(value, fallback = "default") {
-  const raw = String(value || "").trim() || fallback;
-  const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+$/, "_");
-  return safe || fallback;
+  return sharedSafePathPart(value, fallback);
 }
 
 function stableStringify(value) {
@@ -119,7 +123,19 @@ class StaticJsonObjectDal {
     );
   }
 
+  objectFolderDir(userId, objectType, objectId) {
+    return sharedObjectDir(userId, objectType, objectId);
+  }
+
   objectPath(userId, objectType, objectId) {
+    return sharedObjectDataPath(userId, objectType, objectId);
+  }
+
+  objectLogsDir(userId, objectType, objectId) {
+    return sharedObjectLogsDir(userId, objectType, objectId);
+  }
+
+  legacyObjectPath(userId, objectType, objectId) {
     return path.join(
       this.objectDir(userId, objectType),
       `${safePathPart(objectId, "default")}.json`,
@@ -149,18 +165,34 @@ class StaticJsonObjectDal {
     };
   }
 
+  async readObjectFile(userId, objectType, objectId, filePath) {
+    const raw = await fsp.readFile(filePath, "utf8");
+    const parsed = parseJsonField(raw, null);
+    if (!parsed || typeof parsed !== "object") return null;
+    return this.normalizeStaticObject(
+      userId,
+      objectType,
+      objectId,
+      parsed,
+      parsed,
+    );
+  }
+
   async getObject(userId, objectType, objectId) {
     const filePath = this.objectPath(userId, objectType, objectId);
     try {
-      const raw = await fsp.readFile(filePath, "utf8");
-      const parsed = parseJsonField(raw, null);
-      if (!parsed || typeof parsed !== "object") return null;
-      return this.normalizeStaticObject(
+      return await this.readObjectFile(userId, objectType, objectId, filePath);
+    } catch (err) {
+      if (!err || err.code !== "ENOENT") throw err;
+    }
+
+    const legacyPath = this.legacyObjectPath(userId, objectType, objectId);
+    try {
+      return await this.readObjectFile(
         userId,
         objectType,
         objectId,
-        parsed,
-        parsed,
+        legacyPath,
       );
     } catch (err) {
       if (err && err.code === "ENOENT") return null;
@@ -185,7 +217,16 @@ class StaticJsonObjectDal {
           updated_at: meta.updated_at || nowIso(),
         },
       );
+      await ensurePrivateDir(this.objectLogsDir(userId, objectType, objectId));
       await writeJsonAtomic(filePath, row);
+      const legacyPath = this.legacyObjectPath(userId, objectType, objectId);
+      if (legacyPath !== filePath) {
+        try {
+          await fsp.unlink(legacyPath);
+        } catch (err) {
+          if (!err || err.code !== "ENOENT") throw err;
+        }
+      }
       return row;
     });
   }
@@ -193,8 +234,12 @@ class StaticJsonObjectDal {
   async deleteObject(userId, objectType, objectId) {
     const filePath = this.objectPath(userId, objectType, objectId);
     return this.queueForPath(filePath, async () => {
+      await fsp.rm(this.objectFolderDir(userId, objectType, objectId), {
+        recursive: true,
+        force: true,
+      });
       try {
-        await fsp.unlink(filePath);
+        await fsp.unlink(this.legacyObjectPath(userId, objectType, objectId));
       } catch (err) {
         if (!err || err.code !== "ENOENT") throw err;
       }
@@ -202,31 +247,60 @@ class StaticJsonObjectDal {
   }
 
   async listObjects(userId, objectType) {
+    const rows = [];
+    const seen = new Set();
     const files = await listJsonFilesRecursive(
       this.objectDir(userId, objectType),
     );
-    const rows = [];
     for (const filePath of files) {
       try {
-        const raw = await fsp.readFile(filePath, "utf8");
-        const parsed = parseJsonField(raw, null);
-        if (!parsed || typeof parsed !== "object") continue;
-        const objectId = path.basename(filePath, ".json");
-        rows.push(
-          this.normalizeStaticObject(
-            userId,
-            objectType,
-            objectId,
-            parsed,
-            parsed,
-          ),
+        const objectId = path.basename(path.dirname(filePath));
+        if (!objectId || path.basename(filePath) !== "data.json") continue;
+        const row = await this.readObjectFile(
+          userId,
+          objectType,
+          objectId,
+          filePath,
         );
+        if (!row) continue;
+        rows.push(row);
+        seen.add(String(row.object_id));
       } catch (err) {
         this.logger.warn?.(
           `[user-object-store] failed reading static file ${filePath}: ${err.message}`,
         );
       }
     }
+
+    const legacyDir = this.objectDir(userId, objectType);
+    let legacyEntries = [];
+    try {
+      legacyEntries = await fsp.readdir(legacyDir, { withFileTypes: true });
+    } catch (err) {
+      if (!err || err.code !== "ENOENT") throw err;
+    }
+    for (const entry of legacyEntries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const objectId = path.basename(entry.name, ".json");
+      if (seen.has(objectId)) continue;
+      const filePath = path.join(legacyDir, entry.name);
+      try {
+        const row = await this.readObjectFile(
+          userId,
+          objectType,
+          objectId,
+          filePath,
+        );
+        if (!row) continue;
+        rows.push(row);
+        seen.add(String(row.object_id));
+      } catch (err) {
+        this.logger.warn?.(
+          `[user-object-store] failed reading legacy static file ${filePath}: ${err.message}`,
+        );
+      }
+    }
+
     rows.sort((a, b) =>
       `${a.object_type}:${a.object_id}`.localeCompare(
         `${b.object_type}:${b.object_id}`,
@@ -310,10 +384,13 @@ class DynamicSqliteObjectDal {
 
   normalizeDynamicRow(userId, row = {}) {
     if (!row || typeof row !== "object") return null;
+    const objectType = String(row.object_type || "").trim();
+    const objectId = String(row.object_id || "").trim();
+    if (!objectType || !objectId) return null;
     return {
       user_id: String(userId || ""),
-      object_type: String(row.object_type || ""),
-      object_id: String(row.object_id || ""),
+      object_type: objectType,
+      object_id: objectId,
       metadata: parseJsonField(row.metadata, {}),
       status: String(row.status || "ACTIVE"),
       created_at: normalizeIso(row.created_at),

@@ -42,7 +42,7 @@ Now:
 ## Setup
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading/webhook
+cd /Users/macmini/Projects/moza/42trade/webhook
 cp .env.example .env
 npm install
 npm start
@@ -58,13 +58,13 @@ curl http://localhost:80/health
 
 If you run cTrader through an external bridge (`CTRADER_EXECUTOR_URL`), use:
 
-- Bridge script: [`/Users/macmini/Trade/Bot/trading/scripts/ctrader_executor_bridge.js`](/Users/macmini/Trade/Bot/trading/scripts/ctrader_executor_bridge.js)
-- Install helper: [`/Users/macmini/Trade/Bot/trading/scripts/install_ctrader_executor_bridge.sh`](/Users/macmini/Trade/Bot/trading/scripts/install_ctrader_executor_bridge.sh)
+- Bridge script: [`/Users/macmini/Projects/moza/42trade/scripts/ctrader_executor_bridge.js`](/Users/macmini/Projects/moza/42trade/scripts/ctrader_executor_bridge.js)
+- Install helper: [`/Users/macmini/Projects/moza/42trade/scripts/install_ctrader_executor_bridge.sh`](/Users/macmini/Projects/moza/42trade/scripts/install_ctrader_executor_bridge.sh)
 
 Quick install on VPS:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 CTRADER_EXECUTOR_API_KEY=<random-long-key> bash scripts/install_ctrader_executor_bridge.sh
 ```
 
@@ -97,7 +97,7 @@ Notes:
 ### Option A: Local deploy script (recommended)
 
 Script file:
-- `/Users/macmini/Trade/Bot/trading/scripts/deploy_webhook.sh`
+- `/Users/macmini/Projects/moza/42trade/scripts/deploy_webhook.sh`
 
 Default behavior:
 1. Run local syntax check (`node --check webhook/server.js`)
@@ -108,7 +108,7 @@ Step-by-step commands (copy/paste):
 
 ```bash
 # 1) go to repo root
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 
 # 2) optional: review local changes
 git status
@@ -138,7 +138,7 @@ Manual deploy equivalent (no script):
 
 ```bash
 # Local machine
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 git push origin main
 
 # VPS
@@ -165,7 +165,7 @@ pm2 restart webhook
 ### Option B: GitHub Actions deploy
 
 Workflow file:
-- `/Users/macmini/Trade/Bot/trading/.github/workflows/deploy-webhook.yml`
+- `/Users/macmini/Projects/moza/42trade/.github/workflows/deploy-webhook.yml`
 
 Triggers:
 - Manual: `workflow_dispatch`
@@ -194,8 +194,8 @@ Step-by-step (for non-technical users):
 ## MT5 CSV Sync Automation (macOS)
 
 Use these scripts:
-- `/Users/macmini/Trade/Bot/trading/scripts/mt5_csv_sync.sh`
-- `/Users/macmini/Trade/Bot/trading/scripts/install_mt5_csv_sync_launchd.sh`
+- `/Users/macmini/Projects/moza/42trade/scripts/mt5_csv_sync.sh`
+- `/Users/macmini/Projects/moza/42trade/scripts/install_mt5_csv_sync_launchd.sh`
 
 What sync does:
 - Download `/csv` from signal.mozasolution.com (requires API_KEY env var)
@@ -205,14 +205,14 @@ What sync does:
 Run once manually:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="your_signal_api_key" bash scripts/daemons/mt5_csv_sync.sh
 ```
 
 Install scheduler (every 5 minutes):
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="your_signal_api_key" bash scripts/install/install_mt5_csv_sync_launchd.sh
 ```
 
@@ -312,7 +312,7 @@ Open UI:
 - `https://<your-domain>/mt5/ui?apiKey=<SIGNAL_API_KEY>`
 
 EA file:
-- `/Users/macmini/Trade/Bot/trading/bridge-clients/TVBridgeEA.mq5`
+- `/Users/macmini/Projects/moza/42trade/bridge-clients/TVBridgeEA.mq5`
 
 Backtest CSV columns:
 - `timestamp;signal_id;action;symbol;volume;sl;tp;note`
@@ -347,7 +347,7 @@ MT5_POSTGRES_URL=postgresql://mt5_user:<password>@127.0.0.1:5432/mt5_bridge
 Execution Hub v2 backfill helper (postgres):
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 node scripts/mt5_v2_backfill.js
 ```
 
@@ -435,7 +435,7 @@ ON signal_events(signal_id, event_time);
 React UI app (Dashboard + Trades + Trade detail):
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading/web-ui
+cd /Users/macmini/Projects/moza/42trade/web-ui
 npm install
 VITE_API_BASE=https://trade.mozasolution.com/webhook npm run dev
 ```
@@ -443,7 +443,7 @@ VITE_API_BASE=https://trade.mozasolution.com/webhook npm run dev
 Production build:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading/web-ui
+cd /Users/macmini/Projects/moza/42trade/web-ui
 npm run build
 ```
 
@@ -485,7 +485,7 @@ Accounts note:
 Run one command from repo root:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY=<SIGNAL_API_KEY> \
 BASE_URL=http://127.0.0.1:80 \
 UI_URL=http://127.0.0.1:5174 \
@@ -511,7 +511,7 @@ What this script validates:
 Direct Node entrypoint (same test):
 
 ```bash
-node /Users/macmini/Trade/Bot/trading/scripts/test_local_stack.mjs
+node /Users/macmini/Projects/moza/42trade/scripts/test_local_stack.mjs
 ```
 
 ## Remote UI E2E Test (Playwright)
@@ -519,7 +519,7 @@ node /Users/macmini/Trade/Bot/trading/scripts/test_local_stack.mjs
 Run browser-level integration tests against deployed UI/API:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 bash scripts/test_remote_ui.sh
 ```
 
@@ -529,16 +529,16 @@ What it validates:
 - API key and API base are injected from local `webhook/.env` and remote URL defaults
 
 Reports:
-- latest: `/Users/macmini/Trade/Bot/trading/test-results/remote-ui-latest.log`
-- Playwright HTML report: `/Users/macmini/Trade/Bot/trading/web-ui/playwright-report/index.html`
+- latest: `/Users/macmini/Projects/moza/42trade/test-results/remote-ui-latest.log`
+- Playwright HTML report: `/Users/macmini/Projects/moza/42trade/web-ui/playwright-report/index.html`
 
 ## Remote API Test Framework (lightweight)
 
 For remote-only validation (VPS URL + live API), use the Node built-in test runner:
 
-- test file: `/Users/macmini/Trade/Bot/trading/tests/remote/mt5-remote.test.mjs`
-- runner script: `/Users/macmini/Trade/Bot/trading/scripts/test_remote_api.sh`
-- report output directory: `/Users/macmini/Trade/Bot/trading/test-results/`
+- test file: `/Users/macmini/Projects/moza/42trade/tests/remote/mt5-remote.test.mjs`
+- runner script: `/Users/macmini/Projects/moza/42trade/scripts/test_remote_api.sh`
+- report output directory: `/Users/macmini/Projects/moza/42trade/test-results/`
 
 What it tests:
 - TradingView webhook push: `POST /mt5/tv/webhook`
@@ -548,15 +548,15 @@ What it tests:
 Run from repo root:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="$(sed -n 's/^SIGNAL_API_KEY=//p' webhook/.env | head -n 1)" \
 BASE_URL="https://trade.mozasolution.com/webhook" \
 bash scripts/test_remote_api.sh
 ```
 
 Report files:
-- latest: `/Users/macmini/Trade/Bot/trading/test-results/remote-api-latest.log`
-- timestamped: `/Users/macmini/Trade/Bot/trading/test-results/remote-api-YYYYMMDD-HHMMSS.log`
+- latest: `/Users/macmini/Projects/moza/42trade/test-results/remote-api-latest.log`
+- timestamped: `/Users/macmini/Projects/moza/42trade/test-results/remote-api-YYYYMMDD-HHMMSS.log`
 
 ## Remote V2 Broker Smoke Test
 
@@ -565,12 +565,12 @@ Use this after enabling:
 - `MT5_V2_BROKER_API_ENABLED=true`
 
 Script:
-- `/Users/macmini/Trade/Bot/trading/scripts/test_remote_v2_broker.sh`
+- `/Users/macmini/Projects/moza/42trade/scripts/test_remote_v2_broker.sh`
 
 Run:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="<ACCOUNT_API_KEY>" \
 BASE_URL="https://trade.mozasolution.com/webhook" \
 bash scripts/test_remote_v2_broker.sh
@@ -579,7 +579,7 @@ bash scripts/test_remote_v2_broker.sh
 Sync smoke test:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="<ACCOUNT_API_KEY>" \
 BASE_URL="https://trade.mozasolution.com/webhook" \
 bash scripts/test_remote_v2_sync.sh
@@ -588,7 +588,7 @@ bash scripts/test_remote_v2_sync.sh
 Rotate account api key (admin):
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 ADMIN_API_KEY="<SIGNAL_API_KEY>" \
 ACCOUNT_ID="<ACCOUNT_ID>" \
 BASE_URL="https://trade.mozasolution.com/webhook" \
@@ -598,7 +598,7 @@ bash scripts/test_remote_v2_rotate.sh
 Heartbeat + broker-originated trade create:
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading
+cd /Users/macmini/Projects/moza/42trade
 API_KEY="<ACCOUNT_API_KEY>" \
 BASE_URL="https://trade.mozasolution.com/webhook" \
 bash scripts/test_remote_v2_broker_full.sh

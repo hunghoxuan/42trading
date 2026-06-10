@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Children, cloneElement, isValidElement, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 
 /**
@@ -7,9 +7,27 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
  */
 export default function NavDropdown({ trigger, children, align = "end" }) {
   const [container, setContainer] = useState(null);
+  const wrappedChildren = Children.map(children, (child) => {
+    if (!isValidElement(child)) return child;
+    const existingOnClick = child.props.onClick;
+    return cloneElement(child, {
+      onClick: (event, ...rest) => {
+        if (typeof existingOnClick === "function") {
+          existingOnClick(event, ...rest);
+        }
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("mobile-nav-close"));
+        }
+      },
+    });
+  });
 
   return (
-    <div ref={setContainer} className="nav-dropdown">
+    <div
+      ref={setContainer}
+      className="nav-dropdown"
+      onClick={(e) => e.stopPropagation()}
+    >
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           {trigger}
@@ -21,7 +39,7 @@ export default function NavDropdown({ trigger, children, align = "end" }) {
               align={align}
               sideOffset={4}
             >
-              {children}
+              {wrappedChildren}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         )}

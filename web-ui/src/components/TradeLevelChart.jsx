@@ -1,18 +1,32 @@
 import { createChart } from "lightweight-charts";
 import { useEffect, useRef } from "react";
+import { getUiThemeColors } from "../utils/uiTheme";
 
 export default function TradeLevelChart({ trade }) {
   const ref = useRef(null);
+  const themeMode = getUiThemeColors().mode;
 
   useEffect(() => {
     if (!ref.current || !trade) return undefined;
+    const theme = getUiThemeColors();
+    const isLight = theme.mode === "light";
     const chart = createChart(ref.current, {
-      layout: { background: { color: "#0b1020" }, textColor: "#d7e0ea" },
+      layout: {
+        background: { color: isLight ? theme.surface : "#0b1020" },
+        textColor: isLight ? theme.text : "#d7e0ea",
+      },
       width: ref.current.clientWidth,
       height: 340,
-      grid: { vertLines: { color: "#1a2333" }, horzLines: { color: "#1a2333" } },
-      rightPriceScale: { borderColor: "#2a3346" },
-      timeScale: { borderColor: "#2a3346" },
+      grid: {
+        vertLines: {
+          color: isLight ? "rgba(148,163,184,0.18)" : "#1a2333",
+        },
+        horzLines: {
+          color: isLight ? "rgba(148,163,184,0.18)" : "#1a2333",
+        },
+      },
+      rightPriceScale: { borderColor: isLight ? theme.border : "#2a3346" },
+      timeScale: { borderColor: isLight ? theme.border : "#2a3346" },
     });
 
     const base = Number(trade.entry ?? trade.sl ?? trade.tp ?? 0) || 1;
@@ -52,7 +66,7 @@ export default function TradeLevelChart({ trade }) {
       resizeObserver.disconnect();
       chart.remove();
     };
-  }, [trade]);
+  }, [trade, themeMode]);
 
   return <div ref={ref} className="chart-box" />;
 }

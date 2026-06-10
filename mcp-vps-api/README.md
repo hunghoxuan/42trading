@@ -15,7 +15,7 @@ This package supports both:
 ## 1) Install
 
 ```bash
-cd /Users/macmini/Trade/Bot/trading/mcp-vps-api
+cd /Users/macmini/Projects/moza/42trade/mcp-vps-api
 npm install
 ```
 
@@ -50,7 +50,7 @@ Add to Claude Desktop config:
   "mcpServers": {
     "trading-vps-api": {
       "command": "node",
-      "args": ["/Users/macmini/Trade/Bot/trading/mcp-vps-api/server.mjs"],
+      "args": ["/Users/macmini/Projects/moza/42trade/mcp-vps-api/server.mjs"],
       "env": {
         "VPS_API_BASE_URL": "https://trade.mozasolution.com",
         "VPS_API_KEY": "YOUR_API_KEY",

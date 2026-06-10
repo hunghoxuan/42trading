@@ -2,7 +2,7 @@
 
 Use this skill for building high-density, professional dashboards using React and Vanilla CSS.
 
-> **PREREQUISITE**: Read `.agents/rules/design-system.md` FIRST. It catalogs every reusable CSS class. Inline `style={{}}` is banned unless no class matches.
+> **PREREQUISITE**: Read `.agents/rules/ui-rules.md` FIRST. It is the single source of truth for reusable UI classes, layout behavior, and style rules. Inline `style={{}}` is banned unless no class matches.
 
 ## Operational Rules
 
@@ -114,7 +114,7 @@ Use these instead of local wrapper functions. All in `web-ui/src/utils/`.
 | `signalDetailUtils` | `signalDetailUtils.jsx` | `formatTimeframe`, `toTradingViewSymbol`, detail header builder |
 
 ## Verification Checklist
-- [ ] Read `.agents/rules/design-system.md` — no inline styles where CSS class exists
+- [ ] Read `.agents/rules/ui-rules.md` — no inline styles where CSS class exists
 - [ ] Checked shared component catalog before writing new code
 - [ ] Used `PaginationBar` instead of inline pagination
 - [ ] Used `ConfirmDialog` instead of `window.confirm()`

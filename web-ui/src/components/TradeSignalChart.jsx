@@ -7,6 +7,7 @@ import {
 } from "../utils/format";
 import { chartFetchManager } from "../services/chartFetchManager";
 import { normalizePlanLinePrice } from "../utils/tradePlanDrafts";
+import { getUiThemeColors } from "../utils/uiTheme";
 
 const parsePosNum = (v) => {
   const n = Number(v);
@@ -203,14 +204,10 @@ function lineStyleToChartValue(styleRaw) {
 function formatSharedObjectLabel(type, rawLabel) {
   const typeText = String(type || "").trim();
   const labelText = String(rawLabel || "").trim();
-  if (!typeText && !labelText) return "";
-  if (!typeText) return labelText;
-  if (!labelText) return typeText;
-  const lowerType = typeText.toLowerCase();
-  const lowerLabel = labelText.toLowerCase();
-  if (lowerLabel === lowerType) return typeText;
-  if (lowerLabel.startsWith(`${lowerType} `)) return labelText;
-  return `${typeText} ${labelText}`;
+  const base = typeText || labelText;
+  if (!base) return "";
+  const normalized = base.replace(/^All\s+/i, "").trim();
+  return normalized ? `All ${normalized}` : "";
 }
 
 /**
@@ -515,6 +512,8 @@ export default function TradeSignalChart({
     if (!chartContainerRef.current) return;
     const container = chartContainerRef.current;
     if (!container.clientWidth || !container.clientHeight) return;
+    const theme = getUiThemeColors();
+    const isLight = theme.mode === "light";
 
     let isMounted = true;
     let chart;
@@ -525,22 +524,37 @@ export default function TradeSignalChart({
         width: container.clientWidth,
         height: container.clientHeight || height,
         layout: {
-          background: { color: "#0d1117" },
-          textColor: "#d1d4dc",
+          background: {
+            type: ColorType.Solid,
+            color: isLight ? theme.surface : "#0d1117",
+          },
+          textColor: isLight ? theme.text : "#d1d4dc",
         },
         grid: {
-          vertLines: { color: "rgba(42, 46, 57, 0.1)" },
-          horzLines: { color: "rgba(42, 46, 57, 0.1)" },
+          vertLines: {
+            color: isLight
+              ? "rgba(148,163,184,0.18)"
+              : "rgba(42, 46, 57, 0.1)",
+          },
+          horzLines: {
+            color: isLight
+              ? "rgba(148,163,184,0.18)"
+              : "rgba(42, 46, 57, 0.1)",
+          },
         },
         timeScale: {
-          borderColor: "rgba(197, 203, 206, 0.4)",
+          borderColor: isLight
+            ? "rgba(148,163,184,0.35)"
+            : "rgba(197, 203, 206, 0.4)",
           timeVisible: true,
           secondsVisible: false,
           tickMarkFormatter: (time) =>
             formatChartDateTime(Number(time) * 1000, displayTimezone),
         },
         rightPriceScale: {
-          borderColor: "rgba(197, 203, 206, 0.3)",
+          borderColor: isLight
+            ? "rgba(148,163,184,0.28)"
+            : "rgba(197, 203, 206, 0.3)",
           scaleMargins: { top: 0.05, bottom: 0.05 },
           entireTextOnly: true,
         },
@@ -646,7 +660,7 @@ export default function TradeSignalChart({
       const priceLinesRef = { lines: [] };
       const tooltipEl = document.createElement("div");
       tooltipEl.style.cssText =
-        "display:none;position:absolute;z-index:100;background:rgba(0,0,0,0.85);color:#d1d4dc;padding:4px 8px;border-radius:4px;font-size:11px;pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,0.1);";
+        `display:none;position:absolute;z-index:100;background:${theme.panel};color:${theme.text};padding:4px 8px;border-radius:4px;font-size:11px;pointer-events:none;white-space:nowrap;border:1px solid ${theme.border};`;
       chartElement.appendChild(tooltipEl);
 
       const handlePriceLineHover = (param) => {
@@ -670,7 +684,7 @@ export default function TradeSignalChart({
           tooltipEl.style.display = "block";
           tooltipEl.style.left = param.point.x + 10 + "px";
           tooltipEl.style.top = closest.y - 20 + "px";
-          tooltipEl.innerHTML = `<b>${closest.label}</b> ${closest.priceText}`;
+          tooltipEl.textContent = `${closest.label} ${closest.priceText}`;
         } else {
           tooltipEl.style.display = "none";
         }
@@ -1558,6 +1572,7 @@ export default function TradeSignalChart({
     chartId,
     lwTimeToMs,
     displayTimezone,
+    getUiThemeColors().mode,
   ]);
 
   useEffect(() => {

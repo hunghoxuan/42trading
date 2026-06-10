@@ -982,6 +982,12 @@ export const api = {
   notificationSaveSettings: (settings) =>
     post("/v2/notifications/settings", { settings }),
   notificationTest: (payload = {}) => post("/v2/notifications/test", payload),
+  notificationList: (limit = 100) =>
+    get(`/v2/notifications/list?limit=${encodeURIComponent(limit)}`),
+  notificationClear: () => post("/v2/notifications/clear", {}),
+  calendarToday: () => get("/v2/calendar/today"),
+  calendarWeek: () => get("/v2/calendar/week"),
+  dynamicSymbolGroup: () => get("/v2/symbol-groups/dynamic"),
   deleteSetting: (type, name) =>
     del(`/v2/settings/${encodeURIComponent(type)}/${encodeURIComponent(name)}`),
 };

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ACTIVE_DIR="${ROOT}/data/default/trade_active"
-CLOSED_DIR="${ROOT}/data/default/trade_closed"
+ACTIVE_DIR="${ROOT}/data/users/default/trade_active"
+CLOSED_DIR="${ROOT}/data/users/default/trade_closed"
 BASE_URL="${BASE_URL:-http://127.0.0.1:3001}"
 
 if [ ! -d "${ACTIVE_DIR}" ]; then

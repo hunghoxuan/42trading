@@ -31,6 +31,20 @@ function save(list) {
   localStorage.setItem(HUB, JSON.stringify(f));
 }
 
+function persistServerNotification(entry) {
+  try {
+    var list = load();
+    list.push(entry);
+    save(list);
+    window.dispatchEvent(new CustomEvent("hub-result", { detail: entry }));
+    if (bc) {
+      try {
+        bc.postMessage({ type: "hub-result", entry: entry });
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
+
 function emit(evt, sub, pay) {
   var e = { event: evt, subType: sub, payload: pay };
   var s = listeners.get(evt);
@@ -46,17 +60,16 @@ function emit(evt, sub, pay) {
       }),
     );
   }
-  // Persist server-driven snapshot events into hub history
-  // so cron/internal snapshots also show in Notification bell list.
+  // Persist selected server-driven events into hub history
+  // so they show in the Notification bell list.
   try {
     var evName = String((pay && pay.event) || evt || "").toLowerCase();
     if (evName === "snapshot_created") {
       var symbol = String((pay && pay.symbol) || "").toUpperCase();
       var timeframe = String((pay && pay.timeframe) || "");
       var now = Date.now();
-      var list = load();
       var reqId = "snapshot_evt_" + now + "_" + Math.random().toString(36).slice(2, 6);
-      list.push({
+      persistServerNotification({
         requestId: reqId,
         type: "snapshot",
         symbol: symbol,
@@ -67,13 +80,28 @@ function emit(evt, sub, pay) {
         data: pay || {},
         meta: pay || {},
       });
-      save(list);
-      window.dispatchEvent(new CustomEvent("hub-result", { detail: list[list.length - 1] }));
-      if (bc) {
-        try {
-          bc.postMessage({ type: "hub-result", entry: list[list.length - 1] });
-        } catch (_) {}
-      }
+    }
+    if (evName === "news") {
+      var nowNews = Date.now();
+      var reqIdNews =
+        "news_evt_" + nowNews + "_" + Math.random().toString(36).slice(2, 6);
+      var title = String(
+        (pay && (pay.title || pay.news_type || pay.message)) || "News Alert",
+      );
+      var symbols = Array.isArray(pay && pay.effective_symbols)
+        ? pay.effective_symbols.slice(0, 4).join(", ")
+        : "";
+      persistServerNotification({
+        requestId: reqIdNews,
+        type: "news_alert",
+        symbol: String((pay && pay.news_type) || "NEWS").toUpperCase(),
+        status: "ok",
+        createdAt: nowNews,
+        completedAt: nowNews,
+        extra: symbols ? title + " • " + symbols : title,
+        data: pay || {},
+        meta: pay || {},
+      });
     }
   } catch (_) {}
 }
@@ -89,6 +117,7 @@ function on(evt, fn) {
 var ICONS = {
   analyze: "🧠",
   snapshot: "📷",
+  news_alert: "📰",
   create_trade: "📈",
   create_signal: "📡",
 };

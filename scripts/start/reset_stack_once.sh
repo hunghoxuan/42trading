@@ -13,7 +13,7 @@ launchctl remove "${WEBHOOK_LABEL}" 2>/dev/null || true
 launchctl remove "${WEBUI_LABEL}" 2>/dev/null || true
 launchctl remove trading-webhook-local 2>/dev/null || true
 launchctl remove trading-web-ui-local 2>/dev/null || true
-pkill -f "/Users/macmini/Trade/Bot/trading/webhook/server.js" 2>/dev/null || true
+pkill -f "/Users/macmini/Projects/moza/42trade/webhook/server.js" 2>/dev/null || true
 pkill -f "vite --host 127.0.0.1 --port 3000" 2>/dev/null || true
 lsof -ti tcp:3001 | xargs kill -9 2>/dev/null || true
 lsof -ti tcp:3000 | xargs kill -9 2>/dev/null || true

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { createChart } from "lightweight-charts";
+import { getUiThemeColors } from "../../utils/uiTheme";
 import { NotificationHub } from "../../services/NotificationHub";
 import {
   showDateTime,
@@ -28,6 +29,11 @@ import {
   formatNum3,
 } from "../../utils/signalDetailUtils";
 import { isCurrentAiTradePlan } from "../../utils/tradePlanShape";
+import {
+  normalizeSymbolGroupsData,
+  getWatchlistGroup,
+  getCustomSymbolGroups,
+} from "../../utils/symbolGroups";
 
 const SignalDetailCard = lazy(
   () => import("../../components/SignalDetailCard"),
@@ -3018,9 +3024,13 @@ export default function ChartSnapshotsPage() {
   }
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
+  const [symbolGroupsData, setSymbolGroupsData] = useState(
+    normalizeSymbolGroupsData({ groups: [] }),
+  );
   const [watchlist, setWatchlist] = useState([]);
+  const [customSymbolGroups, setCustomSymbolGroups] = useState([]);
   const [isSymbolPanelOpen, setIsSymbolPanelOpen] = useState(true);
-  const [symbolFilterTab, setSymbolFilterTab] = useState("FAVOURITE");
+  const [symbolFilterTab, setSymbolFilterTab] = useState("WATCHLIST");
   const [tradeSymbolsByStatus, setTradeSymbolsByStatus] = useState({
     pending: [],
     filled: [],
@@ -3296,13 +3306,16 @@ export default function ChartSnapshotsPage() {
   }, [cfg.symbol, provider]);
 
   const symbolSelectOptions = useMemo(() => {
-    const merged = [...watchlist];
+    const merged = [
+      ...watchlist,
+      ...customSymbolGroups.flatMap((group) => group.symbols || []),
+    ];
     const current = normalizeWatchSymbol(cfg.symbol);
     if (current && !merged.includes(current)) merged.unshift(current);
     return [...new Set(merged.map(normalizeWatchSymbol).filter(Boolean))].sort(
       (a, b) => a.localeCompare(b),
     );
-  }, [watchlist, cfg.symbol]);
+  }, [watchlist, customSymbolGroups, cfg.symbol]);
 
   const promptText = useMemo(
     () => buildPrompt(cfg, guideUserDraft, schemaUserDraft),
@@ -4338,9 +4351,12 @@ export default function ChartSnapshotsPage() {
           autoEntity?.kind === "trade" &&
           autoEntity?.id
         ) {
-          navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(autoEntity.id)}`), {
-            replace: true,
-          });
+          navigate(
+            withCurrentHash(`/ai/trade/${encodeURIComponent(autoEntity.id)}`),
+            {
+              replace: true,
+            },
+          );
         }
       }
       setAnalysisRaw(raw);
@@ -5088,9 +5104,12 @@ export default function ChartSnapshotsPage() {
         createdEntity?.id &&
         isResponseRoute
       ) {
-        navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(createdEntity.id)}`), {
-          replace: true,
-        });
+        navigate(
+          withCurrentHash(`/ai/trade/${encodeURIComponent(createdEntity.id)}`),
+          {
+            replace: true,
+          },
+        );
         return;
       }
       const msg =
@@ -5364,18 +5383,27 @@ export default function ChartSnapshotsPage() {
     try {
       const out = await api.getSettings();
       const settings = Array.isArray(out?.settings) ? out.settings : [];
-      const watchlistSetting = settings.find(
-        (s) => s.type === "trade" && s.name === "WATCHLIST",
+      const nextSymbolGroups = normalizeSymbolGroupsData(
+        settings.find(
+          (item) => item.type === "symbol_groups" && item.name === "default",
+        )?.data || {},
       );
-      const symbols = Array.isArray(watchlistSetting?.data?.symbols)
-        ? watchlistSetting.data.symbols
-        : [];
+      const watchlistGroup = getWatchlistGroup(nextSymbolGroups);
       const persisted = [
-        ...new Set(symbols.map(normalizeWatchSymbol).filter(Boolean)),
+        ...new Set(
+          (watchlistGroup?.symbols || [])
+            .map(normalizeWatchSymbol)
+            .filter(Boolean),
+        ),
       ];
+      setSymbolGroupsData(nextSymbolGroups);
+      setCustomSymbolGroups(getCustomSymbolGroups(nextSymbolGroups));
       setWatchlist(persisted);
     } catch (err) {
       console.warn("[watchlist] Load failed, using empty list:", err.message);
+      const emptyGroups = normalizeSymbolGroupsData({ groups: [] });
+      setSymbolGroupsData(emptyGroups);
+      setCustomSymbolGroups(getCustomSymbolGroups(emptyGroups));
       setWatchlist([]);
     }
   };
@@ -5410,11 +5438,19 @@ export default function ChartSnapshotsPage() {
 
   const saveWatchlistToDb = async (nextList) => {
     try {
-      await api.upsertSetting({
-        type: "trade",
-        name: "WATCHLIST",
-        data: { symbols: nextList },
+      const nextData = normalizeSymbolGroupsData({
+        ...symbolGroupsData,
+        groups: (symbolGroupsData.groups || []).map((group) =>
+          group.id === "watchlist" ? { ...group, symbols: nextList } : group,
+        ),
       });
+      await api.upsertSetting({
+        type: "symbol_groups",
+        name: "default",
+        data: nextData,
+      });
+      setSymbolGroupsData(nextData);
+      setCustomSymbolGroups(getCustomSymbolGroups(nextData));
     } catch (e) {
       console.error("[watchlist] Save failed:", e.message);
       throw e;
@@ -6139,7 +6175,9 @@ export default function ChartSnapshotsPage() {
       }
       setSelectedSymbols([sym]);
       setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
-      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(sym)}`), { replace: false });
+      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(sym)}`), {
+        replace: false,
+      });
     },
     [cfg.symbol, paramSymbol, tvSymbol, navigate, withCurrentHash],
   );
@@ -6393,6 +6431,8 @@ export default function ChartSnapshotsPage() {
 
   useEffect(() => {
     if (!liteChartRef.current || responseTab !== "chart") return;
+    const theme = getUiThemeColors();
+    const isLight = theme.mode === "light";
     const snapshot = normalizeSnapshotBars(currentBarsSnapshot, timeframe);
     const bars = Array.isArray(snapshot?.bars) ? snapshot.bars : [];
     if (!bars.length) return;
@@ -6405,13 +6445,31 @@ export default function ChartSnapshotsPage() {
     const chart = createChart(liteChartRef.current, {
       width: Math.max(320, liteChartRef.current.clientWidth || 640),
       height: 320,
-      layout: { background: { color: "transparent" }, textColor: "#b8c4de" },
-      grid: {
-        vertLines: { color: "rgba(255,255,255,0.08)" },
-        horzLines: { color: "rgba(255,255,255,0.08)" },
+      layout: {
+        background: {
+          color: isLight ? theme.surface : "transparent",
+        },
+        textColor: isLight ? theme.text : "#b8c4de",
       },
-      rightPriceScale: { borderColor: "rgba(255,255,255,0.1)" },
-      timeScale: { borderColor: "rgba(255,255,255,0.1)", timeVisible: true },
+      grid: {
+        vertLines: {
+          color: isLight ? "rgba(148,163,184,0.18)" : "rgba(255,255,255,0.08)",
+        },
+        horzLines: {
+          color: isLight ? "rgba(148,163,184,0.18)" : "rgba(255,255,255,0.08)",
+        },
+      },
+      rightPriceScale: {
+        borderColor: isLight
+          ? "rgba(148,163,184,0.28)"
+          : "rgba(255,255,255,0.1)",
+      },
+      timeScale: {
+        borderColor: isLight
+          ? "rgba(148,163,184,0.28)"
+          : "rgba(255,255,255,0.1)",
+        timeVisible: true,
+      },
       crosshair: { mode: 1 },
     });
     liteChartApiRef.current = chart;
@@ -6499,6 +6557,7 @@ export default function ChartSnapshotsPage() {
     position.entry,
     position.sl,
     position.tp,
+    getUiThemeColors().mode,
   ]);
 
   // Computed symbol sets for filter tabs
@@ -6507,12 +6566,27 @@ export default function ChartSnapshotsPage() {
     return [...new Set(fromMeta.map(normalizeWatchSymbol).filter(Boolean))];
   }, [watchlist]);
 
+  const customGroupTabOptions = useMemo(
+    () =>
+      customSymbolGroups.map((group) => ({
+        key: `GROUP:${group.id}`,
+        label: group.name,
+        symbols: [
+          ...new Set(
+            (group.symbols || []).map(normalizeWatchSymbol).filter(Boolean),
+          ),
+        ],
+      })),
+    [customSymbolGroups],
+  );
+
   const allSymbols = useMemo(() => {
     return [
       ...new Set(
         [
           ...DEFAULT_WATCHLIST,
           ...favoriteSymbols,
+          ...customGroupTabOptions.flatMap((group) => group.symbols),
           ...DEFAULT_CRYPTO_SYMBOLS,
           ...DEFAULT_FOREX_SYMBOLS,
           ...DEFAULT_COMMODITY_SYMBOLS,
@@ -6522,7 +6596,7 @@ export default function ChartSnapshotsPage() {
           .filter(Boolean),
       ),
     ].sort();
-  }, [favoriteSymbols]);
+  }, [favoriteSymbols, customGroupTabOptions]);
 
   const cryptoSymbols = useMemo(() => {
     const fromAll = allSymbols.filter((s) => classifySymbol(s) === "crypto");
@@ -6576,10 +6650,24 @@ export default function ChartSnapshotsPage() {
     return DEFAULT_SMT_SYMBOLS;
   }, []);
 
+  useEffect(() => {
+    if (
+      symbolFilterTab.startsWith("GROUP:") &&
+      !customGroupTabOptions.some((group) => group.key === symbolFilterTab)
+    ) {
+      setSymbolFilterTab("WATCHLIST");
+    }
+  }, [symbolFilterTab, customGroupTabOptions]);
+
   const symbolsByTab = useMemo(() => {
+    if (symbolFilterTab === "WATCHLIST") return favoriteSymbols;
+    if (symbolFilterTab.startsWith("GROUP:")) {
+      return (
+        customGroupTabOptions.find((group) => group.key === symbolFilterTab)
+          ?.symbols || []
+      );
+    }
     switch (symbolFilterTab) {
-      case "FAVOURITE":
-        return favoriteSymbols;
       case "PENDING":
         return tradeSymbolsByStatus.pending;
       case "FILLED":
@@ -6608,6 +6696,7 @@ export default function ChartSnapshotsPage() {
   }, [
     symbolFilterTab,
     favoriteSymbols,
+    customGroupTabOptions,
     allSymbols,
     cryptoSymbols,
     forexSymbols,
@@ -6667,7 +6756,12 @@ export default function ChartSnapshotsPage() {
                   height: 34,
                 }}
               >
-                <option value="FAVOURITE">Watchlist</option>
+                <option value="WATCHLIST">Watchlist</option>
+                {customGroupTabOptions.map((group) => (
+                  <option key={group.key} value={group.key}>
+                    {group.label}
+                  </option>
+                ))}
                 <option value="ALL">All</option>
                 <option value="PENDING">Pending</option>
                 <option value="FILLED">Filled</option>
@@ -6898,18 +6992,18 @@ export default function ChartSnapshotsPage() {
                                         gap: 2,
                                       }}
                                       draggable={
-                                        symbolFilterTab === "FAVOURITE"
+                                        symbolFilterTab === "WATCHLIST"
                                       }
                                       onDragStart={() => {
                                         dragWatchSymbolRef.current = s;
                                       }}
                                       onDragOver={(e) => {
-                                        if (symbolFilterTab !== "FAVOURITE")
+                                        if (symbolFilterTab !== "WATCHLIST")
                                           return;
                                         e.preventDefault();
                                       }}
                                       onDrop={(e) => {
-                                        if (symbolFilterTab !== "FAVOURITE")
+                                        if (symbolFilterTab !== "WATCHLIST")
                                           return;
                                         e.preventDefault();
                                         const from = dragWatchSymbolRef.current;
@@ -7053,122 +7147,6 @@ export default function ChartSnapshotsPage() {
                     className="minor-text"
                     style={{ padding: "2px 0", fontWeight: 700, fontSize: 11 }}
                   >
-                    Pending ({tradeRowsByStatus.pending.length})
-                  </div>
-                  <div
-                    className="snapshot-activity-list-v4"
-                    style={{ overflow: "visible", maxHeight: "none" }}
-                  >
-                    {tradeRowsByStatus.pending.length === 0 ? (
-                      <div className="minor-text">No pending trades.</div>
-                    ) : (
-                      tradeRowsByStatus.pending.map((t) => {
-                        const sideRaw = String(
-                          t?.action || t?.side || "",
-                        ).toUpperCase();
-                        const isBuy = sideRaw.includes("BUY");
-                        const isSell = sideRaw.includes("SELL");
-                        const sideColor = isBuy
-                          ? "#24e38f"
-                          : isSell
-                            ? "#ff5a5a"
-                            : "#c8d5e8";
-                        const entryNum = Number(t?.entry);
-                        const tpNum = Number(t?.tp);
-                        const entryTxt = Number.isFinite(entryNum)
-                          ? entryNum.toFixed(
-                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
-                        const tpTxt = Number.isFinite(tpNum)
-                          ? tpNum.toFixed(
-                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
-                            )
-                          : "-";
-                        const ref = t?.sid || t?.id || "";
-                        return (
-                          <article
-                            key={`pending-${ref || `${t?.symbol}_${t?.created_at}`}`}
-                            className="snapshot-activity-card-v4 compact"
-                            style={{
-                              cursor: "pointer",
-                              padding: "4px 6px",
-                              marginBottom: 3,
-                              borderRadius: 6,
-                              fontSize: 10,
-                              border:
-                                isTradeRoute &&
-                                String(ref || "").trim() ===
-                                  String(tradeRouteParam || "").trim()
-                                  ? "1px solid #22d3ee"
-                                  : undefined,
-                              boxShadow:
-                                isTradeRoute &&
-                                String(ref || "").trim() ===
-                                  String(tradeRouteParam || "").trim()
-                                  ? "0 0 0 1px rgba(34,211,238,0.2) inset"
-                                  : undefined,
-                            }}
-                            onClick={() => {
-                              if (ref)
-                                navigate(
-                                  withCurrentHash(`/ai/trade/${encodeURIComponent(ref)}`),
-                                );
-                            }}
-                          >
-                            <div
-                              className="snapshot-activity-row-top"
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  color: sideColor,
-                                  letterSpacing: 0.2,
-                                  fontWeight: 700,
-                                  fontSize: 10,
-                                }}
-                              >
-                                {normalizeSignalSymbol(String(t?.symbol || ""))}
-                              </span>
-                              <span />
-                            </div>
-                            <div
-                              className="snapshot-activity-row-mid"
-                              style={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                marginTop: 2,
-                              }}
-                            >
-                              <span
-                                style={{ color: "var(--muted)", fontSize: 9 }}
-                              >
-                                {entryTxt} → {tpTxt}
-                              </span>
-                              <span
-                                style={{ color: "var(--muted)", fontSize: 9 }}
-                              >
-                                {Number.isFinite(Number(t?.rr_planned ?? t?.rr))
-                                  ? `${Number(t?.rr_planned ?? t?.rr).toFixed(1)}R`
-                                  : ""}
-                              </span>
-                            </div>
-                          </article>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <div
-                    className="minor-text"
-                    style={{ padding: "2px 0", fontWeight: 700, fontSize: 11 }}
-                  >
                     Filled ({tradeRowsByStatus.filled.length})
                   </div>
                   <div
@@ -7246,7 +7224,9 @@ export default function ChartSnapshotsPage() {
                             onClick={() => {
                               if (ref)
                                 navigate(
-                                  withCurrentHash(`/ai/trade/${encodeURIComponent(ref)}`),
+                                  withCurrentHash(
+                                    `/ai/trade/${encodeURIComponent(ref)}`,
+                                  ),
                                 );
                             }}
                           >
@@ -7324,6 +7304,123 @@ export default function ChartSnapshotsPage() {
                                 style={{ color: "var(--muted)", fontSize: 9 }}
                               >
                                 {hasPnl ? rrText : ""}
+                              </span>
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div
+                    className="minor-text"
+                    style={{ padding: "2px 0", fontWeight: 700, fontSize: 11 }}
+                  >
+                    Pending ({tradeRowsByStatus.pending.length})
+                  </div>
+                  <div
+                    className="snapshot-activity-list-v4"
+                    style={{ overflow: "visible", maxHeight: "none" }}
+                  >
+                    {tradeRowsByStatus.pending.length === 0 ? (
+                      <div className="minor-text">No pending trades.</div>
+                    ) : (
+                      tradeRowsByStatus.pending.map((t) => {
+                        const sideRaw = String(
+                          t?.action || t?.side || "",
+                        ).toUpperCase();
+                        const isBuy = sideRaw.includes("BUY");
+                        const isSell = sideRaw.includes("SELL");
+                        const sideColor = isBuy
+                          ? "#24e38f"
+                          : isSell
+                            ? "#ff5a5a"
+                            : "#c8d5e8";
+                        const entryNum = Number(t?.entry);
+                        const tpNum = Number(t?.tp);
+                        const entryTxt = Number.isFinite(entryNum)
+                          ? entryNum.toFixed(
+                              entryNum >= 100 ? 1 : entryNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const tpTxt = Number.isFinite(tpNum)
+                          ? tpNum.toFixed(
+                              tpNum >= 100 ? 1 : tpNum >= 10 ? 2 : 4,
+                            )
+                          : "-";
+                        const ref = t?.sid || t?.id || "";
+                        return (
+                          <article
+                            key={`pending-${ref || `${t?.symbol}_${t?.created_at}`}`}
+                            className="snapshot-activity-card-v4 compact"
+                            style={{
+                              cursor: "pointer",
+                              padding: "4px 6px",
+                              marginBottom: 3,
+                              borderRadius: 6,
+                              fontSize: 10,
+                              border:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "1px solid #22d3ee"
+                                  : undefined,
+                              boxShadow:
+                                isTradeRoute &&
+                                String(ref || "").trim() ===
+                                  String(tradeRouteParam || "").trim()
+                                  ? "0 0 0 1px rgba(34,211,238,0.2) inset"
+                                  : undefined,
+                            }}
+                            onClick={() => {
+                              if (ref)
+                                navigate(
+                                  withCurrentHash(
+                                    `/ai/trade/${encodeURIComponent(ref)}`,
+                                  ),
+                                );
+                            }}
+                          >
+                            <div
+                              className="snapshot-activity-row-top"
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color: sideColor,
+                                  letterSpacing: 0.2,
+                                  fontWeight: 700,
+                                  fontSize: 10,
+                                }}
+                              >
+                                {normalizeSignalSymbol(String(t?.symbol || ""))}
+                              </span>
+                              <span />
+                            </div>
+                            <div
+                              className="snapshot-activity-row-mid"
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                marginTop: 2,
+                              }}
+                            >
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {entryTxt} → {tpTxt}
+                              </span>
+                              <span
+                                style={{ color: "var(--muted)", fontSize: 9 }}
+                              >
+                                {Number.isFinite(Number(t?.rr_planned ?? t?.rr))
+                                  ? `${Number(t?.rr_planned ?? t?.rr).toFixed(1)}R`
+                                  : ""}
                               </span>
                             </div>
                           </article>
@@ -7634,7 +7731,7 @@ export default function ChartSnapshotsPage() {
         {!hasAnalyzeResponse && isAnalyzeRoute && (
           <div className="fadeIn">
             <div
-              className="Analyze-component"
+              className="Analyze-component analyze-shell"
               style={{
                 marginBottom: 8,
                 display: "flex",
@@ -7643,7 +7740,7 @@ export default function ChartSnapshotsPage() {
               }}
             >
               <div
-                className=""
+                className="analyze-input-panel"
                 style={{
                   padding: 8,
                   display: "flex",
@@ -7655,6 +7752,7 @@ export default function ChartSnapshotsPage() {
                 }}
               >
                 <div
+                  className="analyze-attach-grid"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr 1fr",
@@ -7769,6 +7867,7 @@ export default function ChartSnapshotsPage() {
                   </div>
                 </div>
                 <div
+                  className="analyze-controls-grid"
                   style={{
                     display: "grid",
                     gridTemplateColumns:
@@ -8032,6 +8131,7 @@ export default function ChartSnapshotsPage() {
                                       cfg.lookbackBars || 300,
                                     )}
                                     showPerCardLayoutControls={false}
+                                    fillViewportForFourCharts={true}
                                     analyzeLabel={
                                       normalizeWatchSymbol(sym) ===
                                       normalizeWatchSymbol(cfg.symbol)
@@ -8082,6 +8182,7 @@ export default function ChartSnapshotsPage() {
                             initialGridCols={effectiveGridCols}
                             initialBarsCount={Number(cfg.lookbackBars || 300)}
                             showPerCardLayoutControls={false}
+                            fillViewportForFourCharts={true}
                             analyzeLabel={
                               normalizeWatchSymbol(sym) ===
                               normalizeWatchSymbol(cfg.symbol)
@@ -8203,7 +8304,9 @@ export default function ChartSnapshotsPage() {
               }
               onGoTrade={() =>
                 navigate(
-                  withCurrentHash(`/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`),
+                  withCurrentHash(
+                    `/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`,
+                  ),
                 )
               }
               onGoAnalyze={() =>
@@ -8601,7 +8704,11 @@ export default function ChartSnapshotsPage() {
                   onAddTrade: (pos, planId = "main") => {
                     const ent = addedEntities[planId];
                     if (ent?.kind === "trade" && ent?.id) {
-                      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(ent.id)}`));
+                      navigate(
+                        withCurrentHash(
+                          `/ai/trade/${encodeURIComponent(ent.id)}`,
+                        ),
+                      );
                       return;
                     }
                     addBySelection("trade", pos, planId);
@@ -8657,7 +8764,9 @@ export default function ChartSnapshotsPage() {
               className="primary-button"
               onClick={() =>
                 navigate(
-                  withCurrentHash(`/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`),
+                  withCurrentHash(
+                    `/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`,
+                  ),
                 )
               }
             >

@@ -8,7 +8,7 @@ Operational helper scripts for command-approval warmups and execution hygiene.
 Warm up approval prefixes for overnight runs.
 
 ### `cleanup_stale_trade_active_dirs.sh`
-Move stale bare SID folders from `data/default/trade_active` to `data/default/trade_closed`, but only when trade status is `CLOSED`, `CANCELLED`, or `REJECTED`.
+Move stale bare SID folders from `data/users/default/trade_active` to `data/users/default/trade_closed`, but only when trade status is `CLOSED`, `CANCELLED`, or `REJECTED`.
 
 ## How To Run
 

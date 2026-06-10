@@ -2,7 +2,9 @@
 
 const crypto = require("crypto");
 
-// Configuration for snapshot strategy - can be overridden by request body merge_snapshots
+// Snapshot batch strategy: always generate merged MASTER snapshots.
+// Per-TF batch generation is retired; only the dedicated single-snapshot
+// context-file path still captures one TF at a time when explicitly needed.
 const ALL_SNAPSHOTS_IN_1_FILE_DEFAULT = true;
 const http = require("http");
 const https = require("https");
@@ -13,6 +15,32 @@ const { AsyncLocalStorage } = require("async_hooks");
 const dbQueries = require("../db/queries");
 const settingsStore = require("./settingsStore");
 const tradeArtifactSync = require("./tradeArtifactSync");
+const {
+  SYSTEM_SYMBOL_GROUP_MAP,
+  normalizeSymbolGroupsData,
+  normalizeCronSymbolGroupValue,
+  resolveSymbolsGroupSymbols,
+  RESERVED_GROUP_IDS,
+} = require("./symbolGroups");
+const {
+  normalizeNewsConfig,
+  buildTrackedNewsEvent,
+  buildTrackedNewsEvents,
+  collectEffectiveSymbolsForPhase,
+  getNewsEventPhase,
+  hydrateNewsEventTiming,
+} = require("./newsService");
+const {
+  parseObjectLogLine,
+  buildObjectLogLine,
+  resolveObjectLogFilePath,
+} = require("./objectLogService");
+const {
+  DATA_ROOT: USER_OBJECT_DATA_ROOT,
+  safePathPart: safeObjectPathPart,
+  objectTypeDir,
+  objectLogsDir,
+} = require("./objectStore");
 const {
   createUserObjectStore,
   parseJsonField: parseUserObjectJsonField,
@@ -399,71 +427,473 @@ function discoverAllMarketSymbols() {
     .sort();
 }
 
-// Resolve symbols_group to actual symbol list
-const SYMBOLS_GROUP_MAP = {
-  crypto: [
-    "BTCUSD",
-    "ETHUSD",
-    "XRPUSD",
-    "SOLUSD",
-    "DOGEUSD",
-    "ADAUSD",
-    "LTCUSD",
-    "BNBUSD",
-    "DOTUSD",
-    "MATICUSD",
-    "ATOMUSD",
-    "ETCUSD",
-    "NEARUSD",
-  ],
-  forex: [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "NZDUSD",
-    "USDCAD",
-    "USDCHF",
-    "GBPJPY",
-    "EURJPY",
-    "EURGBP",
-    "EURAUD",
-    "EURCAD",
-    "GBPAUD",
-    "GBPCAD",
-    "AUDCAD",
-    "AUDCHF",
-    "AUDJPY",
-    "AUDNZD",
-    "CADJPY",
-    "NZDCAD",
-    "EURSGD",
-    "USDSGD",
-  ],
-  indices: ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225", "DE40"],
-  metals: [
-    "XAUUSD",
-    "XAGUSD",
-    "XPTUSD",
-    "XPDUSD",
-    "XAUEUR",
-    "XAUGBP",
-    "XAUJPY",
-    "XTIUSD",
-  ],
-};
+async function ensureUserSymbolGroups(userId) {
+  const safeUserId = String(userId || CFG.mt5DefaultUserId || "default").trim();
+  const existing = await settingsStore.getUserSettingData(
+    safeUserId,
+    "symbol_groups",
+    "default",
+  );
+  if (
+    existing &&
+    Array.isArray(existing.groups) &&
+    existing.groups.length > 0
+  ) {
+    const normalized = normalizeSymbolGroupsData(existing);
+    if (JSON.stringify(normalized) !== JSON.stringify(existing)) {
+      await settingsStore.upsertUserSetting(
+        safeUserId,
+        "symbol_groups",
+        "default",
+        normalized,
+        "ACTIVE",
+      );
+    }
+    return normalized;
+  }
+
+  const legacyWatchlist = await settingsStore.getUserSettingData(
+    safeUserId,
+    "trade",
+    "WATCHLIST",
+  );
+  const migrated = normalizeSymbolGroupsData({
+    groups: [
+      {
+        id: "watchlist",
+        name: "Watchlist",
+        symbols: Array.isArray(legacyWatchlist?.symbols)
+          ? legacyWatchlist.symbols
+          : [],
+      },
+    ],
+  });
+  await settingsStore.upsertUserSetting(
+    safeUserId,
+    "symbol_groups",
+    "default",
+    migrated,
+    "ACTIVE",
+  );
+  await settingsStore
+    .deleteUserSetting(safeUserId, "trade", "WATCHLIST")
+    .catch(() => {});
+  return migrated;
+}
+
+async function syncReservedSymbolGroupSymbols(
+  userId,
+  groupId,
+  groupName,
+  symbols = [],
+  options = {},
+) {
+  const mergeIntoExisting = options?.mergeIntoExisting === true;
+  const normalizedSymbols = [
+    ...new Set(
+      (Array.isArray(symbols) ? symbols : [])
+        .map((value) =>
+          String(value || "")
+            .trim()
+            .toUpperCase(),
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const current = await ensureUserSymbolGroups(userId);
+  const next = normalizeSymbolGroupsData({
+    ...current,
+    groups: (current.groups || []).map((group) =>
+      group.id === groupId
+        ? {
+            ...group,
+            name: groupName,
+            symbols: mergeIntoExisting
+              ? [
+                  ...(Array.isArray(group.symbols) ? group.symbols : []),
+                  ...normalizedSymbols,
+                ]
+              : normalizedSymbols,
+          }
+        : group,
+    ),
+  });
+  if (JSON.stringify(next) === JSON.stringify(current)) return next;
+  await settingsStore.upsertUserSetting(
+    userId,
+    "symbol_groups",
+    "default",
+    next,
+    "ACTIVE",
+  );
+  await StateRepo.del("USER_SETTINGS", userId).catch(() => {});
+  return next;
+}
+
+async function pushDynamicSymbolsToWatchlists(symbols = []) {
+  const rows = await settingsStore
+    .listUserSettingsByType(null, "symbol_groups")
+    .catch(() => []);
+  const userIds = new Set([CFG.mt5DefaultUserId]);
+  for (const row of rows || []) {
+    const userId = String(row?.user_id || row?.userId || "").trim();
+    if (userId) userIds.add(userId);
+  }
+  for (const userId of userIds) {
+    await syncReservedSymbolGroupSymbols(
+      userId,
+      "watchlist",
+      "Watchlist",
+      symbols,
+      { mergeIntoExisting: true },
+    ).catch((error) => {
+      console.warn(
+        `[news] Failed to push dynamic symbols into Watchlist for ${userId}:`,
+        error?.message || error,
+      );
+    });
+  }
+}
+
+function roundNumber(value, digits = 6) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const factor = 10 ** digits;
+  return Math.round(num * factor) / factor;
+}
+
+function average(values = []) {
+  const nums = values.map(Number).filter(Number.isFinite);
+  if (!nums.length) return null;
+  return nums.reduce((sum, value) => sum + value, 0) / nums.length;
+}
+
+function scoreDynamicSymbolFromBars(symbol, bars = [], timeframe = "15m") {
+  const series = Array.isArray(bars) ? bars.filter(Boolean) : [];
+  if (series.length < 25) return null;
+  const latest = series[series.length - 1];
+  const previous = series[series.length - 2];
+  const history = series.slice(-21, -1);
+  if (!latest || !previous || history.length < 20) return null;
+
+  const latestRange = Math.abs(Number(latest.high) - Number(latest.low));
+  const latestBody = Math.abs(Number(latest.close) - Number(latest.open));
+  const prevClose = Number(previous.close);
+  const latestClose = Number(latest.close);
+  if (
+    !Number.isFinite(latestRange) ||
+    !Number.isFinite(latestBody) ||
+    !Number.isFinite(prevClose) ||
+    !Number.isFinite(latestClose)
+  ) {
+    return null;
+  }
+
+  const avgRange = average(
+    history.map((bar) => Math.abs(Number(bar.high) - Number(bar.low))),
+  );
+  const avgBody = average(
+    history.map((bar) => Math.abs(Number(bar.close) - Number(bar.open))),
+  );
+  const priorHigh = Math.max(...history.map((bar) => Number(bar.high)));
+  const priorLow = Math.min(...history.map((bar) => Number(bar.low)));
+  if (
+    !Number.isFinite(avgRange) ||
+    !Number.isFinite(avgBody) ||
+    !Number.isFinite(priorHigh) ||
+    !Number.isFinite(priorLow) ||
+    avgRange <= 0
+  ) {
+    return null;
+  }
+
+  const moveFromPrev = Math.abs(latestClose - prevClose);
+  const breakoutUp = latestClose > priorHigh;
+  const breakoutDown = latestClose < priorLow;
+  const nearHigh = Math.abs(priorHigh - latestClose) <= avgRange * 0.35;
+  const nearLow = Math.abs(latestClose - priorLow) <= avgRange * 0.35;
+  const bigMove = moveFromPrev >= avgRange * 1.25;
+  const expansion =
+    latestRange >= avgRange * 1.35 || latestBody >= avgBody * 1.5;
+
+  let score = 0;
+  const reasons = [];
+  if (breakoutUp || breakoutDown) {
+    score += 5;
+    reasons.push(breakoutUp ? "breakout_up" : "breakout_down");
+  }
+  if (bigMove) {
+    score += 3;
+    reasons.push("big_move");
+  }
+  if (expansion) {
+    score += 2;
+    reasons.push("range_expansion");
+  }
+  if (nearHigh || nearLow) {
+    score += 2;
+    reasons.push(nearHigh ? "near_range_high" : "near_range_low");
+  }
+
+  if (!reasons.length) return null;
+  return {
+    symbol,
+    timeframe,
+    score,
+    reasons,
+    latest_close: roundNumber(latestClose),
+    prior_high: roundNumber(priorHigh),
+    prior_low: roundNumber(priorLow),
+    avg_range: roundNumber(avgRange),
+    latest_range: roundNumber(latestRange),
+    moved_from_prev: roundNumber(moveFromPrev),
+  };
+}
+
+function buildMarketDynamicCandidates(limit = 12) {
+  const symbols = discoverAllMarketSymbols();
+  const candidates = [];
+  for (const symbol of symbols) {
+    const bars15 = readBrokerBarsFromCsv(symbol, "15m", 40);
+    const bars60 = readBrokerBarsFromCsv(symbol, "1h", 40);
+    const score15 = scoreDynamicSymbolFromBars(symbol, bars15, "15m");
+    const score60 = scoreDynamicSymbolFromBars(symbol, bars60, "1h");
+    const best = !score15
+      ? score60
+      : !score60
+        ? score15
+        : score60.score > score15.score
+          ? score60
+          : score15;
+    if (best) candidates.push(best);
+  }
+
+  return candidates
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return String(a.symbol).localeCompare(String(b.symbol));
+    })
+    .slice(0, Math.max(1, limit));
+}
+
+function readJsonUrlWithCurl(url) {
+  const out = execFileSync(
+    "curl",
+    [
+      "-sS",
+      "-L",
+      "--max-time",
+      "15",
+      "-H",
+      "accept: application/json,text/plain,*/*",
+      "-A",
+      "Mozilla/5.0",
+      url,
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  return JSON.parse(out);
+}
+
+async function fetchEconomicCalendarFeed(url) {
+  let lastError = null;
+
+  try {
+    const resp = await fetch(url, {
+      timeout: 10000,
+      headers: {
+        accept: "application/json,text/plain,*/*",
+        "user-agent": "Mozilla/5.0",
+      },
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`status ${resp.status} ${resp.statusText}`.trim());
+    }
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) {
+      throw new Error("response was not a JSON array");
+    }
+    return parsed;
+  } catch (error) {
+    lastError = error;
+  }
+
+  try {
+    return readJsonUrlWithCurl(url);
+  } catch (error) {
+    const curlMessage = error?.message || error;
+    const fetchMessage =
+      lastError?.message || lastError || "unknown fetch error";
+    throw new Error(
+      `fetch failed (${fetchMessage}); curl failed (${curlMessage})`,
+    );
+  }
+}
+
+async function refreshDynamicSymbolGroup(events = []) {
+  const now = Date.now();
+  const newsCandidates = (Array.isArray(events) ? events : [])
+    .filter((event) => {
+      const phase = getNewsEventPhase(event, now);
+      const minutesUntilStart = Number(event?.minutes_until_start);
+      return (
+        phase === "before" ||
+        phase === "during" ||
+        (phase === "upcoming" &&
+          Number.isFinite(minutesUntilStart) &&
+          minutesUntilStart <= 48 * 60)
+      );
+    })
+    .map((event) => ({
+      source: "news",
+      news_type: event.news_type,
+      symbol_count: Array.isArray(event.effective_symbols)
+        ? event.effective_symbols.length
+        : 0,
+      symbols: Array.isArray(event.effective_symbols)
+        ? event.effective_symbols
+        : [],
+      title: event.title,
+      phase: getNewsEventPhase(event, now),
+      start_at: event.start_at,
+      minutes_until_start: Number(event.minutes_until_start) || null,
+      score: Number(event.score) || 0,
+    }));
+
+  const marketCandidates = buildMarketDynamicCandidates(12);
+  const mergedSymbols = new Set();
+  for (const item of newsCandidates) {
+    for (const symbol of item.symbols || []) {
+      const normalized = normalizeMarketDataSymbol(symbol);
+      if (normalized) mergedSymbols.add(normalized);
+    }
+  }
+  for (const item of marketCandidates) {
+    const normalized = normalizeMarketDataSymbol(item.symbol);
+    if (normalized) mergedSymbols.add(normalized);
+  }
+
+  const payload = {
+    updated_at: new Date().toISOString(),
+    sources: {
+      news: newsCandidates,
+      market: marketCandidates,
+    },
+    symbols: [...mergedSymbols].sort((a, b) => a.localeCompare(b)),
+  };
+  await StateRepo.set("DYNAMIC_SYMBOL_GROUP", "watchlist", payload).catch(
+    () => {},
+  );
+  await pushDynamicSymbolsToWatchlists(payload.symbols);
+  return payload;
+}
+
+function parseCronScheduleSpec(schedule) {
+  const raw = String(schedule || "").trim();
+  if (!raw) {
+    return { mode: "none", raw: "", normalized: "", intervalSeconds: 0 };
+  }
+
+  const everyMatch = raw.match(/^every\s+(\d+)(s|m|h|d)$/i);
+  if (everyMatch) {
+    const value = parseInt(everyMatch[1], 10);
+    const unit = everyMatch[2].toLowerCase();
+    if (!Number.isFinite(value) || value <= 0) {
+      return { mode: "invalid", raw, normalized: raw, intervalSeconds: 0 };
+    }
+    let intervalSeconds = value;
+    if (unit === "m") intervalSeconds = value * 60;
+    else if (unit === "h") intervalSeconds = value * 3600;
+    else if (unit === "d") intervalSeconds = value * 86400;
+    return {
+      mode: "interval",
+      raw,
+      normalized: `every ${value}${unit}`,
+      intervalSeconds,
+    };
+  }
+
+  const atMatch = raw.match(/^at (\d{1,2}):(\d{2})\s+on\s+(.+)$/i);
+  if (atMatch) {
+    const hour = parseInt(atMatch[1], 10);
+    const minute = parseInt(atMatch[2], 10);
+    const days = atMatch[3]
+      .split(",")
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    if (
+      !Number.isFinite(hour) ||
+      !Number.isFinite(minute) ||
+      hour < 0 ||
+      hour > 23 ||
+      minute < 0 ||
+      minute > 59 ||
+      !days.length
+    ) {
+      return { mode: "invalid", raw, normalized: raw, intervalSeconds: 0 };
+    }
+    const normalizedDays = days
+      .map((d) => d.slice(0, 1).toUpperCase() + d.slice(1, 3).toLowerCase())
+      .join(",");
+    return {
+      mode: "event",
+      raw,
+      normalized: `at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} on ${normalizedDays}`,
+      intervalSeconds: 0,
+    };
+  }
+
+  return { mode: "invalid", raw, normalized: raw, intervalSeconds: 0 };
+}
+
+function normalizeCronSettingData(data = {}, options = {}) {
+  const base = data && typeof data === "object" ? { ...data } : {};
+  const defaultCadenceSeconds = Math.max(
+    1,
+    Number(options.defaultCadenceSeconds || 60) || 60,
+  );
+  const spec = parseCronScheduleSpec(base.schedule);
+  let cadenceSec = Number(base.cadence_seconds || 0);
+  if (!Number.isFinite(cadenceSec) || cadenceSec <= 0) {
+    const legacyMinutes = Number(base.cadence_minutes || 0);
+    if (Number.isFinite(legacyMinutes) && legacyMinutes > 0) {
+      cadenceSec = legacyMinutes * 60;
+    }
+  }
+  if (spec.mode === "interval") {
+    cadenceSec = spec.intervalSeconds;
+  }
+  if (!Number.isFinite(cadenceSec) || cadenceSec <= 0) {
+    cadenceSec = defaultCadenceSeconds;
+  }
+
+  const out = {
+    ...base,
+    cadence_seconds: cadenceSec,
+  };
+  if (spec.mode === "interval" || spec.mode === "event") {
+    out.schedule = spec.normalized;
+  } else if (spec.mode === "none") {
+    out.schedule = "";
+  } else {
+    out.schedule = String(base.schedule || "").trim();
+  }
+  return out;
+}
 
 // Parse cron schedule string and check if it should fire now.
 // Schedule formats:
-//   "every 5m" → interval-based (handled by cadence_seconds fallback)
+//   "every 5m" → interval-based
 //   "at 11:20 on Mon,Wed,Fri" → specific days + time
 function cronScheduleShouldRun(schedule, nowMs, lastRunMs) {
-  const s = String(schedule || "").trim();
-  if (!s) return false;
-
-  // Event mode: "at HH:MM on Day1,Day2,..."
-  const atMatch = s.match(/^at (\d{1,2}):(\d{2})\s+on\s+(.+)$/i);
-  if (atMatch) {
+  const spec = parseCronScheduleSpec(schedule);
+  if (spec.mode === "event") {
+    const atMatch = spec.normalized.match(/^at (\d{2}):(\d{2})\s+on\s+(.+)$/i);
+    if (!atMatch) return false;
     const targetHour = parseInt(atMatch[1], 10);
     const targetMin = parseInt(atMatch[2], 10);
     const targetDays = atMatch[3].split(",").map((d) => d.trim().toLowerCase());
@@ -474,32 +904,106 @@ function cronScheduleShouldRun(schedule, nowMs, lastRunMs) {
     const currentHour = now.getHours();
     const currentMin = now.getMinutes();
 
-    // Check day
     if (!targetDays.includes(currentDay)) return false;
 
-    // Check time: within the past minute (cron loop runs every 60s)
     const targetTotalMins = targetHour * 60 + targetMin;
     const currentTotalMins = currentHour * 60 + currentMin;
     if (currentTotalMins < targetTotalMins) return false;
     if (currentTotalMins - targetTotalMins > 1) return false;
 
-    // Don't re-run if already ran in the last 2 minutes
     if (lastRunMs && nowMs - lastRunMs < 120000) return false;
 
     return true;
   }
 
-  // Interval mode: handled by cadence_seconds fallback, not here
+  if (spec.mode === "interval") {
+    return nowMs - lastRunMs >= spec.intervalSeconds * 1000 - 5000;
+  }
+
   return false;
 }
 
-function resolveCronSymbols(data = {}) {
-  const group = String(data.symbols_group || "").trim();
-  if (group === "all") return discoverAllMarketSymbols();
-  if (group && SYMBOLS_GROUP_MAP[group]) {
-    const preset = SYMBOLS_GROUP_MAP[group];
-    const all = discoverAllMarketSymbols();
-    return preset.filter((s) => all.includes(s)); // only return symbols that exist in market_data
+function cronConfigShouldRunNow(
+  data = {},
+  nowMs,
+  lastRunMs,
+  defaultCadenceSeconds,
+) {
+  const normalized = normalizeCronSettingData(data, { defaultCadenceSeconds });
+  const spec = parseCronScheduleSpec(normalized.schedule);
+  if (spec.mode === "event" || spec.mode === "interval") {
+    return {
+      normalized,
+      shouldRun: cronScheduleShouldRun(normalized.schedule, nowMs, lastRunMs),
+    };
+  }
+  return {
+    normalized,
+    shouldRun:
+      nowMs - lastRunMs >=
+      Number(normalized.cadence_seconds || defaultCadenceSeconds || 60) * 1000 -
+        5000,
+  };
+}
+
+function readCronObjectLogTimestampMs(userId, cronName, fileBaseName = "") {
+  const safeUserId = String(userId || CFG.mt5DefaultUserId || "default").trim();
+  const safeCronName = String(cronName || "default").trim();
+  const safeFileBase = String(fileBaseName || "")
+    .trim()
+    .replace(/\.log$/i, "");
+  if (!safeUserId || !safeCronName || !safeFileBase) return 0;
+  try {
+    const fullPath = path.join(
+      objectLogsDir(safeUserId, "cron", safeCronName),
+      `${safeFileBase}.log`,
+    );
+    if (!fs.existsSync(fullPath)) return 0;
+    const stat = fs.statSync(fullPath);
+    const ms = Number(stat?.mtimeMs || 0);
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function extractCronAiFailureDetail(body = "") {
+  const raw = String(body || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    const detail =
+      parsed?.error ||
+      parsed?.message ||
+      parsed?.detail ||
+      parsed?.details ||
+      parsed?.reason ||
+      parsed?.cause ||
+      parsed?.auto_save_result?.error ||
+      parsed?.auto_save?.error ||
+      "";
+    if (detail && typeof detail === "object") {
+      return JSON.stringify(detail).slice(0, 300);
+    }
+    const text = String(detail || "").trim();
+    if (text) return text.slice(0, 300);
+  } catch {}
+  return raw.replace(/\s+/g, " ").slice(0, 300);
+}
+
+async function resolveCronSymbols(data = {}, userId = "default") {
+  const group = normalizeCronSymbolGroupValue(data.symbols_group || "");
+  const all = discoverAllMarketSymbols();
+  if (group) {
+    if (group === "system:all") return all;
+    if (group.startsWith("system:")) {
+      const preset = SYSTEM_SYMBOL_GROUP_MAP[group.slice(7)] || [];
+      return preset.filter((symbol) => all.includes(symbol));
+    }
+    const symbolGroups = await ensureUserSymbolGroups(userId);
+    return resolveSymbolsGroupSymbols(symbolGroups, group, all).filter(
+      (symbol) => all.includes(symbol),
+    );
   }
   // Fallback to stored symbols or auto-discover all
   const syms =
@@ -886,7 +1390,19 @@ async function ingestBrokerBarsPayload(payload = {}) {
   }
 
   if (inserted > 0) {
-    const pushAccountId = payload.account_id || "unknown";
+    const rawPushAccountId =
+      String(payload.account_id || "unknown").trim() || "unknown";
+    const canonicalAccount = await resolveCanonicalUserAccount(
+      CFG.mt5DefaultUserId,
+      rawPushAccountId,
+      payload,
+    );
+    const pushAccountId =
+      String(canonicalAccount?.account_id || rawPushAccountId).trim() ||
+      "unknown";
+    const pushUserId =
+      String(canonicalAccount?.user_id || CFG.mt5DefaultUserId).trim() ||
+      CFG.mt5DefaultUserId;
     await mt5Log(
       pushAccountId,
       "accounts",
@@ -896,8 +1412,11 @@ async function ingestBrokerBarsPayload(payload = {}) {
         bar_count: inserted,
         symbols: [...symbolsSeen],
         skipped_crypto: skippedCrypto,
+        ...(pushAccountId !== rawPushAccountId
+          ? { broker_account_id: rawPushAccountId }
+          : {}),
       },
-      CFG.mt5DefaultUserId,
+      pushUserId,
     );
   }
   if (skippedCrypto > 0) {
@@ -1026,7 +1545,7 @@ const EVENT_FILE_MAP = {
   UI_MANUAL_LOG: ["ui", "direct"],
 };
 
-function resolveLogFile(objectId, metadata) {
+function resolveLogFile(objectId, metadata, objectTable = "") {
   const ev = String(metadata.event || metadata.event_type || "").toUpperCase();
 
   // Extract source_id — check top-level first, then nested data (object or JSON string)
@@ -1077,13 +1596,30 @@ function resolveLogFile(objectId, metadata) {
     return folder + "/" + safeFile + ".log";
   }
   if (source === "accounts") {
-    // Accounts log under accounts/{source_name}/ to group by broker
-    const accSource = metaSource || "unknown";
-    const safeSrc = String(accSource).replace(/[^A-Za-z0-9_.-]/g, "_");
     const safeFile = String(idOrFile || "unknown").replace(
       /[^A-Za-z0-9_.-]/g,
       "_",
     );
+    const accountId = String(
+      metadata.account_id || metadata.object_id || objectId || "",
+    ).trim();
+    const targetUserId = String(
+      metadata.user_id || metadata.userId || "",
+    ).trim();
+    if (
+      (String(objectTable || "").toLowerCase() === "accounts" ||
+        String(objectTable || "").toLowerCase() === "user_accounts") &&
+      targetUserId &&
+      accountId
+    ) {
+      return path.join(
+        objectLogsDir(targetUserId, "user_accounts", accountId),
+        safeFile + ".log",
+      );
+    }
+    // Compatibility fallback: legacy global account logs grouped by source.
+    const accSource = metaSource || "unknown";
+    const safeSrc = String(accSource).replace(/[^A-Za-z0-9_.-]/g, "_");
     return "accounts/" + safeSrc + "/" + safeFile + ".log";
   }
 
@@ -1122,6 +1658,43 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
   const level = metadata.error
     ? "ERROR"
     : (metadata.level || "INFO").toUpperCase();
+
+  if (
+    String(objectTable || "")
+      .trim()
+      .toLowerCase() === "cron"
+  ) {
+    const cronName =
+      String(
+        metadata.cron_name || metadata.cron || objectId || "unknown",
+      ).trim() || "unknown";
+    const cronUserId =
+      String(
+        userId || metadata.user_id || metadata.userId || CFG.mt5DefaultUserId,
+      ).trim() || CFG.mt5DefaultUserId;
+    const line = buildObjectLogLine(cronUserId, "cron", cronName, metadata);
+    const fullPath = resolveObjectLogFilePath(
+      cronUserId,
+      "cron",
+      cronName,
+      metadata,
+    );
+    try {
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(fullPath, line);
+    } catch (_) {}
+    if (level === "ERROR") {
+      try {
+        const errPath = path.join(SERVER_LOG_DIR, "system", "error.log");
+        const errDir = path.dirname(errPath);
+        if (!fs.existsSync(errDir)) fs.mkdirSync(errDir, { recursive: true });
+        fs.appendFileSync(errPath, line);
+      } catch (_) {}
+    }
+    return;
+  }
+
   const iso = new Date().toISOString();
   // Message: use explicit message, or generate from event + source + object
   const autoMsg = (() => {
@@ -1154,7 +1727,14 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
   }
   const line =
     "[" + iso + "] [" + level + "] [" + evt + "] " + extra.join(", ") + "\n";
-  const logTarget = resolveLogFile(objectId, metadata);
+  const logTarget = resolveLogFile(
+    objectId,
+    {
+      ...(metadata && typeof metadata === "object" ? metadata : {}),
+      ...(userId ? { user_id: userId } : {}),
+    },
+    objectTable,
+  );
   if (!logTarget) return;
   // Support absolute paths (trades log to trade dir) or relative paths (under SERVER_LOG_DIR)
   const isAbs = path.isAbsolute(logTarget);
@@ -1175,65 +1755,490 @@ function fileLog(objectId, objectTable, metadata = {}, userId = null) {
   }
 }
 
+function walkLogFileLines(filePath, onLine) {
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      onLine(trimmed, filePath);
+    }
+  } catch {}
+}
+
+function listObjectLogUsers() {
+  if (!fs.existsSync(USER_OBJECT_DATA_ROOT)) return [];
+  try {
+    return fs
+      .readdirSync(USER_OBJECT_DATA_ROOT, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function listCronLogUsers() {
+  return listObjectLogUsers();
+}
+
+function listProviderLogUsers() {
+  return listObjectLogUsers();
+}
+
+function listCronCompatibilityLogFiles(cronName = "", requestedFile = "") {
+  const safeRequestedFile = requestedFile
+    ? `${safeObjectPathPart(String(requestedFile || "").replace(/\.log$/i, ""), "activity")}.log`
+    : "";
+  const out = [];
+
+  for (const userId of listCronLogUsers()) {
+    const cronLogsPath = objectLogsDir(userId, "cron", cronName || "default");
+    if (!fs.existsSync(cronLogsPath)) continue;
+    try {
+      if (safeRequestedFile) {
+        const candidate = path.join(cronLogsPath, safeRequestedFile);
+        if (fs.existsSync(candidate)) {
+          out.push({
+            path: candidate,
+            user_id: userId,
+            file: safeRequestedFile.replace(/\.log$/i, ""),
+            scope: "local",
+          });
+        }
+        continue;
+      }
+      for (const entry of fs.readdirSync(cronLogsPath, {
+        withFileTypes: true,
+      })) {
+        if (!entry.isFile() || !entry.name.endsWith(".log")) continue;
+        out.push({
+          path: path.join(cronLogsPath, entry.name),
+          user_id: userId,
+          file: entry.name.replace(/\.log$/i, ""),
+          scope: "local",
+        });
+      }
+    } catch {}
+  }
+
+  const safeCronName = safeObjectPathPart(cronName || "unknown", "unknown");
+  const legacyPath = path.join(SERVER_LOG_DIR, "CRON", `${safeCronName}.log`);
+  if (
+    fs.existsSync(legacyPath) &&
+    (!safeRequestedFile ||
+      ["legacy.log", "global.log"].includes(safeRequestedFile))
+  ) {
+    out.push({
+      path: legacyPath,
+      user_id: null,
+      file: "legacy",
+      scope: "legacy",
+    });
+  }
+
+  return out;
+}
+
+function listAllCronCompatibilityLogFiles() {
+  const out = [];
+  const seen = new Set();
+
+  for (const userId of listCronLogUsers()) {
+    const cronDir = objectTypeDir(userId, "cron");
+    if (!fs.existsSync(cronDir)) continue;
+    try {
+      for (const cronEntry of fs.readdirSync(cronDir, {
+        withFileTypes: true,
+      })) {
+        if (!cronEntry.isDirectory()) continue;
+        for (const match of listCronCompatibilityLogFiles(cronEntry.name)) {
+          const resolved = path.resolve(match.path);
+          if (seen.has(resolved)) continue;
+          seen.add(resolved);
+          out.push(match);
+        }
+      }
+    } catch {}
+  }
+
+  const legacyDir = path.join(SERVER_LOG_DIR, "CRON");
+  if (fs.existsSync(legacyDir)) {
+    try {
+      for (const entry of fs.readdirSync(legacyDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith(".log")) continue;
+        const match = {
+          path: path.join(legacyDir, entry.name),
+          user_id: null,
+          file: "legacy",
+          scope: "legacy",
+        };
+        const resolved = path.resolve(match.path);
+        if (seen.has(resolved)) continue;
+        seen.add(resolved);
+        out.push(match);
+      }
+    } catch {}
+  }
+
+  return out;
+}
+
+function listProviderLogFiles(providerId = "", requestedFile = "") {
+  const normalizedProviderId = settingsStore.providerObjectIdFromSettingName(
+    providerId || "default",
+  );
+  const safeRequestedFile = requestedFile
+    ? `${safeObjectPathPart(String(requestedFile || "").replace(/\.log$/i, ""), "activity")}.log`
+    : "";
+  const out = [];
+
+  for (const userId of listProviderLogUsers()) {
+    const providerLogsPath = objectLogsDir(
+      userId,
+      "providers",
+      normalizedProviderId || "default",
+    );
+    if (!fs.existsSync(providerLogsPath)) continue;
+    try {
+      if (safeRequestedFile) {
+        const candidate = path.join(providerLogsPath, safeRequestedFile);
+        if (fs.existsSync(candidate)) {
+          out.push({
+            path: candidate,
+            user_id: userId,
+            file: safeRequestedFile.replace(/\.log$/i, ""),
+            scope: "local",
+          });
+        }
+        continue;
+      }
+      for (const fileEntry of fs.readdirSync(providerLogsPath, {
+        withFileTypes: true,
+      })) {
+        if (!fileEntry.isFile() || !fileEntry.name.endsWith(".log")) continue;
+        out.push({
+          path: path.join(providerLogsPath, fileEntry.name),
+          user_id: userId,
+          file: fileEntry.name.replace(/\.log$/i, ""),
+          scope: "local",
+        });
+      }
+    } catch {}
+  }
+
+  return out;
+}
+
+function listAccountLogFiles(accountId = "", requestedFile = "") {
+  const safeAccountId = safeObjectPathPart(
+    String(accountId || "").trim(),
+    "default",
+  );
+  const safeRequestedFile = requestedFile
+    ? `${safeObjectPathPart(String(requestedFile || "").replace(/\.log$/i, ""), "activity")}.log`
+    : "";
+  const out = [];
+  const usersRoot = USER_OBJECT_DATA_ROOT;
+
+  if (!usersRoot || !fs.existsSync(usersRoot)) return out;
+
+  try {
+    for (const userEntry of fs.readdirSync(usersRoot, {
+      withFileTypes: true,
+    })) {
+      if (!userEntry.isDirectory()) continue;
+      const userId = userEntry.name;
+      const accountLogsPath = objectLogsDir(
+        userId,
+        "user_accounts",
+        safeAccountId,
+      );
+      if (!fs.existsSync(accountLogsPath)) continue;
+      if (safeRequestedFile) {
+        const candidate = path.join(accountLogsPath, safeRequestedFile);
+        if (fs.existsSync(candidate)) {
+          out.push({
+            path: candidate,
+            user_id: userId,
+            account_id: safeAccountId,
+            file: safeRequestedFile.replace(/\.log$/i, ""),
+            scope: "local",
+          });
+        }
+        continue;
+      }
+      for (const fileEntry of fs.readdirSync(accountLogsPath, {
+        withFileTypes: true,
+      })) {
+        if (!fileEntry.isFile() || !fileEntry.name.endsWith(".log")) continue;
+        out.push({
+          path: path.join(accountLogsPath, fileEntry.name),
+          user_id: userId,
+          account_id: safeAccountId,
+          file: fileEntry.name.replace(/\.log$/i, ""),
+          scope: "local",
+        });
+      }
+    }
+  } catch {}
+
+  return out;
+}
+
+function buildProviderLogSourcesEntry() {
+  const sourceEntry = {};
+
+  for (const userId of listProviderLogUsers()) {
+    const providerDir = objectTypeDir(userId, "providers");
+    if (!fs.existsSync(providerDir)) continue;
+    try {
+      for (const providerEntry of fs.readdirSync(providerDir, {
+        withFileTypes: true,
+      })) {
+        if (!providerEntry.isDirectory()) continue;
+        const providerId = providerEntry.name;
+        const providerSettingName =
+          settingsStore.providerSettingNameFromObjectId(providerId);
+        const logDir = objectLogsDir(userId, "providers", providerId);
+        if (!fs.existsSync(logDir)) continue;
+        const files =
+          (sourceEntry[providerSettingName] &&
+            sourceEntry[providerSettingName].files) ||
+          {};
+        for (const fileEntry of fs.readdirSync(logDir, {
+          withFileTypes: true,
+        })) {
+          if (!fileEntry.isFile() || !fileEntry.name.endsWith(".log")) continue;
+          try {
+            const fullPath = path.join(logDir, fileEntry.name);
+            const stat = fs.statSync(fullPath);
+            const key = fileEntry.name.replace(/\.log$/i, "");
+            const next = {
+              last_modified: stat.mtime.toISOString(),
+              size_bytes: stat.size,
+              user_id: userId,
+              scope: "local",
+            };
+            if (
+              !files[key] ||
+              String(next.last_modified).localeCompare(
+                String(files[key].last_modified || ""),
+              ) > 0
+            ) {
+              files[key] = next;
+            }
+          } catch {}
+        }
+        if (Object.keys(files).length) {
+          sourceEntry[providerSettingName] = {
+            files,
+            last_activity: getLatestTime(files),
+          };
+        }
+      }
+    } catch {}
+  }
+
+  return sourceEntry;
+}
+
+function buildCronLogSourcesEntry() {
+  const sourceEntry = {};
+
+  for (const userId of listCronLogUsers()) {
+    const cronDir = objectTypeDir(userId, "cron");
+    if (!fs.existsSync(cronDir)) continue;
+    try {
+      for (const cronEntry of fs.readdirSync(cronDir, {
+        withFileTypes: true,
+      })) {
+        if (!cronEntry.isDirectory()) continue;
+        const cronName = cronEntry.name;
+        const logDir = objectLogsDir(userId, "cron", cronName);
+        if (!fs.existsSync(logDir)) continue;
+        const files =
+          (sourceEntry[cronName] && sourceEntry[cronName].files) || {};
+        for (const fileEntry of fs.readdirSync(logDir, {
+          withFileTypes: true,
+        })) {
+          if (!fileEntry.isFile() || !fileEntry.name.endsWith(".log")) continue;
+          try {
+            const fullPath = path.join(logDir, fileEntry.name);
+            const stat = fs.statSync(fullPath);
+            const key = fileEntry.name.replace(/\.log$/i, "");
+            const next = {
+              last_modified: stat.mtime.toISOString(),
+              size_bytes: stat.size,
+              user_id: userId,
+              scope: "local",
+            };
+            if (
+              !files[key] ||
+              String(next.last_modified).localeCompare(
+                String(files[key].last_modified || ""),
+              ) > 0
+            ) {
+              files[key] = next;
+            }
+          } catch {}
+        }
+        if (Object.keys(files).length) {
+          sourceEntry[cronName] = {
+            files,
+            last_activity: getLatestTime(files),
+          };
+        }
+      }
+    } catch {}
+  }
+
+  return sourceEntry;
+}
+
+function buildAccountLogSourcesEntry() {
+  const sourceEntry = {};
+  const usersRoot = USER_OBJECT_DATA_ROOT;
+
+  if (!usersRoot || !fs.existsSync(usersRoot)) return sourceEntry;
+
+  try {
+    for (const userEntry of fs.readdirSync(usersRoot, {
+      withFileTypes: true,
+    })) {
+      if (!userEntry.isDirectory()) continue;
+      const userId = userEntry.name;
+      const accountsDir = objectTypeDir(userId, "user_accounts");
+      if (!fs.existsSync(accountsDir)) continue;
+      for (const accountEntry of fs.readdirSync(accountsDir, {
+        withFileTypes: true,
+      })) {
+        if (!accountEntry.isDirectory()) continue;
+        const accountId = accountEntry.name;
+        const logDir = objectLogsDir(userId, "user_accounts", accountId);
+        if (!fs.existsSync(logDir)) continue;
+        const files =
+          (sourceEntry[accountId] && sourceEntry[accountId].files) || {};
+        for (const fileEntry of fs.readdirSync(logDir, {
+          withFileTypes: true,
+        })) {
+          if (!fileEntry.isFile() || !fileEntry.name.endsWith(".log")) continue;
+          try {
+            const fullPath = path.join(logDir, fileEntry.name);
+            const stat = fs.statSync(fullPath);
+            const key = fileEntry.name.replace(/\.log$/i, "");
+            const next = {
+              last_modified: stat.mtime.toISOString(),
+              size_bytes: stat.size,
+              user_id: userId,
+              scope: "local",
+            };
+            if (
+              !files[key] ||
+              String(next.last_modified).localeCompare(
+                String(files[key].last_modified || ""),
+              ) > 0
+            ) {
+              files[key] = next;
+            }
+          } catch {}
+        }
+        if (Object.keys(files).length) {
+          sourceEntry[accountId] = {
+            files,
+            last_activity: getLatestTime(files),
+          };
+        }
+      }
+    }
+  } catch {}
+
+  return sourceEntry;
+}
+
 // Scan SERVER_LOG_DIR and return structured source tree with last-modified times
 function scanLogSources() {
   const result = {};
-  if (!SERVER_LOG_DIR || !fs.existsSync(SERVER_LOG_DIR)) return result;
   const FLAT_SOURCES = new Set(["cron", "api", "ui", "system", "snapshots"]);
-  try {
-    for (const src of fs.readdirSync(SERVER_LOG_DIR, { withFileTypes: true })) {
-      if (!src.isDirectory()) continue;
-      const srcName = src.name.toLowerCase();
-      const srcPath = path.join(SERVER_LOG_DIR, src.name);
-      const sourceEntry = {};
+  if (SERVER_LOG_DIR && fs.existsSync(SERVER_LOG_DIR)) {
+    try {
+      for (const src of fs.readdirSync(SERVER_LOG_DIR, {
+        withFileTypes: true,
+      })) {
+        if (!src.isDirectory()) continue;
+        const srcName = src.name.toLowerCase();
+        if (srcName === "cron" || srcName === "accounts") continue;
+        const srcPath = path.join(SERVER_LOG_DIR, src.name);
+        const sourceEntry = {};
 
-      if (FLAT_SOURCES.has(srcName)) {
-        // Flat: files directly in source dir, each file is one "ID"
-        for (const f of fs.readdirSync(srcPath, { withFileTypes: true })) {
-          if (!f.isFile() || !f.name.endsWith(".log")) continue;
-          try {
-            const stat = fs.statSync(path.join(srcPath, f.name));
-            const key = f.name.replace(/\.log$/, "");
-            sourceEntry[key] = {
-              files: {
-                [key]: {
-                  last_modified: stat.mtime.toISOString(),
-                  size_bytes: stat.size,
-                },
-              },
-              last_activity: stat.mtime.toISOString(),
-            };
-          } catch (_) {}
-        }
-      } else {
-        // Hierarchical: subdirectories are IDs, files inside
-        for (const sub of fs.readdirSync(srcPath, { withFileTypes: true })) {
-          if (!sub.isDirectory()) continue;
-          const subPath = path.join(srcPath, sub.name);
-          const files = {};
-          for (const f of fs.readdirSync(subPath, { withFileTypes: true })) {
+        if (FLAT_SOURCES.has(srcName)) {
+          // Flat: files directly in source dir, each file is one "ID"
+          for (const f of fs.readdirSync(srcPath, { withFileTypes: true })) {
             if (!f.isFile() || !f.name.endsWith(".log")) continue;
             try {
-              const stat = fs.statSync(path.join(subPath, f.name));
-              files[f.name.replace(/\.log$/, "")] = {
-                last_modified: stat.mtime.toISOString(),
-                size_bytes: stat.size,
+              const stat = fs.statSync(path.join(srcPath, f.name));
+              const key = f.name.replace(/\.log$/, "");
+              sourceEntry[key] = {
+                files: {
+                  [key]: {
+                    last_modified: stat.mtime.toISOString(),
+                    size_bytes: stat.size,
+                  },
+                },
+                last_activity: stat.mtime.toISOString(),
               };
             } catch (_) {}
           }
-          if (Object.keys(files).length) {
-            sourceEntry[sub.name] = {
-              files,
-              last_activity: getLatestTime(files),
-            };
+        } else {
+          // Hierarchical: subdirectories are IDs, files inside
+          for (const sub of fs.readdirSync(srcPath, { withFileTypes: true })) {
+            if (!sub.isDirectory()) continue;
+            const subPath = path.join(srcPath, sub.name);
+            const files = {};
+            for (const f of fs.readdirSync(subPath, { withFileTypes: true })) {
+              if (!f.isFile() || !f.name.endsWith(".log")) continue;
+              try {
+                const stat = fs.statSync(path.join(subPath, f.name));
+                files[f.name.replace(/\.log$/, "")] = {
+                  last_modified: stat.mtime.toISOString(),
+                  size_bytes: stat.size,
+                };
+              } catch (_) {}
+            }
+            if (Object.keys(files).length) {
+              sourceEntry[sub.name] = {
+                files,
+                last_activity: getLatestTime(files),
+              };
+            }
           }
         }
+        if (Object.keys(sourceEntry).length) {
+          result[srcName] = sourceEntry;
+        }
       }
-      if (Object.keys(sourceEntry).length) {
-        result[srcName] = sourceEntry;
-      }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  }
+
+  const cronSources = buildCronLogSourcesEntry();
+  if (Object.keys(cronSources).length) {
+    result.cron = cronSources;
+  }
+
+  const providerSources = buildProviderLogSourcesEntry();
+  if (Object.keys(providerSources).length) {
+    result.providers = providerSources;
+  }
+
+  const accountSources = buildAccountLogSourcesEntry();
+  if (Object.keys(accountSources).length) {
+    result.accounts = {
+      ...(result.accounts || {}),
+      ...accountSources,
+    };
+  }
+
   return result;
 }
 
@@ -1247,6 +2252,14 @@ function getLatestTime(files) {
 
 // --- NotificationManager (unified notification routing) ---
 const DEFAULT_NOTIFICATION_SETTINGS = {
+  NEWS: {
+    toast: true,
+    console_log: false,
+    ticker: true,
+    db_log: true,
+    hub: true,
+    sound: "NEWS_ALERT",
+  },
   TRADE_FILLED: {
     toast: true,
     console_log: false,
@@ -1424,8 +2437,12 @@ class NotificationManager {
     // 3) db_log channel → direct file-based log
     if (settings.db_log || payload._force_db_log) {
       const userId = payload.user_id || null;
+      const objectTable =
+        String(payload.object_table || "").trim() ||
+        (eventType === "CRON_SNAPSHOT" ? "cron" : eventType);
       const objectId =
         payload.object_id ||
+        payload.cron_name ||
         payload.position ||
         payload.signal_id ||
         (eventType === "SYSTEM_EVENT"
@@ -1434,13 +2451,11 @@ class NotificationManager {
             ? "api"
             : eventType === "BROKER_POLL" || eventType === "BROKER_SYNC"
               ? "broker"
-              : eventType === "CRON_SNAPSHOT"
-                ? "cron"
-                : eventType === "CHART_SNAPSHOTS"
-                  ? "API"
-                  : null);
+              : eventType === "CHART_SNAPSHOTS"
+                ? "API"
+                : null);
       if (objectId) {
-        fileLog(objectId, eventType, payload, userId);
+        fileLog(objectId, objectTable, payload, userId);
       }
     }
   }
@@ -1523,9 +2538,17 @@ const AI_CONTEXT_CLAUDE_MAP_FILE = path.join(
   AI_CONTEXT_FILE_DIR,
   ".claude-context-files.json",
 );
+const USER_DATA_ROOT = path.join(GLOBAL_DATA_DIR, "users");
 const TRADE_USER =
   String(process.env.MT5_DEFAULT_USER_ID || "default").trim() || "default";
-const TRADE_BASE_DIR = path.resolve(GLOBAL_DATA_DIR, TRADE_USER);
+const legacyUserDataDir = (userId) =>
+  path.resolve(
+    GLOBAL_DATA_DIR,
+    String(userId || "default").trim() || "default",
+  );
+const userDataDir = (userId) =>
+  path.resolve(USER_DATA_ROOT, String(userId || "default").trim() || "default");
+const TRADE_BASE_DIR = userDataDir(TRADE_USER);
 const TRADE_FILES_DIR = path.join(TRADE_BASE_DIR, "trade_files");
 const TRADE_ACTIVE_DIR = path.join(TRADE_BASE_DIR, "trade_active");
 const TRADE_CLOSED_DIR = path.join(TRADE_BASE_DIR, "trade_closed");
@@ -1542,9 +2565,47 @@ const TRADE_STATUS = {
 
 const BROKER_BARS_DIR = path.resolve(GLOBAL_DATA_DIR, "market_data");
 
-for (const d of [BROKER_BARS_DIR]) {
+function moveDirContentsSync(srcDir, dstDir) {
+  if (!fs.existsSync(srcDir)) return false;
+  if (!fs.existsSync(dstDir)) fs.mkdirSync(dstDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const dstPath = path.join(dstDir, entry.name);
+    if (fs.existsSync(dstPath)) {
+      if (entry.isDirectory()) moveDirContentsSync(srcPath, dstPath);
+      continue;
+    }
+    fs.renameSync(srcPath, dstPath);
+  }
+  try {
+    const remain = fs.readdirSync(srcDir);
+    if (remain.length === 0) fs.rmdirSync(srcDir);
+  } catch {}
+  return true;
+}
+
+function migrateLegacyUserScopedDataRoot(userId) {
+  const legacyRoot = legacyUserDataDir(userId);
+  const nextRoot = userDataDir(userId);
+  if (!fs.existsSync(legacyRoot)) return;
+  if (!fs.existsSync(nextRoot)) fs.mkdirSync(nextRoot, { recursive: true });
+  for (const folderName of [
+    "settings",
+    "trade_active",
+    "trade_closed",
+    "trade_files",
+  ]) {
+    const src = path.join(legacyRoot, folderName);
+    const dst = path.join(nextRoot, folderName);
+    if (!fs.existsSync(src)) continue;
+    moveDirContentsSync(src, dst);
+  }
+}
+
+for (const d of [BROKER_BARS_DIR, USER_DATA_ROOT, TRADE_BASE_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
+migrateLegacyUserScopedDataRoot(TRADE_USER);
 
 const TRADE_CATEGORY_DIRS = {
   files: TRADE_FILES_DIR,
@@ -2361,6 +3422,8 @@ const StateRepo = {
     TRADE_LIST: { prefix: "TRD:LST", ttl: 30 }, // 30 seconds (dynamic, short TTL)
     USER_SETTINGS: { prefix: "USR:SET", ttl: 3600 * 6 }, // 6 hours
     NEWS_CALENDAR: { prefix: "NEWS:CAL", ttl: 3600 },
+    NEWS_PHASE: { prefix: "NEWS:PHASE", ttl: 3600 * 24 },
+    DYNAMIC_SYMBOL_GROUP: { prefix: "SYM:DYN", ttl: 300 },
   },
 
   getL1Map(bucketName) {
@@ -2460,38 +3523,130 @@ async function repoGetSystemSettings() {
 
 async function refreshEconomicCalendar() {
   try {
-    // ForexFactory JSON feed ( industry standard )
-    const url = "https://nfs.forexfactory.com/ff_calendar_thisweek.json";
-    const resp = await fetch(url, { timeout: 10000 }).catch(() => null);
-    if (!resp || !resp.ok) return;
+    const appConfig = getAppConfig();
+    const newsConfig = normalizeNewsConfig(appConfig);
+    const url = newsConfig.source_url;
+    let data = [];
+    try {
+      data = await fetchEconomicCalendarFeed(url);
+      await StateRepo.set("NEWS_CALENDAR", "feed", data).catch(() => {});
+    } catch (error) {
+      console.warn(
+        `[news] Live fetch failed for ${url}: ${error?.message || error}`,
+      );
+      const cachedFeed = await StateRepo.get("NEWS_CALENDAR", "feed").catch(
+        () => [],
+      );
+      data = Array.isArray(cachedFeed) ? cachedFeed : [];
+      if (!data.length) return;
+      console.warn(
+        `[news] Falling back to cached feed with ${data.length} events.`,
+      );
+    }
 
-    const data = await resp.json();
-    if (!Array.isArray(data)) return;
-
-    // Filter for today's high impact events
-    const today = new Date().toISOString().split("T")[0];
-    const filtered = data.filter((item) => {
-      // item.date format is usually "MM-DD-YYYY"
-      const dateParts = item.date.split("-");
-      if (dateParts.length !== 3) return false;
-      const itemDate = `${dateParts[2]}-${dateParts[0]}-${dateParts[1]}`;
-
-      return itemDate === today && item.impact === "High";
-    });
+    const now = Date.now();
+    const highImpact = data.filter(
+      (item) => String(item?.impact || "").trim() === "High",
+    );
+    const trackedWeek = highImpact
+      .map((item) => buildTrackedNewsEvent(item, newsConfig, now))
+      .filter(Boolean)
+      .sort((a, b) => a.start_ts - b.start_ts);
+    const filtered = buildTrackedNewsEvents(highImpact, appConfig, now);
 
     await StateRepo.set("NEWS_CALENDAR", "today", filtered);
+    await StateRepo.set("NEWS_CALENDAR", "week", trackedWeek);
+    await refreshDynamicSymbolGroup(trackedWeek);
 
     console.log(
-      `[news] Refreshed economic calendar: ${filtered.length} high-impact events today.`,
+      `[news] Refreshed economic calendar: ${filtered.length} tracked today, ${trackedWeek.length} tracked this week.`,
     );
   } catch (e) {
     console.error("[news] Failed to refresh economic calendar:", e.message);
   }
 }
 
+async function emitNewsPhaseNotifications(events = []) {
+  const now = Date.now();
+  const dynamicEvents = await StateRepo.get("NEWS_CALENDAR", "week").catch(
+    () => null,
+  );
+  await refreshDynamicSymbolGroup(
+    Array.isArray(dynamicEvents) && dynamicEvents.length
+      ? dynamicEvents
+      : events,
+  );
+  for (const event of Array.isArray(events) ? events : []) {
+    const liveEvent = hydrateNewsEventTiming(event, now);
+    const phase = liveEvent.phase;
+    if (phase !== "before" && phase !== "during") continue;
+    const dedupeKey = `${liveEvent.id}:${phase}`;
+    const alreadySent = await StateRepo.get("NEWS_PHASE", dedupeKey).catch(
+      () => null,
+    );
+    if (alreadySent) continue;
+
+    const symbolsText = (liveEvent.effective_symbols || [])
+      .slice(0, 8)
+      .join(", ");
+    const phaseText =
+      phase === "before"
+        ? `starts in ${Math.max(0, liveEvent.minutes_until_start)}m`
+        : `active for ${Math.max(0, liveEvent.minutes_until_end)}m more`;
+    notificationManager.handle("NEWS", phase, {
+      event: "NEWS",
+      sub_type: phase,
+      type: phase === "during" ? "warning" : "info",
+      message: `${liveEvent.news_type}${liveEvent.currency ? ` (${liveEvent.currency})` : ""} ${phaseText}${symbolsText ? ` · ${symbolsText}` : ""}`,
+      title: liveEvent.title,
+      news_type: liveEvent.news_type,
+      news_phase: phase,
+      score: liveEvent.score,
+      effective_symbols: liveEvent.effective_symbols || [],
+      effective_duration: liveEvent.effective_duration || null,
+      start_at: liveEvent.start_at,
+      end_at: liveEvent.end_at,
+    });
+    await StateRepo.set("NEWS_PHASE", dedupeKey, {
+      sent_at: new Date(now).toISOString(),
+    }).catch(() => {});
+  }
+}
+
+async function runNewsWorker() {
+  const existing = await StateRepo.get("NEWS_CALENDAR", "today").catch(
+    () => null,
+  );
+  let events = Array.isArray(existing) ? existing : [];
+  if (!events.length) {
+    await refreshEconomicCalendar();
+    const refreshed = await StateRepo.get("NEWS_CALENDAR", "today").catch(
+      () => [],
+    );
+    events = Array.isArray(refreshed) ? refreshed : [];
+  }
+  await emitNewsPhaseNotifications(events);
+}
+
 // Start news worker
 setInterval(refreshEconomicCalendar, 3600000); // Hourly
 setTimeout(refreshEconomicCalendar, 5000); // Initial boot
+setInterval(() => {
+  runNewsWorker().catch((error) => {
+    console.error(
+      "[news] Notification worker failed:",
+      error?.message || error,
+    );
+  });
+}, 60000);
+setTimeout(() => {
+  runNewsWorker().catch((error) => {
+    console.error(
+      "[news] Initial notification worker failed:",
+      error?.message || error,
+    );
+  });
+}, 10000);
 
 async function repoGetUserAccounts(userId) {
   return await StateRepo.get("USER_ACCOUNTS", userId, async () => {
@@ -3588,6 +4743,100 @@ function normalizeAiApiKeyName(rawName) {
   return name;
 }
 
+function resolveProviderSettingNameForLog(providerRaw, modelRaw = "") {
+  const provider = String(providerRaw || "")
+    .trim()
+    .toLowerCase();
+  const model = String(modelRaw || "")
+    .trim()
+    .toLowerCase();
+
+  if (
+    provider === "claude" ||
+    provider === "anthropic" ||
+    model.includes("claude")
+  ) {
+    return "CLAUDE_API_KEY";
+  }
+  if (provider === "openrouter" || model.includes("openrouter")) {
+    return "OPENROUTER_API_KEY";
+  }
+  if (
+    provider === "openai" ||
+    provider === "gpt4o" ||
+    provider === "gpt-4o" ||
+    provider === "chatgpt" ||
+    model.includes("gpt") ||
+    model.includes("openai")
+  ) {
+    return "OPENAI_API_KEY";
+  }
+  if (provider === "deepseek" || model.includes("deepseek")) {
+    return "DEEPSEEK_API_KEY";
+  }
+  if (
+    provider === "gemini" ||
+    provider === "google" ||
+    provider === "google_gemini" ||
+    model.includes("gemini")
+  ) {
+    return "GEMINI_API_KEY";
+  }
+  if (
+    provider === "twelvedata" ||
+    provider === "twelve_data" ||
+    provider === "twelve" ||
+    model.includes("twelve")
+  ) {
+    return "TWELVE_DATA_API_KEY";
+  }
+
+  const normalized = normalizeAiApiKeyName(providerRaw || modelRaw || "");
+  return ALLOWED_AI_API_KEY_NAMES.has(normalized) ? normalized : "";
+}
+
+function sanitizeProviderLogMessage(raw) {
+  const clipped = clipForLog(raw, 600)
+    .replace(/Bearer\s+[A-Za-z0-9._=-]+/gi, "Bearer [REDACTED]")
+    .replace(
+      /\b(sk-[A-Za-z0-9_-]{6,}|AIza[0-9A-Za-z\-_]{10,})\b/g,
+      "[REDACTED]",
+    )
+    .replace(/\b[A-Za-z0-9+/_=-]{40,}\b/g, "[REDACTED]");
+  return clipped;
+}
+
+async function logProviderActivity({
+  userId,
+  provider,
+  model = "",
+  event,
+  message = "",
+  level = "INFO",
+  statusCode = null,
+  metadata = {},
+}) {
+  const providerId = settingsStore.providerObjectIdFromSettingName(
+    resolveProviderSettingNameForLog(provider, model),
+  );
+  if (!providerId || providerId === "default") return;
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  try {
+    await writeObjectLog(uid, "providers", providerId, {
+      event,
+      level,
+      message,
+      provider: String(provider || "").trim() || providerId,
+      model: String(model || "").trim() || null,
+      status_code: statusCode,
+      ...metadata,
+    });
+  } catch (err) {
+    console.warn("[providers] local log write failed:", err?.message || err);
+  }
+}
+
 function hashApiKey(raw) {
   return crypto
     .createHash("sha256")
@@ -4390,12 +5639,15 @@ function safeTradeFolderSid(value = "") {
 function resolveTradeDirForCreate(sid, symbol = "", category = "files") {
   const safeSid = safeTradeFolderSid(sid);
   if (!safeSid) return TRADE_CATEGORY_DIRS[category] || TRADE_FILES_DIR;
+
+  const existing = findExistingTradeDir(safeSid);
+  if (existing) return existing;
+
   const sym = normalizeTradeFolderSymbol(
     symbol || inferSymbolFromTradeFolder(safeSid),
   );
   if (sym) return ensureTradeDir(safeSid, sym, category);
-  const existing = findExistingTradeDir(safeSid);
-  if (existing) return existing;
+
   throw new Error(`trade folder symbol not found for sid ${safeSid}`);
 }
 
@@ -4675,11 +5927,15 @@ function mirrorTradeSnapshotsFromMarketData(
   const tradeDir =
     resolveTradeDir(tradeSid, sym) ||
     ensureTradeDir(tradeSid.replace(/[^A-Za-z0-9_.-]/g, "_"), sym, "files");
+  const selectedFiles =
+    Array.isArray(files) && files.length
+      ? files
+      : listValidSnapshotFilesForSymbol(sym, 50);
   const copied = tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
     snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
     tradeDir,
     symbol: sym,
-    files,
+    files: selectedFiles,
     status,
     rename: true,
   });
@@ -4957,7 +6213,24 @@ function inferSymbolFromTradeFolder(sid) {
   return "";
 }
 
-function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
+function snapshotFileTfRank(fileName = "") {
+  const base = String(fileName || "")
+    .replace(/\.(png|jpe?g)$/i, "")
+    .toUpperCase();
+  if (!base) return 0;
+  if (base.endsWith("_MASTER")) return 1000;
+  const tf = String(base.split("_").pop() || "");
+  if (tf === "1W" || tf === "W") return 900;
+  if (tf === "D" || tf === "1D" || tf === "1440") return 800;
+  if (tf === "240" || tf === "4H") return 700;
+  if (tf === "60" || tf === "1H") return 600;
+  if (tf === "15" || tf === "15M") return 500;
+  if (tf === "5" || tf === "5M") return 400;
+  if (tf === "1" || tf === "1M") return 300;
+  return 100;
+}
+
+function listValidSnapshotFilesForSymbol(symbol = "", limit = 12, opts = {}) {
   ensureChartSnapshotDir();
   const sym = String(symbol || "")
     .trim()
@@ -4967,39 +6240,64 @@ function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
   const symDir = path.join(CHART_SNAPSHOT_DIR, sym);
   if (!fs.existsSync(symDir)) return [];
 
+  const nowMs = Date.now();
+  const maxAgeMs = Math.max(
+    60_000,
+    Math.floor(
+      asNum(
+        opts.maxAgeMs,
+        asNum(process.env.SNAPSHOT_VALID_MAX_AGE_MS, 30 * 60 * 1000),
+      ),
+    ),
+  );
+  const cohortWindowMs = Math.max(
+    5_000,
+    Math.floor(
+      asNum(
+        opts.cohortWindowMs,
+        asNum(process.env.SNAPSHOT_VALID_COHORT_WINDOW_MS, 10 * 60 * 1000),
+      ),
+    ),
+  );
+
   const files = fs
     .readdirSync(symDir)
     .filter((f) => /\.(png|jpe?g)$/i.test(f))
     .map((f) => {
-      let t = 0;
+      const abs = path.join(symDir, f);
+      let mtimeMs = 0;
+      let sizeBytes = 0;
       try {
-        t = Number(fs.statSync(path.join(symDir, f)).mtimeMs || 0);
+        const st = fs.statSync(abs);
+        mtimeMs = Number(st.mtimeMs || 0);
+        sizeBytes = Number(st.size || 0);
       } catch {}
-      return { file_name: f, mtime_ms: t };
-    });
-  // Group by capture batch (files from same capture share timestamp prefix).
-  // Return only the most recent batch to avoid mixing MASTER + individual TFs.
-  const byBatch = new Map();
-  for (const f of files) {
-    // Extract batch key: first 13 chars of the timestamp token in filename
-    const m = String(f.file_name || "").match(/_(\d{8}_\d{4})/);
-    const batchKey = m ? m[1] : String(f.mtime_ms);
-    if (!byBatch.has(batchKey)) byBatch.set(batchKey, []);
-    byBatch.get(batchKey).push(f);
-  }
-  // Sort batches by max mtime (most recent first), take the first batch
-  const batches = [...byBatch.entries()]
-    .map(([key, items]) => ({
-      key,
-      items,
-      maxTime: Math.max(...items.map((x) => x.mtime_ms)),
-    }))
-    .sort((a, b) => b.maxTime - a.maxTime);
-  const latestBatch = batches[0]?.items || [];
-  const sorted = latestBatch
-    .sort((a, b) => b.mtime_ms - a.mtime_ms)
-    .slice(0, Math.max(1, Number(limit) || 12));
-  return sorted.map((x) => x.file_name);
+      return { file_name: f, mtime_ms: mtimeMs, size_bytes: sizeBytes };
+    })
+    .filter((x) => x.mtime_ms > 0 && x.size_bytes > 0)
+    .sort((a, b) => b.mtime_ms - a.mtime_ms);
+  if (!files.length) return [];
+
+  const newestMs = Number(files[0]?.mtime_ms || 0);
+  const valid = files.filter((x) => {
+    const ageMs = nowMs - Number(x.mtime_ms || 0);
+    const deltaFromNewestMs = newestMs - Number(x.mtime_ms || 0);
+    return ageMs <= maxAgeMs && deltaFromNewestMs <= cohortWindowMs;
+  });
+
+  return valid
+    .sort((a, b) => {
+      const rankDiff =
+        snapshotFileTfRank(b.file_name) - snapshotFileTfRank(a.file_name);
+      if (rankDiff !== 0) return rankDiff;
+      return b.mtime_ms - a.mtime_ms;
+    })
+    .slice(0, Math.max(1, Number(limit) || 12))
+    .map((x) => x.file_name);
+}
+
+function listLatestSnapshotFilesForSymbol(symbol = "", limit = 12) {
+  return listValidSnapshotFilesForSymbol(symbol, limit);
 }
 
 function copySnapshotsToTradeSidFolder(
@@ -5016,14 +6314,17 @@ function copySnapshotsToTradeSidFolder(
     .replace(/^[A-Z0-9_-]+:/, "")
     .replace(/[^A-Z0-9]/g, "");
   if (!sym) return [];
+  const tradeDir =
+    resolveTradeDir(sid, sym) ||
+    ensureTradeDir(sid.replace(/[^A-Za-z0-9_.-]/g, "_"), sym, "files");
   return tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
     snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
-    tradeDir: tradeSnapshotDir(sid, sym),
+    tradeDir,
     symbol: sym,
     files:
       Array.isArray(files) && files.length
         ? files
-        : listLatestSnapshotFilesForSymbol(sym, 12),
+        : listValidSnapshotFilesForSymbol(sym, 50),
     status,
     rename: true,
   });
@@ -5038,50 +6339,55 @@ function copyAnalyzeSnapshotToTradeSession(tradeSid, symbol = "") {
     .replace(/^[A-Z0-9_-]+:/, "")
     .replace(/[^A-Z0-9]/g, "");
   if (!sid || !sym) return "";
-  const srcDir = snapshotSymbolDir(sym);
-  const tradeDir = tradeSnapshotDir(sid, sym);
-  // If trade folder already has any snapshot, skip
-  if (fs.existsSync(tradeDir)) {
-    const existing = fs
-      .readdirSync(tradeDir)
-      .filter((f) => /\.(png|jpe?g)$/i.test(f));
-    if (existing.length) return existing[0];
+
+  const validFiles = listValidSnapshotFilesForSymbol(sym, 50);
+  const tradeDir =
+    resolveTradeDir(sid, sym) ||
+    ensureTradeDir(sid.replace(/[^A-Za-z0-9_.-]/g, "_"), sym, "files");
+  const snapshotDir = path.join(tradeDir, "snapshots");
+  const existing = fs.existsSync(snapshotDir)
+    ? fs.readdirSync(snapshotDir).filter((f) => /\.(png|jpe?g)$/i.test(f))
+    : [];
+
+  const missingValidFiles = validFiles.filter((srcFile) => {
+    const ext = path.extname(srcFile);
+    const base = path.basename(srcFile, ext);
+    return !existing.some((destFile) => {
+      const destBase = path.basename(destFile, path.extname(destFile));
+      return destBase === base || destBase.startsWith(`${base}_`);
+    });
+  });
+
+  let copied = [];
+  if (missingValidFiles.length) {
+    copied = tradeArtifactSync.copyMarketDataSnapshotsToTradeDir({
+      snapshotRoot: path.join(GLOBAL_DATA_DIR, "market_data"),
+      tradeDir,
+      symbol: sym,
+      files: missingValidFiles,
+      status: "pending",
+      rename: true,
+    });
   }
-  const sourceDirs = [srcDir, tradeDir];
-  let candidates = [];
-  for (const dir of sourceDirs) {
-    if (!dir || !fs.existsSync(dir)) continue;
-    try {
-      const list = fs
-        .readdirSync(dir)
-        .filter((f) => /\.(png|jpe?g)$/i.test(f))
-        .map((f) => {
-          const abs = path.join(dir, f);
-          let mtimeMs = 0;
-          try {
-            mtimeMs = Number(fs.statSync(abs).mtimeMs || 0);
-          } catch {}
-          return { f, abs, mtimeMs };
-        });
-      candidates.push(...list);
-    } catch {}
-  }
-  candidates = candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  if (!candidates.length) return "";
-  const preferred =
-    candidates.find((x) => String(x.f).toUpperCase().includes("_MASTER.")) ||
-    candidates[0];
-  if (!preferred?.abs || !fs.existsSync(preferred.abs)) return "";
-  const ext = (path.extname(preferred.f) || ".png").toLowerCase();
-  const destName = `${sym}_MASTER_${snapshotTimestampToken()}_pending${ext}`;
-  const destDir = tradeDir;
-  const dest = path.join(destDir, destName);
-  try {
-    fs.copyFileSync(preferred.abs, dest);
-    return destName;
-  } catch {
-    return "";
-  }
+
+  const combined = [...new Set([...(existing || []), ...(copied || [])])].sort(
+    (a, b) => {
+      const masterDiff =
+        Number(
+          String(b || "")
+            .toUpperCase()
+            .includes("_MASTER"),
+        ) -
+        Number(
+          String(a || "")
+            .toUpperCase()
+            .includes("_MASTER"),
+        );
+      if (masterDiff !== 0) return masterDiff;
+      return snapshotFileTfRank(b) - snapshotFileTfRank(a);
+    },
+  );
+  return combined[0] || "";
 }
 
 async function persistTradeSnapshotFiles(tradeSid, files = [], symbol = "") {
@@ -5654,433 +6960,6 @@ function resolvePlaywrightChromiumExecutablePath() {
   return "";
 }
 
-async function captureTradingViewSnapshotWithBrowser(browser, opts = {}) {
-  ensureChartSnapshotDir();
-  const symbolRaw = normalizeMarketDataSymbol(opts.symbol || "");
-  const symbol = symbolRaw || "BTCUSD";
-  const tvSymbol = await resolveTradingViewSymbolForCapture(
-    symbol,
-    opts.provider,
-  );
-  const interval = toTradingViewInterval(opts.timeframe || opts.tf);
-  const width = Math.max(480, Math.min(Number(opts.width || 960) || 960, 2400));
-  const height = Math.max(
-    270,
-    Math.min(Number(opts.height || 540) || 540, 1600),
-  );
-  const theme =
-    String(opts.theme || "dark").toLowerCase() === "light" ? "light" : "dark";
-  const tz = normalizeTvTimezone(opts.timezone, "Etc/UTC");
-  const lookbackBars = Math.max(
-    50,
-    Math.min(Number(opts.lookbackBars || 300) || 300, 5000),
-  );
-  const outFormatRaw = String(opts.format || "png").toLowerCase();
-  const outFormat =
-    outFormatRaw === "jpg" || outFormatRaw === "jpeg" ? "jpg" : "png";
-  const jpgQuality = Math.max(
-    20,
-    Math.min(Number(opts.quality || 90) || 90, 95),
-  );
-
-  const ts = Date.now();
-  const symbolToken = sanitizeSnapshotFileToken(symbol);
-  const tfToken = sanitizeSnapshotFileToken(interval, "TF");
-  const userId = sanitizeSnapshotFileToken(opts.userId || "default");
-
-  // Simple naming: SYMBOL_TF.png — overwrites on re-capture
-  const fileName = `${symbolToken}_${tfToken}.${outFormat}`;
-  const outPath = path.join(snapshotSymbolDir(symbol), fileName);
-
-  // Reuse existing snapshot if it was captured within the last 60 seconds
-  // (cron takes snapshots every minute — no need to re-capture)
-  if (fs.existsSync(outPath)) {
-    try {
-      const st = fs.statSync(outPath);
-      const ageMs = Date.now() - Number(st.mtimeMs || 0);
-      const maxAge = Number(opts.maxReuseAgeMs || 60000);
-      if (ageMs < maxAge) {
-        return {
-          file_name: fileName,
-          symbol: opts.symbol,
-          timeframe: opts.timeframe || opts.tf,
-          reused: true,
-        };
-      }
-    } catch (_) {}
-  }
-  const sessionPath = path.join(ROOT_DIR, "tv_session.json");
-  let savedCookies = [];
-  if (fs.existsSync(sessionPath)) {
-    try {
-      savedCookies = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
-    } catch (e) {}
-  }
-
-  const context = await browser.newContext({
-    viewport: { width: width, height: height },
-    deviceScaleFactor: 1,
-    userAgent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-  });
-  if (savedCookies.length > 0) {
-    await context.addCookies(savedCookies);
-  }
-  try {
-    const page = await context.newPage();
-
-    const embedUrl = new URL("https://s.tradingview.com/widgetembed/");
-    embedUrl.searchParams.set("symbol", tvSymbol);
-    embedUrl.searchParams.set("interval", interval);
-    embedUrl.searchParams.set("theme", theme);
-    embedUrl.searchParams.set("style", "1");
-    embedUrl.searchParams.set("timezone", tz === "LOCAL" ? "Etc/UTC" : tz);
-    embedUrl.searchParams.set("hide_side_toolbar", "1");
-    embedUrl.searchParams.set("hide_top_toolbar", "1");
-    embedUrl.searchParams.set("hide_legend", "1");
-    embedUrl.searchParams.set("withdateranges", "0");
-    embedUrl.searchParams.set("allow_symbol_change", "0");
-    embedUrl.searchParams.set("save_image", "0");
-    embedUrl.searchParams.set("show_popup_button", "0");
-    embedUrl.searchParams.set("locale", "en");
-
-    console.log(`[snapshot] Navigating to ${embedUrl.toString()}`);
-    await page.goto(embedUrl.toString(), { waitUntil: "networkidle" });
-
-    // Wait for the chart to stabilize
-    await page.waitForTimeout(8000);
-
-    // Nuke UI elements that don't respect the URL parameters
-    await page.evaluate(() => {
-      const hideTags = (tags) => {
-        tags.forEach((t) => {
-          document.querySelectorAll(t).forEach((el) => {
-            el.style.setProperty("display", "none", "important");
-            el.style.setProperty("visibility", "hidden", "important");
-            el.style.setProperty("opacity", "0", "important");
-            el.style.setProperty("pointer-events", "none", "important");
-            el.style.setProperty("height", "0", "important");
-          });
-        });
-      };
-
-      // Comprehensive list of selectors for the public widgetembed
-      hideTags([
-        ".header-chart-panel",
-        ".left-panel",
-        ".legend",
-        ".chart-controls",
-        ".tv-floating-toolbar",
-        ".tv-market-status",
-        ".widgetbar-wrap",
-        '[class*="header-chart-panel"]',
-        '[class*="left-panel"]',
-        '[class*="legend-"]',
-        '[class*="chart-controls"]',
-        '[class*="toolbar-"]',
-        '[class*="button-"]',
-        '[class*="menu-"]',
-        "#page-pi-loading",
-      ]);
-
-      // Ensure the chart container takes the whole space if it was offset
-      const mainContainer =
-        document.querySelector(".chart-container") ||
-        document.querySelector('[class*="chart-container"]');
-      if (mainContainer) {
-        mainContainer.style.setProperty("top", "0", "important");
-        mainContainer.style.setProperty("left", "0", "important");
-        mainContainer.style.setProperty("width", "100%", "important");
-        mainContainer.style.setProperty("height", "100%", "important");
-        mainContainer.style.setProperty("margin", "0", "important");
-        mainContainer.style.setProperty("padding", "0", "important");
-      }
-
-      const chartGui = document.querySelector(".chart-gui-wrapper");
-      if (chartGui) {
-        chartGui.style.setProperty("top", "0", "important");
-      }
-    });
-
-    await page.evaluate(
-      ({ wmSymbol, wmTf }) => {
-        try {
-          const existing = document.getElementById("snapshot-watermark-top");
-          if (existing) existing.remove();
-          const watermark = document.createElement("div");
-          watermark.id = "snapshot-watermark-top";
-          watermark.textContent = `${wmSymbol} | ${wmTf}`;
-          watermark.style.position = "fixed";
-          watermark.style.left = "10px";
-          watermark.style.top = "8px";
-          watermark.style.zIndex = "2147483647";
-          watermark.style.padding = "7px 10px";
-          watermark.style.borderRadius = "6px";
-          watermark.style.fontSize = "15px";
-          watermark.style.fontFamily = "monospace";
-          watermark.style.fontWeight = "900";
-          watermark.style.letterSpacing = "0";
-          watermark.style.background = "rgba(255,255,255,0.94)";
-          watermark.style.color = "#07111f";
-          watermark.style.border = "2px solid rgba(0,0,0,0.88)";
-          watermark.style.boxShadow =
-            "0 0 0 2px rgba(255,255,255,0.65), 0 4px 16px rgba(0,0,0,0.65)";
-          watermark.style.textShadow = "0 1px 0 rgba(255,255,255,0.9)";
-          watermark.style.pointerEvents = "none";
-          document.body.appendChild(watermark);
-        } catch {}
-      },
-      { wmSymbol: symbol, wmTf: interval },
-    );
-
-    await page.waitForTimeout(1000);
-    const watermarkVisible = await page.evaluate(() => {
-      const el = document.getElementById("snapshot-watermark-top");
-      if (!el) return false;
-      const r = el.getBoundingClientRect();
-      const styles = window.getComputedStyle(el);
-      return (
-        r.width > 40 &&
-        r.height > 14 &&
-        styles.visibility !== "hidden" &&
-        styles.display !== "none"
-      );
-    });
-    if (!watermarkVisible) {
-      throw new Error("snapshot_watermark_not_visible_before_capture");
-    }
-
-    const root = page;
-
-    let shotOk = false;
-    let lastShotErr = null;
-    // Retry element screenshot once; Playwright can timeout waiting for "stable" element under load.
-    for (let i = 0; i < 2 && !shotOk; i += 1) {
-      try {
-        if (outFormat === "png") {
-          await root.screenshot({
-            path: outPath,
-            type: "png",
-            animations: "disabled",
-            timeout: 20000,
-          });
-        } else {
-          await root.screenshot({
-            path: outPath,
-            type: "jpeg",
-            quality: jpgQuality,
-            animations: "disabled",
-            timeout: 20000,
-          });
-        }
-        shotOk = true;
-      } catch (e) {
-        lastShotErr = e;
-        await page.waitForTimeout(500);
-      }
-    }
-    if (!shotOk) {
-      // Fallback: clip from page screenshot (avoids locator stability checks/scroll actions).
-      const box = await page.evaluate(() => {
-        const el = document.querySelector("#tv-root");
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return {
-          x: Math.max(0, Math.floor(r.left)),
-          y: Math.max(0, Math.floor(r.top)),
-          width: Math.max(1, Math.floor(r.width)),
-          height: Math.max(1, Math.floor(r.height)),
-        };
-      });
-      if (!box)
-        throw lastShotErr || new Error("Chart root not found for screenshot");
-      if (outFormat === "png") {
-        await page.screenshot({
-          path: outPath,
-          type: "png",
-          clip: box,
-          animations: "disabled",
-          timeout: 20000,
-        });
-      } else {
-        await page.screenshot({
-          path: outPath,
-          type: "jpeg",
-          quality: jpgQuality,
-          clip: box,
-          animations: "disabled",
-          timeout: 20000,
-        });
-      }
-    }
-
-    // Anti-blank safeguard: small files are often blank/failed iframe frames. Retry once with extra wait.
-    try {
-      const st1 = fs.statSync(outPath);
-      const minBytes = outFormat === "png" ? 16000 : 12000;
-      if (Number(st1.size || 0) < minBytes) {
-        await page.waitForTimeout(2200);
-        const box = await page.evaluate(() => {
-          const el = document.querySelector("#tv-root");
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return {
-            x: Math.max(0, Math.floor(r.left)),
-            y: Math.max(0, Math.floor(r.top)),
-            width: Math.max(1, Math.floor(r.width)),
-            height: Math.max(1, Math.floor(r.height)),
-          };
-        });
-        if (box) {
-          try {
-            if (outFormat === "png") {
-              await page.screenshot({
-                path: outPath,
-                type: "png",
-                clip: box,
-                animations: "disabled",
-                timeout: 20000,
-              });
-            } else {
-              await page.screenshot({
-                path: outPath,
-                type: "jpeg",
-                quality: jpgQuality,
-                clip: box,
-                animations: "disabled",
-                timeout: 20000,
-              });
-            }
-          } catch (screenErr) {
-            lastShotErr = screenErr;
-          }
-        }
-      }
-    } catch {
-      // ignore fallback failure
-    }
-
-    // Last-resort fallback for cases where Playwright screenshot hangs on "waiting for fonts to load".
-    try {
-      const st = fs.statSync(outPath);
-      const minBytes = outFormat === "png" ? 12000 : 9000;
-      if (Number(st.size || 0) < minBytes) {
-        throw new Error("screenshot_too_small");
-      }
-    } catch {
-      const box = await page.evaluate(() => {
-        const el = document.querySelector("#tv-root");
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return {
-          x: Math.max(0, Number(r.left || 0)),
-          y: Math.max(0, Number(r.top || 0)),
-          width: Math.max(1, Number(r.width || 0)),
-          height: Math.max(1, Number(r.height || 0)),
-        };
-      });
-      if (!box)
-        throw (
-          lastShotErr || new Error("Chart root not found for CDP screenshot")
-        );
-      const cdp = await context.newCDPSession(page);
-      const shot = await cdp.send("Page.captureScreenshot", {
-        format: outFormat === "png" ? "png" : "jpeg",
-        quality: outFormat === "png" ? undefined : jpgQuality,
-        fromSurface: true,
-        captureBeyondViewport: false,
-        clip: {
-          x: Number(box.x),
-          y: Number(box.y),
-          width: Number(box.width),
-          height: Number(box.height),
-          scale: 1,
-        },
-      });
-      if (!shot?.data)
-        throw lastShotErr || new Error("CDP screenshot returned empty payload");
-      fs.writeFileSync(outPath, Buffer.from(String(shot.data), "base64"));
-    }
-  } finally {
-    try {
-      await context.close();
-    } catch {}
-  }
-
-  const st = fs.statSync(outPath);
-  const result = {
-    id: fileName.replace(/\.(png|jpe?g)$/i, ""),
-    file_name: fileName,
-    symbol,
-    tv_symbol: tvSymbol,
-    timeframe: interval,
-    provider: String(opts.provider || ""),
-    theme,
-    width,
-    height,
-    lookback_bars: lookbackBars,
-    format: outFormat,
-    created_at: new Date(st.mtimeMs || Date.now()).toISOString(),
-    size_bytes: Number(st.size || 0),
-    url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${encodeURIComponent(fileName)}`,
-  };
-  emitSnapshotCreatedNotification({
-    userId: opts.userId || null,
-    symbol: result.symbol,
-    timeframe: result.timeframe,
-    fileName: result.file_name,
-    reused: false,
-  });
-  return result;
-}
-
-function isLikelyChromiumCrash(error) {
-  const msg = String(error?.message || error || "").toLowerCase();
-  return (
-    msg.includes("target crashed") ||
-    msg.includes("page crashed") ||
-    msg.includes("browser has been closed") ||
-    msg.includes("target page, context or browser has been closed")
-  );
-}
-
-async function captureTradingViewSnapshot(opts = {}) {
-  const playwright = loadPlaywrightMaybe();
-  if (!playwright || !playwright.chromium) {
-    throw new Error(
-      "Playwright not found. Install in webhook or web-ui workspace.",
-    );
-  }
-  const executablePath = resolvePlaywrightChromiumExecutablePath();
-  let lastErr = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const browser = await playwright.chromium.launch({
-      headless: true,
-      executablePath: executablePath || undefined,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--no-zygote",
-      ],
-    });
-    try {
-      return await captureTradingViewSnapshotWithBrowser(browser, opts);
-    } catch (error) {
-      lastErr = error;
-      if (attempt === 0 && isLikelyChromiumCrash(error)) {
-        await new Promise((r) => setTimeout(r, 500));
-        continue;
-      }
-      throw error;
-    } finally {
-      await browser.close();
-    }
-  }
-  throw lastErr || new Error("snapshot_failed");
-}
-
 async function captureTradingViewSnapshotsBatch(opts = {}) {
   const playwright = loadPlaywrightMaybe();
   if (!playwright || !playwright.chromium) {
@@ -6113,23 +6992,6 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
   if (!symbols.length) {
     throw new Error("symbol or symbols is required");
   }
-  const tasks = [];
-  for (const symbol of symbols) {
-    for (const tf of timeframes) tasks.push({ symbol, tf });
-  }
-  const requestedConcurrency = Math.max(
-    1,
-    Math.min(
-      3,
-      Math.floor(
-        asNum(
-          opts.captureConcurrency,
-          asNum(process.env.SNAPSHOT_CAPTURE_CONCURRENCY, 1),
-        ),
-      ),
-    ),
-  );
-  const concurrency = Math.min(requestedConcurrency, tasks.length);
   const executablePath = resolvePlaywrightChromiumExecutablePath();
   const browser = await playwright.chromium.launch({
     headless: true,
@@ -6141,171 +7003,139 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
     ],
   });
   try {
+    // Batch capture is MASTER-only. We still honor the config constant for
+    // default behavior semantics, but split per-TF batch generation has been
+    // retired and no longer exists.
     const mergeSnapshots =
       opts.merge_snapshots !== undefined
         ? Boolean(opts.merge_snapshots)
         : ALL_SNAPSHOTS_IN_1_FILE_DEFAULT;
-    if (mergeSnapshots) {
-      // Deduplicate and sort timeframes: highest TF first
-      const uniqueTfs = canonicalizeTfList(timeframes);
-      // Keep grid capture single-threaded per batch to avoid Chromium context
-      // instability under cron load ("Target page/context/browser closed").
-      const maxConcurrent = 1;
-      const results = new Array(symbols.length);
-      let nextIdx = 0;
+    const uniqueTfs = canonicalizeTfList(timeframes);
+    const requestedConcurrent = Number(
+      opts.maxConcurrent ?? process.env.SNAPSHOT_BATCH_MAX_CONCURRENT ?? 4,
+    );
+    const maxConcurrent = Math.max(
+      1,
+      Math.min(
+        symbols.length,
+        Number.isFinite(requestedConcurrent)
+          ? Math.floor(requestedConcurrent)
+          : 4,
+      ),
+    );
+    const results = new Array(symbols.length);
+    let nextIdx = 0;
 
-      const captureOne = async (symbol) => {
-        const ext =
-          opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
-        const brokerSymbol = await resolveTradingViewSymbolForCapture(
-          symbol,
-          opts.provider,
-        );
-        const outFileName = `${symbol}_MASTER.${ext}`;
-        const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
-        const tz = encodeURIComponent(
-          normalizeTvTimezone(opts.timezone, "Etc/UTC"),
-        );
-        const providerQ = encodeURIComponent(String(opts.provider || ""));
-        const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${encodeURIComponent(brokerSymbol)}?tfs=${uniqueTfs.join(",")}&theme=${opts.theme || "dark"}&tz=${tz}&provider=${providerQ}&capture=1`;
+    const captureOne = async (symbol) => {
+      const ext =
+        opts.format === "jpg" || opts.format === "jpeg" ? "jpg" : "png";
+      const brokerSymbol = await resolveTradingViewSymbolForCapture(
+        symbol,
+        opts.provider,
+      );
+      const outFileName = `${symbol}_MASTER.${ext}`;
+      const outPath = path.join(snapshotSymbolDir(symbol), outFileName);
+      const tz = encodeURIComponent(
+        normalizeTvTimezone(opts.timezone, "Etc/UTC"),
+      );
+      const providerQ = encodeURIComponent(String(opts.provider || ""));
+      const gridUrl = `http://localhost:${CFG.port}/v2/chart/snapshots-grid/${encodeURIComponent(brokerSymbol)}?tfs=${uniqueTfs.join(",")}&theme=${opts.theme || "dark"}&tz=${tz}&provider=${providerQ}&capture=1`;
 
-        const context = await browser.newContext({
-          viewport: { width: 1920, height: 1080 },
-          deviceScaleFactor: 2,
-          ignoreHTTPSErrors: true,
+      const context = await browser.newContext({
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 2,
+        ignoreHTTPSErrors: true,
+      });
+      try {
+        const page = await context.newPage();
+        console.log(`[snapshot-grid] Capturing master grid for ${symbol}`);
+        const renderWaitMs = Math.max(
+          3000,
+          Math.floor(asNum(process.env.SNAPSHOT_GRID_RENDER_WAIT_MS, 9000)),
+        );
+        const readyTimeoutMs = Math.max(
+          10000,
+          Math.floor(asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000)),
+        );
+        await page.goto(gridUrl, { waitUntil: "load", timeout: 90000 });
+        await page.waitForTimeout(renderWaitMs);
+        await page
+          .waitForLoadState("networkidle", { timeout: 15000 })
+          .catch(() => {});
+        // Wait for at least one TradingView iframe to render chart canvas
+        try {
+          await page.waitForFunction(
+            () => {
+              const iframes = document.querySelectorAll("iframe");
+              return [...iframes].some((f) => {
+                try {
+                  return f.contentDocument?.querySelector?.(
+                    "canvas, .chart-markup-table",
+                  );
+                } catch {
+                  return false;
+                }
+              });
+            },
+            { timeout: readyTimeoutMs },
+          );
+          // Extra wait for bars to render after canvas appears
+          await page.waitForTimeout(5000);
+        } catch {
+          /* continue even if not fully loaded */
+        }
+        const ok = await page.evaluate(() => {
+          const badges = [
+            ...document.querySelectorAll(".grid-meta-badge,.tf-badge"),
+          ];
+          if (!badges.length) return false;
+          return badges.every((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          });
         });
-        try {
-          const page = await context.newPage();
-          console.log(`[snapshot-grid] Capturing master grid for ${symbol}`);
-          const renderWaitMs = Math.max(
-            3000,
-            Math.floor(asNum(process.env.SNAPSHOT_GRID_RENDER_WAIT_MS, 9000)),
-          );
-          const readyTimeoutMs = Math.max(
-            10000,
-            Math.floor(
-              asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000),
-            ),
-          );
-          await page.goto(gridUrl, { waitUntil: "load", timeout: 90000 });
-          await page.waitForTimeout(renderWaitMs);
-          await page
-            .waitForLoadState("networkidle", { timeout: 15000 })
-            .catch(() => {});
-          // Wait for at least one TradingView iframe to render chart canvas
-          try {
-            await page.waitForFunction(
-              () => {
-                const iframes = document.querySelectorAll("iframe");
-                return [...iframes].some((f) => {
-                  try {
-                    return f.contentDocument?.querySelector?.(
-                      "canvas, .chart-markup-table",
-                    );
-                  } catch {
-                    return false;
-                  }
-                });
-              },
-              { timeout: readyTimeoutMs },
-            );
-            // Extra wait for bars to render after canvas appears
-            await page.waitForTimeout(5000);
-          } catch {
-            /* continue even if not fully loaded */
-          }
-          const ok = await page.evaluate(() => {
-            const badges = [
-              ...document.querySelectorAll(".grid-meta-badge,.tf-badge"),
-            ];
-            if (!badges.length) return false;
-            return badges.every((el) => {
-              const r = el.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
-            });
-          });
-          if (!ok)
-            throw new Error(
-              "snapshot_grid_watermark_not_visible_before_capture",
-            );
-          await page.screenshot({
-            path: outPath,
-            type:
-              opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
-            quality:
-              opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
-            fullPage: true,
-          });
-          emitSnapshotCreatedNotification({
-            userId: opts.userId || null,
-            symbol,
-            timeframe: uniqueTfs.join(","),
-            fileName: outFileName,
-            reused: false,
-          });
-          return {
-            symbol,
-            timeframe: uniqueTfs.join(","),
-            status: "ok",
-            file_name: outFileName,
-            url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
-            master: true,
-          };
-        } catch (e) {
-          console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
-          return { symbol, status: "error", error: e.message };
-        } finally {
-          await context.close();
-        }
-      };
-
-      const worker = async () => {
-        while (nextIdx < symbols.length) {
-          const idx = nextIdx++;
-          results[idx] = await captureOne(symbols[idx]);
-        }
-      };
-
-      await Promise.all(Array.from({ length: maxConcurrent }, () => worker()));
-      return results.filter(Boolean);
-    }
-
-    const items = new Array(tasks.length);
-    let cursor = 0;
-
-    async function worker() {
-      while (true) {
-        const idx = cursor;
-        cursor += 1;
-        if (idx >= tasks.length) return;
-        const task = tasks[idx];
-        try {
-          const one = await captureTradingViewSnapshotWithBrowser(browser, {
-            ...opts,
-            symbol: task.symbol,
-            timeframe: task.tf,
-            tf: task.tf,
-          });
-          items[idx] = one;
-        } catch (error) {
-          if (isLikelyChromiumCrash(error)) {
-            const one = await captureTradingViewSnapshot({
-              ...opts,
-              symbol: task.symbol,
-              timeframe: task.tf,
-              tf: task.tf,
-            });
-            items[idx] = one;
-          } else {
-            throw error;
-          }
-        }
+        if (!ok)
+          throw new Error("snapshot_grid_watermark_not_visible_before_capture");
+        await page.screenshot({
+          path: outPath,
+          type:
+            opts.format === "jpeg" || opts.format === "jpg" ? "jpeg" : "png",
+          quality:
+            opts.format === "jpeg" || opts.format === "jpg" ? 90 : undefined,
+          fullPage: true,
+        });
+        emitSnapshotCreatedNotification({
+          userId: opts.userId || null,
+          symbol,
+          timeframe: uniqueTfs.join(","),
+          fileName: outFileName,
+          reused: false,
+        });
+        return {
+          symbol,
+          timeframe: uniqueTfs.join(","),
+          status: "ok",
+          file_name: outFileName,
+          url: `/v2/chart/snapshots/${encodeURIComponent(symbol)}/${outFileName}`,
+          master: true,
+        };
+      } catch (e) {
+        console.error(`[snapshot-grid] Failed ${symbol}:`, e.message);
+        return { symbol, status: "error", error: e.message };
+      } finally {
+        await context.close();
       }
-    }
+    };
 
-    const workers = Array.from({ length: concurrency }, () => worker());
-    await Promise.all(workers);
-    return items;
+    const worker = async () => {
+      while (nextIdx < symbols.length) {
+        const idx = nextIdx++;
+        results[idx] = await captureOne(symbols[idx]);
+      }
+    };
+
+    await Promise.all(Array.from({ length: maxConcurrent }, () => worker()));
+    return results.filter(Boolean);
   } finally {
     await browser.close();
   }
@@ -7103,17 +7933,21 @@ async function ensureAiTfContext({
   const snapshotFresh =
     snapshotFile?.file_id && Number(snapshotFile.bar_end || 0) >= barEnd;
   if (includeSnapshots && (forceSnapshot || !snapshotFresh)) {
-    const shot = await captureTradingViewSnapshot({
+    const shots = await captureTradingViewSnapshotsBatch({
       userId,
       symbol,
       provider,
-      timeframe: displayTfFromNorm(tfNorm),
+      timeframes: [displayTfFromNorm(tfNorm)],
+      tfs: [displayTfFromNorm(tfNorm)],
       session_prefix: `${symbolNorm}_${displayTfFromNorm(tfNorm)}_${barEnd || "latest"}`,
       lookbackBars: bars,
       format: "png",
       quality: 55,
     });
-    const shotAbs = path.join(CHART_SNAPSHOT_DIR, shot.file_name);
+    const shot = Array.isArray(shots) ? shots[0] || null : null;
+    if (!shot?.file_name)
+      throw new Error("context snapshot capture returned no file");
+    const shotAbs = path.join(snapshotSymbolDir(symbolNorm), shot.file_name);
     snapshotFile = await upsertClaudeContextFile({
       apiKey,
       contextKey,
@@ -7887,41 +8721,109 @@ async function callAiProvider({
   apiKey: callerApiKey = "",
   userId = "",
 }) {
-  // If explicit provider is given (for OpenRouter), use it directly
-  if (explicitProvider) {
-    // Passthrough to appropriate handler below — model-based detection is overridden
-  }
   const modelLower = String(model || "").toLowerCase();
+  const messageCount = Array.isArray(messages) ? messages.length : 0;
 
-  // Claude → use Anthropic Messages API
   if (modelLower.includes("claude")) {
+    const provider = "claude";
     trackApiCall("Claude");
-    const claudeKey =
-      callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
-    if (!claudeKey) throw new Error("CLAUDE_API_KEY is missing in Settings.");
-    const out = await anthropicMessagesWithFallback({
-      apiKey: claudeKey,
+    await logProviderActivity({
+      userId,
+      provider,
       model: model || "claude-sonnet-4-0",
-      messages,
-      maxTokens,
-      timeoutMs,
+      event: "AI_API_CALL_REQUEST",
+      message: "Provider API request started",
+      metadata: {
+        mode: "chat",
+        max_tokens: maxTokens,
+        timeout_ms: timeoutMs,
+        message_count: messageCount,
+      },
     });
-    if (!out.response.ok) {
-      const errText = await out.response.text();
-      throw new Error(`Claude API Error (${out.response.status}): ${errText}`);
+    try {
+      const claudeKey =
+        callerApiKey || (await loadClaudeApiKeyForUser(CFG.mt5DefaultUserId));
+      if (!claudeKey) {
+        await logProviderActivity({
+          userId,
+          provider,
+          model: model || "claude-sonnet-4-0",
+          event: "AUTH_ERROR",
+          level: "ERROR",
+          message: "Provider API key missing",
+          metadata: { reason: "missing_api_key" },
+        });
+        throw new Error("CLAUDE_API_KEY is missing in Settings.");
+      }
+      const out = await anthropicMessagesWithFallback({
+        apiKey: claudeKey,
+        model: model || "claude-sonnet-4-0",
+        messages,
+        maxTokens,
+        timeoutMs,
+      });
+      if (!out.response.ok) {
+        const errText = await out.response.text();
+        await logProviderActivity({
+          userId,
+          provider,
+          model: out.modelUsed || model || "claude-sonnet-4-0",
+          event:
+            out.response.status === 401 || out.response.status === 403
+              ? "AUTH_ERROR"
+              : "PROVIDER_ERROR",
+          level: "ERROR",
+          statusCode: out.response.status,
+          message: "Provider API request failed",
+          metadata: {
+            error_summary: sanitizeProviderLogMessage(errText),
+          },
+        });
+        throw new Error(
+          `Claude API Error (${out.response.status}): ${errText}`,
+        );
+      }
+      const json = await out.response.json();
+      const rawText = Array.isArray(json?.content)
+        ? json.content
+            .filter((x) => x?.type === "text")
+            .map((x) => String(x?.text || ""))
+            .join("")
+        : String(json?.content || "");
+      await logProviderActivity({
+        userId,
+        provider,
+        model: out.modelUsed || model || "claude-sonnet-4-0",
+        event: "AI_API_CALL_RESPONSE",
+        message: "Provider API request completed",
+        metadata: {
+          ok: true,
+          content_chars: rawText.length,
+        },
+      });
+      return {
+        rawText,
+        modelUsed: out.modelUsed || model,
+        provider,
+      };
+    } catch (err) {
+      if (!String(err?.message || "").includes("API Error (")) {
+        await logProviderActivity({
+          userId,
+          provider,
+          model: model || "claude-sonnet-4-0",
+          event: "PROVIDER_ERROR",
+          level: "ERROR",
+          message: "Provider API request failed",
+          metadata: {
+            error_summary: sanitizeProviderLogMessage(err?.message || err),
+          },
+        });
+      }
+      throw err;
     }
-    const json = await out.response.json();
-    const rawText = Array.isArray(json?.content)
-      ? json.content
-          .filter((x) => x?.type === "text")
-          .map((x) => String(x?.text || ""))
-          .join("")
-      : String(json?.content || "");
-    return { rawText, modelUsed: out.modelUsed || model, provider: "claude" };
   }
 
-  // OpenAI / DeepSeek / Gemini → use OpenAI-compatible chat/completions
-  // Determine provider: explicit overrides model-based detection
   let provider = explicitProvider
     ? explicitProvider.toLowerCase()
     : modelLower.includes("openrouter") || modelLower.includes("open-router")
@@ -7932,7 +8834,6 @@ async function callAiProvider({
           ? "deepseek"
           : "gemini";
 
-  // Normalize provider aliases (e.g. frontend sends ai_gpt4o → stripped to "gpt4o")
   if (provider === "gpt4o" || provider === "gpt-4o" || provider === "chatgpt") {
     provider = "openai";
   }
@@ -7950,10 +8851,20 @@ async function callAiProvider({
             ? cfg.OPENAI_API_KEY
             : cfg.GEMINI_API_KEY;
   }
-  if (!sanitizeRuntimeApiKey(apiKey))
+  if (!sanitizeRuntimeApiKey(apiKey)) {
+    await logProviderActivity({
+      userId,
+      provider,
+      model,
+      event: "AUTH_ERROR",
+      level: "ERROR",
+      message: "Provider API key missing",
+      metadata: { reason: "missing_api_key" },
+    });
     throw new Error(
       `${provider.toUpperCase()}_API_KEY is missing in Settings.`,
     );
+  }
 
   const endpoint =
     provider === "openrouter"
@@ -7964,8 +8875,6 @@ async function callAiProvider({
           ? "https://api.openai.com/v1/chat/completions"
           : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
-  // Convert image format: Anthropic base64 → OpenAI image_url
-  // DeepSeek does NOT support images — strip them and warn
   const isDeepSeek = provider === "deepseek";
   let imageCount = 0;
   const convertedMessages = messages.map((m) => {
@@ -7992,20 +8901,44 @@ async function callAiProvider({
     return { ...m, content: parts };
   });
 
+  const resolvedModel =
+    model ||
+    (provider === "deepseek"
+      ? "deepseek-chat"
+      : provider === "openai"
+        ? "gpt-4o"
+        : provider === "openrouter"
+          ? "openai/gpt-4o"
+          : "gemini-2.0-flash");
+
   const body = JSON.stringify({
-    model:
-      model ||
-      (provider === "deepseek"
-        ? "deepseek-chat"
-        : provider === "openai"
-          ? "gpt-4o"
-          : provider === "openrouter"
-            ? "openai/gpt-4o"
-            : "gemini-2.0-flash"),
+    model: resolvedModel,
     messages: convertedMessages,
     max_tokens: maxTokens,
     response_format:
       provider !== "gemini" ? { type: "json_object" } : undefined,
+  });
+
+  await logProviderActivity({
+    userId,
+    provider,
+    model: resolvedModel,
+    event: "AI_API_CALL_REQUEST",
+    message: "Provider API request started",
+    metadata: {
+      mode: "chat",
+      max_tokens: maxTokens,
+      timeout_ms: timeoutMs,
+      message_count: messageCount,
+      image_count: imageCount,
+      endpoint_host: (() => {
+        try {
+          return new URL(endpoint).host;
+        } catch {
+          return "";
+        }
+      })(),
+    },
   });
 
   const ctrl = new AbortController();
@@ -8028,11 +8961,53 @@ async function callAiProvider({
     });
     if (!res.ok) {
       const errText = await res.text();
+      await logProviderActivity({
+        userId,
+        provider,
+        model: resolvedModel,
+        event:
+          res.status === 401 || res.status === 403
+            ? "AUTH_ERROR"
+            : "PROVIDER_ERROR",
+        level: "ERROR",
+        statusCode: res.status,
+        message: "Provider API request failed",
+        metadata: {
+          error_summary: sanitizeProviderLogMessage(errText),
+        },
+      });
       throw new Error(`${provider} API Error (${res.status}): ${errText}`);
     }
     const json = await res.json();
     const rawText = json.choices?.[0]?.message?.content || "";
-    return { rawText, modelUsed: model, provider };
+    await logProviderActivity({
+      userId,
+      provider,
+      model: resolvedModel,
+      event: "AI_API_CALL_RESPONSE",
+      message: "Provider API request completed",
+      metadata: {
+        ok: true,
+        content_chars: String(rawText || "").length,
+      },
+    });
+    return { rawText, modelUsed: resolvedModel, provider };
+  } catch (err) {
+    const msg = String(err?.message || "");
+    if (!msg.includes(" API Error (")) {
+      await logProviderActivity({
+        userId,
+        provider,
+        model: resolvedModel,
+        event: "PROVIDER_ERROR",
+        level: "ERROR",
+        message: "Provider API request failed",
+        metadata: {
+          error_summary: sanitizeProviderLogMessage(msg),
+        },
+      });
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -8559,6 +9534,7 @@ function mt5RenewSignalIdFromExisting(baseId, existingIds) {
 let MT5_BACKEND = null;
 let USER_ACCOUNT_OBJECT_STORE = null;
 const LEGACY_USER_ACCOUNT_MIGRATIONS = new Set();
+const LEGACY_USER_ACCOUNT_FILE_MIGRATIONS = new Set();
 
 function getUserAccountObjectStore() {
   if (!USER_ACCOUNT_OBJECT_STORE) {
@@ -8701,6 +9677,241 @@ async function findUnifiedUserAccountById(accountId, userId = null) {
     aid,
     userId,
   );
+}
+
+function collectAccountIdentityAliases(account = {}) {
+  const meta =
+    account?.metadata && typeof account.metadata === "object"
+      ? account.metadata
+      : {};
+  const out = new Set();
+  const push = (value) => {
+    const v = String(value || "").trim();
+    if (v) out.add(v);
+  };
+  push(account?.account_id);
+  push(account?.object_id);
+  push(meta?.broker_account_id);
+  push(meta?.external_account_id);
+  push(meta?.ctrader_account_id);
+  for (const item of Array.isArray(meta?.broker_account_ids)
+    ? meta.broker_account_ids
+    : []) {
+    push(item);
+  }
+  for (const item of Array.isArray(meta?.external_account_ids)
+    ? meta.external_account_ids
+    : []) {
+    push(item);
+  }
+  return out;
+}
+
+async function absorbAliasedUserAccountArtifacts(
+  userId,
+  canonicalAccountId,
+  aliasId,
+) {
+  const uid = String(userId || "").trim();
+  const canonicalId = String(canonicalAccountId || "").trim();
+  const rawAliasId = String(aliasId || "").trim();
+  if (!uid || !canonicalId || !rawAliasId || canonicalId === rawAliasId) return;
+
+  const canonicalLogsDir = objectLogsDir(uid, "user_accounts", canonicalId);
+  const aliasLogsDir = objectLogsDir(uid, "user_accounts", rawAliasId);
+  try {
+    if (fs.existsSync(aliasLogsDir)) {
+      if (!fs.existsSync(canonicalLogsDir)) {
+        fs.mkdirSync(canonicalLogsDir, { recursive: true });
+      }
+      for (const entry of fs.readdirSync(aliasLogsDir, {
+        withFileTypes: true,
+      })) {
+        if (!entry.isFile() || !entry.name.endsWith(".log")) continue;
+        const src = path.join(aliasLogsDir, entry.name);
+        const dest = path.join(canonicalLogsDir, entry.name);
+        if (!fs.existsSync(dest)) {
+          fs.renameSync(src, dest);
+        } else {
+          const content = fs.readFileSync(src, "utf8");
+          if (content) fs.appendFileSync(dest, content);
+          fs.unlinkSync(src);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(
+      "[user-accounts] alias log absorb skipped:",
+      err?.message || err,
+    );
+  }
+
+  try {
+    const aliasDir = objectTypeDir(uid, "user_accounts");
+    const aliasFolder = path.join(
+      aliasDir,
+      safeObjectPathPart(rawAliasId, "default"),
+    );
+    if (fs.existsSync(aliasFolder)) {
+      const remaining = fs.readdirSync(aliasFolder);
+      if (
+        !remaining.length ||
+        (remaining.length === 1 &&
+          remaining[0] === "logs" &&
+          fs.existsSync(path.join(aliasFolder, "logs")) &&
+          fs.readdirSync(path.join(aliasFolder, "logs")).length === 0)
+      ) {
+        fs.rmSync(aliasFolder, { recursive: true, force: true });
+      }
+    }
+  } catch {}
+}
+
+async function findCanonicalAccountIdFromExecutionProfiles(
+  userId,
+  externalAccountId,
+) {
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const externalId = String(externalAccountId || "").trim();
+  if (!externalId) return null;
+  const rows = await settingsStore.listUserSettingsByType(
+    uid,
+    "execution_profile",
+  );
+  for (const row of rows || []) {
+    const data = settingsStore.parseJsonField(row?.data) || {};
+    if (String(data?.ctrader_account_id || "").trim() !== externalId) continue;
+    const canonicalId = String(data?.account_id || "").trim();
+    if (canonicalId) return canonicalId;
+  }
+  return null;
+}
+
+async function resolveCanonicalUserAccount(
+  userId,
+  accountId,
+  payload = {},
+  options = {},
+) {
+  const uid =
+    String(userId || CFG.mt5DefaultUserId).trim() || CFG.mt5DefaultUserId;
+  const rawId = String(accountId || "").trim();
+  if (!rawId) return null;
+  const store = getUserAccountObjectStore();
+
+  const direct =
+    (await store.getUnifiedObject(uid, "user_accounts", rawId)) ||
+    (await findUnifiedUserAccountById(rawId, uid));
+  if (direct) return direct;
+
+  const accounts = await store.listUnifiedObjects(uid, "user_accounts");
+  const aliasMatch = accounts.find((account) =>
+    collectAccountIdentityAliases(account).has(rawId),
+  );
+  if (aliasMatch) return aliasMatch;
+
+  const profileCanonicalId = await findCanonicalAccountIdFromExecutionProfiles(
+    uid,
+    rawId,
+  );
+  let canonical = profileCanonicalId
+    ? await store.getUnifiedObject(uid, "user_accounts", profileCanonicalId)
+    : null;
+
+  if (!canonical) {
+    const brokerName = String(payload?.broker_name || "")
+      .trim()
+      .toUpperCase();
+    const providerCode = String(
+      payload?.provider_code || resolveProviderCode(payload?.broker_name) || "",
+    )
+      .trim()
+      .toUpperCase();
+    const activeCandidates = accounts.filter(
+      (account) =>
+        String(account?.status || "ACTIVE").toUpperCase() !== "ARCHIVED",
+    );
+    const brokerMatches = activeCandidates.filter((account) => {
+      const accountBroker = String(account?.broker_name || "")
+        .trim()
+        .toUpperCase();
+      const accountProvider = String(
+        account?.provider_code || account?.metadata?.provider_code || "",
+      )
+        .trim()
+        .toUpperCase();
+      return (
+        (brokerName && accountBroker === brokerName) ||
+        (providerCode && accountProvider === providerCode)
+      );
+    });
+    if (brokerMatches.length === 1) {
+      canonical = brokerMatches[0];
+    } else if (activeCandidates.length === 1) {
+      canonical = activeCandidates[0];
+    }
+  }
+
+  if (canonical && String(canonical.account_id || "").trim() !== rawId) {
+    const canonicalId = String(canonical.account_id || "").trim();
+    const currentDynamic = await getDynamicUserAccountRecord(uid, canonicalId);
+    const nextMeta = {
+      ...(currentDynamic?.metadata || {}),
+      broker_account_id: rawId,
+      broker_account_ids: [
+        ...new Set([
+          ...(Array.isArray(currentDynamic?.metadata?.broker_account_ids)
+            ? currentDynamic.metadata.broker_account_ids
+            : []),
+          rawId,
+        ]),
+      ],
+    };
+    await store.upsertDynamicObject(
+      uid,
+      "user_accounts",
+      canonicalId,
+      nextMeta,
+      currentDynamic?.status || canonical.status || "ACTIVE",
+      {
+        created_at:
+          currentDynamic?.created_at || canonical.created_at || mt5NowIso(),
+        updated_at: mt5NowIso(),
+      },
+    );
+    await absorbAliasedUserAccountArtifacts(uid, canonicalId, rawId);
+    return store.getUnifiedObject(uid, "user_accounts", canonicalId);
+  }
+
+  return canonical;
+}
+
+async function migrateLegacyUserAccountStaticFilesToObjectFolders(
+  migrationKey = "default",
+) {
+  const key = String(migrationKey || "default");
+  if (LEGACY_USER_ACCOUNT_FILE_MIGRATIONS.has(key)) return;
+  const store = getUserAccountObjectStore();
+  const users = await store.staticDal.listUsersWithObjectType("user_accounts");
+  for (const uid of users) {
+    const rows = await store.staticDal.listObjects(uid, "user_accounts");
+    for (const row of rows || []) {
+      const objectId = String(row?.object_id || row?.account_id || "").trim();
+      if (!objectId) continue;
+      const legacyPath = store.staticDal.legacyObjectPath(
+        uid,
+        "user_accounts",
+        objectId,
+      );
+      if (!fs.existsSync(legacyPath)) continue;
+      await store.upsertStaticObject(uid, "user_accounts", objectId, row, {
+        created_at: row?.created_at || mt5NowIso(),
+        updated_at: row?.updated_at || mt5NowIso(),
+      });
+    }
+  }
+  LEGACY_USER_ACCOUNT_FILE_MIGRATIONS.add(key);
 }
 
 async function getDynamicUserAccountRecord(userId, accountId) {
@@ -9771,6 +10982,14 @@ END
       err?.message || err,
     );
   });
+  await migrateLegacyUserAccountStaticFilesToObjectFolders(
+    source?.id || postgresUrl || "active",
+  ).catch((err) => {
+    console.warn(
+      "[user-accounts] static file migration skipped:",
+      err?.message || err,
+    );
+  });
 
   const backend = {
     storage,
@@ -10694,10 +11913,15 @@ END
     },
     async brokerSyncV2(accountId, payload = {}) {
       trackSourceActivity(payload?.source_id || "unknown", true);
-      const aid = String(accountId || "").trim();
-      if (!aid) return { ok: false, error: "account_id is required" };
+      const rawAid = String(accountId || "").trim();
+      if (!rawAid) return { ok: false, error: "account_id is required" };
       const store = getUserAccountObjectStore();
-      let existingAccount = await findUnifiedUserAccountById(aid);
+      let existingAccount = await resolveCanonicalUserAccount(
+        payload.user_id || CFG.mt5DefaultUserId,
+        rawAid,
+        payload,
+      );
+      let aid = String(existingAccount?.account_id || rawAid).trim();
       let uid = String(
         existingAccount?.user_id || payload.user_id || CFG.mt5DefaultUserId,
       ).trim();
@@ -10854,7 +12078,11 @@ END
       await this.log(
         aid,
         "accounts",
-        { event: "ACCOUNT_SYNC", data: payload },
+        {
+          event: "ACCOUNT_SYNC",
+          data: payload,
+          ...(aid !== rawAid ? { broker_account_id: rawAid } : {}),
+        },
         uid,
       );
 
@@ -12108,7 +13336,7 @@ END
     },
     async brokerHeartbeatV2(accountId, payload = {}) {
       trackSourceActivity(payload?.source_id || "unknown", true);
-      const aid = String(accountId || "").trim();
+      const rawAid = String(accountId || "").trim();
       const now = mt5NowIso();
       const balance = asNum(payload.balance, null);
       const equity = asNum(payload.equity, null);
@@ -12116,8 +13344,13 @@ END
       const freeMargin = asNum(payload.free_margin, null);
 
       const store = getUserAccountObjectStore();
-      const existing = await findUnifiedUserAccountById(aid);
+      const existing = await resolveCanonicalUserAccount(
+        payload.user_id || CFG.mt5DefaultUserId,
+        rawAid,
+        payload,
+      );
       if (!existing) return { ok: false, error: "account not found" };
+      const aid = String(existing.account_id || rawAid).trim();
       const uid = existing.user_id || CFG.mt5DefaultUserId;
       const currentDynamic = await getDynamicUserAccountRecord(uid, aid);
       const nextMeta = {
@@ -12159,7 +13392,11 @@ END
       await this.log(
         aid,
         "accounts",
-        { event: "ACCOUNT_HEARTBEAT", payload },
+        {
+          event: "ACCOUNT_HEARTBEAT",
+          payload,
+          ...(aid !== rawAid ? { broker_account_id: rawAid } : {}),
+        },
         uid,
       );
       return { ok: true };
@@ -13709,7 +14946,42 @@ END
       }
     },
   };
-  // Run provider schema migration on startup
+  // Run storage migrations on startup
+  settingsStore
+    .migrateCronSettingsToObjects()
+    .then((result) => {
+      if (
+        result?.moved ||
+        result?.removedLegacy ||
+        result?.migratedLogFiles ||
+        result?.removedLegacyLogs
+      ) {
+        console.log(
+          `[Migration] Cron storage: moved=${result?.moved || 0}, removed_legacy=${result?.removedLegacy || 0}, migrated_log_files=${result?.migratedLogFiles || 0}, migrated_log_lines=${result?.migratedLogLines || 0}, removed_legacy_logs=${result?.removedLegacyLogs || 0}`,
+        );
+      }
+    })
+    .catch((err) =>
+      console.warn(
+        "[Migration] Cron storage startup migration error:",
+        err.message,
+      ),
+    );
+  settingsStore
+    .migrateNamedProviderSettingsToObjects()
+    .then((result) => {
+      if (result?.moved || result?.removedLegacy) {
+        console.log(
+          `[Migration] Provider storage: moved=${result?.moved || 0}, removed_legacy=${result?.removedLegacy || 0}`,
+        );
+      }
+    })
+    .catch((err) =>
+      console.warn(
+        "[Migration] Provider storage startup migration error:",
+        err.message,
+      ),
+    );
   migrateProviderSchema().catch((err) =>
     console.warn(
       "[Migration] Provider schema startup migration error:",
@@ -16641,13 +17913,16 @@ async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
       },
       stRaw,
     );
-    const appliedExecutionStatus = stRaw;
+    const appliedExecutionStatus =
+      String(syncResult.execution_status || stRaw)
+        .trim()
+        .toUpperCase() || stRaw;
     const newDispatchStatus = syncResult.dispatch_status;
     const queuedBrokerAction = newDispatchStatus !== null;
     const pnlRaw = payload.pnl_realized ?? payload.pnl;
     const pnlNum = Number(pnlRaw);
     const pnl =
-      appliedExecutionStatus === "PENDING"
+      queuedBrokerAction || appliedExecutionStatus === "PENDING"
         ? 0
         : Number.isFinite(pnlNum)
           ? pnlNum
@@ -16658,6 +17933,7 @@ async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
     const closeReason = closeReasonRaw || null;
     const manualMeta = JSON.stringify({
       manual_requested_status: stRaw,
+      manual_requested_reason: closeReason,
       manual_applied_execution_status: appliedExecutionStatus,
       manual_new_dispatch_status: newDispatchStatus || null,
       manual_edit_source: "vps",
@@ -16673,7 +17949,7 @@ async function mt5ChangeTradeStatusV2(tradeId, userId = null, payload = {}) {
               pnlRealized: sql`CASE WHEN ${pnl}::double precision IS NULL THEN ${b.schema.trades.pnlRealized} ELSE ${pnl}::double precision END`,
             }
           : {}),
-        ...(closeReason != null
+        ...(closeReason != null && !queuedBrokerAction
           ? {
               closeReason: sql`COALESCE(${closeReason}::text, ${b.schema.trades.closeReason})`,
             }
@@ -16759,32 +18035,7 @@ async function mt5UpdateTradeManualV2(tradeId, userId = null, payload = {}) {
 
 // Parse a single log line into an event object for backward-compat APIs.
 function parseLogLine(line, fallbackObjectId) {
-  // New format: [ISO] [LEVEL] [EVENT_TYPE] message, key=val, ...
-  const m = line.match(/^\[([^\]]+)\]\s+\[(\w+)\]\s+\[(\S+)\]\s+(.*)/);
-  if (!m) return null;
-  const [, ts, level, eventType, rest] = m;
-  // Extract message (first segment before "object_type=")
-  const objIdx = rest.indexOf("object_type=");
-  const msg =
-    objIdx > 0
-      ? rest.slice(0, objIdx - 2).trim() // -2 for ", " before object_type
-      : "";
-  const kvStr = objIdx > 0 ? rest.slice(objIdx) : rest;
-  const payload = { level, message: msg };
-  const kvRe = /(\w+)=("([^"]*)"|(\S+))/g;
-  let kvMatch;
-  while ((kvMatch = kvRe.exec(kvStr)) !== null) {
-    payload[kvMatch[1]] = kvMatch[3] !== undefined ? kvMatch[3] : kvMatch[4];
-  }
-  return {
-    log_id: `${ts}_${eventType}`,
-    object_id: payload.object_id || fallbackObjectId,
-    event_type: eventType,
-    event_time: ts,
-    created_at: ts,
-    metadata: payload,
-    payload_json: payload,
-  };
+  return parseObjectLogLine(line, fallbackObjectId);
 }
 
 async function mt5ListTradeEventsV2(tradeId, limit = 200) {
@@ -17809,7 +19060,14 @@ function mt5ComputeTradeMetrics(rows) {
     const s = mt5CanonicalStoredStatus(
       r.execution_status || r.status || r.close_reason,
     );
-    return ["CLOSED", "TP", "SL", "CANCEL", "CANCELLED"].includes(s);
+    return ["CLOSED", "TP", "SL"].includes(s);
+  }).length;
+
+  const countCancelled = all.filter((r) => {
+    const s = mt5CanonicalStoredStatus(
+      r.execution_status || r.status || r.close_reason,
+    );
+    return ["CANCEL", "CANCELLED"].includes(s);
   }).length;
 
   // DASHBOARD FILTER: Only calculate PnL/WR/RR by Closed trades
@@ -17883,9 +19141,46 @@ function mt5ComputeTradeMetrics(rows) {
     return Number.isFinite(rr) ? acc + rr : acc;
   }, 0);
 
+  const filledOpenRows = all.filter((r) => {
+    const s = mt5CanonicalStoredStatus(
+      r.execution_status || r.status || r.close_reason,
+    );
+    return ["PLACED", "FILLED"].includes(s);
+  });
+  const filledOpenPnl = filledOpenRows.reduce((acc, r) => {
+    const v = Number(
+      r?.broker_pnl ?? r?.pnl_money_realized ?? r?.pnl_realized ?? 0,
+    );
+    return Number.isFinite(v) ? acc + v : acc;
+  }, 0);
+  const filledOpenWinSumPnl = filledOpenRows.reduce((acc, r) => {
+    const v = Number(
+      r?.broker_pnl ?? r?.pnl_money_realized ?? r?.pnl_realized ?? 0,
+    );
+    return Number.isFinite(v) && v > 0 ? acc + v : acc;
+  }, 0);
+  const filledOpenLoseSumPnl = filledOpenRows.reduce((acc, r) => {
+    const v = Number(
+      r?.broker_pnl ?? r?.pnl_money_realized ?? r?.pnl_realized ?? 0,
+    );
+    return Number.isFinite(v) && v < 0 ? acc + v : acc;
+  }, 0);
+  const filledOpenWins = filledOpenRows.filter((r) => {
+    const v = Number(
+      r?.broker_pnl ?? r?.pnl_money_realized ?? r?.pnl_realized ?? 0,
+    );
+    return Number.isFinite(v) && v > 0;
+  }).length;
+  const filledOpenLosses = filledOpenRows.filter((r) => {
+    const v = Number(
+      r?.broker_pnl ?? r?.pnl_money_realized ?? r?.pnl_realized ?? 0,
+    );
+    return Number.isFinite(v) && v < 0;
+  }).length;
+
   return {
     total_signals: all.length,
-    total_trades: all.length,
+    total_trades: countPending + countFilled + countClosed,
     wins,
     losses,
     win_rate: winBase > 0 ? (wins / winBase) * 100 : 0,
@@ -17898,6 +19193,12 @@ function mt5ComputeTradeMetrics(rows) {
     count_pending: countPending,
     count_filled: countFilled,
     count_closed: countClosed,
+    count_cancelled: countCancelled,
+    filled_open_pnl: filledOpenPnl,
+    filled_open_win_sum_pnl: filledOpenWinSumPnl,
+    filled_open_lose_sum_pnl: filledOpenLoseSumPnl,
+    filled_open_wins: filledOpenWins,
+    filled_open_losses: filledOpenLosses,
   };
 }
 
@@ -19062,12 +20363,27 @@ const appHandler = async (req, res) => {
     );
     if (!source || !id || !file)
       return json(res, 400, { ok: false, error: "source, id, file required" });
-    // Try nested path first, then flat (source/file.log)
-    let filePath = path.join(SERVER_LOG_DIR, source, id, file + ".log");
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(SERVER_LOG_DIR, source, file + ".log");
+    let filePath = "";
+    if (source === "cron") {
+      const matches = listCronCompatibilityLogFiles(id, file);
+      filePath = matches[0]?.path || "";
+    } else if (source === "providers") {
+      const matches = listProviderLogFiles(id, file);
+      filePath = matches[0]?.path || "";
+    } else if (source === "accounts") {
+      const matches = listAccountLogFiles(id, file);
+      filePath = matches[0]?.path || "";
+      if (!filePath) {
+        filePath = path.join(SERVER_LOG_DIR, source, id, file + ".log");
+      }
+    } else {
+      // Try nested path first, then flat (source/file.log)
+      filePath = path.join(SERVER_LOG_DIR, source, id, file + ".log");
+      if (!fs.existsSync(filePath)) {
+        filePath = path.join(SERVER_LOG_DIR, source, file + ".log");
+      }
     }
-    if (!fs.existsSync(filePath))
+    if (!filePath || !fs.existsSync(filePath))
       return json(res, 404, { ok: false, error: "file not found" });
     try {
       const raw = fs.readFileSync(filePath, "utf8");
@@ -20654,8 +21970,18 @@ const appHandler = async (req, res) => {
         .trim()
         .toLowerCase();
       const { start: rangeStart, end: rangeEnd } = mt5PeriodRange(range);
-      // Collect all .log files from SERVER_LOG_DIR (recursive)
+      // Collect all .log files from SERVER_LOG_DIR plus cron object-local logs.
       const allLines = [];
+      const seenLogFiles = new Set();
+      const collectEventFromLine = (trimmed) => {
+        const ev = parseLogLine(trimmed);
+        if (!ev) return;
+        if (symbolFilter) {
+          const sym = String(ev.metadata?.symbol || "").toUpperCase();
+          if (sym && sym !== symbolFilter) return;
+        }
+        allLines.push(ev);
+      };
       if (fs.existsSync(SERVER_LOG_DIR)) {
         try {
           const walkDir = (dir) => {
@@ -20665,27 +21991,19 @@ const appHandler = async (req, res) => {
               if (e.isDirectory()) {
                 walkDir(full);
               } else if (e.name.endsWith(".log")) {
-                try {
-                  const content = fs.readFileSync(full, "utf8");
-                  for (const line of content.split("\n")) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
-                    const ev = parseLogLine(trimmed);
-                    if (!ev) continue;
-                    if (symbolFilter) {
-                      const sym = String(
-                        ev.metadata?.symbol || "",
-                      ).toUpperCase();
-                      if (sym && sym !== symbolFilter) continue;
-                    }
-                    allLines.push(ev);
-                  }
-                } catch (_) {}
+                seenLogFiles.add(path.resolve(full));
+                walkLogFileLines(full, collectEventFromLine);
               }
             }
           };
           walkDir(SERVER_LOG_DIR);
         } catch {}
+      }
+      for (const match of listAllCronCompatibilityLogFiles()) {
+        const resolved = path.resolve(match.path);
+        if (seenLogFiles.has(resolved)) continue;
+        seenLogFiles.add(resolved);
+        walkLogFileLines(match.path, collectEventFromLine);
       }
 
       // Apply remaining filters
@@ -21166,54 +22484,7 @@ const appHandler = async (req, res) => {
       console.log(
         `[Settings] GET /v2/settings: sess=${JSON.stringify(sess)}, userId=${userId}`,
       );
-      // Seed default cron templates only if they don't exist yet
-      const existingCron = await settingsStore
-        .getUserSettingData(userId, "cron", "CRON_MD_DEFAULT")
-        .catch(() => null);
-      if (!existingCron || Object.keys(existingCron).length === 0) {
-        await settingsStore.upsertUserSetting(
-          userId,
-          "cron",
-          "CRON_MD_DEFAULT",
-          {
-            cron_type: "MARKET_DATA_CRON",
-            enabled: false,
-            provider: "twelvedata",
-            timezone: CFG.marketDataDefaultTimezone,
-            symbols: [],
-            timeframes: ["1m", "5m", "15m"],
-            batch_size: CFG.marketDataCronBatchSize,
-            last_sync: {},
-          },
-          "INACTIVE",
-        );
-      }
-      const existingAiCron = await settingsStore
-        .getUserSettingData(userId, "cron", "CRON_AI_DEFAULT")
-        .catch(() => null);
-      if (!existingAiCron || Object.keys(existingAiCron).length === 0) {
-        await settingsStore.upsertUserSetting(
-          userId,
-          "cron",
-          "CRON_AI_DEFAULT",
-          {
-            cron_type: "ANALYSIS_CRON",
-            enabled: false,
-            refresh_snapshot: false,
-            symbols: [],
-            timeframes: ["15m", "1h"],
-            cadence_minutes: 60,
-            model: "claude-sonnet-4-0",
-            profile: "",
-            entry_models: [],
-            directions: ["BUY", "SELL"],
-            order_types: ["market", "limit", "stop"],
-            prompt: "",
-            last_sync: {},
-          },
-          "INACTIVE",
-        );
-      }
+      await ensureUserSymbolGroups(userId);
       const rows = await repoListUserSettings(userId);
       const settings = rows.map((r) => {
         let d = r.data;
@@ -21348,6 +22619,25 @@ const appHandler = async (req, res) => {
           }
         }
         data = encryptObject({ value: rawValue, api_key: rawValue });
+      }
+
+      if (body.type === "cron") {
+        const defaultCadenceSeconds =
+          data?.cron_type === "ANALYSIS_CRON"
+            ? 3600
+            : data?.cron_type === "MARKET_DATA_CRON" &&
+                Array.isArray(data?.timeframes) &&
+                data.timeframes.length
+              ? parseTfTokenToSeconds(data.timeframes[0])
+              : 60;
+        data = normalizeCronSettingData(data, { defaultCadenceSeconds });
+        data.symbols_group =
+          normalizeCronSymbolGroupValue(data.symbols_group || "") || null;
+      }
+
+      if (body.type === "symbol_groups") {
+        settingName = "default";
+        data = normalizeSymbolGroupsData(data || {});
       }
 
       const result = await settingsStore.upsertUserSetting(
@@ -21732,12 +23022,13 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
       const body = await readJson(req);
-      const item = await captureTradingViewSnapshot({
+      const items = await captureTradingViewSnapshotsBatch({
         userId: sess.user_id,
         symbol: body.symbol,
         provider: body.provider,
         session_prefix: body.session_prefix || body.sessionPrefix || "",
-        timeframe: body.timeframe || body.tf,
+        timeframes: [body.timeframe || body.tf || "1D"],
+        tfs: [body.timeframe || body.tf || "1D"],
         width: body.width,
         height: body.height,
         theme: body.theme,
@@ -21746,6 +23037,8 @@ const appHandler = async (req, res) => {
         format: body.format,
         quality: body.quality,
       });
+      const item = Array.isArray(items) ? items[0] || null : null;
+      if (!item) throw new Error("snapshot capture returned no item");
       const tradeSid = String(
         body.trade_sid || body.tradeSid || body.sid || "",
       ).trim();
@@ -21935,13 +23228,10 @@ const appHandler = async (req, res) => {
       metals: allSymbolsPool.filter((s) => isMetalSym(s)).sort(),
       indices: allSymbolsPool.filter((s) => isIndexSym(s)).sort(),
     };
-    // In watchlist/no-symbol mode, default to single TF 4h unless explicitly provided.
-    // For single-symbol mode, always force the 6-TF layout.
-    const forcedSingleSymbolTfs = "1W,1D,4h,15m,5m,1m";
-    const tfsRaw =
-      symbols.length === 1
-        ? forcedSingleSymbolTfs
-        : tfsExplicitRaw || (noSymbolInput ? "4h" : "D,240,15,5");
+    // Prefer explicit/context TFs. If none are provided, fall back to a 4-TF
+    // layout instead of the old 6-TF default.
+    const defaultTfsRaw = "1D,4H,15m,5m";
+    const tfsRaw = tfsExplicitRaw || defaultTfsRaw;
 
     // Canonicalize, dedup, sort descending
     const tfs = canonicalizeTfList(tfsRaw.split(",").filter(Boolean));
@@ -24213,6 +25503,9 @@ const appHandler = async (req, res) => {
       let snapshotCaptureReason = files.length
         ? "request_files"
         : "latest_snapshot_files";
+      if (!files.length && requestedSymbol) {
+        files = listValidSnapshotFilesForSymbol(requestedSymbol, 50);
+      }
       if (!files.length) {
         const allSnapshots = [];
         // Scan top-level snapshots/ and per-symbol subdirectory
@@ -25335,7 +26628,8 @@ const appHandler = async (req, res) => {
       const payload = await readJson(req);
       const sess = getUiSessionFromReq(req);
       const settings = payload.settings || payload;
-      // Save each event type as a separate notification_config file
+      // Persist notification_config through the DAL; the store keeps it as one
+      // merged document while preserving per-event reads for the UI cache.
       for (const [eventName, config] of Object.entries(settings)) {
         const eventKey = String(eventName)
           .toUpperCase()
@@ -25419,7 +26713,50 @@ const appHandler = async (req, res) => {
         const mem = MARKET_DATA_MEMORY_CACHE.get("economic_calendar:today");
         return mem?.data || [];
       });
-      return json(res, 200, { ok: true, events: data || [] });
+      return json(res, 200, {
+        ok: true,
+        events: (Array.isArray(data) ? data : []).map((event) =>
+          hydrateNewsEventTiming(event, Date.now()),
+        ),
+      });
+    } catch (error) {
+      return json(res, 500, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/calendar/week") {
+    try {
+      const data = await StateRepo.get("NEWS_CALENDAR", "week", async () => {
+        await refreshEconomicCalendar();
+        return (
+          (await StateRepo.get("NEWS_CALENDAR", "week").catch(() => [])) || []
+        );
+      });
+      return json(res, 200, {
+        ok: true,
+        events: (Array.isArray(data) ? data : []).map((event) =>
+          hydrateNewsEventTiming(event, Date.now()),
+        ),
+      });
+    } catch (error) {
+      return json(res, 500, { ok: false, error: error.message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/v2/symbol-groups/dynamic") {
+    if (!requireAuthForUi(req, res)) return;
+    try {
+      const cached = await StateRepo.get(
+        "DYNAMIC_SYMBOL_GROUP",
+        "watchlist",
+        async () => {
+          const events =
+            (await StateRepo.get("NEWS_CALENDAR", "week").catch(() => [])) ||
+            [];
+          return refreshDynamicSymbolGroup(Array.isArray(events) ? events : []);
+        },
+      );
+      return json(res, 200, { ok: true, group: cached || null });
     } catch (error) {
       return json(res, 500, { ok: false, error: error.message });
     }
@@ -29594,10 +30931,17 @@ async function mt5RunSnapshotsCronInline() {
   };
   for (const conf of configs) {
     const userId = conf.userId || conf.user_id;
-    const data = settingsStore.parseJsonField(conf.data) || {};
+    let data = settingsStore.parseJsonField(conf.data) || {};
     if (!asBool(data.enabled ?? true, true)) continue;
     summary.configs++;
-    const symbols = resolveCronSymbols(data);
+    const decision = cronConfigShouldRunNow(
+      data,
+      now,
+      CRON_STATE.lastSnapshotsRun[`${userId}_${conf.name}`] || 0,
+      60,
+    );
+    data = decision.normalized;
+    const symbols = await resolveCronSymbols(data, userId);
     const excludeSymbols = new Set(
       (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
         .map((s) => String(s).toUpperCase().trim())
@@ -29608,31 +30952,32 @@ async function mt5RunSnapshotsCronInline() {
     );
     const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
     if (!filteredSymbols.length || !tfs.length) continue;
-    const cadenceSec = Number(data.cadence_seconds || 3600);
-    const schedule = String(data.schedule || "").trim();
-    const batchSize = Math.max(1, Number(data.symbols_per_tick || 1));
+    const rawBatchSize = Number(data.symbols_per_tick);
+    const batchSize =
+      Number.isFinite(rawBatchSize) && rawBatchSize > 0
+        ? Math.max(1, Math.floor(rawBatchSize))
+        : filteredSymbols.length;
     const stateKey = `${userId}_${conf.name}`;
-    const lastRun = CRON_STATE.lastSnapshotsRun[stateKey] || 0;
 
-    let shouldRun = false;
-    if (schedule) {
-      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
+    if (!decision.shouldRun) {
+      summary.skipped++;
+      continue;
     }
-    if (!shouldRun && !schedule) {
-      if (now - lastRun < cadenceSec * 1000 - 5000) {
-        summary.skipped++;
-        continue;
-      }
+    // Default behavior is "all symbols each tick". A positive symbols_per_tick
+    // enables round-robin batching.
+    let tickSymbols = filteredSymbols;
+    let batchLabel = "all";
+    if (batchSize < filteredSymbols.length) {
+      const rrKey = `${userId}_${conf.name}_rr`;
+      let rrIdx = CRON_STATE.lastSnapshotsRun[rrKey] || 0;
+      if (rrIdx >= filteredSymbols.length) rrIdx = 0;
+      tickSymbols = filteredSymbols.slice(rrIdx, rrIdx + batchSize);
+      CRON_STATE.lastSnapshotsRun[rrKey] =
+        (rrIdx + batchSize) % filteredSymbols.length;
+      batchLabel = String(Math.floor(rrIdx / batchSize) + 1);
     }
-    // Round-robin: rotate through symbols across ticks
-    const rrKey = `${userId}_${conf.name}_rr`;
-    let rrIdx = CRON_STATE.lastSnapshotsRun[rrKey] || 0;
-    if (rrIdx >= filteredSymbols.length) rrIdx = 0;
-    const tickSymbols = filteredSymbols.slice(rrIdx, rrIdx + batchSize);
-    CRON_STATE.lastSnapshotsRun[rrKey] =
-      (rrIdx + batchSize) % filteredSymbols.length;
     console.log(
-      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length} (batch ${Math.floor(rrIdx / batchSize) + 1})`,
+      `[Cron][Snapshots] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length} (batch ${batchLabel})`,
     );
     CRON_STATE.lastSnapshotsRun[stateKey] = now;
     try {
@@ -29648,6 +30993,15 @@ async function mt5RunSnapshotsCronInline() {
         theme: String(data.theme || "dark"),
         width: Number(data.width || 1200),
         height: Number(data.height || 800),
+        maxConcurrent: Math.min(
+          tickSymbols.length,
+          Math.max(
+            1,
+            Math.floor(
+              asNum(process.env.SNAPSHOTS_CRON_SYMBOL_CONCURRENCY, 4),
+            ),
+          ),
+        ),
         userId,
       });
       const created = [];
@@ -29709,7 +31063,8 @@ async function mt5RunSnapshotsCronInline() {
       notificationManager.handle("CRON_SNAPSHOT", "completed", {
         user_id: userId,
         event: "cron_snapshot",
-        message: `Snapshots: ${created.length} symbols (${createdSymbols.slice(0, 3).join(", ")}${createdSymbols.length > 3 ? "..." : ""})`,
+        message:
+          createdSymbols.join(", ") || `${created.length} created`,
         type: "info",
         notification: true,
         symbols: createdSymbols,
@@ -29885,9 +31240,21 @@ async function mt5RunMarketDataCron() {
 
   for (const conf of configs) {
     const userId = conf.userId || conf.user_id;
-    const data = settingsStore.parseJsonField(conf.data) || {};
+    let data = settingsStore.parseJsonField(conf.data) || {};
     if (!marketDataCronSettingEnabled(data)) continue;
-    const symbols = resolveCronSymbols(data);
+    const defaultCadence =
+      Array.isArray(data.timeframes) && data.timeframes.length
+        ? parseTfTokenToSeconds(data.timeframes[0])
+        : 60;
+    const stateKey = `${userId}_${conf.name}`;
+    const decision = cronConfigShouldRunNow(
+      data,
+      now,
+      CRON_STATE.lastMarketDataRun[stateKey] || 0,
+      defaultCadence,
+    );
+    data = decision.normalized;
+    const symbols = await resolveCronSymbols(data, userId);
     const excludeSymbols = new Set(
       (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
         .map((s) => String(s).toUpperCase().trim())
@@ -29900,20 +31267,7 @@ async function mt5RunMarketDataCron() {
     if (!filteredSymbols.length || !tfs.length) continue;
     const timezone = marketDataCronTimezone(data);
 
-    // Cadence: use cadence_seconds from config, fall back to first TF period
-    const defaultCadence = tfs.length ? parseTfTokenToSeconds(tfs[0]) : 60;
-    const cadenceSec = Number(data.cadence_seconds || defaultCadence);
-    const schedule = String(data.schedule || "").trim();
-    const stateKey = `${userId}_${conf.name}`;
-    const lastRun = CRON_STATE.lastMarketDataRun[stateKey] || 0;
-
-    let shouldRun = false;
-    if (schedule) {
-      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
-    }
-    if (!shouldRun && !schedule) {
-      if (now - lastRun < cadenceSec * 1000 - 5000) continue;
-    }
+    if (!decision.shouldRun) continue;
 
     CRON_STATE.lastMarketDataRun[stateKey] = now;
 
@@ -30009,30 +31363,27 @@ async function mt5RunAiAnalysisCronInline() {
   let triggered = 0;
   for (const conf of configs) {
     const userId = conf.userId || conf.user_id;
-    const data = settingsStore.parseJsonField(conf.data) || {};
+    let data = settingsStore.parseJsonField(conf.data) || {};
     const confName = String(conf.name || "ANALYSIS_CRON");
-    const symbols = resolveCronSymbols(data);
-    const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
-    const cadenceSec = Number(data.cadence_seconds || 3600);
-    const schedule = String(data.schedule || "").trim();
-
     const stateKey = `${userId}_${conf.name}`;
-    const lastRun = CRON_STATE.lastAiAnalysisRun[stateKey] || 0;
-
-    // Check if this cron should run now
-    let shouldRun = false;
-    const hasSchedule = schedule && schedule.startsWith("at ");
-    if (hasSchedule) {
-      // Event mode: strict — only fire at scheduled time, no fallback
-      shouldRun = cronScheduleShouldRun(schedule, now, lastRun);
-    } else {
-      // Interval mode: cadence-based
-      if (now - lastRun >= cadenceSec * 1000 - 5000) {
-        shouldRun = true;
-      }
+    const hydratedLastRunMs = readCronObjectLogTimestampMs(
+      userId,
+      confName,
+      "ai_analysis",
+    );
+    const lastRunMs = Math.max(
+      Number(CRON_STATE.lastAiAnalysisRun[stateKey] || 0),
+      Number(hydratedLastRunMs || 0),
+    );
+    if (!CRON_STATE.lastAiAnalysisRun[stateKey] && hydratedLastRunMs > 0) {
+      CRON_STATE.lastAiAnalysisRun[stateKey] = hydratedLastRunMs;
     }
+    const decision = cronConfigShouldRunNow(data, now, lastRunMs, 3600);
+    data = decision.normalized;
+    const symbols = await resolveCronSymbols(data, userId);
+    const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
 
-    if (shouldRun) {
+    if (decision.shouldRun) {
       console.log(
         `[Cron][AiAnalysis] Running userId=${userId} name=${conf.name} symbols=${symbols.length}`,
       );
@@ -30079,7 +31430,6 @@ async function mt5RunAiAnalysisCronInline() {
               format: "png",
               quality: 70,
               theme: "dark",
-              merge_snapshots: false,
             });
           }
           const analyzePayload = JSON.stringify({
@@ -30125,24 +31475,25 @@ async function mt5RunAiAnalysisCronInline() {
           });
           let created = 0;
           let createdTradeSid = "";
+          let parsedBody = null;
           try {
-            const parsed = JSON.parse(body);
+            parsedBody = JSON.parse(body);
             created = Number(
-              parsed?.auto_save_result?.created ||
-                parsed?.auto_save?.created ||
+              parsedBody?.auto_save_result?.created ||
+                parsedBody?.auto_save?.created ||
                 0,
             );
             createdTradeSid = String(
-              parsed?.auto_save_result?.trade_sid ||
-                parsed?.auto_save_result?.sid ||
-                parsed?.auto_save?.trade_sid ||
-                parsed?.auto_save?.sid ||
-                parsed?.trade_sid ||
-                parsed?.sid ||
+              parsedBody?.auto_save_result?.trade_sid ||
+                parsedBody?.auto_save_result?.sid ||
+                parsedBody?.auto_save?.trade_sid ||
+                parsedBody?.auto_save?.sid ||
+                parsedBody?.trade_sid ||
+                parsedBody?.sid ||
                 "",
             ).trim();
             if (!createdTradeSid) {
-              const ids = parsed?.auto_save_result?.created_ids;
+              const ids = parsedBody?.auto_save_result?.created_ids;
               if (Array.isArray(ids) && ids.length > 0) {
                 createdTradeSid = String(ids[0] || "").trim();
               }
@@ -30150,29 +31501,38 @@ async function mt5RunAiAnalysisCronInline() {
           } catch (_) {}
           triggered++;
           const ok = statusCode >= 200 && statusCode < 300;
+          const failureDetail = ok
+            ? ""
+            : extractCronAiFailureDetail(body) ||
+              String(parsedBody?.error || parsedBody?.message || "").trim();
           console.log(
-            `[Cron][AiAnalysis] ${symbol}: ${ok ? "OK" : "FAIL"} (${statusCode}) created=${created}`,
+            `[Cron][AiAnalysis] ${symbol}: ${ok ? "OK" : "FAIL"} (${statusCode}) created=${created}${failureDetail ? ` detail=${failureDetail}` : ""}`,
           );
+          const successMessage = `${createdTradeSid || "NO_SID"}-${symbol}, ${created} created`;
+          const errorMessage = `${symbol} ERROR${failureDetail ? `: ${failureDetail}` : ` (${statusCode})`}`;
           // Per-symbol log
           fileLog(
             symbol,
             "cron",
             {
               event: "CRON_AI_ANALYSIS",
-              message: `AI Analysis: ${symbol} — ${ok ? "ok" : "FAIL (" + statusCode + ")"}${created > 0 ? ", " + created + " trades" : ", 0 trades"}`,
+              level: ok ? "INFO" : "ERROR",
+              message: ok ? successMessage : errorMessage,
               cron_name: confName,
               symbol,
               status: ok ? "ok" : "error",
               created_trades: created,
               trade_sid: createdTradeSid || undefined,
               status_code: statusCode,
+              error: ok ? undefined : failureDetail || `HTTP ${statusCode}`,
+              error_detail: ok ? undefined : failureDetail || undefined,
             },
             userId,
           );
           // Notify hub
           if (notificationManager) {
             notificationManager.handle("SYSTEM_EVENT", "cron_ai", {
-              message: `AI Analysis: ${symbol} — ${ok ? "ok" : "failed"}${created > 0 ? " (" + created + " trades)" : ""}`,
+              message: ok ? successMessage : errorMessage,
               symbol,
             });
           }
@@ -30183,9 +31543,10 @@ async function mt5RunAiAnalysisCronInline() {
             "cron",
             {
               event: "CRON_AI_ANALYSIS",
-              message: `AI Analysis: ${symbol} — ERROR: ${err.message}`,
+              message: `${symbol} ERROR: ${err.message}`,
               level: "ERROR",
               error: err.message,
+              error_detail: err.message,
               cron_name: confName,
               symbol,
             },

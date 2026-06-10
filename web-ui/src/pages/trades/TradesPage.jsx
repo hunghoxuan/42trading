@@ -16,6 +16,7 @@ import { buildDetailHeader } from "../../components/SignalDetailHeaderBuilder";
 import PnlDisplay from "../../components/PnlDisplay";
 import PaginationBar from "../../components/PaginationBar";
 import DataTable from "../../components/DataTable";
+import MobileCollapseSection from "../../components/MobileCollapseSection";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 import {
   asNum,
@@ -148,7 +149,22 @@ function auditTimestampRaw(t) {
   return t?.created_at || t?.opened_at || t?.closed_at || t?.updated_at || null;
 }
 
-function rangeBounds(range) {
+function rangeBounds(range, exactTime = "") {
+  const timeToken = String(exactTime || "")
+    .trim()
+    .toLowerCase();
+  if (timeToken) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(timeToken)) {
+      const start = new Date(`${timeToken}T00:00:00`);
+      const end = new Date(`${timeToken}T23:59:59.999`);
+      if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+        return { from: start.toISOString(), to: end.toISOString() };
+      }
+    }
+    if (timeToken !== "all") {
+      return rangeBounds(timeToken, "");
+    }
+  }
   const now = new Date();
   const start = new Date(now);
   const end = new Date(now);
@@ -332,36 +348,63 @@ export default function TradesPage() {
     return JSON.stringify(createForm) !== JSON.stringify(DEFAULT_CREATE_FORM);
   }, [createForm]);
 
-  const [filter, setFilter] = useState({
-    q: "",
-    account_id: "",
-    source_id: "",
-    symbol: "",
-    side: "",
-    entry_model: "",
-    chart_tf: "",
-    execution_status: routeStatus
-      ? routeStatus.toUpperCase()
-      : (searchParams.get("status") || "FILLED").toUpperCase(),
-    range: "all",
-    page: 1,
-    pageSize: 50,
-  });
+  const initialTradeStatus = useMemo(
+    () => (routeStatus || searchParams.get("status") || "FILLED").toUpperCase(),
+    [routeStatus, searchParams],
+  );
 
-  // Sync filter when sub-menu (URL path) changes (skip when trade detail open)
+  const searchFilterSnapshot = useMemo(
+    () => ({
+      q: String(searchParams.get("q") || ""),
+      account_id: String(searchParams.get("account_id") || ""),
+      source_id: String(
+        searchParams.get("source_id") || searchParams.get("source") || "",
+      ),
+      symbol: String(searchParams.get("symbol") || "").toUpperCase(),
+      side: String(
+        searchParams.get("side") || searchParams.get("direction") || "",
+      ).toUpperCase(),
+      entry_model: String(searchParams.get("entry_model") || ""),
+      chart_tf: String(searchParams.get("chart_tf") || ""),
+      execution_status: initialTradeStatus,
+      time: String(
+        searchParams.get("time") || searchParams.get("range") || "all",
+      ),
+      range: String(
+        searchParams.get("time") || searchParams.get("range") || "all",
+      ),
+      page: Math.max(1, Number(searchParams.get("page") || 1) || 1),
+      pageSize: (() => {
+        const raw = Number(searchParams.get("pageSize") || 50) || 50;
+        return PAGE_SIZE_OPTIONS.includes(raw) ? raw : 50;
+      })(),
+    }),
+    [searchParams, initialTradeStatus],
+  );
+
+  const [filter, setFilter] = useState(searchFilterSnapshot);
+
+  const pageTitle = useMemo(() => {
+    const st = String(initialTradeStatus || "").toUpperCase();
+    if (st === "FILLED") return "Filled Trades (Positions)";
+    if (st === "PENDING") return "Pending Trades (Orders)";
+    if (st === "CLOSED") return "Closed Trades";
+    if (st === "DRAFT") return "Draft Trades";
+    if (st === "REJECTED") return "Rejected Trades";
+    if (st === "CANCELLED") return "Cancelled Trades";
+    return "Trades";
+  }, [initialTradeStatus]);
+
+  // Sync filter when URL path/query changes (skip when trade detail open)
   useEffect(() => {
     if (tradeId) return;
-    const status = (
-      routeStatus ||
-      searchParams.get("status") ||
-      "FILLED"
-    ).toUpperCase();
-    setFilter((f) =>
-      f.execution_status !== status
-        ? { ...f, execution_status: status, page: 1 }
-        : f,
-    );
-  }, [routeStatus, searchParams, tradeId]);
+    setFilter((prev) => {
+      const next = searchFilterSnapshot;
+      const prevJson = JSON.stringify(prev);
+      const nextJson = JSON.stringify(next);
+      return prevJson === nextJson ? prev : next;
+    });
+  }, [searchFilterSnapshot, tradeId]);
 
   const query = useMemo(() => ({ ...filter }), [filter]);
   const [sorting, setSorting] = useState({ key: "info", dir: "desc" });
@@ -411,7 +454,7 @@ export default function TradesPage() {
     try {
       setLoading(true);
       const queryApi = { ...query };
-      const b = rangeBounds(queryApi.range);
+      const b = rangeBounds(queryApi.range, queryApi.time);
       queryApi.created_from = b.from || "";
       queryApi.created_to = b.to || "";
       const data = await api.v2Trades(queryApi);
@@ -490,7 +533,7 @@ export default function TradesPage() {
     try {
       setBulkBusy(true);
       const filters = { ...query };
-      const b = rangeBounds(filters.range);
+      const b = rangeBounds(filters.range, filters.time);
       filters.created_from = b.from || "";
       filters.created_to = b.to || "";
       if (selectedIds.size > 0) {
@@ -638,7 +681,12 @@ export default function TradesPage() {
               execution_status: tradeStatus,
               page: 1,
             }));
-            setSearchParams(tradeStatus ? { status: tradeStatus } : {});
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              if (tradeStatus) next.set("status", tradeStatus);
+              else next.delete("status");
+              return next;
+            });
           }
         } else {
           setNotFound(true);
@@ -767,7 +815,9 @@ export default function TradesPage() {
           status === "REJECTED"
             ? {
                 execution_status: status,
-                rejection_reason: String(detailPlan.rejection_reason || "").trim(),
+                rejection_reason: String(
+                  detailPlan.rejection_reason || "",
+                ).trim(),
               }
             : {
                 execution_status: status,
@@ -1213,7 +1263,7 @@ export default function TradesPage() {
   }
 
   return (
-    <section className="logs-page-container stack-layout">
+    <section className="logs-page-container trades-page-container stack-layout">
       <div
         style={{
           display: "flex",
@@ -1224,199 +1274,165 @@ export default function TradesPage() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <h2 className="page-title" style={{ margin: 0 }}>
-            Trades
+            {pageTitle}
           </h2>
         </div>
         <span className="minor-text">{total} trades</span>
       </div>
 
       <div className="toolbar-panel">
-        <div className="toolbar-group toolbar-pagination">
-          <div className="pager-area">
-            <strong>{total}</strong>
-            <PaginationBar
-              page={filter.page}
-              pages={pages}
-              label={`${filter.page}/${pages}`}
-              pageSize={filter.pageSize}
-              pageSizeOptions={PAGE_SIZE_OPTIONS}
-              onPageChange={(page) => setFilter((f) => ({ ...f, page }))}
-              onPageSizeChange={(pageSize) =>
+        <MobileCollapseSection
+          title="Filters"
+          className="toolbar-group toolbar-search-filter"
+        >
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <input
+              id="trades-search"
+              aria-label="Search"
+              placeholder="SEARCH..."
+              value={filter.q}
+              onChange={(e) => {
+                setFilter((f) => ({ ...f, q: e.target.value, page: 1 }));
+              }}
+            />
+            <select
+              id="trades-filter-account"
+              aria-label="Account"
+              value={filter.account_id}
+              onChange={(e) =>
                 setFilter((f) => ({
                   ...f,
-                  pageSize,
+                  account_id: e.target.value,
                   page: 1,
                 }))
               }
-            />
+            >
+              <option value="">ALL ACCOUNTS</option>
+              {accounts.map((a, i) => (
+                <option key={a.account_id || `acc-${i}`} value={a.account_id}>
+                  {a.name || a.account_id}
+                </option>
+              ))}
+            </select>
+            <select
+              id="trades-filter-source"
+              aria-label="Source"
+              value={filter.source_id}
+              onChange={(e) =>
+                setFilter((f) => ({ ...f, source_id: e.target.value, page: 1 }))
+              }
+            >
+              <option value="">ALL SOURCES</option>
+              {sources.map((s, i) => (
+                <option key={s.source_id || `src-${i}`} value={s.source_id}>
+                  {s.name || s.source_id}
+                </option>
+              ))}
+            </select>
+            <select
+              id="trades-filter-side"
+              aria-label="Side"
+              value={filter.side}
+              onChange={(e) =>
+                setFilter((f) => ({ ...f, side: e.target.value, page: 1 }))
+              }
+            >
+              <option value="">ALL SIDES</option>
+              <option value="BUY">BUY</option>
+              <option value="SELL">SELL</option>
+            </select>
+            <select
+              value={filter.execution_status}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFilter((f) => ({ ...f, execution_status: v, page: 1 }));
+                navigate(v ? `/trades/${v.toLowerCase()}` : "/trades", {
+                  replace: true,
+                });
+              }}
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s.value || "all"} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <select
+              id="trades-filter-symbol"
+              aria-label="Symbol"
+              value={filter.symbol}
+              onChange={(e) =>
+                setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
+              }
+            >
+              <option value="">ALL SYMBOLS</option>
+              {uniqueOptions.symbols.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <select
+              id="trades-filter-range"
+              aria-label="Time Range"
+              value={filter.time || filter.range || "all"}
+              onChange={(e) => {
+                const v = String(e.target.value || "all");
+                setFilter((f) => ({ ...f, range: v, time: v, page: 1 }));
+                setSearchParams((prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("page");
+                  if (!v || v === "all") {
+                    next.delete("time");
+                    next.delete("range");
+                  } else {
+                    next.set("time", v);
+                    next.delete("range");
+                  }
+                  return next;
+                });
+              }}
+            >
+              {RANGE_OPTIONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <select
+              id="trades-bulk-action"
+              aria-label="Bulk Action"
+              value={bulkAction}
+              onChange={(e) => setBulkAction(e.target.value)}
+              disabled={bulkBusy}
+            >
+              {BULK_ACTIONS.map((a) => (
+                <option key={a.value || "none"} value={a.value}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className={`primary-button ${bulkBusy ? "btn-busy" : ""}`}
+              disabled={!bulkAction || bulkBusy}
+              onClick={onBulkApply}
+            >
+              {bulkBusy ? (
+                <div className="spinner" style={{ width: 14, height: 14 }} />
+              ) : (
+                "APPLY"
+              )}
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setCreateMode((v) => !v)}
+            >
+              {createMode ? "CANCEL" : "+ CREATE TRADE"}
+            </button>
           </div>
-        </div>
-
-        <div
-          className="toolbar-group toolbar-search-filter"
-          style={{ flexWrap: "wrap" }}
-        >
-          <input
-            id="trades-search"
-            aria-label="Search"
-            placeholder="SEARCH..."
-            value={filter.q}
-            onChange={(e) => {
-              setFilter((f) => ({ ...f, q: e.target.value, page: 1 }));
-            }}
-          />
-          <select
-            id="trades-filter-account"
-            aria-label="Account"
-            value={filter.account_id}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, account_id: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL ACCOUNTS</option>
-            {accounts.map((a, i) => (
-              <option key={a.account_id || `acc-${i}`} value={a.account_id}>
-                {a.name || a.account_id}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-tf"
-            aria-label="Timeframe"
-            value={filter.chart_tf}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, chart_tf: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL TFS</option>
-            {uniqueOptions.tfs.map((tf) => (
-              <option key={tf} value={tf}>
-                {formatTimeframe(tf)}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-source"
-            aria-label="Source"
-            value={filter.source_id}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, source_id: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL SOURCES</option>
-            {sources.map((s, i) => (
-              <option key={s.source_id || `src-${i}`} value={s.source_id}>
-                {s.name || s.source_id}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-side"
-            aria-label="Side"
-            value={filter.side}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, side: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL SIDES</option>
-            <option value="BUY">BUY</option>
-            <option value="SELL">SELL</option>
-          </select>
-          <select
-            value={filter.execution_status}
-            onChange={(e) => {
-              const v = e.target.value;
-              setFilter((f) => ({ ...f, execution_status: v, page: 1 }));
-              navigate(v ? `/trades/${v.toLowerCase()}` : "/trades", {
-                replace: true,
-              });
-            }}
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s.value || "all"} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-symbol"
-            aria-label="Symbol"
-            value={filter.symbol}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, symbol: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL SYMBOLS</option>
-            {uniqueOptions.symbols.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-model"
-            aria-label="Model"
-            value={filter.entry_model}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, entry_model: e.target.value, page: 1 }))
-            }
-          >
-            <option value="">ALL MODELS</option>
-            {uniqueOptions.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select
-            id="trades-filter-range"
-            aria-label="Time Range"
-            value={filter.range}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, range: e.target.value, page: 1 }))
-            }
-          >
-            {RANGE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="toolbar-group toolbar-bulk-action">
-          <select
-            id="trades-bulk-action"
-            aria-label="Bulk Action"
-            value={bulkAction}
-            onChange={(e) => setBulkAction(e.target.value)}
-            disabled={bulkBusy}
-          >
-            {BULK_ACTIONS.map((a) => (
-              <option key={a.value || "none"} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className={`primary-button ${bulkBusy ? "btn-busy" : ""}`}
-            disabled={!bulkAction || bulkBusy}
-            onClick={onBulkApply}
-          >
-            {bulkBusy ? (
-              <div className="spinner" style={{ width: 14, height: 14 }} />
-            ) : (
-              "APPLY"
-            )}
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => setCreateMode((v) => !v)}
-          >
-            {createMode ? "CANCEL" : "+ CREATE TRADE"}
-          </button>
-        </div>
+        </MobileCollapseSection>
       </div>
       {createMsg ? (
         <div className="loading" style={{ padding: 10 }}>
@@ -1438,24 +1454,44 @@ export default function TradesPage() {
               : { flex: "0 0 40%" }
           }
         >
-          <div style={{ position: "absolute", top: 8, right: 8, zIndex: 2 }}>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() =>
-                setListMode(listMode === "compact" ? "full" : "compact")
-              }
-              title={listMode === "compact" ? "Expand" : "Collapse"}
-              style={{
-                width: 28,
-                height: 28,
-                padding: 0,
-                fontSize: 12,
-                fontWeight: 700,
-              }}
-            >
-              {listMode === "compact" ? ">>" : "<<"}
-            </button>
+          <div className="trades-list-header">
+            <div className="pager-area trades-list-pagination">
+              <strong>{total}</strong>
+              <PaginationBar
+                page={filter.page}
+                pages={pages}
+                label={`${filter.page}/${pages}`}
+                pageSize={filter.pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageChange={(page) => setFilter((f) => ({ ...f, page }))}
+                onPageSizeChange={(pageSize) =>
+                  setFilter((f) => ({
+                    ...f,
+                    pageSize,
+                    page: 1,
+                  }))
+                }
+              />
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() =>
+                  setListMode(listMode === "compact" ? "full" : "compact")
+                }
+                title={listMode === "compact" ? "Open" : "Collapse"}
+                aria-label={listMode === "compact" ? "Open" : "Collapse"}
+                style={{
+                  width: 34,
+                  height: 34,
+                  padding: 0,
+                  fontSize: 15,
+                  fontWeight: 700,
+                  marginLeft: "auto",
+                }}
+              >
+                {listMode === "compact" ? "↓" : "↑"}
+              </button>
+            </div>
           </div>
           {loading && (
             <div className="frozen-overlay">
@@ -1800,7 +1836,7 @@ export default function TradesPage() {
                                       q: selectedTrade.sid || selectedTrade.id,
                                       reason: reason || "CANCEL",
                                     }),
-                              );
+                                );
                               await cancelPromise;
                               if (stay) {
                                 selectedTradeIdRef.current = "";
@@ -1823,7 +1859,7 @@ export default function TradesPage() {
                               selectedTrade.execution_status || "",
                             ).toUpperCase() === "DRAFT"
                           ? onCancelDraft
-                        : null,
+                          : null,
                     onClose:
                       String(
                         selectedTrade.execution_status || "",
@@ -2138,15 +2174,17 @@ export default function TradesPage() {
                     {
                       label: "Broker PnL",
                       value:
-                        asNum(selectedTrade.broker_pnl) ??
+                        (asNum(selectedTrade.broker_pnl) ??
                         asNum(selectedTrade.pnl_realized) ??
                         asNum(selectedTrade.metadata?.broker_data?.net_pnl) ??
                         asNum(selectedTrade.metadata?.broker_data?.pnl) ??
-                        null
+                        null)
                           ? `$${(
                               asNum(selectedTrade.broker_pnl) ??
                               asNum(selectedTrade.pnl_realized) ??
-                              asNum(selectedTrade.metadata?.broker_data?.net_pnl) ??
+                              asNum(
+                                selectedTrade.metadata?.broker_data?.net_pnl,
+                              ) ??
                               asNum(selectedTrade.metadata?.broker_data?.pnl) ??
                               0
                             ).toFixed(2)}`

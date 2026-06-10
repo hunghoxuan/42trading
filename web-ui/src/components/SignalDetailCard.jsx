@@ -3,13 +3,17 @@ import { TradePlanEditor } from "./TradePlanEditor";
 import {
   buildHeaderMeta,
   formatNote,
-  renderHistoryItem,
   shouldShowPnl,
   applyLinkedPlanChange,
   formatNum3,
+  historyPayload,
+  historyType,
+  historyWhen,
 } from "../utils/signalDetailUtils";
 const SymbolChart = lazy(() => import("./charts/SymbolChart"));
 import { SmartContent } from "./SmartContent";
+import LogsViewer from "./LogsViewer";
+import MobileCollapseSection from "./MobileCollapseSection";
 const TradeFilesTab = lazy(() => import("./TradeFilesTab"));
 import { sortTimeframes } from "../utils/format";
 import { mergePlanPreservingEdits } from "../utils/tradePlanDrafts";
@@ -987,20 +991,22 @@ function ExtraPlanBlock({
 
   return (
     <div>
-      <TradePlanEditor
-        value={localPos}
-        onChange={update}
-        onAddSignal={() => onAddSignal?.(localPos, planId)}
-        onAddTrade={() => onAddTrade?.(localPos, planId)}
-        showAddSignalButton={true}
-        showAddTradeButton={true}
-        showResetButton={false}
-        busy={{
-          signal: isSignalAdding,
-          trade: isTradeAdding,
-        }}
-        disabled={Boolean(submittingPlanId && !isThisPlanAdding)}
-      />
+      <MobileCollapseSection title="Trade Edit">
+        <TradePlanEditor
+          value={localPos}
+          onChange={update}
+          onAddSignal={() => onAddSignal?.(localPos, planId)}
+          onAddTrade={() => onAddTrade?.(localPos, planId)}
+          showAddSignalButton={true}
+          showAddTradeButton={true}
+          showResetButton={false}
+          busy={{
+            signal: isSignalAdding,
+            trade: isTradeAdding,
+          }}
+          disabled={Boolean(submittingPlanId && !isThisPlanAdding)}
+        />
+      </MobileCollapseSection>
       {successMessage && isThisPlanAdding && (
         <div style={{ marginTop: 12 }}>
           <span className="minor-text msg-success">{successMessage}</span>
@@ -1088,6 +1094,67 @@ export default function SignalDetailCard({
     const hash = window.location.hash?.replace("#", "");
     return hash || "chart";
   });
+
+  const historyLogLines = useMemo(() => {
+    const items = Array.isArray(history?.items) ? history.items : [];
+    return items.map((item, index) => {
+      const payload = historyPayload(item);
+      const type = historyType(item, payload);
+      const timestamp =
+        item?.event_time || item?.created_at || new Date().toISOString();
+      const statusText = String(
+        payload?.status || item?.status || payload?.level || "",
+      )
+        .trim()
+        .toUpperCase();
+      const level =
+        statusText === "ERROR" ||
+        statusText === "FAIL" ||
+        statusText === "FAILED"
+          ? "ERROR"
+          : statusText === "WARN" || statusText === "WARNING"
+            ? "WARN"
+            : "INFO";
+      const message = String(
+        payload?.message ||
+          payload?.note ||
+          item?.message ||
+          item?.content ||
+          type ||
+          `EVENT ${index + 1}`,
+      ).trim();
+      const metadata = {
+        ...payload,
+        ticket:
+          payload?.ticket ||
+          payload?.broker_trade_id ||
+          payload?.brokerTradeId ||
+          payload?.order_ticket ||
+          undefined,
+        updated_at: historyWhen(item, formatDateTime),
+      };
+      const metadataText = Object.entries(metadata)
+        .filter(([key, value]) => {
+          if (value === undefined || value === null || value === "")
+            return false;
+          return ![
+            "message",
+            "note",
+            "event",
+            "event_type",
+            "level",
+            "status",
+          ].includes(key);
+        })
+        .map(([key, value]) => {
+          const out =
+            typeof value === "object" ? JSON.stringify(value) : String(value);
+          return `${key}=${out}`;
+        })
+        .join(", ");
+      return `[${timestamp}] [${level}] [${type}] ${message}${metadataText ? `, ${metadataText}` : ""}`;
+    });
+  }, [history?.items, formatDateTime]);
 
   useEffect(() => {
     const syncTabFromHash = () => {
@@ -1570,12 +1637,12 @@ export default function SignalDetailCard({
     );
 
   const effectiveTfs = useMemo(() => {
-    const required = ["d", "4h", "15m", "5m"];
     const base = Array.isArray(selectedTfs)
-      ? selectedTfs.map((t) => String(t || "").toLowerCase())
+      ? selectedTfs.map((t) => String(t || "").toLowerCase()).filter(Boolean)
       : [];
-    const merged = [...new Set([...base, ...required])].filter(Boolean);
-    return sortTimeframes(merged, "desc");
+    const fallback = ["d", "4h", "15m", "5m"];
+    const chosen = base.length ? base : fallback;
+    return sortTimeframes([...new Set(chosen)], "desc");
   }, [selectedTfs]);
 
   // Use raw data from multiple possible fields
@@ -1953,90 +2020,94 @@ export default function SignalDetailCard({
                   />
 
                   {isSelected && !tradePlan.hideEditor ? (
-                    <TradePlanEditor
-                      signalId={tradePlan.signalId || null}
-                      tradeId={tradePlan.tradeId || null}
-                      value={planValue}
-                      onChange={(k, v) => {
-                        let nextPlan = null;
-                        setPlanDrafts((prev) => {
-                          nextPlan = applyLinkedPlanChange(
-                            prev[planId] || p,
-                            k,
-                            v,
-                          );
-                          return {
-                            ...prev,
-                            [planId]: nextPlan,
-                          };
-                        });
-                        if (isMain) {
-                          tradePlan.onChange?.(k, v);
-                          if (
-                            (k === "entry" || k === "direction") &&
-                            nextPlan
-                          ) {
-                            if (nextPlan.tp !== undefined)
-                              tradePlan.onChange?.("tp", nextPlan.tp);
-                            if (nextPlan.sl !== undefined)
-                              tradePlan.onChange?.("sl", nextPlan.sl);
+                    <MobileCollapseSection title="Trade Edit">
+                      <TradePlanEditor
+                        signalId={tradePlan.signalId || null}
+                        tradeId={tradePlan.tradeId || null}
+                        value={planValue}
+                        onChange={(k, v) => {
+                          let nextPlan = null;
+                          setPlanDrafts((prev) => {
+                            nextPlan = applyLinkedPlanChange(
+                              prev[planId] || p,
+                              k,
+                              v,
+                            );
+                            return {
+                              ...prev,
+                              [planId]: nextPlan,
+                            };
+                          });
+                          if (isMain) {
+                            tradePlan.onChange?.(k, v);
+                            if (
+                              (k === "entry" || k === "direction") &&
+                              nextPlan
+                            ) {
+                              if (nextPlan.tp !== undefined)
+                                tradePlan.onChange?.("tp", nextPlan.tp);
+                              if (nextPlan.sl !== undefined)
+                                tradePlan.onChange?.("sl", nextPlan.sl);
+                            }
                           }
+                        }}
+                        onReset={tradePlan.onReset}
+                        onGoTrade={tradePlan.onGoTrade}
+                        onGoAnalyze={tradePlan.onGoAnalyze}
+                        onCancel={tradePlan.onCancel}
+                        onClose={tradePlan.onClose}
+                        onSave={tradePlan.onSave}
+                        onPromote={tradePlan.onPromote}
+                        onAddSignal={(pos) =>
+                          tradePlan.onAddSignal?.(pos || planValue, planId)
                         }
-                      }}
-                      onReset={tradePlan.onReset}
-                      onGoTrade={tradePlan.onGoTrade}
-                      onGoAnalyze={tradePlan.onGoAnalyze}
-                      onCancel={tradePlan.onCancel}
-                      onClose={tradePlan.onClose}
-                      onSave={tradePlan.onSave}
-                      onPromote={tradePlan.onPromote}
-                      onAddSignal={(pos) =>
-                        tradePlan.onAddSignal?.(pos || planValue, planId)
-                      }
-                      onAddTrade={(pos) =>
-                        tradePlan.onAddTrade?.(pos || planValue, planId)
-                      }
-                      showSaveButton={tradePlan.showSaveButton}
-                      showAddSignalButton={tradePlan.showAddSignalButton}
-                      showAddTradeButton={tradePlan.showAddTradeButton}
-                      showActionsInView={mode === "ai"}
-                      addTradeLabel={tradePlan.addTradeLabel}
-                      promoteLabel={tradePlan.promoteLabel}
-                      showResetButton={tradePlan.showResetButton !== false}
-                      busy={tradePlan.busy || {}}
-                      disabled={Boolean(tradePlan.disabled)}
-                      lockTradeFields={Boolean(tradePlan.lockTradeFields)}
-                      viewOnly={Boolean(tradePlan.viewOnly)}
-                      error={tradePlan.error || ""}
-                      tradeStatus={tradePlan.execution_status || ""}
-                    />
+                        onAddTrade={(pos) =>
+                          tradePlan.onAddTrade?.(pos || planValue, planId)
+                        }
+                        showSaveButton={tradePlan.showSaveButton}
+                        showAddSignalButton={tradePlan.showAddSignalButton}
+                        showAddTradeButton={tradePlan.showAddTradeButton}
+                        showActionsInView={mode === "ai"}
+                        addTradeLabel={tradePlan.addTradeLabel}
+                        promoteLabel={tradePlan.promoteLabel}
+                        showResetButton={tradePlan.showResetButton !== false}
+                        busy={tradePlan.busy || {}}
+                        disabled={Boolean(tradePlan.disabled)}
+                        lockTradeFields={Boolean(tradePlan.lockTradeFields)}
+                        viewOnly={Boolean(tradePlan.viewOnly)}
+                        error={tradePlan.error || ""}
+                        tradeStatus={tradePlan.execution_status || ""}
+                      />
+                    </MobileCollapseSection>
                   ) : (
-                    <TradePlanEditor
-                      value={planValue}
-                      onCancel={tradePlan.onCancel}
-                      onPromote={tradePlan.onPromote}
-                      onAddSignal={(pos) =>
-                        tradePlan.onAddSignal?.(pos || planValue, planId)
-                      }
-                      onAddTrade={(pos) =>
-                        tradePlan.onAddTrade?.(pos || planValue, planId)
-                      }
-                      showSaveButton={false}
-                      showAddSignalButton={
-                        mode === "ai" && tradePlan.showAddSignalButton
-                      }
-                      showAddTradeButton={
-                        mode === "ai" && tradePlan.showAddTradeButton
-                      }
-                      showActionsInView={mode === "ai"}
-                      promoteLabel={tradePlan.promoteLabel}
-                      showResetButton={false}
-                      busy={tradePlan.busy || {}}
-                      disabled={true}
-                      viewOnly={true}
-                      lockTradeFields={true}
-                      tradeStatus={tradePlan.execution_status || ""}
-                    />
+                    <MobileCollapseSection title="Trade Edit">
+                      <TradePlanEditor
+                        value={planValue}
+                        onCancel={tradePlan.onCancel}
+                        onPromote={tradePlan.onPromote}
+                        onAddSignal={(pos) =>
+                          tradePlan.onAddSignal?.(pos || planValue, planId)
+                        }
+                        onAddTrade={(pos) =>
+                          tradePlan.onAddTrade?.(pos || planValue, planId)
+                        }
+                        showSaveButton={false}
+                        showAddSignalButton={
+                          mode === "ai" && tradePlan.showAddSignalButton
+                        }
+                        showAddTradeButton={
+                          mode === "ai" && tradePlan.showAddTradeButton
+                        }
+                        showActionsInView={mode === "ai"}
+                        promoteLabel={tradePlan.promoteLabel}
+                        showResetButton={false}
+                        busy={tradePlan.busy || {}}
+                        disabled={true}
+                        viewOnly={true}
+                        lockTradeFields={true}
+                        tradeStatus={tradePlan.execution_status || ""}
+                      />
+                    </MobileCollapseSection>
                   )}
                   {isMain && tradePlan.successMessage && (
                     <div style={{ marginTop: 8 }}>
@@ -3617,21 +3688,14 @@ export default function SignalDetailCard({
 
       {/* HISTORY TAB */}
       <div style={{ display: mainTab === "history" ? "block" : "none" }}>
-        {history?.loading ? (
-          <div className="minor-text">{preset.historyLoadingText}</div>
-        ) : (
-          <div className="telemetry-list">
-            {!history?.items || history.items.length === 0 ? (
-              <div className="minor-text">{preset.historyEmptyText}</div>
-            ) : (
-              history.items.map((item, i) => (
-                <div key={i} className="telemetry-item">
-                  {renderHistoryItem(item, i, { formatDateTime })}
-                </div>
-              ))
-            )}
-          </div>
-        )}
+        <LogsViewer
+          staticLines={historyLogLines}
+          staticLoading={Boolean(history?.loading)}
+          logFormat="standard"
+          limit={200}
+          emptyText={preset.historyEmptyText}
+          hideToolbar={false}
+        />
       </div>
     </div>
   );

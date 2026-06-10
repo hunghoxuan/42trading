@@ -1,26 +1,21 @@
 import { useState, useEffect } from "react";
 import { api } from "../../api";
+import LogsViewer from "../../components/LogsViewer";
+import { formatRelativeDateTime } from "../../utils/format";
 
 function StatusDot({ state = "unknown" }) {
-  const color =
+  const cls =
     state === "ok"
-      ? "#22c55e"
+      ? "ok"
       : state === "disabled"
-        ? "#666"
+        ? "disabled"
         : state === "error"
-          ? "#ef4444"
-          : "#666";
+          ? "error"
+          : "idle";
   return (
     <span
-      style={{
-        display: "inline-block",
-        width: 8,
-        height: 8,
-        borderRadius: "50%",
-        background: color,
-        flexShrink: 0,
-        marginRight: 8,
-      }}
+      className={`status-dot ${cls}`}
+      style={{ flexShrink: 0, marginRight: 8 }}
     />
   );
 }
@@ -30,9 +25,6 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(null);
-  const [logLines, setLogLines] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logMeta, setLogMeta] = useState(null);
 
   const fetchHealth = async () => {
     setLoading(true);
@@ -55,22 +47,6 @@ export default function HealthPage() {
     return () => clearInterval(t);
   }, []);
 
-  const openLog = async (source, id, file) => {
-    setSelected({ source, id, file });
-    setLogLoading(true);
-    setLogMeta(null);
-    try {
-      const d = await api.systemLogFile(source, id, file, 200);
-      setLogLines(d.lines || []);
-      setLogMeta({ total: d.total_lines });
-    } catch (e) {
-      setLogLines(["Error: " + (e?.message || e)]);
-      setLogMeta(null);
-    } finally {
-      setLogLoading(false);
-    }
-  };
-
   if (loading && !health)
     return (
       <div className="panel minor-text" style={{ padding: 24 }}>
@@ -86,11 +62,7 @@ export default function HealthPage() {
 
   const timeAgo = (iso) => {
     if (!iso) return "-";
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
-    if (d < 60) return Math.round(d) + "s ago";
-    if (d < 3600) return Math.round(d / 60) + "m ago";
-    if (d < 86400) return Math.round(d / 3600) + "h ago";
-    return Math.round(d / 86400) + "d ago";
+    return formatRelativeDateTime(iso);
   };
 
   const logSources = health?.log_sources || {};
@@ -194,7 +166,7 @@ export default function HealthPage() {
             return (
               <div
                 key={idKey}
-                onClick={() => openLog(srcKey, idKey, fName)}
+                onClick={() => setSelected({ source: srcKey, id: idKey, file: fName })}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -253,7 +225,7 @@ export default function HealthPage() {
                 return (
                   <div
                     key={fName}
-                    onClick={() => openLog(srcKey, idKey, fName)}
+                    onClick={() => setSelected({ source: srcKey, id: idKey, file: fName })}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -399,35 +371,15 @@ export default function HealthPage() {
                 ✕
               </button>
             </div>
-            <div
-              style={{
-                flex: 1,
-                overflow: "auto",
-                fontFamily: "monospace",
-                fontSize: 10,
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all",
-              }}
-            >
-              {logLoading ? (
-                <div className="minor-text">Loading...</div>
-              ) : logLines.length === 0 ? (
-                <div className="minor-text">Empty.</div>
-              ) : (
-                logLines.map((l, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      padding: "1px 0",
-                      borderBottom: "1px solid var(--border)",
-                      opacity: 0.85,
-                    }}
-                  >
-                    {l}
-                  </div>
-                ))
-              )}
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <LogsViewer
+                source={selected.source}
+                objectId={selected.id}
+                fileName={selected.file}
+                hideToolbar
+                limit={200}
+                emptyText="No log lines available."
+              />
             </div>
           </div>
         )}

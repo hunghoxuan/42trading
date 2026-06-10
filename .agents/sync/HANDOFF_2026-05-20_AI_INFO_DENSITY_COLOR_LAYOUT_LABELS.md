@@ -4,7 +4,7 @@
 - `/Users/macmini/Trade/Bot/trading/.agents/.product/tickets/1-backlog/plan-update-feature-ai-info-density-color-coding-and-object-labeling.md`
 - `/Users/macmini/Trade/Bot/trading/AI.md`
 - `/Users/macmini/Trade/Bot/trading/.agents/BOOTSTRAP.md`
-- `/Users/macmini/Trade/Bot/trading/.agents/rules/ui.md`
+- `/Users/macmini/Trade/Bot/trading/.agents/rules/ui-rules.md`
 - `/Users/macmini/Trade/Bot/trading/.agents/rules/testing.md`
 
 ## User Intent

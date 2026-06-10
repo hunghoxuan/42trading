@@ -6,8 +6,7 @@ const path = require("path");
 const { URL } = require("url");
 
 const APP_DIR = __dirname;
-const TRADING_DIR =
-  process.env.TRADING_DIR || path.resolve(__dirname, "../..");
+const TRADING_DIR = process.env.TRADING_DIR || path.resolve(__dirname, "../..");
 const CONFIG_PATH =
   process.env.DB_MANAGER_CONFIG ||
   path.join(TRADING_DIR, "db/.local/db-manager/connections.json");
@@ -81,6 +80,23 @@ function readConfig() {
     connectionString: env.MT5_POSTGRES_URL_REMOTE,
     note: "From webhook/.env MT5_POSTGRES_URL_REMOTE",
   });
+
+  // SQLite user databases
+  const usersDir = path.join(TRADING_DIR, "data", "users");
+  if (fs.existsSync(usersDir)) {
+    for (const uid of fs.readdirSync(usersDir)) {
+      const dbPath = path.join(usersDir, uid, "data.db");
+      if (fs.existsSync(dbPath)) {
+        addConnection({
+          id: `sqlite-${uid}`,
+          name: `User ${uid}`,
+          connectionString: `sqlite:${dbPath}`,
+          note: `SQLite data/users/${uid}/data.db`,
+        });
+      }
+    }
+  }
+
   return connections;
 }
 
@@ -93,8 +109,44 @@ function getConnection(id) {
 function getPool(id) {
   if (pools.has(id)) return pools.get(id);
   const conn = getConnection(id);
+  const cs = conn.connectionString;
+  if (cs.startsWith("sqlite:")) {
+    const dbPath = cs.slice(7);
+    console.log("[db-manager] SQLite:", dbPath);
+    const Database = require("better-sqlite3");
+    const sqlite = new Database(dbPath, { readonly: true });
+    const pool = {
+      _sqlite: true,
+      query: (sql, params) => {
+        try {
+          const sqlUpper = sql.trim().toUpperCase();
+          if (
+            sqlUpper.startsWith("SELECT") ||
+            sqlUpper.startsWith("PRAGMA") ||
+            sqlUpper.startsWith("EXPLAIN")
+          ) {
+            const stmt = sqlite.prepare(sql);
+            const rows = params ? stmt.all(...params) : stmt.all();
+            return {
+              rows,
+              rowCount: rows.length,
+              fields: rows.length ? Object.keys(rows[0]) : [],
+            };
+          }
+          const stmt = sqlite.prepare(sql);
+          const result = params ? stmt.run(...params) : stmt.run();
+          return { rows: [], rowCount: result.changes, fields: [] };
+        } catch (e) {
+          throw new Error(e.message);
+        }
+      },
+      end: () => sqlite.close(),
+    };
+    pools.set(id, pool);
+    return pool;
+  }
   const pool = new Pool({
-    connectionString: conn.connectionString,
+    connectionString: cs,
     max: 4,
     idleTimeoutMillis: 15000,
     connectionTimeoutMillis: 5000,
@@ -152,6 +204,22 @@ function pgEscapeLiteral(val) {
 }
 
 async function getTableSchema(pool, schema, table) {
+  if (pool._sqlite) {
+    const rows = pool.query(
+      "PRAGMA table_info(" + quoteIdent(table) + ")",
+    ).rows;
+    return rows.map((r) => ({
+      column_name: r.name,
+      data_type: r.type || "TEXT",
+      is_nullable: r.notnull ? "NO" : "YES",
+      column_default: r.dflt_value,
+      is_primary_key: r.pk > 0,
+      character_maximum_length: null,
+      numeric_precision: null,
+      numeric_scale: null,
+      ordinal_position: r.cid + 1,
+    }));
+  }
   const sql = `
     WITH pk_cols AS (
       SELECT kcu.column_name
@@ -238,13 +306,17 @@ async function syncTableRows({
   }
   const sourceSchema = await getTableSchema(sourcePool, schema, table);
   const targetSchema = await getTableSchema(targetPool, schema, table);
-  if (!sourceSchema.length) throw new Error(`Source table not found: ${schema}.${table}`);
-  if (!targetSchema.length) throw new Error(`Target table not found: ${schema}.${table}`);
+  if (!sourceSchema.length)
+    throw new Error(`Source table not found: ${schema}.${table}`);
+  if (!targetSchema.length)
+    throw new Error(`Target table not found: ${schema}.${table}`);
 
   const sharedSchema = commonColumns(sourceSchema, targetSchema);
   const keyCol = pickSyncKey(sharedSchema);
   if (!keyCol) {
-    throw new Error(`No sync key found for ${schema}.${table}; expected sid, primary key, or id`);
+    throw new Error(
+      `No sync key found for ${schema}.${table}; expected sid, primary key, or id`,
+    );
   }
 
   const sourceColumns = sharedSchema.map((col) => col.column_name);
@@ -322,13 +394,15 @@ async function syncTableRows({
   };
 }
 
-function buildSearchClause(columns, term, params) {
+function buildSearchClause(columns, term, params, pg = true) {
   const q = String(term || "").trim();
   if (!q || !columns.length) return "";
   const token = `%${q}%`;
   const clauses = columns.map((col) => {
     params.push(token);
-    return `COALESCE(${quoteIdent(col)}::text, '') ILIKE $${params.length}`;
+    return pg
+      ? `COALESCE(${quoteIdent(col)}::text, '') ILIKE $${params.length}`
+      : `${quoteIdent(col)} LIKE ?`;
   });
   return clauses.length ? ` WHERE (${clauses.join(" OR ")})` : "";
 }
@@ -353,6 +427,12 @@ async function handleApi(req, res, url) {
     const pool = getPool(connId);
 
     if (req.method === "GET" && parts[2] === "tables") {
+      if (pool._sqlite) {
+        const result = await pool.query(
+          "SELECT name AS table_name, 'main' AS table_schema, 'TABLE' AS table_type, 0 AS row_estimate FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        );
+        return sendJson(res, 200, { ok: true, rows: result.rows });
+      }
       const search = String(url.searchParams.get("q") || "").trim();
       const params = [];
       let where = "";
@@ -402,12 +482,7 @@ async function handleApi(req, res, url) {
       const schema = decodeURIComponent(parts[3]);
       const table = decodeURIComponent(parts[4]);
       const page = clampInt(url.searchParams.get("page"), 1, 1, 100000);
-      const pageSize = clampInt(
-        url.searchParams.get("pageSize"),
-        50,
-        1,
-        200,
-      );
+      const pageSize = clampInt(url.searchParams.get("pageSize"), 50, 1, 200);
       const q = String(url.searchParams.get("q") || "").trim();
       const schemaRows = await getTableSchema(pool, schema, table);
       const columnNames = schemaRows.map((row) => row.column_name);
@@ -425,12 +500,44 @@ async function handleApi(req, res, url) {
         });
       }
 
-      const primaryKey = schemaRows.find((row) => row.is_primary_key)?.column_name;
+      const primaryKey = schemaRows.find(
+        (row) => row.is_primary_key,
+      )?.column_name;
       const sortColRaw = String(url.searchParams.get("sortCol") || "").trim();
       const sortCol = columnNames.includes(sortColRaw)
         ? sortColRaw
         : primaryKey || columnNames[0];
       const sortDir = normalizeSortDir(url.searchParams.get("sortDir"));
+      if (pool._sqlite) {
+        // SQLite: use table name directly, ? params
+        const params = [];
+        const whereSql = buildSearchClause(columnNames, q, params, false);
+        const countSql = `SELECT COUNT(*) AS total FROM ${quoteIdent(table)}${whereSql}`;
+        const totalResult = await pool.query(countSql, params);
+        const total = Number(totalResult.rows?.[0]?.total || 0);
+        const pages = Math.max(1, Math.ceil(total / pageSize));
+        const safePage = Math.min(page, pages);
+        const offset = (safePage - 1) * pageSize;
+        const dataParams = params.slice();
+        dataParams.push(pageSize, offset);
+        const dataSql =
+          `SELECT * FROM ${quoteIdent(table)}` +
+          whereSql +
+          ` ORDER BY ${quoteIdent(sortCol)} ${sortDir} LIMIT ? OFFSET ?`;
+        const result = await pool.query(dataSql, dataParams);
+        return sendJson(res, 200, {
+          ok: true,
+          schema: schemaRows,
+          rows: result.rows,
+          total,
+          pages,
+          page: safePage,
+          pageSize,
+          sortCol,
+          sortDir,
+        });
+      }
+      // PostgreSQL
       const params = [];
       const whereSql = buildSearchClause(columnNames, q, params);
       const countSql = `SELECT COUNT(*)::bigint AS total FROM ${quoteIdent(schema)}.${quoteIdent(table)}${whereSql}`;
@@ -478,12 +585,20 @@ async function handleApi(req, res, url) {
     if (req.method === "POST" && parts[2] === "sync" && parts[3] && parts[4]) {
       const body = await readBody(req);
       const otherConnId = String(body.otherConnId || "").trim();
-      const direction = String(body.direction || "").trim().toLowerCase();
+      const direction = String(body.direction || "")
+        .trim()
+        .toLowerCase();
       if (!otherConnId) {
-        return sendJson(res, 400, { ok: false, error: "otherConnId is required" });
+        return sendJson(res, 400, {
+          ok: false,
+          error: "otherConnId is required",
+        });
       }
       if (!["to", "from"].includes(direction)) {
-        return sendJson(res, 400, { ok: false, error: "direction must be to or from" });
+        return sendJson(res, 400, {
+          ok: false,
+          error: "direction must be to or from",
+        });
       }
       const schema = decodeURIComponent(parts[3]);
       const table = decodeURIComponent(parts[4]);
@@ -511,21 +626,48 @@ async function handleApi(req, res, url) {
         const sets = Object.entries(values)
           .map(([k, v]) => pgEscapeIdent(k) + " = " + pgEscapeLiteral(v))
           .join(", ");
-        const sql = "UPDATE " + schema + "." + table + " SET " + sets + " WHERE " + pkCol + " = " + pgEscapeLiteral(pkVal);
+        const sql =
+          "UPDATE " +
+          schema +
+          "." +
+          table +
+          " SET " +
+          sets +
+          " WHERE " +
+          pkCol +
+          " = " +
+          pgEscapeLiteral(pkVal);
         await pool.query(sql);
         return sendJson(res, 200, { ok: true, command: "UPDATE" });
       }
       if (req.method === "DELETE") {
         const pkCol = pgEscapeIdent(body.pkCol || "id");
         const pkVal = body.pkVal;
-        const sql = "DELETE FROM " + schema + "." + table + " WHERE " + pkCol + " = " + pgEscapeLiteral(pkVal);
+        const sql =
+          "DELETE FROM " +
+          schema +
+          "." +
+          table +
+          " WHERE " +
+          pkCol +
+          " = " +
+          pgEscapeLiteral(pkVal);
         await pool.query(sql);
         return sendJson(res, 200, { ok: true, command: "DELETE" });
       }
       if (req.method === "POST") {
         const cols = Object.keys(values).map(pgEscapeIdent).join(", ");
         const vals = Object.values(values).map(pgEscapeLiteral).join(", ");
-        const sql = "INSERT INTO " + schema + "." + table + " (" + cols + ") VALUES (" + vals + ")";
+        const sql =
+          "INSERT INTO " +
+          schema +
+          "." +
+          table +
+          " (" +
+          cols +
+          ") VALUES (" +
+          vals +
+          ")";
         await pool.query(sql);
         return sendJson(res, 200, { ok: true, command: "INSERT" });
       }

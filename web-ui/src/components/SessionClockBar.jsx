@@ -4,6 +4,8 @@ import { playSound, SoundEvents } from "../utils/SoundManager";
 import Tooltip from "./Tooltip";
 import { api } from "../api";
 import {
+  formatRelativeDurationMs,
+  showDateTime,
   getDisplayTimezoneMode,
   normalizeDisplayTimezone,
   setDisplayTimezoneMode,
@@ -111,19 +113,10 @@ export default function SessionClockBar({ displayTimezone }) {
       setNow(new Date());
     }, 1000);
 
-    // Fetch News Today
     const fetchNews = async () => {
       try {
-        const res = await fetch("/v2/calendar/today");
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          // ignore HTML responses or other non-JSON
-          return;
-        }
-        if (data.ok) setNews(data.events || []);
+        const todayData = await api.calendarToday();
+        if (todayData?.ok) setNews(todayData.events || []);
       } catch (e) {
         // ignore network errors
       }
@@ -247,8 +240,59 @@ export default function SessionClockBar({ displayTimezone }) {
 
     if (!future) return null;
     const mins = Math.floor(future.diff * 60);
-    return { text: `${future.label.toUpperCase()} : ${mins}'`, mins };
+    const diffMs = Math.max(0, future.diff * 60 * 60 * 1000);
+    return {
+      text: `${future.label.toUpperCase()} : ${formatRelativeDurationMs(diffMs)}`,
+      mins,
+    };
   }, [currentHour, currentTz]);
+
+  const activeNews = useMemo(
+    () =>
+      (Array.isArray(news) ? news : []).filter(
+        (event) => event.phase === "before" || event.phase === "during",
+      ),
+    [news],
+  );
+
+  const nextUpcomingNews = useMemo(() => {
+    return (Array.isArray(news) ? news : [])
+      .filter((event) => {
+        const phase = String(event?.phase || "");
+        return phase === "upcoming" || phase === "before";
+      })
+      .sort((a, b) => Number(a?.start_ts || 0) - Number(b?.start_ts || 0))
+      .slice(0, 2);
+  }, [news]);
+
+  const newsBadgeTitle = useMemo(() => {
+    if (activeNews.length) {
+      return activeNews
+        .slice(0, 6)
+        .map((event) => {
+          const phaseText =
+            event.phase === "during"
+              ? `ends ${formatRelativeDurationMs(
+                  Math.max(0, Number(event.minutes_until_end) || 0) * 60 * 1000,
+                )}`
+              : `${formatRelativeDurationMs(
+                  Math.max(0, Number(event.minutes_until_start) || 0) * 60 * 1000,
+                )}`;
+          return `${event.news_type || event.title}: ${phaseText}`;
+        })
+        .join("\n");
+    }
+    if (nextUpcomingNews.length) {
+      return nextUpcomingNews
+        .map((event) => {
+          const diffMs =
+            Math.max(0, Number(event.minutes_until_start) || 0) * 60 * 1000;
+          return `${event.news_type || event.title}: ${formatRelativeDurationMs(diffMs)}`;
+        })
+        .join("\n");
+    }
+    return "";
+  }, [activeNews, nextUpcomingNews]);
 
   const renderRuler = () => {
     const ticks = [];
@@ -332,8 +376,8 @@ export default function SessionClockBar({ displayTimezone }) {
               <span className="session-label">{item.label}</span>
             ) : (
               <span
-                className="session-label"
-                style={{ fontSize: 8, opacity: 0.7 }}
+                className="session-label time-minor"
+                style={{ fontSize: 8 }}
               >
                 {item.label.replace(/ Kill Zone| KZ/g, " KZ")}
               </span>
@@ -405,27 +449,66 @@ export default function SessionClockBar({ displayTimezone }) {
 
         {/* News Markers */}
         {news.map((ev, idx) => {
-          // Parse time like "10:00am"
-          const timeMatch = ev.time.match(/(\d+):(\d+)(am|pm)/i);
-          if (!timeMatch) return null;
-          let h = parseInt(timeMatch[1]);
-          const m = parseInt(timeMatch[2]);
-          const isPm = timeMatch[3].toLowerCase() === "pm";
-          if (isPm && h < 12) h += 12;
-          if (!isPm && h === 12) h = 0;
-          // FF feed is in EST
-          const posPct = (getEstToTzHour(h, m) / 24) * 100;
+          let posPct = null;
+          if (ev.start_at) {
+            try {
+              const eventDate = new Date(ev.start_at);
+              const fmt = new Intl.DateTimeFormat("en-GB", {
+                timeZone: currentTz,
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              });
+              const parts = fmt.formatToParts(eventDate);
+              const h = Number(parts.find((p) => p.type === "hour")?.value || 0);
+              const m = Number(parts.find((p) => p.type === "minute")?.value || 0);
+              posPct = ((h + m / 60) / 24) * 100;
+            } catch {
+              posPct = null;
+            }
+          }
+          if (posPct == null) {
+            const timeMatch = String(ev.time || "").match(/(\d+):(\d+)(am|pm)/i);
+            if (!timeMatch) return null;
+            let h = parseInt(timeMatch[1]);
+            const m = parseInt(timeMatch[2]);
+            const isPm = timeMatch[3].toLowerCase() === "pm";
+            if (isPm && h < 12) h += 12;
+            if (!isPm && h === 12) h = 0;
+            posPct = (getEstToTzHour(h, m) / 24) * 100;
+          }
           return (
             <div
               key={`news-${idx}`}
               className="news-marker"
               style={{ left: `${posPct}%` }}
             >
-              <div className="news-icon">!</div>
+              <div
+                className="news-icon"
+                style={{
+                  background: ev.phase === "during" ? "#f97316" : "#ef4444",
+                  boxShadow:
+                    ev.phase === "during"
+                      ? "0 0 18px rgba(249, 115, 22, 0.75)"
+                      : undefined,
+                }}
+              >
+                {ev.phase === "during" ? "N" : "!"}
+              </div>
               <div className="news-tooltip">
-                <strong>{ev.title}</strong>
+                <strong>{ev.news_type || ev.title}</strong>
                 <br />
-                Impact: {ev.impact} · {ev.time} EST
+                {ev.title}
+                <br />
+                Impact: {ev.impact} · {ev.start_at
+                  ? showDateTime(ev.start_at)
+                  : `${ev.time} EST`}
+                {ev.effective_symbols?.length ? (
+                  <>
+                    <br />
+                    Symbols: {ev.effective_symbols.slice(0, 6).join(", ")}
+                  </>
+                ) : null}
               </div>
             </div>
           );
@@ -451,6 +534,41 @@ export default function SessionClockBar({ displayTimezone }) {
             style={{ cursor: "pointer" }}
           >
             {countdown && <div className="countdown-text">{countdown.text}</div>}
+            {!activeNews.length && nextUpcomingNews.length ? (
+              <div
+                className="next-news-text"
+                title={newsBadgeTitle || "Next upcoming tracked news"}
+              >
+                {nextUpcomingNews
+                  .map((event) => {
+                    const mins = Math.max(
+                      0,
+                      Number(event.minutes_until_start) || 0,
+                    );
+                    return `${event.news_type || "NEWS"} ${mins}m`;
+                  })
+                  .join(" • ")}
+              </div>
+            ) : null}
+            <div
+              title={
+                activeNews.length
+                  ? newsBadgeTitle
+                  : nextUpcomingNews.length
+                    ? newsBadgeTitle
+                    : "NEWS 0 - no active tracked events right now"
+              }
+              style={{
+                fontSize: 9,
+                fontWeight: 900,
+                color: activeNews.length ? "#fde68a" : "rgba(255,255,255,0.6)",
+                letterSpacing: 0.8,
+                textTransform: "uppercase",
+                marginBottom: 2,
+              }}
+            >
+              {activeNews.length ? "NEWS LIVE" : ""}
+            </div>
             <div className="time-value-small">{timeStr}</div>
             <div className="tz-label-small">
               {dateStr ? `${dateStr} ` : ""}

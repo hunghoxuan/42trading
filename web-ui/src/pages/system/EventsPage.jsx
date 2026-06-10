@@ -184,12 +184,15 @@ function EventRow({ event, idx, toggle, setField, state }) {
   );
 }
 
-export function EventsPageContent() {
+export function EventsPageContent({ embedded = false }) {
   const state = useNotificationState();
   const { events, loading, msg, error, load, save, toggle, setField } = state;
   return (
     <section className="stack-layout" style={{ gap: 14 }}>
-      <div className="panel">
+      <div
+        className={embedded ? "stack-layout" : "panel"}
+        style={embedded ? { gap: 14 } : undefined}
+      >
         <div className="panel-label">
           NOTIFICATION SETTINGS
           <span className="minor-text" style={{ marginLeft: 8, fontSize: 10 }}>
@@ -206,7 +209,7 @@ export function EventsPageContent() {
         >
           {msg && (
             <span
-              className="badge FILLED"
+              className="badge ACTIVE"
               style={{ padding: "4px 10px", fontSize: 11 }}
             >
               {msg}
@@ -238,7 +241,7 @@ export function EventsPageContent() {
           </button>
           {state.testMsg && (
             <span
-              className="badge FILLED"
+              className="badge ACTIVE"
               style={{ padding: "4px 10px", fontSize: 11 }}
             >
               {state.testMsg}
@@ -246,7 +249,10 @@ export function EventsPageContent() {
           )}
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table className="events-table" style={{ width: "100%", minWidth: 600 }}>
+          <table
+            className="events-table"
+            style={{ width: "100%", minWidth: 600 }}
+          >
             <thead>
               <tr>
                 <th>EVENT</th>

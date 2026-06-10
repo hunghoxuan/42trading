@@ -76,7 +76,7 @@ export function SymbolEntryCell({
         style={{ display: "flex", justifyContent: "space-between", gap: 8 }}
       >
         <span>
-          {entry} → <span style={{ color: "var(--accent)" }}>{tp}</span> / {sl}{" "}
+          {entry} → <span className="status-accent">{tp}</span> / {sl}{" "}
           {rrNum != null ? `${rrNum.toFixed(1)}r` : "-"}
         </span>
         {showRightPnl && (
@@ -125,8 +125,8 @@ export function PositionAuditCell({
 
   return (
     <div className="cell-wrap">
-      <div className="cell-major">{timeText || "-"}</div>
-      <div className="cell-minor" style={{ opacity: 0.7, display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <div className="cell-major time-major">{timeText || "-"}</div>
+      <div className="cell-minor time-minor" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         <span>{sid}</span>
         {brokerId && brokerId !== "-" ? (
           <>
@@ -201,21 +201,15 @@ export function StatusPnlCell({
     <div className="cell-wrap" style={{ alignItems: "flex-end" }}>
       <div
         className="cell-major"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          justifyContent: "flex-end",
-          fontWeight: 400,
-        }}
+        style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", fontWeight: 400 }}
       >
         {!hideStatus && statusNode}
         {shouldShowLiveMetrics && (
           <>
             {pnlNum != null && (
               <div
-                className={`${pnlNum < 0 ? "money-neg" : "money-pos"}${flashed("broker_pnl")}${flashed("pnl_realized")}`}
-                style={{ fontSize: "12px", fontWeight: 400, opacity: 0.75 }}
+                className={`${pnlNum < 0 ? "money-neg" : "money-pos"}${flashed("broker_pnl")}${flashed("pnl_realized")} time-minor`}
+                style={{ fontSize: "12px", fontWeight: 400 }}
               >
                 {pnlNum < 0 ? "-" : "+"}${Math.abs(pnlNum).toFixed(2)}
               </div>

@@ -6,6 +6,7 @@ import { showDateTime } from "../../utils/format";
 import PaginationBar from "../../components/PaginationBar";
 import SearchFilterBar from "../../components/SearchFilterBar";
 import DataTable from "../../components/DataTable";
+import MobileCollapseSection from "../../components/MobileCollapseSection";
 
 // Columns hidden in COMPACT preset (verbose/metadata/raw/internal)
 const COMPACT_HIDE = [
@@ -439,26 +440,43 @@ export default function DatabasePage() {
           />
         </div>
 
-        <SearchFilterBar
-          search={{
-            placeholder: "SEARCH RECORDS...",
-            value: filter.q,
-            onChange: (value) => handleSearchChange({ target: { value } }),
-            style: { width: "180px" },
-          }}
-          filters={[
-            {
-              key: "table",
-              value: selectedTable,
-              onChange: (value) => handleTableChange({ target: { value } }),
-              style: { minWidth: "140px" },
-              options: tables.map((table) => ({
-                value: table,
-                label: table.toUpperCase(),
-              })),
-            },
-          ]}
-        />
+        <MobileCollapseSection title="Filters" className="toolbar-search-filter">
+          <SearchFilterBar
+            search={{
+              placeholder: "SEARCH RECORDS...",
+              value: filter.q,
+              onChange: (value) => handleSearchChange({ target: { value } }),
+              style: { width: "180px" },
+            }}
+            filters={[
+              {
+                key: "table",
+                value: selectedTable,
+                onChange: (value) => handleTableChange({ target: { value } }),
+                style: { minWidth: "140px" },
+                options: tables.map((table) => ({
+                  value: table,
+                  label: table.toUpperCase(),
+                })),
+              },
+            ]}
+          />
+          <div className="toolbar-group toolbar-bulk-action">
+            <select disabled={loading}>
+              <option value="">BULK ACTION...</option>
+              <option value="export">DOWNLOAD CSV</option>
+              <option value="delete">DELETE ALL</option>
+            </select>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => alert("Action triggered")}
+              disabled={loading}
+            >
+              APPLY
+            </button>
+          </div>
+        </MobileCollapseSection>
 
         <button
           type="button"
@@ -467,21 +485,6 @@ export default function DatabasePage() {
         >
           {showSchema ? "HIDE SCHEMA" : "SHOW SCHEMA"}
         </button>
-        <div className="toolbar-group toolbar-bulk-action">
-          <select disabled={loading}>
-            <option value="">BULK ACTION...</option>
-            <option value="export">DOWNLOAD CSV</option>
-            <option value="delete">DELETE ALL</option>
-          </select>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => alert("Action triggered")}
-            disabled={loading}
-          >
-            APPLY
-          </button>
-        </div>
       </div>
 
       <div className="logs-layout-split">

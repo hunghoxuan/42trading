@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import {
+  Link,
   NavLink,
   Navigate,
   Route,
@@ -8,6 +9,7 @@ import {
 } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
 const ChartSnapshotsPage = lazy(() => import("./pages/ai/ChartSnapshotsPage"));
+const AiNewsPage = lazy(() => import("./pages/ai/AiNewsPage"));
 const TradesPage = lazy(() => import("./pages/trades/TradesPage"));
 const TempTradesPage = lazy(() => import("./pages/trades/TempTradesPage"));
 const SettingsPage = lazy(() => import("./pages/settings/SettingsPage"));
@@ -21,7 +23,7 @@ const AccountsV2Page = lazy(() => import("./pages/system/AccountsV2Page"));
 const SnapshotsPage = lazy(() => import("./pages/system/SnapshotsPage"));
 const StoragePage = lazy(() => import("./pages/system/StoragePage"));
 const CachePage = lazy(() => import("./pages/system/CachePage"));
-const EventsPage = lazy(() => import("./pages/system/EventsPage"));
+
 import {
   api,
   getRuntimeActiveUserId,
@@ -192,6 +194,11 @@ export default function App() {
     }
     setAuthUser(null);
   };
+  const closeMobileNav = () => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("mobile-nav-close"));
+    }
+  };
 
   if (authLoading) {
     return <div className="loading">Loading...</div>;
@@ -216,10 +223,53 @@ export default function App() {
     );
   }
 
+  const mobileTopbarContent = (
+    <div className="brand mobile-topbar-brand">
+      <Link
+        to="/dashboard"
+        className="brand-link"
+        onClick={closeMobileNav}
+        title="Go to home page"
+      >
+        📈 Trading
+      </Link>
+      {serverVersion ? (
+        <span className="brand-version">v{serverVersion}</span>
+      ) : null}
+      {dbSources.length >= 2 ? (
+        <label className="db-source-switcher" title="DB Source">
+          <span>DB</span>
+          <select
+            value={activeDbSource}
+            onChange={(event) => {
+              const next = event.target.value;
+              setActiveDbSource(next);
+              setRuntimeDbSource(next);
+              window.location.reload();
+            }}
+          >
+            {dbSources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name || source.id}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+    </div>
+  );
+
   const topbarContent = (
     <>
       <div className="brand">
-        <span>📈 Trading</span>
+        <Link
+          to="/dashboard"
+          className="brand-link"
+          onClick={closeMobileNav}
+          title="Go to home page"
+        >
+          📈 Trading
+        </Link>
         {serverVersion ? (
           <span className="brand-version">v{serverVersion}</span>
         ) : null}
@@ -263,7 +313,10 @@ export default function App() {
       <nav>
         <NavLink
           to="/dashboard"
-          className={({ isActive }) => (isActive ? "active" : "")}
+          className={({ isActive }) =>
+            `mobile-nav-link ${isActive ? "active" : ""}`
+          }
+          onClick={closeMobileNav}
         >
           Dashboard
         </NavLink>
@@ -272,13 +325,16 @@ export default function App() {
           trigger={
             <NavLink
               to="/ai/analyze"
-              className={({ isActive }) => (isActive ? "active" : "")}
+              className={({ isActive }) =>
+                `mobile-nav-link ${isActive ? "active" : ""}`
+              }
             >
               AI
             </NavLink>
           }
         >
           <NavLink to="/ai/analyze">Analyze</NavLink>
+          <NavLink to="/ai/news">News</NavLink>
           <NavLink to="/ai/response">Response</NavLink>
         </NavDropdown>
         <NavDropdown
@@ -286,23 +342,25 @@ export default function App() {
           trigger={
             <NavLink
               to="/trades"
-              className={({ isActive }) => (isActive ? "active" : "")}
+              className={({ isActive }) =>
+                `mobile-nav-link ${isActive ? "active" : ""}`
+              }
             >
               Trades
             </NavLink>
           }
         >
           <NavLink
-            to="/trades/pending"
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            Pending{countBadge("PENDING")}
-          </NavLink>
-          <NavLink
             to="/trades/filled"
             className={({ isActive }) => (isActive ? "active" : "")}
           >
             Filled{countBadge("FILLED")}
+          </NavLink>
+          <NavLink
+            to="/trades/pending"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Pending{countBadge("PENDING")}
           </NavLink>
           <NavLink
             to="/trades/closed"
@@ -362,13 +420,10 @@ export default function App() {
           }
         >
           <NavLink to="/settings/profile">Profile</NavLink>
-          <NavLink to="/settings/notifications">Notifications</NavLink>
           <NavLink to="/settings/accounts">Accounts</NavLink>
           <NavLink to="/settings/crons">Cron</NavLink>
           <NavLink to="/settings/providers">Providers</NavLink>
-          <NavLink to="/settings" end>
-            Settings
-          </NavLink>
+          <NavLink to="/settings/notification">Settings</NavLink>
           <hr
             style={{
               border: "0",
@@ -393,25 +448,196 @@ export default function App() {
             Logout
           </button>
         </NavDropdown>
-        <NotificationDot />
-        <button
-          onClick={toggleTheme}
-          className="secondary-button"
-          style={{
-            padding: "4px 10px",
-            fontSize: "11px",
-            marginLeft: "10px",
-            minWidth: "40px",
-          }}
+        <div className="mobile-nav-utils">
+          <NotificationDot />
+          <button
+            onClick={() => {
+              toggleTheme();
+              closeMobileNav();
+            }}
+            className="secondary-button"
+            style={{
+              padding: "4px 10px",
+              fontSize: "11px",
+              marginLeft: "10px",
+              minWidth: "40px",
+            }}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
+      </nav>
+    </>
+  );
+
+  const mobileDrawerContent = (
+    <>
+      <nav>
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) =>
+            `mobile-nav-link ${isActive ? "active" : ""}`
+          }
+          onClick={closeMobileNav}
         >
-          {theme === "dark" ? "☀️" : "🌙"}
-        </button>
+          Dashboard
+        </NavLink>
+        <NavDropdown
+          align="start"
+          trigger={
+            <NavLink
+              to="/ai/analyze"
+              className={({ isActive }) =>
+                `mobile-nav-link ${isActive ? "active" : ""}`
+              }
+            >
+              AI
+            </NavLink>
+          }
+        >
+          <NavLink to="/ai/analyze">Analyze</NavLink>
+          <NavLink to="/ai/news">News</NavLink>
+          <NavLink to="/ai/response">Response</NavLink>
+        </NavDropdown>
+        <NavDropdown
+          align="start"
+          trigger={
+            <NavLink
+              to="/trades"
+              className={({ isActive }) =>
+                `mobile-nav-link ${isActive ? "active" : ""}`
+              }
+            >
+              Trades
+            </NavLink>
+          }
+        >
+          <NavLink
+            to="/trades/filled"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Filled{countBadge("FILLED")}
+          </NavLink>
+          <NavLink
+            to="/trades/pending"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Pending{countBadge("PENDING")}
+          </NavLink>
+          <NavLink
+            to="/trades/closed"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Closed{countBadge("CLOSED")}
+          </NavLink>
+          <NavLink
+            to="/trades/rejected"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Rejected{countBadge("REJECTED")}
+          </NavLink>
+          <NavLink
+            to="/trades/cancelled"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Cancelled{countBadge("CANCELLED")}
+          </NavLink>
+          <NavLink
+            to="/trades/draft"
+            className={({ isActive }) => (isActive ? "active" : "")}
+          >
+            Draft{countBadge("DRAFT")}
+          </NavLink>
+        </NavDropdown>
+
+        <div style={{ flex: 1 }} />
+
+        {canAccessSystemPages && (
+          <NavDropdown
+            trigger={
+              <button
+                type="button"
+                className={`secondary-button nav-dropdown-trigger ${systemMenuActive ? "active" : ""}`}
+              >
+                System
+              </button>
+            }
+          >
+            <NavLink to="/system/files">Files</NavLink>
+            <NavLink to="/system/storage">Storage</NavLink>
+            <NavLink to="/system/cache">Cache</NavLink>
+            <NavLink to="/system/logs">Logs</NavLink>
+            <NavLink to="/system/health">Health</NavLink>
+            <NavLink to="/system/users">Users</NavLink>
+          </NavDropdown>
+        )}
+        <NavDropdown
+          trigger={
+            <button
+              type="button"
+              className={`secondary-button nav-dropdown-trigger ${settingsMenuActive ? "active" : ""}`}
+            >
+              User
+            </button>
+          }
+        >
+          <NavLink to="/settings/profile">Profile</NavLink>
+          <NavLink to="/settings/accounts">Accounts</NavLink>
+          <NavLink to="/settings/crons">Cron</NavLink>
+          <NavLink to="/settings/providers">Providers</NavLink>
+          <NavLink to="/settings/notification">Settings</NavLink>
+          <hr
+            style={{
+              border: "0",
+              borderTop: "1px solid rgba(255,255,255,0.1)",
+              margin: "4px 0",
+            }}
+          />
+          <button
+            onClick={handleLogout}
+            className="nav-item-button danger-text"
+            style={{
+              width: "100%",
+              textAlign: "left",
+              background: "none",
+              border: "none",
+              color: "#ff4d4f",
+              padding: "8px 12px",
+              fontSize: "11px",
+              cursor: "pointer",
+            }}
+          >
+            Logout
+          </button>
+        </NavDropdown>
+        <div className="mobile-nav-utils">
+          <NotificationDot />
+          <button
+            onClick={() => {
+              toggleTheme();
+              closeMobileNav();
+            }}
+            className="secondary-button"
+            style={{
+              padding: "4px 10px",
+              fontSize: "11px",
+              marginLeft: "10px",
+              minWidth: "40px",
+            }}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+        </div>
       </nav>
     </>
   );
 
   return (
-    <AppShell topbar={topbarContent}>
+    <AppShell
+      topbar={topbarContent}
+      mobileTopbar={mobileTopbarContent}
+      mobileDrawer={mobileDrawerContent}
+    >
       <ConfirmDialogProvider>
         <NotificationWatcher />
         <ToastContainer />
@@ -454,6 +680,7 @@ export default function App() {
               />
               <Route path="/ai/response" element={<TempTradesPage />} />
               <Route path="/ai/response/:symbol" element={<TempTradesPage />} />
+              <Route path="/ai/news" element={<AiNewsPage />} />
               <Route
                 path="/ai/browser"
                 element={<Navigate to="/ai/analyze" replace />}
@@ -472,8 +699,72 @@ export default function App() {
                 }
               />
               <Route path="/settings/crons" element={<CronPage />} />
+              <Route path="/settings/crons/:cronName" element={<CronPage />} />
               <Route path="/settings/providers" element={<ProvidersPage />} />
+              <Route
+                path="/settings/providers/:providerName"
+                element={<ProvidersPage />}
+              />
               <Route path="/settings/accounts" element={<AccountsV2Page />} />
+              <Route
+                path="/settings/notification"
+                element={<SettingsPage showNotifications />}
+              />
+              <Route
+                path="/settings/analyse"
+                element={
+                  <SettingsPage
+                    routeAlias={{ type: "settings", name: "ANALYSE_SETTINGS" }}
+                  />
+                }
+              />
+              <Route
+                path="/settings/log_prefixes"
+                element={
+                  <SettingsPage
+                    routeAlias={{
+                      type: "system_config",
+                      name: "enabled_log_prefixes",
+                    }}
+                  />
+                }
+              />
+              <Route
+                path="/settings/execution_profile"
+                element={
+                  <SettingsPage
+                    routeAlias={{ type: "execution_profile", name: "default" }}
+                  />
+                }
+              />
+              <Route
+                path="/settings/symbol_groups"
+                element={
+                  <SettingsPage
+                    routeAlias={{ type: "symbol_groups", name: "default" }}
+                  />
+                }
+              />
+              <Route
+                path="/settings/settings/ANALYSE_SETTINGS"
+                element={<Navigate to="/settings/analyse" replace />}
+              />
+              <Route
+                path="/settings/settings/analyse"
+                element={<Navigate to="/settings/analyse" replace />}
+              />
+              <Route
+                path="/settings/settings/default"
+                element={<Navigate to="/settings" replace />}
+              />
+              <Route
+                path="/settings/execution_profile/default"
+                element={<Navigate to="/settings/execution_profile" replace />}
+              />
+              <Route
+                path="/settings/:settingType/:settingName"
+                element={<SettingsPage />}
+              />
               <Route path="/settings" element={<SettingsPage />} />
               <Route
                 path="/system/files"
@@ -583,9 +874,18 @@ export default function App() {
                   )
                 }
               />
-              <Route path="/tools" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/tools/notification" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/settings/notifications" element={<EventsPage />} />
+              <Route
+                path="/tools"
+                element={<Navigate to="/dashboard" replace />}
+              />
+              <Route
+                path="/tools/notification"
+                element={<Navigate to="/dashboard" replace />}
+              />
+              <Route
+                path="/settings/notifications"
+                element={<Navigate to="/settings/notification" replace />}
+              />
               <Route
                 path="/snapshots"
                 element={<Navigate to="/system/files" replace />}

@@ -291,7 +291,7 @@ const NumericInline = memo(function NumericInline({
     [isDisabled, k, onUpdate, sliderMeta, valueRaw],
   );
   return (
-    <div style={numericInlineRowStyle}>
+    <div className="trade-plan-numeric-row" style={numericInlineRowStyle}>
       <label
         htmlFor={fieldId}
         className="minor-text"
@@ -304,6 +304,7 @@ const NumericInline = memo(function NumericInline({
         {label}
       </label>
       <div
+        className="trade-plan-numeric-controls"
         style={{
           display: "grid",
           gridTemplateColumns: "auto minmax(0, 1fr) auto",
@@ -314,7 +315,7 @@ const NumericInline = memo(function NumericInline({
       >
         <button
           type="button"
-          className="secondary-button"
+          className="secondary-button trade-plan-step-button"
           onClick={() => adjustByStep(-1)}
           disabled={sliderDisabled}
           style={stepButtonStyle}
@@ -325,6 +326,7 @@ const NumericInline = memo(function NumericInline({
         <input
           id={fieldId}
           name={k}
+          className="trade-plan-numeric-input"
           style={{ ...numericInputStyle, color: toneColor }}
           type="number"
           step={step}
@@ -337,7 +339,7 @@ const NumericInline = memo(function NumericInline({
         />
         <button
           type="button"
-          className="secondary-button"
+          className="secondary-button trade-plan-step-button"
           onClick={() => adjustByStep(1)}
           disabled={sliderDisabled}
           style={stepButtonStyle}
@@ -346,7 +348,7 @@ const NumericInline = memo(function NumericInline({
           +
         </button>
       </div>
-      <div style={sliderWrapStyle}>
+      <div className="trade-plan-slider-wrap" style={sliderWrapStyle}>
         <input
           id={`${fieldId}-range`}
           className="snapshot-number-slider-v4"
@@ -381,7 +383,10 @@ const NumericNoSlider = memo(function NumericNoSlider({
   const fieldId = `${idPrefix}-${k}`;
   const isDisabled = disabled || controlsDisabled || readOnly;
   return (
-    <div style={numericNoSliderRowStyle}>
+    <div
+      className="trade-plan-numeric-row trade-plan-numeric-row-no-slider"
+      style={numericNoSliderRowStyle}
+    >
       <label
         htmlFor={fieldId}
         className="minor-text"
@@ -390,6 +395,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
         {label}
       </label>
       <div
+        className="trade-plan-numeric-controls"
         style={{
           display: "grid",
           gridTemplateColumns: "auto minmax(0, 1fr) auto",
@@ -400,7 +406,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
       >
         <button
           type="button"
-          className="secondary-button"
+          className="secondary-button trade-plan-step-button"
           onClick={() =>
             onUpdate(k, formatNum3((parseNum(valueRaw) ?? 0) - Number(step || 0.01)))
           }
@@ -413,6 +419,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
         <input
           id={fieldId}
           name={k}
+          className="trade-plan-numeric-input"
           style={{ ...numericInputStyle, opacity: readOnly ? 0.85 : 1 }}
           type="number"
           step={step}
@@ -427,7 +434,7 @@ const NumericNoSlider = memo(function NumericNoSlider({
         />
         <button
           type="button"
-          className="secondary-button"
+          className="secondary-button trade-plan-step-button"
           onClick={() =>
             onUpdate(k, formatNum3((parseNum(valueRaw) ?? 0) + Number(step || 0.01)))
           }
@@ -504,13 +511,13 @@ export function TradePlanEditor({
       ? showAddTradeButton
       : Boolean(signalId || (!signalId && !tradeId));
   const resolvedSaveLabel =
-    saveLabel || (tradeId ? "Save Trade" : "Save Draft");
+    saveLabel || (tradeId ? "Save" : "Save Draft");
   const isTradeSaveAction =
     Boolean(tradeId) ||
     String(resolvedSaveLabel || "")
       .trim()
       .toLowerCase()
-      .includes("save trade");
+      .includes("save");
   const normalizedTradeStatus = String(
     tradeStatus || value?.execution_status || value?.status || "",
   )
@@ -1235,6 +1242,7 @@ export function TradePlanEditor({
             </div>
 
             <div
+              className="trade-plan-actions-row"
               style={{
                 display: "flex",
                 justifyContent: "space-between",
@@ -1262,6 +1270,7 @@ export function TradePlanEditor({
                 />
               ) : null}
               <div
+                className="trade-plan-action-buttons"
                 style={{
                   display: "flex",
                   justifyContent: "flex-end",

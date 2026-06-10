@@ -1,18 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
+import { formatRelativeDurationMs } from "../../utils/format";
 import { parseTextList } from "../../utils/textList";
 import { maskSecretPreview } from "../../utils/secrets";
+import {
+  normalizeSymbolGroupsData,
+  makeSymbolGroupId,
+  RESERVED_SYMBOL_GROUP_IDS,
+} from "../../utils/symbolGroups";
 import MasterDetailLayout from "../../components/MasterDetailLayout";
+import SymbolTogglePicker from "../../components/SymbolTogglePicker";
 import SidebarListItem from "../../components/SidebarListItem";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import { EventsPageContent } from "../system/EventsPage";
 
 // Types excluded from Settings page (have their own dedicated pages)
-const EXCLUDED_TYPES = new Set(["api_key", "cron", "system_config", "notification_config"]);
+const EXCLUDED_TYPES = new Set(["api_key", "cron", "notification_config"]);
 
 // Display labels for setting types
-const TYPE_LABELS = { trade: "symbols" };
-function typeLabel(t) { return TYPE_LABELS[String(t || "").toLowerCase()] || t; }
+const TYPE_LABELS = { trade: "symbols", symbol_groups: "symbols" };
+function typeLabel(t) {
+  return TYPE_LABELS[String(t || "").toLowerCase()] || t;
+}
 
 function settingStatusClass(status) {
   return (
@@ -26,8 +37,41 @@ function parseSymbolText(value) {
   return parseTextList(value, { uppercase: true });
 }
 
-export default function SettingsPage() {
+function displaySettingName(type, name) {
+  const t = String(type || "").trim();
+  const n = String(name || "").trim();
+  if (t === "settings" && n === "ANALYSE_SETTINGS") return "analyse";
+  if (t === "system_config" && n === "enabled_log_prefixes")
+    return "log_prefixes";
+  if (t === "execution_profile" && n === "default") return "execution_profile";
+  if (t === "symbol_groups" && n === "default") return "symbol_groups";
+  return n || t;
+}
+
+function canonicalSettingPath(type, name) {
+  const t = String(type || "").trim();
+  const n = String(name || "").trim();
+  if (t === "settings" && n === "ANALYSE_SETTINGS") return "/settings/analyse";
+  if (t === "system_config" && n === "enabled_log_prefixes")
+    return "/settings/log_prefixes";
+  if (t === "execution_profile" && n === "default")
+    return "/settings/execution_profile";
+  if (t === "symbol_groups" && n === "default")
+    return "/settings/symbol_groups";
+  return `/settings/${encodeURIComponent(t)}/${encodeURIComponent(n)}`;
+}
+
+export default function SettingsPage({
+  routeAlias = null,
+  showNotifications = false,
+}) {
   const confirm = useConfirmDialog();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { settingType: routeSettingType, settingName: routeSettingName } =
+    useParams();
+  const effectiveRouteType = routeAlias?.type || routeSettingType || "";
+  const effectiveRouteName = routeAlias?.name || routeSettingName || "";
   const [settings, setSettings] = useState([]);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState("");
@@ -41,6 +85,9 @@ export default function SettingsPage() {
   const [jsonDetailText, setJsonDetailText] = useState("");
   const [symbolsDetailText, setSymbolsDetailText] = useState("");
   const [activeTab, setActiveTab] = useState("");
+  const [selectedSymbolGroupId, setSelectedSymbolGroupId] =
+    useState("watchlist");
+  const [dynamicGroupState, setDynamicGroupState] = useState(null);
 
   // ── Reveal helpers ────────────────────────────────────────────────────────
 
@@ -95,6 +142,10 @@ export default function SettingsPage() {
 
   // ── Sidebar item renderer ─────────────────────────────────────────────────
 
+  function settingRoutePath(type, name) {
+    return canonicalSettingPath(type, name);
+  }
+
   function renderSidebarItem(s) {
     const key = getSettingKey(s);
     const active = String(s.status || "").toUpperCase() === "ACTIVE";
@@ -103,9 +154,12 @@ export default function SettingsPage() {
         key={key}
         active={activeTab === key}
         enabled={active}
-        title={s.name}
+        title={displaySettingName(s.type, s.name)}
         subtitle={typeLabel(s.type)}
-        onClick={() => setActiveTab(key)}
+        onClick={() => {
+          setActiveTab(key);
+          navigate(settingRoutePath(s.type, s.name));
+        }}
       />
     );
   }
@@ -126,21 +180,16 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    loadData().then(() => {
-      // Pick the first visible setting as the default active tab
-      api.getSettings().then((res) => {
-        const list = Array.isArray(res?.settings) ? res.settings : [];
-        const firstVisible = list.find(
-          (s) =>
-            String(s?.type || "").toLowerCase() !== "api_key" &&
-            String(s?.type || "").toLowerCase() !== "cron" &&
-            !String(s?.type || "").endsWith("_cron"),
-        );
-        if (firstVisible) {
-          setActiveTab(getSettingKey(firstVisible));
-        }
-      });
-    });
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    api
+      .dynamicSymbolGroup()
+      .then((res) => {
+        if (res?.ok) setDynamicGroupState(res.group || null);
+      })
+      .catch(() => {});
   }, []);
 
   // ── Setting CRUD ──────────────────────────────────────────────────────────
@@ -205,6 +254,7 @@ export default function SettingsPage() {
       await api.deleteSetting(type, name || type);
       setSettingsMsg(`Setting ${type}/${name} deleted.`);
       setActiveTab("");
+      navigate(`/settings`, { replace: true });
       await loadData();
     } catch (err) {
       setSettingsMsg(err.message);
@@ -224,6 +274,7 @@ export default function SettingsPage() {
     try {
       let data;
       const lcType = String(type).toLowerCase();
+      let nextName = name;
       if (lcType === "symbols" || lcType === "trade") {
         const symbols = String(value || "")
           .split(/[\n,]/)
@@ -234,16 +285,27 @@ export default function SettingsPage() {
           )
           .filter(Boolean);
         data = { symbols: [...new Set(symbols)] };
+      } else if (lcType === "symbol_groups") {
+        nextName = "default";
+        const symbols = String(value || "")
+          .split(/[\n,]/)
+          .map((x) => normalizeSymbol(x))
+          .filter(Boolean);
+        data = normalizeSymbolGroupsData({
+          groups: [{ id: "watchlist", name: "Watchlist", symbols }],
+        });
       } else {
         const parsed = JSON.parse(String(value || "{}"));
         data = parsed && typeof parsed === "object" ? parsed : {};
       }
-      await api.upsertSetting({ type, name, data, status: "active" });
-      setSettingsMsg(`Setting ${type}/${name} created.`);
+      await api.upsertSetting({ type, name: nextName, data, status: "active" });
+      const finalName = nextName;
+      setSettingsMsg(`Setting ${type}/${finalName} created.`);
       setShowAddForm(false);
       setNewSettingForm({ type: "note", name: "", value: "" });
-      const newKey = `${type}::${name}`;
+      const newKey = `${type}::${finalName}`;
       setActiveTab(newKey);
+      navigate(settingRoutePath(type, finalName));
       await loadData();
     } catch (err) {
       setSettingsMsg(err.message);
@@ -260,10 +322,86 @@ export default function SettingsPage() {
     [settings, activeTab],
   );
 
+  const symbolGroupsData = useMemo(() => {
+    if (
+      String(selectedSetting?.type || "").toLowerCase() !== "symbol_groups" ||
+      String(selectedSetting?.name || "") !== "default"
+    ) {
+      return normalizeSymbolGroupsData({ groups: [] });
+    }
+    return normalizeSymbolGroupsData(selectedSetting?.data || {});
+  }, [selectedSetting]);
+
+  const symbolGroupsList = useMemo(
+    () => symbolGroupsData.groups || [],
+    [symbolGroupsData],
+  );
+
+  const currentSymbolGroup = useMemo(
+    () =>
+      symbolGroupsList.find((group) => group.id === selectedSymbolGroupId) ||
+      symbolGroupsList[0] ||
+      null,
+    [symbolGroupsList, selectedSymbolGroupId],
+  );
+
   const sidebarSettings = useMemo(
-    () => settings.filter((s) => !EXCLUDED_TYPES.has(String(s.type || "").toLowerCase())),
+    () =>
+      settings.filter((s) => {
+        const type = String(s.type || "").toLowerCase();
+        const name = String(s.name || "").toLowerCase();
+        if (EXCLUDED_TYPES.has(type)) return false;
+        if (type === "settings" && name === "default") return false;
+        return true;
+      }),
     [settings],
   );
+
+  const notificationSidebarKey = "notification_config::preferences";
+
+  useEffect(() => {
+    if (!sidebarSettings.length) {
+      setActiveTab("");
+      return;
+    }
+
+    if (showNotifications) {
+      if (activeTab !== notificationSidebarKey)
+        setActiveTab(notificationSidebarKey);
+      return;
+    }
+
+    if (location.pathname === "/settings") {
+      const firstSettingKey = getSettingKey(sidebarSettings[0]);
+      if (activeTab !== firstSettingKey) setActiveTab(firstSettingKey);
+      return;
+    }
+
+    if (effectiveRouteType && effectiveRouteName) {
+      const matched =
+        sidebarSettings.find(
+          (s) =>
+            String(s.type || "") === String(effectiveRouteType || "") &&
+            String(s.name || "") === String(effectiveRouteName || ""),
+        ) || null;
+      if (matched) {
+        const nextKey = getSettingKey(matched);
+        if (nextKey !== activeTab) setActiveTab(nextKey);
+        return;
+      }
+    }
+
+    if (!activeTab) {
+      setActiveTab(getSettingKey(sidebarSettings[0]));
+    }
+  }, [
+    sidebarSettings,
+    effectiveRouteType,
+    effectiveRouteName,
+    activeTab,
+    showNotifications,
+    location.pathname,
+  ]);
 
   // ── Detail text sync ──────────────────────────────────────────────────────
 
@@ -274,6 +412,11 @@ export default function SettingsPage() {
       return;
     }
     const type = String(selectedSetting.type || "").toLowerCase();
+    if (type === "symbol_groups") {
+      setJsonDetailText("");
+      setSymbolsDetailText("");
+      return;
+    }
     if (type === "symbols" || type === "trade") {
       const arr = Array.isArray(selectedSetting?.data?.symbols)
         ? selectedSetting.data.symbols
@@ -300,6 +443,123 @@ export default function SettingsPage() {
     selectedSetting?.data,
   ]);
 
+  useEffect(() => {
+    if (String(selectedSetting?.type || "").toLowerCase() !== "symbol_groups") {
+      setSelectedSymbolGroupId("watchlist");
+      return;
+    }
+    if (!currentSymbolGroup) {
+      setSelectedSymbolGroupId("watchlist");
+      return;
+    }
+    if (currentSymbolGroup.id !== selectedSymbolGroupId) {
+      setSelectedSymbolGroupId(currentSymbolGroup.id);
+    }
+  }, [selectedSetting, currentSymbolGroup, selectedSymbolGroupId]);
+
+  function updateSelectedSymbolGroups(mutator) {
+    if (!selectedSetting) return;
+    const nextData = normalizeSymbolGroupsData(
+      typeof mutator === "function"
+        ? mutator(symbolGroupsData)
+        : symbolGroupsData,
+    );
+    setSettings((prev) =>
+      prev.map((item) =>
+        getSettingKey(item) === getSettingKey(selectedSetting)
+          ? { ...item, data: nextData }
+          : item,
+      ),
+    );
+  }
+
+  function addSymbolGroup() {
+    const existingIds = new Set(symbolGroupsList.map((group) => group.id));
+    let name = "New Group";
+    let id = makeSymbolGroupId(name, "group");
+    let suffix = 2;
+    while (existingIds.has(id)) {
+      name = `New Group ${suffix}`;
+      id = makeSymbolGroupId(name, `group-${suffix}`);
+      suffix += 1;
+    }
+    updateSelectedSymbolGroups((current) => ({
+      ...current,
+      groups: [...(current.groups || []), { id, name, symbols: [] }],
+    }));
+    setSelectedSymbolGroupId(id);
+  }
+
+  async function removeSymbolGroup(groupToRemove = currentSymbolGroup) {
+    if (!groupToRemove || RESERVED_SYMBOL_GROUP_IDS.has(groupToRemove.id)) return;
+    if (
+      !(await confirm({
+        title: "Remove symbol group?",
+        message: `Delete symbol group \"${groupToRemove.name}\"?`,
+        confirmLabel: "Delete",
+        tone: "danger",
+      }))
+    ) {
+      return;
+    }
+    const remaining = symbolGroupsList.filter(
+      (group) => group.id !== groupToRemove.id,
+    );
+    updateSelectedSymbolGroups((current) => ({
+      ...current,
+      groups: remaining,
+    }));
+    if (selectedSymbolGroupId === groupToRemove.id) {
+      setSelectedSymbolGroupId("watchlist");
+    }
+  }
+
+  function renameCurrentSymbolGroup(nextName) {
+    if (!currentSymbolGroup || RESERVED_SYMBOL_GROUP_IDS.has(currentSymbolGroup.id)) return;
+    const trimmed = String(nextName || "")
+      .replace(/^\s+/, "")
+      .trim();
+    if (!trimmed) return;
+    updateSelectedSymbolGroups((current) => ({
+      ...current,
+      groups: (current.groups || []).map((group) =>
+        group.id === currentSymbolGroup.id
+          ? {
+              ...group,
+              name: trimmed,
+            }
+          : group,
+      ),
+    }));
+  }
+
+  async function openRenameSymbolGroupDialog(group) {
+    if (!group || RESERVED_SYMBOL_GROUP_IDS.has(group.id)) return;
+    const result = await confirm({
+      title: "Rename symbol group",
+      message: `Rename \"${group.name}\"`,
+      confirmLabel: "OK",
+      cancelLabel: "Cancel",
+      input: true,
+      inputPlaceholder: "Group name",
+      inputDefaultValue: group.name,
+    });
+    if (!result?.ok) return;
+    renameCurrentSymbolGroup(result.value);
+  }
+
+  function setCurrentSymbolGroupSymbols(nextSymbols) {
+    if (!currentSymbolGroup) return;
+    updateSelectedSymbolGroups((current) => ({
+      ...current,
+      groups: (current.groups || []).map((group) =>
+        group.id === currentSymbolGroup.id
+          ? { ...group, symbols: nextSymbols }
+          : group,
+      ),
+    }));
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -309,9 +569,27 @@ export default function SettingsPage() {
       <MasterDetailLayout className="settings-layout-v2">
         {/* ── Left: Sidebar ──────────────────────────────────────────────── */}
         <div className="panel stack-layout" style={{ gap: 2, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span className="panel-label" style={{ marginBottom: 0 }}>SETTINGS</span>
-            <button className="secondary-button" style={{ padding: "3px 8px", fontSize: 10 }} onClick={() => { setNewSettingForm({ type: "note", name: "", value: "" }); setShowAddForm(true); }}>+ New</button>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 8,
+            }}
+          >
+            <span className="panel-label" style={{ marginBottom: 0 }}>
+              SETTINGS
+            </span>
+            <button
+              className="secondary-button"
+              style={{ padding: "3px 8px", fontSize: 10 }}
+              onClick={() => {
+                setNewSettingForm({ type: "note", name: "", value: "" });
+                setShowAddForm(true);
+              }}
+            >
+              + New
+            </button>
           </div>
 
           {/* Add new setting form */}
@@ -338,7 +616,7 @@ export default function SettingsPage() {
                 >
                   <option value="note">note</option>
                   <option value="symbols">symbols</option>
-                  <option value="trade">trade (watchlist)</option>
+                  <option value="symbol_groups">symbol_groups</option>
                 </select>
               </label>
               <label className="stack-layout" style={{ gap: 4 }}>
@@ -386,6 +664,17 @@ export default function SettingsPage() {
 
           {/* Settings list */}
           <div className="stack-layout" style={{ gap: 0 }}>
+            <SidebarListItem
+              key={notificationSidebarKey}
+              active={activeTab === notificationSidebarKey}
+              enabled
+              title="notification"
+              subtitle="notification_config"
+              onClick={() => {
+                setActiveTab(notificationSidebarKey);
+                navigate("/settings/notification");
+              }}
+            />
             {sidebarSettings.map((s) => renderSidebarItem(s))}
             {sidebarSettings.length === 0 && !settingsLoading && (
               <span className="minor-text" style={{ padding: "8px 12px" }}>
@@ -398,15 +687,32 @@ export default function SettingsPage() {
         {/* ── Right: Detail ──────────────────────────────────────────────── */}
         <div className="panel stack-layout" style={{ gap: 16, padding: 24 }}>
           {/* Selected setting detail */}
-          {selectedSetting && (
+          {showNotifications ? (
+            <EventsPageContent embedded />
+          ) : selectedSetting ? (
             <>
               <div>
                 <input
-                  value={selectedSetting.name}
+                  value={displaySettingName(
+                    selectedSetting.type,
+                    selectedSetting.name,
+                  )}
                   readOnly
-                  style={{ fontSize: 16, fontWeight: 700, border: "none", background: "transparent", color: "inherit", width: "100%", outline: "none", paddingLeft: 0, opacity: 0.7 }}
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    width: "100%",
+                    outline: "none",
+                    paddingLeft: 0,
+                    opacity: 0.7,
+                  }}
                 />
-                <span className="minor-text" style={{ fontSize: 11 }}>Type: {typeLabel(selectedSetting.type)}</span>
+                <span className="minor-text" style={{ fontSize: 11 }}>
+                  Type: {typeLabel(selectedSetting.type)}
+                </span>
               </div>
 
               {/* Detail renderer by type */}
@@ -433,6 +739,189 @@ export default function SettingsPage() {
                       placeholder="Write your notes here..."
                     />
                   </label>
+                </div>
+              ) : String(selectedSetting.type || "").toLowerCase() ===
+                "symbol_groups" ? (
+                <div className="stack-layout" style={{ gap: 14 }}>
+                  <div className="stack-layout" style={{ gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {symbolGroupsList.map((group) => (
+                        <div
+                          key={group.id}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                        >
+                          <button
+                            className={`secondary-button${currentSymbolGroup?.id === group.id ? " active" : ""}`}
+                            style={{ padding: "6px 10px", fontSize: 11 }}
+                            onClick={() => setSelectedSymbolGroupId(group.id)}
+                          >
+                            {group.name}
+                          </button>
+                          {!RESERVED_SYMBOL_GROUP_IDS.has(group.id) ? (
+                            <>
+                              <button
+                                className="secondary-button"
+                                style={{ padding: "4px 7px", fontSize: 10 }}
+                                title={`Edit ${group.name}`}
+                                onClick={() =>
+                                  openRenameSymbolGroupDialog(group)
+                                }
+                              >
+                                ✎
+                              </button>
+                              <button
+                                className="danger-button"
+                                style={{ padding: "4px 7px", fontSize: 10 }}
+                                title={`Delete ${group.name}`}
+                                onClick={() => removeSymbolGroup(group)}
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      ))}
+                      <button
+                        className="secondary-button"
+                        style={{ padding: "6px 10px", fontSize: 11 }}
+                        onClick={addSymbolGroup}
+                      >
+                        + Add Group
+                      </button>
+                    </div>
+
+                    {currentSymbolGroup && (
+                      <div className="stack-layout" style={{ gap: 10 }}>
+                        <div className="minor-text" style={{ fontSize: 11 }}>
+                          {currentSymbolGroup.id === "watchlist"
+                            ? "Protected watchlist group — editable symbols, no rename/delete."
+                            : `${currentSymbolGroup.symbols.length} symbols in this group.`}
+                        </div>
+                        {currentSymbolGroup.id === "watchlist" &&
+                        dynamicGroupState ? (
+                          <div
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                              padding: 12,
+                              background: "rgba(255,255,255,0.02)",
+                            }}
+                          >
+                            <div
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 8 }}
+                            >
+                              DYNAMIC WATCHLIST SOURCES
+                            </div>
+                            <div className="minor-text" style={{ fontSize: 11 }}>
+                              Updated:{" "}
+                              {dynamicGroupState.updated_at
+                                ? new Date(
+                                    dynamicGroupState.updated_at,
+                                  ).toLocaleString()
+                                : "-"}
+                            </div>
+                            <div className="minor-text" style={{ fontSize: 11 }}>
+                              Symbols:{" "}
+                              {Array.isArray(dynamicGroupState.symbols)
+                                ? dynamicGroupState.symbols.length
+                                : 0}
+                            </div>
+                            <div className="minor-text" style={{ fontSize: 11 }}>
+                              News signals:{" "}
+                              {Array.isArray(dynamicGroupState?.sources?.news)
+                                ? dynamicGroupState.sources.news.length
+                                : 0}
+                            </div>
+                            <div className="minor-text" style={{ fontSize: 11 }}>
+                              Market signals:{" "}
+                              {Array.isArray(dynamicGroupState?.sources?.market)
+                                ? dynamicGroupState.sources.market.length
+                                : 0}
+                            </div>
+                            {Array.isArray(dynamicGroupState?.sources?.news) &&
+                            dynamicGroupState.sources.news.length ? (
+                              <div
+                                className="stack-layout"
+                                style={{ gap: 6, marginTop: 10 }}
+                              >
+                                <div
+                                  className="minor-text"
+                                  style={{ fontSize: 10, textTransform: "uppercase" }}
+                                >
+                                  Top news detections
+                                </div>
+                                {dynamicGroupState.sources.news
+                                  .slice(0, 6)
+                                  .map((item, index) => (
+                                    <div
+                                      key={`${item.title || item.news_type}-${item.start_at || index}`}
+                                      className="minor-text"
+                                      style={{ fontSize: 11 }}
+                                    >
+                                      {item.news_type || "News"} · {item.title} ·{" "}
+                                      {item.phase}
+                                      {Number.isFinite(Number(item.minutes_until_start))
+                                        ? ` · ${formatRelativeDurationMs(
+                                            Math.max(
+                                              0,
+                                              Number(item.minutes_until_start),
+                                            ) *
+                                              60 *
+                                              1000,
+                                          )}`
+                                        : ""}
+                                      {Array.isArray(item.symbols) &&
+                                      item.symbols.length
+                                        ? ` · ${item.symbols
+                                            .slice(0, 6)
+                                            .join(", ")}`
+                                        : ""}
+                                    </div>
+                                  ))}
+                              </div>
+                            ) : null}
+                            {Array.isArray(dynamicGroupState?.sources?.market) &&
+                            dynamicGroupState.sources.market.length ? (
+                              <div
+                                className="stack-layout"
+                                style={{ gap: 6, marginTop: 10 }}
+                              >
+                                <div
+                                  className="minor-text"
+                                  style={{ fontSize: 10, textTransform: "uppercase" }}
+                                >
+                                  Top market detections
+                                </div>
+                                {dynamicGroupState.sources.market
+                                  .slice(0, 6)
+                                  .map((item) => (
+                                    <div
+                                      key={`${item.symbol}-${item.timeframe}`}
+                                      className="minor-text"
+                                      style={{ fontSize: 11 }}
+                                    >
+                                      {item.symbol} · {item.timeframe} · score{" "}
+                                      {item.score} ·{" "}
+                                      {(item.reasons || []).join(", ")}
+                                    </div>
+                                  ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <SymbolTogglePicker
+                          value={currentSymbolGroup.symbols || []}
+                          onChange={setCurrentSymbolGroupSymbols}
+                          symbolGroups={symbolGroupsList}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : String(selectedSetting.type || "").toLowerCase() ===
                   "symbols" ||
@@ -475,7 +964,9 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="stack-layout" style={{ gap: 6 }}>
-                  <span className="panel-label" style={{ fontSize: 10 }}>JSON CONFIGURATION</span>
+                  <span className="panel-label" style={{ fontSize: 10 }}>
+                    JSON CONFIGURATION
+                  </span>
                   <textarea
                     rows={16}
                     style={{ fontFamily: "monospace", fontSize: 11 }}
@@ -483,8 +974,16 @@ export default function SettingsPage() {
                     onChange={(e) => {
                       setJsonDetailText(e.target.value);
                       try {
-                        const parsed = JSON.parse(String(e.target.value || "{}"));
-                        setSettings((prev) => prev.map((x) => getSettingKey(x) === getSettingKey(selectedSetting) ? { ...x, data: parsed } : x));
+                        const parsed = JSON.parse(
+                          String(e.target.value || "{}"),
+                        );
+                        setSettings((prev) =>
+                          prev.map((x) =>
+                            getSettingKey(x) === getSettingKey(selectedSetting)
+                              ? { ...x, data: parsed }
+                              : x,
+                          ),
+                        );
                       } catch {}
                     }}
                   />
@@ -502,27 +1001,23 @@ export default function SettingsPage() {
                 }}
               >
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    className={String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "secondary-button" : "primary-button"}
-                    style={{ padding: "12px 24px", fontSize: 14 }}
-                    onClick={() => {
-                      const newStatus = String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "INACTIVE" : "ACTIVE";
-                      setSettings((prev) => prev.map((s) => getSettingKey(s) === getSettingKey(selectedSetting) ? { ...s, status: newStatus } : s));
-                    }}
-                    disabled={settingsLoading}
-                  >
-                    {String(selectedSetting.status).toUpperCase() === "ACTIVE" ? "DEACTIVATE" : "ACTIVATE"}
-                  </button>
-                  {!EXCLUDED_TYPES.has(String(selectedSetting.type || "")) && (
-                    <button
-                      className="danger-button"
-                      style={{ padding: "12px 24px", fontSize: 14 }}
-                      onClick={() => deleteSetting(selectedSetting.type, selectedSetting.name)}
-                      disabled={settingsLoading}
-                    >
-                      DELETE
-                    </button>
-                  )}
+                  {!EXCLUDED_TYPES.has(String(selectedSetting.type || "")) &&
+                    String(selectedSetting.type || "").toLowerCase() !==
+                      "symbol_groups" && (
+                      <button
+                        className="danger-button"
+                        style={{ padding: "12px 24px", fontSize: 14 }}
+                        onClick={() =>
+                          deleteSetting(
+                            selectedSetting.type,
+                            selectedSetting.name,
+                          )
+                        }
+                        disabled={settingsLoading}
+                      >
+                        DELETE
+                      </button>
+                    )}
                 </div>
                 <button
                   className="primary-button"
@@ -536,17 +1031,19 @@ export default function SettingsPage() {
 
               {settingsMsg && (
                 <div
-                  className="minor-text"
-                  style={{ marginTop: 16, color: "var(--success)" }}
+                  className="minor-text status-success"
+                  style={{ marginTop: 16 }}
                 >
                   {settingsMsg}
                 </div>
               )}
             </>
-          )}
+          ) : null}
 
-          {!selectedSetting && (
-            <span className="minor-text">Select a setting to view details.</span>
+          {!showNotifications && !selectedSetting && (
+            <span className="minor-text">
+              Select a setting to view details.
+            </span>
           )}
         </div>
       </MasterDetailLayout>

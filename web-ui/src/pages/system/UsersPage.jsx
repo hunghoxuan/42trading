@@ -6,6 +6,7 @@ import PaginationBar from "../../components/PaginationBar";
 import SearchFilterBar from "../../components/SearchFilterBar";
 import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import MobileCollapseSection from "../../components/MobileCollapseSection";
 
 const ROLE_OPTIONS = ["System", "Admin", "User", "Guest"];
 const ACCOUNT_STATUS_OPTIONS = ["ACTIVE", "INACTIVE"];
@@ -589,46 +590,48 @@ export default function UsersPage({ authUser }) {
           />
         </div>
 
-        <SearchFilterBar
-          search={{
-            placeholder: "SEARCH USER, EMAIL...",
-            value: searchQuery,
-            onChange: setSearchQuery,
-            style: { width: "220px" },
-          }}
-          filters={[
-            {
-              key: "role",
-              value: roleFilter,
-              onChange: setRoleFilter,
-              options: [
-                { value: "", label: "ALL ROLES" },
-                ...ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
-              ],
-            },
-          ]}
-        />
+        <MobileCollapseSection title="Filters" className="toolbar-group toolbar-search-filter">
+          <SearchFilterBar
+            search={{
+              placeholder: "SEARCH USER, EMAIL...",
+              value: searchQuery,
+              onChange: setSearchQuery,
+              style: { width: "220px" },
+            }}
+            filters={[
+              {
+                key: "role",
+                value: roleFilter,
+                onChange: setRoleFilter,
+                options: [
+                  { value: "", label: "ALL ROLES" },
+                  ...ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
+                ],
+              },
+            ]}
+          />
 
-        <div className="toolbar-group toolbar-bulk-action">
-          <select
-            value={bulkAction}
-            onChange={(e) => setBulkAction(e.target.value)}
-          >
-            {BULK_ACTIONS.map((a) => (
-              <option key={a} value={a}>
-                {a || "BULK ACTION..."}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={onApplyBulkAction}
-            disabled={saving || !bulkAction}
-          >
-            APPLY
-          </button>
-        </div>
+          <div className="toolbar-group toolbar-bulk-action">
+            <select
+              value={bulkAction}
+              onChange={(e) => setBulkAction(e.target.value)}
+            >
+              {BULK_ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a || "BULK ACTION..."}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onApplyBulkAction}
+              disabled={saving || !bulkAction}
+            >
+              APPLY
+            </button>
+          </div>
+        </MobileCollapseSection>
       </div>
 
       <div className="logs-layout-split">

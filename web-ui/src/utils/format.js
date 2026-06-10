@@ -110,6 +110,53 @@ function getSafeTimezoneConfig(timezone) {
   return resolveDisplayTimezone(timezone);
 }
 
+const DURATION_UNITS = [
+  { label: "M", ms: 30 * 24 * 60 * 60 * 1000 },
+  { label: "D", ms: 24 * 60 * 60 * 1000 },
+  { label: "h", ms: 60 * 60 * 1000 },
+  { label: "m", ms: 60 * 1000 },
+  { label: "s", ms: 1000 },
+];
+
+export function formatCompactDuration(valueMs, maxParts = 2, minUnitMs = 1000) {
+  const totalMs = Math.max(0, Math.floor(Math.abs(Number(valueMs) || 0)));
+  if (!Number.isFinite(totalMs) || totalMs <= 0) return "0s";
+
+  let remaining = totalMs;
+  const parts = [];
+  for (const unit of DURATION_UNITS) {
+    if (unit.ms < minUnitMs) continue;
+    if (parts.length >= maxParts) break;
+    const amount = Math.floor(remaining / unit.ms);
+    if (amount <= 0) continue;
+    parts.push(`${amount}${unit.label}`);
+    remaining -= amount * unit.ms;
+  }
+
+  if (!parts.length) {
+    if (minUnitMs >= 60 * 1000) return "1m";
+    const secs = Math.max(1, Math.round(totalMs / 1000));
+    return `${secs}s`;
+  }
+  return parts.join(" ");
+}
+
+export function formatRelativeDurationMs(diffMs, maxParts = 2) {
+  const numericDiff = Number(diffMs);
+  if (!Number.isFinite(numericDiff)) return "";
+  const absMs = Math.abs(numericDiff);
+  const roundedMs = Math.max(absMs, 60 * 1000);
+  const body = formatCompactDuration(roundedMs, maxParts, 60 * 1000);
+  return numericDiff > 0 ? `~ ${body}` : `${body} ago`;
+}
+
+export function formatRelativeDateTime(val, maxParts = 2) {
+  if (!val) return "-";
+  const date = new Date(val);
+  if (Number.isNaN(date.getTime())) return String(val);
+  return formatRelativeDurationMs(date.getTime() - Date.now(), maxParts);
+}
+
 function formatDateParts(date, timezone) {
   const tzConfig = getSafeTimezoneConfig(timezone);
   const fmt = new Intl.DateTimeFormat("en-GB", {
@@ -165,11 +212,9 @@ export function showDateTime(val, timezone) {
   if (!val) return "-";
   const date = new Date(val);
   if (isNaN(date.getTime())) return String(val);
-  const nowMs = Date.now();
-  const diffMs = nowMs - date.getTime();
-  if (diffMs >= 0 && diffMs < 60 * 60 * 1000) {
-    const mins = Math.max(0, Math.floor(diffMs / (60 * 1000)));
-    return `${mins}'`;
+  const diffMs = date.getTime() - Date.now();
+  if (Math.abs(diffMs) < 24 * 60 * 60 * 1000) {
+    return formatRelativeDurationMs(diffMs);
   }
 
   const tzConfig = getSafeTimezoneConfig(timezone);
@@ -212,10 +257,7 @@ export function formatDurationLabel(startVal, endVal) {
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "";
   const diffMs = end.getTime() - start.getTime();
   if (diffMs < 0) return "";
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${hours}h ${minutes}m`;
+  return formatCompactDuration(diffMs, 2, 60 * 1000);
 }
 
 export function formatDateTimeWithDuration(value, fromValue, timezone) {

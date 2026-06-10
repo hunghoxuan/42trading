@@ -3,7 +3,7 @@
 // @trace_ts: 2026-03-07 22:29:54 +0100
 // @trace_update: refactor Wyckoff sideways-range detector to use TradingKit (Theme/UI helpers) + project naming/sections
 // @trace_features: sideways range box (ACC/DIST), optional merge, breakout projection, optional spring/upthrust markers
-// @trace_last_backup: /Users/macmini/Trade/Bot/Hung Bot/backups/wyckoff.pine.bak_20260307_222326_pre_tradingkit_refactor
+// @trace_last_backup: /Users/macmini/Projects/moza/42trade/backups/wyckoff.pine.bak_20260307_222326_pre_tradingkit_refactor
 indicator("Hung - Wyckoff Ranges", overlay = true, max_boxes_count = 50, max_labels_count = 200, max_bars_back = 300)
 
 import hunghoxuan/TradingKit/45 as LIB

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
 import { parseTextList } from "../../utils/textList";
@@ -6,17 +7,24 @@ import MasterDetailLayout from "../../components/MasterDetailLayout";
 import SidebarListItem from "../../components/SidebarListItem";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 import CronInterval from "../../components/CronInterval";
-import SymbolGroupSelector from "../../components/SymbolGroupSelector";
+import SymbolTogglePicker from "../../components/SymbolTogglePicker";
+import CronSectionCard from "../../components/CronSectionCard";
+import LogsViewer from "../../components/LogsViewer";
+import {
+  getSymbolGroupsDataFromSettings,
+  getSymbolGroupSymbols,
+  normalizeSymbolList,
+} from "../../utils/symbolGroups";
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const API_KEY_NAME_OPTIONS = [
-  { value: "GEMINI_API_KEY", label: "Gemini API Key" },
-  { value: "OPENAI_API_KEY", label: "OpenAI API Key" },
-  { value: "DEEPSEEK_API_KEY", label: "DeepSeek API Key" },
-  { value: "CLAUDE_API_KEY", label: "Claude API Key" },
-  { value: "OPENROUTER_API_KEY", label: "OpenRouter API Key" },
-  { value: "TWELVE_DATA_API_KEY", label: "Twelve Data API Key" },
+  { value: "GEMINI", label: "Gemini" },
+  { value: "OPENAI", label: "OpenAI" },
+  { value: "DEEPSEEK", label: "DeepSeek" },
+  { value: "CLAUDE", label: "Claude" },
+  { value: "OPENROUTER", label: "OpenRouter" },
+  { value: "TWELVE_DATA", label: "Twelve Data" },
 ];
 
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1W"];
@@ -97,42 +105,6 @@ const SNAPSHOT_QUALITY_OPTIONS = [
   { label: "High (90)", value: 90 },
 ];
 
-const SYMBOLS_GROUP_PRESETS = {
-  watchlist: [],
-  all: [], // filled at runtime — all symbols from market_data
-  crypto: [
-    "BTCUSD",
-    "ETHUSD",
-    "XRPUSD",
-    "SOLUSD",
-    "DOGEUSD",
-    "ADAUSD",
-    "LTCUSD",
-  ],
-  forex: [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "NZDUSD",
-    "USDCAD",
-    "USDCHF",
-    "GBPJPY",
-    "EURJPY",
-    "EURGBP",
-  ],
-  indices: ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"],
-  metals: ["XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD"],
-};
-
-const SYMBOLS_GROUP_LABELS = {
-  watchlist: "Watchlist",
-  crypto: "Crypto",
-  forex: "Forex",
-  indices: "Indices",
-  metals: "Metals",
-};
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function symbolsToText(arr) {
@@ -193,7 +165,7 @@ function defaultForm(type) {
         theme: "dark",
         width: 1920,
         height: 1080,
-        symbols_per_tick: 1,
+        symbols_per_tick: 0,
       };
     default:
       return base;
@@ -249,19 +221,21 @@ function formFromCronData(data) {
         theme: String(data?.theme || "dark"),
         width: Number(data?.width || 1920),
         height: Number(data?.height || 1080),
-        symbols_per_tick: Number(data?.symbols_per_tick || 1),
+        symbols_per_tick: Number.isFinite(Number(data?.symbols_per_tick))
+          ? Number(data.symbols_per_tick)
+          : 0,
       };
     default:
       return base;
   }
 }
 
-function formToDataPayload(form, symbolsGroup = "") {
+function formToDataPayload(form) {
   const symbols = parseTextList(form.symbols, true);
   const data = {
     cron_type: form.cron_type,
-    symbols: symbolsGroup ? [] : symbols, // empty when group selected = dynamic
-    symbols_group: symbolsGroup || null,
+    symbols,
+    symbols_group: null,
     timeframes: form.timeframes,
     schedule: form.schedule || "",
     cadence_seconds: form.cadence_seconds,
@@ -318,11 +292,15 @@ function MasterCronToggle() {
     } catch {}
   };
 
-  useEffect(() => { fetchStatus(); }, []);
+  useEffect(() => {
+    fetchStatus();
+  }, []);
 
   const toggle = async () => {
     try {
-      const r = await (await fetch("/v2/cron/master/toggle", { method: "POST" })).json();
+      const r = await (
+        await fetch("/v2/cron/master/toggle", { method: "POST" })
+      ).json();
       setActive(r.active);
       showToast(r.active ? "Cron master ACTIVATED" : "Cron master PAUSED");
     } catch (e) {
@@ -333,7 +311,16 @@ function MasterCronToggle() {
   if (active === null) return null;
 
   return (
-    <div className="panel" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 8 }}>
+    <div
+      className="panel"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 16px",
+        marginBottom: 8,
+      }}
+    >
       <span style={{ fontWeight: 700, fontSize: 13 }}>BullMQ Master Cron</span>
       <span className={`status-dot ${active ? "online" : "offline"}`} />
       <span style={{ fontSize: 11, color: "var(--muted)" }}>
@@ -352,6 +339,8 @@ function MasterCronToggle() {
 
 export default function CronPage() {
   const confirm = useConfirmDialog();
+  const navigate = useNavigate();
+  const { cronName: routeCronName } = useParams();
   const [settings, setSettings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -359,10 +348,9 @@ export default function CronPage() {
   const [cronName, setCronName] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
   const [saveLoading, setSaveLoading] = useState(false);
-  const [watchlistSymbols, setWatchlistSymbols] = useState([]);
   const [showNewCronPicker, setShowNewCronPicker] = useState(false);
   const [form, setForm] = useState(defaultForm("MARKET_DATA_CRON"));
-  const [symbolsGroup, setSymbolsGroup] = useState("");
+  const [detailTab, setDetailTab] = useState("settings");
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -382,13 +370,10 @@ export default function CronPage() {
   const isNewCron =
     selectedCronName && !cronSettings.find((s) => s.name === selectedCronName);
 
-  const availableGroupPresets = useMemo(() => {
-    const wl = watchlistSymbols.length > 0 ? watchlistSymbols : [];
-    return {
-      ...SYMBOLS_GROUP_PRESETS,
-      watchlist: wl,
-    };
-  }, [watchlistSymbols]);
+  const symbolGroupsData = useMemo(
+    () => getSymbolGroupsDataFromSettings(settings),
+    [settings],
+  );
 
   // ── Load settings & watchlist ───────────────────────────────────────────
 
@@ -403,18 +388,13 @@ export default function CronPage() {
         const list = Array.isArray(res?.settings) ? res.settings : [];
         setSettings(list);
 
-        // Extract watchlist
-        const watchlistEntry = list.find(
-          (s) => s.type === "trade" && s.name === "WATCHLIST",
-        );
-        const wl = Array.isArray(watchlistEntry?.data?.symbols)
-          ? watchlistEntry.data.symbols
-          : [];
-        setWatchlistSymbols(wl);
-
-        // Auto-select first cron if none selected
         const crons = list.filter((s) => s?.type === "cron");
-        if (crons.length > 0 && !selectedCronName) {
+        const matchedRouteCron = routeCronName
+          ? crons.find((s) => s.name === routeCronName) || null
+          : null;
+        if (matchedRouteCron) {
+          setSelectedCronName(matchedRouteCron.name);
+        } else if (crons.length > 0 && !selectedCronName) {
           setSelectedCronName(crons[0].name);
         }
       } catch (err) {
@@ -431,28 +411,36 @@ export default function CronPage() {
     return () => {
       cancelled = true;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [routeCronName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Populate form when selected cron changes ───────────────────────────
 
   useEffect(() => {
     if (!selectedCronName) {
       setForm(defaultForm("MARKET_DATA_CRON"));
-      setSymbolsGroup("");
       return;
     }
     if (isNewCron) {
-      // Form already set by handleNewCron
-      setSymbolsGroup("");
       return;
     }
     if (selectedCron) {
-      const d = typeof selectedCron.data === "string" ? JSON.parse(selectedCron.data) : (selectedCron.data || {});
-      setForm(formFromCronData(d));
+      const d =
+        typeof selectedCron.data === "string"
+          ? JSON.parse(selectedCron.data)
+          : selectedCron.data || {};
+      const baseForm = formFromCronData(d);
+      if (
+        (!baseForm.symbols || !String(baseForm.symbols).trim()) &&
+        d.symbols_group
+      ) {
+        baseForm.symbols = normalizeSymbolList(
+          getSymbolGroupSymbols(symbolGroupsData, d.symbols_group),
+        ).join("\n");
+      }
+      setForm(baseForm);
       setCronName(selectedCron.name || "");
-      setSymbolsGroup(d.symbols_group || "");
     }
-  }, [selectedCronName, selectedCron, isNewCron]);
+  }, [selectedCronName, selectedCron, isNewCron, symbolGroupsData]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -460,16 +448,19 @@ export default function CronPage() {
     setForm((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  const handleNewCron = useCallback((type) => {
-    setShowNewCronPicker(false);
-    const name = `${CRON_TYPE_LABELS[type] || type}_${Date.now().toString(36)}`;
-    const newForm = defaultForm(type);
-    setForm(newForm);
-    setCronName(name);
-    setSelectedCronName(name);
-    setSymbolsGroup("");
-    setSaveMsg("");
-  }, []);
+  const handleNewCron = useCallback(
+    (type) => {
+      setShowNewCronPicker(false);
+      const name = `${CRON_TYPE_LABELS[type] || type}_${Date.now().toString(36)}`;
+      const newForm = defaultForm(type);
+      setForm(newForm);
+      setCronName(name);
+      setSelectedCronName(name);
+      navigate(`/settings/crons/${encodeURIComponent(name)}`);
+      setSaveMsg("");
+    },
+    [navigate],
+  );
 
   const handleSave = useCallback(async () => {
     console.log("[cron-save] start, selectedCronName=", selectedCronName);
@@ -477,7 +468,7 @@ export default function CronPage() {
     setSaveLoading(true);
     setSaveMsg("");
     try {
-      const data = formToDataPayload(form, symbolsGroup);
+      const data = formToDataPayload(form);
       const existing = cronSettings.find((s) => s.name === selectedCronName);
       const status = existing ? existing.status || "ACTIVE" : "INACTIVE";
       // Auto-rename if another cron already has this name (avoid duplicates)
@@ -502,6 +493,7 @@ export default function CronPage() {
       }
       await api.upsertSetting(payload);
       setSelectedCronName(finalName);
+      navigate(`/settings/crons/${encodeURIComponent(finalName)}`);
       const msg = `${CRON_TYPE_LABELS[form.cron_type] || form.cron_type} saved.`;
       setSaveMsg(msg);
       showToast({ message: msg, type: "success" });
@@ -509,11 +501,6 @@ export default function CronPage() {
       const res = await api.getSettings();
       const list = Array.isArray(res?.settings) ? res.settings : [];
       setSettings(list);
-      // Update watchlist
-      const wl = list.find((s) => s.type === "trade" && s.name === "WATCHLIST");
-      setWatchlistSymbols(
-        Array.isArray(wl?.data?.symbols) ? wl.data.symbols : [],
-      );
     } catch (err) {
       console.error("[cron-save]", err);
       const errMsg = err?.message || String(err || "Save failed");
@@ -523,7 +510,7 @@ export default function CronPage() {
       setSaveLoading(false);
       setTimeout(() => setSaveMsg(""), 5000);
     }
-  }, [selectedCronName, cronName, form, symbolsGroup, cronSettings]);
+  }, [selectedCronName, cronName, form, cronSettings]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedCron || isNewCron) return;
@@ -545,7 +532,15 @@ export default function CronPage() {
       setSettings(list);
       // Select next cron or clear
       const crons = list.filter((s) => s?.type === "cron");
-      setSelectedCronName(crons.length > 0 ? crons[0].name : null);
+      const nextCronName = crons.length > 0 ? crons[0].name : null;
+      setSelectedCronName(nextCronName);
+      if (nextCronName) {
+        navigate(`/settings/crons/${encodeURIComponent(nextCronName)}`, {
+          replace: true,
+        });
+      } else {
+        navigate(`/settings/crons`, { replace: true });
+      }
       if (crons.length === 0) {
         setForm(defaultForm("MARKET_DATA_CRON"));
       }
@@ -554,7 +549,7 @@ export default function CronPage() {
     } finally {
       setSaveLoading(false);
     }
-  }, [selectedCron, isNewCron]);
+  }, [selectedCron, isNewCron, confirm, navigate]);
 
   const handleToggleStatus = useCallback(async () => {
     console.log("[cron-toggle] start, selectedCron=", selectedCron?.name);
@@ -582,12 +577,6 @@ export default function CronPage() {
     }
   }, [selectedCron]);
 
-  const handleSymbolsGroupChange = useCallback((g) => {
-    setSymbolsGroup(g);
-    // When switching to a group, don't touch form.symbols —
-    // custom selections persist. Group name is stored separately.
-  }, []);
-
   const handleCheckboxToggle = useCallback((field, value) => {
     setForm((prev) => {
       const arr = prev[field] || [];
@@ -606,6 +595,12 @@ export default function CronPage() {
 
   const cronTypeLabel = CRON_TYPE_LABELS[form.cron_type] || form.cron_type;
   const cadenceOption = cadenceSecondsToOption(form.cadence_seconds);
+
+  useEffect(() => {
+    if (!selectedCronName) {
+      setDetailTab("settings");
+    }
+  }, [selectedCronName]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -701,6 +696,9 @@ export default function CronPage() {
                   subtitle={ctLabel}
                   onClick={() => {
                     setSelectedCronName(cron.name);
+                    navigate(
+                      `/settings/crons/${encodeURIComponent(cron.name)}`,
+                    );
                     setShowNewCronPicker(false);
                   }}
                 />
@@ -721,15 +719,16 @@ export default function CronPage() {
             </div>
           ) : (
             <>
-              {/* Header */}
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
                   alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
                 }}
               >
-                <div style={{ flex: 1 }}>
+                <div className="stack-layout" style={{ gap: 2, flex: 1 }}>
                   <input
                     value={cronName}
                     onChange={(e) => setCronName(e.target.value)}
@@ -757,643 +756,625 @@ export default function CronPage() {
                     Type: {cronTypeLabel}
                   </span>
                 </div>
-              </div>
-
-              {/* ═══════════════════════════════════════════
-                  Part 1 — Schedule (shared)
-                  ═══════════════════════════════════════════ */}
-
-              <div
-                style={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: 16,
-                }}
-              >
-                <span
-                  className="panel-label"
-                  style={{ fontSize: 11, marginBottom: 12, display: "block" }}
-                >
-                  SCHEDULE
-                </span>
-
-                <div className="stack-layout" style={{ gap: 12 }}>
-                  {/* Interval */}
-                  <CronInterval
-                    value={
-                      form.schedule ||
-                      `every ${Math.round((form.cadence_seconds || 60) / 60)}m`
-                    }
-                    onChange={(schedule) => updateForm({ schedule })}
-                  />
-
-                  {/* Symbols */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
-                    >
-                      SYMBOLS
-                    </span>
-                    <SymbolGroupSelector
-                      value={form.symbols}
-                      onChange={(val) => updateForm({ symbols: val })}
-                      group={symbolsGroup}
-                      onGroupChange={(g) => handleSymbolsGroupChange(g)}
-                      watchlist={watchlistSymbols}
-                      compact
-                    />
-                  </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className={`secondary-button ${detailTab === "settings" ? "active" : ""}`}
+                    onClick={() => setDetailTab("settings")}
+                  >
+                    Settings
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-button ${detailTab === "logs" ? "active" : ""}`}
+                    onClick={() => setDetailTab("logs")}
+                  >
+                    Logs
+                  </button>
                 </div>
               </div>
 
-              {/* ═══════════════════════════════════════════
-                  Part 2 — Type-specific fields
-                  ═══════════════════════════════════════════ */}
+              {detailTab === "settings" ? (
+                <>
+                  <div className="stack-layout" style={{ gap: 12 }}>
+                    <CronSectionCard title="SCHEDULE">
+                      <CronInterval
+                        value={
+                          form.schedule ||
+                          `every ${Math.round((form.cadence_seconds || 60) / 60)}m`
+                        }
+                        onChange={(schedule) => updateForm({ schedule })}
+                      />
+                    </CronSectionCard>
 
-              <div
-                style={{
-                  borderTop: "1px solid var(--border)",
-                  paddingTop: 16,
-                }}
-              >
-                <span
-                  className="panel-label"
-                  style={{
-                    fontSize: 10,
-                    marginBottom: 16,
-                    display: "block",
-                    color: "var(--muted)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                  }}
-                >
-                  ADVANCED SETTINGS — {cronTypeLabel.toUpperCase()}
-                </span>
+                    <CronSectionCard title="SYMBOLS">
+                      <SymbolTogglePicker
+                        value={parseTextList(form.symbols, true)}
+                        onChange={(next) =>
+                          updateForm({ symbols: symbolsToText(next) })
+                        }
+                        symbolGroups={symbolGroupsData.groups}
+                        compact
+                      />
+                    </CronSectionCard>
 
-                <div className="stack-layout" style={{ gap: 12 }}>
-                  {/* Timeframes (all types) */}
-                  <div className="stack-layout" style={{ gap: 6 }}>
-                    <span
-                      className="panel-label"
-                      style={{ fontSize: 10, marginBottom: 0 }}
+                    <CronSectionCard
+                      title="TIMEFRAMES"
+                      subtitle={`ADVANCED SETTINGS — ${cronTypeLabel.toUpperCase()}`}
                     >
-                      TIMEFRAMES
-                    </span>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-                      {TIMEFRAME_OPTIONS.map((tf) => (
-                        <label
-                          key={tf}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={form.timeframes.includes(tf)}
-                            onChange={() =>
-                              handleCheckboxToggle("timeframes", tf)
-                            }
-                          />
-                          <span style={{ fontSize: 13 }}>{tf}</span>
-                        </label>
-                      ))}
-                    </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+                        {TIMEFRAME_OPTIONS.map((tf) => (
+                          <label
+                            key={tf}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={form.timeframes.includes(tf)}
+                              onChange={() => handleCheckboxToggle("timeframes", tf)}
+                            />
+                            <span style={{ fontSize: 13 }}>{tf}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </CronSectionCard>
+
+                      {/* MARKET_DATA_CRON fields */}
+                      {form.cron_type === "MARKET_DATA_CRON" && (
+                        <>
+                          {/* Row: Provider / Timezone / Batch Size */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Provider</span>
+                              <select
+                                value={form.provider}
+                                onChange={(e) =>
+                                  updateForm({ provider: e.target.value })
+                                }
+                              >
+                                <option value="twelvedata">Twelve Data</option>
+                              </select>
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">
+                                Display Timezone
+                              </span>
+                              <select
+                                value={form.timezone}
+                                onChange={(e) =>
+                                  updateForm({ timezone: e.target.value })
+                                }
+                              >
+                                {DISPLAY_TIMEZONE_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Batch Size</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={form.batch_size}
+                                onChange={(e) =>
+                                  updateForm({
+                                    batch_size: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          {/* Exclude Symbols */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              EXCLUDE SYMBOLS (COMMA OR NEWLINE)
+                            </span>
+                            <textarea
+                              rows={2}
+                              value={form.exclude_symbols}
+                              onChange={(e) =>
+                                updateForm({ exclude_symbols: e.target.value })
+                              }
+                              placeholder="e.g. XAUUSD (skip these)"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* ANALYSIS_CRON fields */}
+                      {form.cron_type === "ANALYSIS_CRON" && (
+                        <>
+                          {/* Pickup Mode */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                PICKUP MODE
+                              </span>
+                              <select
+                                value={form.pickup_mode || "all"}
+                                onChange={(e) =>
+                                  setForm((f) => ({
+                                    ...f,
+                                    pickup_mode: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="all">
+                                  All — run on every selected symbol
+                                </option>
+                                <option value="random">
+                                  Random — pick 1 random symbol
+                                </option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Snapshot behavior */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              SNAPSHOT SETTING
+                            </span>
+                            <label
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                cursor: "pointer",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={form.refresh_snapshot === true}
+                                onChange={(e) =>
+                                  updateForm({
+                                    refresh_snapshot: e.target.checked,
+                                  })
+                                }
+                              />
+                              <span style={{ fontSize: 13 }}>
+                                Always refresh snapshot before analysis
+                              </span>
+                            </label>
+                            <div
+                              className="minor-text"
+                              style={{ fontSize: 11 }}
+                            >
+                              Off: use existing snapshot only if age is 5m or
+                              less; otherwise auto-refresh before analysis.
+                            </div>
+                          </div>
+
+                          {/* Row: Directions / Order Types */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                DIRECTIONS
+                              </span>
+                              <div style={{ display: "flex", gap: 12 }}>
+                                {DIRECTION_OPTIONS.map((direction) => (
+                                  <label
+                                    key={direction}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={form.directions.includes(
+                                        direction,
+                                      )}
+                                      onChange={() =>
+                                        handleCheckboxToggle(
+                                          "directions",
+                                          direction,
+                                        )
+                                      }
+                                    />
+                                    <span style={{ fontSize: 13 }}>
+                                      {direction}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                ORDER TYPES
+                              </span>
+                              <div style={{ display: "flex", gap: 12 }}>
+                                {ORDER_TYPE_OPTIONS.map((ot) => (
+                                  <label
+                                    key={ot}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: 6,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={form.order_types.includes(ot)}
+                                      onChange={() =>
+                                        handleCheckboxToggle("order_types", ot)
+                                      }
+                                    />
+                                    <span style={{ fontSize: 13 }}>{ot}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Model / Profile / Auto Save — compact row */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                MODEL
+                              </span>
+                              <select
+                                value={form.model}
+                                onChange={(e) =>
+                                  updateForm({ model: e.target.value })
+                                }
+                              >
+                                {API_KEY_NAME_OPTIONS.map((opt) => (
+                                  <option
+                                    key={opt.value}
+                                    value={opt.value.toLowerCase()}
+                                  >
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                PROFILE
+                              </span>
+                              <input
+                                value={form.profile}
+                                onChange={(e) =>
+                                  updateForm({ profile: e.target.value })
+                                }
+                                placeholder="Profile name"
+                              />
+                            </div>
+                            <div className="stack-layout" style={{ gap: 6 }}>
+                              <span
+                                className="panel-label"
+                                style={{ fontSize: 10, marginBottom: 0 }}
+                              >
+                                AUTO SAVE
+                              </span>
+                              <select
+                                value={form.auto_save || "trades"}
+                                onChange={(e) =>
+                                  updateForm({ auto_save: e.target.value })
+                                }
+                              >
+                                <option value="none">None (files)</option>
+                                <option value="signals">Trade (Draft)</option>
+                                <option value="trades">Trade (Pending)</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Entry Models */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              ENTRY MODELS (COMMA OR NEWLINE)
+                            </span>
+                            <textarea
+                              rows={3}
+                              value={form.entry_models}
+                              onChange={(e) =>
+                                updateForm({ entry_models: e.target.value })
+                              }
+                              placeholder="Order Block, FVG, ICT..."
+                            />
+                          </div>
+
+                          {/* Prompt */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              PROMPT TEMPLATE
+                            </span>
+                            <select
+                              value={form.prompt_template || "custom"}
+                              onChange={(e) => {
+                                const tpl = e.target.value;
+                                updateForm({
+                                  prompt_template: tpl,
+                                  prompt:
+                                    tpl === "custom"
+                                      ? form.prompt
+                                      : PROMPT_TEMPLATES[tpl] || "",
+                                });
+                              }}
+                            >
+                              <option value="custom">Custom</option>
+                              <option value="smc">SMC Default</option>
+                              <option value="pa">Price Action</option>
+                              <option value="ict">ICT</option>
+                              <option value="scalp">Scalping</option>
+                            </select>
+                          </div>
+
+                          {/* Prompt Text */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              PROMPT
+                            </span>
+                            <textarea
+                              rows={6}
+                              value={form.prompt}
+                              onChange={(e) => {
+                                updateForm({
+                                  prompt: e.target.value,
+                                  prompt_template: "custom",
+                                });
+                              }}
+                              placeholder="Instructions for AI setup detection..."
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* SNAPSHOT_CRON fields */}
+                      {form.cron_type === "SNAPSHOT_CRON" && (
+                        <>
+                          {/* Broker Select */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              BROKER (optional)
+                            </span>
+                            <select
+                              value={form.broker || ""}
+                              onChange={(e) =>
+                                updateForm({ broker: e.target.value })
+                              }
+                            >
+                              <option value="">Auto (no prefix)</option>
+                              <option value="ICMARKETS">IC Markets</option>
+                              <option value="OANDA">OANDA</option>
+                              <option value="FOREXCOM">Forex.com</option>
+                              <option value="PEPPERSTONE">Pepperstone</option>
+                              <option value="FXCM">FXCM</option>
+                              <option value="BINANCE">Binance</option>
+                              <option value="BYBIT">Bybit</option>
+                            </select>
+                          </div>
+
+                          {/* Row: Format / Quality / Theme */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Format</span>
+                              <select
+                                value={form.format}
+                                onChange={(e) =>
+                                  updateForm({ format: e.target.value })
+                                }
+                              >
+                                {SNAPSHOT_FORMAT_OPTIONS.map((f) => (
+                                  <option key={f} value={f}>
+                                    {f.toUpperCase()}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Quality</span>
+                              <select
+                                value={form.quality}
+                                onChange={(e) =>
+                                  updateForm({
+                                    quality: Number(e.target.value),
+                                  })
+                                }
+                              >
+                                {SNAPSHOT_QUALITY_OPTIONS.map((q) => (
+                                  <option key={q.value} value={q.value}>
+                                    {q.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Theme</span>
+                              <select
+                                value={form.theme}
+                                onChange={(e) =>
+                                  updateForm({ theme: e.target.value })
+                                }
+                              >
+                                {SNAPSHOT_THEME_OPTIONS.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+
+                          {/* Row: Width / Height / Lookback Bars / Symbols Per Tick */}
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                              gap: 12,
+                            }}
+                          >
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Width (px)</span>
+                              <input
+                                type="number"
+                                min="100"
+                                max="3840"
+                                value={form.width}
+                                onChange={(e) =>
+                                  updateForm({ width: Number(e.target.value) })
+                                }
+                              />
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Height (px)</span>
+                              <input
+                                type="number"
+                                min="100"
+                                max="2160"
+                                value={form.height}
+                                onChange={(e) =>
+                                  updateForm({ height: Number(e.target.value) })
+                                }
+                              />
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">Lookback Bars</span>
+                              <input
+                                type="number"
+                                min="10"
+                                max="10000"
+                                value={form.lookback_bars}
+                                onChange={(e) =>
+                                  updateForm({
+                                    lookback_bars: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+
+                            <label className="stack-layout" style={{ gap: 6 }}>
+                              <span className="minor-text">
+                                Symbols Per Tick (0 = All)
+                              </span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="50"
+                                value={form.symbols_per_tick}
+                                onChange={(e) =>
+                                  updateForm({
+                                    symbols_per_tick: Number(e.target.value),
+                                  })
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          {/* Exclude Symbols */}
+                          <div className="stack-layout" style={{ gap: 6 }}>
+                            <span
+                              className="panel-label"
+                              style={{ fontSize: 10, marginBottom: 0 }}
+                            >
+                              EXCLUDE SYMBOLS (COMMA OR NEWLINE)
+                            </span>
+                            <textarea
+                              rows={2}
+                              value={form.exclude_symbols}
+                              onChange={(e) =>
+                                updateForm({ exclude_symbols: e.target.value })
+                              }
+                              placeholder="e.g. XAUUSD (skip these)"
+                            />
+                          </div>
+                        </>
+                      )}
                   </div>
-
-                  {/* MARKET_DATA_CRON fields */}
-                  {form.cron_type === "MARKET_DATA_CRON" && (
-                    <>
-                      {/* Row: Provider / Timezone / Batch Size */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Provider</span>
-                          <select
-                            value={form.provider}
-                            onChange={(e) =>
-                              updateForm({ provider: e.target.value })
-                            }
-                          >
-                            <option value="twelvedata">Twelve Data</option>
-                          </select>
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Display Timezone</span>
-                          <select
-                            value={form.timezone}
-                            onChange={(e) =>
-                              updateForm({ timezone: e.target.value })
-                            }
-                          >
-                            {DISPLAY_TIMEZONE_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Batch Size</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={form.batch_size}
-                            onChange={(e) =>
-                              updateForm({ batch_size: Number(e.target.value) })
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      {/* Exclude Symbols */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          EXCLUDE SYMBOLS (COMMA OR NEWLINE)
-                        </span>
-                        <textarea
-                          rows={2}
-                          value={form.exclude_symbols}
-                          onChange={(e) =>
-                            updateForm({ exclude_symbols: e.target.value })
-                          }
-                          placeholder="e.g. XAUUSD (skip these)"
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* ANALYSIS_CRON fields */}
-                  {form.cron_type === "ANALYSIS_CRON" && (
-                    <>
-                      {/* Pickup Mode */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            PICKUP MODE
-                          </span>
-                          <select
-                            value={form.pickup_mode || "all"}
-                            onChange={(e) =>
-                              setForm((f) => ({
-                                ...f,
-                                pickup_mode: e.target.value,
-                              }))
-                            }
-                          >
-                            <option value="all">
-                              All — run on every selected symbol
-                            </option>
-                            <option value="random">
-                              Random — pick 1 random symbol
-                            </option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Snapshot behavior */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          SNAPSHOT SETTING
-                        </span>
-                        <label
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={form.refresh_snapshot === true}
-                            onChange={(e) =>
-                              updateForm({
-                                refresh_snapshot: e.target.checked,
-                              })
-                            }
-                          />
-                          <span style={{ fontSize: 13 }}>
-                            Always refresh snapshot before analysis
-                          </span>
-                        </label>
-                        <div className="minor-text" style={{ fontSize: 11 }}>
-                          Off: use existing snapshot only if age is 5m or less;
-                          otherwise auto-refresh before analysis.
-                        </div>
-                      </div>
-
-                      {/* Row: Directions / Order Types */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            DIRECTIONS
-                          </span>
-                          <div style={{ display: "flex", gap: 12 }}>
-                            {DIRECTION_OPTIONS.map((direction) => (
-                              <label
-                                key={direction}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={form.directions.includes(direction)}
-                                  onChange={() =>
-                                    handleCheckboxToggle(
-                                      "directions",
-                                      direction,
-                                    )
-                                  }
-                                />
-                                <span style={{ fontSize: 13 }}>
-                                  {direction}
-                                </span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            ORDER TYPES
-                          </span>
-                          <div style={{ display: "flex", gap: 12 }}>
-                            {ORDER_TYPE_OPTIONS.map((ot) => (
-                              <label
-                                key={ot}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={form.order_types.includes(ot)}
-                                  onChange={() =>
-                                    handleCheckboxToggle("order_types", ot)
-                                  }
-                                />
-                                <span style={{ fontSize: 13 }}>{ot}</span>
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Model / Profile / Auto Save — compact row */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            MODEL
-                          </span>
-                          <select
-                            value={form.model}
-                            onChange={(e) =>
-                              updateForm({ model: e.target.value })
-                            }
-                          >
-                            {API_KEY_NAME_OPTIONS.map((opt) => (
-                              <option
-                                key={opt.value}
-                                value={opt.value
-                                  .replace("_API_KEY", "")
-                                  .toLowerCase()}
-                              >
-                                {opt.label.replace(" API Key", "")}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            PROFILE
-                          </span>
-                          <input
-                            value={form.profile}
-                            onChange={(e) =>
-                              updateForm({ profile: e.target.value })
-                            }
-                            placeholder="Profile name"
-                          />
-                        </div>
-                        <div className="stack-layout" style={{ gap: 6 }}>
-                          <span
-                            className="panel-label"
-                            style={{ fontSize: 10, marginBottom: 0 }}
-                          >
-                            AUTO SAVE
-                          </span>
-                          <select
-                            value={form.auto_save || "trades"}
-                            onChange={(e) =>
-                              updateForm({ auto_save: e.target.value })
-                            }
-                          >
-                            <option value="none">None (files)</option>
-                            <option value="signals">Trade (Draft)</option>
-                            <option value="trades">Trade (Pending)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Entry Models */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          ENTRY MODELS (COMMA OR NEWLINE)
-                        </span>
-                        <textarea
-                          rows={3}
-                          value={form.entry_models}
-                          onChange={(e) =>
-                            updateForm({ entry_models: e.target.value })
-                          }
-                          placeholder="Order Block, FVG, ICT..."
-                        />
-                      </div>
-
-                      {/* Prompt */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          PROMPT TEMPLATE
-                        </span>
-                        <select
-                          value={form.prompt_template || "custom"}
-                          onChange={(e) => {
-                            const tpl = e.target.value;
-                            updateForm({
-                              prompt_template: tpl,
-                              prompt:
-                                tpl === "custom"
-                                  ? form.prompt
-                                  : PROMPT_TEMPLATES[tpl] || "",
-                            });
-                          }}
-                        >
-                          <option value="custom">Custom</option>
-                          <option value="smc">SMC Default</option>
-                          <option value="pa">Price Action</option>
-                          <option value="ict">ICT</option>
-                          <option value="scalp">Scalping</option>
-                        </select>
-                      </div>
-
-                      {/* Prompt Text */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          PROMPT
-                        </span>
-                        <textarea
-                          rows={6}
-                          value={form.prompt}
-                          onChange={(e) => {
-                            updateForm({
-                              prompt: e.target.value,
-                              prompt_template: "custom",
-                            });
-                          }}
-                          placeholder="Instructions for AI setup detection..."
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* SNAPSHOT_CRON fields */}
-                  {form.cron_type === "SNAPSHOT_CRON" && (
-                    <>
-                      {/* Broker Select */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          BROKER (optional)
-                        </span>
-                        <select
-                          value={form.broker || ""}
-                          onChange={(e) =>
-                            updateForm({ broker: e.target.value })
-                          }
-                        >
-                          <option value="">Auto (no prefix)</option>
-                          <option value="ICMARKETS">IC Markets</option>
-                          <option value="OANDA">OANDA</option>
-                          <option value="FOREXCOM">Forex.com</option>
-                          <option value="PEPPERSTONE">Pepperstone</option>
-                          <option value="FXCM">FXCM</option>
-                          <option value="BINANCE">Binance</option>
-                          <option value="BYBIT">Bybit</option>
-                        </select>
-                      </div>
-
-                      {/* Row: Format / Quality / Theme */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Format</span>
-                          <select
-                            value={form.format}
-                            onChange={(e) =>
-                              updateForm({ format: e.target.value })
-                            }
-                          >
-                            {SNAPSHOT_FORMAT_OPTIONS.map((f) => (
-                              <option key={f} value={f}>
-                                {f.toUpperCase()}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Quality</span>
-                          <select
-                            value={form.quality}
-                            onChange={(e) =>
-                              updateForm({ quality: Number(e.target.value) })
-                            }
-                          >
-                            {SNAPSHOT_QUALITY_OPTIONS.map((q) => (
-                              <option key={q.value} value={q.value}>
-                                {q.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Theme</span>
-                          <select
-                            value={form.theme}
-                            onChange={(e) =>
-                              updateForm({ theme: e.target.value })
-                            }
-                          >
-                            {SNAPSHOT_THEME_OPTIONS.map((t) => (
-                              <option key={t} value={t}>
-                                {t.charAt(0).toUpperCase() + t.slice(1)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
-                      {/* Row: Width / Height / Lookback Bars / Symbols Per Tick */}
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr 1fr",
-                          gap: 12,
-                        }}
-                      >
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Width (px)</span>
-                          <input
-                            type="number"
-                            min="100"
-                            max="3840"
-                            value={form.width}
-                            onChange={(e) =>
-                              updateForm({ width: Number(e.target.value) })
-                            }
-                          />
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Height (px)</span>
-                          <input
-                            type="number"
-                            min="100"
-                            max="2160"
-                            value={form.height}
-                            onChange={(e) =>
-                              updateForm({ height: Number(e.target.value) })
-                            }
-                          />
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Lookback Bars</span>
-                          <input
-                            type="number"
-                            min="10"
-                            max="10000"
-                            value={form.lookback_bars}
-                            onChange={(e) =>
-                              updateForm({
-                                lookback_bars: Number(e.target.value),
-                              })
-                            }
-                          />
-                        </label>
-
-                        <label className="stack-layout" style={{ gap: 6 }}>
-                          <span className="minor-text">Symbols Per Tick</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="50"
-                            value={form.symbols_per_tick}
-                            onChange={(e) =>
-                              updateForm({
-                                symbols_per_tick: Number(e.target.value),
-                              })
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      {/* Exclude Symbols */}
-                      <div className="stack-layout" style={{ gap: 6 }}>
-                        <span
-                          className="panel-label"
-                          style={{ fontSize: 10, marginBottom: 0 }}
-                        >
-                          EXCLUDE SYMBOLS (COMMA OR NEWLINE)
-                        </span>
-                        <textarea
-                          rows={2}
-                          value={form.exclude_symbols}
-                          onChange={(e) =>
-                            updateForm({ exclude_symbols: e.target.value })
-                          }
-                          placeholder="e.g. XAUUSD (skip these)"
-                        />
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
+                </>
+              ) : (
+                <LogsViewer
+                  source="cron"
+                  objectId={selectedCronName}
+                  fileName=""
+                  logFormat={null}
+                  limit={200}
+                  emptyText="No log files found for this cron yet."
+                />
+              )}
 
               {/* ── Actions ────────────────────────── */}
               <div
@@ -1412,17 +1393,17 @@ export default function CronPage() {
                       style={{
                         padding: "10px 20px",
                         fontSize: 13,
-                        borderColor: isActive
-                          ? "var(--accent)"
-                          : "var(--border)",
+                        borderColor: isActive ? "var(--accent)" : "var(--border)",
                         borderWidth: 2,
                       }}
                       onClick={handleToggleStatus}
                       disabled={saveLoading}
                     >
-                      {isActive
-                        ? "● ACTIVE — Click to Turn Off"
-                        : "○ INACTIVE — Click to Turn On"}
+                      <span
+                        className={`status-dot ${isActive ? "ok" : "disabled"}`}
+                        style={{ marginRight: 6 }}
+                      />
+                      {isActive ? "ACTIVE" : "INACTIVE"}
                     </button>
                   )}
                   {selectedCron && !isNewCron && (
@@ -1442,21 +1423,17 @@ export default function CronPage() {
                   onClick={handleSave}
                   disabled={saveLoading}
                 >
-                  {saveLoading
-                    ? "SAVING..."
-                    : isNewCron
-                      ? "CREATE CRON"
-                      : "SAVE CRON"}
+                  {saveLoading ? "SAVING..." : "SAVE"}
                 </button>
               </div>
 
-              {saveMsg && (
+                  {saveMsg && (
                 <div
                   className="minor-text"
                   style={{
                     color: saveMsg.toLowerCase().includes("fail")
                       ? "var(--danger)"
-                      : "var(--success)",
+                      : "var(--text)",
                   }}
                 >
                   {saveMsg}

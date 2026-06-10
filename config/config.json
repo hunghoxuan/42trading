@@ -1,26 +1,8 @@
 {
-  "htf_timeframe": [
-    "W",
-    "D",
-    "4H"
-  ],
-  "ltf_timeframe": [
-    "15m",
-    "5m",
-    "1m"
-  ],
-  "trend": [
-    "Bullish",
-    "Bearish",
-    "Ranging"
-  ],
-  "structure": [
-    "BOS",
-    "CHoCH",
-    "MSB",
-    "Continuation",
-    "Ranging"
-  ],
+  "htf_timeframe": ["W", "D", "4H"],
+  "ltf_timeframe": ["15m", "5m", "1m"],
+  "trend": ["Bullish", "Bearish", "Ranging"],
+  "structure": ["BOS", "CHoCH", "MSB", "Continuation", "Ranging"],
   "phase": [
     "Trending",
     "Retracement",
@@ -31,31 +13,11 @@
     "Distribution",
     "Accumulation"
   ],
-  "bias": [
-    "Long",
-    "Short",
-    "Neutral"
-  ],
-  "direction": [
-    "Bullish",
-    "Bearish",
-    "Neutral"
-  ],
-  "order_side": [
-    "BUY",
-    "SELL"
-  ],
-  "order_type": [
-    "Limit",
-    "Stop",
-    "Market"
-  ],
-  "profile": [
-    "Position",
-    "Swing",
-    "Intraday",
-    "Scalp"
-  ],
+  "bias": ["Long", "Short", "Neutral"],
+  "direction": ["Bullish", "Bearish", "Neutral"],
+  "order_side": ["BUY", "SELL"],
+  "order_type": ["Limit", "Stop", "Market"],
+  "profile": ["Position", "Swing", "Intraday", "Scalp"],
   "session": [
     "Asian",
     "London",
@@ -64,23 +26,9 @@
     "Pre-Market",
     "Post-Market"
   ],
-  "broker_name": [
-    "ICMARKETS",
-    "OANDA",
-    "BINANCE"
-  ],
-  "ltf_structure": [
-    "Uptrend",
-    "Downtrend",
-    "Ranging",
-    "Transitional"
-  ],
-  "macro": [
-    "Risk_On",
-    "Risk_Off",
-    "Neutral",
-    "News_Pending"
-  ],
+  "broker_name": ["ICMARKETS", "OANDA", "BINANCE"],
+  "ltf_structure": ["Uptrend", "Downtrend", "Ranging", "Transitional"],
+  "macro": ["Risk_On", "Risk_Off", "Neutral", "News_Pending"],
   "strategy": [
     "AVWAP",
     "Breakout",
@@ -181,47 +129,16 @@
       "Flag_Pennant",
       "Channel_Break"
     ],
-    "MA_VWAP": [
-      "EMA_Cross",
-      "MA_Bounce",
-      "VWAP_Reclaim",
-      "AVWAP_Bounce"
-    ],
-    "Divergence": [
-      "RSI_Divergence",
-      "MACD_Divergence",
-      "Hidden_Divergence"
-    ],
-    "Supply_Demand": [
-      "SD_Zone_Reaction"
-    ],
-    "Elliott_Wave": [
-      "Elliott_Wave3",
-      "Elliott_Wave5"
-    ],
-    "Pivot_Points": [
-      "PivotPoint_Bounce"
-    ]
+    "MA_VWAP": ["EMA_Cross", "MA_Bounce", "VWAP_Reclaim", "AVWAP_Bounce"],
+    "Divergence": ["RSI_Divergence", "MACD_Divergence", "Hidden_Divergence"],
+    "Supply_Demand": ["SD_Zone_Reaction"],
+    "Elliott_Wave": ["Elliott_Wave3", "Elliott_Wave5"],
+    "Pivot_Points": ["PivotPoint_Bounce"]
   },
-  "weight": [
-    "High",
-    "Medium",
-    "Low"
-  ],
-  "confidence": [
-    "Low",
-    "Medium",
-    "High"
-  ],
-  "poi_freshness": [
-    "Fresh",
-    "Once_Tested",
-    "Stale"
-  ],
-  "ob_freshness": [
-    "Fresh",
-    "Once_Mitigated"
-  ],
+  "weight": ["High", "Medium", "Low"],
+  "confidence": ["Low", "Medium", "High"],
+  "poi_freshness": ["Fresh", "Once_Tested", "Stale"],
+  "ob_freshness": ["Fresh", "Once_Mitigated"],
   "ob_type": [
     "Bullish_OB",
     "Bearish_OB",
@@ -229,12 +146,7 @@
     "Propulsion",
     "Mitigation"
   ],
-  "fvg_type": [
-    "IFVG",
-    "BISI",
-    "SIBI",
-    "Regular"
-  ],
+  "fvg_type": ["IFVG", "BISI", "SIBI", "Regular"],
   "liquidity_type": [
     "BSL",
     "SSL",
@@ -272,31 +184,12 @@
     "DailyOpen",
     "MidnightOpen"
   ],
-  "premium_discount_position": [
-    "Discount",
-    "Premium",
-    "Equilibrium"
-  ],
-  "choch_sub_type": [
-    "Body_Break",
-    "Wick_Break"
-  ],
-  "choch_type": [
-    "Minor",
-    "Major"
-  ],
-  "choch_used_as": [
-    "Early_Entry",
-    "Confirmation"
-  ],
-  "mss_type": [
-    "Impulsive",
-    "Gradual"
-  ],
-  "bos_type": [
-    "Internal",
-    "External"
-  ],
+  "premium_discount_position": ["Discount", "Premium", "Equilibrium"],
+  "choch_sub_type": ["Body_Break", "Wick_Break"],
+  "choch_type": ["Minor", "Major"],
+  "choch_used_as": ["Early_Entry", "Confirmation"],
+  "mss_type": ["Impulsive", "Gradual"],
+  "bos_type": ["Internal", "External"],
   "candle_pattern": [
     "Engulfing",
     "Pin_Bar",
@@ -338,18 +231,8 @@
     "ABCD",
     "None"
   ],
-  "divergence_indicator": [
-    "RSI",
-    "MACD",
-    "OBV",
-    "Stoch",
-    "CCI",
-    "None"
-  ],
-  "divergence_class": [
-    "Regular",
-    "Hidden"
-  ],
+  "divergence_indicator": ["RSI", "MACD", "OBV", "Stoch", "CCI", "None"],
+  "divergence_class": ["Regular", "Hidden"],
   "wyckoff_phase": [
     "Phase_A",
     "Phase_B",
@@ -385,18 +268,8 @@
     "Climactic_Action",
     "None"
   ],
-  "volume_level": [
-    "High",
-    "Normal",
-    "Low",
-    "N/A"
-  ],
-  "idm_type": [
-    "Minor_Swing",
-    "EQL",
-    "EQH",
-    "Retail_Stop_Zone"
-  ],
+  "volume_level": ["High", "Normal", "Low", "N/A"],
+  "idm_type": ["Minor_Swing", "EQL", "EQH", "Retail_Stop_Zone"],
   "entry_trigger_type": [
     "CHoCH",
     "MSS",
@@ -408,34 +281,11 @@
     "Candle_Close",
     "Pattern_Completion"
   ],
-  "news_impact": [
-    "High",
-    "Medium",
-    "Low",
-    "None"
-  ],
-  "assets_checked": [
-    "DXY",
-    "Gold",
-    "Indices",
-    "Oil",
-    "Bonds"
-  ],
-  "correlation_alignment": [
-    "Confirming",
-    "Neutral",
-    "Conflicting"
-  ],
-  "overextension_risk": [
-    "Low",
-    "Medium",
-    "High"
-  ],
-  "breakeven_condition": [
-    "After_TP1",
-    "At_1R",
-    "Manual"
-  ],
+  "news_impact": ["High", "Medium", "Low", "None"],
+  "assets_checked": ["DXY", "Gold", "Indices", "Oil", "Bonds"],
+  "correlation_alignment": ["Confirming", "Neutral", "Conflicting"],
+  "overextension_risk": ["Low", "Medium", "High"],
+  "breakeven_condition": ["After_TP1", "At_1R", "Manual"],
   "tp1_logic": [
     "IDM",
     "EQH",
@@ -460,17 +310,8 @@
     "Fib_2.618",
     "Elliott_Wave_Target"
   ],
-  "when_price": [
-    "greater_than",
-    "less_than",
-    "equal_to"
-  ],
-  "risk_grade": [
-    "A",
-    "B",
-    "C",
-    "NoTrade"
-  ],
+  "when_price": ["greater_than", "less_than", "equal_to"],
+  "risk_grade": ["A", "B", "C", "NoTrade"],
   "suggested_action": [
     "Proceed",
     "Skip_News",
@@ -479,23 +320,9 @@
     "Skip_Spread",
     "Skip_Counter_Trend"
   ],
-  "checklist_ai_confirm": [
-    "yes",
-    "no",
-    "not_sure"
-  ],
-  "zone_relevance": [
-    "TP_Target",
-    "Entry_Boundary",
-    "DOL",
-    "Invalidation"
-  ],
-  "zone_status": [
-    "Fresh",
-    "Tested",
-    "Mitigated",
-    "Broken"
-  ],
+  "checklist_ai_confirm": ["yes", "no", "not_sure"],
+  "zone_relevance": ["TP_Target", "Entry_Boundary", "DOL", "Invalidation"],
+  "zone_status": ["Fresh", "Tested", "Mitigated", "Broken"],
   "grade_criteria": {
     "A": ">=4 confluences, HTF aligned, liquidity swept, LTF confirmed, no high news",
     "B": "3 confluences, mostly aligned, minor gap acceptable",
@@ -582,6 +409,625 @@
     "overextension_high_action": "Skip_Late_Entry",
     "low_confluence_action": "Skip_Low_Confluence"
   },
+  "news": {
+    "source_url": "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+    "source_timezone": "America/New_York",
+    "default_before_minutes": 30,
+    "default_during_minutes": 90,
+    "types": [
+      {
+        "news_type": "CPI",
+        "aliases": ["CPI", "CORE CPI", "INFLATION RATE"],
+        "score": 95,
+        "effective_symbols": {
+          "USD": [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "NZDUSD",
+            "USDCAD",
+            "USDCHF",
+            "XAUUSD",
+            "US30",
+            "NAS100",
+            "SPX500"
+          ],
+          "EUR": ["EURUSD", "EURJPY", "EURGBP", "GER40"],
+          "GBP": ["GBPUSD", "GBPJPY", "EURGBP", "UK100"],
+          "AUD": ["AUDUSD", "AUDJPY", "AUDNZD", "XAUUSD"],
+          "NZD": ["NZDUSD", "AUDNZD", "NZDCAD"],
+          "CAD": ["USDCAD", "CADJPY", "XAUUSD"],
+          "CHF": ["USDCHF", "EURCHF", "GBPCHF"],
+          "ALL": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+        },
+        "effective_duration": {
+          "before_minutes": 30,
+          "during_minutes": 90
+        },
+        "impact_rules": {
+          "condition_field": "actual_vs_forecast",
+          "thresholds": {
+            "hot": {
+              "operator": ">",
+              "value": 0.1,
+              "unit": "percentage_points"
+            },
+            "cool": {
+              "operator": "<",
+              "value": -0.1,
+              "unit": "percentage_points"
+            },
+            "inline": {
+              "operator": "between",
+              "value": [-0.1, 0.1],
+              "unit": "percentage_points"
+            }
+          },
+          "rules": [
+            {
+              "condition": "hot",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Hot CPI triggers hawkish Fed repricing; rate hike bets rise"
+            },
+            {
+              "condition": "cool",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Cool CPI signals disinflation; rate cut expectations increase"
+            },
+            {
+              "condition": "inline",
+              "symbol": "USD",
+              "direction": "neutral",
+              "magnitude": "low",
+              "reason": "Market already priced in; muted reaction expected"
+            },
+            {
+              "condition": "hot",
+              "symbol": "XAUUSD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Real yields rise with hawkish repricing; USD strength weighs on gold"
+            },
+            {
+              "condition": "cool",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Lower real yield expectations; USD softens — gold bid"
+            },
+            {
+              "condition": "hot",
+              "symbol": "XAUUSD",
+              "special_case": "stagflation",
+              "trigger": "actual_yoy > 5.0 AND gdp_growth < 1.0",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Stagflation fear — safe haven demand overrides rate logic"
+            },
+            {
+              "condition": "hot",
+              "symbol": ["US30", "NAS100", "SPX500"],
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Rate hike fears crush equity multiples; sell-off likely"
+            },
+            {
+              "condition": "cool",
+              "symbol": ["US30", "NAS100", "SPX500"],
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Rate cut narrative drives risk-on rally"
+            },
+            {
+              "condition": "hot",
+              "currency": "USD",
+              "symbol": "EURUSD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "USD bid; EUR/USD drops on dollar strength"
+            },
+            {
+              "condition": "hot",
+              "currency": "EUR",
+              "symbol": "EURUSD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "ECB hawkish repricing; EUR/USD rises on eurozone rate expectations"
+            }
+          ]
+        }
+      },
+      {
+        "news_type": "NFP",
+        "aliases": [
+          "NON-FARM EMPLOYMENT CHANGE",
+          "NON FARM",
+          "NFP",
+          "EMPLOYMENT CHANGE"
+        ],
+        "score": 98,
+        "effective_symbols": {
+          "USD": [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "NZDUSD",
+            "USDCAD",
+            "USDCHF",
+            "XAUUSD",
+            "US30",
+            "NAS100",
+            "SPX500"
+          ],
+          "ALL": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"]
+        },
+        "effective_duration": {
+          "before_minutes": 45,
+          "during_minutes": 120
+        },
+        "impact_rules": {
+          "condition_field": "actual_vs_forecast",
+          "secondary_fields": [
+            "average_hourly_earnings_vs_forecast",
+            "unemployment_rate_actual"
+          ],
+          "thresholds": {
+            "strong": { "operator": ">", "value": 50, "unit": "thousands" },
+            "weak": { "operator": "<", "value": -50, "unit": "thousands" },
+            "inline": {
+              "operator": "between",
+              "value": [-50, 50],
+              "unit": "thousands"
+            }
+          },
+          "rules": [
+            {
+              "condition": "strong",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Tight labor market; Fed stays hawkish — no cuts imminent"
+            },
+            {
+              "condition": "weak",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Labor market deteriorating; Fed rate cut expectations rise"
+            },
+            {
+              "condition": "inline",
+              "secondary_trigger": "avg_hourly_earnings_beat",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Wage inflation keeps Fed on hold; USD supported"
+            },
+            {
+              "condition": "inline",
+              "secondary_trigger": "unemployment_rate_rising",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Rising UE rate signals slowdown beneath headline NFP"
+            },
+            {
+              "condition": "weak",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Rate cut bets surge; USD falls — gold bids strongly"
+            },
+            {
+              "condition": "strong",
+              "symbol": "XAUUSD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "USD strength weighs on gold; may recover if broader risk-off develops"
+            },
+            {
+              "condition": "strong",
+              "special_case": "goldilocks",
+              "trigger": "actual_vs_forecast between 50 AND 150",
+              "symbol": ["US30", "NAS100"],
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Healthy jobs but not overheating — good economy, no extreme hawkish fear"
+            },
+            {
+              "condition": "strong",
+              "special_case": "overheating",
+              "trigger": "actual_vs_forecast > 150",
+              "symbol": ["US30", "NAS100"],
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Overheating labor market raises rate hike overshoot fears"
+            },
+            {
+              "condition": "weak",
+              "symbol": ["US30", "NAS100"],
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Recession fears dominate; equities sell off broadly"
+            },
+            {
+              "condition": "strong",
+              "symbol": "USDJPY",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "US-Japan yield differential widens; USD/JPY spikes"
+            }
+          ]
+        }
+      },
+      {
+        "news_type": "FOMC",
+        "aliases": [
+          "FOMC",
+          "FED",
+          "FEDERAL RESERVE",
+          "FED CHAIR"
+        ],
+        "score": 99,
+        "effective_symbols": {
+          "USD": [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "AUDUSD",
+            "NZDUSD",
+            "USDCAD",
+            "USDCHF",
+            "XAUUSD",
+            "BTCUSD",
+            "US30",
+            "NAS100",
+            "SPX500"
+          ],
+          "ALL": ["EURUSD", "USDJPY", "XAUUSD", "US30", "NAS100"]
+        },
+        "effective_duration": {
+          "before_minutes": 60,
+          "during_minutes": 180
+        },
+        "impact_rules": {
+          "condition_field": "rate_decision",
+          "secondary_fields": [
+            "statement_tone",
+            "dot_plot_revision",
+            "press_conference_tone"
+          ],
+          "conditions": {
+            "hike": "rate_change > 0",
+            "cut": "rate_change < 0",
+            "hold_hawkish": "rate_change == 0 AND statement_tone == 'hawkish'",
+            "hold_dovish": "rate_change == 0 AND statement_tone == 'dovish'",
+            "hold_neutral": "rate_change == 0 AND statement_tone == 'neutral'"
+          },
+          "rules": [
+            {
+              "condition": "hike",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Tightening cycle; USD bids on yield advantage"
+            },
+            {
+              "condition": "cut",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Easing cycle begins; dollar loses yield appeal"
+            },
+            {
+              "condition": "hold_hawkish",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "'Higher for longer' rhetoric — no cut yet, USD stays bid"
+            },
+            {
+              "condition": "hold_dovish",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Market front-runs anticipated cuts; USD softens"
+            },
+            {
+              "condition": "cut",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Lower real rates + weaker USD = strongest gold rally scenario"
+            },
+            {
+              "condition": "hike",
+              "symbol": "XAUUSD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Higher real yields reduce gold's appeal as non-yielding asset"
+            },
+            {
+              "condition": "hold_neutral",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Uncertainty bid; gold used as policy hedge"
+            },
+            {
+              "condition": "cut",
+              "symbol": "BTCUSD",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Liquidity expansion narrative drives crypto rally"
+            },
+            {
+              "condition": "hike",
+              "symbol": "BTCUSD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Risk-off; BTC correlates with equities in tightening regimes"
+            },
+            {
+              "condition": "cut",
+              "symbol": ["US30", "NAS100", "SPX500"],
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Lower discount rate expands equity multiples; risk-on rally"
+            },
+            {
+              "condition": "hike",
+              "symbol": ["US30", "NAS100", "SPX500"],
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Higher rates compress valuations; growth stocks hit hardest"
+            },
+            {
+              "condition": "hike",
+              "secondary_trigger": "boj_still_dovish",
+              "symbol": "USDJPY",
+              "direction": "bullish",
+              "magnitude": "high",
+              "reason": "Fed-BOJ policy divergence widens; USD/JPY spikes sharply"
+            }
+          ]
+        }
+      },
+      {
+        "news_type": "GDP",
+        "aliases": ["GDP", "GROSS DOMESTIC PRODUCT"],
+        "score": 85,
+        "effective_symbols": {
+          "USD": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US30", "NAS100"],
+          "EUR": ["EURUSD", "EURJPY", "GER40"],
+          "GBP": ["GBPUSD", "GBPJPY", "UK100"],
+          "ALL": ["EURUSD", "USDJPY", "XAUUSD"]
+        },
+        "effective_duration": {
+          "before_minutes": 20,
+          "during_minutes": 60
+        },
+        "impact_rules": {
+          "condition_field": "actual_vs_forecast",
+          "thresholds": {
+            "beat": {
+              "operator": ">",
+              "value": 0.1,
+              "unit": "percentage_points"
+            },
+            "miss": {
+              "operator": "<",
+              "value": -0.1,
+              "unit": "percentage_points"
+            },
+            "negative": {
+              "operator": "<",
+              "value": 0.0,
+              "unit": "qoq_annualized"
+            },
+            "recession": { "operator": "consecutive_negative", "count": 2 }
+          },
+          "rules": [
+            {
+              "condition": "beat",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Strong economy; Fed less likely to cut — USD supported"
+            },
+            {
+              "condition": "miss",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Weak growth raises rate cut bets; USD softens"
+            },
+            {
+              "condition": "recession",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Two consecutive negative quarters — recession confirmed; major USD selling"
+            },
+            {
+              "condition": "miss",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Safe haven demand; weaker growth = lower rate expectations"
+            },
+            {
+              "condition": "beat",
+              "symbol": ["US30", "NAS100"],
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Earnings growth optimism; risk-on"
+            },
+            {
+              "condition": "miss",
+              "symbol": ["US30", "NAS100"],
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Growth slowdown raises earnings risk; equities sell"
+            },
+            {
+              "condition": "beat",
+              "currency": "EUR",
+              "symbol": "EURUSD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Eurozone recovery narrative; EUR bid, ECB less likely to cut"
+            },
+            {
+              "condition": "miss",
+              "currency": "EUR",
+              "symbol": "EURUSD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Weak EU growth raises ECB cut expectations; EUR sold"
+            },
+            {
+              "condition": "beat",
+              "currency": "GBP",
+              "symbol": "UK100",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "UK growth surprise supports domestic equities"
+            }
+          ]
+        }
+      },
+      {
+        "news_type": "PMI",
+        "aliases": [
+          "PMI",
+          "PURCHASING MANAGERS",
+          "ISM MANUFACTURING",
+          "ISM SERVICES"
+        ],
+        "score": 78,
+        "effective_symbols": {
+          "USD": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"],
+          "EUR": ["EURUSD", "EURJPY", "GER40"],
+          "GBP": ["GBPUSD", "EURGBP", "UK100"],
+          "ALL": ["EURUSD", "USDJPY"]
+        },
+        "effective_duration": {
+          "before_minutes": 15,
+          "during_minutes": 45
+        },
+        "impact_rules": {
+          "condition_field": "actual_value",
+          "secondary_fields": [
+            "actual_vs_forecast",
+            "manufacturing_vs_services"
+          ],
+          "thresholds": {
+            "expansion": { "operator": ">", "value": 50 },
+            "contraction": { "operator": "<", "value": 50 },
+            "shock_contraction": {
+              "operator": "<",
+              "value": 48,
+              "and": "actual_vs_forecast < -1.5"
+            },
+            "beat": {
+              "operator": ">",
+              "value": 0,
+              "field": "actual_vs_forecast"
+            },
+            "miss": {
+              "operator": "<",
+              "value": 0,
+              "field": "actual_vs_forecast"
+            }
+          },
+          "rules": [
+            {
+              "condition": "expansion AND beat",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Above 50 + beat forecast — business activity expanding, USD supported"
+            },
+            {
+              "condition": "contraction",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "medium",
+              "reason": "Below 50 = contraction territory; growth concerns weigh on USD"
+            },
+            {
+              "condition": "shock_contraction",
+              "currency": "USD",
+              "symbol": "USD",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Unexpected sharp contraction — large move likely; recession fear trigger"
+            },
+            {
+              "condition": "beat",
+              "currency": "EUR",
+              "symbol": "EURUSD",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Eurozone manufacturing recovery signal; EUR/USD higher"
+            },
+            {
+              "condition": "contraction",
+              "currency": "EUR",
+              "symbol": "EURUSD",
+              "direction": "bearish",
+              "magnitude": "low",
+              "reason": "EUR offered but reaction often muted if already priced in"
+            },
+            {
+              "condition": "beat",
+              "currency": "DEU",
+              "symbol": "GER40",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "German manufacturing PMI beat — industrial recovery drives DAX"
+            },
+            {
+              "condition": "contraction",
+              "currency": "USD",
+              "symbol": "XAUUSD",
+              "direction": "bullish",
+              "magnitude": "low",
+              "reason": "Mild safe haven bid on growth concerns; gold benefits moderately"
+            },
+            {
+              "condition": "expansion AND beat",
+              "sub_type": "ISM_SERVICES",
+              "symbol": "US30",
+              "direction": "bullish",
+              "magnitude": "medium",
+              "reason": "Services = ~70% of US economy; beat is a strong growth signal for equities"
+            },
+            {
+              "condition": "shock_contraction",
+              "sub_type": "ISM_SERVICES",
+              "symbol": "US30",
+              "direction": "bearish",
+              "magnitude": "high",
+              "reason": "Services contraction = broad economic slowdown; equities sell hard"
+            }
+          ]
+        }
+      }
+    ]
+  },
   "limits": {
     "max_symbols_per_response": 1,
     "max_pd_arrays": 6,
@@ -623,16 +1069,7 @@
     "w": 10080,
     "m": 43200
   },
-  "default_tf_tabs": [
-    "ENTRY",
-    "1m",
-    "5m",
-    "15m",
-    "1h",
-    "4h",
-    "d",
-    "W"
-  ],
+  "default_tf_tabs": ["ENTRY", "1m", "5m", "15m", "1h", "4h", "d", "W"],
   "trade_status": [
     "Draft",
     "PENDING",
@@ -696,15 +1133,7 @@
       "EURSGD",
       "USDSGD"
     ],
-    "indices": [
-      "US30",
-      "NAS100",
-      "SPX500",
-      "GER40",
-      "UK100",
-      "JPN225",
-      "DE40"
-    ],
+    "indices": ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225", "DE40"],
     "metals": [
       "XAUUSD",
       "XAGUSD",
@@ -719,59 +1148,35 @@
   "default_smt_groups": [
     {
       "name": "EUR/GBP",
-      "symbols": [
-        "EURUSD",
-        "GBPUSD"
-      ]
+      "symbols": ["EURUSD", "GBPUSD"]
     },
     {
       "name": "BTC/ETH",
-      "symbols": [
-        "BTCUSD",
-        "ETHUSD"
-      ]
+      "symbols": ["BTCUSD", "ETHUSD"]
     },
     {
       "name": "AUD/NZD",
-      "symbols": [
-        "AUDUSD",
-        "NZDUSD"
-      ]
+      "symbols": ["AUDUSD", "NZDUSD"]
     },
     {
       "name": "USD/CAD",
-      "symbols": [
-        "USDCAD",
-        "US30"
-      ]
+      "symbols": ["USDCAD", "US30"]
     },
     {
       "name": "Gold/Silver",
-      "symbols": [
-        "XAUUSD",
-        "XAGUSD"
-      ]
+      "symbols": ["XAUUSD", "XAGUSD"]
     },
     {
       "name": "GBP/JPY",
-      "symbols": [
-        "GBPJPY",
-        "GBPUSD"
-      ]
+      "symbols": ["GBPJPY", "GBPUSD"]
     },
     {
       "name": "EUR/JPY",
-      "symbols": [
-        "EURJPY",
-        "EURUSD"
-      ]
+      "symbols": ["EURJPY", "EURUSD"]
     },
     {
       "name": "CAD/JPY",
-      "symbols": [
-        "CADJPY",
-        "USDCAD"
-      ]
+      "symbols": ["CADJPY", "USDCAD"]
     }
   ]
 }

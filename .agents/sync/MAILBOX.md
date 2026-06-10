@@ -16,6 +16,55 @@ Use this section for parallel-agent safety and deploy ordering.
 - since_utc: `2026-05-21 16:02 UTC`
 - note: `snapshot status display - master vs individual TFs`
 
+### [2026-06-08 16:05 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: `NOT_COMMITTED`
+- scope: `AI cron message format update + Trade History via LogViewer`
+- owned_files:
+  - `webhook/server.js`
+  - `web-ui/src/components/LogViewer.jsx`
+  - `web-ui/src/components/SignalDetailCard.jsx`
+- merge_status: `N/A - local uncommitted changes`
+- deploy_status: `NOT_DEPLOYED`
+- verify:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk bash scripts/start/reset_stack_once.sh` ✅
+  - `rtk bash scripts/test/verify_webhook_local.sh` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean ✅
+
+### [2026-06-08 15:35 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: `NOT_COMMITTED`
+- scope: `web-ui route URL selection state for settings detail pages`
+- owned_files:
+  - `web-ui/src/App.jsx`
+  - `web-ui/src/pages/settings/CronPage.jsx`
+  - `web-ui/src/pages/settings/ProvidersPage.jsx`
+  - `web-ui/src/pages/settings/SettingsPage.jsx`
+- merge_status: `N/A - local uncommitted changes`
+- deploy_status: `NOT_DEPLOYED`
+- verify:
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean ✅
+
+### [2026-06-08 15:05 UTC] AGENT:Codex
+- status: DONE
+- branch: main
+- commit: `NOT_COMMITTED`
+- scope: `web-ui shared LogViewer + Cron/Providers logs tab consistency`
+- owned_files:
+  - `web-ui/src/components/LogViewer.jsx`
+  - `web-ui/src/pages/settings/CronPage.jsx`
+  - `web-ui/src/pages/settings/ProvidersPage.jsx`
+- merge_status: `N/A - local uncommitted changes`
+- deploy_status: `NOT_DEPLOYED`
+- verify:
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean ✅
+
 ### [2026-05-22 07:22 UTC] AGENT:DeepSeek
 - status: DEPLOYED
 - branch: main

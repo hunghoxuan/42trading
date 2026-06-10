@@ -1,35 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { showToast } from "../../components/ToastContainer";
 import { maskSecretPreview } from "../../utils/secrets";
 import MasterDetailLayout from "../../components/MasterDetailLayout";
 import SidebarListItem from "../../components/SidebarListItem";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
+import LogsViewer from "../../components/LogsViewer";
 
 // ── Provider definitions ──────────────────────────────────────────────────
 
 const PROVIDERS = [
   {
-    name: "GEMINI_API_KEY",
+    name: "GEMINI",
     label: "Gemini",
-    models: [
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
-      "gemini-2.0-flash",
-    ],
+    models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
   },
   {
-    name: "OPENAI_API_KEY",
+    name: "OPENAI",
     label: "OpenAI",
     models: ["gpt-4o", "gpt-4.1", "gpt-4o-mini", "o3-mini"],
   },
   {
-    name: "DEEPSEEK_API_KEY",
+    name: "DEEPSEEK",
     label: "DeepSeek",
     models: ["deepseek-chat", "deepseek-r1"],
   },
   {
-    name: "CLAUDE_API_KEY",
+    name: "CLAUDE",
     label: "Claude",
     models: [
       "claude-sonnet-4-0",
@@ -38,7 +36,7 @@ const PROVIDERS = [
     ],
   },
   {
-    name: "OPENROUTER_API_KEY",
+    name: "OPENROUTER",
     label: "OpenRouter",
     models: [
       "openai/gpt-4o",
@@ -51,7 +49,7 @@ const PROVIDERS = [
     ],
   },
   {
-    name: "TWELVE_DATA_API_KEY",
+    name: "TWELVE_DATA",
     label: "Twelve Data",
     models: [],
   },
@@ -60,35 +58,40 @@ const PROVIDERS = [
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalizeProviderName(raw) {
-  const s = String(raw || "").toUpperCase().replace(/\s+/g, "_");
-  // Map old names
-  if (s === "GEMINI" || s === "GOOGLE_GEMINI") return "GEMINI_API_KEY";
-  if (s === "OPENAI") return "OPENAI_API_KEY";
-  if (s === "DEEPSEEK") return "DEEPSEEK_API_KEY";
-  if (s === "CLAUDE" || s === "ANTHROPIC") return "CLAUDE_API_KEY";
-  if (s === "OPENROUTER") return "OPENROUTER_API_KEY";
-  if (s === "TWELVE_DATA" || s === "TWELVEDATA") return "TWELVE_DATA_API_KEY";
-  return s;
+  const s = String(raw || "")
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  if (s === "GEMINI" || s === "GOOGLE_GEMINI" || s === "GEMINI_API_KEY")
+    return "GEMINI";
+  if (s === "OPENAI" || s === "OPENAI_API_KEY") return "OPENAI";
+  if (s === "DEEPSEEK" || s === "DEEPSEEK_API_KEY") return "DEEPSEEK";
+  if (s === "CLAUDE" || s === "ANTHROPIC" || s === "CLAUDE_API_KEY")
+    return "CLAUDE";
+  if (s === "OPENROUTER" || s === "OPENROUTER_API_KEY") return "OPENROUTER";
+  if (s === "TWELVE_DATA" || s === "TWELVEDATA" || s === "TWELVE_DATA_API_KEY")
+    return "TWELVE_DATA";
+  return s.replace(/_API_KEY$/i, "");
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function ProvidersPage() {
   const confirm = useConfirmDialog();
+  const navigate = useNavigate();
+  const { providerName: routeProviderName } = useParams();
   const [settings, setSettings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
   const [revealedValues, setRevealedValues] = useState({});
-  const [selectedProvider, setSelectedProvider] = useState("GEMINI_API_KEY");
+  const [selectedProvider, setSelectedProvider] = useState("GEMINI");
   const [saveBusy, setSaveBusy] = useState(false);
+  const [detailTab, setDetailTab] = useState("settings");
 
   // ── Derived ─────────────────────────────────────────────────────────────
 
   const apiKeySettings = useMemo(
     () =>
-      settings.filter(
-        (s) => String(s.type || "").toLowerCase() === "api_key",
-      ),
+      settings.filter((s) => String(s.type || "").toLowerCase() === "api_key"),
     [settings],
   );
 
@@ -128,7 +131,11 @@ export default function ProvidersPage() {
 
   // ── Local form state for current provider ──────────────────────────────
 
-  const [form, setForm] = useState({ models: [], api_key: "", remain_credits: 0 });
+  const [form, setForm] = useState({
+    models: [],
+    api_key: "",
+    remain_credits: 0,
+  });
 
   useEffect(() => {
     if (currentProvider) {
@@ -141,6 +148,27 @@ export default function ProvidersPage() {
       });
     }
   }, [selectedProvider, currentProvider?.data?.api_key]);
+
+  useEffect(() => {
+    const normalizedRouteProvider = routeProviderName
+      ? normalizeProviderName(routeProviderName)
+      : "";
+    if (
+      normalizedRouteProvider &&
+      PROVIDERS.some((prov) => prov.name === normalizedRouteProvider) &&
+      normalizedRouteProvider !== selectedProvider
+    ) {
+      setSelectedProvider(normalizedRouteProvider);
+      return;
+    }
+    if (!routeProviderName && selectedProvider) {
+      return;
+    }
+  }, [routeProviderName, selectedProvider]);
+
+  useEffect(() => {
+    setDetailTab("settings");
+  }, [selectedProvider]);
 
   // ── Reveal helpers ──────────────────────────────────────────────────────
 
@@ -331,7 +359,8 @@ export default function ProvidersPage() {
   const visible = isRevealed();
   const showApiKey = visible ? getRevealedValue() : form.api_key;
 
-  const isActive = String(currentProvider?.status || "").toUpperCase() === "ACTIVE";
+  const isActive =
+    String(currentProvider?.status || "").toUpperCase() === "ACTIVE";
 
   return (
     <div className="stack-layout fadeIn" style={{ paddingBottom: 40 }}>
@@ -345,8 +374,7 @@ export default function ProvidersPage() {
           </div>
           {PROVIDERS.map((prov) => {
             const info = providerMap[prov.name];
-            const ok =
-              String(info?.status || "").toUpperCase() === "ACTIVE";
+            const ok = String(info?.status || "").toUpperCase() === "ACTIVE";
             return (
               <SidebarListItem
                 key={prov.name}
@@ -354,154 +382,211 @@ export default function ProvidersPage() {
                 enabled={ok}
                 title={prov.label}
                 subtitle={prov.name}
-                onClick={() => setSelectedProvider(prov.name)}
+                onClick={() => {
+                  setSelectedProvider(prov.name);
+                  navigate(
+                    `/settings/providers/${encodeURIComponent(prov.name)}`,
+                  );
+                }}
               />
             );
           })}
         </div>
 
-        {/* Right: Edit form */}
+        {/* Right: Detail */}
         <div className="panel stack-layout" style={{ gap: 16, padding: 24 }}>
           {loading ? (
             <div className="minor-text">Loading...</div>
           ) : (
             <>
-              {/* Header */}
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>{currentProvDef.label}</div>
-                <span className="minor-text" style={{ fontSize: 11 }}>{currentProvDef.name}</span>
-              </div>
-
-              {/* Models */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span className="panel-label" style={{ fontSize: 10 }}>MODELS (COMMA OR NEWLINE)</span>
-                <textarea
-                  rows={4}
-                  value={form.models.join("\n")}
-                  onChange={(e) => setForm((prev) => ({ ...prev, models: e.target.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) }))}
-                />
-              </div>
-
-              {/* API Key */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span className="panel-label" style={{ fontSize: 10 }}>API KEY</span>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                  }}
-                >
-                  <input
-                    type={visible ? "text" : "password"}
-                    value={showApiKey}
-                    readOnly={visible}
-                    onChange={
-                      visible
-                        ? undefined
-                        : (e) =>
-                            setForm((prev) => ({
-                              ...prev,
-                              api_key: e.target.value,
-                            }))
-                    }
-                    style={{ flex: 1 }}
-                    placeholder="Enter API key..."
-                  />
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    style={{ padding: "4px 8px", fontSize: 11 }}
-                    onClick={async () => {
-                      if (!visible) {
-                        await revealApiKey();
-                      } else {
-                        hideRevealed();
-                      }
-                    }}
-                    title={visible ? "Hide" : "Reveal"}
-                  >
-                    {visible ? "Hide" : "Eye"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    style={{ padding: "4px 8px", fontSize: 11 }}
-                    onClick={async () => {
-                      const plain = await revealApiKey();
-                      if (plain) {
-                        await copySecretToClipboard(plain, "API Key");
-                      } else {
-                        setMsg("API Key: empty value, nothing copied.");
-                      }
-                    }}
-                    title="Copy decrypted value"
-                  >
-                    Copy
-                  </button>
-                </div>
-                {!visible && form.api_key && (
-                  <span
-                    className="minor-text"
-                    style={{ fontSize: 10, opacity: 0.9 }}
-                  >
-                    {maskSecretPreview(form.api_key)}
-                  </span>
-                )}
-              </div>
-
-              {/* Remain Credits */}
-              <div className="stack-layout" style={{ gap: 6 }}>
-                <span className="panel-label">Remain Credits</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.remain_credits}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      remain_credits: Number(e.target.value),
-                    }))
-                  }
-                  style={{ width: 160 }}
-                />
-              </div>
-
-              {/* Actions */}
               <div
                 style={{
                   display: "flex",
-                  gap: 8,
-                  paddingTop: 20,
-                  borderTop: "1px solid var(--border)",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
                 }}
               >
-                <button
-                  className={isActive ? "secondary-button" : "primary-button"}
-                  style={{ padding: "12px 24px", fontSize: 14 }}
-                  onClick={toggleStatus}
-                  disabled={saveBusy}
-                >
-                  {isActive ? "DEACTIVATE" : "ACTIVATE"}
-                </button>
-                <button
-                  className="danger-button"
-                  style={{ padding: "12px 24px", fontSize: 14 }}
-                  onClick={deleteProvider}
-                  disabled={saveBusy || !currentProvider?.setting}
-                >
-                  DELETE
-                </button>
-                <div style={{ flex: 1 }} />
-                <button
-                  className="primary-button"
-                  style={{ padding: "12px 32px", fontSize: 14 }}
-                  onClick={saveProvider}
-                  disabled={saveBusy}
-                >
-                  {saveBusy ? "SAVING..." : "SAVE"}
-                </button>
+                <div className="stack-layout" style={{ gap: 2, flex: 1 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>
+                    {currentProvDef.label}
+                  </div>
+                  <span className="minor-text" style={{ fontSize: 11 }}>
+                    {currentProvDef.name}
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className={`secondary-button ${detailTab === "settings" ? "active" : ""}`}
+                    onClick={() => setDetailTab("settings")}
+                  >
+                    Settings
+                  </button>
+                  <button
+                    type="button"
+                    className={`secondary-button ${detailTab === "logs" ? "active" : ""}`}
+                    onClick={() => setDetailTab("logs")}
+                  >
+                    Logs
+                  </button>
+                </div>
               </div>
+
+              {detailTab === "settings" ? (
+                <>
+                  <div className="stack-layout" style={{ gap: 6 }}>
+                    <span className="panel-label" style={{ fontSize: 10 }}>
+                      MODELS (COMMA OR NEWLINE)
+                    </span>
+                    <textarea
+                      rows={4}
+                      value={form.models.join("\n")}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          models: e.target.value
+                            .split(/[\n,]/)
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div className="stack-layout" style={{ gap: 6 }}>
+                    <span className="panel-label" style={{ fontSize: 10 }}>
+                      API KEY
+                    </span>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      <input
+                        type={visible ? "text" : "password"}
+                        value={showApiKey}
+                        readOnly={visible}
+                        onChange={
+                          visible
+                            ? undefined
+                            : (e) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  api_key: e.target.value,
+                                }))
+                        }
+                        style={{ flex: 1 }}
+                        placeholder="Enter API key..."
+                      />
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ padding: "4px 8px", fontSize: 11 }}
+                        onClick={async () => {
+                          if (!visible) {
+                            await revealApiKey();
+                          } else {
+                            hideRevealed();
+                          }
+                        }}
+                        title={visible ? "Hide" : "Reveal"}
+                      >
+                        {visible ? "Hide" : "Eye"}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ padding: "4px 8px", fontSize: 11 }}
+                        onClick={async () => {
+                          const plain = await revealApiKey();
+                          if (plain) {
+                            await copySecretToClipboard(plain, "API Key");
+                          } else {
+                            setMsg("API Key: empty value, nothing copied.");
+                          }
+                        }}
+                        title="Copy decrypted value"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    {!visible && form.api_key && (
+                      <span
+                        className="minor-text"
+                        style={{ fontSize: 10, opacity: 0.9 }}
+                      >
+                        {maskSecretPreview(form.api_key)}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="stack-layout" style={{ gap: 6 }}>
+                    <span className="panel-label">Remain Credits</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.remain_credits}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          remain_credits: Number(e.target.value),
+                        }))
+                      }
+                      style={{ width: 160 }}
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      paddingTop: 20,
+                      borderTop: "1px solid var(--border)",
+                    }}
+                  >
+                    <button
+                      className={
+                        isActive ? "secondary-button" : "primary-button"
+                      }
+                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      onClick={toggleStatus}
+                      disabled={saveBusy}
+                    >
+                      {isActive ? "DEACTIVATE" : "ACTIVATE"}
+                    </button>
+                    <button
+                      className="danger-button"
+                      style={{ padding: "12px 24px", fontSize: 14 }}
+                      onClick={deleteProvider}
+                      disabled={saveBusy || !currentProvider?.setting}
+                    >
+                      DELETE
+                    </button>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      className="primary-button"
+                      style={{ padding: "12px 32px", fontSize: 14 }}
+                      onClick={saveProvider}
+                      disabled={saveBusy}
+                    >
+                      {saveBusy ? "SAVING..." : "SAVE"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <LogsViewer
+                  source="providers"
+                  objectId={selectedProvider}
+                  fileName=""
+                  logFormat={null}
+                  limit={200}
+                  emptyText="No provider logs found."
+                />
+              )}
             </>
           )}
         </div>
@@ -510,8 +595,8 @@ export default function ProvidersPage() {
       {/* Global message */}
       {msg && (
         <div
-          className="minor-text"
-          style={{ color: "var(--success)", marginTop: 12 }}
+          className="minor-text status-success"
+          style={{ marginTop: 12 }}
         >
           {msg}
         </div>

@@ -5,6 +5,7 @@ import { showDateTime } from "../../utils/format";
 import PaginationBar from "../../components/PaginationBar";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 import DataTable from "../../components/DataTable";
+import MobileCollapseSection from "../../components/MobileCollapseSection";
 
 function getEventId(ev) {
   return ev?.log_id ?? ev?.id ?? "";
@@ -183,9 +184,7 @@ export default function LogsPage() {
       {
         accessorKey: "event_type",
         header: "EVENT TYPE",
-        cell: ({ getValue }) => (
-          <span className="badge">{getValue()}</span>
-        ),
+        cell: ({ getValue }) => <span className="badge INACTIVE">{getValue()}</span>,
       },
       {
         id: "id_ticket",
@@ -198,10 +197,7 @@ export default function LogsPage() {
               <div className="minor-text">{row.original.object_table}</div>
             )}
             {row.original.ack_ticket && (
-              <div
-                className="minor-text"
-                style={{ color: "var(--accent)" }}
-              >
+              <div className="minor-text status-accent">
                 # {row.original.ack_ticket}
               </div>
             )}
@@ -222,7 +218,13 @@ export default function LogsPage() {
             return (
               <div className="cell-wrap">
                 <span
-                  className={`badge ${ev.metadata?.level === "ERROR" ? "SL" : ev.metadata?.level === "WARNING" ? "OK" : "FILLED"}`}
+                  className={`badge ${
+                    ev.metadata?.level === "ERROR"
+                      ? "SL"
+                      : ev.metadata?.level === "WARNING"
+                        ? "PENDING"
+                        : "ACTIVE"
+                  }`}
                 >
                   {ev.metadata?.level || "INFO"}
                 </span>
@@ -248,10 +250,10 @@ export default function LogsPage() {
             );
           }
           if (ev.status) {
-            return <span className="badge FILLED">{ev.status}</span>;
+            return <span className="badge ACTIVE">{ev.status}</span>;
           }
           return (
-            <span className="badge" style={{ opacity: 0.6 }}>
+            <span className="badge INACTIVE">
               OK
             </span>
           );
@@ -351,81 +353,83 @@ export default function LogsPage() {
           </div>
         </div>
 
-        <div className="toolbar-group toolbar-search-filter">
-          <label htmlFor="logs-search" className="sr-only">
-            Search
-          </label>
-          <input
-            id="logs-search"
-            placeholder="SEARCH TICKET, ID..."
-            value={filter.q}
-            onChange={(e) => {
-              setFilter((f) => ({ ...f, q: e.target.value }));
-              setPage(0);
-            }}
-            style={{ width: "180px" }}
-          />
-          <label htmlFor="logs-symbol" className="sr-only">
-            Symbol
-          </label>
-          <select
-            id="logs-symbol"
-            value={filter.symbol}
-            onChange={(e) => {
-              setFilter((f) => ({ ...f, symbol: e.target.value }));
-              setPage(0);
-            }}
-          >
-            <option value="">ALL SYMBOLS</option>
-            {symbols.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <label htmlFor="logs-range" className="sr-only">
-            Time Range
-          </label>
-          <select
-            id="logs-range"
-            value={filter.range}
-            onChange={(e) => {
-              setFilter((f) => ({ ...f, range: e.target.value }));
-              setPage(0);
-            }}
-          >
-            {RANGE_OPTIONS.map((r) => (
-              <option key={r.val} value={r.val}>
-                {r.lab}
-              </option>
-            ))}
-          </select>
-        </div>
+        <MobileCollapseSection title="Filters" className="toolbar-group toolbar-search-filter">
+          <div className="toolbar-group toolbar-search-filter">
+            <label htmlFor="logs-search" className="sr-only">
+              Search
+            </label>
+            <input
+              id="logs-search"
+              placeholder="SEARCH TICKET, ID..."
+              value={filter.q}
+              onChange={(e) => {
+                setFilter((f) => ({ ...f, q: e.target.value }));
+                setPage(0);
+              }}
+              style={{ width: "180px" }}
+            />
+            <label htmlFor="logs-symbol" className="sr-only">
+              Symbol
+            </label>
+            <select
+              id="logs-symbol"
+              value={filter.symbol}
+              onChange={(e) => {
+                setFilter((f) => ({ ...f, symbol: e.target.value }));
+                setPage(0);
+              }}
+            >
+              <option value="">ALL SYMBOLS</option>
+              {symbols.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="logs-range" className="sr-only">
+              Time Range
+            </label>
+            <select
+              id="logs-range"
+              value={filter.range}
+              onChange={(e) => {
+                setFilter((f) => ({ ...f, range: e.target.value }));
+                setPage(0);
+              }}
+            >
+              {RANGE_OPTIONS.map((r) => (
+                <option key={r.val} value={r.val}>
+                  {r.lab}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="toolbar-group toolbar-bulk-action">
-          <label htmlFor="logs-bulk-action" className="sr-only">
-            Bulk Action
-          </label>
-          <select
-            id="logs-bulk-action"
-            value={bulkAction}
-            onChange={(e) => setBulkAction(e.target.value)}
-          >
-            {BULK_ACTIONS.map((a) => (
-              <option key={a} value={a}>
-                {a || "BULK ACTION..."}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={onBulkOk}
-            disabled={loading || !bulkAction}
-          >
-            APPLY
-          </button>
-        </div>
+          <div className="toolbar-group toolbar-bulk-action">
+            <label htmlFor="logs-bulk-action" className="sr-only">
+              Bulk Action
+            </label>
+            <select
+              id="logs-bulk-action"
+              value={bulkAction}
+              onChange={(e) => setBulkAction(e.target.value)}
+            >
+              {BULK_ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a || "BULK ACTION..."}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onBulkOk}
+              disabled={loading || !bulkAction}
+            >
+              APPLY
+            </button>
+          </div>
+        </MobileCollapseSection>
       </div>
 
       <div className="logs-layout-split">

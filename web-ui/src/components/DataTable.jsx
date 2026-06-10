@@ -36,20 +36,28 @@ export default function DataTable({
   onRowClick,
   className,
 }) {
-  const tableState = useMemo(() => ({
-    sorting: sorting ? [{ id: sorting.key, desc: sorting.dir === "desc" }] : [],
-    globalFilter,
-  }), [sorting?.key, sorting?.dir, globalFilter]);
+  const tableState = useMemo(
+    () => ({
+      sorting: sorting
+        ? [{ id: sorting.key, desc: sorting.dir === "desc" }]
+        : [],
+      globalFilter,
+    }),
+    [sorting?.key, sorting?.dir, globalFilter],
+  );
 
-  const handleSortingChange = useCallback((updater) => {
-    if (!onSortingChange) return;
-    const s = typeof updater === "function" ? updater([]) : updater;
-    if (s.length > 0) {
-      onSortingChange({ key: s[0].id, dir: s[0].desc ? "desc" : "asc" });
-    } else {
-      onSortingChange(null);
-    }
-  }, [onSortingChange]);
+  const handleSortingChange = useCallback(
+    (updater) => {
+      if (!onSortingChange) return;
+      const s = typeof updater === "function" ? updater([]) : updater;
+      if (s.length > 0) {
+        onSortingChange({ key: s[0].id, dir: s[0].desc ? "desc" : "asc" });
+      } else {
+        onSortingChange(null);
+      }
+    },
+    [onSortingChange],
+  );
 
   const table = useReactTable({
     data,
@@ -75,6 +83,8 @@ export default function DataTable({
                   style={{
                     cursor: header.column.getCanSort() ? "pointer" : "default",
                     userSelect: "none",
+                    width: header.column.columnDef.size || undefined,
+                    minWidth: header.column.columnDef.size || undefined,
                   }}
                 >
                   {flexRender(
@@ -107,12 +117,22 @@ export default function DataTable({
             table.getRowModel().rows.map((row) => (
               <tr
                 key={row.id}
-                className={rowClassName ? rowClassName(row.original) : undefined}
-                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                className={
+                  rowClassName ? rowClassName(row.original) : undefined
+                }
+                onClick={
+                  onRowClick ? () => onRowClick(row.original) : undefined
+                }
                 style={onRowClick ? { cursor: "pointer" } : undefined}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id}>
+                  <td
+                    key={cell.id}
+                    style={{
+                      width: cell.column.columnDef.size || undefined,
+                      minWidth: cell.column.columnDef.size || undefined,
+                    }}
+                  >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

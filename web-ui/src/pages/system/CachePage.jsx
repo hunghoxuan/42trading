@@ -1,17 +1,13 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../../api";
-import { showDateTime } from "../../utils/format";
+import { formatRelativeDateTime, showDateTime } from "../../utils/format";
 import MasterDetailLayout from "../../components/MasterDetailLayout";
 import DataTable from "../../components/DataTable";
 import { useConfirmDialog } from "../../components/ConfirmDialog";
 
 function timeAgo(ms) {
   if (!ms) return null;
-  const diff = Date.now() - ms;
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return Math.floor(diff / 60000) + "m ago";
-  if (diff < 86400000) return Math.floor(diff / 3600000) + "h ago";
-  return Math.floor(diff / 86400000) + "d ago";
+  return formatRelativeDateTime(ms);
 }
 
 function expiryText(item) {
@@ -325,7 +321,7 @@ export default function CachePage() {
             ))}
           </select>
           {msg && (
-            <span className="badge FILLED" style={{ padding: "6px 12px" }}>
+            <span className="badge ACTIVE" style={{ padding: "6px 12px" }}>
               {msg}
             </span>
           )}

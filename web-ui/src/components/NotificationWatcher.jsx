@@ -1,6 +1,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import { api } from "../api";
 import { playSound, SoundEvents } from "../utils/SoundManager";
+import {
+  formatNotificationLine,
+  isMeaningfulEntry,
+  normalizeServerEntry,
+} from "../utils/notificationDisplay";
 import { showToast } from "./ToastContainer";
 import { NotificationHub } from "../services/NotificationHub";
 
@@ -89,15 +94,17 @@ export default function NotificationWatcher() {
 
       // 3. Notification Ticker
       if (showTicker) {
-        const msg = p.message || `[${(p.event || "").replace(/_/g, " ").toUpperCase()}]`;
-        const newItem = {
-          id: p.id || Math.random().toString(36).slice(2, 9),
-          message: msg,
-          type: p.type || "info",
-          ts: Date.now()
-        };
-        window.__tickerMessages = [newItem, ...(window.__tickerMessages || [])].slice(0, 15);
-        window.dispatchEvent(new CustomEvent("ticker-update"));
+        const normalizedEntry = normalizeServerEntry(p);
+        if (isMeaningfulEntry(normalizedEntry)) {
+          const newItem = {
+            id: normalizedEntry.requestId || Math.random().toString(36).slice(2, 9),
+            message: formatNotificationLine(normalizedEntry),
+            type: p.type || "info",
+            ts: Date.now(),
+          };
+          window.__tickerMessages = [newItem, ...(window.__tickerMessages || [])].slice(0, 15);
+          window.dispatchEvent(new CustomEvent("ticker-update"));
+        }
       }
 
 // 4. Page refresh

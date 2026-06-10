@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { showDateTime, sortTimeframes } from "../utils/format";
+import { showDateTime } from "../utils/format";
+import {
+  asMoney,
+  asMoneySigned,
+  asPct,
+  asRR,
+  moneyClass,
+} from "../utils/numberFormat";
+import MobileCollapseSection from "../components/MobileCollapseSection";
 
 const RANGE_OPTIONS = [
   { val: "all", lab: "All times" },
@@ -17,58 +26,13 @@ const AUTO_REFRESH_MS = Number(
 );
 
 const PERIOD_DISPLAY = [
-  { key: "all", lab: "All times" },
+  { key: "filled_open", lab: "Now" },
   { key: "today", lab: "Today" },
   { key: "week", lab: "This Week" },
   { key: "month", lab: "This Month" },
   { key: "year", lab: "This Year" },
+  { key: "all", lab: "All times" },
 ];
-
-function asMoney(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "0.00";
-  return n.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function asMoneySigned(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "$0.00";
-  if (n < 0) return `-$${asMoney(Math.abs(n))}`;
-  return `$${asMoney(n)}`;
-}
-
-function asPct(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "0%";
-  return `${Math.ceil(n)}%`;
-}
-
-function asRR(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "0.00";
-  return (n > 0 ? "+" : "") + n.toFixed(2);
-}
-
-function moneyClass(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n === 0) return "money-neutral";
-  return n > 0 ? "money-pos" : "money-neg";
-}
-
-function formatTimeframe(min) {
-  if (!min) return "-";
-  const n = Number(min);
-  if (isNaN(n) || n <= 0) return min;
-  if (n < 60) return `${n}m`;
-  if (n < 1440) return `${n / 60}h`;
-  if (n < 10080) return `${n / 1440}d`;
-  if (n < 43200) return `${n / 10080}W`;
-  if (n === 43200) return "1M";
-  return `${n / 43200}M`;
-}
 
 const DASHBOARD_CALENDAR_CACHE_KEY = "tvbridge_dashboard_calendar_master_v1";
 
@@ -157,7 +121,13 @@ function sumCalendarPnlInRange(calendarData, startDate, endDate) {
   return sum;
 }
 
-function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
+function TableBlock({
+  title,
+  rows,
+  noun = "ITEMS",
+  nameFormatter = null,
+  onRowClick = null,
+}) {
   const [sortKey, setSortKey] = useState("WR");
   const [sortDir, setSortDir] = useState("DESC");
 
@@ -274,12 +244,14 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
             <div
               className="mini-table-row wide"
               key={r.key}
+              onClick={onRowClick ? () => onRowClick(r) : undefined}
               style={{
                 padding: "6px 0",
                 borderBottom: "1px solid var(--border)",
                 display: "flex",
                 gap: "12px",
                 alignItems: "center",
+                cursor: onRowClick ? "pointer" : "default",
               }}
             >
               <span
@@ -301,12 +273,14 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                   whiteSpace: "nowrap",
                 }}
               >
-                <span style={{}}>{asPct(r.win_rate)}</span>
+                <span>{asPct(r.win_rate)}</span>
                 <span
                   className="minor-text"
                   style={{ fontSize: "10px", marginLeft: "4px" }}
                 >
-                  {r.wins}/{r.losses}
+                  <span>{r.wins}</span>
+                  <span className="minor-text">/</span>
+                  <span>{r.losses}</span>
                 </span>
               </span>
               <span
@@ -321,7 +295,6 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
                   textAlign: "right",
                   fontSize: "10px",
                 }}
-                className={moneyClass(r.rr_total)}
               >
                 {asRR(r.rr_total)}
               </span>
@@ -334,6 +307,7 @@ function TableBlock({ title, rows, noun = "ITEMS", nameFormatter = null }) {
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [error, setError] = useState("");
@@ -473,8 +447,7 @@ export default function DashboardPage() {
     const n = Math.max(1, Number(v) || 1);
     const p = 10 ** Math.floor(Math.log10(n));
     const m = n / p;
-    const base =
-      m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
+    const base = m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10;
     return base * p;
   };
   const posStep = roundUpNiceUnit(Math.max(1, maxPnl / 5));
@@ -509,6 +482,40 @@ export default function DashboardPage() {
       ...(periodTotals.month || {}),
       total_pnl: sumCalendarPnlInRange(calendarData, monthStart, todayStart),
     },
+  };
+
+  const buildTradeSearch = (extra = {}) => {
+    const params = new URLSearchParams();
+    const merged = {
+      account_id: filters.account_id || "",
+      symbol: filters.symbol || "",
+      source: filters.source || "",
+      entry_model: filters.entry_model || "",
+      direction: filters.direction || "",
+      chart_tf: filters.chart_tf || "",
+      range: filters.range || "",
+      ...extra,
+    };
+    Object.entries(merged).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      const safe = String(value).trim();
+      if (!safe || safe.toLowerCase() === "all") return;
+      params.set(key, safe);
+    });
+    return params.toString();
+  };
+
+  const goTrades = ({ status = "closed", ...extra } = {}) => {
+    const qs = buildTradeSearch(extra);
+    navigate(`/trades/${String(status).toLowerCase()}${qs ? `?${qs}` : ""}`);
+  };
+
+  const periodCardClick = (key) => {
+    if (key === "filled_open") {
+      goTrades({ status: "filled", range: undefined, time: undefined });
+      return;
+    }
+    goTrades({ status: "closed", time: key, range: undefined });
   };
 
   return (
@@ -551,230 +558,247 @@ export default function DashboardPage() {
               alignItems: "center",
               justifyContent: "space-between",
               padding: "8px 16px",
+              gap: 16,
+              flexWrap: "nowrap",
             }}
           >
             <div
               className="toolbar-group dashboard-summary-highlights"
-              style={{ display: "flex", gap: "20px", alignItems: "center" }}
+              style={{
+                display: "flex",
+                gap: "20px",
+                alignItems: "center",
+                flexWrap: "nowrap",
+                minWidth: 0,
+                flex: "0 0 auto",
+              }}
             >
-              <div className="summary-item">
+              <div
+                className="summary-item"
+                onClick={() => goTrades({ status: "closed", time: "all" })}
+                style={{ cursor: "pointer" }}
+                title="Open all closed trades"
+              >
                 <span className="minor-text" style={{ fontSize: "10px" }}>
                   TOTAL
                 </span>
-                <div style={{ fontSize: "16px" }}>{m.total_trades || 0}</div>
+                <div style={{ fontSize: "16px" }}>
+                  {(m.count_pending || 0) +
+                    (m.count_filled || 0) +
+                    (m.count_closed || 0)}
+                </div>
               </div>
-              <div className="summary-item">
+              <div
+                className="summary-item"
+                onClick={() => goTrades({ status: "pending", time: undefined })}
+                style={{ cursor: "pointer" }}
+                title="Open pending trades"
+              >
                 <span className="minor-text" style={{ fontSize: "10px" }}>
                   PENDING
                 </span>
-                <div
-                  style={{
-                    fontSize: "16px",
-                    color: "var(--accent)",
-                  }}
-                >
-                  {m.count_pending || 0}
-                </div>
+                <div style={{ fontSize: "16px" }}>{m.count_pending || 0}</div>
               </div>
-              <div className="summary-item">
+              <div
+                className="summary-item"
+                onClick={() => goTrades({ status: "filled", time: undefined })}
+                style={{ cursor: "pointer" }}
+                title="Open filled trades"
+              >
                 <span className="minor-text" style={{ fontSize: "10px" }}>
                   FILLED
                 </span>
-                <div
-                  style={{
-                    fontSize: "16px",
-                    color: "var(--success)",
-                  }}
-                >
-                  {m.count_filled || 0}
-                </div>
+                <div style={{ fontSize: "16px" }}>{m.count_filled || 0}</div>
               </div>
-              <div className="summary-item">
+              <div
+                className="summary-item"
+                onClick={() =>
+                  goTrades({ status: "closed", time: filters.range || "all" })
+                }
+                style={{ cursor: "pointer" }}
+                title="Open closed trades"
+              >
                 <span className="minor-text" style={{ fontSize: "10px" }}>
-                  WINS
+                  W/L
                 </span>
-                <div
-                  style={{
-                    fontSize: "16px",
-                    color: "var(--success)",
-                  }}
-                >
-                  {m.wins || 0}
-                </div>
-              </div>
-              <div className="summary-item">
-                <span className="minor-text" style={{ fontSize: "10px" }}>
-                  LOSSES
-                </span>
-                <div
-                  style={{
-                    fontSize: "16px",
-                    color: "var(--error)",
-                  }}
-                >
+                <div style={{ fontSize: "16px" }}>
+                  {m.wins || 0} <span className="minor-text"> / </span>{" "}
                   {m.losses || 0}
                 </div>
               </div>
             </div>
 
-            <div
+            <MobileCollapseSection
+              title="Filters"
               className="toolbar-group toolbar-filters"
-              style={{
-                display: "flex",
-                gap: "12px",
-                flexWrap: "wrap",
-                justifyContent: "flex-end",
-                flex: 1,
-                alignItems: "flex-end",
-              }}
             >
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  ACCOUNT
-                </span>
-                <select
-                  id="db-filter-account"
-                  value={filters.account_id}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      account_id: e.target.value,
-                    }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  <option value="">All</option>
-                  {(f.accounts || []).map((v) => (
-                    <option key={v} value={v}>
-                      {accountNameById.get(String(v)) || v}
-                    </option>
-                  ))}
-                </select>
+              <div
+                className="dashboard-filter-grid"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(5, minmax(150px, 170px))",
+                  gap: "12px",
+                  width: "fit-content",
+                  justifyContent: "end",
+                  marginLeft: "auto",
+                  alignItems: "end",
+                  minWidth: 0,
+                  flex: "0 0 auto",
+                }}
+              >
+                <div className="dashboard-filter-field">
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
+                    ACCOUNT
+                  </span>
+                  <select
+                    id="db-filter-account"
+                    value={filters.account_id}
+                    onChange={(e) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        account_id: e.target.value,
+                      }))
+                    }
+                    style={{
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <option value="">All</option>
+                    {(f.accounts || []).map((v) => (
+                      <option key={v} value={v}>
+                        {accountNameById.get(String(v)) || v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="dashboard-filter-field">
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
+                    SYMBOL
+                  </span>
+                  <select
+                    id="db-filter-symbol"
+                    value={filters.symbol}
+                    onChange={(e) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        symbol: e.target.value,
+                      }))
+                    }
+                    style={{
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <option value="">All</option>
+                    {(f.symbols || []).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="dashboard-filter-field">
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
+                    SOURCE
+                  </span>
+                  <select
+                    id="db-filter-source"
+                    value={filters.source}
+                    onChange={(e) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        source: e.target.value,
+                      }))
+                    }
+                    style={{
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <option value="">All</option>
+                    {(f.sources || []).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="dashboard-filter-field">
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
+                    MODEL
+                  </span>
+                  <select
+                    id="db-filter-model"
+                    value={filters.entry_model}
+                    onChange={(e) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        entry_model: e.target.value,
+                      }))
+                    }
+                    style={{
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    <option value="">All</option>
+                    {(f.entry_models || []).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="dashboard-filter-field">
+                  <span
+                    className="minor-text"
+                    style={{ fontSize: 9, opacity: 0.7 }}
+                  >
+                    RANGE
+                  </span>
+                  <select
+                    id="db-filter-range"
+                    value={filters.range}
+                    onChange={(e) =>
+                      setFilters((prev) => ({ ...prev, range: e.target.value }))
+                    }
+                    style={{
+                      fontSize: 10,
+                      padding: "4px 8px",
+                      width: "100%",
+                      minWidth: 0,
+                    }}
+                  >
+                    {RANGE_OPTIONS.map((r) => (
+                      <option key={r.val} value={r.val}>
+                        {r.lab}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  SYMBOL
-                </span>
-                <select
-                  id="db-filter-symbol"
-                  value={filters.symbol}
-                  onChange={(e) =>
-                    setFilters((prev) => ({ ...prev, symbol: e.target.value }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  <option value="">All</option>
-                  {(f.symbols || []).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  SOURCE
-                </span>
-                <select
-                  id="db-filter-source"
-                  value={filters.source}
-                  onChange={(e) =>
-                    setFilters((prev) => ({ ...prev, source: e.target.value }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  <option value="">All</option>
-                  {(f.sources || []).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  MODEL
-                </span>
-                <select
-                  id="db-filter-model"
-                  value={filters.entry_model}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      entry_model: e.target.value,
-                    }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  <option value="">All</option>
-                  {(f.entry_models || []).map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  TF
-                </span>
-                <select
-                  id="db-filter-tf"
-                  value={filters.signal_tf}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      signal_tf: e.target.value,
-                    }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  <option value="">All</option>
-                  {sortTimeframes(f.signal_tfs || [], "desc").map((v) => (
-                    <option key={v} value={v}>
-                      {formatTimeframe(v)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span
-                  className="minor-text"
-                  style={{ fontSize: 9, opacity: 0.7 }}
-                >
-                  RANGE
-                </span>
-                <select
-                  id="db-filter-range"
-                  value={filters.range}
-                  onChange={(e) =>
-                    setFilters((prev) => ({ ...prev, range: e.target.value }))
-                  }
-                  style={{ fontSize: 10, padding: "4px 8px" }}
-                >
-                  {RANGE_OPTIONS.map((r) => (
-                    <option key={r.val} value={r.val}>
-                      {r.lab}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            </MobileCollapseSection>
           </div>
 
           <div
@@ -786,20 +810,35 @@ export default function DashboardPage() {
             }}
           >
             {PERIOD_DISPLAY.map((conf) => {
-              const v = displayPeriodTotals[conf.key] || {};
+              const isFilledOpen = conf.key === "filled_open";
+              const v = isFilledOpen
+                ? {
+                    total_pnl: m.filled_open_pnl || 0,
+                    total_trades: m.count_filled || 0,
+                    total_wins: m.filled_open_wins || 0,
+                    total_losses: m.filled_open_losses || 0,
+                    win_sum_pnl: m.filled_open_win_sum_pnl || 0,
+                    lose_sum_pnl: m.filled_open_lose_sum_pnl || 0,
+                  }
+                : displayPeriodTotals[conf.key] || {};
               const winrate =
                 v.total_wins + v.total_losses > 0
                   ? (v.total_wins / (v.total_wins + v.total_losses)) * 100
                   : 0;
-
               return (
-                <article className="kpi-card" key={conf.key}>
+                <article
+                  className="kpi-card"
+                  key={conf.key}
+                  onClick={() => periodCardClick(conf.key)}
+                  style={{ cursor: "pointer" }}
+                  title={`Open ${conf.lab} trades`}
+                >
                   <div
                     style={{
                       display: "flex",
-                      justifyContent: "space-between",
                       alignItems: "baseline",
-                      gap: 8,
+                      justifyContent: "space-between",
+                      gap: "8px",
                     }}
                   >
                     <div className="panel-label" style={{ marginBottom: 0 }}>
@@ -811,9 +850,11 @@ export default function DashboardPage() {
                         fontSize: "10px",
                         whiteSpace: "nowrap",
                         opacity: 0.9,
+                        textAlign: "right",
                       }}
                     >
-                      t: {v.total_trades || 0} | w: {v.total_wins || 0} | l:{" "}
+                      t: {v.total_trades || 0} | {v.total_wins || 0}{" "}
+                      <span className="minor-text"> / </span>{" "}
                       {v.total_losses || 0}
                     </div>
                   </div>
@@ -850,9 +891,8 @@ export default function DashboardPage() {
                     <span className="money-neg">
                       {asMoneySigned(v.lose_sum_pnl || 0)}
                     </span>
-                    <span style={{ marginLeft: "auto" }}>
-                      wr: {asPct(winrate)} | rr: {asRR(v.total_rr || 0)}
-                    </span>
+                    <span>|</span>
+                    <span>{asPct(winrate)}</span>
                   </div>
                 </article>
               );
@@ -861,15 +901,19 @@ export default function DashboardPage() {
 
           {/* Calendar + Daily PnL chart */}
           <div
+            className="dashboard-calendar-layout"
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(420px, 1.2fr) minmax(320px, 1fr)",
               gap: 16,
-              alignItems: "start",
+              alignItems: "stretch",
             }}
           >
             {/* Monthly PnL Calendar */}
-            <div className="panel fadeIn" style={{ padding: 12 }}>
+            <div
+              className="panel fadeIn dashboard-calendar-panel"
+              style={{ padding: 12 }}
+            >
               <div className="panel-label" style={{ marginBottom: 8 }}>
                 PnL Calendar
               </div>
@@ -938,6 +982,16 @@ export default function DashboardPage() {
                     cells.push(
                       <div
                         key={d}
+                        onClick={
+                          pnl != null
+                            ? () =>
+                                goTrades({
+                                  status: "closed",
+                                  time: dateStr,
+                                  range: undefined,
+                                })
+                            : undefined
+                        }
                         style={{
                           padding: "4px 2px 6px",
                           borderRadius: 5,
@@ -971,6 +1025,7 @@ export default function DashboardPage() {
                         }
                       >
                         <div
+                          className={isPastDay ? "time-past" : "time-current"}
                           style={{
                             fontSize: 9,
                             color: isPastDay
@@ -984,12 +1039,10 @@ export default function DashboardPage() {
                         </div>
                         {pnl != null && (
                           <div
+                            className={`${pnl > 0 ? "money-pos" : "money-neg"} ${isPastDay ? "time-past" : "time-current"}`}
                             style={{
-                              color:
-                                pnl > 0 ? "var(--success)" : "var(--error)",
                               fontSize: 9,
                               letterSpacing: "0.1px",
-                              opacity: isPastDay ? 0.78 : 1,
                             }}
                           >
                             {pnl > 0 ? "+" : ""}
@@ -1042,7 +1095,10 @@ export default function DashboardPage() {
                   );
                 };
                 return (
-                  <div style={{ display: "flex", gap: 16 }}>
+                  <div
+                    className="dashboard-calendar-months"
+                    style={{ display: "flex", gap: 16 }}
+                  >
                     <div style={{ flex: 1 }}>
                       {renderGrid(prevMonth, prevYear, "prev")}
                     </div>
@@ -1055,7 +1111,10 @@ export default function DashboardPage() {
             </div>
 
             {/* Last ~2 months PnL bar chart */}
-            <div className="panel fadeIn" style={{ padding: 12 }}>
+            <div
+              className="panel fadeIn dashboard-chart-panel"
+              style={{ padding: 12 }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -1076,6 +1135,7 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div
+                className="dashboard-chart-canvas"
                 style={{
                   position: "relative",
                   height: 180,
@@ -1148,8 +1208,8 @@ export default function DashboardPage() {
                     position: "absolute",
                     left: 48,
                     right: 8,
-                    top: "46%",
-                    borderTop: "1px solid rgba(148,163,184,0.45)",
+                    top: "47%",
+                    border: "2px solid rgba(148, 163, 184, 0.45)",
                     zIndex: 3,
                   }}
                 />
@@ -1175,7 +1235,9 @@ export default function DashboardPage() {
                     const isPos = pnlNum >= 0;
                     const barTop = isPos ? 50 - hPct : 50;
                     const shortLabel = p.date ? p.date.slice(8) : ""; // DD
-                    const pDate = p.date ? new Date(`${p.date}T00:00:00`) : null;
+                    const pDate = p.date
+                      ? new Date(`${p.date}T00:00:00`)
+                      : null;
                     const isPrevMonth =
                       pDate != null &&
                       (pDate.getFullYear() !== today.getFullYear() ||
@@ -1250,6 +1312,13 @@ export default function DashboardPage() {
               title="Symbols"
               noun="Symbols"
               rows={Array.isArray(top.symbols) ? top.symbols : []}
+              onRowClick={(row) =>
+                goTrades({
+                  status: "closed",
+                  time: filters.range || "all",
+                  symbol: row?.key || "",
+                })
+              }
             />
             <TableBlock
               title="Strategy"
@@ -1260,11 +1329,25 @@ export default function DashboardPage() {
               title="Entry Model"
               noun="Models"
               rows={Array.isArray(top.entry_models) ? top.entry_models : []}
+              onRowClick={(row) =>
+                goTrades({
+                  status: "closed",
+                  time: filters.range || "all",
+                  entry_model: row?.key || "",
+                })
+              }
             />
             <TableBlock
               title="Source ID"
               noun="Sources"
               rows={Array.isArray(top.sources) ? top.sources : []}
+              onRowClick={(row) =>
+                goTrades({
+                  status: "closed",
+                  time: filters.range || "all",
+                  source: row?.key || "",
+                })
+              }
             />
             <TableBlock
               title="Order Type"

@@ -1,3 +1,86 @@
+# Session Log: 2026-06-08 16:05 UTC
+- **Starting Task**:
+  - Fix AI analysis cron restart interval bug.
+  - Improve failed AI cron log entries with `ERROR` level and detailed message.
+- **Work Accomplished**:
+  - Updated AI analysis cron log success format to `{sid}-{symbol}, x created`.
+  - Updated AI analysis cron error format to `{symbol} ERROR` with detailed failure text when available.
+  - Refactored Trade History tab to render via shared `LogViewer` table UI instead of custom history cards.
+  - Extended `LogViewer` to support static in-memory lines for non-file history sources.
+- **Changed Files**:
+  - `webhook/server.js`
+  - `web-ui/src/components/LogViewer.jsx`
+  - `web-ui/src/components/SignalDetailCard.jsx`
+  - `.agents/worklog.md`
+  - `.agents/sync/MAILBOX.md`
+- **Technical Decisions**:
+  - Reused `LogViewer` by adding static-lines mode rather than duplicating another table renderer.
+  - Trade History lines are normalized into standard `[time] [level] [type] message` records so they render in the same table style as Cron logs.
+- **Verification**:
+  - `rtk node --check webhook/server.js` ✅
+  - `rtk bash scripts/start/reset_stack_once.sh` ✅
+  - `rtk bash scripts/test/verify_webhook_local.sh` ✅
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean for `webhook/server.js`, `LogViewer.jsx`, `SignalDetailCard.jsx` ✅
+- **Deploy Status**:
+  - NOT_DEPLOYED
+
+
+# Session Log: 2026-06-08 15:35 UTC
+- **Starting Task**:
+  - Apply route URL selection state for Cron, Providers, and other applicable Settings detail pages.
+- **Work Accomplished**:
+  - Added route-param support for settings detail selection in `App.jsx`.
+  - Synced Cron selection with URL via `/settings/crons/:cronName`.
+  - Synced Provider selection with URL via `/settings/providers/:providerName`.
+  - Synced generic Settings selection with URL via `/settings/:settingType/:settingName`.
+  - Kept base routes working while allowing deep links and refresh persistence.
+- **Changed Files**:
+  - `web-ui/src/App.jsx`
+  - `web-ui/src/pages/settings/CronPage.jsx`
+  - `web-ui/src/pages/settings/ProvidersPage.jsx`
+  - `web-ui/src/pages/settings/SettingsPage.jsx`
+  - `.agents/worklog.md`
+  - `.agents/sync/MAILBOX.md`
+- **Technical Decisions**:
+  - Used existing object names/setting names directly in route params via `encodeURIComponent`.
+  - Only applied URL-sync to pages with actual detail-selection state.
+  - Preserved existing base routes for backward compatibility.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean for `App.jsx`, `CronPage.jsx`, `ProvidersPage.jsx`, `SettingsPage.jsx` ✅
+- **Deploy Status**:
+  - NOT_DEPLOYED
+
+
+# Session Log: 2026-06-08 15:05 UTC
+- **Starting Task**:
+  - Build shared `LogViewer` component for Cron + Providers.
+  - Support auto-detect text vs standard structured logs.
+  - Align Cron/Providers detail header + Settings/Logs tab UI.
+- **Work Accomplished**:
+  - Added reusable `web-ui/src/components/LogViewer.jsx`.
+  - Implemented auto-detect between plain text and standard structured log lines.
+  - Standard structured logs now render in TanStack `DataTable` with time via `showDateTime` and colorized level badge.
+  - Refactored `CronPage` and `ProvidersPage` to use shared `LogViewer`.
+  - Aligned both pages to the same `DETAIL` header row with right-aligned `Settings` / `Logs` tabs.
+- **Changed Files**:
+  - `web-ui/src/components/LogViewer.jsx`
+  - `web-ui/src/pages/settings/CronPage.jsx`
+  - `web-ui/src/pages/settings/ProvidersPage.jsx`
+  - `.agents/worklog.md`
+  - `.agents/sync/MAILBOX.md`
+- **Technical Decisions**:
+  - `LogViewer` accepts `fileName` and `logFormat` plus source/object identity so pages stay thin.
+  - Auto-detect chooses structured mode when sampled lines match `[time] [level] [type] message` pattern.
+  - Structured log table shows newest rows first; plain text keeps raw tail order.
+- **Verification**:
+  - `rtk npm --prefix web-ui run build` ✅
+  - diagnostics clean for `LogViewer.jsx`, `CronPage.jsx`, `ProvidersPage.jsx` ✅
+- **Deploy Status**:
+  - NOT_DEPLOYED
+
+
 # Session Log: 2026-05-28 16:30 UTC
 - **Starting Task**: Investigate why SL/TP changes on cTrader pending orders don't sync to VPS.
 - **Work Accomplished**:

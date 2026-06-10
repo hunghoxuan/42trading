@@ -12,6 +12,7 @@ import {
   clamp01,
 } from "./chartObjectModel";
 import {
+  formatRelativeDateTime,
   getEffectiveDisplayTimezone,
   showDateTime,
   sortTimeframes,
@@ -69,10 +70,14 @@ function liveTfToTvInterval(tf) {
 }
 
 function toTradingViewSymbol(symRaw, provider = "") {
-  const s = String(symRaw || "").trim().toUpperCase();
+  const s = String(symRaw || "")
+    .trim()
+    .toUpperCase();
   if (!s) return "";
   if (s.includes(":")) return s;
-  const p = String(provider || "").trim().toUpperCase();
+  const p = String(provider || "")
+    .trim()
+    .toUpperCase();
   return p ? `${p}:${s}` : s;
 }
 
@@ -86,13 +91,7 @@ function toTradingViewTimezone() {
 
 function timeAgo(ts) {
   if (!ts) return "";
-  const sec = Math.floor((Date.now() - Number(ts)) / 1000);
-  if (sec < 60) return "just now";
-  const min = Math.floor(sec / 60);
-  if (min < 60) return min + "m ago";
-  const hrs = Math.floor(min / 60);
-  if (hrs < 24) return hrs + "h ago";
-  return Math.floor(hrs / 24) + "d ago";
+  return formatRelativeDateTime(ts);
 }
 
 function toEpochMs(v) {
@@ -177,17 +176,33 @@ function defaultTpSlFromEntry(entry, direction) {
   };
 }
 
+function normalizeSnapshotGridTf(tf) {
+  const raw = String(tf || "").trim();
+  if (!raw) return "";
+  const t = raw.toLowerCase();
+  if (t === "1d" || t === "d" || t === "day") return "1D";
+  if (t === "4h" || t === "240") return "4H";
+  if (t === "15m" || t === "15") return "15m";
+  if (t === "5m" || t === "5") return "5m";
+  return raw;
+}
+
+function buildSnapshotGridTfs(timeframes = []) {
+  const list = Array.isArray(timeframes) ? timeframes : [];
+  const normalized = [
+    ...new Set(list.map((tf) => normalizeSnapshotGridTf(tf)).filter(Boolean)),
+  ];
+  if (normalized.length > 0) return normalized;
+  return ["1D", "4H", "15m", "5m"];
+}
+
 function formatObjectLabel(type, rawLabel) {
   const typeText = String(type || "").trim();
   const labelText = String(rawLabel || "").trim();
-  if (!typeText && !labelText) return "";
-  if (!typeText) return labelText;
-  if (!labelText) return typeText;
-  const lowerType = typeText.toLowerCase();
-  const lowerLabel = labelText.toLowerCase();
-  if (lowerLabel === lowerType) return typeText;
-  if (lowerLabel.startsWith(`${lowerType} `)) return labelText;
-  return `${typeText} ${labelText}`;
+  const base = typeText || labelText;
+  if (!base) return "";
+  const normalized = base.replace(/^All\s+/i, "").trim();
+  return normalized ? `All ${normalized}` : "";
 }
 
 function NumberAdjuster({
@@ -518,12 +533,16 @@ export default function SymbolChart({
   showPerCardLayoutControls = true,
   selectedTradePlanGroup = null,
   onTradePlanGroupChange = null,
+  fillViewportForFourCharts = false,
 }) {
   const rootRef = useRef(null);
+  const gridRef = useRef(null);
   const [mode, setMode] = useState(defaultMode);
   const [pendingMode, setPendingMode] = useState(null); // mode we're loading
   const [lastError, setLastError] = useState(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [availableViewportGridHeight, setAvailableViewportGridHeight] =
+    useState(0);
   const cleanSym = useMemo(() => normSym(symbol), [symbol]);
   const defaultGridCols = useMemo(() => {
     const maxCols = Math.max(1, timeframes?.length || 4);
@@ -744,7 +763,11 @@ export default function SymbolChart({
         try {
           const res = await api.brokerBars(cleanSym, tf, localBarsCount || 300);
           if (!alive) return;
-          if (res?.source === "broker" && Array.isArray(res.bars) && res.bars.length) {
+          if (
+            res?.source === "broker" &&
+            Array.isArray(res.bars) &&
+            res.bars.length
+          ) {
             next[tf.toLowerCase()] = res.bars;
             srcTfs.add(tf.toLowerCase());
           }
@@ -930,7 +953,7 @@ export default function SymbolChart({
         });
       } else if (field === "label") {
         const nextType = String(current?.type || "line").toUpperCase();
-        updateSelectedObject({ label: formatObjectLabel(nextType, next) });
+        updateSelectedObject({ label: formatObjectLabel(nextType, "") });
       } else {
         updateSelectedObject({ [field]: next });
       }
@@ -1302,33 +1325,108 @@ export default function SymbolChart({
   }, [mode, master?.snapshots]);
 
   const displayTfCount = useMemo(() => {
-    const count = isMasterSnapshotMode && sortedTfs.length ? 1 : sortedTfs.length;
+    const count =
+      isMasterSnapshotMode && sortedTfs.length ? 1 : sortedTfs.length;
     return Math.max(1, count || 1);
   }, [isMasterSnapshotMode, sortedTfs]);
 
   const activeGridCols = useMemo(() => {
+    const narrowViewport = containerWidth > 0 && containerWidth < 768;
     return Math.max(
       1,
-      Math.min(isMasterSnapshotMode ? 1 : gridCols, displayTfCount),
+      Math.min(
+        isMasterSnapshotMode ? 1 : gridCols,
+        displayTfCount,
+        narrowViewport ? 1 : 6,
+      ),
     );
-  }, [displayTfCount, gridCols, isMasterSnapshotMode]);
+  }, [displayTfCount, gridCols, isMasterSnapshotMode, containerWidth]);
+
+  useEffect(() => {
+    if (!fillViewportForFourCharts) {
+      setAvailableViewportGridHeight(0);
+      return;
+    }
+    const updateAvailableHeight = () => {
+      if (!gridRef.current || typeof window === "undefined") return;
+      const rect = gridRef.current.getBoundingClientRect();
+      const viewportHeight =
+        window.visualViewport?.height || window.innerHeight || 0;
+      const bottomPadding = 12;
+      setAvailableViewportGridHeight(
+        Math.max(0, Math.round(viewportHeight - rect.top - bottomPadding)),
+      );
+    };
+    updateAvailableHeight();
+    const onViewportChange = () => updateAvailableHeight();
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("scroll", onViewportChange, true);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", onViewportChange);
+    viewport?.addEventListener("scroll", onViewportChange);
+    let observer = null;
+    if (typeof ResizeObserver !== "undefined" && gridRef.current) {
+      observer = new ResizeObserver(() => updateAvailableHeight());
+      observer.observe(gridRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", onViewportChange);
+      window.removeEventListener("scroll", onViewportChange, true);
+      viewport?.removeEventListener("resize", onViewportChange);
+      viewport?.removeEventListener("scroll", onViewportChange);
+      observer?.disconnect();
+    };
+  }, [fillViewportForFourCharts, displayTfCount, activeGridCols]);
 
   const chartHeight = useMemo(() => {
     const cols = Math.max(1, activeGridCols);
+    const rows = Math.max(1, Math.ceil(displayTfCount / cols));
     const gapPx = 8;
     const usableWidth = Math.max(0, containerWidth - gapPx * (cols - 1));
     const tileWidth = usableWidth > 0 ? usableWidth / cols : 0;
-    const targetAspectRatio = cols <= 2 ? 1.7 : 1.45;
-    if (!tileWidth) {
-      return cols <= 2 ? 280 : 240;
-    }
-    return Math.round(
-      Math.max(210, Math.min(360, tileWidth / targetAspectRatio)),
+    const isNarrowViewport = containerWidth > 0 && containerWidth < 768;
+    const targetAspectRatio = isNarrowViewport ? 1.12 : cols <= 2 ? 1.7 : 1.45;
+    const widthBasedHeight = !tileWidth
+      ? isNarrowViewport
+        ? 220
+        : cols <= 2
+          ? 280
+          : 240
+      : Math.round(
+          Math.max(
+            isNarrowViewport ? 190 : 210,
+            Math.min(
+              isNarrowViewport ? 260 : 360,
+              tileWidth / targetAspectRatio,
+            ),
+          ),
+        );
+    const shouldFillViewportForFourCharts =
+      fillViewportForFourCharts &&
+      !isNarrowViewport &&
+      displayTfCount === 4 &&
+      cols === 2 &&
+      availableViewportGridHeight > 0;
+    if (!shouldFillViewportForFourCharts) return widthBasedHeight;
+    const viewportHeightPerTile = Math.floor(
+      (availableViewportGridHeight - gapPx * (rows - 1)) / rows,
     );
-  }, [activeGridCols, containerWidth]);
+    return Math.max(widthBasedHeight, viewportHeightPerTile);
+  }, [
+    activeGridCols,
+    availableViewportGridHeight,
+    containerWidth,
+    displayTfCount,
+    fillViewportForFourCharts,
+  ]);
 
   const showControls = !(hasTradePlan && hasAnalysis);
   const tvTimezone = useMemo(() => toTradingViewTimezone(), [timezoneTick]);
+  const uiThemeMode =
+    typeof document !== "undefined" &&
+    document.documentElement.getAttribute("data-theme") === "light"
+      ? "light"
+      : "dark";
   const overlayButtons = [
     { key: "plan1", label: "P1" },
     { key: "plan2", label: "P2" },
@@ -1974,7 +2072,15 @@ export default function SymbolChart({
               onClick={async () => {
                 setBrowserSnapshotBusy(true);
                 try {
-                  const tfs = [...new Set(["1D", "4h", "15m", "5m", ...(timeframes || [])])];
+                  const tfs = [
+                    ...new Set([
+                      "1D",
+                      "4h",
+                      "15m",
+                      "5m",
+                      ...(timeframes || []),
+                    ]),
+                  ];
                   const res = await api.chartSnapshotCreateBatch({
                     symbol: String(symbol || "").toUpperCase(),
                     timeframes: tfs,
@@ -2004,14 +2110,14 @@ export default function SymbolChart({
               fontWeight: 700,
             }}
             onClick={() => {
-              const fixedTfs = ["1D", "4h", "15m", "5m"];
+              const gridTfs = buildSnapshotGridTfs(timeframes);
               window.open(
                 "/v2/chart/snapshots-grid/" +
                   encodeURIComponent(String(symbol || "").toUpperCase()) +
                   "?provider=" +
                   encodeURIComponent(String(provider || "")) +
                   "&tfs=" +
-                  encodeURIComponent(fixedTfs.join(",")),
+                  encodeURIComponent(gridTfs.join(",")),
                 "_blank",
               );
             }}
@@ -2028,7 +2134,12 @@ export default function SymbolChart({
               lineHeight: 1,
               fontWeight: 700,
             }}
-            onClick={() => window.open(`/ai/manual/${encodeURIComponent(String(symbol || "").toUpperCase())}`, "_self")}
+            onClick={() =>
+              window.open(
+                `/ai/manual/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
+                "_self",
+              )
+            }
             title="Manual trade"
           >
             Trade &gt;
@@ -2042,7 +2153,12 @@ export default function SymbolChart({
               lineHeight: 1,
               fontWeight: 700,
             }}
-            onClick={() => window.open(`/ai/analyze/${encodeURIComponent(String(symbol || "").toUpperCase())}`, "_self")}
+            onClick={() =>
+              window.open(
+                `/ai/analyze/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
+                "_self",
+              )
+            }
             title="AI analyze"
           >
             AI &gt;
@@ -2055,6 +2171,7 @@ export default function SymbolChart({
           isMasterSnapshotMode && sortedTfs.length ? [sortedTfs[0]] : sortedTfs;
         return (
           <div
+            ref={gridRef}
             className="chart-grid-area"
             style={{
               display: "grid",
@@ -2067,12 +2184,11 @@ export default function SymbolChart({
               const context = master?.context?.[tf.toLowerCase()];
               const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
               // Prefer master.bars (updated by refresh) over brokerBars (fetched once on mount)
-              const barsForTf =
-                master?.bars?.[tf.toLowerCase()]?.length
-                  ? master.bars[tf.toLowerCase()]
-                  : brokerBars[tf.toLowerCase()]?.length
-                    ? brokerBars[tf.toLowerCase()]
-                    : [];
+              const barsForTf = master?.bars?.[tf.toLowerCase()]?.length
+                ? master.bars[tf.toLowerCase()]
+                : brokerBars[tf.toLowerCase()]?.length
+                  ? brokerBars[tf.toLowerCase()]
+                  : [];
               const hasBars = status !== "LOADING" && barsForTf.length > 0;
               const noData = !isLive && !hasBars && status !== "LOADING";
               const tfViewport = viewports[chartId] || null;
@@ -2239,7 +2355,10 @@ export default function SymbolChart({
                   {isLive ? (
                     <div style={{ position: "relative", height: chartHeight }}>
                       {(() => {
-                        const tvSymbol = toTradingViewSymbol(cleanSym, provider);
+                        const tvSymbol = toTradingViewSymbol(
+                          cleanSym,
+                          provider,
+                        );
                         const tvInterval = liveTfToTvInterval(tf);
                         const tvUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(tvInterval)}`;
                         return (
@@ -2248,7 +2367,11 @@ export default function SymbolChart({
                             aria-label={`Open ${tvSymbol} ${tf} in TradingView`}
                             title={`Open ${tvSymbol} ${tf} in TradingView`}
                             onClick={() => {
-                              window.open(tvUrl, "_blank", "noopener,noreferrer");
+                              window.open(
+                                tvUrl,
+                                "_blank",
+                                "noopener,noreferrer",
+                              );
                             }}
                             style={{
                               position: "absolute",
@@ -2275,7 +2398,7 @@ export default function SymbolChart({
                           height: "100%",
                           border: "none",
                         }}
-                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=dark&style=1&locale=en&toolbarbg=%230f1729&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=${uiThemeMode}&style=1&locale=en&toolbarbg=${uiThemeMode === "light" ? "%23eef3f8" : "%230f1729"}&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
                       />
                       <button
                         className="secondary-button"
@@ -2373,7 +2496,9 @@ export default function SymbolChart({
                           mode === "cache" ? handleCrosshairSync : undefined
                         }
                         onBarsLoaded={handleBarsLoaded}
-                        sharedObjects={enableChartObjects ? annotationObjects : []}
+                        sharedObjects={
+                          enableChartObjects ? annotationObjects : []
+                        }
                         onContextRequest={
                           mode === "cache" ? handleContextRequest : undefined
                         }
@@ -3010,11 +3135,12 @@ export default function SymbolChart({
                     <input
                       id={`${symbol}-${activeChartId || cleanSym}-inspector-edit-label`}
                       name="label"
-                      value={selectedObject.label || ""}
-                      onChange={(e) =>
-                        updateSelectedField("label", e.target.value)
-                      }
-                      placeholder="label"
+                      value={formatObjectLabel(
+                        selectedObject.type,
+                        selectedObject.label,
+                      )}
+                      readOnly
+                      placeholder="All label"
                     />
                   </label>
                   <label

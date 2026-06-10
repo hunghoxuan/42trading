@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api";
+import { formatRelativeDateTime, showDateTime } from "../utils/format";
+import {
+  buildNotificationDisplay,
+  eventTypeToHubType,
+  isMeaningfulEntry,
+  normalizeServerEntry,
+} from "../utils/notificationDisplay";
 
 var HUB_KEY = "hub:results",
   TTL = 3600000,
@@ -14,30 +22,66 @@ function loadResults() {
   }
 }
 
+function saveResults(list) {
+  try {
+    localStorage.setItem(HUB_KEY, JSON.stringify(list || []));
+  } catch (_) {
+    // ignore storage issues
+  }
+}
+
+function mergeEntries(localEntries, serverEntries) {
+  var byId = new Map();
+  (Array.isArray(serverEntries) ? serverEntries : []).forEach(function (entry) {
+    byId.set(entry.requestId, entry);
+  });
+  (Array.isArray(localEntries) ? localEntries : []).forEach(function (entry) {
+    var existing = byId.get(entry.requestId) || {};
+    byId.set(entry.requestId, { ...existing, ...entry });
+  });
+  return Array.from(byId.values())
+    .filter(function (r) {
+      return Date.now() - Number(r.createdAt || 0) < TTL;
+    })
+    .filter(isMeaningfulEntry)
+    .sort(function (a, b) {
+      return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+    })
+    .slice(0, MAX_VISIBLE);
+}
+
 var TYPE_META = {
   analyze: {
-    icon: "🧠",
     label: "Analysis",
     nav: function (r) {
       return "/ai/result?result=" + (r.requestId || "");
     },
   },
   snapshot: {
-    icon: "📷",
     label: "Snapshot",
     nav: function (r) {
       return "/system/files?result=" + (r.requestId || "");
     },
   },
+  cron_snapshot: {
+    label: "Snapshot Cron",
+    nav: function () {
+      return "/system/files";
+    },
+  },
   twelve_data: {
-    icon: "📡",
     label: "Twelve Data",
     nav: function (r) {
       return "/ai/analyze";
     },
   },
+  news_alert: {
+    label: "News Alert",
+    nav: function () {
+      return "/ai/news";
+    },
+  },
   cancel_trade: {
-    icon: "🚫",
     label: "Cancel Trade",
     nav: function (r) {
       var sid = (r.data && r.data.sid) || "";
@@ -45,7 +89,6 @@ var TYPE_META = {
     },
   },
   close_trade: {
-    icon: "✅",
     label: "Close Trade",
     nav: function (r) {
       var sid = (r.data && r.data.sid) || "";
@@ -53,7 +96,6 @@ var TYPE_META = {
     },
   },
   create_trade: {
-    icon: "📈",
     label: "Trade",
     nav: function (r) {
       var sid =
@@ -64,7 +106,6 @@ var TYPE_META = {
     },
   },
   create_signal: {
-    icon: "📡",
     label: "Signal",
     nav: function (r) {
       var sid =
@@ -78,25 +119,43 @@ var TYPE_META = {
       return sid ? "/signals/" + sid : "/signals";
     },
   },
+  system_event: {
+    label: "Notification",
+    nav: function () {
+      return "/settings/notification";
+    },
+  },
 };
-
-function statusIcon(s) {
-  if (s === "running") return "⏳";
-  if (s === "ok") return "✅";
-  if (s === "no_data") return "⚠️";
-  return "❌";
-}
 
 export default function NotificationDot() {
   var navigate = useNavigate();
   var [results, setResults] = useState([]);
   var [open, setOpen] = useState(false);
 
-  var refresh = useCallback(function () {
-    var all = loadResults().filter(function (r) {
+  var refresh = useCallback(async function () {
+    var localEntries = loadResults().filter(function (r) {
       return Date.now() - r.createdAt < TTL;
     });
-    setResults(all.slice(-MAX_VISIBLE).reverse());
+    try {
+      var response = await api.notificationList(MAX_VISIBLE);
+      var serverEntries = Array.isArray(response && response.items)
+        ? response.items.map(normalizeServerEntry)
+        : [];
+      var merged = mergeEntries(localEntries, serverEntries);
+      saveResults(merged);
+      setResults(merged);
+      return;
+    } catch (_) {
+      // fall back to browser-local hub entries only
+    }
+    setResults(
+      localEntries
+        .slice()
+        .sort(function (a, b) {
+          return Number(b.createdAt || 0) - Number(a.createdAt || 0);
+        })
+        .slice(0, MAX_VISIBLE),
+    );
   }, []);
 
   useEffect(
@@ -129,7 +188,10 @@ export default function NotificationDot() {
   var pending = results.filter(function (r) {
     return r.status === "running";
   });
-  var badgeCount = pending.length;
+  var unread = results.filter(function (r) {
+    return !r._seen;
+  });
+  var badgeCount = unread.length || pending.length;
 
   var handleClick = function (entry) {
     var meta = TYPE_META[entry.type] || {};
@@ -148,22 +210,7 @@ export default function NotificationDot() {
     localStorage.removeItem(HUB_KEY);
     setResults([]);
     setOpen(false);
-  };
-
-  var formatTime = function (ts) {
-    var d = new Date(ts);
-    var h = String(d.getHours()).padStart(2, "0");
-    var m = String(d.getMinutes()).padStart(2, "0");
-    var s = String(d.getSeconds()).padStart(2, "0");
-    return h + ":" + m + ":" + s;
-  };
-
-  var formatDurationMs = function (startTs, endTs) {
-    var s = Number(startTs || 0);
-    if (!Number.isFinite(s) || s <= 0) return "0ms";
-    var e = Number(endTs || Date.now());
-    if (!Number.isFinite(e) || e < s) e = s;
-    return String(Math.max(0, Math.round(e - s))) + "ms";
+    api.notificationClear().catch(function () {});
   };
 
   return (
@@ -178,6 +225,9 @@ export default function NotificationDot() {
         type="button"
         className="secondary-button"
         onClick={function () {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("mobile-nav-close"));
+          }
           if (!open) {
             // Mark all as read when opening
             var all = loadResults();
@@ -285,10 +335,7 @@ export default function NotificationDot() {
               </div>
             )}
             {results.map(function (entry) {
-              var meta = TYPE_META[entry.type] || {
-                icon: "🔔",
-                label: entry.type,
-              };
+              var display = buildNotificationDisplay(entry);
               return (
                 <div
                   key={entry.requestId}
@@ -296,7 +343,7 @@ export default function NotificationDot() {
                     handleClick(entry);
                   }}
                   style={{
-                    padding: "5px 12px",
+                    padding: "8px 12px",
                     borderBottom: "1px solid rgba(255,255,255,0.05)",
                     cursor: "pointer",
                     fontSize: "11px",
@@ -311,47 +358,41 @@ export default function NotificationDot() {
                   }}
                 >
                   <div
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                    }}
                   >
-                    <span style={{ fontSize: "14px", flexShrink: 0 }}>
-                      {statusIcon(entry.status)}
-                    </span>
-                    <span
+                    <div
                       style={{
-                        fontWeight: 500,
                         flex: 1,
                         minWidth: 0,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
+                      title={
+                        display.detail
+                          ? display.title + ": " + display.detail
+                          : display.title
+                      }
                     >
-                      {meta.icon} {meta.label}
-                      {entry.symbol ? ": " + entry.symbol : ""}
-                      {entry.status === "running" ? " - In progress..." : ""}
-                      {entry.status === "error"
-                        ? " - " + String(entry.error || "Failed")
-                        : ""}
-                    </span>
+                      <span style={{ fontWeight: 500 }}>{display.title}:</span>
+                      {display.detail ? (
+                        <span style={{ color: "#9aa0aa", marginLeft: 6 }}>
+                          {display.detail}
+                        </span>
+                      ) : null}
+                    </div>
                     <span
                       style={{ color: "#666", fontSize: "9px", flexShrink: 0 }}
+                      title={showDateTime(entry.createdAt)}
                     >
-                      {formatTime(entry.createdAt)} +{formatDurationMs(entry.createdAt, entry.completedAt)}
+                      {formatRelativeDateTime(entry.createdAt)}
                     </span>
                   </div>
-                  {entry.extra &&
-                  entry.status !== "running" &&
-                  entry.status !== "error" ? (
-                    <div
-                      style={{
-                        color: "#888",
-                        fontSize: "10px",
-                        paddingLeft: 20,
-                      }}
-                    >
-                      {entry.extra}
-                    </div>
-                  ) : null}
                 </div>
               );
             })}

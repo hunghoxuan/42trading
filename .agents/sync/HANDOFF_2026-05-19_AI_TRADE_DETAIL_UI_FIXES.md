@@ -4,7 +4,7 @@
 - `AI.md`
 - `.agents/BOOTSTRAP.md`
 - `.agents/.product/tickets/1-backlog/plan-fix-bug-ai-trade-detail-chart-info-context-menu.md`
-- `.agents/rules/ui.md`
+- `.agents/rules/ui-rules.md`
 - `.agents/rules/testing.md`
 - `.agents/rules/deploy.md`
 

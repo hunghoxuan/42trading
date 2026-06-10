@@ -1,6 +1,9 @@
 # Backlog
 
 ## Planned
+- [ ] [2026-06-08] [Architecture/Storage/Logging] [Author: GPT-5.4] Parent Ticket: Move `cron` + `providers` out of `settings/` into per-object folders under `data/users/{user_id}/{object_type}/{object_id}/data.json` with colocated `logs/`; shared DAL/BAL umbrella. Spec: `1-backlog/2026-06-08-object-storage-refactor-cron-provider-per-object-folders.md`.
+- [ ] [2026-06-08] [Architecture/Storage/Logging/Cron] [Author: GPT-5.4] Implementation Ticket: move `cron` config to `data/users/{user_id}/cron/{cron_name}/data.json` and cron logs to object-local `logs/`. Spec: `1-backlog/2026-06-08-cron-object-folder-storage-and-local-logs.md`.
+- [ ] [2026-06-08] [Architecture/Storage/Logging/Providers] [Author: GPT-5.4] Implementation Ticket: move provider/api-key storage to `data/users/{user_id}/providers/{provider_id}/data.json` with provider-local `logs/`. Spec: `1-backlog/2026-06-08-providers-object-folder-storage-and-local-logs.md`.
 - [ ] [2026-05-28] [Web-UI/Design] [Author: DeepSeek] Feature: Design System & Performance Refactor — see `2026-05-28-design-system-and-performance-refactor.md`
 
 ## Completed

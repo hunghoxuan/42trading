@@ -1,25 +1,24 @@
 import React from "react";
 import Tooltip from "./Tooltip";
 
-export function statusColor(status) {
+export function statusBadgeToken(status) {
   const s = String(status || "")
     .trim()
     .toUpperCase();
-  // Light gray: new / draft
-  if (["NEW", "DRAFT", "PLANNED"].includes(s)) return "var(--muted)";
-  // Yellow: pending / consumed
-  if (["PENDING", "CONSUMED"].includes(s)) return "#f59e0b";
-  // Cyan/teal: filled / active / leased / open / modify
-  if (
-    ["FILLED", "ACTIVE", "OPEN", "LEASED", "MODIFY", "IN_PROGRESS"].includes(s)
-  )
-    return "var(--accent)";
-  // Dark red: error / fail / rejected
-  if (["ERROR", "FAIL", "FAILED", "REJECTED"].includes(s)) return "#dc2626";
-  // Dark gray: closed / cancelled / archived
-  if (["CLOSED", "CANCELLED", "CANCEL", "ARCHIVED", "EXPIRED"].includes(s))
-    return "#64748b";
-  return "var(--border)";
+  if (["ERROR", "FAIL", "FAILED", "REJECTED", "LOSE", "NEGATIVE"].includes(s)) {
+    return "SL";
+  }
+  if (["PENDING", "CONSUMED", "WARN", "WARNING", "INFO", "START", "PROGRESS"].includes(s)) {
+    return "PENDING";
+  }
+  if (["FILLED", "OPEN"].includes(s)) return "FILLED";
+  if (["ACTIVE", "OK", "SUCCESS", "DONE", "WIN", "POSITIVE"].includes(s)) {
+    return "ACTIVE";
+  }
+  if (["INACTIVE", "DISABLED", "DISABLE", "CANCELLED", "CANCEL", "OFFLINE", "NEW", "DRAFT", "PLANNED", "EXPIRED"].includes(s)) {
+    return "INACTIVE";
+  }
+  return "NEUTRAL";
 }
 
 export function StatusBadge({
@@ -27,42 +26,21 @@ export function StatusBadge({
   status,
   className = "badge badge-mini",
   style = {},
+  tooltipSide = "right",
 }) {
   const text = String(id || "").trim();
-  const s = String(status || "")
-    .trim()
-    .toUpperCase();
   if (!text || text === "-") return null;
-  const color = statusColor(s);
+  const token = statusBadgeToken(status);
   return (
-    <Tooltip content={`${text} (${s || "unknown"})`}>
-      <span
-        className={className}
-        style={{
-          padding: "2px 6px",
-          fontSize: 9,
-          fontWeight: 500,
-          border: "1px solid",
-          borderColor: color,
-          color,
-          borderRadius: 4,
-          ...style,
-        }}
-      >
+    <Tooltip
+      content={`${text} (${String(status || "unknown").toUpperCase()})`}
+      side={tooltipSide}
+    >
+      <span className={`${className} ${token}`} style={style}>
         {text}
       </span>
     </Tooltip>
   );
-}
-
-// Legacy alias
-export function brokerDispatchColor(
-  dispatchStatus,
-  fallback = "var(--border)",
-) {
-  return statusColor(dispatchStatus) === "var(--border)"
-    ? fallback
-    : statusColor(dispatchStatus);
 }
 
 export function BrokerTicketBadge(props) {

@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/macmini/Trade/Bot/trading/scripts/start/start_webhook.sh</string>
+        <string>/Users/macmini/Projects/moza/42trade/scripts/start/start_webhook.sh</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -27,11 +27,11 @@
     <integer>5</integer>
 
     <key>WorkingDirectory</key>
-    <string>/Users/macmini/Trade/Bot/trading</string>
+    <string>/Users/macmini/Projects/moza/42trade</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/macmini/Trade/Bot/trading/.local/webhook.stdout.log</string>
+    <string>/Users/macmini/Projects/moza/42trade/.local/webhook.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/macmini/Trade/Bot/trading/.local/webhook.stderr.log</string>
+    <string>/Users/macmini/Projects/moza/42trade/.local/webhook.stderr.log</string>
 </dict>
 </plist>
