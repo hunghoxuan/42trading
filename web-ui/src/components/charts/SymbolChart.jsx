@@ -30,6 +30,34 @@ const STATUS_COLORS = {
   ERROR: "#ef4444",
 };
 
+const INDICATOR_GROUPS = [
+  {
+    label: "MOMENTUM",
+    items: [
+      { key: "rsi", label: "RSI (14)", color: "#a855f7" },
+      { key: "rsiEma9", label: "RSI EMA (9)", color: "#facc15" },
+      { key: "rsiWma45", label: "RSI WMA (45)", color: "#34d399" },
+    ],
+  },
+  {
+    label: "TREND",
+    items: [
+      { key: "sma20", label: "SMA (20)", color: "#60a5fa" },
+      { key: "sma50", label: "SMA (50)", color: "#f97316" },
+      { key: "sma200", label: "SMA (200)", color: "#22c55e" },
+    ],
+  },
+];
+
+const DEFAULT_INDICATOR_VISIBILITY = {
+  rsi: true,
+  rsiEma9: true,
+  rsiWma45: true,
+  sma20: true,
+  sma50: true,
+  sma200: true,
+};
+
 function toHexColor(v) {
   if (!v) return "#60a5fa";
   const s = String(v).trim();
@@ -637,6 +665,10 @@ export default function SymbolChart({
   const [viewports, setViewports] = useState({});
   const [ctxMenu, setCtxMenu] = useState(null);
   const [activeChartId, setActiveChartId] = useState(null);
+  const [showIndicatorsMenu, setShowIndicatorsMenu] = useState(false);
+  const [indicatorVisibility, setIndicatorVisibility] = useState(
+    DEFAULT_INDICATOR_VISIBILITY,
+  );
   const [hoverInfo, setHoverInfo] = useState(null);
   const [activePlanGroup, setActivePlanGroup] = useState("P1");
   const [drawMode, setDrawMode] = useState(null);
@@ -2100,6 +2132,135 @@ export default function SymbolChart({
               📷
             </button>
           )}
+          {mode !== "live" && (
+            <div style={{ position: "relative" }}>
+              <button
+                className="secondary-button"
+                style={{
+                  height: 22,
+                  padding: "0 8px",
+                  fontSize: 10,
+                  lineHeight: 1,
+                  fontWeight: 700,
+                  borderColor: showIndicatorsMenu
+                    ? "rgba(34,211,238,0.45)"
+                    : "var(--border)",
+                  color: showIndicatorsMenu ? "#22d3ee" : "inherit",
+                  background: showIndicatorsMenu
+                    ? "rgba(34,211,238,0.10)"
+                    : undefined,
+                }}
+                onClick={() => setShowIndicatorsMenu((open) => !open)}
+                title="Toggle indicators for all TF charts"
+              >
+                Indicators
+              </button>
+              {showIndicatorsMenu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    left: 0,
+                    width: 220,
+                    zIndex: 40,
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(9,15,28,0.96)",
+                    boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
+                    padding: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 10,
+                      fontSize: 12,
+                      fontWeight: 800,
+                      letterSpacing: "0.12em",
+                      color: "#cbd5e1",
+                    }}
+                  >
+                    <span>INDICATORS</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowIndicatorsMenu(false)}
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        color: "inherit",
+                        cursor: "pointer",
+                        fontSize: 16,
+                        lineHeight: 1,
+                      }}
+                    >
+                      x
+                    </button>
+                  </div>
+                  {INDICATOR_GROUPS.map((group) => (
+                    <div key={group.label} style={{ marginBottom: 10 }}>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          letterSpacing: "0.18em",
+                          color: "#64748b",
+                          marginBottom: 8,
+                        }}
+                      >
+                        {group.label}
+                      </div>
+                      {group.items.map((item) => {
+                        const isVisible = Boolean(indicatorVisibility[item.key]);
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() =>
+                              setIndicatorVisibility((current) => ({
+                                ...current,
+                                [item.key]: !current[item.key],
+                              }))
+                            }
+                            style={{
+                              width: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: 12,
+                              marginBottom: 6,
+                              borderRadius: 10,
+                              border: `1px solid ${isVisible ? item.color : "transparent"}`,
+                              background: isVisible
+                                ? "rgba(30,41,59,0.9)"
+                                : "transparent",
+                              color: "#e5e7eb",
+                              padding: "8px 10px",
+                              cursor: "pointer",
+                              fontSize: 13,
+                              fontWeight: 600,
+                            }}
+                          >
+                            <span>{item.label}</span>
+                            <span
+                              style={{
+                                color: isVisible ? item.color : "#64748b",
+                                fontSize: 11,
+                                fontWeight: 800,
+                              }}
+                            >
+                              {isVisible ? "ON" : "OFF"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <button
             className="secondary-button"
             style={{
@@ -2506,6 +2667,9 @@ export default function SymbolChart({
                           mode === "cache" ? handleViewportChange : undefined
                         }
                         initialViewport={viewports[chartId] || null}
+                        showIndicators={true}
+                        showIndicatorPanel={false}
+                        indicatorVisibilityConfig={indicatorVisibility}
                       />
                       {mode === "cache" && (
                         <div

@@ -34,13 +34,15 @@ const {
   parseObjectLogLine,
   buildObjectLogLine,
   resolveObjectLogFilePath,
+  writeObjectLog,
 } = require("./objectLogService");
+const objectStore = require("./objectStore");
 const {
   DATA_ROOT: USER_OBJECT_DATA_ROOT,
   safePathPart: safeObjectPathPart,
   objectTypeDir,
   objectLogsDir,
-} = require("./objectStore");
+} = objectStore;
 const {
   createUserObjectStore,
   parseJsonField: parseUserObjectJsonField,
@@ -196,6 +198,68 @@ function normalizeIsoTimestamp(value, fallback = new Date().toISOString()) {
   const ms = Date.parse(raw);
   if (!Number.isFinite(ms)) return fallback;
   return new Date(ms).toISOString();
+}
+
+function trimImageBlocksFromMessages(messages = [], maxImageBlocks = Number.MAX_SAFE_INTEGER) {
+  const safeLimit = Number.isFinite(Number(maxImageBlocks))
+    ? Math.max(0, Math.floor(Number(maxImageBlocks)))
+    : Number.MAX_SAFE_INTEGER;
+  if (!Array.isArray(messages) || !messages.length) {
+    return {
+      messages,
+      totalImageBlocks: 0,
+      imageBlocksUsed: 0,
+      imageBlocksDropped: 0,
+    };
+  }
+
+  let imageSeen = 0;
+  let imageUsed = 0;
+  let imageDropped = 0;
+  const out = [];
+
+  for (const message of messages) {
+    if (!message || typeof message !== "object" || !Array.isArray(message.content)) {
+      out.push(message);
+      continue;
+    }
+
+    const newContent = [];
+    for (const block of message.content) {
+      if (block?.type === "image") {
+        imageSeen += 1;
+        if (imageUsed < safeLimit) {
+          imageUsed += 1;
+          newContent.push(block);
+          continue;
+        }
+        imageDropped += 1;
+        continue;
+      }
+      newContent.push(block);
+    }
+
+    out.push({
+      ...message,
+      content: newContent,
+    });
+  }
+
+  return {
+    messages: out,
+    totalImageBlocks: imageSeen,
+    imageBlocksUsed: imageUsed,
+    imageBlocksDropped: imageDropped,
+  };
+}
+
+function isOllamaRunnerStoppedError(error) {
+  const msg = String(error?.message || "").toLowerCase();
+  if (!msg.includes("ollama api error (500)")) return false;
+  return (
+    msg.includes("model runner has unexpectedly stopped") ||
+    msg.includes("runner has unexpectedly stopped")
+  );
 }
 
 loadEnvFile();
@@ -2937,6 +3001,31 @@ const CFG = {
   mt5PruneDays: asNum(process.env.MT5_PRUNE_DAYS, 14),
   mt5PruneIntervalMinutes: asNum(process.env.MT5_PRUNE_INTERVAL_MINUTES, 60),
   twelveDataApiKey: envStr(process.env.TWELVE_DATA_API_KEY),
+  ollamaBaseUrl: envStr(
+    process.env.OLLAMA_BASE_URL,
+    envStr(process.env.OLLAMA_HOST, "http://127.0.0.1:11434"),
+  ).replace(/\/+$/, ""),
+  ollamaDefaultModel: envStr(process.env.OLLAMA_DEFAULT_MODEL, "qwen2.5vl:3b"),
+  ollamaAnalyzeImageLimit: Math.max(
+    1,
+    asNum(process.env.OLLAMA_ANALYZE_IMAGE_LIMIT, 4),
+  ),
+  ollamaAnalyzeFallbackImageLimit: Math.max(
+    1,
+    asNum(process.env.OLLAMA_ANALYZE_FALLBACK_IMAGE_LIMIT, 1),
+  ),
+  ollamaAnalyzeMaxTokens: Math.max(
+    512,
+    asNum(process.env.OLLAMA_ANALYZE_MAX_TOKENS, 4096),
+  ),
+  ollamaAnalyzeFallbackMaxTokens: Math.max(
+    512,
+    asNum(process.env.OLLAMA_ANALYZE_FALLBACK_MAX_TOKENS, 2048),
+  ),
+  ollamaAnalyzeTextOnlyMaxTokens: Math.max(
+    256,
+    asNum(process.env.OLLAMA_ANALYZE_TEXT_ONLY_MAX_TOKENS, 1024),
+  ),
   mt5PostgresUrl:
     envStr(process.env.MT5_POSTGRES_URL) ||
     envStr(process.env.POSTGRES_URL) ||
@@ -3752,24 +3841,16 @@ async function repoGetUserWatchlist(userId) {
 
 async function repoGetUserTemplates(userId) {
   return await StateRepo.get("USER_TEMPLATES", userId, async () => {
-    const db = await mt5InitBackend();
-    const rows = await db.db
-      .select({
-        templateId: schema.userTemplates.id,
-        name: schema.userTemplates.name,
-        data: schema.userTemplates.data,
-      })
-      .from(schema.userTemplates)
-      .where(eq(schema.userTemplates.userId, userId))
-      .orderBy(
-        desc(schema.userTemplates.updatedAt),
-        desc(schema.userTemplates.createdAt),
-      );
-    return rows.map((r) => ({
-      template_id: r.templateId,
-      name: r.name,
-      ...dbQueries.parseJsonField(r.data),
-    }));
+    const rows = await objectStore.listObjectsByType(userId, "templates");
+    return (rows || [])
+      .sort((a, b) =>
+        String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
+      )
+      .map((row) => ({
+        template_id: String(row?.name || row?.object_id || ""),
+        name: String(row?.name || row?.object_id || ""),
+        ...(row?.data && typeof row.data === "object" ? row.data : {}),
+      }));
   });
 }
 
@@ -3980,6 +4061,148 @@ function normalizeMarketDataBars(rawBars = []) {
   return [...dedup.values()].sort((a, b) => a.time - b.time);
 }
 
+function normalizeIndicatorSeries(rawSeries = [], { min = null, max = null } = {}) {
+  return (Array.isArray(rawSeries) ? rawSeries : [])
+    .map((point) => {
+      const time = Number(point?.time);
+      const value = Number(point?.value);
+      if (!Number.isFinite(time) || !Number.isFinite(value)) return null;
+      let nextValue = value;
+      if (Number.isFinite(min)) nextValue = Math.max(min, nextValue);
+      if (Number.isFinite(max)) nextValue = Math.min(max, nextValue);
+      return { time: Math.floor(time), value: nextValue };
+    })
+    .filter(Boolean);
+}
+
+function buildSmaSeriesFromBars(bars, period) {
+  if (!Array.isArray(bars) || bars.length < period) return [];
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < bars.length; i += 1) {
+    const close = Number(bars[i]?.close);
+    if (!Number.isFinite(close)) continue;
+    sum += close;
+    if (i >= period) sum -= Number(bars[i - period]?.close) || 0;
+    if (i >= period - 1) out.push({ time: bars[i].time, value: sum / period });
+  }
+  return out;
+}
+
+function buildRsiSeriesFromBarsForCache(bars, period = 14) {
+  if (!Array.isArray(bars) || bars.length <= period) return [];
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i += 1) {
+    const change = Number(bars[i]?.close) - Number(bars[i - 1]?.close);
+    if (!Number.isFinite(change)) return [];
+    if (change >= 0) gains += change;
+    else losses -= change;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  const out = [];
+  const firstRs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+  const firstRsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + firstRs);
+  out.push({ time: bars[period].time, value: firstRsi });
+  for (let i = period + 1; i < bars.length; i += 1) {
+    const change = Number(bars[i]?.close) - Number(bars[i - 1]?.close);
+    if (!Number.isFinite(change)) continue;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    const rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+    const rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + rs);
+    out.push({ time: bars[i].time, value: rsi });
+  }
+  return normalizeIndicatorSeries(out, { min: 0, max: 100 });
+}
+
+function buildEmaSeriesFromLine(rawSeries, period = 9) {
+  const series = normalizeIndicatorSeries(rawSeries);
+  if (series.length < period) return [];
+  const multiplier = 2 / (period + 1);
+  let ema =
+    series.slice(0, period).reduce((sum, point) => sum + point.value, 0) / period;
+  const out = [{ time: series[period - 1].time, value: ema }];
+  for (let i = period; i < series.length; i += 1) {
+    ema = (series[i].value - ema) * multiplier + ema;
+    out.push({ time: series[i].time, value: ema });
+  }
+  return normalizeIndicatorSeries(out, { min: 0, max: 100 });
+}
+
+function buildWmaSeriesFromLine(rawSeries, period = 45) {
+  const series = normalizeIndicatorSeries(rawSeries);
+  if (series.length < period) return [];
+  const denominator = (period * (period + 1)) / 2;
+  const out = [];
+  for (let i = period - 1; i < series.length; i += 1) {
+    let total = 0;
+    for (let j = 0; j < period; j += 1) {
+      total += Number(series[i - period + 1 + j]?.value) * (j + 1);
+    }
+    out.push({ time: series[i].time, value: total / denominator });
+  }
+  return normalizeIndicatorSeries(out, { min: 0, max: 100 });
+}
+
+function buildFallbackOscillatorSeriesForCache(bars, amplitude = 12, phase = 0) {
+  if (!Array.isArray(bars) || !bars.length) return [];
+  return normalizeIndicatorSeries(
+    bars.map((bar, index) => ({
+      time: bar.time,
+      value: Math.max(
+        0,
+        Math.min(100, 50 + Math.sin(index / 6 + phase) * amplitude),
+      ),
+    })),
+    { min: 0, max: 100 },
+  );
+}
+
+function buildIndicatorSeriesForBars(bars = []) {
+  const normalizedBars = normalizeMarketDataBars(bars);
+  const rsi = buildRsiSeriesFromBarsForCache(normalizedBars, 14);
+  const safeRsi = rsi.length
+    ? rsi
+    : buildFallbackOscillatorSeriesForCache(normalizedBars, 14, 0);
+  const rsiEma9 = buildEmaSeriesFromLine(safeRsi, 9);
+  const rsiWma45 = buildWmaSeriesFromLine(safeRsi, 45);
+  return {
+    sma20: normalizeIndicatorSeries(buildSmaSeriesFromBars(normalizedBars, 20)),
+    sma50: normalizeIndicatorSeries(buildSmaSeriesFromBars(normalizedBars, 50)),
+    sma200: normalizeIndicatorSeries(buildSmaSeriesFromBars(normalizedBars, 200)),
+    rsi: safeRsi,
+    rsiEma9: rsiEma9.length
+      ? rsiEma9
+      : buildFallbackOscillatorSeriesForCache(normalizedBars, 9, 0.75),
+    rsiWma45: rsiWma45.length
+      ? rsiWma45
+      : buildFallbackOscillatorSeriesForCache(normalizedBars, 7, 1.35),
+  };
+}
+
+function attachIndicatorDataToMarketSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") return snapshot;
+  const bars = normalizeMarketDataBars(snapshot.bars);
+  const indicators = buildIndicatorSeriesForBars(bars);
+  return {
+    ...snapshot,
+    bars,
+    indicators,
+    metadata: {
+      ...(snapshot.metadata && typeof snapshot.metadata === "object"
+        ? snapshot.metadata
+        : {}),
+      indicators,
+      indicator_source: "calculated_from_bars",
+      indicator_updated_at: new Date().toISOString(),
+    },
+  };
+}
+
 function detectMarketDataGapCandidates(bars = [], tfNorm = "1min") {
   const sec = Math.max(60, parseTfTokenToSeconds(tfNorm));
   const out = [];
@@ -4083,13 +4306,18 @@ function marketDataFileRead(symbolNorm, tfNorm, reqStart, reqEnd) {
   const barEnd = bars[bars.length - 1].time;
   if (barStart > reqEnd || barEnd < reqStart) return null;
   const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
+  const metadata = readMarketDataMetadata(symbolNorm, tfNorm);
   return {
     symbol: symbolNorm,
     timeframe: tfNorm,
     bar_start: barStart,
     bar_end: barEnd + tfSec,
     bars,
-    metadata: readMarketDataMetadata(symbolNorm, tfNorm),
+    metadata,
+    indicators:
+      metadata?.indicators && typeof metadata.indicators === "object"
+        ? metadata.indicators
+        : null,
     last_price: bars[bars.length - 1].close,
     last_price_at: null,
   };
@@ -4490,9 +4718,43 @@ async function marketDataRedisWrite(symbolNorm, tfNorm, snapshot) {
 async function marketDataFileUpsert(symbolNorm, tfNorm, snapshot) {
   const bars = normalizeMarketDataBars(snapshot?.bars);
   if (!bars.length) return;
+  const indicators =
+    snapshot?.indicators && typeof snapshot.indicators === "object"
+      ? snapshot.indicators
+      : buildIndicatorSeriesForBars(bars);
+  const metadata = {
+    ...(snapshot?.metadata && typeof snapshot.metadata === "object"
+      ? snapshot.metadata
+      : {}),
+    indicators,
+    provider: String(snapshot?.provider || "").trim() || "unknown",
+    cache_source: String(snapshot?.cache_source || "").trim() || "file",
+    last_price: Number.isFinite(Number(snapshot?.last_price))
+      ? Number(snapshot.last_price)
+      : Number(bars[bars.length - 1]?.close) || null,
+    indicator_source: "calculated_from_bars",
+    indicator_updated_at: new Date().toISOString(),
+  };
 
   // Merge bars into CSV (deduplicates by time, updates L1 + Redis cache)
   mergeBarsIntoCSV(symbolNorm, tfNorm, bars);
+  writeMarketDataMetadata(symbolNorm, tfNorm, metadata);
+  marketDataMemoryWrite(symbolNorm, tfNorm, {
+    ...snapshot,
+    bars,
+    indicators,
+    metadata,
+    bar_start: snapshot?.bar_start || bars[0]?.time || null,
+    bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
+  });
+  await marketDataRedisWrite(symbolNorm, tfNorm, {
+    ...snapshot,
+    bars,
+    indicators,
+    metadata,
+    bar_start: snapshot?.bar_start || bars[0]?.time || null,
+    bar_end: snapshot?.bar_end || bars[bars.length - 1]?.time || null,
+  }).catch(() => {});
 
   // Update cron state (keeps tracking for monitoring)
   await marketDataUpdateCronState({
@@ -4714,6 +4976,7 @@ const ALLOWED_AI_API_KEY_NAMES = new Set([
   "CLAUDE_API_KEY",
   "TWELVE_DATA_API_KEY",
   "OPENROUTER_API_KEY",
+  "OLLAMA_API_KEY",
 ]);
 
 function normalizeAiApiKeyName(rawName) {
@@ -4740,6 +5003,8 @@ function normalizeAiApiKeyName(rawName) {
     name === "TWELVE_DATA_KEY"
   )
     return "TWELVE_DATA_API_KEY";
+  if (name === "OLLAMA" || name === "OLLAMA_LOCAL" || name === "OLLAMA_API_KEY")
+    return "OLLAMA_API_KEY";
   return name;
 }
 
@@ -4789,6 +5054,14 @@ function resolveProviderSettingNameForLog(providerRaw, modelRaw = "") {
     model.includes("twelve")
   ) {
     return "TWELVE_DATA_API_KEY";
+  }
+  if (
+    provider === "ollama" ||
+    provider === "local_ai" ||
+    model === "local" ||
+    model.startsWith("local_")
+  ) {
+    return "OLLAMA_API_KEY";
   }
 
   const normalized = normalizeAiApiKeyName(providerRaw || modelRaw || "");
@@ -7057,7 +7330,10 @@ async function captureTradingViewSnapshotsBatch(opts = {}) {
           10000,
           Math.floor(asNum(process.env.SNAPSHOT_GRID_READY_TIMEOUT_MS, 30000)),
         );
-        await page.goto(gridUrl, { waitUntil: "load", timeout: 90000 });
+        await page.goto(gridUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 90000,
+        });
         await page.waitForTimeout(renderWaitMs);
         await page
           .waitForLoadState("networkidle", { timeout: 15000 })
@@ -8709,7 +8985,41 @@ async function loadAiConfig(userId = "") {
     cfg.GEMINI_API_KEY = sanitizeRuntimeApiKey(
       envStr(process.env.GEMINI_API_KEY),
     );
+  if (!cfg.OLLAMA_API_KEY)
+    cfg.OLLAMA_API_KEY = sanitizeRuntimeApiKey(envStr(process.env.OLLAMA_API_KEY));
   return cfg;
+}
+
+function normalizeOllamaModel(rawModel = "") {
+  return String(rawModel || "")
+    .trim()
+    .toLowerCase();
+}
+
+function getFallbackOllamaModel() {
+  return normalizeOllamaModel(CFG.ollamaDefaultModel);
+}
+
+function resolveAiProvider(rawProvider = "", rawModel = "") {
+  const provider = String(rawProvider || "").trim().toLowerCase();
+  const model = normalizeOllamaModel(rawModel);
+  if (!provider || provider === "default") {
+    if (model.includes("claude")) return "claude";
+    if (model.includes("openrouter") || model.includes("open-router")) return "openrouter";
+    if (model.includes("gpt") || model.includes("openai")) return "openai";
+    if (model.includes("deepseek")) return "deepseek";
+    if (model.includes("gemini")) return "gemini";
+    if (model === "qwen" || model.startsWith("qwen") || model.startsWith("llava") || model.includes("2.5vl"))
+      return "ollama";
+    return "gemini";
+  }
+
+  if (provider.startsWith("ai_")) {
+    return provider.slice(3);
+  }
+  if (provider === "ollama" || provider === "local" || provider === "local_ai")
+    return "ollama";
+  return provider;
 }
 
 async function callAiProvider({
@@ -8723,14 +9033,17 @@ async function callAiProvider({
 }) {
   const modelLower = String(model || "").toLowerCase();
   const messageCount = Array.isArray(messages) ? messages.length : 0;
+  const requestedModel = String(model || "").trim();
+  let provider = resolveAiProvider(explicitProvider, modelLower);
+  const resolvedModelFromConfig = requestedModel || null;
 
-  if (modelLower.includes("claude")) {
-    const provider = "claude";
+  if (provider === "claude") {
     trackApiCall("Claude");
+    const resolvedModel = requestedModel || "claude-sonnet-4-0";
     await logProviderActivity({
       userId,
       provider,
-      model: model || "claude-sonnet-4-0",
+      model: resolvedModel,
       event: "AI_API_CALL_REQUEST",
       message: "Provider API request started",
       metadata: {
@@ -8747,7 +9060,7 @@ async function callAiProvider({
         await logProviderActivity({
           userId,
           provider,
-          model: model || "claude-sonnet-4-0",
+          model: resolvedModel,
           event: "AUTH_ERROR",
           level: "ERROR",
           message: "Provider API key missing",
@@ -8757,7 +9070,7 @@ async function callAiProvider({
       }
       const out = await anthropicMessagesWithFallback({
         apiKey: claudeKey,
-        model: model || "claude-sonnet-4-0",
+        model: resolvedModel,
         messages,
         maxTokens,
         timeoutMs,
@@ -8767,7 +9080,7 @@ async function callAiProvider({
         await logProviderActivity({
           userId,
           provider,
-          model: out.modelUsed || model || "claude-sonnet-4-0",
+          model: out.modelUsed || resolvedModel,
           event:
             out.response.status === 401 || out.response.status === 403
               ? "AUTH_ERROR"
@@ -8779,9 +9092,7 @@ async function callAiProvider({
             error_summary: sanitizeProviderLogMessage(errText),
           },
         });
-        throw new Error(
-          `Claude API Error (${out.response.status}): ${errText}`,
-        );
+        throw new Error(`Claude API Error (${out.response.status}): ${errText}`);
       }
       const json = await out.response.json();
       const rawText = Array.isArray(json?.content)
@@ -8793,7 +9104,7 @@ async function callAiProvider({
       await logProviderActivity({
         userId,
         provider,
-        model: out.modelUsed || model || "claude-sonnet-4-0",
+        model: out.modelUsed || resolvedModel,
         event: "AI_API_CALL_RESPONSE",
         message: "Provider API request completed",
         metadata: {
@@ -8803,7 +9114,7 @@ async function callAiProvider({
       });
       return {
         rawText,
-        modelUsed: out.modelUsed || model,
+        modelUsed: out.modelUsed || resolvedModel,
         provider,
       };
     } catch (err) {
@@ -8811,7 +9122,7 @@ async function callAiProvider({
         await logProviderActivity({
           userId,
           provider,
-          model: model || "claude-sonnet-4-0",
+          model: requestedModel || "claude-sonnet-4-0",
           event: "PROVIDER_ERROR",
           level: "ERROR",
           message: "Provider API request failed",
@@ -8824,23 +9135,21 @@ async function callAiProvider({
     }
   }
 
-  let provider = explicitProvider
-    ? explicitProvider.toLowerCase()
-    : modelLower.includes("openrouter") || modelLower.includes("open-router")
-      ? "openrouter"
-      : modelLower.includes("gpt") || modelLower.includes("openai")
-        ? "openai"
-        : modelLower.includes("deepseek")
-          ? "deepseek"
-          : "gemini";
-
   if (provider === "gpt4o" || provider === "gpt-4o" || provider === "chatgpt") {
     provider = "openai";
   }
 
+  const resolvedOllamaModel = getFallbackOllamaModel();
+
+  let selectedModel = String(resolvedModelFromConfig || "").trim() || resolvedOllamaModel;
+
   trackApiCall(provider.charAt(0).toUpperCase() + provider.slice(1));
   let apiKey = sanitizeRuntimeApiKey(callerApiKey || "");
-  if (!apiKey) {
+  if (provider === "ollama") {
+    selectedModel = selectedModel || resolvedOllamaModel || "qwen2.5vl:3b";
+  }
+
+  if (!apiKey && provider !== "ollama") {
     const cfg = await loadAiConfig(userId);
     apiKey =
       provider === "deepseek"
@@ -8849,9 +9158,11 @@ async function callAiProvider({
           ? cfg.OPENROUTER_API_KEY || ""
           : provider === "openai"
             ? cfg.OPENAI_API_KEY
-            : cfg.GEMINI_API_KEY;
+            : provider === "ollama"
+              ? cfg.OLLAMA_API_KEY || ""
+              : cfg.GEMINI_API_KEY;
   }
-  if (!sanitizeRuntimeApiKey(apiKey)) {
+  if (provider !== "ollama" && !sanitizeRuntimeApiKey(apiKey)) {
     await logProviderActivity({
       userId,
       provider,
@@ -8873,9 +9184,12 @@ async function callAiProvider({
         ? "https://api.deepseek.com/chat/completions"
         : provider === "openai"
           ? "https://api.openai.com/v1/chat/completions"
-          : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+          : provider === "ollama"
+            ? `${CFG.ollamaBaseUrl}/v1/chat/completions`
+            : "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 
   const isDeepSeek = provider === "deepseek";
+  const isOllama = provider === "ollama";
   let imageCount = 0;
   const convertedMessages = messages.map((m) => {
     if (typeof m.content === "string") return m;
@@ -8887,6 +9201,14 @@ async function callAiProvider({
           return {
             type: "text",
             text: "[Chart image attached — analyze based on the symbol/timeframe context above]",
+          };
+        }
+        if (isOllama) {
+          return {
+            type: "image_url",
+            image_url: {
+              url: `data:${block.source.media_type || "image/jpeg"};base64,${block.source.data}`,
+            },
           };
         }
         return {
@@ -8909,6 +9231,8 @@ async function callAiProvider({
         ? "gpt-4o"
         : provider === "openrouter"
           ? "openai/gpt-4o"
+          : provider === "ollama"
+            ? selectedModel || resolvedOllamaModel || "qwen2.5vl:3b"
           : "gemini-2.0-flash");
 
   const body = JSON.stringify({
@@ -8916,7 +9240,9 @@ async function callAiProvider({
     messages: convertedMessages,
     max_tokens: maxTokens,
     response_format:
-      provider !== "gemini" ? { type: "json_object" } : undefined,
+      provider !== "gemini" && provider !== "ollama"
+        ? { type: "json_object" }
+        : undefined,
   });
 
   await logProviderActivity({
@@ -8949,7 +9275,7 @@ async function callAiProvider({
       signal: ctrl.signal,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        ...(provider === "ollama" ? {} : { Authorization: `Bearer ${apiKey}` }),
         ...(provider === "openrouter"
           ? {
               "HTTP-Referer": "https://trade.mozasolution.com",
@@ -8980,6 +9306,23 @@ async function callAiProvider({
     }
     const json = await res.json();
     const rawText = json.choices?.[0]?.message?.content || "";
+    if (provider === "ollama" && !String(rawText || "").trim()) {
+      await logProviderActivity({
+        userId,
+        provider,
+        model: resolvedModel,
+        event: "PROVIDER_ERROR",
+        level: "ERROR",
+        message: "Provider returned empty completion",
+        metadata: {
+          response_keys:
+            json && typeof json === "object" ? Object.keys(json).slice(0, 20) : [],
+        },
+      });
+      throw new Error(
+        "ollama API returned empty completion. Try fewer charts, fewer attached images, or a smaller prompt.",
+      );
+    }
     await logProviderActivity({
       userId,
       provider,
@@ -9011,6 +9354,69 @@ async function callAiProvider({
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function checkLocalAiHealth() {
+  const result = {
+    configured: false,
+    baseUrl: String(CFG.ollamaBaseUrl || "").trim(),
+    status: "disabled",
+    reachable: false,
+    error: "",
+    selectedModel: getFallbackOllamaModel(),
+    availableModels: [],
+    modelCount: 0,
+  };
+
+  if (!result.baseUrl) {
+    return result;
+  }
+
+  result.configured = true;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 1200);
+  try {
+    const versionRes = await fetch(`${result.baseUrl}/api/version`, {
+      method: "GET",
+      signal: ctrl.signal,
+    });
+    result.status = versionRes?.ok ? "reachable" : "error";
+    if (!versionRes?.ok) {
+      result.error = `version check failed (${versionRes.status})`;
+      return result;
+    }
+    await versionRes.text().catch(() => "");
+    result.reachable = true;
+
+    const tagsRes = await fetch(`${result.baseUrl}/api/tags`, {
+      method: "GET",
+      signal: ctrl.signal,
+    });
+    if (tagsRes?.ok) {
+      const tagsPayload = await tagsRes.json().catch(() => ({}));
+      const models = Array.isArray(tagsPayload?.models)
+        ? tagsPayload.models
+        : [];
+      result.availableModels = models
+        .map((x) => String(x?.name || "").trim())
+        .filter(Boolean);
+      result.modelCount = result.availableModels.length;
+    }
+  } catch (err) {
+    result.status = "error";
+    result.reachable = false;
+    result.error = String(err?.message || err);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const existsSelected = result.availableModels.some(
+    (name) => String(name || "").toLowerCase() === result.selectedModel,
+  );
+  if (result.configured && result.availableModels.length) {
+    result.selectedModelAvailable = existsSelected;
+  }
+  return result;
 }
 
 function normalizeHostHeader(hostRaw) {
@@ -9535,6 +9941,8 @@ let MT5_BACKEND = null;
 let USER_ACCOUNT_OBJECT_STORE = null;
 const LEGACY_USER_ACCOUNT_MIGRATIONS = new Set();
 const LEGACY_USER_ACCOUNT_FILE_MIGRATIONS = new Set();
+const LEGACY_USER_TEMPLATE_MIGRATIONS = new Set();
+const LEGACY_USER_SETTINGS_TABLE_MIGRATIONS = new Set();
 
 function getUserAccountObjectStore() {
   if (!USER_ACCOUNT_OBJECT_STORE) {
@@ -9552,115 +9960,15 @@ async function migrateLegacyUserAccountsToUnifiedStore(
   migrationKey = "default",
 ) {
   const key = String(migrationKey || "default");
-  if (LEGACY_USER_ACCOUNT_MIGRATIONS.has(key)) return;
-  const rows = await pool.query(
-    `
-      SELECT account_id, user_id, name, balance, status, metadata,
-             api_key_hash, api_key_last4, api_key_rotated_at,
-             source_ids_cache, equity, margin, free_margin, leverage,
-             broker_name, created_at, updated_at
-      FROM user_accounts
-    `,
-  );
-  await getUserAccountObjectStore().migrateLegacyUserAccounts(rows.rows || []);
   LEGACY_USER_ACCOUNT_MIGRATIONS.add(key);
 }
 
 async function upsertLegacyUserAccountShadow(pool, account = {}) {
-  const accountId = String(
-    account?.account_id || account?.accountId || "",
-  ).trim();
-  const userId =
-    String(
-      account?.user_id || account?.userId || CFG.mt5DefaultUserId,
-    ).trim() || CFG.mt5DefaultUserId;
-  if (!accountId || !userId) return;
-  await pool.query(
-    `
-      INSERT INTO users (user_id, role, is_active, created_at, updated_at)
-      VALUES ($1, $2, TRUE, NOW(), NOW())
-      ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()
-    `,
-    [userId, userId === CFG.mt5DefaultUserId ? UI_ROLE_SYSTEM : UI_ROLE_USER],
-  );
-  const metadataValue =
-    account?.metadata && typeof account.metadata === "object"
-      ? JSON.stringify(account.metadata)
-      : typeof account?.metadata === "string"
-        ? account.metadata
-        : "{}";
-  const sourceIdsValue = Array.isArray(account?.source_ids_cache)
-    ? JSON.stringify(account.source_ids_cache)
-    : account?.source_ids_cache && typeof account.source_ids_cache === "object"
-      ? JSON.stringify(account.source_ids_cache)
-      : "[]";
-  const createdAt = normalizeIsoTimestamp(account?.created_at, mt5NowIso());
-  const updatedAt = normalizeIsoTimestamp(account?.updated_at, mt5NowIso());
-  await pool.query(
-    `
-      INSERT INTO user_accounts (
-        account_id, user_id, name, balance, api_key_hash, api_key_last4,
-        api_key_rotated_at, source_ids_cache, metadata, status,
-        equity, margin, free_margin, leverage, broker_name,
-        created_at, updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17)
-      ON CONFLICT (account_id) DO UPDATE SET
-        user_id = EXCLUDED.user_id,
-        name = EXCLUDED.name,
-        balance = EXCLUDED.balance,
-        api_key_hash = EXCLUDED.api_key_hash,
-        api_key_last4 = EXCLUDED.api_key_last4,
-        api_key_rotated_at = EXCLUDED.api_key_rotated_at,
-        source_ids_cache = EXCLUDED.source_ids_cache,
-        metadata = EXCLUDED.metadata,
-        status = EXCLUDED.status,
-        equity = EXCLUDED.equity,
-        margin = EXCLUDED.margin,
-        free_margin = EXCLUDED.free_margin,
-        leverage = EXCLUDED.leverage,
-        broker_name = EXCLUDED.broker_name,
-        updated_at = EXCLUDED.updated_at
-    `,
-    [
-      accountId,
-      userId,
-      String(account?.name || accountId),
-      account?.balance == null || Number.isNaN(Number(account.balance))
-        ? null
-        : Number(account.balance),
-      account?.api_key_hash ? String(account.api_key_hash) : null,
-      account?.api_key_last4 ? String(account.api_key_last4) : null,
-      account?.api_key_rotated_at
-        ? normalizeIsoTimestamp(account.api_key_rotated_at, updatedAt)
-        : null,
-      sourceIdsValue,
-      metadataValue,
-      String(account?.status || "ACTIVE"),
-      account?.equity == null || Number.isNaN(Number(account.equity))
-        ? null
-        : Number(account.equity),
-      account?.margin == null || Number.isNaN(Number(account.margin))
-        ? null
-        : Number(account.margin),
-      account?.free_margin == null || Number.isNaN(Number(account.free_margin))
-        ? null
-        : Number(account.free_margin),
-      account?.leverage == null || Number.isNaN(Number(account.leverage))
-        ? null
-        : Number(account.leverage),
-      String(account?.broker_name || ""),
-      createdAt,
-      updatedAt,
-    ],
-  );
+  return;
 }
 
 async function deleteLegacyUserAccountShadow(pool, userId, accountId) {
-  await pool.query(
-    `DELETE FROM user_accounts WHERE user_id = $1 AND account_id = $2`,
-    [String(userId || ""), String(accountId || "")],
-  );
+  return;
 }
 
 async function findUnifiedUserAccountById(accountId, userId = null) {
@@ -9912,6 +10220,112 @@ async function migrateLegacyUserAccountStaticFilesToObjectFolders(
     }
   }
   LEGACY_USER_ACCOUNT_FILE_MIGRATIONS.add(key);
+}
+
+async function migrateLegacyUserTemplatesToObjectStore(
+  pool,
+  migrationKey = "default",
+) {
+  const key = String(migrationKey || "default");
+  if (LEGACY_USER_TEMPLATE_MIGRATIONS.has(key)) return;
+  const tableCheck = await pool
+    .query(`SELECT to_regclass('public.user_templates') AS table_name`)
+    .catch(() => ({ rows: [] }));
+  if (tableCheck.rows?.[0]?.table_name) {
+    const rows = await pool
+      .query(
+        `
+          SELECT user_id, name, data, status, created_at, updated_at
+          FROM user_templates
+          ORDER BY updated_at DESC, created_at DESC
+        `,
+      )
+      .catch(() => ({ rows: [] }));
+    for (const row of rows.rows || []) {
+      const userId =
+        String(row?.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const templateName =
+        String(row?.name || "default").trim() || "default";
+      await objectStore.upsertObject(
+        userId,
+        "templates",
+        templateName,
+        dbQueries.parseJsonField(row?.data) || {},
+        String(row?.status || "ACTIVE"),
+        {
+          created_at: row?.created_at || mt5NowIso(),
+          updated_at: row?.updated_at || mt5NowIso(),
+          type: "templates",
+          name: templateName,
+          object_id: templateName,
+        },
+      );
+    }
+    await pool.query(`DROP TABLE IF EXISTS user_templates`).catch(() => {});
+  }
+  LEGACY_USER_TEMPLATE_MIGRATIONS.add(key);
+}
+
+async function migrateLegacyUserSettingsTableToFileStore(
+  pool,
+  migrationKey = "default",
+) {
+  const key = String(migrationKey || "default");
+  if (LEGACY_USER_SETTINGS_TABLE_MIGRATIONS.has(key)) return;
+  const tableCheck = await pool
+    .query(`SELECT to_regclass('public.user_settings') AS table_name`)
+    .catch(() => ({ rows: [] }));
+  if (tableCheck.rows?.[0]?.table_name) {
+    const rows = await pool
+      .query(
+        `
+          SELECT id, user_id, name, type, data, status, created_at, updated_at
+          FROM user_settings
+          ORDER BY updated_at DESC, created_at DESC
+        `,
+      )
+      .catch(() => ({ rows: [] }));
+    for (const row of rows.rows || []) {
+      const userId =
+        String(row?.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const type = String(row?.type || "").trim();
+      const name = String(row?.name || "default").trim() || "default";
+      const data = dbQueries.parseJsonField(row?.data) || {};
+      if (type === "ai_template") {
+        await objectStore.upsertObject(
+          userId,
+          "templates",
+          name,
+          data,
+          String(row?.status || "ACTIVE"),
+          {
+            created_at: row?.created_at || mt5NowIso(),
+            updated_at: row?.updated_at || mt5NowIso(),
+            type: "templates",
+            name,
+            object_id: name,
+          },
+        );
+        continue;
+      }
+      await settingsStore.upsertUserSetting(
+        userId,
+        type,
+        name,
+        data,
+        String(row?.status || "ACTIVE"),
+        {
+          id: row?.id,
+          created_at: row?.created_at || mt5NowIso(),
+          updated_at: row?.updated_at || mt5NowIso(),
+        },
+      );
+    }
+    await pool.query(`DROP TABLE IF EXISTS user_settings`).catch(() => {});
+  }
+  LEGACY_USER_SETTINGS_TABLE_MIGRATIONS.add(key);
 }
 
 async function getDynamicUserAccountRecord(userId, accountId) {
@@ -10298,64 +10712,14 @@ async function _mt5InitBackendInternal(source = null) {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS user_accounts (
-      account_id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-      name TEXT,
-      balance DOUBLE PRECISION NULL,
-      api_key_hash TEXT NULL,
-      api_key_last4 TEXT NULL,
-      api_key_rotated_at TIMESTAMPTZ NULL,
-      source_ids_cache JSONB NULL,
-      metadata JSONB,
-      status TEXT,
-      equity NUMERIC NULL,
-      margin NUMERIC NULL,
-      free_margin NUMERIC NULL,
-      leverage NUMERIC NULL,
-      broker_name TEXT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS user_templates (
-        id SERIAL PRIMARY KEY,
-        user_id TEXT REFERENCES users(user_id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        data JSONB NOT NULL,
-        status TEXT DEFAULT 'ACTIVE',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS user_settings (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-        name TEXT NOT NULL DEFAULT 'default',
-        type TEXT NOT NULL,
-        data JSONB NOT NULL,
-        status TEXT DEFAULT 'ACTIVE',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_type_name ON user_settings (user_id, type, name);
-
     -- DDL Migration for existing installations
-    ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS equity NUMERIC NULL;
-    ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS margin NUMERIC NULL;
-    ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS free_margin NUMERIC NULL;
-    ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS leverage NUMERIC NULL;
-    ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS broker_name TEXT NULL;
-
-    DROP INDEX IF EXISTS idx_user_settings_singleton;
-    DROP INDEX IF EXISTS idx_user_settings_user_type_name;
 
     -- Keep old tables for safe migration then drop
     DROP TABLE IF EXISTS ai_configs;
 
     CREATE TABLE IF NOT EXISTS trades (
       sid TEXT PRIMARY KEY,
-      account_id TEXT NOT NULL REFERENCES user_accounts(account_id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
       signal_id TEXT NULL,
       source_id TEXT NULL,
@@ -10412,6 +10776,7 @@ async function _mt5InitBackendInternal(source = null) {
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp1 FLOAT8 NULL;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp2 FLOAT8 NULL;
     ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp3 FLOAT8 NULL;
+    ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_account_id_fkey;
 
 
 
@@ -10543,71 +10908,20 @@ async function _mt5InitBackendInternal(source = null) {
     .query(`ALTER TABLE accounts DROP COLUMN IF EXISTS broker_id`)
     .catch(() => {});
 
-  // Compatibility migration: absorb legacy AI templates from both the old
-  // physical table and deprecated user_settings rows into user_templates.
-  try {
-    const legacyAiTemplatesTable = await pool.query(
-      `SELECT to_regclass('public.ai_templates') AS table_name`,
-    );
-    if (legacyAiTemplatesTable.rows?.[0]?.table_name) {
-      await pool
-        .query(
-          `
-        INSERT INTO user_templates (user_id, name, data, status, created_at, updated_at)
-        SELECT
-          COALESCE(NULLIF(t.user_id, ''), $1) AS user_id,
-          COALESCE(NULLIF(t.name, ''), 'Legacy Template ' || COALESCE(t.id::text, substr(md5(random()::text), 1, 6))) AS name,
-          (to_jsonb(t) - 'id' - 'user_id' - 'name' - 'status' - 'created_at' - 'updated_at') AS data,
-          COALESCE(NULLIF(t.status, ''), 'ACTIVE') AS status,
-          COALESCE(t.created_at, NOW()) AS created_at,
-          COALESCE(t.updated_at, NOW()) AS updated_at
-        FROM ai_templates t
-      `,
-          [CFG.mt5DefaultUserId],
-        )
-        .catch(() => {});
-      await pool.query(`DROP TABLE IF EXISTS ai_templates`).catch(() => {});
-    }
-  } catch (e) {
+  // Compatibility migration: move legacy template/settings SQL rows into
+  // file-backed storage, then remove the old tables.
+  await migrateLegacyUserTemplatesToObjectStore(pool).catch((e) => {
     console.warn(
-      "[mt5-db] legacy ai_templates migration skipped:",
+      "[mt5-db] legacy user_templates migration skipped:",
       e?.message || e,
     );
-  }
-
-  try {
-    const legacyUserSettingsTable = await pool.query(
-      `SELECT to_regclass('public.user_settings') AS table_name`,
-    );
-    if (legacyUserSettingsTable.rows?.[0]?.table_name) {
-      await pool.query(`
-        INSERT INTO user_templates (user_id, name, data, status, created_at, updated_at)
-        SELECT
-          s.user_id,
-          COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6)) AS name,
-          COALESCE(s.data, '{}'::jsonb) AS data,
-          COALESCE(NULLIF(s.status, ''), 'ACTIVE') AS status,
-          COALESCE(s.created_at, NOW()) AS created_at,
-          COALESCE(s.updated_at, NOW()) AS updated_at
-        FROM user_settings s
-        WHERE s.type = 'ai_template'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM user_templates ut
-            WHERE ut.user_id = s.user_id
-              AND ut.name = COALESCE(NULLIF(s.name, ''), 'Migrated Template ' || substr(md5(s.id::text), 1, 6))
-          )
-      `);
-      await pool
-        .query(`DELETE FROM user_settings WHERE type = 'ai_template'`)
-        .catch(() => {});
-    }
-  } catch (e) {
+  });
+  await migrateLegacyUserSettingsTableToFileStore(pool).catch((e) => {
     console.warn(
-      "[mt5-db] user_settings ai_template migration skipped:",
+      "[mt5-db] legacy user_settings migration skipped:",
       e?.message || e,
     );
-  }
+  });
 
   await pool
     .query(`ALTER TABLE trades RENAME COLUMN side TO action`)
@@ -10836,7 +11150,6 @@ END
       .query(
         `
       SELECT
-        (SELECT COUNT(*) FROM user_accounts WHERE user_id = $1) AS accounts_count,
         (SELECT COUNT(*) FROM signals WHERE user_id = $1) AS signals_count,
         (SELECT COUNT(*) FROM trades WHERE user_id = $1) AS trades_count,
         0 AS settings_count
@@ -10846,7 +11159,6 @@ END
       .catch(() => ({ rows: [] }));
     const refRow = refRes.rows?.[0] || {};
     const totalRefs =
-      Number(refRow.accounts_count || 0) +
       Number(refRow.signals_count || 0) +
       Number(refRow.trades_count || 0) +
       Number(refRow.settings_count || 0) +
@@ -10962,9 +11274,6 @@ END
     .query(
       `
     ALTER TABLE users ALTER COLUMN metadata TYPE TEXT USING metadata::text;
-    ALTER TABLE user_accounts ALTER COLUMN metadata TYPE TEXT USING metadata::text;
-    ALTER TABLE user_accounts ALTER COLUMN source_ids_cache TYPE TEXT USING source_ids_cache::text;
-    ALTER TABLE user_templates ALTER COLUMN data TYPE TEXT USING data::text;
     ALTER TABLE trades ALTER COLUMN raw_json TYPE TEXT USING raw_json::text;
     ALTER TABLE trades ALTER COLUMN metadata TYPE TEXT USING metadata::text;
     ALTER TABLE trades ALTER COLUMN confluence_checklist TYPE TEXT USING confluence_checklist::text;
@@ -11283,17 +11592,20 @@ END
       const sourceId = String(payload.source_id || "").trim();
       const userId = String(payload.user_id || CFG.mt5DefaultUserId).trim();
       if (!sourceId || !userId) return { created: 0, account_ids: [] };
+      const store = getUserAccountObjectStore();
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const accounts = await client.query(
-          `SELECT account_id, metadata FROM user_accounts WHERE user_id = $1 AND status != 'ARCHIVED'`,
-          [userId],
-        );
+        const accounts = (await store.listUnifiedObjects(userId, "user_accounts"))
+          .filter((row) => String(row?.status || "").toUpperCase() !== "ARCHIVED")
+          .map((row) => ({
+            account_id: row?.account_id || row?.object_id || "",
+            metadata: row?.metadata || {},
+          }));
         let created = 0;
         const accountIds = [];
         const sids = [];
-        for (const row of accounts.rows || []) {
+        for (const row of accounts || []) {
           const aid = String(row.account_id || "").trim();
           if (!aid) continue; // skip accounts with null/empty account_id
           const accountMeta = mt5ParseAccountMetadata(row.metadata);
@@ -11572,12 +11884,15 @@ END
           const rowDispatch = String(row.dispatch_status || "")
             .trim()
             .toUpperCase();
+          const normalizedMetadata = syncGuards.normalizeTradeMetadata(
+            row.metadata,
+          );
           const currentLeasedDispatch =
             rowDispatch === "LEASED"
-              ? row.metadata?.leased_dispatch_status
+              ? normalizedMetadata.leased_dispatch_status
               : rowDispatch;
           const updatedMeta = {
-            ...(row.metadata || {}),
+            ...normalizedMetadata,
             lease_retry_count: retryCount,
             leased_dispatch_status: syncGuards.brokerTaskTypeForTrade({
               dispatch_status: currentLeasedDispatch,
@@ -13995,9 +14310,26 @@ END
         .filter((x) => x && x.is_active !== false)
         .map((x) => String(x.source_id || "").trim())
         .filter(Boolean);
-      await pool.query(
-        `UPDATE user_accounts SET source_ids_cache = $1::jsonb, updated_at = NOW() WHERE account_id = $2`,
-        [JSON.stringify(sourceIds), targetId],
+      const existing = await findUnifiedUserAccountById(targetId);
+      if (!existing) return { ok: false, error: "account not found" };
+      const uid =
+        String(existing.user_id || CFG.mt5DefaultUserId).trim() ||
+        CFG.mt5DefaultUserId;
+      const store = getUserAccountObjectStore();
+      const dynamic = await getDynamicUserAccountRecord(uid, targetId);
+      await store.upsertDynamicObject(
+        uid,
+        "user_accounts",
+        targetId,
+        {
+          ...(dynamic?.metadata || {}),
+          source_ids_cache: sourceIds,
+        },
+        dynamic?.status || existing.status || "ACTIVE",
+        {
+          created_at: dynamic?.created_at || existing.created_at || mt5NowIso(),
+          updated_at: mt5NowIso(),
+        },
       );
       return { ok: true };
     },
@@ -14037,7 +14369,7 @@ END
       return res.rows[0]?.column_name || null;
     },
     async listTables() {
-      return ["users", "user_accounts", "trades", "user_templates"];
+      return ["users", "trades"];
     },
     async listTableRows(
       table,
@@ -14165,11 +14497,7 @@ END
       return { ok: true, table, updated: idVal };
     },
     async getAccountByIdV2(accountId) {
-      const res = await pool.query(
-        `SELECT * FROM user_accounts WHERE account_id = $1 LIMIT 1`,
-        [accountId],
-      );
-      return res.rows[0] || null;
+      return findUnifiedUserAccountById(accountId);
     },
     async getUiAuthUser(email) {
       const target = normalizeEmail(email);
@@ -16749,7 +17077,7 @@ async function buildAnalysisSnapshotFromTwelve({
         ? Number(brokerBars[brokerBars.length - 1].time) +
           Math.max(60, parseTfTokenToSeconds(tfNorm))
         : null;
-      const brokerSnapshot = {
+      const brokerSnapshot = attachIndicatorDataToMarketSnapshot({
         provider: "broker_csv",
         status: "ok",
         timezone: "UTC",
@@ -16774,7 +17102,7 @@ async function buildAnalysisSnapshotFromTwelve({
           0,
           20,
         ),
-      };
+      });
       tfCacheSet(symbolNorm, tfNorm, brokerSnapshot);
       await marketDataFileUpsert(symbolNorm, tfNorm, brokerSnapshot).catch(
         () => {},
@@ -16803,7 +17131,7 @@ async function buildAnalysisSnapshotFromTwelve({
         cached.bar_end || cached.bars[cached.bars.length - 1].time,
       );
       if (s <= reqRange.start && e >= reqRange.end) {
-        return mergeLastPriceIntoBars({
+        return mergeLastPriceIntoBars(attachIndicatorDataToMarketSnapshot({
           ...cached,
           symbol: symbolNorm,
           symbol_norm: symbolNorm,
@@ -16813,7 +17141,7 @@ async function buildAnalysisSnapshotFromTwelve({
           bar_end: e,
           status: "ok",
           cache_source: "memory",
-        });
+        }));
       }
     }
     // Fallback to CSV files
@@ -16829,9 +17157,10 @@ async function buildAnalysisSnapshotFromTwelve({
     });
 
     if (dbHit && Array.isArray(dbHit.bars) && dbHit.bars.length) {
-      tfCacheSet(symbolNorm, tfNorm, dbHit);
+      const enrichedDbHit = attachIndicatorDataToMarketSnapshot(dbHit);
+      tfCacheSet(symbolNorm, tfNorm, enrichedDbHit);
       return mergeLastPriceIntoBars({
-        ...dbHit,
+        ...enrichedDbHit,
         cache_source: "db",
         symbol_norm: symbolNorm,
         tf_norm: tfNorm,
@@ -16842,20 +17171,23 @@ async function buildAnalysisSnapshotFromTwelve({
   // Crypto symbols: use Binance free API instead of Twelve Data
   const binanceResult = await fetchBinanceBars(symbolNorm, tfNorm, outputsize);
   if (binanceResult) {
+    const enrichedBinanceResult = attachIndicatorDataToMarketSnapshot(
+      binanceResult,
+    );
     if (notificationManager) {
       notificationManager.handle("REMOTE_API_CALL", "binance_success", {
-        message: `Binance OK ${symbolNorm} ${tfNorm} ${binanceResult.bars.length} bars`,
+        message: `Binance OK ${symbolNorm} ${tfNorm} ${enrichedBinanceResult.bars.length} bars`,
         api: "Binance",
         symbol: symbolNorm,
         tf: tfNorm,
-        bars_count: binanceResult.bars.length,
+        bars_count: enrichedBinanceResult.bars.length,
       });
     }
-    tfCacheSet(symbolNorm, tfNorm, binanceResult);
-    await marketDataFileUpsert(symbolNorm, tfNorm, binanceResult).catch(
+    tfCacheSet(symbolNorm, tfNorm, enrichedBinanceResult);
+    await marketDataFileUpsert(symbolNorm, tfNorm, enrichedBinanceResult).catch(
       () => {},
     );
-    return mergeLastPriceIntoBars(binanceResult);
+    return mergeLastPriceIntoBars(enrichedBinanceResult);
   }
 
   const keys = await loadUserApiKeysMap(userId).catch(() => ({}));
@@ -17005,7 +17337,7 @@ async function buildAnalysisSnapshotFromTwelve({
     const barEnd = bars.length
       ? bars[bars.length - 1].time + reqRange.sec
       : null;
-    const snapshot = {
+    const snapshot = attachIndicatorDataToMarketSnapshot({
       provider: "twelvedata",
       status: "ok",
       timezone: "UTC",
@@ -17049,7 +17381,7 @@ async function buildAnalysisSnapshotFromTwelve({
         note: String(payload?.trade_plan?.note || payload?.note || "").trim(),
       },
       checklist: parseSnapshotChecklist(payload),
-    };
+    });
 
     // Update Unified Cache
     tfCacheSet(symbolNorm, tfNorm, snapshot);
@@ -19797,7 +20129,12 @@ const appHandler = async (req, res) => {
       const db = await mt5InitBackend();
       const userId = sess.user_id;
 
-      const current = (await dbQueries.getUserMetadata(db.db, userId)) || {};
+      const currentRaw = await dbQueries.getUserMetadata(db.db, userId);
+      const currentParsed = dbQueries.parseJsonField(currentRaw);
+      const current =
+        currentParsed && typeof currentParsed === "object" && !Array.isArray(currentParsed)
+          ? currentParsed
+          : {};
       const next = { ...current, ...payload };
       if (
         current?.settings &&
@@ -20189,6 +20526,7 @@ const appHandler = async (req, res) => {
     let postgresOk = false;
     let redisOk = false;
     let storageBackend = "unknown";
+    const localAi = await checkLocalAiHealth().catch(() => ({}));
     try {
       const b = await mt5Backend();
       storageBackend = b?.storage || "unknown";
@@ -20277,10 +20615,13 @@ const appHandler = async (req, res) => {
           lastActivity: SOURCE_STATUS.binance.lastActivity,
         },
       },
-      diagnostics: {
-        cron: cronDiag,
-        endpoints: {
-          health: { path: "/health", auth: "none", included_in_health: true },
+        diagnostics: {
+          ai: {
+            local: localAi,
+          },
+          cron: cronDiag,
+          endpoints: {
+            health: { path: "/health", auth: "none", included_in_health: true },
           mt5Health: {
             path: "/mt5/health",
             auth: "none",
@@ -20324,6 +20665,31 @@ const appHandler = async (req, res) => {
       );
     }
     return json(res, 200, { ok: true, active: CRON_STATE.masterActive });
+  }
+
+  if (req.method === "POST" && url.pathname === "/v2/cron/run") {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const cronName = String(body?.name || "").trim();
+      if (!cronName) {
+        return json(res, 400, { ok: false, error: "Cron name is required" });
+      }
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const conf = await settingsStore.getUserSetting(userId, "cron", cronName);
+      if (!conf) {
+        return json(res, 404, { ok: false, error: "Cron not found" });
+      }
+      const result = await runCronSettingNow(conf);
+      return json(res, 200, { ok: true, result });
+    } catch (e) {
+      return json(res, 500, { ok: false, error: e.message });
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/v2/cron/snapshots/latest") {
@@ -22335,7 +22701,7 @@ const appHandler = async (req, res) => {
   // AI HUB API
   // =========================
   // =========================
-  // AI HUB API — Templates stored in user_templates
+  // AI HUB API — Templates stored in file-backed object storage
   if (req.method === "GET" && url.pathname === "/v2/ai/templates") {
     if (!requireAdminKey(req, res, url)) return;
     try {
@@ -22350,7 +22716,6 @@ const appHandler = async (req, res) => {
     if (!requireAdminKey(req, res, url)) return;
     try {
       const payload = await readJson(req);
-      const db = await mt5InitBackend();
       const { template_id, name, ...rest } = payload;
       const config = rest.config || rest;
       const templateName = String(name || config?.name || "Unnamed").trim();
@@ -22360,14 +22725,19 @@ const appHandler = async (req, res) => {
         _schema: config._schema,
         saved: rest.saved || new Date().toISOString(),
       };
-      await db.db.insert(schema.userTemplates).values({
-        userId: CFG.mt5DefaultUserId,
-        name: templateName,
-        data: dbQueries.jsonField(templateData),
-        status: "ACTIVE",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
+      await objectStore.upsertObject(
+        CFG.mt5DefaultUserId,
+        "templates",
+        templateName,
+        templateData,
+        "ACTIVE",
+        {
+          type: "templates",
+          name: templateName,
+          object_id: templateName,
+          updated_at: new Date().toISOString(),
+        },
+      );
       await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
       return json(res, 201, {
         ok: true,
@@ -22382,15 +22752,12 @@ const appHandler = async (req, res) => {
     if (!requireAdminKey(req, res, url)) return;
     try {
       const templateName = decodeURIComponent(url.pathname.split("/").pop());
-      const db = await mt5InitBackend();
-      await db.db
-        .delete(schema.userTemplates)
-        .where(
-          and(
-            eq(schema.userTemplates.userId, CFG.mt5DefaultUserId),
-            eq(schema.userTemplates.name, templateName),
-          ),
-        );
+      await objectStore.deleteObject(
+        CFG.mt5DefaultUserId,
+        "templates",
+        templateName,
+      );
+      await StateRepo.del("USER_TEMPLATES", CFG.mt5DefaultUserId);
       return json(res, 200, { ok: true });
     } catch (e) {
       return json(res, 500, { ok: false, error: e.message });
@@ -22586,7 +22953,8 @@ const appHandler = async (req, res) => {
       if (body.type === "ai_template") {
         return json(res, 400, {
           ok: false,
-          error: "ai_template moved to user_templates. Use /v2/ai/templates.",
+          error:
+            "ai_template moved to file-backed template storage. Use /v2/ai/templates.",
         });
       }
 
@@ -22596,7 +22964,7 @@ const appHandler = async (req, res) => {
           return json(res, 400, {
             ok: false,
             error:
-              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY",
+              "Invalid api_key name. Allowed: GEMINI_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, CLAUDE_API_KEY, OPENROUTER_API_KEY, TWELVE_DATA_API_KEY, OLLAMA_API_KEY",
           });
         }
         const incomingValue = String(
@@ -22749,7 +23117,10 @@ const appHandler = async (req, res) => {
         finalPrompt += `\n\nIMPORTANT: Keep enum values exactly as specified, but write narrative fields such as note, recent_move, narrative, condition, and reasons_to_skip.reason in ${userLang}.`;
       }
 
+      let requestModel = String(model || "").trim();
+
       let provider = (bodyProvider || service || "gemini").toLowerCase();
+      provider = resolveAiProvider(provider, requestModel);
       if (
         requestModel &&
         (requestModel.includes("openrouter") ||
@@ -22765,9 +23136,11 @@ const appHandler = async (req, res) => {
               ? config.OPENAI_API_KEY
               : provider === "claude"
                 ? config.CLAUDE_API_KEY || config.ANTHROPIC_API_KEY
+                : provider === "ollama"
+                  ? config.OLLAMA_API_KEY || ""
                 : config.GEMINI_API_KEY;
 
-      if (!apiKey) {
+      if (provider !== "ollama" && !apiKey) {
         return json(res, 400, {
           ok: false,
           error: `API Key for ${provider} is missing. Please configure it in the AI Hub.`,
@@ -22779,7 +23152,6 @@ const appHandler = async (req, res) => {
       let endpoint = "";
       let authHeader = "";
       let bodyData = {};
-      let requestModel = String(model || "").trim();
 
       if (provider === "deepseek") {
         endpoint = "https://api.deepseek.com/chat/completions";
@@ -22817,6 +23189,14 @@ const appHandler = async (req, res) => {
         bodyData = {
           model: requestModel,
           max_tokens: 32000,
+          messages: [{ role: "user", content: finalPrompt }],
+        };
+      } else if (provider === "ollama") {
+        endpoint = `${CFG.ollamaBaseUrl}/v1/chat/completions`;
+        authHeader = "";
+        if (!requestModel) requestModel = getFallbackOllamaModel();
+        bodyData = {
+          model: requestModel,
           messages: [{ role: "user", content: finalPrompt }],
         };
       } else {
@@ -23265,11 +23645,6 @@ const appHandler = async (req, res) => {
       .replace("Z", " UTC");
     const gridStampEsc = htmlEscape(gridStamp);
     const sessionLabel = sessionKillerZoneLabelUTC(new Date());
-    const cols = tfs.length > 2 ? 2 : tfs.length;
-    const cellHeight = Math.max(
-      280,
-      Math.min(900, Number(url.searchParams.get("cell_h") || 420) || 420),
-    );
     const tzLabel =
       selectedTz === "LOCAL"
         ? "Local"
@@ -23281,13 +23656,7 @@ const appHandler = async (req, res) => {
       "KZ",
     );
     const gridHeaderText = `${gridStampEsc} | ${htmlEscape(sessionLabelShort)} | ${tzLabel}`;
-    const singleTfMode = tfs.length === 1;
-    const singleTfCols = 4;
-    const singleTfRows = Math.max(1, Math.ceil(symbols.length / singleTfCols));
-    const singleGridGapPx = 8;
-    const singleGridPadPx = 8;
-    const singleHeaderHpx = 52;
-    const singleCellHeightExpr = `calc((100vh - ${singleHeaderHpx}px - ${singleGridPadPx * 2}px - ${(singleTfRows - 1) * singleGridGapPx}px) / ${singleTfRows})`;
+    const totalChartCount = Math.max(1, symbols.length * Math.max(1, tfs.length));
     const defaultGroupName = noSymbolInput
       ? "watchlist"
       : symbols.length > 1
@@ -23303,14 +23672,21 @@ const appHandler = async (req, res) => {
           <title>Grid ${htmlEscape(symbols.join("-"))}</title>
 
           <style>
+            html, body {
+              width: 100%;
+              height: 100%;
+            }
             body {
               margin: 0;
               background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
               overflow: ${captureMode ? "visible" : "hidden"};
               font-family: sans-serif;
+              display: flex;
+              flex-direction: column;
             }
             .grid-header {
               height: 52px;
+              min-height: 52px;
               display: flex;
               align-items: center;
               gap: 10px;
@@ -23420,28 +23796,26 @@ const appHandler = async (req, res) => {
               text-align: right;
             }
             .symbols-stack {
-              height: ${captureMode ? "auto" : "calc(100vh - 52px)"};
-              overflow-y: ${captureMode ? "visible" : "auto"};
+              display: none;
+            }
+            .grid-surface {
+              flex: 1 1 auto;
+              min-height: 0;
               padding: 8px;
               box-sizing: border-box;
               background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
+              overflow: hidden;
+            }
+            .adaptive-grid {
+              --grid-cols: 1;
+              --grid-cell-height: 240px;
               display: flex;
-              flex-direction: column;
-              gap: 14px; /* visual separator between symbol groups */
-            }
-            .symbols-grid {
-              display: grid;
-              grid-template-columns: repeat(${singleTfCols}, minmax(0, 1fr));
-              grid-auto-rows: ${singleCellHeightExpr};
-              align-content: start;
+              flex-wrap: wrap;
+              align-content: stretch;
               gap: 8px;
-              padding: 8px;
-              box-sizing: border-box;
-              background: ${theme === "dark" ? "#1a2233" : "#e1e1e1"};
-              height: ${captureMode ? "auto" : "calc(100vh - 52px)"};
-            }
-            .symbols-grid .chart-cell {
+              width: 100%;
               height: 100%;
+              box-sizing: border-box;
             }
             .symbol-group {
               border: 1px solid ${theme === "dark" ? "rgba(148,163,184,0.2)" : "rgba(15,23,42,0.2)"};
@@ -23450,21 +23824,16 @@ const appHandler = async (req, res) => {
               background: ${theme === "dark" ? "rgba(11,18,32,0.55)" : "rgba(255,255,255,0.6)"};
             }
             .grid {
-              display: grid;
-              grid-template-columns: repeat(${cols}, 1fr);
-              grid-auto-rows: minmax(${cellHeight}px, 1fr);
-              width: 100%;
-              min-height: ${captureMode ? "unset" : "calc(100vh - 74px)"};
-              gap: 8px; /* Increased gap to help AI partition */
-              background: transparent;
-              padding: 0;
-              box-sizing: border-box;
+              display: contents;
             }
             .chart-cell {
               position: relative;
               overflow: hidden;
               background: ${theme === "dark" ? "#0b1220" : "#ffffff"};
               border-radius: 4px; /* Slight rounding for clean edges */
+              flex: 1 1 calc((100% - (var(--grid-cols) - 1) * 8px) / var(--grid-cols));
+              min-width: calc((100% - (var(--grid-cols) - 1) * 8px) / var(--grid-cols));
+              height: var(--grid-cell-height);
             }
             .chart-cell iframe {
               position: absolute;
@@ -23530,30 +23899,17 @@ const appHandler = async (req, res) => {
                   })
                   .join("")}
               </div>
+              <button class="snapshot-btn" id="snapshot-copy-btn" type="button" title="Copy current viewport snapshot to clipboard">📋 Copy</button>
               <button class="snapshot-btn" id="snapshot-browser-btn" type="button" title="Browser capture — screenshots your current viewport (zoom, bars, iframes)">📷 Browser</button>
               <button class="snapshot-btn" id="snapshot-api-btn" type="button" title="API capture — server-side Playwright snapshot">📷 API</button>
               <span class="snapshot-status" id="snapshot-status"></span>
             </form>
           </div>
-          ${
-            singleTfMode
-              ? `<div class="symbols-grid">
-            ${symbols
-              .map(
-                (sym) => `
-              <div class="chart-cell">
-                <div class="tf-badge">${htmlEscape(sym)} | ${htmlEscape(displayTfs[0])}${provider ? ` | ${htmlEscape(String(provider).toUpperCase())}` : ""}</div>
-                <iframe src="https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedTvSymbols[sym] || toTradingViewSymbol(sym, provider))}&interval=${encodeURIComponent(tvIntervals[0])}&theme=${encodeURIComponent(theme)}&style=1&timezone=${encodeURIComponent(effectiveTz)}&hide_top_toolbar=1&hide_legend=1&hide_side_toolbar=1&allow_symbol_change=0&save_image=0"></iframe>
-              </div>
-            `,
-              )
-              .join("")}
-          </div>`
-              : `<div class="symbols-stack">
-            ${symbols
-              .map(
-                (sym) => `
-              <section class="symbol-group">
+          <div class="grid-surface">
+            <div class="adaptive-grid" id="adaptive-grid" data-count="${totalChartCount}">
+              ${symbols
+                .map(
+                  (sym) => `
                 <div class="grid">
                   ${tfs
                     .map(
@@ -23566,22 +23922,74 @@ const appHandler = async (req, res) => {
                     )
                     .join("")}
                 </div>
-              </section>
-            `,
-              )
-              .join("")}
-          </div>`
-          }
+              `,
+                )
+                .join("")}
+            </div>
+          </div>
           <script>
             (function () {
               const form = document.getElementById("grid-controls-form");
+              const copyBtn = document.getElementById("snapshot-copy-btn");
               const browserBtn = document.getElementById("snapshot-browser-btn");
               const apiBtn = document.getElementById("snapshot-api-btn");
               const statusEl = document.getElementById("snapshot-status");
               const titleEl = document.querySelector(".grid-meta-badge");
-              if (!form || !browserBtn || !apiBtn || !statusEl) return;
+              const surfaceEl = document.querySelector(".grid-surface");
+              const gridEl = document.getElementById("adaptive-grid");
+              if (!form || !copyBtn || !browserBtn || !apiBtn || !statusEl) return;
               const groupedSymbols = ${JSON.stringify(groupedSymbols)};
               const PREF_KEY = "snapshots-grid-prefs-v1";
+              const GRID_GAP_PX = 8;
+
+              function chooseBestGrid(count, width, height) {
+                const safeCount = Math.max(1, Number(count) || 1);
+                const safeWidth = Math.max(1, Number(width) || 1);
+                const safeHeight = Math.max(1, Number(height) || 1);
+                const targetAspect =
+                  safeCount === 1 ? safeWidth / safeHeight : safeCount <= 2 ? 1.7 : safeCount <= 4 ? 1.45 : 1.25;
+                let best = { cols: 1, rows: safeCount, cellHeight: safeHeight, score: -Infinity };
+                for (let cols = 1; cols <= safeCount; cols += 1) {
+                  const rows = Math.max(1, Math.ceil(safeCount / cols));
+                  const cellWidth = (safeWidth - GRID_GAP_PX * (cols - 1)) / cols;
+                  const cellHeight = (safeHeight - GRID_GAP_PX * (rows - 1)) / rows;
+                  if (!(cellWidth > 0) || !(cellHeight > 0)) continue;
+                  const ratio = cellWidth / cellHeight;
+                  const area = cellWidth * cellHeight;
+                  const aspectPenalty = Math.abs(Math.log(Math.max(ratio, 0.01) / Math.max(targetAspect, 0.01)));
+                  const emptyPenalty = (rows * cols - safeCount) / (rows * cols);
+                  const score = area * (1 - Math.min(0.85, aspectPenalty * 0.22) - emptyPenalty * 0.08);
+                  if (score > best.score) {
+                    best = {
+                      cols,
+                      rows,
+                      cellHeight: Math.max(1, Math.floor(cellHeight)),
+                      score,
+                    };
+                  }
+                }
+                return best;
+              }
+
+              function layoutAdaptiveGrid() {
+                if (!surfaceEl || !gridEl) return;
+                const headerHeight = Math.ceil(
+                  document.querySelector(".grid-header")?.getBoundingClientRect().height || 52,
+                );
+                const viewportHeight =
+                  window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+                const surfaceHeight = Math.max(120, viewportHeight - headerHeight);
+                surfaceEl.style.height = surfaceHeight + "px";
+                const gridWidth = Math.max(1, surfaceEl.clientWidth - 16);
+                const gridHeight = Math.max(1, surfaceHeight - 16);
+                const chartCount = Math.max(
+                  1,
+                  Number(gridEl.dataset.count) || gridEl.querySelectorAll(".chart-cell").length || 1,
+                );
+                const best = chooseBestGrid(chartCount, gridWidth, gridHeight);
+                gridEl.style.setProperty("--grid-cols", String(best.cols));
+                gridEl.style.setProperty("--grid-cell-height", best.cellHeight + "px");
+              }
 
               // LOCAL timezone must be resolved client-side for browser view.
               try {
@@ -23601,6 +24009,11 @@ const appHandler = async (req, res) => {
                   }
                 }
               } catch (_) {}
+
+              layoutAdaptiveGrid();
+              window.addEventListener("resize", layoutAdaptiveGrid);
+              window.visualViewport?.addEventListener("resize", layoutAdaptiveGrid);
+              window.visualViewport?.addEventListener("scroll", layoutAdaptiveGrid);
 
               function getSymbols() {
                 const fd = new FormData(form);
@@ -23732,20 +24145,71 @@ const appHandler = async (req, res) => {
                 document.body.classList.remove("snapshot-capturing");
               }
 
+              async function captureCurrentViewportPng() {
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                  preferCurrentTab: true,
+                  video: { frameRate: 1 },
+                });
+                try {
+                  const track = stream.getVideoTracks()[0];
+                  const imageCapture = new ImageCapture(track);
+                  const bitmap = await imageCapture.grabFrame();
+                  const canvas = document.createElement("canvas");
+                  canvas.width = bitmap.width;
+                  canvas.height = bitmap.height;
+                  canvas.getContext("2d").drawImage(bitmap, 0, 0);
+                  track.stop();
+                  return await new Promise((resolve, reject) => {
+                    canvas.toBlob((blob) => {
+                      if (blob) resolve(blob);
+                      else reject(new Error("canvas_to_blob_failed"));
+                    }, "image/png");
+                  });
+                } finally {
+                  stream.getTracks().forEach((track) => {
+                    try {
+                      track.stop();
+                    } catch (_) {}
+                  });
+                }
+              }
+
+              copyBtn.addEventListener("click", async () => {
+                hideToolbar();
+                try {
+                  if (!navigator.clipboard || typeof window.ClipboardItem === "undefined") {
+                    statusEl.textContent = "Clipboard unsupported";
+                    showToolbar();
+                    return;
+                  }
+                  statusEl.textContent = "Copying...";
+                  const blob = await captureCurrentViewportPng();
+                  await navigator.clipboard.write([
+                    new window.ClipboardItem({
+                      [blob.type || "image/png"]: blob,
+                    }),
+                  ]);
+                  statusEl.textContent = "Copied";
+                } catch (_) {
+                  statusEl.textContent = "Copy failed";
+                } finally {
+                  showToolbar();
+                }
+              });
+
               // 📷 Browser: Screen Capture API — captures your actual viewport (zoom, bars, iframes)
               browserBtn.addEventListener("click", async () => {
                 hideToolbar();
-                const stack = document.querySelector(".symbols-stack");
                 const origBodyOverflow = document.body.style.overflow;
-                const origStackOverflow = stack?.style?.overflowY;
-                const origStackHeight = stack?.style?.height;
+                const origSurfaceOverflow = surfaceEl?.style?.overflow;
+                const origSurfaceHeight = surfaceEl?.style?.height;
                 try {
                   statusEl.textContent = "Expanding page...";
                   // Expand page to show full grid content before capture
                   document.body.style.overflow = "visible";
-                  if (stack) {
-                    stack.style.overflowY = "visible";
-                    stack.style.height = "auto";
+                  if (surfaceEl) {
+                    surfaceEl.style.overflow = "visible";
+                    surfaceEl.style.height = "auto";
                   }
                   await new Promise((r) => setTimeout(r, 200));
                   statusEl.textContent = "Capturing viewport...";
@@ -23759,26 +24223,21 @@ const appHandler = async (req, res) => {
                   const groupNameRaw = String(new FormData(form).get("group_name") || "").trim();
                   const useGroup = symbols.length > 1 || !symbol;
                   const groupName = useGroup ? (groupNameRaw || "group") : "";
-                  const stream = await navigator.mediaDevices.getDisplayMedia({
-                    preferCurrentTab: true,
-                    video: { frameRate: 1 },
-                  });
-                  const track = stream.getVideoTracks()[0];
-                  const imageCapture = new ImageCapture(track);
-                  const bitmap = await imageCapture.grabFrame();
-                  const canvas = document.createElement("canvas");
-                  canvas.width = bitmap.width;
-                  canvas.height = bitmap.height;
-                  canvas.getContext("2d").drawImage(bitmap, 0, 0);
-                  track.stop();
+                  const blob = await captureCurrentViewportPng();
                   statusEl.textContent = "Uploading...";
-                  const dataUrl = canvas.toDataURL("image/png");
+                  const dataUrl = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(String(reader.result || ""));
+                    reader.onerror = () => reject(new Error("blob_read_failed"));
+                    reader.readAsDataURL(blob);
+                  });
                   const res = await fetch("/v2/chart/snapshots-grid/upload", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                       symbol,
                       symbols,
+                      tfs: getTfValues(),
                       group_name: groupName,
                       image_data: dataUrl,
                     }),
@@ -23795,10 +24254,11 @@ const appHandler = async (req, res) => {
                 } finally {
                   // Restore original overflow styles
                   document.body.style.overflow = origBodyOverflow;
-                  if (stack) {
-                    stack.style.overflowY = origStackOverflow;
-                    stack.style.height = origStackHeight;
+                  if (surfaceEl) {
+                    surfaceEl.style.overflow = origSurfaceOverflow;
+                    surfaceEl.style.height = origSurfaceHeight;
                   }
+                  layoutAdaptiveGrid();
                   showToolbar();
                 }
               });
@@ -23869,6 +24329,11 @@ const appHandler = async (req, res) => {
       const symbols = Array.isArray(body?.symbols)
         ? body.symbols.map((s) => normalizeMarketDataSymbol(s)).filter(Boolean)
         : [];
+      const tfs = Array.isArray(body?.tfs)
+        ? canonicalizeTfList(
+            body.tfs.map((tf) => String(tf || "").trim()).filter(Boolean),
+          )
+        : [];
       const groupNameRaw = String(body?.group_name || "")
         .trim()
         .toLowerCase();
@@ -23898,8 +24363,34 @@ const appHandler = async (req, res) => {
           .replace(/_+/g, "_")
           .replace(/^_+|_+$/g, "")
           .toLowerCase() || "group";
+      const buildMultiSymbolSnapshotFileName = () => {
+        const symbolPart = (symbols.length ? symbols : [symbol])
+          .map((s) => safeObjectPathPart(String(s || "").toLowerCase(), "symbol"))
+          .filter(Boolean)
+          .slice(0, 8)
+          .join("-");
+        const tfPart = tfs.length
+          ? tfs
+              .map((tf) =>
+                safeObjectPathPart(String(tf || "").toLowerCase(), "tf"),
+              )
+              .filter(Boolean)
+              .join("-")
+          : "multi-tf";
+        const stamp = new Date()
+          .toISOString()
+          .replace(/\.\d{3}Z$/, "Z")
+          .replace(/[-:]/g, "")
+          .replace("T", "-")
+          .toLowerCase();
+        const rawBase = [symbolPart || safeGroup, tfPart, stamp]
+          .filter(Boolean)
+          .join("-");
+        const safeBase = safeObjectPathPart(rawBase, safeGroup || "group");
+        return `${String(safeBase || "group").slice(0, 180)}.png`;
+      };
       const outFileName = useGroup
-        ? `${safeGroup}.png`
+        ? buildMultiSymbolSnapshotFileName()
         : `${symbol}_MASTER.png`;
       const outDir = useGroup ? CHART_SNAPSHOT_DIR : snapshotSymbolDir(symbol);
       const outPath = path.join(outDir, outFileName);
@@ -24453,6 +24944,7 @@ const appHandler = async (req, res) => {
       CFG.adminKey;
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    let isLocalAnalyzeProvider = false;
     try {
       const body = await readJson(req);
       const reqPrompt = String(body?.prompt || "");
@@ -25017,6 +25509,10 @@ const appHandler = async (req, res) => {
         .replace(/^ai_/i, "")
         .trim()
         .toLowerCase();
+      const resolvedProviderForKeyCheck = resolveAiProvider(
+        aiProviderRaw,
+        String(body.model || "claude-sonnet-4-0"),
+      );
       const isClaudeProvider =
         !aiProviderRaw ||
         aiProviderRaw === "claude" ||
@@ -25028,6 +25524,7 @@ const appHandler = async (req, res) => {
       // Resolve the required key based on provider
       let requiredKeyName = "CLAUDE_API_KEY";
       let requiredKeyValue = "";
+      let requiresKey = true;
       if (aiProviderRaw === "openrouter") {
         requiredKeyName = "OPENROUTER_API_KEY";
         requiredKeyValue = userApiKeys.OPENROUTER_API_KEY || "";
@@ -25040,12 +25537,16 @@ const appHandler = async (req, res) => {
       } else if (aiProviderRaw === "gemini") {
         requiredKeyName = "GEMINI_API_KEY";
         requiredKeyValue = userApiKeys.GEMINI_API_KEY || "";
+      } else if (resolvedProviderForKeyCheck === "ollama") {
+        requiredKeyName = "OLLAMA_API_KEY";
+        requiredKeyValue = "local_provider";
+        requiresKey = false;
       } else {
         // Claude / default
         requiredKeyValue = userApiKeys.CLAUDE_API_KEY || "";
       }
 
-      if (!requiredKeyValue) {
+      if (requiresKey && !requiredKeyValue) {
         const providerLabel = requiredKeyName.replace(/_API_KEY$/, "");
         return json(res, 400, {
           ok: false,
@@ -25686,6 +26187,60 @@ const appHandler = async (req, res) => {
       // For text-only models (DeepSeek), inject bar data as text since they can't see images
       const requestModel =
         String(body.model || "claude-sonnet-4-0").trim() || "claude-sonnet-4-0";
+      isLocalAnalyzeProvider = resolveAiProvider(
+        aiProviderRaw,
+        requestModel,
+      ) === "ollama";
+      if (isLocalAnalyzeProvider) {
+        const stripSection = (input, marker) => {
+          const idx = String(input || "").indexOf(marker);
+          return idx >= 0 ? String(input || "").slice(0, idx).trim() : String(input || "");
+        };
+        const extractSection = (input, startMarker, endMarkers = []) => {
+          const raw = String(input || "");
+          const start = raw.indexOf(startMarker);
+          if (start < 0) return "";
+          let end = raw.length;
+          for (const marker of endMarkers) {
+            const idx = raw.indexOf(marker, start + startMarker.length);
+            if (idx >= 0) end = Math.min(end, idx);
+          }
+          return raw.slice(start, end).trim();
+        };
+        const sessionConfigSection = extractSection(
+          finalPrompt,
+          "## SESSION CONFIG",
+          ["## ACTIVE STRATEGIES", "## ANALYSIS INSTRUCTIONS", "## EXPECTED OUTPUT SCHEMA"],
+        );
+        const analysisSection = extractSection(
+          finalPrompt,
+          "## ANALYSIS INSTRUCTIONS",
+          ["## EXPECTED OUTPUT SCHEMA", "## FIELD CONSTRAINTS", "CONFIG:"],
+        );
+        const pricePrecisionSection = extractSection(
+          finalPrompt,
+          "## PRICE PRECISION RULE",
+          ["## EXPECTED OUTPUT SCHEMA", "## FIELD CONSTRAINTS", "CONFIG:"],
+        );
+        const multiSymbolSection = extractSection(
+          finalPrompt,
+          "MULTI_SYMBOL_INPUT=",
+          [],
+        );
+        const localPromptParts = [
+          "LOCAL OLLAMA MODE",
+          "Use only the attached chart image evidence. If structure is unclear, return NO_TRADE_ABORT.",
+          "Return JSON only. No markdown. No prose outside JSON.",
+          sessionConfigSection,
+          analysisSection,
+          pricePrecisionSection,
+          multiSymbolSection,
+        ].filter(Boolean);
+        finalPrompt = localPromptParts.join("\n\n");
+        finalPrompt = stripSection(finalPrompt, "## EXPECTED OUTPUT SCHEMA");
+        finalPrompt = stripSection(finalPrompt, "## FIELD CONSTRAINTS");
+        finalPrompt = stripSection(finalPrompt, "CONFIG:");
+      }
       if (requestModel.toLowerCase().includes("deepseek")) {
         try {
           const symbol = String(body.symbol || "").trim();
@@ -25748,6 +26303,85 @@ const appHandler = async (req, res) => {
         text: finalPrompt,
       });
 
+      const runOllamaAwareAiCall = async ({
+        maxTokens,
+        imageLimit,
+      }) => {
+        const filtered = isLocalAnalyzeProvider
+          ? trimImageBlocksFromMessages(
+              [{ role: "user", content }],
+              imageLimit,
+            )
+          : {
+              messages: [{ role: "user", content }],
+              totalImageBlocks: 0,
+              imageBlocksUsed: 0,
+              imageBlocksDropped: 0,
+            };
+        const droppedImageBlocks = filtered.imageBlocksDropped || 0;
+        if (droppedImageBlocks > 0) {
+          console.warn(
+            "[snapshot-analyze] Trimming image blocks for local Ollama:",
+            {
+              dropped: droppedImageBlocks,
+              used: filtered.imageBlocksUsed,
+              total: filtered.totalImageBlocks,
+              requestedLimit: imageLimit,
+            },
+          );
+        }
+        const out = await callAiProvider({
+          model: requestModel,
+          provider: aiProviderRaw || "",
+          messages: filtered.messages,
+          maxTokens,
+          timeoutMs: 180000,
+          apiKey: requiredKeyValue,
+          userId,
+        });
+        return {
+          out,
+          filtered,
+        };
+      };
+
+      const localPrimaryImageLimit = isLocalAnalyzeProvider
+        ? CFG.ollamaAnalyzeImageLimit
+        : Number.POSITIVE_INFINITY;
+      const localFallbackImageLimit = isLocalAnalyzeProvider
+        ? CFG.ollamaAnalyzeFallbackImageLimit
+        : Number.POSITIVE_INFINITY;
+      const requestedMaxTokens = Number(body.max_tokens || 32000);
+      const requestedTextOnlyMaxTokens = Math.max(
+        256,
+        Number.isFinite(Number(body.max_tokens))
+          ? Math.round(Number(body.max_tokens) / 2)
+          : CFG.ollamaAnalyzeTextOnlyMaxTokens,
+      );
+      const localPrimaryMaxTokens = isLocalAnalyzeProvider
+        ? Math.min(
+            Number.isFinite(requestedMaxTokens) ? requestedMaxTokens : 32000,
+            CFG.ollamaAnalyzeMaxTokens,
+            1400,
+          )
+        : Number.isFinite(requestedMaxTokens)
+          ? requestedMaxTokens
+          : 32000;
+      const localFallbackMaxTokens = isLocalAnalyzeProvider
+        ? Math.min(
+            localPrimaryMaxTokens,
+            CFG.ollamaAnalyzeFallbackMaxTokens,
+            900,
+          )
+        : localPrimaryMaxTokens;
+      const localTextOnlyMaxTokens = isLocalAnalyzeProvider
+        ? Math.min(
+            Math.min(requestedTextOnlyMaxTokens, localFallbackMaxTokens),
+            CFG.ollamaAnalyzeTextOnlyMaxTokens,
+            700,
+          )
+        : localPrimaryMaxTokens;
+
       // Use the ai_provider resolved earlier for callAiProvider
       await (
         await mt5Backend()
@@ -25791,17 +26425,58 @@ const appHandler = async (req, res) => {
           path.join(logsDir, "payload.json"),
           JSON.stringify(payloadLog, null, 2),
         );
-      } catch (_) {}
+        } catch (_) {}
 
-      const aiResult = await callAiProvider({
-        model: requestModel,
-        provider: aiProviderRaw || "",
-        messages: [{ role: "user", content }],
-        maxTokens: Number(body.max_tokens || 32000),
-        timeoutMs: 180000,
-        apiKey: requiredKeyValue,
-        userId,
-      });
+      let aiResult = null;
+      const totalSnapshotImages = imagePayload?.usedFiles
+        ? imagePayload.usedFiles.length
+        : 0;
+      let usedFilesForResponse = imagePayload.usedFiles || [];
+      if (!isLocalAnalyzeProvider) {
+        const res = await runOllamaAwareAiCall({
+          maxTokens: localPrimaryMaxTokens,
+          imageLimit: Number.POSITIVE_INFINITY,
+        });
+        aiResult = res.out;
+        usedFilesForResponse = imagePayload.usedFiles || snapshotFiles.map((x) => x.fileName);
+      } else {
+        try {
+          const primary = await runOllamaAwareAiCall({
+            maxTokens: localPrimaryMaxTokens,
+            imageLimit: localPrimaryImageLimit,
+          });
+          aiResult = primary.out;
+          const primaryUsed = Math.max(0, primary.filtered.imageBlocksUsed);
+          usedFilesForResponse = imagePayload.usedFiles
+            ? imagePayload.usedFiles.slice(0, Math.min(totalSnapshotImages, primaryUsed))
+            : [];
+        } catch (error) {
+          if (!isOllamaRunnerStoppedError(error)) {
+            throw error;
+          }
+          try {
+            const fallback = await runOllamaAwareAiCall({
+              maxTokens: localFallbackMaxTokens,
+              imageLimit: localFallbackImageLimit,
+            });
+            aiResult = fallback.out;
+            const fallbackUsed = Math.max(0, fallback.filtered.imageBlocksUsed);
+            usedFilesForResponse = imagePayload.usedFiles
+              ? imagePayload.usedFiles.slice(0, Math.min(totalSnapshotImages, fallbackUsed))
+              : [];
+          } catch (fallbackError) {
+            if (!isOllamaRunnerStoppedError(fallbackError)) {
+              throw fallbackError;
+            }
+            const textOnly = await runOllamaAwareAiCall({
+              maxTokens: localTextOnlyMaxTokens,
+              imageLimit: 0,
+            });
+            aiResult = textOnly.out;
+            usedFilesForResponse = [];
+          }
+        }
+      }
 
       const rawResponse = aiResult.rawText;
       const resolvedModel = aiResult.modelUsed;
@@ -25976,8 +26651,7 @@ const appHandler = async (req, res) => {
         model: resolvedModel,
         session_id: sessionId,
         schema_version: AI_RESPONSE_SCHEMA_VERSION,
-        used_files:
-          imagePayload.usedFiles || snapshotFiles.map((x) => x.fileName),
+        used_files: usedFilesForResponse,
         used_symbols: usedSymbols,
         claude_files_mode: claudeFilesMode,
         claude_files: imagePayload.claudeFiles || [],
@@ -25992,11 +26666,11 @@ const appHandler = async (req, res) => {
         auto_refresh: 0,
         trade_sid: sessionId,
       });
-    } catch (error) {
-      try {
-        const userId = sess.user_id || CFG.mt5DefaultUserId;
-        await (
-          await mt5Backend()
+      } catch (error) {
+        try {
+          const userId = sess.user_id || CFG.mt5DefaultUserId;
+          await (
+            await mt5Backend()
         ).log(
           `ai_analyze_error_${Date.now()}`,
           "ai",
@@ -26008,11 +26682,21 @@ const appHandler = async (req, res) => {
           },
           userId,
         );
-      } catch {}
-      if (
-        error?.name === "AbortError" ||
-        String(error?.message || "")
-          .toLowerCase()
+        } catch {}
+        if (
+          isLocalAnalyzeProvider &&
+          isOllamaRunnerStoppedError(error)
+        ) {
+          return json(res, 500, {
+            ok: false,
+            error:
+              "Local Ollama runner crashed during analysis. The backend already retried with fewer images and a lighter local prompt, but the local model still stopped.",
+          });
+        }
+        if (
+          error?.name === "AbortError" ||
+          String(error?.message || "")
+            .toLowerCase()
           .includes("aborted")
       ) {
         return json(res, 504, {
@@ -27486,27 +28170,28 @@ const appHandler = async (req, res) => {
         const accountMap = new Map(); // account_id -> { broker_name, provider_code, metadata }
         if (accountIds.length) {
           try {
-            const b = await mt5Backend();
-            const acctRows = await b.pool.query(
-              `SELECT account_id, metadata FROM user_accounts WHERE account_id = ANY($1::text[])`,
-              [accountIds],
+            const accounts = await Promise.all(
+              accountIds.map((accountId) => findUnifiedUserAccountById(accountId)),
             );
-            for (const r of acctRows.rows || []) {
-              let meta = {};
-              try {
-                meta =
-                  r.metadata && typeof r.metadata === "object"
-                    ? r.metadata
-                    : typeof r.metadata === "string"
-                      ? JSON.parse(r.metadata)
-                      : {};
-              } catch (_) {}
-              accountMap.set(r.account_id, {
+            for (const account of accounts.filter(Boolean)) {
+              const meta =
+                account?.metadata && typeof account.metadata === "object"
+                  ? account.metadata
+                  : {};
+              const accountId = String(account.account_id || account.object_id || "").trim();
+              if (!accountId) continue;
+              accountMap.set(accountId, {
                 broker_name:
-                  meta.broker_name || meta.name || r.account_id || null,
-                provider_code: resolveProviderCode(
-                  meta.broker_name || meta.name || "",
-                ),
+                  account.broker_name || meta.broker_name || account.name || accountId || null,
+                provider_code:
+                  String(
+                    account.provider_code ||
+                      meta.provider_code ||
+                      resolveProviderCode(
+                        account.broker_name || meta.broker_name || account.name || "",
+                      ) ||
+                      "",
+                  ).trim() || null,
                 metadata: meta,
               });
             }
@@ -28056,22 +28741,21 @@ const appHandler = async (req, res) => {
       // If no other active users are subscribed to this source, mark signal CLOSED
       if (fanout?.created > 0 && sourceId) {
         try {
-          const { and, eq, ne } = require("drizzle-orm");
-          const schema = b.schema || require("../db/schema");
-          const subRows = await b.db
-            .select()
-            .from(schema.userSettings)
-            .where(
-              and(
-                eq(schema.userSettings.type, "execution_profile"),
-                ne(
-                  schema.userSettings.userId,
-                  signal.userId || userId || CFG.mt5DefaultUserId,
-                ),
-              ),
-            );
+          const subRows = await settingsStore.listUserSettingsByType(
+            null,
+            "execution_profile",
+          );
           const hasSubscribers = (subRows || []).some((r) => {
-            const d = dbQueries.parseJsonField(r.data) || {};
+            if (
+              String(r?.user_id || "").trim() ===
+              String(signal.userId || userId || CFG.mt5DefaultUserId).trim()
+            ) {
+              return false;
+            }
+            const d =
+              r?.data && typeof r.data === "object"
+                ? r.data
+                : dbQueries.parseJsonField(r?.data) || {};
             return (
               d.is_active &&
               Array.isArray(d.source_ids) &&
@@ -28237,13 +28921,8 @@ const appHandler = async (req, res) => {
       const existingTradeRow = existingTrade.rows[0];
       const existingMeta =
         dbQueries.parseJsonField(existingTradeRow.metadata) || {};
-      const accountRes = await b.pool.query(
-        `SELECT metadata FROM user_accounts WHERE account_id = $1 LIMIT 1`,
-        [existingTradeRow.account_id],
-      );
-      const accountMeta = mt5ParseAccountMetadata(
-        accountRes.rows?.[0]?.metadata,
-      );
+      const account = await findUnifiedUserAccountById(existingTradeRow.account_id);
+      const accountMeta = mt5ParseAccountMetadata(account?.metadata);
       const symbolMetric = mt5FindSymbolMetric(
         accountMeta,
         existingTradeRow.symbol,
@@ -29039,16 +29718,19 @@ const appHandler = async (req, res) => {
       const resp = {
         ok: true,
         items: (items || []).map((t) => {
+          const normalizedMetadata = syncGuards.normalizeTradeMetadata(
+            t.metadata,
+          );
           const type = syncGuards.brokerTaskTypeForTrade(t);
           const plannedLots =
-            asNum(t.metadata?.volume_basis_lots) ??
-            asNum(t.metadata?.trade_plan?.lots) ??
-            asNum(t.metadata?.trade_plan?.volume) ??
+            asNum(normalizedMetadata.volume_basis_lots) ??
+            asNum(normalizedMetadata.trade_plan?.lots) ??
+            asNum(normalizedMetadata.trade_plan?.volume) ??
             null;
           const brokerLots =
             asNum(t.broker_lots) ??
-            asNum(t.metadata?.broker_lots) ??
-            asNum(t.metadata?.broker_data?.lots) ??
+            asNum(normalizedMetadata.broker_lots) ??
+            asNum(normalizedMetadata.broker_data?.lots) ??
             null;
           const taskLots =
             type === "MODIFY"
@@ -29083,8 +29765,7 @@ const appHandler = async (req, res) => {
             risk_money: t.risk_money_planned ?? null,
             risk_pct: t.risk_pct_planned ?? null,
             note: t.note ?? t.intent_note ?? null,
-            metadata:
-              t.metadata && typeof t.metadata === "object" ? t.metadata : {},
+            metadata: normalizedMetadata,
           };
         }),
       };
@@ -29700,30 +30381,43 @@ const appHandler = async (req, res) => {
 
       // 5. Update account metadata with last price push info
       try {
-        const backend = await mt5Backend();
-        const { eq } = require("drizzle-orm");
-        const schema = backend.schema || require("../db/schema");
-        const existingAcct = await backend.db
-          .select({ metadata: schema.userAccounts.metadata })
-          .from(schema.userAccounts)
-          .where(eq(schema.userAccounts.accountId, account.account_id))
-          .limit(1);
-        const existingMeta =
-          dbQueries.parseJsonField(existingAcct[0]?.metadata) || {};
-        const mergedMeta = {
-          ...existingMeta,
-          last_price_push_at: new Date().toISOString(),
-          last_price_push_symbols: prices.length,
-          last_price_push_source: payload.source_id || "unknown",
-          last_price_push_elapsed_ms: elapsed,
-        };
-        await backend.db
-          .update(schema.userAccounts)
-          .set({
-            metadata: dbQueries.jsonField(mergedMeta),
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.userAccounts.accountId, account.account_id));
+        const targetId = String(account.account_id || "").trim();
+        const unified = await findUnifiedUserAccountById(targetId);
+        if (unified) {
+          const uid =
+            String(unified.user_id || CFG.mt5DefaultUserId).trim() ||
+            CFG.mt5DefaultUserId;
+          const store = getUserAccountObjectStore();
+          const existingDynamic = await getDynamicUserAccountRecord(
+            uid,
+            targetId,
+          );
+          const existingMeta =
+            existingDynamic?.metadata && typeof existingDynamic.metadata === "object"
+              ? existingDynamic.metadata
+              : unified?.metadata && typeof unified.metadata === "object"
+                ? unified.metadata
+                : {};
+          const mergedMeta = {
+            ...existingMeta,
+            last_price_push_at: new Date().toISOString(),
+            last_price_push_symbols: prices.length,
+            last_price_push_source: payload.source_id || "unknown",
+            last_price_push_elapsed_ms: elapsed,
+          };
+          await store.upsertDynamicObject(
+            uid,
+            "user_accounts",
+            targetId,
+            mergedMeta,
+            existingDynamic?.status || unified.status || "ACTIVE",
+            {
+              created_at:
+                existingDynamic?.created_at || unified.created_at || mt5NowIso(),
+              updated_at: mt5NowIso(),
+            },
+          );
+        }
       } catch (e) {
         console.error("[broker/prices] metadata update failed:", e);
       }
@@ -31043,12 +31737,31 @@ async function mt5RunSnapshotsCronInline() {
             .toUpperCase(),
         )
         .filter(Boolean);
+      const failedResults = Array.isArray(results)
+        ? results.filter((r) => r && r.status !== "ok")
+        : [];
+      const failedSymbols = failedResults
+        .map((r) => {
+          const sym = String(r?.symbol || "")
+            .trim()
+            .toUpperCase();
+          const err = String(r?.error || "").trim();
+          if (sym && err) return `${sym}: ${err}`;
+          return sym || err;
+        })
+        .filter(Boolean);
+      const captureErrorMessage = failedSymbols.length
+        ? `Snapshot capture failed: ${failedSymbols.join("; ")}`
+        : "Snapshot capture failed: no images were created";
       await updateHealthActivity(
         "CRON",
         String(conf.name || "SNAPSHOTS_CRON"),
         {
-          status: "ok",
-          message: `completed ${createdSymbols.join(", ") || "0 symbols"}`,
+          status: created.length === 0 ? "error" : "ok",
+          message:
+            created.length === 0
+              ? captureErrorMessage
+              : `completed ${createdSymbols.join(", ") || "0 symbols"}`,
           user_id: userId,
           cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
           broker: broker || null,
@@ -31057,20 +31770,34 @@ async function mt5RunSnapshotsCronInline() {
           timeframes: Array.isArray(tfs) ? tfs : [],
           created_count: created.length,
           created,
+          errors: failedSymbols,
           duration_ms: Date.now() - startedAt,
         },
       );
-      notificationManager.handle("CRON_SNAPSHOT", "completed", {
-        user_id: userId,
-        event: "cron_snapshot",
-        message:
-          createdSymbols.join(", ") || `${created.length} created`,
-        type: "info",
-        notification: true,
-        symbols: createdSymbols,
-        cron_name: String(conf.name || "SNAPSHOTS_CRON"),
-        created_count: created.length,
-      });
+      if (created.length === 0) {
+        notificationManager.handle("CRON_SNAPSHOT", "failed", {
+          user_id: userId,
+          event: "cron_snapshot",
+          message: captureErrorMessage,
+          type: "error",
+          notification: true,
+          cron_name: String(conf.name || "SNAPSHOTS_CRON"),
+          created_count: created.length,
+          errors: failedSymbols,
+        });
+      } else {
+        notificationManager.handle("CRON_SNAPSHOT", "completed", {
+          user_id: userId,
+          event: "cron_snapshot",
+          message:
+            createdSymbols.join(", ") || `${created.length} created`,
+          type: "info",
+          notification: true,
+          symbols: createdSymbols,
+          cron_name: String(conf.name || "SNAPSHOTS_CRON"),
+          created_count: created.length,
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       summary.errors.push(msg);
@@ -31102,6 +31829,201 @@ async function mt5RunSnapshotsCronInline() {
       });
       console.error(`[Cron][Snapshots] Failed userId=${userId}:`, msg);
     }
+  }
+  return summary;
+}
+
+async function runSnapshotsCronConfigNow(conf) {
+  const userId = conf.userId || conf.user_id;
+  const data = settingsStore.parseJsonField(conf.data) || {};
+  const cronName = String(conf.name || "SNAPSHOTS_CRON");
+  const summary = {
+    cron_name: cronName,
+    cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+    captured: 0,
+    skipped: 0,
+    symbols: [],
+    errors: [],
+  };
+  if (!asBool(data.enabled ?? true, true)) return summary;
+  const symbols = await resolveCronSymbols(data, userId);
+  const excludeSymbols = new Set(
+    (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
+      .map((s) => String(s).toUpperCase().trim())
+      .filter(Boolean),
+  );
+  const filteredSymbols = symbols.filter(
+    (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
+  );
+  const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
+  if (!filteredSymbols.length || !tfs.length) return summary;
+  const rawBatchSize = Number(data.symbols_per_tick);
+  const batchSize =
+    Number.isFinite(rawBatchSize) && rawBatchSize > 0
+      ? Math.max(1, Math.floor(rawBatchSize))
+      : filteredSymbols.length;
+  const tickSymbols =
+    batchSize < filteredSymbols.length
+      ? filteredSymbols.slice(0, batchSize)
+      : filteredSymbols;
+  console.log(
+    `[Cron][Snapshots][Manual] Running userId=${userId} name=${conf.name} symbols=${tickSymbols.length}/${filteredSymbols.length}`,
+  );
+  await writeObjectLog(userId, "cron", cronName, {
+    event: "CRON_SNAPSHOT",
+    level: "INFO",
+    message: `Manual execute started (${tickSymbols.length}/${filteredSymbols.length} symbols)`,
+    cron_name: cronName,
+    cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+    manual_run: true,
+    symbols: tickSymbols,
+    timeframes: tfs,
+  }).catch(() => {});
+  try {
+    const startedAt = Date.now();
+    const broker = String(data.broker || "");
+    const results = await captureTradingViewSnapshotsBatch({
+      symbols: tickSymbols,
+      timeframes: tfs,
+      provider: broker,
+      lookbackBars: Number(data.lookback_bars || 200),
+      format: String(data.format || "png"),
+      quality: Number(data.quality || 90),
+      theme: String(data.theme || "dark"),
+      width: Number(data.width || 1200),
+      height: Number(data.height || 800),
+      maxConcurrent: Math.min(
+        tickSymbols.length,
+        Math.max(
+          1,
+          Math.floor(asNum(process.env.SNAPSHOTS_CRON_SYMBOL_CONCURRENCY, 4)),
+        ),
+      ),
+      userId,
+    });
+    const created = [];
+    if (Array.isArray(results)) {
+      for (const r of results) {
+        if (r && r.status === "ok") {
+          summary.captured++;
+          summary.symbols.push(`${r.symbol || "?"}:${r.timeframe || "?"}`);
+          created.push({
+            symbol: r.symbol || "",
+            timeframe: r.timeframe || "",
+            file_name: r.file_name || "",
+            url: r.url || "",
+          });
+        }
+      }
+    }
+    const failedResults = Array.isArray(results)
+      ? results.filter((r) => r && r.status !== "ok")
+      : [];
+    const failedSymbols = failedResults
+      .map((r) => {
+        const sym = String(r?.symbol || "").trim().toUpperCase();
+        const err = String(r?.error || "").trim();
+        if (sym && err) return `${sym}: ${err}`;
+        return sym || err;
+      })
+      .filter(Boolean);
+    summary.errors = failedSymbols;
+    await writeObjectLog(userId, "cron", cronName, {
+      event: "CRON_SNAPSHOT",
+      level: created.length === 0 ? "ERROR" : "INFO",
+      message:
+        created.length === 0
+          ? failedSymbols.join("; ") || "Manual snapshot execute failed"
+          : `Manual execute completed: ${created.map((x) => x.symbol).join(", ") || "0 symbols"}`,
+      cron_name: cronName,
+      cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+      manual_run: true,
+      created_count: created.length,
+      symbols: created.map((x) => x.symbol).filter(Boolean),
+      errors: failedSymbols,
+    }).catch(() => {});
+    if (created.length === 0) {
+      notificationManager.handle("CRON_SNAPSHOT", "failed", {
+        user_id: userId,
+        event: "cron_snapshot",
+        message:
+          failedSymbols.join("; ") || "Manual snapshot execute failed",
+        type: "error",
+        notification: true,
+        cron_name: cronName,
+        created_count: created.length,
+        errors: failedSymbols,
+        manual_run: true,
+      });
+    } else {
+      notificationManager.handle("CRON_SNAPSHOT", "completed", {
+        user_id: userId,
+        event: "cron_snapshot",
+        message:
+          created.map((x) => x.symbol).filter(Boolean).join(", ") ||
+          `${created.length} created`,
+        type: "info",
+        notification: true,
+        symbols: created.map((x) => x.symbol).filter(Boolean),
+        cron_name: cronName,
+        created_count: created.length,
+        manual_run: true,
+      });
+    }
+    await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
+      status: created.length === 0 ? "error" : "ok",
+      message:
+        created.length === 0
+          ? failedSymbols.join("; ") || "Snapshot capture failed"
+          : `manual run completed ${created.map((x) => x.symbol).join(", ") || "0 symbols"}`,
+      user_id: userId,
+      cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+      broker: broker || null,
+      tick_symbols: tickSymbols,
+      all_symbols_count: filteredSymbols.length,
+      timeframes: Array.isArray(tfs) ? tfs : [],
+      created_count: created.length,
+      created,
+      errors: failedSymbols,
+      duration_ms: Date.now() - startedAt,
+      manual_run: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    summary.errors.push(msg);
+    await writeObjectLog(userId, "cron", cronName, {
+      event: "CRON_SNAPSHOT",
+      level: "ERROR",
+      message: `Manual execute failed: ${msg}`,
+      cron_name: cronName,
+      cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+      manual_run: true,
+      errors: [msg],
+    }).catch(() => {});
+    notificationManager.handle("CRON_SNAPSHOT", "failed", {
+      user_id: userId,
+      event: "cron_snapshot",
+      message: `Snapshots FAILED (${cronName}): ${msg}`,
+      type: "error",
+      notification: true,
+      cron_name: cronName,
+      error: msg,
+      manual_run: true,
+    });
+    await updateHealthActivity("CRON", String(conf.name || "SNAPSHOTS_CRON"), {
+      status: "error",
+      message: msg,
+      user_id: userId,
+      cron_type: String(data.cron_type || "SNAPSHOTS_CRON"),
+      broker: String(data.broker || "") || null,
+      tick_symbols: tickSymbols,
+      all_symbols_count: filteredSymbols.length,
+      timeframes: Array.isArray(tfs) ? tfs : [],
+      created_count: 0,
+      created: [],
+      errors: [msg],
+      manual_run: true,
+    });
   }
   return summary;
 }
@@ -31348,6 +32270,129 @@ async function mt5RunMarketDataCron() {
   return { queued: 1 };
 }
 
+async function runMarketDataCronConfigNow(conf) {
+  const userId = conf.userId || conf.user_id;
+  const data = settingsStore.parseJsonField(conf.data) || {};
+  const cronName = String(conf.name || "MARKET_DATA_CRON");
+  const summary = {
+    cron_name: cronName,
+    cron_type: String(data.cron_type || "MARKET_DATA_CRON"),
+    queued: 0,
+    symbols: [],
+    timeframes: [],
+  };
+  if (!marketDataCronSettingEnabled(data)) return summary;
+  const symbols = await resolveCronSymbols(data, userId);
+  const excludeSymbols = new Set(
+    (Array.isArray(data.exclude_symbols) ? data.exclude_symbols : [])
+      .map((s) => String(s).toUpperCase().trim())
+      .filter(Boolean),
+  );
+  const filteredSymbols = symbols.filter(
+    (s) => !excludeSymbols.has(String(s).toUpperCase().trim()),
+  );
+  const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
+  if (!filteredSymbols.length || !tfs.length) return summary;
+  const timezone = marketDataCronTimezone(data);
+  summary.symbols = filteredSymbols;
+  summary.timeframes = tfs;
+  console.log(
+    `[Cron][MarketData][Manual] Running userId=${userId} name=${conf.name} tfs=${tfs.join(",")} symbols=${filteredSymbols.length}`,
+  );
+  await writeObjectLog(userId, "cron", cronName, {
+    event: "TASK_FETCH",
+    level: "INFO",
+    message: `Manual execute started (${filteredSymbols.length} symbols, ${tfs.join(", ")})`,
+    cron_name: cronName,
+    cron_type: String(data.cron_type || "MARKET_DATA_CRON"),
+    manual_run: true,
+    symbols: filteredSymbols,
+    timeframes: tfs,
+  }).catch(() => {});
+  for (const tf of tfs) {
+    const tfSec = parseTfTokenToSeconds(tf);
+    const batchSize = Number(data.batch_size || CFG.marketDataCronBatchSize) || 8;
+    for (let i = 0; i < filteredSymbols.length; i += batchSize) {
+      const batch = filteredSymbols.slice(i, i + batchSize);
+      if (MARKET_DATA_QUEUE) {
+        const bucket = Math.floor(Date.now() / (tfSec * 1000));
+        await Promise.allSettled(
+          batch.map((symbol) => {
+            const symbolNorm = normalizeMarketDataSymbol(symbol);
+            const tfNorm = normalizeMarketDataTf(tf);
+            const jobId = `manual_market_${sanitizeBullJobIdPart(userId)}_${sanitizeBullJobIdPart(conf.name || "default")}_${sanitizeBullJobIdPart(symbolNorm)}_${sanitizeBullJobIdPart(tfNorm)}_${sanitizeBullJobIdPart(bucket)}`;
+            return MARKET_DATA_QUEUE.add(
+              "fetch-bars",
+              {
+                userId,
+                settingName: conf.name || "default",
+                symbol,
+                tf,
+                timezone,
+              },
+              { jobId },
+            );
+          }),
+        );
+      } else {
+        await Promise.all(
+          batch.map((symbol) =>
+            marketDataFetchJob({
+              userId,
+              settingName: conf.name || "default",
+              symbol,
+              tf,
+              timezone,
+            }).catch((err) =>
+              console.error(
+                `[Cron][MarketData][Manual] Failed symbol=${symbol} tf=${tf}:`,
+                err.message,
+              ),
+            ),
+          ),
+        );
+      }
+      summary.queued += batch.length;
+    }
+    await marketDataUpdateCronState({
+      userId,
+      settingName: conf.name || "default",
+      symbol: "_cron",
+      tf,
+      patch: {
+        timezone,
+        queued_at: new Date().toISOString(),
+        symbols_count: filteredSymbols.length,
+        batch_size: batchSize,
+        queue: MARKET_DATA_QUEUE ? "bullmq" : "inline",
+        manual_run: true,
+      },
+    }).catch(() => {});
+  }
+  await writeObjectLog(userId, "cron", cronName, {
+    event: "TASK_FETCH",
+    level: "INFO",
+    message: `Manual execute queued ${summary.queued} market data jobs`,
+    cron_name: cronName,
+    cron_type: String(data.cron_type || "MARKET_DATA_CRON"),
+    manual_run: true,
+    queued: summary.queued,
+    symbols: filteredSymbols,
+    timeframes: tfs,
+  }).catch(() => {});
+  notificationManager.handle("SYSTEM_EVENT", "cron_md_manual", {
+    message: `Market data cron manual run: ${cronName} queued ${summary.queued}`,
+    type: "info",
+    notification: true,
+    cron_name: cronName,
+    symbols: filteredSymbols,
+    timeframes: tfs,
+    queued: summary.queued,
+    manual_run: true,
+  });
+  return summary;
+}
+
 async function mt5RunAiAnalysisCronInline() {
   const rows = await settingsStore.listUserSettingsByType(null, "cron");
   const configs = (rows || []).filter((r) => {
@@ -31557,6 +32602,179 @@ async function mt5RunAiAnalysisCronInline() {
     }
   }
   return { triggered };
+}
+
+async function runAiAnalysisCronConfigNow(conf) {
+  const userId = conf.userId || conf.user_id;
+  const data = settingsStore.parseJsonField(conf.data) || {};
+  const confName = String(conf.name || "ANALYSIS_CRON");
+  const summary = {
+    cron_name: confName,
+    cron_type: String(data.cron_type || "ANALYSIS_CRON"),
+    triggered: 0,
+    results: [],
+  };
+  const symbols = await resolveCronSymbols(data, userId);
+  const tfs = Array.isArray(data.timeframes) ? data.timeframes : [];
+  if (!symbols.length) return summary;
+  console.log(
+    `[Cron][AiAnalysis][Manual] Running userId=${userId} name=${conf.name} symbols=${symbols.length}`,
+  );
+  const pickupMode = String(data.pickup_mode || "all").toLowerCase();
+  const runSymbols =
+    pickupMode === "random"
+      ? [symbols[Math.floor(Math.random() * symbols.length)]]
+      : symbols;
+  await writeObjectLog(userId, "cron", confName, {
+    event: "CRON_AI_ANALYSIS",
+    level: "INFO",
+    message: `Manual execute started (${runSymbols.length} symbols)`,
+    cron_name: confName,
+    cron_type: String(data.cron_type || "ANALYSIS_CRON"),
+    manual_run: true,
+    symbols: runSymbols,
+    timeframes: tfs,
+  }).catch(() => {});
+  for (const symbol of runSymbols) {
+    try {
+      const runTimeframes = tfs.length ? tfs : ["D", "4H", "15m", "5m"];
+      const forceRefreshSnapshots =
+        data.refresh_snapshot === true || data.snapshot_refresh === true;
+      let shouldRefreshSnapshots = forceRefreshSnapshots;
+      if (!shouldRefreshSnapshots) {
+        const recent = findRecentChartSnapshots({
+          symbol,
+          provider: String(data.broker || "ICMARKETS"),
+          timeframes: runTimeframes,
+          maxAgeMs: 5 * 60 * 1000,
+        });
+        shouldRefreshSnapshots =
+          !Array.isArray(recent.items) ||
+          recent.items.length < recent.target_timeframes.length;
+      }
+      if (shouldRefreshSnapshots) {
+        await captureTradingViewSnapshotsBatch({
+          symbol,
+          provider: String(data.broker || "ICMARKETS"),
+          timeframes: runTimeframes,
+          lookbackBars: Number(data.lookback_bars || 300),
+          format: "png",
+          quality: 70,
+          theme: "dark",
+        });
+      }
+      const analyzePayload = JSON.stringify({
+        symbol,
+        timeframes: runTimeframes,
+        model: data.model || "claude-sonnet-4-0",
+        auto_save: data.auto_save || "trades",
+        prompt: data.prompt || "",
+        profile: data.profile || "",
+        provider: data.broker || "ICMARKETS",
+        snapshot_refresh: shouldRefreshSnapshots,
+      });
+      const { statusCode, body } = await new Promise((resolve, reject) => {
+        const req = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: 3001,
+            path: "/v2/chart/snapshots/analyze",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": CFG.signalApiKey || "",
+              "Content-Length": Buffer.byteLength(analyzePayload),
+            },
+            timeout: 180000,
+          },
+          (res) => {
+            let b = "";
+            res.on("data", (chunk) => (b += chunk));
+            res.on("end", () => resolve({ statusCode: res.statusCode, body: b }));
+          },
+        );
+        req.on("error", (e) => reject(e));
+        req.on("timeout", () => {
+          req.destroy();
+          reject(new Error("timeout"));
+        });
+        req.write(analyzePayload);
+        req.end();
+      });
+      let parsedBody = null;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {}
+      const ok = statusCode >= 200 && statusCode < 300;
+      const failureDetail = ok
+        ? ""
+        : extractCronAiFailureDetail(body) ||
+          String(parsedBody?.error || parsedBody?.message || "").trim();
+      summary.triggered++;
+      summary.results.push({
+        symbol,
+        ok,
+        statusCode,
+        error: failureDetail || null,
+      });
+      fileLog(symbol, "cron", {
+        event: "CRON_AI_ANALYSIS",
+        level: ok ? "INFO" : "ERROR",
+        message: ok
+          ? `${symbol} manual run completed`
+          : `${symbol} ERROR${failureDetail ? `: ${failureDetail}` : ` (${statusCode})`}`,
+        cron_name: confName,
+        symbol,
+        status: ok ? "ok" : "error",
+        manual_run: true,
+      });
+    } catch (err) {
+      summary.results.push({
+        symbol,
+        ok: false,
+        statusCode: 500,
+        error: err.message,
+      });
+    }
+  }
+  const failed = summary.results.filter((x) => !x.ok);
+  await writeObjectLog(userId, "cron", confName, {
+    event: "CRON_AI_ANALYSIS",
+    level: failed.length ? "ERROR" : "INFO",
+    message: failed.length
+      ? `Manual execute finished with ${failed.length} failure(s)`
+      : `Manual execute completed for ${summary.results.length} symbol(s)`,
+    cron_name: confName,
+    cron_type: String(data.cron_type || "ANALYSIS_CRON"),
+    manual_run: true,
+    results: summary.results,
+  }).catch(() => {});
+  notificationManager.handle("SYSTEM_EVENT", "cron_ai_manual", {
+    message: failed.length
+      ? `AI cron manual run ${confName}: ${failed.length} failed`
+      : `AI cron manual run ${confName}: ${summary.results.length} completed`,
+    type: failed.length ? "warning" : "info",
+    notification: true,
+    cron_name: confName,
+    results: summary.results,
+    manual_run: true,
+  });
+  return summary;
+}
+
+async function runCronSettingNow(conf) {
+  const data = settingsStore.parseJsonField(conf?.data) || {};
+  const cronType = String(data.cron_type || "").toUpperCase();
+  if (cronType === "MARKET_DATA_CRON") {
+    return runMarketDataCronConfigNow(conf);
+  }
+  if (cronType === "ANALYSIS_CRON") {
+    return runAiAnalysisCronConfigNow(conf);
+  }
+  if (cronType === "SNAPSHOT_CRON" || cronType === "SNAPSHOTS_CRON") {
+    return runSnapshotsCronConfigNow(conf);
+  }
+  throw new Error(`Unsupported cron type: ${cronType || "unknown"}`);
 }
 async function mt5RunAiAnalysisCron() {
   const queueReady = Boolean(AI_ANALYSIS_CRON_QUEUE && AI_ANALYSIS_CRON_WORKER);

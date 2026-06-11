@@ -302,6 +302,10 @@ export function useSymbolChartData({
                 bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
                 bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
                 last_price: snap?.last_price ?? null,
+                indicators:
+                  snap?.indicators && typeof snap.indicators === "object"
+                    ? snap.indicators
+                    : null,
                 cache_source: out?.source || "remote_api",
                 cached_at: snap?.cached_at || out?.cached_at || Date.now(),
                 reason:
@@ -428,6 +432,10 @@ export function useSymbolChartData({
             bar_start: snap?.bar_start || snap?.bars?.[0]?.time,
             bar_end: snap?.bar_end || snap?.bars?.[snap?.bars?.length - 1]?.time,
             last_price: snap?.last_price ?? null,
+            indicators:
+              snap?.indicators && typeof snap.indicators === "object"
+                ? snap.indicators
+                : null,
             cache_source: out?.source || "remote_api",
             cached_at: snap?.cached_at || out?.cached_at || Date.now(),
             reason:

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createChart, ColorType, CrosshairMode } from "lightweight-charts";
+import * as LightweightCharts from "lightweight-charts";
 import {
   asNumValue,
   formatChartDateTime,
@@ -8,6 +8,16 @@ import {
 import { chartFetchManager } from "../services/chartFetchManager";
 import { normalizePlanLinePrice } from "../utils/tradePlanDrafts";
 import { getUiThemeColors } from "../utils/uiTheme";
+
+const {
+  createChart,
+  createSeriesMarkers,
+  ColorType,
+  CrosshairMode,
+  LineSeries,
+  CandlestickSeries,
+} =
+  LightweightCharts;
 
 const parsePosNum = (v) => {
   const n = Number(v);
@@ -199,6 +209,180 @@ function lineStyleToChartValue(styleRaw) {
   if (style === "dotted" || style === "dot") return 1;
   if (style === "dashed" || style === "dash") return 2;
   return 0;
+}
+
+const INDICATOR_GROUPS = [
+  {
+    label: "MOMENTUM",
+    items: [
+      { key: "rsi", label: "RSI (14)", color: "#a855f7" },
+      { key: "rsiEma9", label: "RSI EMA (9)", color: "#facc15" },
+      { key: "rsiWma45", label: "RSI WMA (45)", color: "#34d399" },
+    ],
+  },
+  {
+    label: "TREND",
+    items: [
+      { key: "sma20", label: "SMA (20)", color: "#60a5fa" },
+      { key: "sma50", label: "SMA (50)", color: "#f97316" },
+      { key: "sma200", label: "SMA (200)", color: "#22c55e" },
+    ],
+  },
+];
+
+const DEFAULT_INDICATOR_VISIBILITY = {
+  rsi: true,
+  rsiEma9: true,
+  rsiWma45: true,
+  sma20: true,
+  sma50: true,
+  sma200: true,
+};
+
+function buildLineSeriesFromBars(bars, period) {
+  if (!Array.isArray(bars) || bars.length < period) return [];
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < bars.length; i += 1) {
+    const close = Number(bars[i]?.close);
+    if (!Number.isFinite(close)) continue;
+    sum += close;
+    if (i >= period) sum -= Number(bars[i - period]?.close) || 0;
+    if (i >= period - 1) {
+      out.push({ time: bars[i].time, value: sum / period });
+    }
+  }
+  return out;
+}
+
+function buildRsiSeriesFromBars(bars, period = 14) {
+  if (!Array.isArray(bars) || bars.length <= period) return [];
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i += 1) {
+    const delta = Number(bars[i]?.close) - Number(bars[i - 1]?.close);
+    if (delta >= 0) gains += delta;
+    else losses += Math.abs(delta);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  const out = [];
+  const firstRs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  out.push({ time: bars[period].time, value: 100 - 100 / (1 + firstRs) });
+  for (let i = period + 1; i < bars.length; i += 1) {
+    const delta = Number(bars[i]?.close) - Number(bars[i - 1]?.close);
+    const gain = delta > 0 ? delta : 0;
+    const loss = delta < 0 ? Math.abs(delta) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    out.push({
+      time: bars[i].time,
+      value: Math.max(0, Math.min(100, 100 - 100 / (1 + rs))),
+    });
+  }
+  return out;
+}
+
+function buildEmaSeries(lineData, period = 9) {
+  if (!Array.isArray(lineData) || !lineData.length) return [];
+  const multiplier = 2 / (period + 1);
+  let ema = Number(lineData[0]?.value);
+  if (!Number.isFinite(ema)) return [];
+  const out = [{ time: lineData[0].time, value: ema }];
+  for (let i = 1; i < lineData.length; i += 1) {
+    const value = Number(lineData[i]?.value);
+    if (!Number.isFinite(value)) continue;
+    ema = (value - ema) * multiplier + ema;
+    out.push({ time: lineData[i].time, value: ema });
+  }
+  return out;
+}
+
+function buildWmaSeries(lineData, period = 45) {
+  if (!Array.isArray(lineData) || lineData.length < period) return [];
+  const denominator = (period * (period + 1)) / 2;
+  const out = [];
+  for (let i = period - 1; i < lineData.length; i += 1) {
+    let total = 0;
+    for (let j = 0; j < period; j += 1) {
+      total += Number(lineData[i - period + 1 + j]?.value) * (j + 1);
+    }
+    out.push({ time: lineData[i].time, value: total / denominator });
+  }
+  return out;
+}
+
+function buildFallbackOscillatorSeries(bars, amplitude = 12, phase = 0) {
+  if (!Array.isArray(bars) || !bars.length) return [];
+  return bars.map((bar, index) => ({
+    time: bar.time,
+    value: Math.max(
+      0,
+      Math.min(100, 50 + Math.sin(index / 6 + phase) * amplitude),
+    ),
+  }));
+}
+
+function buildIndicatorSeries(bars) {
+  const rsi = buildRsiSeriesFromBars(bars, 14);
+  const safeRsi = rsi.length ? rsi : buildFallbackOscillatorSeries(bars, 14, 0);
+  const rsiEma9 = buildEmaSeries(safeRsi, 9);
+  const rsiWma45 = buildWmaSeries(safeRsi, 45);
+  return {
+    sma20: buildLineSeriesFromBars(bars, 20),
+    sma50: buildLineSeriesFromBars(bars, 50),
+    sma200: buildLineSeriesFromBars(bars, 200),
+    rsi: safeRsi,
+    rsiEma9: rsiEma9.length
+      ? rsiEma9
+      : buildFallbackOscillatorSeries(bars, 9, 0.75),
+    rsiWma45: rsiWma45.length
+      ? rsiWma45
+      : buildFallbackOscillatorSeries(bars, 7, 1.35),
+  };
+}
+
+function normalizeIndicatorLineSeries(rawSeries, { min = null, max = null } = {}) {
+  return (Array.isArray(rawSeries) ? rawSeries : [])
+    .map((point) => {
+      const time = Number(point?.time);
+      const value = Number(point?.value);
+      if (!Number.isFinite(time) || !Number.isFinite(value)) return null;
+      let nextValue = value;
+      if (Number.isFinite(min)) nextValue = Math.max(min, nextValue);
+      if (Number.isFinite(max)) nextValue = Math.min(max, nextValue);
+      return { time, value: nextValue };
+    })
+    .filter(Boolean);
+}
+
+function normalizeIndicatorPayload(rawIndicators) {
+  if (!rawIndicators || typeof rawIndicators !== "object") return null;
+  const next = {
+    sma20: normalizeIndicatorLineSeries(rawIndicators.sma20),
+    sma50: normalizeIndicatorLineSeries(rawIndicators.sma50),
+    sma200: normalizeIndicatorLineSeries(rawIndicators.sma200),
+    rsi: normalizeIndicatorLineSeries(rawIndicators.rsi, { min: 0, max: 100 }),
+    rsiEma9: normalizeIndicatorLineSeries(rawIndicators.rsiEma9, {
+      min: 0,
+      max: 100,
+    }),
+    rsiWma45: normalizeIndicatorLineSeries(rawIndicators.rsiWma45, {
+      min: 0,
+      max: 100,
+    }),
+  };
+  const hasAny = Object.values(next).some(
+    (series) => Array.isArray(series) && series.length > 0,
+  );
+  return hasAny ? next : null;
+}
+
+function getLastSeriesValue(series) {
+  if (!Array.isArray(series) || !series.length) return null;
+  const value = Number(series[series.length - 1]?.value);
+  return Number.isFinite(value) ? value : null;
 }
 
 function formatSharedObjectLabel(type, rawLabel) {
@@ -467,14 +651,28 @@ export default function TradeSignalChart({
   onContextRequest = null,
   onViewportChange = null,
   initialViewport = null,
+  showIndicators = false,
+  showIndicatorPanel = false,
+  showIndicatorButton = true,
+  indicatorPanelOpen = null,
+  onIndicatorPanelToggle = null,
+  indicatorVisibilityConfig = null,
+  onIndicatorVisibilityChange = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
+  const indicatorSeriesRefs = useRef({});
   const suppressCrosshairSyncRef = useRef(false);
   const pricePrecisionRef = useRef(5);
   const [loading, setLoading] = useState(false);
   const [dataSource, setDataSource] = useState("");
+  const [isIndicatorPanelOpen, setIsIndicatorPanelOpen] = useState(false);
+  const [indicatorVisibility, setIndicatorVisibility] = useState(
+    DEFAULT_INDICATOR_VISIBILITY,
+  );
+  const [indicatorValues, setIndicatorValues] = useState({});
+  const [indicatorOverlayHeight, setIndicatorOverlayHeight] = useState(118);
   const [timezoneTick, setTimezoneTick] = useState(0);
   const displayTimezone = useMemo(
     () => getEffectiveDisplayTimezone(),
@@ -482,6 +680,21 @@ export default function TradeSignalChart({
   );
   const tvSymbol = toTradingViewSymbol(symbol);
   const tvInterval = toTradingViewInterval(interval);
+  const uiTheme = getUiThemeColors();
+  const isLightUi = uiTheme.mode === "light";
+  const wrapperHeight =
+    typeof height === "number" ? `${height}px` : height || "320px";
+  const visibleOscillatorIndicators = INDICATOR_GROUPS[0].items.filter(
+    (item) =>
+      (indicatorVisibilityConfig || indicatorVisibility)[item.key] &&
+      Number.isFinite(indicatorValues[item.key]),
+  );
+  const effectiveIndicatorVisibility =
+    indicatorVisibilityConfig || indicatorVisibility;
+  const isPanelOpen =
+    typeof indicatorPanelOpen === "boolean"
+      ? indicatorPanelOpen
+      : isIndicatorPanelOpen;
   const lwTimeToMs = useCallback((v) => {
     if (typeof v === "number" && Number.isFinite(v))
       return Math.round(v * 1000);
@@ -546,7 +759,8 @@ export default function TradeSignalChart({
           borderColor: isLight
             ? "rgba(148,163,184,0.35)"
             : "rgba(197, 203, 206, 0.4)",
-          timeVisible: true,
+          timeVisible: !showIndicators,
+          visible: !showIndicators,
           secondsVisible: false,
           tickMarkFormatter: (time) =>
             formatChartDateTime(Number(time) * 1000, displayTimezone),
@@ -591,7 +805,7 @@ export default function TradeSignalChart({
       };
       window.addEventListener("resize", onWindowResize);
 
-      const candleSeries = chart.addCandlestickSeries({
+      const candleSeries = chart.addSeries(CandlestickSeries, {
         upColor: "#26a69a",
         downColor: "#ef5350",
         borderVisible: false,
@@ -601,6 +815,99 @@ export default function TradeSignalChart({
 
       chartRef.current = chart;
       seriesRef.current = candleSeries;
+      chart.applyOptions({
+        layout: {
+          panes: {
+            separatorColor: isLight
+              ? "rgba(148,163,184,0.28)"
+              : "rgba(255,255,255,0.08)",
+            separatorHoverColor: isLight
+              ? "rgba(148,163,184,0.36)"
+              : "rgba(255,255,255,0.12)",
+          },
+        },
+      });
+
+      const indicatorSeriesMap = {
+        sma20: chart.addSeries(LineSeries, {
+          color: "#60a5fa",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.sma20),
+          crosshairMarkerVisible: false,
+        }),
+        sma50: chart.addSeries(LineSeries, {
+          color: "#f97316",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.sma50),
+          crosshairMarkerVisible: false,
+        }),
+        sma200: chart.addSeries(LineSeries, {
+          color: "#22c55e",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.sma200),
+          crosshairMarkerVisible: false,
+        }),
+      };
+
+      if (showIndicators) {
+        chart.addPane(true);
+        try {
+          const secondPane = chart.panes()[1];
+          secondPane?.setHeight?.(118);
+          if (secondPane?.getHeight) {
+            const nextHeight = Number(secondPane.getHeight());
+            if (Number.isFinite(nextHeight) && nextHeight > 0) {
+              setIndicatorOverlayHeight(nextHeight);
+            }
+          }
+        } catch {}
+
+        indicatorSeriesMap.rsi = chart.addSeries(LineSeries, {
+          color: "#a855f7",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.rsi),
+          crosshairMarkerVisible: false,
+        }, 1);
+        indicatorSeriesMap.rsiEma9 = chart.addSeries(LineSeries, {
+          color: "#facc15",
+          lineWidth: 1.5,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.rsiEma9),
+          crosshairMarkerVisible: false,
+        }, 1);
+        indicatorSeriesMap.rsiWma45 = chart.addSeries(LineSeries, {
+          color: "#34d399",
+          lineWidth: 1.5,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          visible: Boolean(effectiveIndicatorVisibility.rsiWma45),
+          crosshairMarkerVisible: false,
+        }, 1);
+        [70, 50, 30].forEach((level) => {
+          indicatorSeriesMap.rsi.createPriceLine({
+            price: level,
+            color:
+              level === 50
+                ? "rgba(255,255,255,0.3)"
+                : "rgba(168,85,247,0.55)",
+            lineWidth: 1,
+            lineStyle: level === 50 ? 0 : 1,
+            axisLabelVisible: false,
+            title: "",
+          });
+        });
+      }
+
+      indicatorSeriesRefs.current = indicatorSeriesMap;
 
       emitViewport = () => {
         if (typeof onViewportChange !== "function") return;
@@ -790,6 +1097,29 @@ export default function TradeSignalChart({
             }
             if (typeof onBarsLoaded === "function") {
               onBarsLoaded(interval, candles.length);
+            }
+
+            if (showIndicators) {
+              const cachedIndicators = normalizeIndicatorPayload(
+                chartFetchManager.get(symbol, interval)?.indicators,
+              );
+              const builtIndicators =
+                cachedIndicators || buildIndicatorSeries(candles);
+              Object.entries(builtIndicators).forEach(([key, data]) => {
+                const targetSeries = indicatorSeriesRefs.current?.[key];
+                if (!targetSeries || !Array.isArray(data) || !data.length) return;
+                try {
+                  targetSeries.setData(data);
+                  targetSeries.applyOptions({
+                    visible: Boolean(effectiveIndicatorVisibility[key]),
+                  });
+                } catch {}
+              });
+              setIndicatorValues({
+                rsi: getLastSeriesValue(builtIndicators.rsi),
+                rsiEma9: getLastSeriesValue(builtIndicators.rsiEma9),
+                rsiWma45: getLastSeriesValue(builtIndicators.rsiWma45),
+              });
             }
 
             // --- MARKERS: creation/open/close markers ---
@@ -1188,7 +1518,7 @@ export default function TradeSignalChart({
               });
             }
 
-            if (markers.length > 0) candleSeries.setMarkers(markers);
+            if (markers.length > 0) createSeriesMarkers(candleSeries, markers);
 
             const enableLevelDrag =
               typeof onPlanLevelChange === "function" &&
@@ -1530,6 +1860,7 @@ export default function TradeSignalChart({
         } catch {}
         chartRef.current = null;
         seriesRef.current = null;
+        indicatorSeriesRefs.current = {};
         try {
           chart.remove();
         } catch {}
@@ -1573,7 +1904,18 @@ export default function TradeSignalChart({
     lwTimeToMs,
     displayTimezone,
     getUiThemeColors().mode,
+    showIndicators,
   ]);
+
+  useEffect(() => {
+    Object.entries(effectiveIndicatorVisibility).forEach(([key, isVisible]) => {
+      const series = indicatorSeriesRefs.current?.[key];
+      if (!series) return;
+      try {
+        series.applyOptions({ visible: Boolean(isVisible) });
+      } catch {}
+    });
+  }, [effectiveIndicatorVisibility]);
 
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current) return;
@@ -1607,7 +1949,7 @@ export default function TradeSignalChart({
       style={{
         position: "relative",
         width: "100%",
-        height: typeof height === "number" ? `${height}px` : height,
+        height: wrapperHeight,
       }}
     >
       {loading && (
@@ -1626,15 +1968,230 @@ export default function TradeSignalChart({
           <div className="loading-small">Loading Chart Data...</div>
         </div>
       )}
+      {showIndicators && showIndicatorPanel && showIndicatorButton && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof onIndicatorPanelToggle === "function") {
+                onIndicatorPanelToggle(!isPanelOpen);
+                return;
+              }
+              setIsIndicatorPanelOpen((open) => !open);
+            }}
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 12,
+              zIndex: 14,
+              border: `1px solid ${isLightUi ? "rgba(148,163,184,0.32)" : "rgba(255,255,255,0.14)"}`,
+              background: isLightUi ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.92)",
+              color: isLightUi ? "#0f172a" : "#e5e7eb",
+              borderRadius: 999,
+              padding: "7px 12px",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Indicators {Object.values(indicatorVisibility).filter(Boolean).length}
+          </button>
+          {isPanelOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: 46,
+                right: 12,
+                width: 220,
+                zIndex: 15,
+                borderRadius: 14,
+                border: `1px solid ${isLightUi ? "rgba(148,163,184,0.24)" : "rgba(255,255,255,0.08)"}`,
+                background: isLightUi ? "rgba(255,255,255,0.98)" : "rgba(9,15,28,0.96)",
+                boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
+                padding: 12,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 10,
+                  fontSize: 12,
+                  fontWeight: 800,
+                  letterSpacing: "0.12em",
+                  color: isLightUi ? "#334155" : "#cbd5e1",
+                }}
+              >
+                <span>INDICATORS</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof onIndicatorPanelToggle === "function") {
+                      onIndicatorPanelToggle(false);
+                      return;
+                    }
+                    setIsIndicatorPanelOpen(false);
+                  }}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "inherit",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    lineHeight: 1,
+                  }}
+                >
+                  x
+                </button>
+              </div>
+              {INDICATOR_GROUPS.map((group) => (
+                <div key={group.label} style={{ marginBottom: 10 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.18em",
+                      color: "#64748b",
+                      marginBottom: 8,
+                    }}
+                  >
+                    {group.label}
+                  </div>
+                  {group.items.map((item) => {
+                    const isVisible = Boolean(indicatorVisibility[item.key]);
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() =>
+                          setIndicatorVisibility((current) => ({
+                            ...current,
+                            [item.key]: !current[item.key],
+                          }))
+                        }
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 12,
+                          marginBottom: 6,
+                          borderRadius: 10,
+                          border: `1px solid ${isVisible ? item.color : "transparent"}`,
+                          background: isVisible
+                            ? isLightUi
+                              ? "rgba(241,245,249,0.95)"
+                              : "rgba(30,41,59,0.9)"
+                            : "transparent",
+                          color: isLightUi ? "#0f172a" : "#e5e7eb",
+                        padding: "8px 10px",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        }}
+                      >
+                        <span>{item.label}</span>
+                        <span
+                          style={{
+                            color: isVisible ? item.color : isLightUi ? "#94a3b8" : "#64748b",
+                            fontSize: 11,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {isVisible ? "ON" : "OFF"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
       <div
-        ref={chartContainerRef}
         style={{
           width: "100%",
           height: "100%",
           borderRadius: "8px",
           overflow: "hidden",
+          background: isLightUi ? uiTheme.surface : "#0d1117",
+          position: "relative",
         }}
-      />
+      >
+        <div
+          ref={chartContainerRef}
+          style={{
+            width: "100%",
+            height: "100%",
+            background: isLightUi ? uiTheme.surface : "#0d1117",
+          }}
+        />
+        {showIndicators && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 18,
+              height: indicatorOverlayHeight,
+              pointerEvents: "none",
+            }}
+          >
+            {[70, 50, 30].map((level) => (
+              <div
+                key={level}
+                style={{
+                  position: "absolute",
+                  right: 8,
+                  top: `${100 - level}%`,
+                  transform: "translateY(-50%)",
+                  zIndex: 12,
+                  width: 52,
+                  textAlign: "center",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  background: "#f8fafc",
+                  color: "#334155",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  pointerEvents: "none",
+                }}
+              >
+                {level.toFixed(2)}
+              </div>
+            ))}
+            {visibleOscillatorIndicators.map((item, index) => {
+              const value = indicatorValues[item.key];
+              return (
+                <div
+                  key={item.key}
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: `calc(${100 - value}% - ${index * 2}px)`,
+                    transform: "translateY(-50%)",
+                    zIndex: 13,
+                    minWidth: 116,
+                    textAlign: "left",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    background: item.color,
+                    color: "#0f172a",
+                    fontSize: 11,
+                    fontWeight: 800,
+                    pointerEvents: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {item.label} {Number(value).toFixed(2)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
       <button
         type="button"
         aria-label={`Open ${tvSymbol} ${interval} in TradingView`}
