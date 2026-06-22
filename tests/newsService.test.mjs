@@ -7,8 +7,8 @@ const {
   buildTrackedNewsEvents,
   collectEffectiveSymbolsForPhase,
   parseForexFactoryTimestamp,
-} = require("../webhook/newsService.js");
-const { normalizeSymbolGroupsData } = require("../webhook/symbolGroups.js");
+} = require("../src/api/news/newsService.js");
+const { normalizeSymbolGroupsData } = require("../src/api/utils/symbolGroups.js");
 
 const APP_CONFIG = {
   news: {

@@ -1,0 +1,14 @@
+{
+  "key": "triple_ema_trend_v1",
+  "name": "Triple EMA Trend v1",
+  "kind": "preset",
+  "description": "Aligns fast, medium, and slow EMAs to ride trend continuation phases.",
+  "params": {
+    "fast_period": 8,
+    "mid_period": 21,
+    "slow_period": 55,
+    "rr_target": 2,
+    "stop_lookback": 3
+  },
+  "min_bars": 80
+}

@@ -36,9 +36,9 @@ Multiple UI regressions reported after recent AI/trade header and editor updates
   - Date: `Tue May 19 11:07:33 2026 +0200`
   - Message: `feat: AI nav buttons, TradePlan RR sliders, static chart wiring, close auto-snapshot, chart objects API`
 - Files touched include:
-  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
-  - `web-ui/src/components/TradePlanEditor.jsx`
-  - `web-ui/src/components/charts/SymbolChart.jsx`
+  - `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `src/ui/src/components/TradePlanEditor.jsx`
+  - `src/ui/src/components/charts/SymbolChart.jsx`
 
 ## Solution
 1. **Restore Analyze behavior in target context**
@@ -62,5 +62,5 @@ Multiple UI regressions reported after recent AI/trade header and editor updates
 - [ ] TradePlan slider tracks/labels/plus controls are fully visible (no clipping) on screenshot-size viewport.
 - [ ] SL/RR/RR2/RR3 labels do not overlap neighboring controls.
 - [ ] Health page visual rhythm matches app-wide style conventions.
-- [ ] `rtk npm --prefix web-ui run build` passes.
+- [ ] `rtk npm --prefix src/ui run build` passes.
 

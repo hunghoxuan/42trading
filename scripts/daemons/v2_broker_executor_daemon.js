@@ -4,7 +4,7 @@
 /**
  * V2 Broker Executor Daemon (paper executor)
  *
- * Pulls trades from /v2/broker/pull using account API key, then acks them via /v2/broker/ack.
+ * Pulls trades from /api/broker/pull using account API key, then acks them via /api/broker/ack.
  * Default behavior:
  * - market order -> OPEN
  * - limit/stop order -> PENDING
@@ -88,7 +88,7 @@ async function processTrade(item) {
     console.log(
       `[${TAG}] release type=${taskType} trade=${tradeId} — deferring to real broker`,
     );
-    await postJson("/v2/broker/ack", {
+    await postJson("/api/broker/ack", {
       trade_id: tradeId,
       lease_token: leaseToken,
       execution_status: item?.execution_status || "PENDING",
@@ -119,7 +119,7 @@ async function processTrade(item) {
     },
   };
 
-  const out = await postJson("/v2/broker/ack", ackPayload);
+  const out = await postJson("/api/broker/ack", ackPayload);
   console.log(
     `[${TAG}] ack ok trade=${tradeId} status=${executionStatus} ticket=${ticket} resp=${JSON.stringify(
       {
@@ -132,7 +132,7 @@ async function processTrade(item) {
 }
 
 async function once() {
-  const out = await postJson("/v2/broker/pull", {
+  const out = await postJson("/api/broker/pull", {
     max_items: MAX_ITEMS,
     task_type: "OPEN",
   });

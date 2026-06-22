@@ -20,7 +20,7 @@ The chart correctly renders the entry/SL/TP lines from JSON data, but the form s
 
 ## Investigation
 
-### Affected Functions (all in `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`)
+### Affected Functions (all in `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`)
 
 #### 1. `planEntryNumber` (L581-594)
 Current candidate order:

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # =============================================================================
-# deploy_webhook.sh — Deploy webhook + web-ui to VPS
+# deploy_webhook.sh — Deploy src/api + src/admin to VPS
 # =============================================================================
 # Architecture:
-#   Port 443  → nginx → serves web-ui (dist/) + proxies /v2/*, /health, etc. to :3001
-#   Port 3001 → webhook (API only, no HTTPS)
+#   Port 443  → nginx → serves src/admin (dist/) + proxies /api/*, /health, etc. to :3001
+#   Port 3001 → src/api (API only, no HTTPS)
 #
 # Prerequisites (VPS):
 #   - Node.js 20+
 #   - PostgreSQL with mt5_bridge database
 #   - nginx with SSL (trade.mozasolution.com)
 #   - PM2 (npm i -g pm2)
-#   - /opt/trading/webhook/.env with:
+#   - /opt/trading/src/api/.env with:
 #       PORT=3001
 #       MT5_STORAGE=postgres
 #       MT5_POSTGRES_URL=postgresql://user:pass@127.0.0.1:5432/mt5_bridge
@@ -30,7 +30,7 @@ BRANCH="${BRANCH:-main}"
 PUSH_FIRST="${PUSH_FIRST:-1}"
 VPS_HOST="${VPS_HOST:-root@139.59.211.192}"
 VPS_APP_DIR="${VPS_APP_DIR:-/opt/trading}"
-SERVICE_NAME="${SERVICE_NAME:-webhook}"
+SERVICE_NAME="${SERVICE_NAME:-src/api}"
 REMOTE_HEALTH_BASE_URL="${REMOTE_HEALTH_BASE_URL:-https://trade.mozasolution.com}"
 
 echo "============================================"
@@ -50,9 +50,9 @@ if [[ -f "scripts/deploy/check_build_versions.sh" ]]; then
   bash scripts/deploy/check_build_versions.sh "origin/${BRANCH}" || true
 fi
 
-# ── Step 2: Build web-ui locally ──
-echo "[2/6] Building web-ui..."
-npm --prefix web-ui run build
+# ── Step 2: Build src/admin locally ──
+echo "[2/6] Building src/admin..."
+pnpm --dir src/admin run build
 
 # ── Step 3: Push to origin ──
 if [[ "${PUSH_FIRST}" == "1" ]]; then
@@ -74,25 +74,23 @@ git checkout main
 git pull --ff-only origin main
 
 echo "  [vps] Removing local-only DB tooling..."
-rm -rf /opt/trading/db/db-manager
-rm -f /opt/trading/db/start_db.sh
+rm -rf /opt/trading/src/apps/db-manager
+rm -f /opt/trading/src/db/start_db.sh
 
 echo "  [vps] Installing deps..."
-npm install --no-audit --no-fund 2>/dev/null || true
-cd webhook && npm install --no-audit --no-fund 2>/dev/null || true
-cd /opt/trading/web-ui && npm install --no-audit --no-fund 2>/dev/null || true
+corepack pnpm install --frozen-lockfile
 
-echo "  [vps] Building web-ui..."
-cd /opt/trading/web-ui && npm run build
+echo "  [vps] Building src/admin..."
+corepack pnpm --dir /opt/trading/src/admin run build
 
 echo "  [vps] Ensuring .env exists..."
-if [ ! -f /opt/trading/webhook/.env ]; then
-  echo "PORT=3001" > /opt/trading/webhook/.env
+if [ ! -f /opt/trading/src/api/.env ]; then
+  echo "PORT=3001" > /opt/trading/src/api/.env
   echo "WARNING: .env created with defaults. Set MT5_POSTGRES_URL manually."
 fi
 
-echo "  [vps] Restarting webhook (port 3001)..."
-pm2 restart webhook --update-env 2>/dev/null || pm2 start /opt/trading/webhook/server.js --name webhook
+echo "  [vps] Restarting src/api (port 3001)..."
+pm2 restart src/api --update-env 2>/dev/null || pm2 start /opt/trading/src/api/server.js --name src/api
 
 echo "  [vps] Restarting nginx (port 443)..."
 systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
@@ -115,7 +113,7 @@ done
 
 if [[ "${OK}" != "1" ]]; then
   echo "  [health] FAILED after 20 attempts"
-  echo "  Check: ssh ${VPS_HOST} 'pm2 logs webhook --lines 5'"
+  echo "  Check: ssh ${VPS_HOST} 'pm2 logs src/api --lines 5'"
   exit 1
 fi
 

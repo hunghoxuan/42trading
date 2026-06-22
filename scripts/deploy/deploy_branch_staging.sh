@@ -22,7 +22,7 @@ REPO_URL="${REPO_URL:-https://github.com/hunghoxuan/trading.git}"
 STAGING_PORT="${STAGING_PORT:-18080}"
 STAGING_NAME="${STAGING_NAME:-$(echo "${BRANCH}" | tr '/._' '-' | tr -cd '[:alnum:]-' | tr '[:upper:]' '[:lower:]')}"
 VPS_APP_DIR="${VPS_APP_DIR:-${VPS_ROOT_DIR}/trading-staging-${STAGING_NAME}}"
-PM2_NAME="${PM2_NAME:-webhook-${STAGING_NAME}}"
+PM2_NAME="${PM2_NAME:-src/api-${STAGING_NAME}}"
 HEALTH_PATH="${HEALTH_PATH:-/health}"
 
 echo "[staging] root=${ROOT_DIR}"
@@ -60,12 +60,11 @@ git fetch --all --prune
 git checkout "${BRANCH}"
 git pull --ff-only origin "${BRANCH}"
 
-node --check webhook/server.js
-npm --prefix webhook install --no-audit --no-fund
+node --check src/api/server.js
+corepack pnpm install --frozen-lockfile
 
-if [[ -d "web-ui" ]]; then
-  npm --prefix web-ui install --no-audit --no-fund
-  npm --prefix web-ui run build
+if [[ -d "src/admin" ]]; then
+  corepack pnpm --dir src/admin run build
 fi
 
 if pm2 describe "${PM2_NAME}" >/dev/null 2>&1; then
@@ -73,7 +72,7 @@ if pm2 describe "${PM2_NAME}" >/dev/null 2>&1; then
   PORT="${STAGING_PORT}" NODE_ENV=staging BRANCH_NAME="${BRANCH}" pm2 restart "${PM2_NAME}" --update-env
 else
   echo "[vps-staging] start ${PM2_NAME}"
-  PORT="${STAGING_PORT}" NODE_ENV=staging BRANCH_NAME="${BRANCH}" pm2 start webhook/server.js --name "${PM2_NAME}" --cwd "${VPS_APP_DIR}" --time
+  PORT="${STAGING_PORT}" NODE_ENV=staging BRANCH_NAME="${BRANCH}" pm2 start src/api/server.js --name "${PM2_NAME}" --cwd "${VPS_APP_DIR}" --time
 fi
 
 pm2 save >/dev/null 2>&1 || true
@@ -90,4 +89,3 @@ echo "[staging] done"
 echo "[staging] branch=${BRANCH}"
 echo "[staging] pm2=${PM2_NAME}"
 echo "[staging] local-check-url=http://127.0.0.1:${STAGING_PORT}${HEALTH_PATH} (on VPS)"
-

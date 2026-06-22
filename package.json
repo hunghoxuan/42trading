@@ -1,10 +1,20 @@
 {
+  "name": "42trade-workspace",
+  "private": true,
+  "packageManager": "pnpm@9.13.2",
+  "scripts": {
+    "install:workspace": "pnpm install",
+    "dev:db-manager": "node --watch --watch-path=src/apps/db-manager --watch-path=src/shared/styles --watch-path=src/shared/components --watch-path=src/shared/bridge src/apps/db-manager/server.js",
+    "dev:system-tools": "node --watch --watch-path=src/apps/system-tools --watch-path=src/shared/styles --watch-path=src/shared/bridge src/apps/system-tools/server.js",
+    "test:verify-webhook-local": "bash tests/verify_webhook_local.sh",
+    "test:remote-api": "bash tests/test_remote_api_default.sh",
+    "test:remote-ui": "bash tests/test_remote_ui.sh",
+    "test:sync-guards": "node --test tests/syncGuards.test.mjs"
+  },
   "dependencies": {
-    "@max89701/ctrader-layer": "^1.4.6",
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-dropdown-menu": "^2.1.16",
-    "@radix-ui/react-tooltip": "^1.2.8",
-    "@tanstack/react-table": "^8.21.3",
-    "react-virtuoso": "^4.18.7"
+    "@max89701/ctrader-layer": "^1.4.6"
+  },
+  "devDependencies": {
+    "pg": "^8.21.0"
   }
 }

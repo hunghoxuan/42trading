@@ -6,11 +6,11 @@ PORT="${PORT:-3001}"
 LOG_FILE="${LOG_FILE:-/tmp/trading-webhook-local.log}"
 MODE="${1:-manual}" # manual | launchctl
 LABEL="trading-webhook-local"
-VERIFY_SCRIPT="${ROOT}/scripts/test/verify_webhook_local.sh"
+VERIFY_SCRIPT="${ROOT}/tests/verify_webhook_local.sh"
 
 start_launchctl() {
   launchctl remove "${LABEL}" 2>/dev/null || true
-  launchctl submit -l "${LABEL}" -- /bin/zsh -lc "cd ${ROOT}/webhook && PORT=${PORT} npm run start >> ${LOG_FILE} 2>&1"
+  launchctl submit -l "${LABEL}" -- /bin/zsh -lc "cd ${ROOT} && PORT=${PORT} bash ${ROOT}/scripts/start/start_webhook.sh >> ${LOG_FILE} 2>&1"
 }
 
 start_manual() {

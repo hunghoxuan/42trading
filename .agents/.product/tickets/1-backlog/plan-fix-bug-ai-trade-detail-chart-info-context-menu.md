@@ -27,7 +27,7 @@ The AI trade detail / analysis UI still has several current-flow UX and data pre
   - Screenshot 4: Chart currently labels `P1 TP` only; user wants TP1, TP2, TP3 displayed together with distinguishable green backgrounds/opacities.
   - Screenshot 5: Summary only shows `SMC 0.0%`; user wants `strategy | entry_model` and risk-management metrics/badges.
 - Findings:
-  - Required surfaces are likely `web-ui/src/components/SignalDetailCard.jsx`, `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`, chart components under `web-ui/src/components/charts/`, and context-menu handling in `TradeSignalChart` / chart overlay code.
+  - Required surfaces are likely `src/ui/src/components/SignalDetailCard.jsx`, `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`, chart components under `src/ui/src/components/charts/`, and context-menu handling in `TradeSignalChart` / chart overlay code.
   - Current/future AI schema source fields should come from exact v3 raw payload:
     - `strategy`
     - `entry_model`
@@ -74,8 +74,8 @@ Implement current/future AI v3 UI behavior:
 - [ ] Chart displays TP1/TP2/TP3 simultaneously when v3 `execution_plan` contains them.
 - [ ] TP1/TP2/TP3 have distinct green opacity/background styling.
 - [ ] Info tab shows structured v3 analysis and risk-management fields, including badges for strategy, entry model, grade, risk percent, confidence percent, estimated entry minutes, and suggested action.
-- [ ] `rtk npm --prefix web-ui run test:unit`
-- [ ] `rtk npm --prefix web-ui run build`
+- [ ] `rtk npm --prefix src/ui run test:unit`
+- [ ] `rtk npm --prefix src/ui run build`
 - [ ] Browser verification against local or deployed UI screenshots for the five requested areas.
 - [ ] If deployed: live `/health` and `/ui` asset verified.
 

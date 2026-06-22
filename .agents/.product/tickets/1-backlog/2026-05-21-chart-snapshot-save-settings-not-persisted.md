@@ -18,11 +18,11 @@ On the Chart Snapshots page, clicking **Save** shows a green toast "Settings sav
 
 ### Root Cause Found ✅
 
-**File:** `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` — `useEffect` on mount (L2519–2529)
+**File:** `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` — `useEffect` on mount (L2519–2529)
 
 **Bug:** Wrong response key used when reading back saved settings.
 
-```web-ui/src/pages/ai/ChartSnapshotsPage.jsx#L2519-2529
+```src/ui/src/pages/ai/ChartSnapshotsPage.jsx#L2519-2529
 // Load ANALYSE_SETTINGS from user_settings on mount
 useEffect(() => {
   api.getSettings().then(res => {
@@ -40,7 +40,7 @@ useEffect(() => {
 The code reads `res?.items` → `undefined` → `.find()` returns `undefined` → settings are never applied → `DEFAULT_CONFIG` always wins.
 
 Compare with `loadWatchlist` at L4413 which correctly uses `out?.settings`:
-```web-ui/src/pages/ai/ChartSnapshotsPage.jsx#L4413-4415
+```src/ui/src/pages/ai/ChartSnapshotsPage.jsx#L4413-4415
 const settings = Array.isArray(out?.settings) ? out.settings : [];
 ```
 
@@ -61,7 +61,7 @@ const settings = Array.isArray(out?.settings) ? out.settings : [];
 
 ### Fix 1 — Wrong key on load (required)
 
-**File:** `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+**File:** `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
 
 Change line ~2524:
 ```/dev/null/before.jsx#L1-1

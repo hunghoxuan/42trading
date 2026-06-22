@@ -1,0 +1,2271 @@
+//@version=5
+// @file-version: 0411-02
+indicator("Hung - SMC", overlay = true, scale = scale.right, max_bars_back = 5000, dynamic_requests = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+import hunghoxuan/KitUI/32
+import hunghoxuan/KitCore/84
+import hunghoxuan/KitSMC/66
+// ==================== TYPES, CONSTANTS ====================
+
+PAPER_EQUITY_USD = 100000.0
+
+var THEME = KitCore.Theme.new()
+var UI_THEME = KitUI.Theme.new(COLOR_BEARISH = THEME.COLOR_BEARISH, COLOR_BULLISH = THEME.COLOR_BULLISH, COLOR_NEUTRAL = THEME.COLOR_NEUTRAL, COLOR_TRANSPARENT = THEME.COLOR_TRANSPARENT, COLOR_UI_BG = THEME.COLOR_UI_BG, COLOR_UI_FG = THEME.COLOR_UI_FG, STYLE_LABEL_NONE = THEME.STYLE_LABEL_NONE, SIZE_TINY = THEME.SIZE_TINY, SIZE_SMALL = THEME.SIZE_SMALL, SIZE_NORMAL = THEME.SIZE_NORMAL)
+var SETTINGS = KitCore.Settings.new()
+var CONST = KitCore.Const.new()
+var SMC_CONST = KitSMC.Const.new()
+
+var array<KitCore.Trade> trades = array.new<KitCore.Trade>()
+var array<string> tradeOrderIds = array.new_string()
+var KitSMC.SMCContext smcCtx = KitSMC.smc_context_new("LTF", "HTF1", "HTF2")
+
+// ==================== TYPES, CONSTANTS ==================== s
+type LocalCfg
+    int detMethod = 0
+    int detMethodCross = 1
+    string detBasis = "Wick" // Wick/Close basis.
+    bool detUseImpulse = false
+    float detImpulseAtr = 0.5
+    int scoreHtf = 2
+    int scoreConfirm = 2
+    bool entryZoneFilterEnable = true
+    float entryZoneMinQualityPct = 0.0
+    bool entryFilterNearLegEnable = false
+    int entryFilterNearLegMaxSeq = 99
+    bool entryFilterNearLegRequireDirMatch = false
+    bool entryFilterNearLegAllowUnknown = true
+    int zoneCapPerType = 100000
+    int zoneCapTotal = 100000
+    int zoneCurrMaxPerTypeSide = 100000
+    float zonePriorityAgeDecay = 0.01
+    int zoneFormationLockBars = 1
+    float zoneMinHeightAtr = 0.05
+    float zoneKeepMinSizeAtr = 1.0
+    float zoneLessExtraMinSizeAtr = 2.0
+    int zoneMergeStartGapBars = 2
+    int htfZoneLookbackBars = 1000000
+    float htfProjectionMinQualityPct = 0.0
+    string displayMode = "Normal"
+    int workingLookbackBars = 0
+    int htfOccurrenceTraceMax = 4
+    int displayZonePerTypeSideCap = 1
+    int displayZoneSideTotalCap = 999
+    int currPivotLenNormal = 0
+    int htf1PivotLenNormal = 0
+    int htf2PivotLenNormal = 0
+    int sweepReclaimMinBars = 2
+    int sweepReclaimMaxBars = 14
+    int breakRetestMinBars = 6
+    int breakRetestMaxBars = 34
+    float minTradeSizeTicks = 0.0
+    float minTradeRR = 0.0
+
+type UIConfig
+    color colorBearish = color.red
+    color colorBullish = color.teal
+    color colorBg = color.gray
+    color colorText = color.white
+    color ltfColor = color.gray
+    int ltfBarsExt = 5
+    int ltfLineBarsExt = 8
+    bool msHtf1SwingShow = true
+    bool msHtf1ZigzagShow = true
+    bool msHtf2SwingShow = true
+    bool msHtf2ZigzagShow = true
+    int htfZoneBgTransp = 90
+    int zoneCurrMinWidthBars = 6
+    bool htfShowProjectedZones = true
+
+get_ui_cfg(KitCore.Theme th) =>
+    UIConfig cfg = UIConfig.new()
+    cfg.colorBearish := color.new(th.COLOR_BEARISH, th.T_NORMAL)
+    cfg.colorBullish := color.new(th.COLOR_BULLISH, th.T_NORMAL)
+    cfg.colorBg := color.new(th.COLOR_NEUTRAL, th.T_NORMAL)
+    cfg.colorText := color.new(th.TEXT_COLOR, th.T_NORMAL)
+    cfg.ltfColor := color.new(color.rgb(215, 215, 215), 0)
+    cfg
+
+get_data_local_cfg(int globalLookbackBars, string displayMode) =>
+    LocalCfg cfg = LocalCfg.new()
+    cfg.displayMode := displayMode
+    cfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(displayMode, globalLookbackBars)
+    cfg.displayZonePerTypeSideCap := displayMode == "Less" ? 2 : displayMode == "Normal" ? 1 : 999
+    cfg.displayZoneSideTotalCap := displayMode == "Extreme" ? 1 : 999
+    cfg.htfZoneLookbackBars := cfg.workingLookbackBars <= 0 ? 1000000 : cfg.workingLookbackBars
+    cfg.htfOccurrenceTraceMax := displayMode == "All" ? 6 : displayMode == "Less" ? 5 : displayMode == "Normal" ? 4 : 2
+    cfg.entryZoneMinQualityPct := 35.0
+    cfg.htfProjectionMinQualityPct := 25.0
+    cfg.zoneCapPerType := 100000
+    cfg.zoneCapTotal := 100000
+    cfg.zoneCurrMaxPerTypeSide := 100000
+    cfg.zonePriorityAgeDecay := 0.010
+    cfg
+
+get_data_is_1m_chart() =>
+    timeframe.in_seconds(timeframe.period) <= 60
+
+get_data_is_fast_chart() =>
+    timeframe.in_seconds(timeframe.period) <= 300
+
+get_data_history_cap_bars_for_chart() =>
+    int tfSec = timeframe.in_seconds(timeframe.period)
+    tfSec <= 60 ? 1000 :
+     tfSec <= 300 ? 1800 :
+     tfSec <= 900 ? 2200 :
+     tfSec <= 3600 ? 2400 :
+     tfSec <= 14400 ? 1800 :
+     tfSec <= 86400 ? 1600 : 1400
+
+get_data_effective_history_cap_bars(string timeRange) =>
+    str.lower(timeRange) == "dynamic" ? get_data_history_cap_bars_for_chart() : 10000
+
+var KitCore.EntryVisualCfg ENTRY_VIS_CFG = KitCore.EntryVisualCfg.new()
+
+HTF_pdarray_PER_TF = 1000 // math.max(1, 10)
+HTF1_EXT_BASE = 14
+HTF2_EXT_BASE = 25
+HTF_EXT_PAD = 5
+
+PIVOT_LEN_SCALP = 15
+PIVOT_LEN_INTRADAY = 12
+PIVOT_LEN_MULTI_DAY = 8
+PIVOT_LEN_SWING = 6
+PIVOT_LEN_POSITION = 4
+PIVOT_LEN_BASE = KitCore.get_pivot_len_base_for_tf(timeframe.period, timeframe.period, CONST.PIVOT_MODE_FIXED, PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+
+ENTRY_MODE_OFF = "NO ENTRY"
+ENTRY_MODE_LIMIT = "LIMIT"
+ENTRY_MODE_AFTER_RETEST = "AFTER RETEST"
+TRIGGER_TYPE_SIGNAL = "Signal"
+TRIGGER_TYPE_TRADE = "Trade"
+TRIGGER_WHEN_TOUCH = "Touch"
+TRIGGER_WHEN_RETEST = "Retest"
+
+GLOBAL_MAX_LOOKBACK_BARS = SETTINGS.GLOBAL_MAX_LOOKBACK_BARS
+htfProjectionSpanBars = GLOBAL_MAX_LOOKBACK_BARS
+perfLookbackBars = GLOBAL_MAX_LOOKBACK_BARS
+effectiveCurrLookbackBars = GLOBAL_MAX_LOOKBACK_BARS
+var int htf2MasterRangeBars = SETTINGS.GLOBAL_MAX_LOOKBACK_BARS
+var KitCore.ChartConfig chartCfg = KitCore.ChartConfig.new()
+var KitCore.ChartContext chartCtx = KitCore.ChartContext.new()
+var KitCore.RuntimeContext runtimeCtx = KitCore.RuntimeContext.new()
+var KitCore.DataCfg ctxDataCfg = KitCore.DataCfg.new()
+var int workingFirstBar = na
+var line workingFirstBarLine = na
+var label workingFirstBarLabel = na
+var array<int> tradeBiasVals = array.new_int(3, 0)
+var array<int> tradeTrendVals = array.new_int(3, 0)
+var array<float> propDayState = array.from(na, 0.0, -1.0) // [dayStartEquity, dailyRiskUsed, lastDayNum]
+
+var LocalCfg localCfg = get_data_local_cfg(GLOBAL_MAX_LOOKBACK_BARS, "Normal")
+
+var table signalStatsTableTopRight = table.new(position.top_right, 5, 24, bgcolor = color.new(THEME.COLOR_UI_BG, 85), frame_color = color.new(THEME.COLOR_UI_FG, 75), frame_width = 1, border_color = color.new(THEME.COLOR_UI_FG, 80), border_width = 1)
+var UIConfig uiCfg = get_ui_cfg(THEME)
+var KitSMC.ZoneDrawConfig CFG_SR = KitSMC.ZoneDrawConfig.new(color.new(THEME.COLOR_NEUTRAL, SETTINGS.SR_LINE_TRANSP), line.style_dotted, 1, THEME.SIZE_TINY, true)
+var KitSMC.ZoneVisualCfg ZONE_VIS_CFG = KitSMC.ZoneVisualCfg.new(minWidthBars = uiCfg.zoneCurrMinWidthBars, borderWidth = 1, textSize = THEME.SIZE_TINY, transparentColor = THEME.COLOR_TRANSPARENT, labelStyle = THEME.STYLE_LABEL_NONE, textHAlign = text.align_right, textVAlign = text.align_bottom)
+var HTF_BOX_VIS_CFG = KitUI.ProjectedBoxVisualCfg.new(borderWidth = 1, textSize = THEME.SIZE_SMALL, textHAlign = text.align_right, textVAlign = text.align_center)
+var KitSMC.PriceZoneLineVisualCfg SR_VIS_CFG = KitSMC.PriceZoneLineVisualCfg.new(lineStyle = CFG_SR.lineStyle, lineWidth = CFG_SR.lineWidth, labelSize = CFG_SR.labelSize, showLabel = CFG_SR.showLabel)
+var LIQ_LINE_VIS_CFG = KitUI.LineTextVisualCfg.new(lineStyle = line.style_dotted, lineWidth = 1, textSize = THEME.SIZE_TINY, vPos = 0, yPadTicks = 0.0, xRatio = 0.5, xPadBars = 0, textAlign = text.align_center)
+
+var int dynCachedCurrLookbackBars = localCfg.workingLookbackBars
+var KitSMC.TFConfig htf1Cfg = KitSMC.TFConfig.new("HTF1", uiCfg.msHtf1SwingShow, uiCfg.msHtf1ZigzagShow, color.new(THEME.COLOR_HTF1, 70), color.new(THEME.COLOR_HTF1, 70), size.normal, color.new(THEME.COLOR_HTF1, 70), line.style_dotted, 1, SETTINGS.MS_HTF1_SWING_Y_SHIFT_TICKS)
+var KitSMC.TFConfig htf2Cfg = KitSMC.TFConfig.new("HTF2", uiCfg.msHtf2SwingShow, uiCfg.msHtf2ZigzagShow, color.new(THEME.COLOR_HTF2, 30), color.new(THEME.COLOR_HTF2, 30), size.large, color.new(THEME.COLOR_HTF2, 30), line.style_dotted, 1, SETTINGS.MS_HTF2_SWING_Y_SHIFT_TICKS)
+var KitSMC.TFData ltfData = smcCtx.ltfData
+var KitSMC.TFData htf1Data = smcCtx.htf1Data
+var KitSMC.TFData htf2Data = smcCtx.htf2Data
+var KitSMC.ZoneTypeConfig cfgOB = KitSMC.ZoneTypeConfig.new(1, "OB", "ob", "Order Block", "Primary block zone", 2, 0.0, uiCfg.ltfBarsExt, line.style_solid, false, false, "BB")
+var KitSMC.ZoneTypeConfig cfgFVG = KitSMC.ZoneTypeConfig.new(2, "FVG", "fvg", "Fair Value Gap", "Imbalance zone", 1, 0.0, uiCfg.ltfBarsExt - 4, line.style_solid, true, false, "IFVG")
+var KitSMC.ZoneTypeConfig cfgRJB = KitSMC.ZoneTypeConfig.new(3, "RJB", "rjb", "Rejection Block", "Rejection zone", 2, 0.0, uiCfg.ltfBarsExt, line.style_solid, false, false, "")
+var KitSMC.ZoneTypeConfig cfgSD = KitSMC.ZoneTypeConfig.new(4, "SD", "sd", "Supply/Demand", "Density-based SD zone", 2, 0.0, uiCfg.ltfBarsExt, line.style_dotted, false, false, "")
+var KitSMC.ZoneTypeConfig cfgBB = KitSMC.ZoneTypeConfig.new(5, "BB", "bb", "Breaker Block", "OB break/retest derived zone", 2, 0.0, uiCfg.ltfBarsExt, line.style_dotted, false, true, "")
+var KitSMC.ZoneTypeConfig cfgIFVG = KitSMC.ZoneTypeConfig.new(6, "IFVG", "ifvg", "Inverted FVG", "FVG break/retest derived zone", 1, 0.0, uiCfg.ltfBarsExt - 4, line.style_dotted, true, true, "")
+var array<KitCore.EntryModelDef> strategyDefs = array.new<KitCore.EntryModelDef>()
+var array<int> rtBarBox = array.new_int(1, na)
+var array<int> rtBiasBox = array.new_int(1, 0)
+var array<int> rtAllowBuyBox = array.new_int(1, 0)
+var array<int> rtAllowSellBox = array.new_int(1, 0)
+var array<string> rtStrategyKeys = array.new_string()
+var array<bool> rtStrategyEnabled = array.new_bool()
+var array<int> rtStrategyScore = array.new_int()
+var array<string> rtStrategyShort = array.new_string()
+var array<string> rtStrategyTriggerType = array.new_string()
+var array<string> rtStrategyTriggerWhen = array.new_string()
+var array<string> rtPdMetaKeys = array.new_string()
+var array<int> rtPdMetaRank = array.new_int()
+var array<int> rtPdMetaLegId = array.new_int()
+var array<int> rtPdMetaLegDir = array.new_int()
+var array<int> rtPdMetaLegSeq = array.new_int()
+var array<string> rtMinRightKeys = array.new_string()
+var array<int> rtMinRightVals = array.new_int()
+var array<int> rtTimeToIdxKeys = array.new_int()
+var array<int> rtTimeToIdxVals = array.new_int()
+var array<int> rtLtfLegIds = array.new_int()
+var array<int> rtHtf1LegIds = array.new_int()
+var array<int> rtHtf2LegIds = array.new_int()
+
+commonAtr = ta.atr(14)
+
+var zqCfg = KitSMC.ZoneQualityCfg.new()
+zqCfg.minHeightAtr := localCfg.zoneMinHeightAtr
+zqCfg.useVolume := true
+zqCfg.minRelVolume := 1.1
+zqCfg.useImpulse := false
+zqCfg.minBodyAtr := 0.35
+zqCfg.sizeStrongMult := 1.8
+zqCfg.volStrong := 1.5
+zqCfg.impStrong := 1.0
+zqCfg.dispMin := 0.65
+zqCfg.volLen := 20
+zqCfg.scoreSizeStrong := 2
+zqCfg.scoreSizeBase := 1
+zqCfg.scoreVolStrong := 2
+zqCfg.scoreVolBase := 1
+zqCfg.scoreImpStrong := 2
+zqCfg.scoreImpBase := 1
+zqCfg.scoreDisp := 1
+
+// ==================== INPUT SETTINGS ====================
+GROUP_UI_CONFIG = "1. UI Config"
+GROUP_TRADE_MODELS = "2. Trade Models"
+GROUP_TRADES_CONFIG = "3. Trade Config"
+
+uiPlotObInput = input.bool(true, "OB", inline = "ui0", group = GROUP_UI_CONFIG)
+uiPlotFvgInput = input.bool(true, "FVG", inline = "ui0", group = GROUP_UI_CONFIG)
+uiPlotSdInput = input.bool(true, "SD", inline = "ui0", group = GROUP_UI_CONFIG)
+uiUseBbInput = input.bool(true, "BB", inline = "ui0", group = GROUP_UI_CONFIG)
+uiUseIfvgInput = input.bool(true, "iFVG", inline = "ui0", group = GROUP_UI_CONFIG)
+uiShowLtfInput = input.bool(true, "LTF", inline = "ui1", group = GROUP_UI_CONFIG)
+uiShowTf1Input = input.bool(true, "TF1", inline = "ui1", group = GROUP_UI_CONFIG)
+uiShowTf2Input = input.bool(true, "TF2", inline = "ui1", group = GROUP_UI_CONFIG)
+pdDisplayMode = input.string("Normal", "Display", options = ["All", "Less", "Normal", "Extreme", "None"], inline = "ui_disp", group = GROUP_UI_CONFIG)
+uiTimeRangeCombo = input.string("dynamic", "", options = ["dynamic", "Today", "Yesterday", "Day", "This Week", "Last Week", "Week", "This Month", "Last Month", "Month", "This Year", "Year"], inline = "ui_disp", group = GROUP_UI_CONFIG)
+
+bool uiModeAll = pdDisplayMode == "All"
+bool uiModeLess = pdDisplayMode == "Less"
+bool uiModeExtreme = pdDisplayMode == "Extreme"
+bool uiModeNone = pdDisplayMode == "None"
+plotOB = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiPlotObInput
+plotFVG = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiPlotFvgInput
+plotSD = uiModeNone ? false : uiModeAll ? true : uiModeLess ? false : uiModeExtreme ? false : uiPlotSdInput
+useBB = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiUseBbInput
+useIFVG = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? false : uiUseIfvgInput
+showProjectedZones = not uiModeNone
+pdShowLtf = uiShowLtfInput
+pdShowTf1 = uiShowTf1Input
+pdShowTf2 = uiShowTf2Input
+
+emBreakout = input.bool(true, "BO - Breakout.", inline="em1", group = GROUP_TRADE_MODELS)
+emBreakoutWhen = TRIGGER_WHEN_RETEST
+emBreakoutType = TRIGGER_TYPE_TRADE
+emBreakoutRrs = input.string("0.2, 0.5, 1", "RRs", inline="em1", group = GROUP_TRADE_MODELS)
+emBreakoutGap = input.float(0.1, "Gap", minval = 0.0, step = 0.05, inline="em1", group = GROUP_TRADE_MODELS)
+emRejection = input.bool(true, "RJ - Rejection.", inline="em3", group = GROUP_TRADE_MODELS)
+emRejectionWhen = TRIGGER_WHEN_TOUCH
+emRejectionType = TRIGGER_TYPE_TRADE
+emRejectionRrs = input.string("0.2, 0.5, 1", "RRs", inline="em3", group = GROUP_TRADE_MODELS)
+emRejectionGap = input.float(0.1, "Gap", minval = 0.0, step = 0.05, inline="em3", group = GROUP_TRADE_MODELS)
+emSweep = input.bool(true, "SW - Sweep.", inline="em4", group = GROUP_TRADE_MODELS)
+emSweepWhen = TRIGGER_WHEN_RETEST
+emSweepType = TRIGGER_TYPE_TRADE
+emSweepRrs = input.string("0.2, 0.5, 1", "RRs", inline="em4", group = GROUP_TRADE_MODELS)
+emSweepGap = input.float(0.1, "Gap", minval = 0.0, step = 0.05, inline="em4", group = GROUP_TRADE_MODELS)
+
+tradeEntriesInput = input.bool(true, "Trades", inline = "tc0", group = GROUP_TRADES_CONFIG)
+strategyOrdersInput = input.bool(false, "Paper", inline = "tc0", group = GROUP_TRADES_CONFIG)
+propPreset = input.string("None", "Trade rules", options = ["None", "FTMO 2-Step", "FTMO 1-Step", "The5ers HS", "The5ers HG"], tooltip = "FTMO 2-Step: 2.5% daily cap, 0.5%/trade | FTMO 1-Step: 1.5%/0.5% | The5ers HS: 2.5%/0.5% | The5ers HG: 1.5%/0.5% | None: unlimited", inline = "tc0", group = GROUP_TRADES_CONFIG)
+tradeRiskValue = input.float(1.0, "1R", minval = 0.01, maxval = 100.0, step = 0.1, inline = "tc1", group = GROUP_TRADES_CONFIG)
+tradeRiskMode  = input.string("%", "", options = ["%", "$"], inline = "tc1", group = GROUP_TRADES_CONFIG)
+tradeSpreadTicks = input.float(0.0, "Spread", minval = 0.0, step = 0.5, inline = "tc1", group = GROUP_TRADES_CONFIG)
+webhookEnabled = input.bool(true, "Webhook", inline = "wh0", group = GROUP_TRADES_CONFIG)
+tradeShowPending = input.bool(false, "Pending", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowStart = input.bool(false, "Start -> Active", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowTp = input.bool(false, "TP", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowSl = input.bool(false, "SL", inline = "tc2", group = GROUP_TRADES_CONFIG)
+gateUsePreTouchTpCut = input.bool(false, "Pre-touch TP cut", inline = "tc3", group = GROUP_TRADES_CONFIG)
+bool gateUseEntryDirection = false
+bool gateUseRetestConfirm = false
+bool gateUseRetestInvalidation = false
+bool gateUseTradePrune = false
+bool gateUsePdarrayPrune = false
+tradeEntriesEnabled = false
+strategyOrdersEnabled = false
+entryEngineEnabled = false
+showTradesDashboard = false
+GLOBAL_MAX_LOOKBACK_BARS := KitCore.get_dynamic_global_max_lookback_bars(uiTimeRangeCombo, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS, htf2MasterRangeBars)
+GLOBAL_MAX_LOOKBACK_BARS := math.min(GLOBAL_MAX_LOOKBACK_BARS, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+
+
+// ==================== INIT / SETUP (ENTRY MODELS, PDARRAYs..) ====================
+// barstate.isfirst
+if barstate.isfirst
+    localCfg := get_data_local_cfg(GLOBAL_MAX_LOOKBACK_BARS, pdDisplayMode)
+    workingFirstBar := KitCore.get_working_first_bar_from_lookback(localCfg.workingLookbackBars)
+    [_wfLine0, _wfLabel0] = KitCore.update_working_first_bar_marker(workingFirstBarLine, workingFirstBarLabel, workingFirstBar, "SMC", color.new(uiCfg.ltfColor, 0), line.style_dotted, color.new(uiCfg.ltfColor, 0), THEME.SIZE_TINY)
+    workingFirstBarLine := _wfLine0
+    workingFirstBarLabel := _wfLabel0
+    uiCfg := get_ui_cfg(THEME)
+    zqCfg.minHeightAtr := localCfg.zoneMinHeightAtr
+    ZONE_VIS_CFG.minWidthBars := uiCfg.zoneCurrMinWidthBars
+    cfgOB.extendBarsCurr := uiCfg.ltfBarsExt
+    cfgFVG.extendBarsCurr := uiCfg.ltfBarsExt - 4
+    cfgRJB.extendBarsCurr := uiCfg.ltfBarsExt
+    cfgSD.extendBarsCurr := uiCfg.ltfBarsExt
+    cfgBB.extendBarsCurr := uiCfg.ltfBarsExt
+    cfgIFVG.extendBarsCurr := uiCfg.ltfBarsExt - 4
+    uiCfg.htfShowProjectedZones := showProjectedZones
+
+float tradeRiskAmountUsd = tradeRiskMode == "%" ? (tradeRiskValue / 100.0 * math.max(PAPER_EQUITY_USD, 0.0)) : tradeRiskValue
+// removed minTradeSizeTicks
+localCfg.minTradeRR := 0.0
+localCfg.displayMode := pdDisplayMode
+localCfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(pdDisplayMode, GLOBAL_MAX_LOOKBACK_BARS)
+if SETTINGS.DYN_LOOKBACK_ENABLE and uiTimeRangeCombo == "dynamic"
+    localCfg.workingLookbackBars := math.max(localCfg.workingLookbackBars, htf2MasterRangeBars)
+localCfg.workingLookbackBars := math.min(localCfg.workingLookbackBars, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+localCfg.displayZonePerTypeSideCap := pdDisplayMode == "All" ? 4 : pdDisplayMode == "Less" ? 2 : pdDisplayMode == "Normal" ? 1 : 1
+localCfg.displayZoneSideTotalCap := pdDisplayMode == "All" ? 8 : pdDisplayMode == "Less" ? 4 : pdDisplayMode == "Normal" ? 2 : 1
+localCfg.htfZoneLookbackBars := localCfg.workingLookbackBars
+if get_data_is_1m_chart()
+    localCfg.htfZoneLookbackBars := math.min(localCfg.htfZoneLookbackBars, 800)
+else if get_data_is_fast_chart()
+    localCfg.htfZoneLookbackBars := math.min(localCfg.htfZoneLookbackBars, 1500)
+int tfSecCap = timeframe.in_seconds(timeframe.period)
+int baseTotalCap = tfSecCap <= 300 ? 180 : tfSecCap <= 3600 ? 260 : tfSecCap <= 14400 ? 320 : tfSecCap <= 86400 ? 420 : 520
+float modeMult = pdDisplayMode == "All" ? 1.0 : pdDisplayMode == "Less" ? 0.80 : pdDisplayMode == "Normal" ? 0.65 : 0.50
+int totalCap = int(math.max(80, math.round(float(baseTotalCap) * modeMult)))
+localCfg.zoneCapTotal := totalCap
+localCfg.zoneCapPerType := int(math.max(30, math.round(float(totalCap) * 0.45)))
+localCfg.zoneCurrMaxPerTypeSide := tfSecCap <= 300 ? 20 : tfSecCap <= 3600 ? 30 : tfSecCap <= 14400 ? 40 : tfSecCap <= 86400 ? 55 : 70
+if get_data_is_1m_chart()
+    localCfg.htfOccurrenceTraceMax := math.min(localCfg.htfOccurrenceTraceMax, 2)
+    localCfg.zoneCapTotal := math.min(localCfg.zoneCapTotal, 120)
+    localCfg.zoneCapPerType := math.min(localCfg.zoneCapPerType, 45)
+    localCfg.zoneCurrMaxPerTypeSide := math.min(localCfg.zoneCurrMaxPerTypeSide, 12)
+else if get_data_is_fast_chart()
+    localCfg.htfOccurrenceTraceMax := math.min(localCfg.htfOccurrenceTraceMax, 3)
+    localCfg.zoneCapTotal := math.min(localCfg.zoneCapTotal, 160)
+    localCfg.zoneCapPerType := math.min(localCfg.zoneCapPerType, 60)
+    localCfg.zoneCurrMaxPerTypeSide := math.min(localCfg.zoneCurrMaxPerTypeSide, 18)
+uiCfg.htfShowProjectedZones := showProjectedZones
+
+// ==================== LOCAL HELPERS ====================
+
+CORE_get_trade_order_qty(float entry, float stoploss, float riskPerRRUsd) =>
+    if na(entry) or na(stoploss)
+        float(na)
+    else
+        float riskPerUnitUsd = math.abs(entry - stoploss) * math.max(math.abs(syminfo.pointvalue), 1e-10)
+        riskPerUnitUsd <= 0.0 ? float(na) : (math.max(riskPerRRUsd, 0.0) / riskPerUnitUsd)
+
+CORE_track_trade_entry(array<KitCore.Trade> entriesRef, array<string> orderIdsRef, KitCore.Trade e, string orderId, bool shouldTrack) =>
+    if shouldTrack and not na(e)
+        array.push(entriesRef, e)
+        array.push(orderIdsRef, orderId)
+    bool(na)
+
+CORE_submit_strategy_trade_order(string orderId, string direction, float orderQty, float entry, float stoploss, float takeprofit) =>
+    if orderId != "" and not na(orderQty) and orderQty > 0.0
+        na
+    bool(na)
+
+CORE_cancel_strategy_trade_order(string orderId) =>
+    if orderId != ""
+        na
+    bool(na)
+
+get_data_htf_detection_cutoff_time(int tfSlot, string tfName) =>
+    int ratioTime = not na(tfName) ? KitSMC.get_working_first_time_for_tf(timeframe.period, tfName, localCfg.workingLookbackBars) : 0
+    int structTime = KitSMC.get_tf_struct_pair_start_time(tfSlot, htf1Data.mss, htf2Data.mss)
+    na(structTime) ? ratioTime : math.max(ratioTime, structTime)
+
+get_data_working_first_idx_for_tf_name(string tfName) =>
+    if na(tfName) or tfName == "" or tfName == timeframe.period
+        workingFirstBar
+    else
+        [tf1Local, tf2Local] = KitCore.get_htf_pair()
+        int tfSlot = tfName == tf1Local ? 0 : tfName == tf2Local ? 1 : 0
+        int cutoffTime = get_data_htf_detection_cutoff_time(tfSlot, tfName)
+        int cutoffIdx = KitUI.closest_bar_index_from_time(cutoffTime)
+        na(cutoffIdx) ? workingFirstBar : cutoffIdx
+
+get_data_real_htf_swings(string tfName, int pivotLen) =>
+    float sh = na
+    int shT = na
+    float sl = na
+    int slT = na
+    if not na(tfName) and tfName != ""
+        [shRaw, slRaw, shTRaw, slTRaw] = request.security(syminfo.tickerid, tfName, [ta.pivothigh(high, pivotLen, pivotLen), ta.pivotlow(low, pivotLen, pivotLen), not na(ta.pivothigh(high, pivotLen, pivotLen)) ? time[pivotLen] : int(na), not na(ta.pivotlow(low, pivotLen, pivotLen)) ? time[pivotLen] : int(na)], lookahead = barmerge.lookahead_off)
+        sh := shRaw
+        sl := slRaw
+        shT := int(shTRaw)
+        slT := int(slTRaw)
+    [sh, shT, sl, slT]
+
+get_data_real_htf_pdarray_occurrence_set(string tfName, int occurrence) =>
+    float obUpTopRaw = na
+    float obUpBtmRaw = na
+    int obUpStartRaw = na
+    float obUpQRaw = na
+    float obDnTopRaw = na
+    float obDnBtmRaw = na
+    int obDnStartRaw = na
+    float obDnQRaw = na
+    float fvgUpTopRaw = na
+    float fvgUpBtmRaw = na
+    int fvgUpStartRaw = na
+    float fvgUpQRaw = na
+    float fvgDnTopRaw = na
+    float fvgDnBtmRaw = na
+    int fvgDnStartRaw = na
+    float fvgDnQRaw = na
+    float obUpTop = na
+    float obUpBtm = na
+    int obUpStart = na
+    float obUpQ = na
+    float obDnTop = na
+    float obDnBtm = na
+    int obDnStart = na
+    float obDnQ = na
+    float fvgUpTop = na
+    float fvgUpBtm = na
+    int fvgUpStart = na
+    float fvgUpQ = na
+    float fvgDnTop = na
+    float fvgDnBtm = na
+    int fvgDnStart = na
+    float fvgDnQ = na
+    if not na(tfName) and tfName != ""
+        if occurrence == 0
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(0, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 1
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(1, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 2
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(2, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 3
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(3, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 4
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(4, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 5
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(5, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 6
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(6, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 7
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(7, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else if occurrence == 8
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(8, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        else
+            [obUpTopRaw, obUpBtmRaw, obUpStartRaw, obUpQRaw, obDnTopRaw, obDnBtmRaw, obDnStartRaw, obDnQRaw, fvgUpTopRaw, fvgUpBtmRaw, fvgUpStartRaw, fvgUpQRaw, fvgDnTopRaw, fvgDnBtmRaw, fvgDnStartRaw, fvgDnQRaw] = request.security(syminfo.tickerid, tfName, KitSMC.get_htf_pdarray_occurrence_set(9, localCfg.zoneFormationLockBars, zqCfg, 14), lookahead = barmerge.lookahead_off)
+        obUpTop := obUpTopRaw
+        obUpBtm := obUpBtmRaw
+        obUpStart := int(obUpStartRaw)
+        obUpQ := obUpQRaw
+        obDnTop := obDnTopRaw
+        obDnBtm := obDnBtmRaw
+        obDnStart := int(obDnStartRaw)
+        obDnQ := obDnQRaw
+        fvgUpTop := fvgUpTopRaw
+        fvgUpBtm := fvgUpBtmRaw
+        fvgUpStart := int(fvgUpStartRaw)
+        fvgUpQ := fvgUpQRaw
+        fvgDnTop := fvgDnTopRaw
+        fvgDnBtm := fvgDnBtmRaw
+        fvgDnStart := int(fvgDnStartRaw)
+        fvgDnQ := fvgDnQRaw
+    [obUpTop, obUpBtm, obUpStart, obUpQ, obDnTop, obDnBtm, obDnStart, obDnQ, fvgUpTop, fvgUpBtm, fvgUpStart, fvgUpQ, fvgDnTop, fvgDnBtm, fvgDnStart, fvgDnQ]
+
+get_data_map_htf_source_to_ltf_idx(int sourceT) =>
+    not na(sourceT) ? KitUI.closest_bar_index_from_time(sourceT) : na
+
+process_data_prune_outside_working_zone(array<KitSMC.PDArray> zones) =>
+    if array.size(zones) > 0
+        for i = array.size(zones) - 1 to 0 by 1
+            KitSMC.PDArray z = array.get(zones, i)
+            int anchorIdx = na(z.barStart) ? na : z.barStart
+            string sourceTf = na(z.sourceTf) or z.sourceTf == "" ? timeframe.period : z.sourceTf
+            int firstIdx = get_data_working_first_idx_for_tf_name(sourceTf)
+            if not na(anchorIdx) and anchorIdx < firstIdx
+                KitSMC.delete_pd_array_drawings(z)
+                array.remove(zones, i)
+    bool(na)
+
+get_pdarray_cfg(string zoneType) =>
+    zoneType == "OB" ? cfgOB :
+     zoneType == "FVG" ? cfgFVG :
+     zoneType == "RJB" ? cfgRJB :
+     zoneType == "SD" ? cfgSD :
+     zoneType == "BB" ? cfgBB :
+     zoneType == "IFVG" ? cfgIFVG :
+     KitSMC.ZoneTypeConfig.new(0, "", "", "", "", 0, 0.0, 0, line.style_solid, false, false, "")
+
+get_data_parse_rr_array(string rrText) =>
+    array<float> out = array.new_float()
+    string cleaned = str.replace_all(rrText, "[", "")
+    cleaned := str.replace_all(cleaned, "]", "")
+    cleaned := str.replace_all(cleaned, " ", "")
+    array<string> parts = str.split(cleaned, ",")
+    if array.size(parts) > 0
+        for i = 0 to array.size(parts) - 1
+            string token = array.get(parts, i)
+            float v = str.tonumber(token)
+            if not na(v) and v > 0
+                bool exists = false
+                if array.size(out) > 0
+                    for j = 0 to array.size(out) - 1
+                        if math.abs(array.get(out, j) - v) <= 0.000001
+                            exists := true
+                            break
+                if not exists
+                    array.push(out, v)
+    if array.size(out) == 0
+        array.push(out, 1.0)
+    out
+
+get_data_rr_array_for_model(string modelKey) =>
+    string k = str.upper(modelKey)
+    string rrText = k == "BREAK_OUT" ? emBreakoutRrs : k == "REJECTION" ? emRejectionRrs : k == "SWEEP" ? emSweepRrs : "1"
+    get_data_parse_rr_array(rrText)
+
+get_data_first_rr_for_model(string modelKey, float fallback) =>
+    array<float> arr = get_data_rr_array_for_model(modelKey)
+    array.size(arr) > 0 ? array.get(arr, 0) : fallback
+
+process_data_init_strategy_defs() =>
+    array.clear(strategyDefs)
+    array.push(strategyDefs, KitCore.EntryModelDef.new("BREAK_OUT", "BO", 6, emBreakout, emBreakoutType, emBreakoutWhen, get_data_first_rr_for_model("BREAK_OUT", 1.0), "", 1, 1, 0, "", 80, "na", 1, true, emBreakoutGap, ENTRY_MODE_AFTER_RETEST))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("REJECTION", "RJ", 5, emRejection, emRejectionType, emRejectionWhen, get_data_first_rr_for_model("REJECTION", 1.0), "", 2, 0, 0, "", 120, "na", 1, true, emRejectionGap, ENTRY_MODE_AFTER_RETEST))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("SWEEP", "SW", 6, emSweep, emSweepType, emSweepWhen, get_data_first_rr_for_model("SWEEP", 1.0), "", 1, 0, 0, "", 80, "na", 1, true, emSweepGap, ENTRY_MODE_LIMIT))
+    bool(na)
+
+process_data_reset_runtime_context_if_new_bar() =>
+    int cachedBar = array.get(rtBarBox, 0)
+    if na(cachedBar) or cachedBar != bar_index
+        array.set(rtBarBox, 0, bar_index)
+        array.clear(rtStrategyKeys)
+        array.clear(rtStrategyEnabled)
+        array.clear(rtStrategyScore)
+        array.clear(rtStrategyShort)
+        array.clear(rtStrategyTriggerType)
+        array.clear(rtStrategyTriggerWhen)
+        array.clear(rtPdMetaKeys)
+        array.clear(rtPdMetaRank)
+        array.clear(rtPdMetaLegId)
+        array.clear(rtPdMetaLegDir)
+        array.clear(rtPdMetaLegSeq)
+        array.clear(rtMinRightKeys)
+        array.clear(rtMinRightVals)
+        array.clear(rtTimeToIdxKeys)
+        array.clear(rtTimeToIdxVals)
+    bool(na)
+
+get_data_strategy_meta_by_key(string key) =>
+    process_data_init_strategy_defs()
+    string k = str.upper(key)
+    process_data_reset_runtime_context_if_new_bar()
+    int cachedIdx = na
+    if array.size(rtStrategyKeys) > 0
+        for i = 0 to array.size(rtStrategyKeys) - 1
+            if array.get(rtStrategyKeys, i) == k
+                cachedIdx := i
+                break
+    if not na(cachedIdx)
+        [array.get(rtStrategyEnabled, cachedIdx), array.get(rtStrategyScore, cachedIdx), array.get(rtStrategyShort, cachedIdx), array.get(rtStrategyTriggerType, cachedIdx), array.get(rtStrategyTriggerWhen, cachedIdx)]
+    else
+        bool enabled = false
+        int score = 0
+        string shortName = ""
+        string triggerType = TRIGGER_TYPE_TRADE
+        string triggerWhen = TRIGGER_WHEN_RETEST
+        if array.size(strategyDefs) > 0
+            for i = 0 to array.size(strategyDefs) - 1
+                KitCore.EntryModelDef s = array.get(strategyDefs, i)
+                if s.key == k
+                    enabled := s.enabled
+                    score := s.baseScore
+                    shortName := s.shortName
+                    triggerType := s.trigger_type
+                    triggerWhen := s.trigger_when
+                    break
+        array.push(rtStrategyKeys, k)
+        array.push(rtStrategyEnabled, enabled)
+        array.push(rtStrategyScore, score)
+        array.push(rtStrategyShort, shortName)
+        array.push(rtStrategyTriggerType, triggerType)
+        array.push(rtStrategyTriggerWhen, triggerWhen)
+        [enabled, score, shortName, triggerType, triggerWhen]
+
+get_data_cached_bar_index_from_time(int t) =>
+    process_data_reset_runtime_context_if_new_bar()
+    if na(t)
+        na
+    else
+        int idx = na
+        if array.size(rtTimeToIdxKeys) > 0
+            for i = 0 to array.size(rtTimeToIdxKeys) - 1
+                if array.get(rtTimeToIdxKeys, i) == t
+                    idx := i
+                    break
+        if not na(idx)
+            array.get(rtTimeToIdxVals, idx)
+        else
+            int v = KitUI.closest_bar_index_from_time(t)
+            array.push(rtTimeToIdxKeys, t)
+            array.push(rtTimeToIdxVals, v)
+            v
+
+get_data_swing_leg_array_index(int sourceTfRank, int legId) =>
+    int outIdx = na
+    if not na(legId) and legId >= 0
+        array<int> legIds = sourceTfRank >= 3 ? rtHtf2LegIds : sourceTfRank >= 2 ? rtHtf1LegIds : rtLtfLegIds
+        int n = array.size(legIds)
+        int found = -1
+        if n > 0
+            for i = 0 to n - 1
+                if array.get(legIds, i) == legId
+                    found := i
+                    break
+        if found >= 0
+            outIdx := found
+        else
+            array.push(legIds, legId)
+            outIdx := array.size(legIds) - 1
+    outIdx
+
+BIAS_TOG = KitCore.BiasToggles.new(true, true, true, true, true, true, true, true)
+
+prune_post_touch_pdarrays(array<KitSMC.PDArray> zones, int keepMax, float ageDecay) =>
+    int cnt = 0
+    if gateUsePdarrayPrune and array.size(zones) > 0
+        for i = 0 to array.size(zones) - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            bool isCurrentTf = z.sourceTfRank <= 1
+            if isCurrentTf and KitSMC.is_pdarray_post_touch(z) and not z.broken
+                cnt += 1
+    while cnt > keepMax
+        int weakestIdx = na
+        float weakestScore = 10e10
+        if array.size(zones) > 0
+            for i = 0 to array.size(zones) - 1
+                KitSMC.PDArray z = array.get(zones, i)
+                bool isCurrentTf = z.sourceTfRank <= 1
+                if isCurrentTf and KitSMC.is_pdarray_post_touch(z) and not z.broken
+                    float s = nz(z.qualityPct, 0.0) - (math.max(bar_index - z.barStart, 0) * ageDecay)
+                    if na(weakestIdx) or s < weakestScore
+                        weakestScore := s
+                        weakestIdx := i
+        if not na(weakestIdx)
+            KitSMC.PDArray zDel = array.get(zones, weakestIdx)
+            KitSMC.delete_pd_array_drawings(zDel)
+            array.remove(zones, weakestIdx)
+            cnt -= 1
+        else
+            cnt := keepMax
+    bool(na)
+
+process_data_store_active_zone(array<KitSMC.PDArray> zones, KitSMC.PDArray z) =>
+    if gateUsePdarrayPrune
+        array<KitSMC.PDArray> removed = KitSMC.add_active_zone(zones, z, localCfg.zoneCapPerType, localCfg.zoneCapTotal, localCfg.zoneCurrMaxPerTypeSide, effectiveCurrLookbackBars, last_bar_index, close, bar_index, localCfg.zonePriorityAgeDecay)
+        if array.size(removed) > 0
+            for i = 0 to array.size(removed) - 1
+                KitSMC.PDArray zDel = array.get(removed, i)
+                KitSMC.delete_pd_array_drawings(zDel)
+    else
+        array.push(zones, z)
+    bool(na)
+
+get_data_pdarray_tooltip(KitSMC.PDArray z) =>
+    float zoneTop = math.max(z.top, z.bottom)
+    float zoneBtm = math.min(z.top, z.bottom)
+    float zoneSize = math.max(zoneTop - zoneBtm, syminfo.mintick)
+    float atrNow = math.max(nz(commonAtr), syminfo.mintick)
+    float sizeAtr = zoneSize / atrNow
+    bool isSmall = sizeAtr < localCfg.zoneKeepMinSizeAtr
+    [tf1Local, tf2Local] = KitCore.get_htf_pair()
+    string tfRaw = na(z.sourceTf) or z.sourceTf == "" ? (z.sourceTfRank >= 3 ? tf2Local : z.sourceTfRank >= 2 ? tf1Local : timeframe.period) : z.sourceTf
+    string tfText = KitUI.get_friendly_tf(tfRaw)
+    string sizeText = str.tostring(zoneSize, format.mintick)
+    string sizeAtrText = str.tostring(sizeAtr, "#.##")
+    string thresholdText = str.tostring(localCfg.zoneKeepMinSizeAtr, "#.##")
+    string sideText = zoneBtm >= high ? "Above current bar" : zoneTop <= low ? "Below current bar" : "Around current bar"
+    string qualityText = na(z.qualityPct) ? "n/a" : str.tostring(z.qualityPct, "#.##")
+    string tooltipText = "TF: " + tfText +
+     "\nType: " + z.type +
+     "\nStart bar: " + str.tostring(z.barStart) +
+     "\nTouches: " + str.tostring(math.max(z.touchCount, 0)) +
+     "\nRejects: " + str.tostring(math.max(z.rejectCount, 0)) +
+     "\nSize: " + sizeText +
+     "\nSize ATR: " + sizeAtrText +
+     "\nZone top: " + str.tostring(zoneTop, format.mintick) +
+     "\nZone bottom: " + str.tostring(zoneBtm, format.mintick) +
+     "\nSmall: " + (isSmall ? "Yes" : "No") +
+     "\nSmall threshold ATR: " + thresholdText
+    if z.sourceTfRank >= 2
+        tooltipText += "\nSide: " + sideText
+    if not na(z.indexInLeg) and z.indexInLeg > 0
+        tooltipText += "\nIndex in leg: " + str.tostring(z.indexInLeg)
+    if not na(z.swingLegArrayIndex)
+        tooltipText += "\nSwing leg idx: " + str.tostring(z.swingLegArrayIndex)
+    if not na(z.legId) and z.legId >= 0
+        tooltipText += "\nLeg ID: " + str.tostring(z.legId)
+    if not na(z.qualityPct)
+        tooltipText += "\nQuality: " + qualityText + "%"
+    tooltipText
+
+get_data_pdarray_size_atr(float top, float btm) =>
+    float atrNow = math.max(nz(commonAtr), syminfo.mintick)
+    math.max(math.abs(top - btm), syminfo.mintick) / atrNow
+
+get_data_trade_pdarray_text(string pdarrayType, string sourceTf, float levelTop, float levelBtm) =>
+    float zoneTop = math.max(levelTop, levelBtm)
+    float zoneBtm = math.min(levelTop, levelBtm)
+    string tfResolved = na(sourceTf) or sourceTf == "" ? timeframe.period : sourceTf
+    string typeResolved = str.upper(pdarrayType)
+    string tfText = KitUI.get_friendly_tf(tfResolved)
+    string typeText = typeResolved == "" ? "na" : typeResolved
+    string sizeAtr = str.tostring(get_data_pdarray_size_atr(zoneTop, zoneBtm), "#.##")
+    typeText + ", " + tfText + ", sizeATR " + sizeAtr + ", top " + str.tostring(zoneTop, format.mintick) + ", bottom " + str.tostring(zoneBtm, format.mintick)
+
+passes_pdarray_add_gate(float top, float btm) =>
+    get_data_pdarray_size_atr(top, btm) >= localCfg.zoneKeepMinSizeAtr
+
+get_data_pdarray_merge_idx(array<KitSMC.PDArray> zones, string type, bool isBull, int leftIdx, int ext) =>
+    int outIdx = na
+    if array.size(zones) > 0
+        for i = array.size(zones) - 1 to 0
+            KitSMC.PDArray z = array.get(zones, i)
+            bool sameTypeSide = z.type == type and z.isBullish == isBull
+            bool sameSlot = z.extendBars == ext
+            bool active = not z.broken
+            bool nearStart = math.abs(z.barStart - leftIdx) <= localCfg.zoneMergeStartGapBars
+            if sameTypeSide and sameSlot and active and nearStart
+                outIdx := i
+                break
+    outIdx
+    
+add_primary_zone(array<KitSMC.PDArray> zones, string type, bool isBull, float top, float btm, int leftIdx, int ext, string labelText, int labelX, float labelY, color labelColor, color borderColor, string borderStyle, float qualityPct, int tfSlot) =>
+    if na(leftIdx) or leftIdx < workingFirstBar
+        bool(na)
+    else if not passes_pdarray_add_gate(top, btm)
+        bool(na)
+    else
+        [tf1Local, tf2Local] = KitCore.get_htf_pair()
+        string sourceTfNow = tfSlot == 0 ? tf1Local : tfSlot == 1 ? tf2Local : timeframe.period
+        int sourceTfRankNow = tfSlot == 0 ? 2 : tfSlot == 1 ? 3 : 1
+        int mergeIdx = get_data_pdarray_merge_idx(zones, type, isBull, leftIdx, ext)
+        if not na(mergeIdx)
+            KitSMC.PDArray zMerge = array.get(zones, mergeIdx)
+            zMerge.top := top
+            zMerge.bottom := btm
+            zMerge.qualityPct := na(qualityPct) ? zMerge.qualityPct : qualityPct
+            zMerge.labelText := labelText
+            zMerge.extendBars := ext
+            if tfSlot >= 0
+                zMerge.sourceTf := sourceTfNow
+                zMerge.sourceTfRank := sourceTfRankNow
+            array.set(zones, mergeIdx, zMerge)
+            bool(na)
+        else
+            string labelSize = tfSlot == 1 ? THEME.SIZE_SMALL : tfSlot == 0 ? THEME.SIZE_SMALL : THEME.SIZE_SMALL
+            bool showLabel = labelSize != "None"
+            color resolvedLabelColor = na(labelColor) ? uiCfg.ltfColor : labelColor
+            color resolvedBorderColor = borderColor
+            if tfSlot < 0 and not na(resolvedBorderColor)
+                resolvedBorderColor := color.new(uiCfg.ltfColor, 85)
+            if tfSlot < 0
+                resolvedLabelColor := uiCfg.ltfColor
+            color areaFillColor = tfSlot == 0 ? color.new(htf1Cfg.zigzagColor, uiCfg.htfZoneBgTransp) :
+             tfSlot == 1 ? color.new(htf2Cfg.zigzagColor, uiCfg.htfZoneBgTransp) :
+             uiCfg.colorBg
+            bool strong = not na(qualityPct) and qualityPct >= 70.0
+            if strong
+                resolvedLabelColor := color.new(resolvedLabelColor, 0)
+            KitSMC.ZoneVisualCfg zoneCfg = ZONE_VIS_CFG
+            zoneCfg.textSize := labelSize
+            SR_VIS_CFG.lineStyle := CFG_SR.lineStyle
+            SR_VIS_CFG.lineWidth := CFG_SR.lineWidth
+            SR_VIS_CFG.labelSize := labelSize
+            SR_VIS_CFG.showLabel := CFG_SR.showLabel
+            KitSMC.PDArray z = KitSMC.PDArray.new()
+            z.type := type
+            z.top := top
+            z.bottom := btm
+            z.barStart := leftIdx
+            z.sourceTf := sourceTfNow
+            z.sourceTfRank := sourceTfRankNow
+            z.isBullish := isBull
+            z.labelText := labelText
+            z.extendBars := ext
+            z.qualityPct := qualityPct
+            string tooltipText = get_data_pdarray_tooltip(z)
+            z := KitSMC.draw_price_zone(z, leftIdx, bar_index + ext, top, btm, areaFillColor, resolvedBorderColor, borderStyle, labelText, resolvedLabelColor, tooltipText, labelX, labelY, zoneCfg, SR_VIS_CFG, true, false, (top + btm) / 2.0, CFG_SR.lineColor, "AREA", showLabel)
+            z.lifeState := CONST.LIFE_FORMED
+            z.touchCount := 0
+            process_data_store_active_zone(zones, z)
+    bool(na)
+
+process_data_add_ltf_candidate(KitSMC.PDArrayCandidate cand) =>
+    string zoneType = cand.type
+    bool isBull = cand.isBullish
+    float top = cand.top
+    float btm = cand.bottom
+    int leftIdx = cand.leftIdx
+    float qPct = cand.qualityPct
+    string labelText = cand.labelText
+    if zoneType == "OB"
+        KitSMC.ZoneTypeConfig obCfg = get_pdarray_cfg("OB")
+        int ext = obCfg.extendBarsCurr > 0 ? obCfg.extendBarsCurr : KitCore.get_current_pdarray_extend("OB", uiCfg.ltfBarsExt - 4, uiCfg.ltfBarsExt)
+        string borderStyle = THEME.STYLE_STRONG == "None" ? line.style_solid : THEME.STYLE_STRONG
+        color labelColor = isBull ? uiCfg.colorBullish : color.new(uiCfg.colorBearish, 20)
+        color borderColor = isBull ? (THEME.STYLE_STRONG == "None" ? na : color.new(uiCfg.colorBullish, 55)) : color.new(uiCfg.colorBearish, 55)
+        float labelY = isBull ? top : btm
+        add_primary_zone(smcCtx.zones, zoneType, isBull, top, btm, leftIdx, ext, labelText, bar_index + 3, labelY, labelColor, borderColor, borderStyle, qPct, -1)
+    else if zoneType == "RJB"
+        KitSMC.ZoneTypeConfig rjbCfg = get_pdarray_cfg("RJB")
+        int ext = rjbCfg.extendBarsCurr > 0 ? rjbCfg.extendBarsCurr : KitCore.get_current_pdarray_extend("RJB", uiCfg.ltfBarsExt - 4, uiCfg.ltfBarsExt)
+        string borderStyle = THEME.STYLE_STRONG == "None" ? line.style_solid : THEME.STYLE_STRONG
+        color labelColor = isBull ? uiCfg.colorBullish : color.new(uiCfg.colorBearish, THEME.T_LOW)
+        color borderColor = THEME.STYLE_STRONG == "None" ? na : (isBull ? color.new(uiCfg.colorBullish, 55) : color.new(uiCfg.colorBearish, 55))
+        float labelY = isBull ? top : btm
+        add_primary_zone(smcCtx.zones, zoneType, isBull, top, btm, leftIdx, ext, labelText, bar_index + 11, labelY, labelColor, borderColor, borderStyle, qPct, -1)
+    else if zoneType == "FVG"
+        KitSMC.ZoneTypeConfig fvgCfg = get_pdarray_cfg("FVG")
+        int ext = fvgCfg.extendBarsCurr > 0 ? fvgCfg.extendBarsCurr : KitCore.get_current_pdarray_extend("FVG", uiCfg.ltfBarsExt - 4, uiCfg.ltfBarsExt)
+        color labelColor = isBull ? uiCfg.colorBullish : color.new(uiCfg.colorBearish, THEME.T_LOW)
+        add_primary_zone(smcCtx.zones, zoneType, isBull, top, btm, leftIdx, ext, labelText, bar_index + 7, (top + btm) / 2.0, labelColor, na, line.style_solid, qPct, -1)
+    bool(na)
+
+process_data_detect_ltf_pdarrays() =>
+    if array.size(smcCtx.ltfCandidates) > 0
+        for i = 0 to array.size(smcCtx.ltfCandidates) - 1
+            process_data_add_ltf_candidate(array.get(smcCtx.ltfCandidates, i))
+    bool(na)
+
+spawn_derived_zone(array<KitSMC.PDArray> zones, string newType, bool isBull, float top, float btm, float qualityPct) =>
+    if not passes_pdarray_add_gate(top, btm)
+        bool(na)
+    else
+        KitSMC.ZoneTypeConfig cfg = get_pdarray_cfg(newType)
+        float q = nz(qualityPct, 0.0)
+        int ext = cfg.extendBarsCurr > 0 ? cfg.extendBarsCurr : KitCore.get_current_pdarray_extend(newType, uiCfg.ltfBarsExt - 4, uiCfg.ltfBarsExt)
+        color txtColor = uiCfg.ltfColor
+        borderStyle = cfg.borderStyle
+        color borderColor = cfg.noBorder ? na : color.new(uiCfg.ltfColor, 85)
+        string lbl = cfg.shortName != "" ? cfg.shortName : (newType == "BB" ? "BB" : "iFVG")
+        KitSMC.PDArray z = KitSMC.PDArray.new()
+        z.type := newType
+        z.top := top
+        z.bottom := btm
+        z.barStart := bar_index
+        z.sourceTf := timeframe.period
+        z.sourceTfRank := 1
+        z.isBullish := isBull
+        z.labelText := lbl
+        z.indexInLeg := 1
+        z.isAll := true
+        z.isLess := true
+        z.isNormal := true
+        z.isExtreme := true
+        z.extendBars := ext
+        z.qualityPct := q
+        string tooltipText = get_data_pdarray_tooltip(z)
+        z := KitSMC.draw_price_zone(z, bar_index, bar_index + ext, top, btm, uiCfg.colorBg, borderColor, borderStyle, lbl, txtColor, tooltipText, bar_index + ext, (top + btm) / 2.0, ZONE_VIS_CFG, SR_VIS_CFG, true, false, na, borderColor, "AREA", true)
+        z.lifeState := CONST.LIFE_FORMED
+        z.touchCount := 0
+        z.rejectCount := 0
+        process_data_store_active_zone(zones, z)
+
+annotate_new_pricezones(array<KitSMC.PDArray> zones, int startIdx, string sourceTf, int sourceTfRank, KitSMC.TFData tfData) =>
+    int zoneCount = array.size(zones)
+    if startIdx < zoneCount
+        for i = startIdx to zoneCount - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            if z.sourceTf == ""
+                tfData.mss.legSeqAll += 1
+                int seqType = 0
+                if z.type == "OB" or z.type == "BB"
+                    tfData.mss.legSeqOb += 1
+                    seqType := tfData.mss.legSeqOb
+                else if z.type == "FVG" or z.type == "IFVG"
+                    tfData.mss.legSeqFvg += 1
+                    seqType := tfData.mss.legSeqFvg
+                else if z.type == "RJB"
+                    tfData.mss.legSeqRjb += 1
+                    seqType := tfData.mss.legSeqRjb
+                else
+                    tfData.mss.legSeqLevel += 1
+                    seqType := tfData.mss.legSeqLevel
+                z.sourceTf := sourceTf
+                z.sourceTfRank := sourceTfRank
+                z.legId := tfData.mss.legId
+                z.legDir := tfData.mss.legDir
+                z.legSeqAll := tfData.mss.legSeqAll
+                z.legSeqType := seqType
+                z.indexInLeg := tfData.mss.legSeqAll
+                z.swingLegArrayIndex := get_data_swing_leg_array_index(sourceTfRank, z.legId)
+                z.isAll := true
+                bool isHtf = sourceTfRank >= 2
+                z.isLess := isHtf ? (z.indexInLeg <= 3) : (z.indexInLeg <= 4)
+                z.isNormal := isHtf ? (z.indexInLeg <= 2) : (z.indexInLeg <= 3)
+                z.isExtreme := z.indexInLeg <= 1
+                array.set(zones, i, z)
+
+is_pdarray_trade_type(string type) =>
+    string t = str.upper(type)
+    str.contains(t, "OB") or str.contains(t, "BB") or str.contains(t, "FVG") or str.contains(t, "IFVG") or str.contains(t, "RJB") or str.contains(t, "SD")
+
+get_trade_pdarray_meta(string type, float zoneTop, float zoneBtm) =>
+    process_data_reset_runtime_context_if_new_bar()
+    string metaKey = type + "|" + str.tostring(zoneTop, "#.#####") + "|" + str.tostring(zoneBtm, "#.#####")
+    int cachedIdx = na
+    if array.size(rtPdMetaKeys) > 0
+        for i = 0 to array.size(rtPdMetaKeys) - 1
+            if array.get(rtPdMetaKeys, i) == metaKey
+                cachedIdx := i
+                break
+    if not na(cachedIdx)
+        [array.get(rtPdMetaRank, cachedIdx), array.get(rtPdMetaLegId, cachedIdx), array.get(rtPdMetaLegDir, cachedIdx), array.get(rtPdMetaLegSeq, cachedIdx)]
+    else
+        int outRank = 0
+        int outLegId = -1
+        int outLegDir = 0
+        int outLegSeq = -1
+        float tol = syminfo.mintick * 2.0
+        if array.size(smcCtx.zones) > 0
+            for i = array.size(smcCtx.zones) - 1 to 0
+                KitSMC.PDArray z = array.get(smcCtx.zones, i)
+                bool sameType = z.type == type
+                bool nearTop = math.abs(z.top - zoneTop) <= tol
+                bool nearBtm = math.abs(z.bottom - zoneBtm) <= tol
+                if sameType and nearTop and nearBtm
+                    outRank := z.sourceTfRank
+                    outLegId := z.legId
+                    outLegDir := z.legDir
+                    outLegSeq := z.legSeqAll
+                    break
+        array.push(rtPdMetaKeys, metaKey)
+        array.push(rtPdMetaRank, outRank)
+        array.push(rtPdMetaLegId, outLegId)
+        array.push(rtPdMetaLegDir, outLegDir)
+        array.push(rtPdMetaLegSeq, outLegSeq)
+        [outRank, outLegId, outLegDir, outLegSeq]
+
+passes_pdarray_trade_filter(string type, float qualityPct, float zoneTop, float zoneBtm, string direction) =>
+    bool pass = true
+    if localCfg.entryZoneFilterEnable and is_pdarray_trade_type(type)
+        [srcRank, legId, legDir, legSeq] = get_trade_pdarray_meta(type, zoneTop, zoneBtm)
+        float q = nz(qualityPct, 0.0)
+        if pass and q < localCfg.entryZoneMinQualityPct
+            pass := false
+        if pass and localCfg.entryFilterNearLegEnable
+            bool known = legId >= 0 and legSeq > 0
+            bool seqOk = known and legSeq <= localCfg.entryFilterNearLegMaxSeq
+            bool dirOk = true
+            if localCfg.entryFilterNearLegRequireDirMatch and known
+                bool isBuy = str.upper(direction) == "BUY"
+                dirOk := (isBuy and legDir >= 0) or ((not isBuy) and legDir <= 0)
+            pass := known ? (seqOk and dirOk) : localCfg.entryFilterNearLegAllowUnknown
+    pass
+
+add_htf_pdarray_core(array<KitSMC.PDArray> zones, int tfSlot, string zoneType, bool isBull, float top, float btm, int startTs, float qPct) =>
+    int ext = KitCore.get_htf_pdarray_extend(tfSlot, HTF1_EXT_BASE + HTF_EXT_PAD, HTF2_EXT_BASE + HTF_EXT_PAD)
+    string lblBase = zoneType == "SD" ? (isBull ? "D" : "S") : str.upper(zoneType)
+    string lbl = lblBase
+    bool hasDupSameSlot = false
+    if array.size(zones) > 0
+        for i = 0 to array.size(zones) - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            bool sameTypeSide = z.type == zoneType and z.isBullish == isBull
+            bool sameSlot = z.extendBars == ext
+            if sameTypeSide and sameSlot and KitSMC.pd_arrays_overlap(top, btm, z.top, z.bottom)
+                hasDupSameSlot := true
+                break
+    if not hasDupSameSlot
+        int leftIdxRaw = get_data_map_htf_source_to_ltf_idx(startTs)
+        if not na(leftIdxRaw)
+            int leftIdx = leftIdxRaw
+            KitSMC.ZoneTypeConfig cfg = get_pdarray_cfg(zoneType)
+            color lineClr = tfSlot == 0 ? color.new(htf1Cfg.zigzagColor, 0) : color.new(htf2Cfg.zigzagColor, 0)
+            color tfBorder = tfSlot == 0 ? color.new(htf1Cfg.zigzagColor, 85) : color.new(htf2Cfg.zigzagColor, 85)
+            color borderClr = cfg.noBorder ? na : tfBorder
+            string borderStyle = cfg.borderStyle
+            float y = (top + btm) * 0.5
+            int labelX = bar_index + 5
+            add_primary_zone(zones, zoneType, isBull, top, btm, leftIdx, ext, lbl, labelX, y, lineClr, borderClr, borderStyle, qPct, tfSlot)
+    bool(na)
+
+add_htf_pdarray_if_valid(array<KitSMC.PDArray> zones, int tfSlot, bool showType, string zoneType, bool isBull, float top, float btm, int startTs, float qPct) =>
+    [tf1Local, tf2Local] = KitCore.get_htf_pair()
+    string tfName = tfSlot == 0 ? tf1Local : tf2Local
+    int recentTsCut = get_data_htf_detection_cutoff_time(tfSlot, tfName)
+    bool recent = not na(startTs) and startTs >= recentTsCut
+    bool sdRelax = pdDisplayMode == "Less" and zoneType == "SD"
+    bool recencyOk = sdRelax ? not na(startTs) : recent
+    bool qualityOk = sdRelax ? true : nz(qPct, 0) >= localCfg.htfProjectionMinQualityPct
+    bool unmitigated = zoneType == "SD" ? true : (isBull ? (low > top) : (high < btm))
+    bool valid = showType and recencyOk and not na(startTs) and not na(top) and not na(btm) and top > btm and qualityOk and unmitigated
+    if valid
+        add_htf_pdarray_core(zones, tfSlot, zoneType, isBull, top, btm, startTs, qPct)
+    bool(na)
+
+process_data_add_htf_side_fallback(array<KitSMC.PDArray> zones, int startIdx, int tfSlot, bool wantAbove,
+ bool showType0, string type0, bool bull0, float top0, float btm0, int st0, float q0,
+ bool showType1, string type1, bool bull1, float top1, float btm1, int st1, float q1,
+ bool showType2, string type2, bool bull2, float top2, float btm2, int st2, float q2,
+ bool showType3, string type3, bool bull3, float top3, float btm3, int st3, float q3) =>
+    [tf1Local, tf2Local] = KitCore.get_htf_pair()
+    string tfName = tfSlot == 0 ? tf1Local : tf2Local
+    int recentTsCut = get_data_htf_detection_cutoff_time(tfSlot, tfName)
+    [hasChoice, zType, isBull, top, btm, st, q] = KitSMC.pick_htf_side_fallback(zones, startIdx, true, wantAbove, close, recentTsCut, localCfg.htfProjectionMinQualityPct, low, high, syminfo.mintick,
+     showType0, type0, bull0, top0, btm0, st0, q0,
+     showType1, type1, bull1, top1, btm1, st1, q1,
+     showType2, type2, bull2, top2, btm2, st2, q2,
+     showType3, type3, bull3, top3, btm3, st3, q3)
+    if hasChoice
+        add_htf_pdarray_core(zones, tfSlot, zType, isBull, top, btm, st, q)
+    bool(na)
+
+process_data_attach_htf_pdarrays_for_tf(array<KitSMC.PDArray> zones, string tfName, int tfSlot, bool showTf,
+ bool obEnabled, float obUpTop, float obUpBtm, int obUpStart, float obUpQ, float obDnTop, float obDnBtm, int obDnStart, float obDnQ,
+ bool fvgEnabled, float fvgUpTop, float fvgUpBtm, int fvgUpStart, float fvgUpQ, float fvgDnTop, float fvgDnBtm, int fvgDnStart, float fvgDnQ,
+ bool sdEnabled, float sdSupTop, float sdSupBtm, int sdSupStart,
+ float sdDemTop, float sdDemBtm, int sdDemStart,
+ KitSMC.TFData tfData, int sourceTfRank) =>
+    bool hasAnyType = obEnabled or fvgEnabled or sdEnabled
+    if not showTf or not hasAnyType
+        bool(na)
+    else
+        int zoneStartIdx = array.size(zones)
+        bool foundAbove = false
+        bool foundBelow = false
+
+        // occurrence 0 (already prefetched snapshot)
+        int beforeAbove0 = array.size(zones)
+        process_data_add_htf_side_fallback(zones, zoneStartIdx, tfSlot, true,
+         obEnabled, "OB", true, obUpTop, obUpBtm, obUpStart, obUpQ,
+         obEnabled, "OB", false, obDnTop, obDnBtm, obDnStart, obDnQ,
+         fvgEnabled, "FVG", true, fvgUpTop, fvgUpBtm, fvgUpStart, fvgUpQ,
+         fvgEnabled, "FVG", false, fvgDnTop, fvgDnBtm, fvgDnStart, fvgDnQ)
+        foundAbove := array.size(zones) > beforeAbove0
+        int beforeBelow0 = array.size(zones)
+        process_data_add_htf_side_fallback(zones, zoneStartIdx, tfSlot, false,
+         obEnabled, "OB", true, obUpTop, obUpBtm, obUpStart, obUpQ,
+         obEnabled, "OB", false, obDnTop, obDnBtm, obDnStart, obDnQ,
+         fvgEnabled, "FVG", true, fvgUpTop, fvgUpBtm, fvgUpStart, fvgUpQ,
+         fvgEnabled, "FVG", false, fvgDnTop, fvgDnBtm, fvgDnStart, fvgDnQ)
+        foundBelow := array.size(zones) > beforeBelow0
+
+        // Trace back older HTF occurrences until both sides are found.
+        int traceMax = math.min(HTF_pdarray_PER_TF, math.max(localCfg.htfOccurrenceTraceMax, 1))
+        if not foundAbove or not foundBelow
+            for occ = 1 to traceMax - 1
+                if foundAbove and foundBelow
+                    break
+                [obUpTopOcc, obUpBtmOcc, obUpStartOcc, obUpQOcc, obDnTopOcc, obDnBtmOcc, obDnStartOcc, obDnQOcc, fvgUpTopOcc, fvgUpBtmOcc, fvgUpStartOcc, fvgUpQOcc, fvgDnTopOcc, fvgDnBtmOcc, fvgDnStartOcc, fvgDnQOcc] = get_data_real_htf_pdarray_occurrence_set(tfName, occ)
+                if not foundAbove
+                    int beforeAbove = array.size(zones)
+                    process_data_add_htf_side_fallback(zones, zoneStartIdx, tfSlot, true,
+                     obEnabled, "OB", true, obUpTopOcc, obUpBtmOcc, obUpStartOcc, obUpQOcc,
+                     obEnabled, "OB", false, obDnTopOcc, obDnBtmOcc, obDnStartOcc, obDnQOcc,
+                     fvgEnabled, "FVG", true, fvgUpTopOcc, fvgUpBtmOcc, fvgUpStartOcc, fvgUpQOcc,
+                     fvgEnabled, "FVG", false, fvgDnTopOcc, fvgDnBtmOcc, fvgDnStartOcc, fvgDnQOcc)
+                    foundAbove := array.size(zones) > beforeAbove
+                if not foundBelow
+                    int beforeBelow = array.size(zones)
+                    process_data_add_htf_side_fallback(zones, zoneStartIdx, tfSlot, false,
+                     obEnabled, "OB", true, obUpTopOcc, obUpBtmOcc, obUpStartOcc, obUpQOcc,
+                     obEnabled, "OB", false, obDnTopOcc, obDnBtmOcc, obDnStartOcc, obDnQOcc,
+                     fvgEnabled, "FVG", true, fvgUpTopOcc, fvgUpBtmOcc, fvgUpStartOcc, fvgUpQOcc,
+                     fvgEnabled, "FVG", false, fvgDnTopOcc, fvgDnBtmOcc, fvgDnStartOcc, fvgDnQOcc)
+                    foundBelow := array.size(zones) > beforeBelow
+        add_htf_pdarray_if_valid(zones, tfSlot, sdEnabled, "SD", false, sdSupTop, sdSupBtm, sdSupStart, 100.0)
+        add_htf_pdarray_if_valid(zones, tfSlot, sdEnabled, "SD", true, sdDemTop, sdDemBtm, sdDemStart, 100.0)
+        annotate_new_pricezones(zones, zoneStartIdx, tfName, sourceTfRank, tfData)
+    bool(na)
+
+get_data_htf_sd_snapshot(float thresholdPct, int divBins, int lookbackBars) =>
+    int lb = math.max(5, lookbackBars)
+    float hi = ta.highest(high, lb)
+    float lo = ta.lowest(low, lb)
+    float csum = math.sum(volume, lb)
+    float bin = (hi - lo) / divBins
+    int safeOff = math.max(0, math.min(math.min(lb - 1, bar_index), 10000))
+    int st = int(time[safeOff])
+    float sTop = na
+    float sBtm = na
+    float dTop = na
+    float dBtm = na
+    if csum > 0 and bin > 0
+        float sAcc = 0.0
+        float dAcc = 0.0
+        for i = 0 to divBins - 1
+            float sLvl = hi - (i + 1) * bin
+            float sPrev = hi - i * bin
+            float dLvl = lo + (i + 1) * bin
+            float dPrev = lo + i * bin
+            float sVol = 0.0
+            float dVol = 0.0
+            for j = 0 to lb - 1
+                if high[j] > sLvl and high[j] <= sPrev
+                    sVol += volume[j]
+                if low[j] >= dPrev and low[j] < dLvl
+                    dVol += volume[j]
+            sAcc += sVol
+            dAcc += dVol
+            if na(sBtm) and sAcc / csum * 100 > thresholdPct
+                sTop := hi
+                sBtm := sLvl
+            if na(dTop) and dAcc / csum * 100 > thresholdPct
+                dTop := dLvl
+                dBtm := lo
+            if not na(sBtm) and not na(dTop)
+                break
+    [sTop, sBtm, st, dTop, dBtm, st]
+
+get_data_entry_model_dynamic_cfg(string modelKey) =>
+    process_data_init_strategy_defs()
+    string k = str.upper(modelKey)
+    KitCore.EntryModelDef found = na
+    if array.size(strategyDefs) > 0
+        for i = 0 to array.size(strategyDefs) - 1
+            KitCore.EntryModelDef s = array.get(strategyDefs, i)
+            if s.key == k
+                found := s
+                break
+    not na(found) ? found : KitCore.EntryModelDef.new(key=k, shortName=k, baseScore=0, enabled=true, rr=2.0, bias_ltf=1, bias_htf1=0, bias_htf2=0, required_previous_events="", required_window_bars=80, bias_direction="na", max_active=1, dynamic_tp_sl=true, risk_zone_pct=0.0, entry_mode=ENTRY_MODE_AFTER_RETEST)
+
+get_cached_pdarray_min_right(KitSMC.PDArray z, int desiredRight, int minWidthBars) =>
+    process_data_reset_runtime_context_if_new_bar()
+    string key = z.type + "|" + str.tostring(z.barStart) + "|" + str.tostring(desiredRight) + "|" + str.tostring(minWidthBars)
+    int idx = na
+    if array.size(rtMinRightKeys) > 0
+        for i = 0 to array.size(rtMinRightKeys) - 1
+            if array.get(rtMinRightKeys, i) == key
+                idx := i
+                break
+    if not na(idx)
+        array.get(rtMinRightVals, idx)
+    else
+        int v = KitSMC.get_pdarray_min_right_idx(z, desiredRight, minWidthBars)
+        array.push(rtMinRightKeys, key)
+        array.push(rtMinRightVals, v)
+        v
+
+get_model_key_for_type(string t) =>
+    string u = str.upper(t)
+    (u == "OB" or u == "FVG" or u == "SD" or u == "BB" or u == "IFVG" or u == "RJB" or u == "BO" or u == "BREAK_OUT" or u == "BOS" or u == "MSS" or u == "MS") ? "BREAK_OUT" :
+     ((u == "RJ" or u == "REJECTION") ? "REJECTION" :
+     ((u == "SW" or u == "SWEEP") ? "SWEEP" : u))
+
+get_data_trade_tf_suffix(string sourceTf) =>
+    KitUI.get_friendly_tf(na(sourceTf) or sourceTf == "" ? timeframe.period : sourceTf)
+
+get_data_trade_source_label(string baseType) =>
+    string k = str.upper(baseType)
+    int dotPos = str.pos(k, ".")
+    k := dotPos >= 0 ? str.substring(k, 0, dotPos) : k
+    string fullName = k == "OB" ? "Order Block" :
+                      k == "FVG" ? "Fair Value Gap" :
+                      k == "SD" ? "Supply/Demand" :
+                      k == "BB" ? "Breaker Block" :
+                      k == "IFVG" ? "Inversion FVG" :
+                      k == "RJ" or k == "REJECTION" ? "Rejection" :
+                      k == "SW" or k == "SWEEP" ? "Sweep" :
+                      k == "BO" or k == "BOS" ? "Break of Structure" :
+                      k == "MSS" or k == "MS" ? "Market Structure Shift" : "Model"
+    k + " - " + fullName
+
+get_data_trade_type_for_source(string baseType, string sourceTf) =>
+    baseType + "." + get_data_trade_tf_suffix(sourceTf)
+
+get_data_trade_type_for_source_rr(string baseType, string sourceTf, float rrVal) =>
+    string k = str.upper(baseType)
+    int dotPos = str.pos(k, ".")
+    k := dotPos >= 0 ? str.substring(k, 0, dotPos) : k
+    string rrText = na(rrVal) ? "na" : str.tostring(rrVal)
+    k + "." + get_data_trade_tf_suffix(sourceTf) + "." + rrText
+
+get_data_source_tf_rank(string sourceTf) =>
+    [tf1Local, tf2Local] = KitCore.get_htf_pair()
+    string tfResolved = na(sourceTf) or sourceTf == "" ? timeframe.period : sourceTf
+    tfResolved == tf2Local ? 3 : tfResolved == tf1Local ? 2 : 1
+
+get_data_is_source_tf_enabled_by_rank(int sourceTfRank) =>
+    sourceTfRank >= 3 ? pdShowTf2 : sourceTfRank >= 2 ? pdShowTf1 : pdShowLtf
+
+get_data_is_source_tf_enabled(string sourceTf) =>
+    get_data_is_source_tf_enabled_by_rank(get_data_source_tf_rank(sourceTf))
+
+is_pdarray_type_enabled(string t) =>
+    string u = str.upper(t)
+    (u == "OB" and plotOB) or (u == "FVG" and plotFVG) or (u == "SD" and plotSD) or (u == "BB" and useBB) or (u == "IFVG" and useIFVG) or (u == "RJB") or (u == "SWEEP")
+
+process_data_add_entry(string type, string direction, string reason, float levelTop, float levelBtm, float qualityPct, int scoreVal, string pdarrayType, string sourceTf) =>
+    if not get_data_is_source_tf_enabled(sourceTf)
+        bool(na)
+    else
+        bool isBuy = direction == "Buy"
+        float zoneTop = math.max(levelTop, levelBtm)
+        float zoneBtm = math.min(levelTop, levelBtm)
+        string modelKey = get_model_key_for_type(type)
+        KitCore.EntryModelDef mCfg = get_data_entry_model_dynamic_cfg(modelKey)
+        bool allowEntry = true
+        bool shouldTrackTrades = tradeEntriesEnabled or strategyOrdersEnabled
+        bool passBatchCap = true
+        bool propAllowed = true
+        if allowEntry and passBatchCap and propAllowed
+            KitSMC.cache_signal_memory_event(smcCtx.signalHist, KitSMC.Event.new(type, direction, levelTop, levelBtm, na, bar_index, int(na), false, reason, sourceTf, qualityPct, scoreVal), syminfo.mintick, 80)
+            float tick = syminfo.mintick
+            float sameZoneTol = tick * 2.0
+            float zoneHeight = math.max(zoneTop - zoneBtm, syminfo.mintick)
+            float slRaw = isBuy ? zoneBtm : zoneTop
+            float riskPct = math.max(mCfg.risk_zone_pct, 0.0)
+            float entry = isBuy ? zoneTop : zoneBtm
+            float gapDist = zoneHeight * math.max(mCfg.risk_zone_pct, 0.0)
+            array<float> rrList = get_data_rr_array_for_model(modelKey)
+            for rrIdx = 0 to array.size(rrList) - 1
+                float rrTarget = array.get(rrList, rrIdx)
+                KitCore.TradePlan plan = KitCore.build_trade_plan(direction, entry, slRaw, rrTarget, gapDist)
+                float slGap = plan.slGap
+                float stoploss = plan.stoploss
+                float rrUsed = plan.rrUsed
+                float takeprofit = plan.takeprofit
+
+                if plan.valid and KitCore.is_trade_plan_valid_with_limits(entry, stoploss, takeprofit, localCfg.minTradeSizeTicks, localCfg.minTradeRR)
+                    string tradeType = get_data_trade_type_for_source_rr(type, sourceTf, rrTarget)
+                    string sourceLabel = get_data_trade_source_label(type)
+                    string sh = str.upper(type)
+                    int p = str.pos(sh, ".")
+                    sh := p >= 0 ? str.substring(sh, 0, p) : sh
+                    string longName = sh == "RJ" or sh == "REJECTION" ? "Rejection" : sh == "SW" or sh == "SWEEP" ? "Sweep" : (sh == "BO" or sh == "BREAK_OUT" or sh == "BOS" or sh == "MSS" or sh == "MS") ? "Breakout" : "Model"
+                    KitCore.EntryModelDef typeCfg = get_data_entry_model_dynamic_cfg(get_model_key_for_type(type))
+                    string pdU = str.upper(pdarrayType)
+                    string pdType = (pdU == "OB" or pdU == "FVG" or pdU == "SD" or pdU == "BB" or pdU == "IFVG" or pdU == "RJB") ? pdU : "na"
+                    string pdText = get_data_trade_pdarray_text(pdType, sourceTf, zoneTop, zoneBtm)
+                    string eventsLine = "events: " + KitSMC.get_trade_relevant_events_text(smcCtx.signalHist, direction, type, typeCfg.required_previous_events, 5, 40, 28, CONST.SYM_ARR2_UP, CONST.SYM_ARR2_DN, CONST.SYM_DASH)
+                    KitCore.TradeTooltipMeta tipMeta = KitCore.TradeTooltipMeta.new(shortName = sh, longName = longName, reason = reason, pdarrayText = pdText, qualityPct = qualityPct, scoreVal = scoreVal)
+                    string reasonFinal = KitCore.format_trade_tooltip(chartCtx, tipMeta, direction, entry, takeprofit, stoploss, rrUsed, slGap, eventsLine, CONST.SYM_ARR2_UP, CONST.SYM_ARR2_DN, CONST.SYM_DASH)
+                    int entryIdx = na
+                    if array.size(trades) > 0
+                        for k = array.size(trades) - 1 to 0
+                            KitCore.Trade ex = array.get(trades, k)
+                            bool sameZone = math.abs(ex.zoneTop - levelTop) <= sameZoneTol and math.abs(ex.zoneBtm - levelBtm) <= sameZoneTol
+                            if ex.direction == direction and ex.type == tradeType and sameZone and ex.state == CONST.SIGNAL_STATE_PENDING
+                                entryIdx := k
+                                break
+                    if na(entryIdx)
+                        int orderSeq = array.size(trades)
+                        [e, orderId] = KitCore.build_trade_entry_payload(direction, tradeType, levelTop, levelBtm, entry, stoploss, takeprofit, rrUsed, bar_index, reasonFinal, scoreVal, tradeRiskAmountUsd, "SMC", tradeType, orderSeq, CONST, tick)
+                        float orderQty = not na(e) ? CORE_get_trade_order_qty(entry, stoploss, tradeRiskAmountUsd) : float(na)
+                        if not na(e)
+                            CORE_track_trade_entry(trades, tradeOrderIds, e, orderId, shouldTrackTrades)
+                            string webhookNote = reason
+                            KitCore.emit_trade_webhook_new_trade(webhookEnabled, true, sourceLabel, syminfo.ticker, direction, sourceTf, entry, stoploss, takeprofit, webhookNote, orderId, "ctrader", "PENDING", rrUsed, sourceLabel, tradeRiskAmountUsd, tradeRiskMode == "%" ? tradeRiskValue : na, time, reason, timeframe.period)
+                            if tradeRiskMode == "%"
+                                KitCore.prop_register_trade(propDayState, tradeRiskValue)
+                            if strategyOrdersEnabled
+                                CORE_submit_strategy_trade_order(orderId, direction, orderQty, entry, stoploss, takeprofit)
+                    else
+                        KitCore.Trade e = array.get(trades, entryIdx)
+                        e := KitCore.patch_pending_trade(e, tradeType, entry, stoploss, takeprofit, rrUsed, reasonFinal, scoreVal)
+                        array.set(trades, entryIdx, e)
+        bool(na)
+
+process_data_chart_context() =>
+    chartCfg.useBias := true
+    chartCfg.allowLong := true
+    chartCfg.allowShort := true
+
+    ctxDataCfg.needBias := true
+    ctxDataCfg.needMsTrendDirs := true
+    ctxDataCfg.needPdPw := true
+    ctxDataCfg.needPriceRange := true
+    ctxDataCfg.needHtfCandles := false
+    ctxDataCfg.initBiasFactorArrays := true
+    ctxDataCfg.rangeLookbackBars := math.max(effectiveCurrLookbackBars, 50)
+    KitSMC.sync_context_tf_data(smcCtx, ltfData, htf1Data, htf2Data)
+    int dir0 = KitSMC.get_context_structure_dir(smcCtx)
+    KitCore.ChartContext ctx = KitCore.get_data_context_for_dir(ctxDataCfg, SETTINGS, BIAS_TOG, dir0)
+
+    KitCore.fill_trade_bias_trend_arrays(ctx, tradeBiasVals, tradeTrendVals)
+    [memScore, memDir, bullCount, bearCount] = KitSMC.compute_signal_memory_bias(smcCtx.signalHist, 20)
+    ctx.signalMemoryScore := memScore
+    ctx.signalMemoryDir := memDir
+    ctx.signalBullCount := bullCount
+    ctx.signalBearCount := bearCount
+    int effBias = ctx.activeBias
+    if memDir != 0
+        if effBias == 0
+            effBias := memDir
+        else if effBias != memDir
+            effBias := 0
+    ctx.biasVal := effBias
+    process_data_reset_runtime_context_if_new_bar()
+    array.set(rtBiasBox, 0, ctx.biasVal)
+    array.set(rtAllowBuyBox, 0, KitCore.direction_allowed_raw("Buy", memDir) ? 1 : 0)
+    array.set(rtAllowSellBox, 0, KitCore.direction_allowed_raw("Sell", memDir) ? 1 : 0)
+    ctx
+
+process_data_barrier_touch_setup(KitCore.ChartContext ctx) =>
+    [btEnabled, btScore, shortName, btType, btWhen] = get_data_strategy_meta_by_key("REJECTION")
+    KitCore.EntryModelDef rCfg = get_data_entry_model_dynamic_cfg("REJECTION")
+    if rCfg.entry_mode == ENTRY_MODE_OFF
+        bool(na)
+    else
+        [aboveBarrier, belowBarrier, aboveH, belowH, aboveTf, belowTf] = KitSMC.get_nearest_barriers(smcCtx.zones, close, syminfo.mintick)
+        bool hasRes = not na(aboveBarrier) and not na(aboveH)
+        bool hasSup = not na(belowBarrier) and not na(belowH)
+        if hasRes
+            bool touchedRes = KitSMC.check_touch(aboveBarrier + aboveH, aboveBarrier, localCfg.detBasis, open, high, low, close)
+            bool validSell = KitCore.direction_allowed_cached("Sell", gateUseEntryDirection, array.get(rtBarBox, 0), array.get(rtBiasBox, 0), bar_index, ctx.biasVal, array.get(rtAllowBuyBox, 0), array.get(rtAllowSellBox, 0), chartCtx.signalMemoryDir)
+            int scoreSell = btScore + (chartCfg.useBias and validSell ? localCfg.scoreHtf : 0)
+            string reasonSell = "Barrier Touch (resistance touch)"
+            if touchedRes and validSell
+                if btWhen == TRIGGER_WHEN_TOUCH and btType == TRIGGER_TYPE_TRADE
+                    process_data_add_entry(shortName, "Sell", reasonSell, aboveBarrier + aboveH, aboveBarrier, na, scoreSell, "", aboveTf)
+                else
+                    KitSMC.add_signal(smcCtx.events, smcCtx.signalHist, shortName, "Sell", reasonSell, aboveBarrier + aboveH, aboveBarrier, float(na), scoreSell, bar_index, syminfo.mintick, 80, aboveTf)
+        if hasSup
+            bool touchedSup = KitSMC.check_touch(belowBarrier, belowBarrier - belowH, localCfg.detBasis, open, high, low, close)
+            bool validBuy = KitCore.direction_allowed_cached("Buy", gateUseEntryDirection, array.get(rtBarBox, 0), array.get(rtBiasBox, 0), bar_index, ctx.biasVal, array.get(rtAllowBuyBox, 0), array.get(rtAllowSellBox, 0), chartCtx.signalMemoryDir)
+            int scoreBuy = btScore + (chartCfg.useBias and validBuy ? localCfg.scoreHtf : 0)
+            string reasonBuy = "Barrier Touch (support touch)"
+            if touchedSup and validBuy
+                if btWhen == TRIGGER_WHEN_TOUCH and btType == TRIGGER_TYPE_TRADE
+                    process_data_add_entry(shortName, "Buy", reasonBuy, belowBarrier, belowBarrier - belowH, na, scoreBuy, "", belowTf)
+                else
+                    KitSMC.add_signal(smcCtx.events, smcCtx.signalHist, shortName, "Buy", reasonBuy, belowBarrier, belowBarrier - belowH, float(na), scoreBuy, bar_index, syminfo.mintick, 80, belowTf)
+        bool(na)
+
+process_data_trades() =>
+    bool doResolve = true
+    float rHi = high
+    float rLo = low
+    int rBar = bar_index
+    if doResolve and array.size(trades) > 0 and array.size(tradeOrderIds) == array.size(trades)
+        for i = array.size(trades) - 1 to 0
+            KitCore.Trade e = array.get(trades, i)
+            if not KitCore.is_trade_plan_valid_with_limits(e.entry, e.stoploss, e.takeprofit, localCfg.minTradeSizeTicks, localCfg.minTradeRR)
+                if gateUseTradePrune
+                    if strategyOrdersEnabled
+                        CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                    continue
+            bool preTouchTpHit = e.state == CONST.SIGNAL_STATE_PENDING and not e.touched and
+             ((e.direction == "Buy" and not na(e.takeprofit) and rHi >= e.takeprofit and rLo > e.entry) or
+             (e.direction == "Sell" and not na(e.takeprofit) and rLo <= e.takeprofit and rHi < e.entry))
+            if gateUsePreTouchTpCut and preTouchTpHit
+                if strategyOrdersEnabled
+                    CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                KitCore.delete_trade_visuals(e)
+                array.remove(trades, i)
+                array.remove(tradeOrderIds, i)
+                continue
+            string orderId = array.get(tradeOrderIds, i)
+            [eResolved, outcome] = KitCore.resolve_trade_state(e, rHi, rLo, rBar, SETTINGS.ENTRY_REQUIRE_NEXT_BAR, SETTINGS.ENTRY_SL_FIRST_ON_DUAL_HIT, CONST)
+            e := eResolved
+            if outcome == 2 and gateUsePreTouchTpCut
+                if strategyOrdersEnabled
+                    CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                KitCore.delete_trade_visuals(e)
+                array.remove(trades, i)
+                array.remove(tradeOrderIds, i)
+                continue
+            if outcome == 1 or outcome == -1
+                float exitPrice = outcome > 0 ? e.takeprofit : e.stoploss
+                float denom = math.max(math.abs(e.entry - e.stoploss), syminfo.mintick)
+                float realizedR = math.abs(exitPrice - e.entry) / denom
+                float rrForStats = math.max(0.1, realizedR)
+                e.rrValue := rrForStats
+            string entryDisplayMode = (e.state == CONST.SIGNAL_STATE_TP or e.state == CONST.SIGNAL_STATE_SL) ? "RESULT_LINES" : "NORMAL"
+            bool signalShowActive = e.state == CONST.SIGNAL_STATE_PENDING ? tradeShowPending : e.state == CONST.SIGNAL_STATE_START ? tradeShowStart : false
+            if tradeEntriesEnabled
+                e := KitCore.draw_trade_visual(e, CONST, THEME, ENTRY_VIS_CFG, true, signalShowActive, tradeShowTp, tradeShowSl, perfLookbackBars, 0, entryDisplayMode, "RESULT_LINES", 0)
+            array.set(trades, i, e)
+    bool(na)
+
+get_data_has_visible_zone_for_event(KitSMC.Event e) =>
+    bool found = false
+    if array.size(smcCtx.zones) > 0
+        for zi = 0 to array.size(smcCtx.zones) - 1
+            KitSMC.PDArray z = array.get(smcCtx.zones, zi)
+            bool sameType = z.type == e.type
+            bool sameTf = e.sourceTf == "" or z.sourceTf == e.sourceTf
+            bool sameZone = math.abs(z.top - e.zoneTop) <= syminfo.mintick * 2 and math.abs(z.bottom - e.zoneBtm) <= syminfo.mintick * 2
+            if z.visible and not z.broken and sameType and sameTf and sameZone
+                found := true
+                break
+    found
+
+process_data_events_queue(array<KitSMC.Event> events, KitCore.ChartContext ctx, int breakRetestWindowBars) =>
+    if events.size() > 0
+        for i = events.size() - 1 to 0
+            e = events.get(i)
+            if not get_data_is_source_tf_enabled(e.sourceTf)
+                events.remove(i)
+                continue
+            if e.type != "SWEEP" and not get_data_has_visible_zone_for_event(e)
+                events.remove(i)
+                continue
+            bool isBreakRetestEvent = not na(e.barBreak)
+            bool isSignalEvent = not isBreakRetestEvent
+            if isSignalEvent
+                if e.type == "SWEEP"
+                    continue
+                string signalModelKey = get_model_key_for_type(e.type)
+                [sigEnabled, _, _, sigTriggerType, sigTriggerWhen] = get_data_strategy_meta_by_key(signalModelKey)
+                KitCore.EntryModelDef sCfg = get_data_entry_model_dynamic_cfg(signalModelKey)
+                if not sigEnabled or (sCfg.entry_mode == ENTRY_MODE_OFF)
+                    events.remove(i)
+                    continue
+                if sigTriggerType != TRIGGER_TYPE_TRADE
+                    events.remove(i)
+                    continue
+                bool validSignalDirection = KitCore.direction_allowed_cached(e.direction, gateUseEntryDirection, array.get(rtBarBox, 0), array.get(rtBiasBox, 0), bar_index, ctx.biasVal, array.get(rtAllowBuyBox, 0), array.get(rtAllowSellBox, 0), chartCtx.signalMemoryDir)
+                bool passSignalEntryMode = sCfg.entry_mode != ENTRY_MODE_OFF
+                if not gateUseRetestConfirm
+                    if passSignalEntryMode and validSignalDirection
+                        process_data_add_entry(e.type, e.direction, e.reason, e.zoneTop, e.zoneBtm, e.quality, e.score, e.type, e.sourceTf)
+                    events.remove(i)
+                    continue
+                if e.direction == "Buy" and close > e.zoneTop
+                    if sCfg.entry_mode == ENTRY_MODE_AFTER_RETEST and sigTriggerWhen == TRIGGER_WHEN_RETEST and validSignalDirection
+                        process_data_add_entry(e.type, "Buy", e.reason + " (close reclaimed zone top)", e.zoneTop, e.zoneBtm, e.quality, e.score + localCfg.scoreConfirm, e.type, e.sourceTf)
+                    events.remove(i)
+                    continue
+                else if e.direction == "Sell" and close < e.zoneBtm
+                    if sCfg.entry_mode == ENTRY_MODE_AFTER_RETEST and sigTriggerWhen == TRIGGER_WHEN_RETEST and validSignalDirection
+                        process_data_add_entry(e.type, "Sell", e.reason + " (close rejected below zone bottom)", e.zoneTop, e.zoneBtm, e.quality, e.score + localCfg.scoreConfirm, e.type, e.sourceTf)
+                    events.remove(i)
+                    continue
+            else
+                int age = bar_index - e.barBreak
+                if age > breakRetestWindowBars
+                    events.remove(i)
+                    continue
+                bool isBuy = e.direction == "Buy"
+                string modelKey = get_model_key_for_type(e.type)
+                [stratEnabled, stratScore, shortName, triggerType, triggerWhen] = get_data_strategy_meta_by_key(modelKey)
+                KitCore.EntryModelDef mCfgObj = get_data_entry_model_dynamic_cfg(modelKey)
+                bool allowedPdArray = is_pdarray_type_enabled(e.type)
+                bool validType = stratEnabled and allowedPdArray
+                bool validDirection = KitCore.direction_allowed_cached(e.direction, gateUseEntryDirection, array.get(rtBarBox, 0), array.get(rtBiasBox, 0), bar_index, ctx.biasVal, array.get(rtAllowBuyBox, 0), array.get(rtAllowSellBox, 0), chartCtx.signalMemoryDir)
+                bool touched = KitSMC.check_touch(e.zoneTop, e.zoneBtm, localCfg.detBasis, open, high, low, close)
+                if touched
+                    e.retestSeen := true
+                    events.set(i, e)
+                bool confirmed = e.retestSeen and (isBuy ? (close > e.zoneTop) : (close < e.zoneBtm))
+                bool invalidated = isBuy ? (close < e.zoneBtm) : (close > e.zoneTop)
+                if gateUseRetestInvalidation and invalidated
+                    events.remove(i)
+                    continue
+                bool passEntryMode = mCfgObj.entry_mode != ENTRY_MODE_OFF
+                bool passTriggerWhen = not gateUseRetestConfirm or triggerWhen == TRIGGER_WHEN_RETEST
+                bool passConfirm = not gateUseRetestConfirm or confirmed
+                bool tradeCandidate = validType and validDirection and passEntryMode and passTriggerWhen and triggerType == TRIGGER_TYPE_TRADE
+                if passConfirm and tradeCandidate
+                    int baseScore = stratScore + localCfg.scoreConfirm + (chartCfg.useBias and validDirection ? localCfg.scoreHtf : 0)
+                    string reason = gateUseRetestConfirm ? e.type + " Break-Retest confirmed" : e.type + " Break-Retest gate bypass"
+                    process_data_add_entry(shortName, e.direction, reason, e.zoneTop, e.zoneBtm, e.quality, baseScore, e.type, e.sourceTf)
+                    events.remove(i)
+                    continue
+                if confirmed
+                    events.remove(i)
+                    continue
+    bool(na)
+
+process_data_register_pdarray_retest_signal(array<KitSMC.Event> _triggersQueue, KitSMC.PDArray z, int biasVal, string reasonOverride, string setupOverride) =>
+    if not z.visible or not get_data_is_source_tf_enabled_by_rank(z.sourceTfRank)
+        bool(na)
+    else
+        string type = z.type
+        string modelKey = get_model_key_for_type(type)
+        [stratEnabled, stratScore, shortName, triggerType, triggerWhen] = get_data_strategy_meta_by_key(modelKey)
+        KitCore.EntryModelDef mCfgP = get_data_entry_model_dynamic_cfg(modelKey)
+        bool allowedPdArray = is_pdarray_type_enabled(type)
+        bool enabledType = stratEnabled and allowedPdArray
+        string direction = z.isBullish ? "Buy" : "Sell"
+        bool validBias = KitCore.direction_allowed_cached(direction, gateUseEntryDirection, array.get(rtBarBox, 0), array.get(rtBiasBox, 0), bar_index, biasVal, array.get(rtAllowBuyBox, 0), array.get(rtAllowSellBox, 0), chartCtx.signalMemoryDir)
+        int baseScore = stratScore
+        int biasScore = chartCfg.useBias and validBias ? localCfg.scoreHtf : 0
+        int totalScore = baseScore + biasScore
+        string reason = reasonOverride == "" ? KitSMC.signal_reason_text(type, z.isBullish) : reasonOverride
+        reason := reason + (chartCfg.useBias ? " (HTF Bias Confirmed)" : "")
+        string setup = setupOverride == "" ? shortName : setupOverride
+        bool passEntryMode = mCfgP.entry_mode != ENTRY_MODE_OFF
+        if enabledType and validBias and passEntryMode and not KitSMC.has_pending_trade_signal(_triggersQueue, setup, direction, z.top, z.bottom, syminfo.mintick)
+            bool directEntry = triggerType == TRIGGER_TYPE_TRADE and ((triggerWhen == TRIGGER_WHEN_TOUCH and mCfgP.entry_mode == ENTRY_MODE_LIMIT) or not gateUseRetestConfirm)
+            if directEntry
+                process_data_add_entry(setup, direction, reason, z.top, z.bottom, z.qualityPct, totalScore, z.type, z.sourceTf)
+            else if triggerType == TRIGGER_TYPE_SIGNAL or (gateUseRetestConfirm and (triggerWhen == TRIGGER_WHEN_RETEST or mCfgP.entry_mode == ENTRY_MODE_AFTER_RETEST))
+                KitSMC.add_signal(_triggersQueue, smcCtx.signalHist, setup, direction, reason, z.top, z.bottom, z.qualityPct, totalScore, bar_index, syminfo.mintick, 80, z.sourceTf)
+        bool(na)
+
+var array<int> lsrBarState = array.new<int>(2, na)
+
+process_data_lsr_model(KitCore.ChartContext ctx) =>
+    [lsrEnabled, lsrScore, shortName, _, _] = get_data_strategy_meta_by_key("SWEEP")
+    if lsrEnabled
+        int bearBar = array.get(lsrBarState, 0)
+        int bullBar = array.get(lsrBarState, 1)
+        int evSize = array.size(smcCtx.events)
+        if evSize > 0
+            for i = evSize - 1 to 0
+                KitSMC.Event e = array.get(smcCtx.events, i)
+                if e.type == "SWEEP"
+                    if e.direction == "Sell"
+                        bearBar := e.barDetected
+                        array.set(lsrBarState, 0, bearBar)
+                    else if e.direction == "Buy"
+                        bullBar := e.barDetected
+                        array.set(lsrBarState, 1, bullBar)
+                    array.remove(smcCtx.events, i)
+                    
+        int chochBarsLimit = 50
+        bool bearSweepValid = not na(bearBar) and (bar_index - bearBar) <= chochBarsLimit
+        int lastLtfLegBar = get_data_cached_bar_index_from_time(ltfData.mss.legEventTime)
+        bool bearChoch = bearSweepValid and ltfData.mss.msBias == -1 and lastLtfLegBar > bearBar
+        if bearSweepValid and bearChoch
+            KitSMC.PDArray extremeOrigin = na
+            float highestTop = -999999.0
+            if array.size(smcCtx.zones) > 0
+                for i = 0 to array.size(smcCtx.zones) - 1
+                    KitSMC.PDArray z = array.get(smcCtx.zones, i)
+                    bool isTrendZone = z.type == "OB" or z.type == "FVG" or z.type == "SD"
+                    if z.visible and not z.broken and isTrendZone and not z.isBullish
+                        if z.barStart >= bearBar - 2 and z.barStart <= lastLtfLegBar + 2
+                            if z.top > highestTop
+                                extremeOrigin := z
+                                highestTop := z.top
+            if not na(extremeOrigin)
+                process_data_register_pdarray_retest_signal(smcCtx.events, extremeOrigin, ctx.biasVal, "LSR Swept: Bearish Origin RTO", shortName)
+                array.set(lsrBarState, 0, na)
+                
+        bool bullSweepValid = not na(bullBar) and (bar_index - bullBar) <= chochBarsLimit
+        bool bullChoch = bullSweepValid and ltfData.mss.msBias == 1 and lastLtfLegBar > bullBar
+        if bullSweepValid and bullChoch
+            KitSMC.PDArray extremeOrigin = na
+            float lowestBtm = 999999.0
+            if array.size(smcCtx.zones) > 0
+                for i = 0 to array.size(smcCtx.zones) - 1
+                    KitSMC.PDArray z = array.get(smcCtx.zones, i)
+                    bool isTrendZone = z.type == "OB" or z.type == "FVG" or z.type == "SD"
+                    if z.visible and not z.broken and isTrendZone and z.isBullish
+                        if z.barStart >= bullBar - 2 and z.barStart <= lastLtfLegBar + 2
+                            if z.bottom < lowestBtm
+                                extremeOrigin := z
+                                lowestBtm := z.bottom
+            if not na(extremeOrigin)
+                process_data_register_pdarray_retest_signal(smcCtx.events, extremeOrigin, ctx.biasVal, "LSR Swept: Bullish Origin RTO", shortName)
+                array.set(lsrBarState, 1, na)
+
+    bool(na)
+
+get_data_pdarray_display_label(KitSMC.PDArray z) =>
+    string baseLbl = z.labelText
+    if baseLbl == ""
+        baseLbl := z.type == "SD" ? (z.isBullish ? "D" : "S") : str.upper(z.type)
+    baseLbl
+
+update_pdarray_box_label(KitSMC.PDArray z, float boxHigh, float boxLow) =>
+    string displayLbl = get_data_pdarray_display_label(z)
+    z.labelText := displayLbl
+    if not na(z.visualLabel)
+        float zoneH = math.max(boxHigh - boxLow, syminfo.mintick)
+        float labelY = ((boxHigh + boxLow) * 0.5) - (zoneH * 0.12)
+        int labelXRaw = box.get_right(z.visualBox) - math.max(1, 1)
+        int minLabelX = math.max(bar_index - 4000, 0)
+        int maxLabelX = bar_index + 500
+        int labelX = math.min(math.max(labelXRaw, minLabelX), maxLabelX)
+        if z.visualLabel.get_x() != labelX
+            z.visualLabel.set_x(labelX)
+        if z.visualLabel.get_y() != labelY
+            z.visualLabel.set_y(labelY)
+        string lblAlignSig = "SMC_LABEL_ALIGN|RIGHT"
+        if z.visLabelStyleSig != lblAlignSig
+            z.visualLabel.set_textalign(text.align_right)
+            z.visLabelStyleSig := lblAlignSig
+        if z.visualLabel.get_text() != displayLbl
+            z.visualLabel.set_text(displayLbl)
+    if not na(z.visualBox)
+        string nextBorderStyle = KitSMC.get_pdarray_border_style(z.type, displayLbl, line.style_solid, SMC_CONST)
+        string boxBorderSig = "SMC_BOX_BORDER|" + nextBorderStyle
+        if z.visAreaStyleSig != boxBorderSig
+            z.visualBox.set_border_style(nextBorderStyle)
+            z.visAreaStyleSig := boxBorderSig
+    z
+
+
+mark_pdarray_mitigated_visual(KitSMC.PDArray z) =>
+    bool isHtfZone = z.sourceTfRank >= 2
+    color mitClr = isHtfZone ? (z.sourceTfRank >= 3 ? color.new(htf2Cfg.zigzagColor, 0) : color.new(htf1Cfg.zigzagColor, 0)) : THEME.COLOR_NEUTRAL
+    if not na(z.visualBox)
+        z.visualBox.set_bgcolor(color.new(mitClr, 90))
+        z.visualBox.set_border_color(z.type == "IFVG" ? na : color.new(mitClr, 85))
+    string nextLbl = z.type == "OB" ? "ob" : z.labelText
+    z.labelText := nextLbl
+    z.labelText := get_data_pdarray_display_label(z)
+    if not na(z.visualLabel)
+        z.visualLabel.set_textcolor(color.new(mitClr, 40))
+    z.lifeState := CONST.LIFE_TOUCHED
+    z.touchCount := math.max(z.touchCount, 0) + 1
+    z.barEnd := bar_index
+    z.rejectCount := math.max(z.rejectCount, 0)
+    z
+
+process_data_zone_lifecycle(array<KitSMC.PDArray> zones, float _atr, int _biasVal, bool canEmitSignals) =>
+    float o0 = open
+    float h0 = high
+    float l0 = low
+    float c0 = close
+    float o1 = open[1]
+    float h1 = high[1]
+    float l1 = low[1]
+    float c1 = close[1]
+    if zones.size() > 0
+        for i = zones.size() - 1 to 0
+            z = zones.get(i)
+            z := KitSMC.normalize_pricezone_state(z, SMC_CONST)
+            if not na(z.barStart) and (bar_index - z.barStart > effectiveCurrLookbackBars)
+                if gateUsePdarrayPrune
+                    if not na(z.visualLabel)
+                        z.visualLabel.delete()
+                    if not na(z.visualBox)
+                        z.visualBox.delete()
+                    zones.remove(i)
+                    continue
+            if not z.broken
+                float _boxLow = not na(z.visualBox) ? z.visualBox.get_bottom() : z.bottom
+                float _boxHigh = not na(z.visualBox) ? z.visualBox.get_top() : z.top
+                if z.visible
+                    KitSMC.ZoneTypeConfig cfg = get_pdarray_cfg(z.type)
+                    z.labelText := get_data_pdarray_display_label(z)
+                    bool isHtfZone = z.sourceTfRank >= 2
+                    color resolvedLabelColor = isHtfZone ? (z.sourceTfRank >= 3 ? color.new(htf2Cfg.zigzagColor, 0) : color.new(htf1Cfg.zigzagColor, 0)) :
+                     uiCfg.ltfColor
+                    color resolvedBorderColor = cfg.noBorder ? na :
+                     isHtfZone ? (z.sourceTfRank >= 3 ? color.new(htf2Cfg.zigzagColor, 85) : color.new(htf1Cfg.zigzagColor, 85)) :
+                     color.new(uiCfg.ltfColor, 85)
+                    string borderStyle = KitSMC.get_pdarray_border_style(z.type, z.labelText, cfg.borderStyle, SMC_CONST)
+                    int rightIdx = get_cached_pdarray_min_right(z, bar_index + z.extendBars, uiCfg.zoneCurrMinWidthBars)
+                    float labelY = (z.top + z.bottom) * 0.5
+                    string tooltipText = get_data_pdarray_tooltip(z)
+                    color resolvedFillColor = isHtfZone ? (z.sourceTfRank >= 3 ? color.new(htf2Cfg.zigzagColor, uiCfg.htfZoneBgTransp) : color.new(htf1Cfg.zigzagColor, uiCfg.htfZoneBgTransp)) : uiCfg.colorBg
+                    z := KitSMC.draw_price_zone(z, z.barStart, rightIdx, z.top, z.bottom, resolvedFillColor, resolvedBorderColor, borderStyle, z.labelText, resolvedLabelColor, tooltipText, rightIdx, labelY, ZONE_VIS_CFG, SR_VIS_CFG, true, false, na, resolvedBorderColor, "AREA", true)
+                    _boxLow := not na(z.visualBox) ? z.visualBox.get_bottom() : z.bottom
+                    _boxHigh := not na(z.visualBox) ? z.visualBox.get_top() : z.top
+                    z := update_pdarray_box_label(z, _boxHigh, _boxLow)
+                if z.type == "SD"
+                    int sdRight = get_cached_pdarray_min_right(z, bar_index + z.extendBars, uiCfg.zoneCurrMinWidthBars)
+                    if z.visible and not na(z.visualBox) and box.get_right(z.visualBox) != sdRight
+                        z.visualBox.set_right(sdRight)
+                    bool sdTouched = KitSMC.check_touch(_boxHigh, _boxLow, localCfg.detBasis, o0, h0, l0, c0)
+                    bool canEmitSd = na(z.barEnd) or z.barEnd != bar_index
+                    if canEmitSignals and z.visible and sdTouched and canEmitSd
+                        process_data_register_pdarray_retest_signal(smcCtx.events, z, _biasVal, "", "")
+                        z.barEnd := bar_index
+                    zones.set(i, z)
+                    continue
+                bool isBull = z.isBullish
+                bool postTouch = KitSMC.is_pdarray_post_touch(z)
+                if not postTouch
+                    bool derivedNeedsDelay = z.type == "BB" or z.type == "IFVG"
+                    bool canCheckMitigation = not derivedNeedsDelay or bar_index > z.barStart
+                    entered = canCheckMitigation and KitSMC.check_mitigation(z.type, z.isBullish, _boxHigh, _boxLow, localCfg.detMethod, localCfg.detMethodCross, localCfg.detBasis, localCfg.detUseImpulse, _atr, localCfg.detImpulseAtr, o0, h0, l0, c0, o1, h1, l1, c1)
+
+                    if not entered
+                        ext = z.extendBars
+                        int nextRight = get_cached_pdarray_min_right(z, bar_index + ext, uiCfg.zoneCurrMinWidthBars)
+                        if z.visible and not na(z.visualBox) and box.get_right(z.visualBox) != nextRight
+                            z.visualBox.set_right(nextRight)
+                        zones.set(i, z)
+                    else
+                        if canEmitSignals and z.visible
+                            process_data_register_pdarray_retest_signal(smcCtx.events, z, _biasVal, "", "")
+                        z := mark_pdarray_mitigated_visual(z)
+                        zones.set(i, z)
+                else
+                    breakLevel = isBull ? _boxLow : _boxHigh
+                    respected = KitSMC.check_pdarray_respect(isBull, _boxHigh, _boxLow, h0, l0, c0)
+                    [stratEnabled, _, _, _, _] = get_data_strategy_meta_by_key(str.upper(z.type))
+                    canEmitRespect = na(z.barEnd) and stratEnabled
+                    if respected
+                        z.barEnd := bar_index
+                        z.lifeState := CONST.LIFE_RESPECTED
+                        z.rejectCount := math.max(z.rejectCount, 0) + 1
+                        int latestTouchRight = get_cached_pdarray_min_right(z, z.barEnd + 10, uiCfg.zoneCurrMinWidthBars)
+                        if box.get_right(z.visualBox) != latestTouchRight
+                            z.visualBox.set_right(latestTouchRight)
+                    if canEmitSignals and z.visible and respected and canEmitRespect
+                        process_data_register_pdarray_retest_signal(smcCtx.events, z, _biasVal, z.type + " touch respected", z.type + " R")
+                        z.barEnd := bar_index
+                    isBroken = KitSMC.check_break(not isBull, breakLevel, localCfg.detMethod, localCfg.detMethodCross, localCfg.detBasis, localCfg.detUseImpulse, _atr, localCfg.detImpulseAtr, o0, h0, l0, c0, o1, h1, l1, c1)
+                    if isBroken
+                        string breakDirection = z.isBullish ? "Sell" : "Buy"
+                        if canEmitSignals and z.visible
+                            KitSMC.register_break_retest_event(smcCtx.events, z.type, breakDirection, z.top, z.bottom, bar_index, z.qualityPct, syminfo.mintick, z.sourceTf)
+                        if z.type == "FVG" and plotFVG
+                            spawn_derived_zone(zones, "IFVG", not z.isBullish, _boxHigh, _boxLow, z.qualityPct)
+                        if z.type == "OB" and plotOB
+                            spawn_derived_zone(zones, "BB", not z.isBullish, _boxHigh, _boxLow, z.qualityPct)
+                        z.broken := true
+                        z.lifeState := CONST.LIFE_BROKEN
+                        if not na(z.visualLabel)
+                            z.visualLabel.delete()
+                        z.visualBox.delete()
+                        if gateUsePdarrayPrune
+                            zones.remove(i)
+                            continue
+                        else
+                            zones.set(i, z)
+                    else
+                        zones.set(i, z)
+                if KitSMC.is_pdarray_post_touch(z) and KitCore.is_life_formed(z.lifeState, CONST)
+                    z.lifeState := CONST.LIFE_TOUCHED
+                    zones.set(i, z)
+    bool(na)
+
+get_data_is_type_enabled(string zType) =>
+    zType == "OB" ? plotOB : zType == "FVG" ? plotFVG : zType == "SD" ? plotSD : zType == "BB" ? useBB : zType == "IFVG" ? useIFVG : true
+
+process_data_prune_zones_by_relevance(array<KitSMC.PDArray> zones) =>
+    int n = array.size(zones)
+    if n <= 0
+        bool(na)
+    else
+        int htfAllPerSideCap = math.max(1, int(math.ceil(HTF_pdarray_PER_TF * 0.5)))
+        array<int> normalIdxBySlot = array.new_int(6, na)
+        array<float> normalScoreBySlot = array.new_float(6, na)
+        for i = 0 to n - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            z.zoneHeightAtr := get_data_pdarray_size_atr(z.top, z.bottom)
+            bool tfEnabled = get_data_is_source_tf_enabled_by_rank(z.sourceTfRank)
+            z.isAll := not z.broken and tfEnabled and get_data_is_type_enabled(z.type) and z.sourceTfRank <= 1
+            z.isLess := false
+            z.isNormal := false
+            z.isExtreme := false
+            float idxScore = math.max(nz(z.indexInLeg), 0) * 1000000.0
+            float legScore = math.max(nz(z.swingLegArrayIndex), 0) * 10000.0
+            float qualScore = nz(z.qualityPct, 0.0) * 100.0
+            float barScore = math.max(nz(z.barStart), 0)
+            z.volScore := idxScore + legScore + qualScore + barScore
+            array.set(zones, i, z)
+        for rank = 2 to 3
+            for side = 0 to 1
+                array<int> sideIdxs = array.new_int()
+                if n > 0
+                    for i = 0 to n - 1
+                        KitSMC.PDArray z = array.get(zones, i)
+                        bool sideMatch = (((z.top + z.bottom) * 0.5) >= close ? 0 : 1) == side
+                        if z.sourceTfRank == rank and get_data_is_source_tf_enabled_by_rank(z.sourceTfRank) and not z.broken and get_data_is_type_enabled(z.type) and sideMatch
+                            array.push(sideIdxs, i)
+                int kept = 0
+                while kept < htfAllPerSideCap and array.size(sideIdxs) > 0
+                    int bestPos = na
+                    float bestScore = na
+                    for j = 0 to array.size(sideIdxs) - 1
+                        int idx = array.get(sideIdxs, j)
+                        KitSMC.PDArray z = array.get(zones, idx)
+                        float sc = nz(z.volScore, -10e10)
+                        if na(bestPos) or sc > bestScore
+                            bestPos := j
+                            bestScore := sc
+                    if not na(bestPos)
+                        int keepIdx = array.get(sideIdxs, bestPos)
+                        KitSMC.PDArray zKeep = array.get(zones, keepIdx)
+                        zKeep.isAll := true
+                        array.set(zones, keepIdx, zKeep)
+                        array.remove(sideIdxs, bestPos)
+                        kept += 1
+        for i = 0 to n - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            if z.isAll
+                int side = ((z.top + z.bottom) * 0.5) >= close ? 0 : 1
+                int slot = (((z.sourceTfRank <= 0 ? 1 : z.sourceTfRank) - 1) * 2) + side
+                float sc = nz(z.volScore, -10e10)
+                int bestIdx = array.get(normalIdxBySlot, slot)
+                float bestScore = array.get(normalScoreBySlot, slot)
+                if na(bestIdx) or sc > bestScore
+                    array.set(normalIdxBySlot, slot, i)
+                    array.set(normalScoreBySlot, slot, sc)
+        for slot = 0 to 5
+            int idx = array.get(normalIdxBySlot, slot)
+            if not na(idx)
+                KitSMC.PDArray z = array.get(zones, idx)
+                z.isNormal := true
+                array.set(zones, idx, z)
+        for i = 0 to n - 1
+            KitSMC.PDArray z = array.get(zones, i)
+            if z.isAll
+                z.isLess := z.isNormal or nz(z.zoneHeightAtr, 0.0) >= localCfg.zoneLessExtraMinSizeAtr
+                array.set(zones, i, z)
+        for side = 0 to 1
+            for rank = 2 to 3
+                int slot = ((rank - 1) * 2) + side
+                int idx = array.get(normalIdxBySlot, slot)
+                if not na(idx)
+                    KitSMC.PDArray z = array.get(zones, idx)
+                    z.isExtreme := true
+                    array.set(zones, idx, z)
+        int j = 0
+        while j < n
+            KitSMC.PDArray z = array.get(zones, j)
+            bool modeOk = pdDisplayMode == "All" ? z.isAll :
+             pdDisplayMode == "Less" ? z.isLess :
+             pdDisplayMode == "Normal" ? z.isNormal :
+             pdDisplayMode == "Extreme" ? z.isExtreme :
+             false
+            z.visible := z.isAll and modeOk
+            if not z.visible
+                if not na(z.visualBox)
+                    z.visualBox.set_bgcolor(color.new(uiCfg.colorBg, 100))
+                    z.visualBox.set_border_color(color.new(uiCfg.colorBg, 100))
+                if not na(z.visualLine)
+                    z.visualLine.set_color(color.new(uiCfg.colorBg, 100))
+                if not na(z.visualLabel)
+                    z.visualLabel.delete()
+                    z.visualLabel := na
+                    z.visLabelGeomSig := ""
+                    z.visLabelStyleSig := ""
+            array.set(zones, j, z)
+            j += 1
+        bool(na)
+
+draw_data_htf_pdarray_set(array<box> store, int tfSlot, bool showTf, string tfLabel, string tfStr,
+ float top0, float btm0, int start0, float q0, bool bull0, string type0,
+ float top1, float btm1, int start1, float q1, bool bull1, string type1,
+ float top2, float btm2, int start2, float q2, bool bull2, string type2,
+ float top3, float btm3, int start3, float q3, bool bull3, string type3) =>
+    float adOb = na
+    int aiOb = na
+    float adFvg = na
+    int aiFvg = na
+    float bdOb = na
+    int biOb = na
+    float bdFvg = na
+    int biFvg = na
+    float adObFb = na
+    int aiObFb = na
+    float adFvgFb = na
+    int aiFvgFb = na
+    float bdObFb = na
+    int biObFb = na
+    float bdFvgFb = na
+    int biFvgFb = na
+    [tf1Local, tf2Local] = KitCore.get_htf_pair()
+    string tfNameForSet = tfSlot == 0 ? tf1Local : tf2Local
+    int recentTsCut = get_data_htf_detection_cutoff_time(tfSlot, tfNameForSet)
+
+    for i = 0 to 3
+        float top = i == 0 ? top0 : i == 1 ? top1 : i == 2 ? top2 : top3
+        float btm = i == 0 ? btm0 : i == 1 ? btm1 : i == 2 ? btm2 : btm3
+        int st = i == 0 ? start0 : i == 1 ? start1 : i == 2 ? start2 : start3
+        float q = i == 0 ? q0 : i == 1 ? q1 : i == 2 ? q2 : q3
+        string zType = i == 0 ? type0 : i == 1 ? type1 : i == 2 ? type2 : type3
+        bool showType = zType == "OB" ? plotOB : plotFVG
+        bool isBull = i == 0 ? bull0 : i == 1 ? bull1 : i == 2 ? bull2 : bull3
+        bool baseValid = showTf and showType and not na(st) and not na(top) and not na(btm) and top > btm
+        if baseValid
+            float midFb = (top + btm) * 0.5
+            float distFb = math.abs(midFb - close)
+            bool isAboveFb = midFb > close
+            string famFb = KitSMC.get_pdarray_cap_family(zType)
+            if isAboveFb
+                if famFb == "OB_FAMILY"
+                    if na(adObFb) or distFb < adObFb
+                        adObFb := distFb
+                        aiObFb := i
+                else if famFb == "FVG_FAMILY"
+                    if na(adFvgFb) or distFb < adFvgFb
+                        adFvgFb := distFb
+                        aiFvgFb := i
+            else
+                if famFb == "OB_FAMILY"
+                    if na(bdObFb) or distFb < bdObFb
+                        bdObFb := distFb
+                        biObFb := i
+                else if famFb == "FVG_FAMILY"
+                    if na(bdFvgFb) or distFb < bdFvgFb
+                        bdFvgFb := distFb
+                        biFvgFb := i
+        bool unmitigated = isBull ? (low > top) : (high < btm)
+        bool recent = not na(st) and st >= recentTsCut
+        bool valid = showTf and showType and recent and not na(st) and not na(top) and not na(btm) and top > btm and nz(q, 0) >= localCfg.htfProjectionMinQualityPct and unmitigated
+        if valid
+            float mid = (top + btm) * 0.5
+            float dist = math.abs(mid - close)
+            bool isAbove = mid > close
+            string fam = KitSMC.get_pdarray_cap_family(zType)
+            if isAbove
+                if fam == "OB_FAMILY"
+                    if na(adOb) or dist < adOb
+                        adOb := dist
+                        aiOb := i
+                else if fam == "FVG_FAMILY"
+                    if na(adFvg) or dist < adFvg
+                        adFvg := dist
+                        aiFvg := i
+            else
+                if fam == "OB_FAMILY"
+                    if na(bdOb) or dist < bdOb
+                        bdOb := dist
+                        biOb := i
+                else if fam == "FVG_FAMILY"
+                    if na(bdFvg) or dist < bdFvg
+                        bdFvg := dist
+                        biFvg := i
+
+    bool obFirst = true
+    int aOb = not na(aiOb) ? aiOb : aiObFb
+    int aFvg = not na(aiFvg) ? aiFvg : aiFvgFb
+    int bOb = not na(biOb) ? biOb : biObFb
+    int bFvg = not na(biFvg) ? biFvg : biFvgFb
+    int aboveFirst = obFirst ? (not na(aOb) ? aOb : aFvg) : (not na(aFvg) ? aFvg : aOb)
+    int aboveSecond = obFirst ? (not na(aOb) and not na(aFvg) ? aFvg : na) : (not na(aFvg) and not na(aOb) ? aOb : na)
+    int belowFirst = obFirst ? (not na(bOb) ? bOb : bFvg) : (not na(bFvg) ? bFvg : bOb)
+    int belowSecond = obFirst ? (not na(bOb) and not na(bFvg) ? bFvg : na) : (not na(bFvg) and not na(bOb) ? bOb : na)
+
+    float dAbove = na
+    if not na(aboveFirst)
+        float topA = aboveFirst == 0 ? top0 : aboveFirst == 1 ? top1 : aboveFirst == 2 ? top2 : top3
+        float btmA = aboveFirst == 0 ? btm0 : aboveFirst == 1 ? btm1 : aboveFirst == 2 ? btm2 : btm3
+        dAbove := math.abs(((topA + btmA) * 0.5) - close)
+    float dBelow = na
+    if not na(belowFirst)
+        float topB = belowFirst == 0 ? top0 : belowFirst == 1 ? top1 : belowFirst == 2 ? top2 : top3
+        float btmB = belowFirst == 0 ? btm0 : belowFirst == 1 ? btm1 : belowFirst == 2 ? btm2 : btm3
+        dBelow := math.abs(((topB + btmB) * 0.5) - close)
+
+    int p0 = na
+    int p1 = na
+    if not na(aboveFirst) and not na(belowFirst)
+        bool aboveNearest = dAbove <= dBelow
+        p0 := aboveNearest ? aboveFirst : belowFirst
+        p1 := aboveNearest ? belowFirst : aboveFirst
+    else
+        p0 := not na(aboveFirst) ? aboveFirst : belowFirst
+        p1 := na
+    int p2 = not na(p1) and p1 == aboveFirst ? belowSecond : p1 == belowFirst ? aboveSecond : aboveSecond
+    int p3 = not na(p2) and p2 == aboveSecond ? belowSecond : belowSecond
+
+    int outMax = math.max(1, HTF_pdarray_PER_TF)
+    for outPos = 0 to outMax - 1
+        int cand = na
+        if outPos == 0
+            cand := p0
+        else if outPos == 1
+            cand := p1
+        else if outPos == 2
+            cand := p2
+        else if outPos == 3
+            cand := p3
+        int boxIdx = tfSlot * HTF_pdarray_PER_TF + outPos
+        if not na(cand)
+            float top = cand == 0 ? top0 : cand == 1 ? top1 : cand == 2 ? top2 : top3
+            float btm = cand == 0 ? btm0 : cand == 1 ? btm1 : cand == 2 ? btm2 : btm3
+            int st = cand == 0 ? start0 : cand == 1 ? start1 : cand == 2 ? start2 : start3
+            float q = cand == 0 ? q0 : cand == 1 ? q1 : cand == 2 ? q2 : q3
+            bool isBull = cand == 0 ? bull0 : cand == 1 ? bull1 : cand == 2 ? bull2 : bull3
+            string zType = cand == 0 ? type0 : cand == 1 ? type1 : cand == 2 ? type2 : type3
+            int ext = KitCore.get_htf_pdarray_extend(tfSlot, HTF1_EXT_BASE + HTF_EXT_PAD, HTF2_EXT_BASE + HTF_EXT_PAD)
+            color txtCol = tfSlot == 0 ? color.new(htf1Cfg.zigzagColor, 0) : color.new(htf2Cfg.zigzagColor, 0)
+            string txt = str.upper(zType)
+            color tfFillBase = tfSlot == 0 ? htf1Cfg.zigzagColor : htf2Cfg.zigzagColor
+            color htfFill = color.new(tfFillBase, uiCfg.htfZoneBgTransp)
+            color tfBorder = tfSlot == 0 ? color.new(htf1Cfg.zigzagColor, 85) : color.new(htf2Cfg.zigzagColor, 85)
+            KitUI.update_projected_box_slot(store, boxIdx, showTf, st, ext, top, btm, htfFill, txtCol, txt, bar_index, time, time[1], htfProjectionSpanBars, bar_index >= workingFirstBar, tfBorder, line.style_dotted, HTF_BOX_VIS_CFG)
+        else
+            KitUI.update_projected_box_slot(store, boxIdx, false, int(na), 0, float(na), float(na), color.new(THEME.COLOR_NEUTRAL, uiCfg.htfZoneBgTransp), THEME.COLOR_NEUTRAL, "", bar_index, time, time[1], htfProjectionSpanBars, bar_index >= workingFirstBar, color.new(THEME.COLOR_NEUTRAL, 15), line.style_dotted, HTF_BOX_VIS_CFG)
+
+get_data_htf_pdarray_snapshots(string htf1, string htf2, bool zshow0, bool reqHtf2Zones, KitSMC.ZoneQualityCfg zqCfg) =>
+    int srPivotLen = int(math.max(PIVOT_LEN_BASE + 2, 3))
+    [h1ObUpTop, h1ObUpBtm, h1ObUpStart, h1ObDnTop, h1ObDnBtm, h1ObDnStart, h1FvgUpTop, h1FvgUpBtm, h1FvgUpStart, h1FvgDnTop, h1FvgDnBtm, h1FvgDnStart, h1ObUpQ, h1ObDnQ, h1FvgUpQ, h1FvgDnQ, h1SrHiDummy, h1SrHiTDummy, h1SrLoDummy, h1SrLoTDummy] = if zshow0
+        request.security(syminfo.tickerid, htf1, KitSMC.get_htf_pdarray_sr_snapshot(localCfg.zoneFormationLockBars, zqCfg, 14, srPivotLen))
+    else
+        [float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), float(na), float(na), float(na), int(na), float(na), int(na)]
+    [h2ObUpTop, h2ObUpBtm, h2ObUpStart, h2ObDnTop, h2ObDnBtm, h2ObDnStart, h2FvgUpTop, h2FvgUpBtm, h2FvgUpStart, h2FvgDnTop, h2FvgDnBtm, h2FvgDnStart, h2ObUpQ, h2ObDnQ, h2FvgUpQ, h2FvgDnQ, h2SrHi, h2SrHiT, h2SrLo, h2SrLoT] = if reqHtf2Zones
+        request.security(syminfo.tickerid, htf2, KitSMC.get_htf_pdarray_sr_snapshot(localCfg.zoneFormationLockBars, zqCfg, 14, srPivotLen))
+    else
+        [float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), int(na), float(na), float(na), float(na), float(na), float(na), int(na), float(na), int(na)]
+    [h1ObUpTop, h1ObUpBtm, h1ObUpStart, h1ObDnTop, h1ObDnBtm, h1ObDnStart, h1FvgUpTop, h1FvgUpBtm, h1FvgUpStart, h1FvgDnTop, h1FvgDnBtm, h1FvgDnStart, h1ObUpQ, h1ObDnQ, h1FvgUpQ, h1FvgDnQ, h2ObUpTop, h2ObUpBtm, h2ObUpStart, h2ObDnTop, h2ObDnBtm, h2ObDnStart, h2FvgUpTop, h2FvgUpBtm, h2FvgUpStart, h2FvgDnTop, h2FvgDnBtm, h2FvgDnStart, h2ObUpQ, h2ObDnQ, h2FvgUpQ, h2FvgDnQ, h2SrHi, h2SrHiT, h2SrLo, h2SrLoT]
+
+[htf1, htf2] = KitCore.get_htf_pair()
+localCfg.currPivotLenNormal := KitCore.get_pivot_len_for_tf(timeframe.period, timeframe.period, CONST.PIVOT_MODE_FIXED, "Normal", PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+localCfg.htf1PivotLenNormal := KitCore.get_pivot_len_for_tf(htf1, timeframe.period, CONST.PIVOT_MODE_FIXED, "Normal", PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+localCfg.htf2PivotLenNormal := KitCore.get_pivot_len_for_tf(htf2, timeframe.period, CONST.PIVOT_MODE_FIXED, "Normal", PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+
+zshow0 = uiCfg.htfShowProjectedZones and pdShowTf1 and not na(htf1)
+zshow1 = uiCfg.htfShowProjectedZones and pdShowTf2 and not na(htf2)
+zdraw0 = zshow0
+zdraw1 = zshow1
+bool needHtf2Anchors = SETTINGS.DYN_LOOKBACK_ENABLE and not na(htf2)
+
+var float h1ObUpTop = na
+var float h1ObUpBtm = na
+var int h1ObUpStart = na
+var float h1ObDnTop = na
+var float h1ObDnBtm = na
+var int h1ObDnStart = na
+var float h1FvgUpTop = na
+var float h1FvgUpBtm = na
+var int h1FvgUpStart = na
+var float h1FvgDnTop = na
+var float h1FvgDnBtm = na
+var int h1FvgDnStart = na
+var float h1ObUpQ = na
+var float h1ObDnQ = na
+var float h1FvgUpQ = na
+var float h1FvgDnQ = na
+var float h1SdSupTop = na
+var float h1SdSupBtm = na
+var int h1SdSupStart = na
+var float h1SdDemTop = na
+var float h1SdDemBtm = na
+var int h1SdDemStart = na
+var float h2ObUpTop = na
+var float h2ObUpBtm = na
+var int h2ObUpStart = na
+var float h2ObDnTop = na
+var float h2ObDnBtm = na
+var int h2ObDnStart = na
+var float h2FvgUpTop = na
+var float h2FvgUpBtm = na
+var int h2FvgUpStart = na
+var float h2FvgDnTop = na
+var float h2FvgDnBtm = na
+var int h2FvgDnStart = na
+var float h2ObUpQ = na
+var float h2ObDnQ = na
+var float h2FvgUpQ = na
+var float h2FvgDnQ = na
+var float h2SdSupTop = na
+var float h2SdSupBtm = na
+var int h2SdSupStart = na
+var float h2SdDemTop = na
+var float h2SdDemBtm = na
+var int h2SdDemStart = na
+
+bool reqHtf2Zones = zshow1 or needHtf2Anchors
+var bool prevZshow0 = false
+var bool prevReqHtf2Zones = false
+var bool initialTradesSyncDone = false
+bool htf1BarChanged = zshow0 and not na(htf1) and ta.change(time(htf1)) != 0
+bool htf2BarChanged = reqHtf2Zones and not na(htf2) and ta.change(time(htf2)) != 0
+bool htfCfgChanged = barstate.isfirst or zshow0 != prevZshow0 or reqHtf2Zones != prevReqHtf2Zones
+bool needRefreshHtfSnapshots = htfCfgChanged or htf1BarChanged or htf2BarChanged
+if needRefreshHtfSnapshots
+    [_h1ObUpTop, _h1ObUpBtm, _h1ObUpStart, _h1ObDnTop, _h1ObDnBtm, _h1ObDnStart, _h1FvgUpTop, _h1FvgUpBtm, _h1FvgUpStart, _h1FvgDnTop, _h1FvgDnBtm, _h1FvgDnStart, _h1ObUpQ, _h1ObDnQ, _h1FvgUpQ, _h1FvgDnQ, _h2ObUpTop, _h2ObUpBtm, _h2ObUpStart, _h2ObDnTop, _h2ObDnBtm, _h2ObDnStart, _h2FvgUpTop, _h2FvgUpBtm, _h2FvgUpStart, _h2FvgDnTop, _h2FvgDnBtm, _h2FvgDnStart, _h2ObUpQ, _h2ObDnQ, _h2FvgUpQ, _h2FvgDnQ, _, _, _, _] = get_data_htf_pdarray_snapshots(htf1, htf2, zshow0, reqHtf2Zones, zqCfg)
+    h1ObUpTop := _h1ObUpTop
+    h1ObUpBtm := _h1ObUpBtm
+    h1ObUpStart := _h1ObUpStart
+    h1ObDnTop := _h1ObDnTop
+    h1ObDnBtm := _h1ObDnBtm
+    h1ObDnStart := _h1ObDnStart
+    h1FvgUpTop := _h1FvgUpTop
+    h1FvgUpBtm := _h1FvgUpBtm
+    h1FvgUpStart := _h1FvgUpStart
+    h1FvgDnTop := _h1FvgDnTop
+    h1FvgDnBtm := _h1FvgDnBtm
+    h1FvgDnStart := _h1FvgDnStart
+    h1ObUpQ := _h1ObUpQ
+    h1ObDnQ := _h1ObDnQ
+    h1FvgUpQ := _h1FvgUpQ
+    h1FvgDnQ := _h1FvgDnQ
+    h2ObUpTop := _h2ObUpTop
+    h2ObUpBtm := _h2ObUpBtm
+    h2ObUpStart := _h2ObUpStart
+    h2ObDnTop := _h2ObDnTop
+    h2ObDnBtm := _h2ObDnBtm
+    h2ObDnStart := _h2ObDnStart
+    h2FvgUpTop := _h2FvgUpTop
+    h2FvgUpBtm := _h2FvgUpBtm
+    h2FvgUpStart := _h2FvgUpStart
+    h2FvgDnTop := _h2FvgDnTop
+    h2FvgDnBtm := _h2FvgDnBtm
+    h2FvgDnStart := _h2FvgDnStart
+    h2ObUpQ := _h2ObUpQ
+    h2ObDnQ := _h2ObDnQ
+    h2FvgUpQ := _h2FvgUpQ
+    h2FvgDnQ := _h2FvgDnQ
+prevZshow0 := zshow0
+prevReqHtf2Zones := reqHtf2Zones
+int htfSdLookback = math.max(20, math.min(localCfg.htfZoneLookbackBars, 300))
+var bool prevZshow0Sd = false
+var bool prevZshow1 = false
+var bool prevPlotSd = false
+bool sdCfgChanged = barstate.isfirst or zshow0 != prevZshow0Sd or zshow1 != prevZshow1 or plotSD != prevPlotSd
+bool refreshHtf1Sd = sdCfgChanged or (zshow0 and plotSD and not na(htf1) and ta.change(time(htf1)) != 0)
+bool refreshHtf2Sd = sdCfgChanged or (zshow1 and plotSD and not na(htf2) and ta.change(time(htf2)) != 0)
+if refreshHtf1Sd
+    [h1SdSupTopRaw, h1SdSupBtmRaw, h1SdSupStartRaw, h1SdDemTopRaw, h1SdDemBtmRaw, h1SdDemStartRaw] = if zshow0 and plotSD
+        request.security(syminfo.tickerid, htf1, get_data_htf_sd_snapshot(10.0, 50, htfSdLookback))
+    else
+        [float(na), float(na), int(na), float(na), float(na), int(na)]
+    h1SdSupTop := h1SdSupTopRaw
+    h1SdSupBtm := h1SdSupBtmRaw
+    h1SdSupStart := h1SdSupStartRaw
+    h1SdDemTop := h1SdDemTopRaw
+    h1SdDemBtm := h1SdDemBtmRaw
+    h1SdDemStart := h1SdDemStartRaw
+if refreshHtf2Sd
+    [h2SdSupTopRaw, h2SdSupBtmRaw, h2SdSupStartRaw, h2SdDemTopRaw, h2SdDemBtmRaw, h2SdDemStartRaw] = if zshow1 and plotSD
+        request.security(syminfo.tickerid, htf2, get_data_htf_sd_snapshot(10.0, 50, htfSdLookback))
+    else
+        [float(na), float(na), int(na), float(na), float(na), int(na)]
+    h2SdSupTop := h2SdSupTopRaw
+    h2SdSupBtm := h2SdSupBtmRaw
+    h2SdSupStart := h2SdSupStartRaw
+    h2SdDemTop := h2SdDemTopRaw
+    h2SdDemBtm := h2SdDemBtmRaw
+    h2SdDemStart := h2SdDemStartRaw
+prevZshow1 := zshow1
+prevPlotSd := plotSD
+prevZshow0Sd := zshow0
+
+process_data_run_pdarray_pipeline(string htf1Name, string htf2Name, bool showLtf, bool showHtf1, bool showHtf2, int ltfZoneStartIdx, bool canEmitSignals) =>
+    bool wantLtfDetect = showLtf and (plotOB or plotFVG)
+    if wantLtfDetect
+        process_data_detect_ltf_pdarrays()
+        annotate_new_pricezones(smcCtx.zones, ltfZoneStartIdx, timeframe.period, 1, ltfData)
+    if gateUsePdarrayPrune
+        array<KitSMC.PDArray> prunedOld = KitSMC.prune_old_current_zones(smcCtx.zones, effectiveCurrLookbackBars, last_bar_index)
+        if array.size(prunedOld) > 0
+            for i = 0 to array.size(prunedOld) - 1
+                KitSMC.PDArray zDel = array.get(prunedOld, i)
+                KitSMC.delete_pd_array_drawings(zDel)
+    process_data_attach_htf_pdarrays_for_tf(smcCtx.zones, htf1Name, 0, showHtf1,
+     plotOB, h1ObUpTop, h1ObUpBtm, h1ObUpStart, h1ObUpQ, h1ObDnTop, h1ObDnBtm, h1ObDnStart, h1ObDnQ,
+     plotFVG, h1FvgUpTop, h1FvgUpBtm, h1FvgUpStart, h1FvgUpQ, h1FvgDnTop, h1FvgDnBtm, h1FvgDnStart, h1FvgDnQ,
+     plotSD, h1SdSupTop, h1SdSupBtm, h1SdSupStart,
+     h1SdDemTop, h1SdDemBtm, h1SdDemStart,
+     htf1Data, 2)
+    process_data_attach_htf_pdarrays_for_tf(smcCtx.zones, htf2Name, 1, showHtf2,
+     plotOB, h2ObUpTop, h2ObUpBtm, h2ObUpStart, h2ObUpQ, h2ObDnTop, h2ObDnBtm, h2ObDnStart, h2ObDnQ,
+     plotFVG, h2FvgUpTop, h2FvgUpBtm, h2FvgUpStart, h2FvgUpQ, h2FvgDnTop, h2FvgDnBtm, h2FvgDnStart, h2FvgDnQ,
+     plotSD, h2SdSupTop, h2SdSupBtm, h2SdSupStart,
+     h2SdDemTop, h2SdDemBtm, h2SdDemStart,
+     htf2Data, 3)
+    int breakRetestWindowBars = KitCore.get_dynamic_confirmation_window_bars(timeframe.period, false, localCfg.sweepReclaimMinBars, localCfg.sweepReclaimMaxBars, localCfg.breakRetestMinBars, localCfg.breakRetestMaxBars)
+    process_data_prune_zones_by_relevance(smcCtx.zones)
+    KitCore.ChartContext ctx = chartCtx
+    process_data_zone_lifecycle(smcCtx.zones, commonAtr, ctx.biasVal, canEmitSignals)
+    if array.size(smcCtx.events) > 0
+        array.clear(smcCtx.events)
+    if array.size(smcCtx.signalHist) > 0
+        array.clear(smcCtx.signalHist)
+    int postTouchKeepMax = 16
+    if gateUsePdarrayPrune
+        prune_post_touch_pdarrays(smcCtx.zones, postTouchKeepMax, localCfg.zonePriorityAgeDecay)
+    bool(na)
+
+int htf2ObAnchorTs = KitCore.get_latest_time4(h2ObUpStart, h2ObDnStart, h2FvgUpStart, h2FvgDnStart)
+int htf2SrAnchorTs = na
+runtimeCtx := KitCore.update_runtime_context(runtimeCtx)
+bool canEmitSignals = false
+bool calcOnClosedBar = barstate.ishistory or barstate.isconfirmed
+if not initialTradesSyncDone
+    initialTradesSyncDone := true
+
+// Other logics
+if calcOnClosedBar
+    int currPivotLen = localCfg.currPivotLenNormal
+    int htf1PivotLen = localCfg.htf1PivotLenNormal
+    int htf2PivotLen = localCfg.htf2PivotLenNormal
+    int maxSafeHistOff = 90
+    int currPivotOffSafe = math.max(0, math.min(currPivotLen, maxSafeHistOff))
+    float currSh = ta.pivothigh(high, currPivotLen, currPivotLen)
+    float currSl = ta.pivotlow(low, currPivotLen, currPivotLen)
+    [sh1Real, sh1RealT, sl1Real, sl1RealT] = get_data_real_htf_swings(htf1, htf1PivotLen)
+    [sh2Real, sh2RealT, sl2Real, sl2RealT] = get_data_real_htf_swings(htf2, htf2PivotLen)
+    KitSMC.ingest_real_swings(htf1Data, sh1Real, int(sh1RealT), sl1Real, int(sl1RealT), SETTINGS.SWING_HISTORY_MAX)
+    KitSMC.ingest_real_swings(htf2Data, sh2Real, int(sh2RealT), sl2Real, int(sl2RealT), SETTINGS.SWING_HISTORY_MAX)
+    float hv = ta.valuewhen(not na(ta.pivothigh(high, PIVOT_LEN_BASE, PIVOT_LEN_BASE)), high[PIVOT_LEN_BASE], 0)
+    float lv = ta.valuewhen(not na(ta.pivotlow(low, PIVOT_LEN_BASE, PIVOT_LEN_BASE)), low[PIVOT_LEN_BASE], 0)
+    KitSMC.EngineCfg engineCfg = KitSMC.EngineCfg.new()
+    engineCfg.runSwingCycle := true
+    engineCfg.runStructureState := false
+    engineCfg.runPDArray := true
+    engineCfg.pdWantObFamily := plotOB
+    engineCfg.pdWantFvg := plotFVG
+    engineCfg.pdFormationLockBars := localCfg.zoneFormationLockBars
+    KitSMC.process_engine_base_cycle(
+     smcCtx, engineCfg,
+     htf1, htf2,
+     currSh, not na(currSh) ? int(time[currPivotOffSafe]) : na, currSl, not na(currSl) ? int(time[currPivotOffSafe]) : na,
+     sh1Real, int(sh1RealT), sl1Real, int(sl1RealT),
+     sh2Real, int(sh2RealT), sl2Real, int(sl2RealT),
+     SETTINGS.SWING_HISTORY_MAX,
+     int(na), high, low, bar_index,
+     hv, lv, commonAtr, syminfo.mintick, zqCfg)
+[h2LastHi, h2LastHiT, h2LastLo, h2LastLoT] = KitSMC.market_structure_latest_hilo(htf2Data.mss)
+int htf2SwingAnchorTs = KitCore.get_latest_time4(h2LastHiT, h2LastLoT, int(na), int(na))
+int htf2AnchorTsFinal = KitCore.get_dynamic_anchor_ts("OB_FIRST", "SR_FIRST", "SWING_FIRST", htf2ObAnchorTs, htf2SrAnchorTs, htf2SwingAnchorTs)
+bool recalcByHtf2 = not na(htf2) and ta.change(time(htf2)) != 0
+bool shouldDynRecalc = SETTINGS.DYN_LOOKBACK_ENABLE and calcOnClosedBar and (barstate.isfirst or recalcByHtf2)
+if shouldDynRecalc
+    int dynHtf1Candles = SETTINGS.DYN_LOOKBACK_ENABLE and not na(htf1) ? KitCore.get_candles_to_anchor(htf1, htf2AnchorTsFinal, SETTINGS.DYN_HTF1_CANDLES_MIN, SETTINGS.DYN_HTF1_CANDLES_MAX, SETTINGS.HTF_CANDLES_BASE) : SETTINGS.HTF_CANDLES_BASE
+    int htf1SecForDyn = not na(htf1) ? math.max(KitUI.get_tf_seconds(htf1), 1) : na
+    int htf2SecForDyn = not na(htf2) ? math.max(KitUI.get_tf_seconds(htf2), 1) : na
+    float htf2PerHtf1Dyn = not na(htf1SecForDyn) and not na(htf2SecForDyn) and htf2SecForDyn > htf1SecForDyn ? float(htf2SecForDyn) / float(htf1SecForDyn) : na
+    int dynHtf2Candles = not na(htf2PerHtf1Dyn) ? int(math.round(float(dynHtf1Candles) / htf2PerHtf1Dyn)) : SETTINGS.DYN_HTF2_CANDLES_FALLBACK
+    dynHtf2Candles := math.max(SETTINGS.DYN_HTF2_CANDLES_MIN, math.min(dynHtf2Candles, SETTINGS.DYN_HTF2_CANDLES_MAX))
+    int dynHtf1FromHtf2 = not na(htf2PerHtf1Dyn) ? int(math.ceil(float(dynHtf2Candles) * htf2PerHtf1Dyn)) : dynHtf1Candles
+    dynHtf1Candles := math.max(dynHtf1Candles, dynHtf1FromHtf2)
+    dynHtf1Candles := math.max(SETTINGS.DYN_HTF1_CANDLES_MIN, math.min(dynHtf1Candles, SETTINGS.DYN_HTF1_CANDLES_MAX))
+    int dynCurrLookbackBars = KitCore.get_curr_lookback_from_htf2(htf2, dynHtf2Candles, SETTINGS.DYN_CURR_LOOKBACK_MIN_BARS, SETTINGS.DYN_CURR_LOOKBACK_MAX_BARS)
+    dynCachedCurrLookbackBars := dynCurrLookbackBars
+workingFirstBar := KitCore.get_working_first_bar_from_lookback(localCfg.workingLookbackBars)
+[_wfLine1, _wfLabel1] = KitCore.update_working_first_bar_marker(workingFirstBarLine, workingFirstBarLabel, workingFirstBar, "SMC", color.new(uiCfg.ltfColor, 0), line.style_dotted, color.new(uiCfg.ltfColor, 0), THEME.SIZE_TINY)
+workingFirstBarLine := _wfLine1
+workingFirstBarLabel := _wfLabel1
+if calcOnClosedBar
+    int ltfOffSafe = math.max(0, math.min(math.min(bar_index - workingFirstBar, bar_index), 10000))
+    int ltfFirstTime = int(time[ltfOffSafe])
+    int htf1FirstTime = not na(htf1) ? get_data_htf_detection_cutoff_time(0, htf1) : na
+    int htf2FirstTime = not na(htf2) ? get_data_htf_detection_cutoff_time(1, htf2) : na
+    if not na(htf1FirstTime) and htf1FirstTime > ltfFirstTime
+        htf1FirstTime := ltfFirstTime
+    int htf2MaxTime = not na(htf1FirstTime) ? htf1FirstTime : ltfFirstTime
+    if not na(htf2FirstTime) and htf2FirstTime > htf2MaxTime
+        htf2FirstTime := htf2MaxTime
+    process_data_prune_outside_working_zone(smcCtx.zones)
+    chartCtx := process_data_chart_context()
+effectiveCurrLookbackBars := SETTINGS.DYN_LOOKBACK_ENABLE ? dynCachedCurrLookbackBars : localCfg.workingLookbackBars
+effectiveCurrLookbackBars := math.min(effectiveCurrLookbackBars, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+effectiveCurrLookbackBars := math.max(bar_index - workingFirstBar + 1, 1)
+perfLookbackBars := effectiveCurrLookbackBars
+htfProjectionSpanBars := effectiveCurrLookbackBars
+
+int ltfZoneStartIdx = array.size(smcCtx.zones)
+if calcOnClosedBar
+    bool is1m = get_data_is_1m_chart()
+    bool isFast = get_data_is_fast_chart()
+    int tfSecPipe = timeframe.in_seconds(timeframe.period)
+    bool isMidIntraday = tfSecPipe > 300 and tfSecPipe <= 14400
+    int pipelineDiv = is1m ? 6 : isFast ? 3 : isMidIntraday ? 2 : 1
+    bool runPipeline = pipelineDiv <= 1 or barstate.isfirst or (bar_index % pipelineDiv == 0)
+    if runPipeline
+        process_data_run_pdarray_pipeline(htf1, htf2, pdShowLtf, zshow0, zshow1, ltfZoneStartIdx, canEmitSignals)
+    else if tradeEntriesEnabled
+        process_data_trades()
+    htf2MasterRangeBars := KitSMC.get_master_range_lookback_bars(htf2Data, smcCtx.zones, 3, 2, high, low, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS)
+    GLOBAL_MAX_LOOKBACK_BARS := KitCore.get_dynamic_global_max_lookback_bars(uiTimeRangeCombo, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS, htf2MasterRangeBars)
+    GLOBAL_MAX_LOOKBACK_BARS := math.min(GLOBAL_MAX_LOOKBACK_BARS, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+    localCfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(pdDisplayMode, GLOBAL_MAX_LOOKBACK_BARS)
+    if SETTINGS.DYN_LOOKBACK_ENABLE and uiTimeRangeCombo == "dynamic"
+        localCfg.workingLookbackBars := math.max(localCfg.workingLookbackBars, htf2MasterRangeBars)
+    localCfg.workingLookbackBars := math.min(localCfg.workingLookbackBars, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+    localCfg.htfZoneLookbackBars := localCfg.workingLookbackBars
+    if get_data_is_1m_chart()
+        localCfg.htfZoneLookbackBars := math.min(localCfg.htfZoneLookbackBars, 800)
+    else if get_data_is_fast_chart()
+        localCfg.htfZoneLookbackBars := math.min(localCfg.htfZoneLookbackBars, 1500)
+    htfProjectionSpanBars := GLOBAL_MAX_LOOKBACK_BARS
+else
+    // Realtime open bar: keep trade states fresh so dashboard TP/SL stats update intrabar.
+    if tradeEntriesEnabled
+        process_data_trades()
+// barstate.islast
+if barstate.islast or barstate.islastconfirmedhistory
+    table.clear(signalStatsTableTopRight, 0, 0, 4, 23)
+    KitCore.draw_bias_row_under_trades(signalStatsTableTopRight, 0, chartCtx, THEME, SETTINGS, CONST, "SMC")

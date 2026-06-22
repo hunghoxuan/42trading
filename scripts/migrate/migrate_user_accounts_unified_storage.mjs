@@ -7,12 +7,12 @@ import { createRequire } from "module";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
-const webhookRequire = createRequire(path.join(PROJECT_ROOT, "webhook", "package.json"));
+const webApiRequire = createRequire(path.join(PROJECT_ROOT, "src/api", "package.json"));
 
-const { Client } = webhookRequire("pg");
+const { Client } = webApiRequire("pg");
 const {
   createUserObjectStore,
-} = webhookRequire(path.join(PROJECT_ROOT, "webhook", "userObjectStore.js"));
+} = webApiRequire(path.join(PROJECT_ROOT, "src/api", "storage", "userObjectStore.js"));
 
 const postgresUrl =
   process.env.MT5_POSTGRES_URL ||

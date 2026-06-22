@@ -8,7 +8,7 @@
 - Implementer: `Deepseek` (coding)
 - Reviewer/Release: `Codex` (review + deploy)
 - Profile: `Fullstack Developer` (primary) + `UI-Designer` (secondary) + `Tester` (secondary)
-- Target area: `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` (+ small style updates if needed)
+- Target area: `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` (+ small style updates if needed)
 
 ## Problem Statement
 Current symbols panel on Chart Snapshots page is missing quick segmentation by asset class and favorites, and the panel header wastes space with non-essential label text.
@@ -41,7 +41,7 @@ User-required UX updates:
   - Read: `api.authMe()` returns `user.metadata.watchlist`.
   - Write: `api.updateMetadata({ watchlist: nextList })`.
 - Current panel file:
-  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
 - Current default symbol source:
   - `DEFAULT_WATCHLIST` constant in same file.
 
@@ -128,7 +128,7 @@ User-required UX updates:
 
 ## Test Plan (Deepseek must run)
 - UI build:
-  - `rtk npm --prefix web-ui run build`
+  - `rtk npm --prefix src/ui run build`
 - Targeted behavior checks (manual):
   - Toggle open/close panel.
   - Add new symbol with `+`, verify appears in `Favourite`.
@@ -146,7 +146,7 @@ Review checklist before merge/deploy:
 
 ## Deploy Plan (Codex after review)
 1. Re-run checks:
-   - `rtk npm --prefix web-ui run build`
+   - `rtk npm --prefix src/ui run build`
    - `rtk node --check webhook/server.js` (safety baseline)
 2. If only UI changed, still follow project deploy rule if any backend/EA/script touched.
 3. Deploy using standard script if approved:

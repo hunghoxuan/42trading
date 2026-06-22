@@ -1,0 +1,62 @@
+<section class="st-page-shell trades-page-container stack-layout fadeIn">
+  <div class="page-header trades-page-header st-page-header">
+    <div class="page-header__title">
+      <h1 id="modeTitle" class="page-title">System Tools</h1>
+    </div>
+    <div class="page-header__actions st-page-header-actions">
+      <div id="toolbarFilters" class="st-header-filters"></div>
+      <div id="toolbarActions" class="st-header-actions"></div>
+      <span id="headerStatus" class="st-status-line minor-text"></span>
+    </div>
+  </div>
+
+  <div id="syncStatus" class="st-sync-status hidden">
+    <div id="syncProgress" class="st-sync-progress" aria-hidden="true"></div>
+    <span id="syncStatusText"></span>
+  </div>
+
+  <section id="healthView" class="st-health-view hidden"></section>
+
+  <div class="logs-layout-split st-layout-split" id="layoutSplit">
+    <aside class="logs-list-pane st-sidebar-pane" id="sidebarPane">
+      <div class="st-sidebar-header">
+        <div class="panel-label" id="sidebarTitle">Folders</div>
+        <div class="minor-text" id="sidebarMeta"></div>
+      </div>
+      <div class="st-sidebar-body">
+        <div id="treeRoot" class="st-tree-root"></div>
+      </div>
+    </aside>
+
+    <section class="st-main stack-layout">
+      <div class="st-pane-grid">
+        <section class="panel st-content-panel">
+          <div class="st-panel-head">
+            <div class="panel-label" id="contentTitle">Items</div>
+            <div class="st-panel-actions" id="contentActions"></div>
+          </div>
+          <div id="contentError" class="st-error hidden"></div>
+          <div class="st-data-grid-wrap">
+            <table class="st-data-grid table-dense">
+              <thead>
+                <tr id="tableHead"></tr>
+              </thead>
+              <tbody id="tableBody"></tbody>
+            </table>
+          </div>
+          <div class="st-pagination-bar" id="paginationBar"></div>
+        </section>
+
+        <aside class="logs-detail-pane panel st-detail-pane" id="detailPane">
+          <div class="st-panel-head">
+            <div class="panel-label" id="detailTitle">Detail</div>
+            <div class="st-panel-actions" id="detailActions"></div>
+          </div>
+          <div class="st-detail-body" id="detailBody">
+            <div id="detailContent" class="empty-state st-detail-empty">Select an item to inspect its content.</div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </div>
+</section>

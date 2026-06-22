@@ -39,11 +39,11 @@ Professional trading UI with zero visual breakage on any screen size (320px phon
 
 ## Technical Details
 - **Frontend**: 
-  - `web-ui/src/styles.css`: Add design token block, utility classes, and mobile breakpoints.
-  - `web-ui/src/components/AppShell.jsx`: New top-level shell with hamburger menu for mobile.
-  - `web-ui/src/components/DataTable.jsx`: New TanStack-powered table component.
-  - `web-ui/src/components/ConfirmDialog.jsx`: Rewired to use `@radix-ui/react-dialog` internally.
-  - `web-ui/src/components/EmptyState.jsx`: New reusable empty state.
-  - `web-ui/src/components/FormGroup.jsx`: New form field wrapper.
+  - `src/ui/src/styles.css`: Add design token block, utility classes, and mobile breakpoints.
+  - `src/ui/src/components/AppShell.jsx`: New top-level shell with hamburger menu for mobile.
+  - `src/ui/src/components/DataTable.jsx`: New TanStack-powered table component.
+  - `src/ui/src/components/ConfirmDialog.jsx`: Rewired to use `@radix-ui/react-dialog` internally.
+  - `src/ui/src/components/EmptyState.jsx`: New reusable empty state.
+  - `src/ui/src/components/FormGroup.jsx`: New form field wrapper.
 - **New dependencies**: `@tanstack/react-table`, `react-virtuoso`, `@radix-ui/react-dialog`, `@radix-ui/react-dropdown-menu`, `@radix-ui/react-tooltip`.
 - **Bundle impact**: ~40 KB gzipped total added. All tree-shakeable.

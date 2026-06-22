@@ -3,11 +3,11 @@
 ## Architecture
 ```
 # Local dev
-Vite :3000 (web-ui) + webhook :3001 (API)
+Vite :3000 (src/ui) + webhook :3001 (API)
 
 # Production (VPS)
 Browser → :443 (nginx)
-  → /, /assets/* → web-ui/dist/ (static)
+  → /, /assets/* → src/ui/dist/ (static)
   → /v2/*, /health, /auth/* → proxy → 127.0.0.1:3001 (webhook)
 ```
 

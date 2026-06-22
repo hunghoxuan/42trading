@@ -53,7 +53,7 @@ Implement bugfix in three parts:
 - [ ] No `P1` prefix or price-change suffix appears in those labels.
 - [ ] Editing SL/TP1/TP2/TP3 via chart updates corresponding TradePlan Edit inputs and values do not revert.
 - [ ] Constraint logic still blocks/adjusts only invalid values (no silent reset for valid edits).
-- [ ] `rtk npm --prefix web-ui run build`
+- [ ] `rtk npm --prefix src/ui run build`
 - [ ] Relevant UI tests (if present) pass.
 - [ ] Browser verification screenshot for edited lines + synced inputs.
 

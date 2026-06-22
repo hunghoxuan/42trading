@@ -223,6 +223,31 @@ async function submitToDownstream(normalized, mode) {
   };
 }
 
+async function proxyDownstreamJson(pathname, payload = {}) {
+  if (!CFG.downstreamUrl) {
+    throw new Error("CTRADER_DOWNSTREAM_URL is not configured");
+  }
+  const baseUrl = String(CFG.downstreamUrl).replace(/\/execute\/?$/, "").replace(/\/+$/, "");
+  const headers = { "content-type": "application/json" };
+  if (CFG.downstreamApiKey) headers["x-api-key"] = CFG.downstreamApiKey;
+  const res = await fetch(`${baseUrl}${pathname}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = { raw: text };
+  }
+  if (!res.ok) {
+    throw new Error(`downstream failed ${res.status}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
 function requireApiKey(req) {
   if (!CFG.apiKey) return true;
   const key = envStr(req.headers["x-api-key"]);
@@ -310,6 +335,30 @@ async function handleRefresh(req, res) {
   }
 }
 
+async function handleSymbolCalibration(req, res) {
+  if (!requireApiKey(req)) return json(res, 401, { ok: false, error: "invalid api key" });
+  let body = {};
+  try {
+    body = await readBody(req);
+  } catch (error) {
+    return json(res, 400, { ok: false, error: `invalid json: ${error.message}` });
+  }
+  try {
+    const symbol = String(body.symbol || "").trim().toUpperCase();
+    if (!symbol) {
+      return json(res, 400, { ok: false, error: "symbol required" });
+    }
+    const accountId = envStr(body.account_id || CFG.accountId || null);
+    const out = await proxyDownstreamJson("/symbol-calibration", {
+      account_id: accountId,
+      symbol,
+    });
+    return json(res, 200, out);
+  } catch (error) {
+    return json(res, 500, { ok: false, error: error.message || String(error) });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/health") {
@@ -329,6 +378,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/execute") return handleExecute(req, res);
   if (req.method === "POST" && url.pathname === "/auth/refresh") return handleRefresh(req, res);
+  if (req.method === "POST" && url.pathname === "/symbol-calibration") return handleSymbolCalibration(req, res);
   return json(res, 404, { ok: false, error: "not found" });
 });
 

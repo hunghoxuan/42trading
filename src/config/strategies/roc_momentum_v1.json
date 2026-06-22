@@ -1,0 +1,12 @@
+{
+  "key": "roc_momentum_v1",
+  "name": "ROC Momentum v1",
+  "kind": "preset",
+  "description": "Trades rate-of-change momentum acceleration and reversal through zero.",
+  "params": {
+    "period": 12,
+    "rr_target": 2,
+    "stop_lookback": 3
+  },
+  "min_bars": 40
+}

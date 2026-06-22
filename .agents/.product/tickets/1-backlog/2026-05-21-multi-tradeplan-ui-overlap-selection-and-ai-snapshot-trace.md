@@ -67,7 +67,7 @@ Implement in 3 workstreams:
 - [x] Per-card controls edit only that card's state.
 - [x] AI flow stores and returns snapshot references used in response (or fallback state).
 - [x] UI displays Snapshots Used for each AI response/trade context.
-- [x] rtk npm --prefix web-ui run build
+- [x] rtk npm --prefix src/ui run build
 - [~] Add/update UI tests for multi-card selection and isolation. (deferred: manual verification sufficient for TICKET flow)
 - [~] Manual browser verification with 2+ cards and snapshot-trace sample. (deferred: build passes; user verifies in browser)
 
@@ -112,11 +112,11 @@ Return:
 - No changes to `trade_plan_schema.json` or backend contracts — UI-only contract extension
 
 ### Files Changed
-- `web-ui/src/components/SignalDetailCard.jsx` — Fix 1 (overflow clip), Fix 2 (selection ref guard), Fix 3 (snapshots display)
-- `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` — Pass `snapshotsUsed` through response prop
+- `src/ui/src/components/SignalDetailCard.jsx` — Fix 1 (overflow clip), Fix 2 (selection ref guard), Fix 3 (snapshots display)
+- `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` — Pass `snapshotsUsed` through response prop
 
 ### Checks Run
-- `npm --prefix web-ui run build` — passed (no errors, 1.02s)
+- `npm --prefix src/ui run build` — passed (no errors, 1.02s)
 - `node --check webhook/server.js` — passed (backend untouched)
 
 ### Deploy Status

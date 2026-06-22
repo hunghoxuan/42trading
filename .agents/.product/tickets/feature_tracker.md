@@ -24,7 +24,7 @@ This file tracks the status of user-facing features and links them to technical 
 
 ## [x] Unified Bar Source of Truth
 - **Status**: Done
-- **Feature Doc**: [../features/web-ui/unified_bar_source_of_truth.md]
+- **Feature Doc**: [../features/src/ui/unified_bar_source_of_truth.md]
 - **Summary**: `mergeBarsIntoCSV` — single merge function for broker push + Twelve Data cron + manual pull. CSV is canonical source. Sorted by time, dedup, L1/Redis cache updated.
 
 ## [ ] Broker OHLC Bars Pipeline
@@ -37,7 +37,7 @@ This file tracks the status of user-facing features and links them to technical 
 
 ## [ ] Design System & Performance Refactor
 - **Status**: Planned
-- **Feature Doc**: [../features/web-ui/design_system_and_performance_refactor.md]
+- **Feature Doc**: [../features/src/ui/design_system_and_performance_refactor.md]
 - **Ticket**: [./1-backlog/2026-05-28-design-system-and-performance-refactor.md]
 - **Summary**: Formalize existing CSS into design tokens + utility classes. Add mobile-first responsive breakpoints (hamburger nav, scrollable tables, stacked cards). Integrate TanStack Table (headless) on 7 data-table pages. Add react-virtuoso for virtual scrolling. Replace hand-rolled modal/dropdown with Radix UI primitives (Dialog, DropdownMenu, Tooltip). Zero visual regression. No TypeScript.
 

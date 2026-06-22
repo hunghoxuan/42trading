@@ -10,7 +10,7 @@
 - [x] [2026-05-23] [Feature] [Author: DeepSeek] Multi-Cron Support + Snapshot Improvements — see `2026-05-23-multi-cron-support-and-snapshot-improvements.md`
 - [ ] [2026-05-23] [Webhook/Snapshots] [Author: Codex] Fix Bug: MASTER snapshot duplicates timeframe aliases (`D`/`1D`, `240`/`4H`) and can sort incorrectly due to non-canonical dedup/sort path. Spec: `1-backlog/2026-05-23-master-snapshot-timeframe-canonicalization-dedup-sort-fix.md`.
 - [ ] [2026-05-24] [DB/Accounts] [Author: Codex] Cleanup: unify legacy `accounts` and canonical `user_accounts`, align schema, remove duplicate source-of-truth risk. Spec: `1-backlog/2026-05-24-unify-accounts-and-user-accounts.md`.
-- [ ] [2026-05-24] [DB/Schema] [Author: Codex] Fix schema drift: align `db/schema.js` `user_accounts` model with real DB columns before larger account-table consolidation. Spec: `1-backlog/2026-05-24-align-user-accounts-drizzle-schema.md`.
+- [ ] [2026-05-24] [DB/Schema] [Author: Codex] Fix schema drift: align `src/db/schema.js` `user_accounts` model with real DB columns before larger account-table consolidation. Spec: `1-backlog/2026-05-24-align-user-accounts-drizzle-schema.md`.
 - [x] [2026-04-16 11:30] [Reliability] [Author: Hung] Task: Implement "Deadlock Breaker" (Stale Lock Recovery) in Postgres backend for signals locked > 5 mins.
 - [x] [2026-04-16 12:45] [Reliability] [Author: Hung] Task: Update EA status mapping (START/SUBMITTED) and increase timezone drift tolerance to 2 hours.
 - [x] [2026-05-19 09:30] [Refactor] [Author: DeepSeek] Task: Drop signals table, remove signals UI/routes, add Draft status, +Signal saves Draft trade — see `2026-05-19-drop-signals-add-draft-status.md`

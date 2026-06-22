@@ -29,10 +29,10 @@ Current AI detail and object editor UI is readable but low-density and low-signa
 
 ## Investigation
 - Likely primary files:
-  - `web-ui/src/components/SignalDetailCard.jsx`
-  - `web-ui/src/components/charts/SymbolChart.jsx`
-  - `web-ui/src/components/TradePlanEditor.jsx`
-  - object/overlay editor component(s) under `web-ui/src/components/charts/` or related object panel modules.
+  - `src/ui/src/components/SignalDetailCard.jsx`
+  - `src/ui/src/components/charts/SymbolChart.jsx`
+  - `src/ui/src/components/TradePlanEditor.jsx`
+  - object/overlay editor component(s) under `src/ui/src/components/charts/` or related object panel modules.
 - Existing UI already has badge primitives and chart object controls, so this should be a focused layout/formatting pass, not a new system.
 
 ## Solution
@@ -60,7 +60,7 @@ Current AI detail and object editor UI is readable but low-density and low-signa
 - [ ] Screen 5 object editor uses 6-column dense layout on desktop and remains readable on smaller widths.
 - [ ] Changing object Type updates displayed chart label to `type + label`.
 - [ ] Duplicate type prefixes are not shown in label text.
-- [ ] `rtk npm --prefix web-ui run build`
+- [ ] `rtk npm --prefix src/ui run build`
 - [ ] Visual verification with provided screenshots 1-5 parity goals.
 
 ## Constraints
@@ -87,7 +87,7 @@ Implement:
 6) Ensure line/object label is `type + label` and updates when Type changes.
 
 Checks:
-- rtk npm --prefix web-ui run build
+- rtk npm --prefix src/ui run build
 - visual verification against the 5 referenced screenshots
 
 Return:

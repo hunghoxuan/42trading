@@ -82,7 +82,7 @@ Implement in two parts:
 - [ ] `parsed_json` retains `execution_plan` when raw response contains it.
 - [ ] No fallback BUY/0 object is shown when canonical AI payload is valid.
 - [ ] Add regression fixture/test for raw response with root `execution_plan`.
-- [ ] `rtk npm --prefix web-ui run build`
+- [ ] `rtk npm --prefix src/ui run build`
 - [ ] Browser verification with screenshots for `Files` tab and populated TradePlan editor.
 
 ## Handoff Prompt

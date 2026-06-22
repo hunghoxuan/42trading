@@ -1,4 +1,4 @@
-# Fix Schema Drift: Align `db/schema.js` `user_accounts` with real DB table
+# Fix Schema Drift: Align `src/db/schema.js` `user_accounts` with real DB table
 
 ## Meta
 - Ticket Type: `Fix bug / schema alignment`
@@ -10,7 +10,7 @@
   - `1-backlog/2026-05-24-unify-accounts-and-user-accounts.md`
 
 ## Problem
-`db/schema.js` defines `user_accounts`, but the runtime/real SQL table contains additional columns that are not represented in the Drizzle schema.
+`src/db/schema.js` defines `user_accounts`, but the runtime/real SQL table contains additional columns that are not represented in the Drizzle schema.
 
 This creates ORM/schema drift and increases risk for:
 - incomplete query results
@@ -19,7 +19,7 @@ This creates ORM/schema drift and increases risk for:
 - inconsistent type contract across DB layers
 
 ## Current Drift Found
-Real SQL `user_accounts` includes fields that are missing in `db/schema.js`:
+Real SQL `user_accounts` includes fields that are missing in `src/db/schema.js`:
 - `equity`
 - `margin`
 - `free_margin`
@@ -29,20 +29,20 @@ Real SQL `user_accounts` includes fields that are missing in `db/schema.js`:
 Potentially other differences should be audited as part of implementation.
 
 ## Goal
-Make `db/schema.js` accurately reflect the actual `user_accounts` table used by the live app/runtime.
+Make `src/db/schema.js` accurately reflect the actual `user_accounts` table used by the live app/runtime.
 
 ## Detailed Solution
 
 ### 1) Audit actual DB contract
 Compare these sources:
-- `db/schema/mt5_schema.sql`
+- `src/db/schema/mt5_schema.sql`
 - `webhook/server.js` bootstrap table creation
-- `db/schema.js`
+- `src/db/schema.js`
 
 Confirm exact live `user_accounts` shape and field types.
 
 ### 2) Update Drizzle schema
-Extend `userAccounts` in `db/schema.js` to include missing fields with correct types.
+Extend `userAccounts` in `src/db/schema.js` to include missing fields with correct types.
 
 Expected additions at minimum:
 - `equity`
@@ -64,7 +64,7 @@ If `accounts` legacy table is still present, do not solve that here.
 This ticket is schema alignment only.
 
 ## Acceptance Criteria
-- [ ] `db/schema.js` `userAccounts` includes all real live columns needed from `user_accounts`
+- [ ] `src/db/schema.js` `userAccounts` includes all real live columns needed from `user_accounts`
 - [ ] Types match DB semantics closely enough for Drizzle queries
 - [ ] No diagnostics/errors introduced
 - [ ] Existing DB code still imports and runs correctly
@@ -72,12 +72,12 @@ This ticket is schema alignment only.
 
 ## Validation Plan
 1. Compare SQL dump vs Drizzle schema field-by-field
-2. Run syntax/diagnostics on `db/schema.js`
+2. Run syntax/diagnostics on `src/db/schema.js`
 3. Run any DB query tests if available
 4. Smoke-check any account query path that uses Drizzle schema
 
 ## Impacted Files
-- `db/schema.js`
+- `src/db/schema.js`
 - optionally docs if schema contract is documented elsewhere
 
 ## Risk

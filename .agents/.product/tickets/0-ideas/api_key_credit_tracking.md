@@ -36,7 +36,7 @@ The `user_settings` records of type `api_key` will move from a simple string-bas
 - **Manual Refresh API**: `POST /api/settings/api-key/refresh` to trigger an immediate update.
 - **Cron Integration**: Periodic updates (e.g., every 12 hours) via the internal cron engine.
 
-### B. Frontend UI (`web-ui`)
+### B. Frontend UI (`src/ui`)
 - **Settings Panel Upgrade**:
     - Replace the single "value" field with a "Key & Balance" section.
     - Show a `Credits` badge next to the key name.

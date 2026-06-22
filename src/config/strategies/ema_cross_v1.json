@@ -1,0 +1,13 @@
+{
+  "key": "ema_cross_v1",
+  "name": "EMA Cross v1",
+  "kind": "preset",
+  "description": "Simple fast/slow EMA crossover with fixed 1:2 risk-reward and one open trade at a time.",
+  "params": {
+    "fast_period": 9,
+    "slow_period": 21,
+    "rr_target": 2,
+    "stop_lookback": 2
+  },
+  "min_bars": 40
+}

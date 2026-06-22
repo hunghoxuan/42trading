@@ -28,13 +28,13 @@ echo -e "${CYAN}[2/6] pulling latest on VPS...${NC}"
 ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && git fetch origin && git checkout ${BRANCH} && git pull --ff-only origin ${BRANCH}"
 
 echo -e "${CYAN}[3/6] installing dependencies...${NC}"
-ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && npm --prefix webhook install --no-audit --no-fund"
+ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && corepack pnpm install --frozen-lockfile"
 
-echo -e "${CYAN}[4/6] building web-ui...${NC}"
-ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && npm --prefix web-ui install --no-audit --no-fund && npm --prefix web-ui run build"
+echo -e "${CYAN}[4/6] building src/admin...${NC}"
+ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && corepack pnpm --dir src/admin run build"
 
-echo -e "${CYAN}[5/6] restarting webhook...${NC}"
-ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && PORT=3001 HTTPS_ENABLED=false pm2 restart webhook --update-env"
+echo -e "${CYAN}[5/6] restarting src/api...${NC}"
+ssh "${VPS_HOST}" "cd ${VPS_APP_DIR} && PORT=3001 HTTPS_ENABLED=false pm2 restart src/api --update-env"
 
 echo -e "${CYAN}[5b/6] reloading nginx...${NC}"
 ssh "${VPS_HOST}" "nginx -t && nginx -s reload" 2>/dev/null || echo -e "${YELLOW}  nginx not running, skipping${NC}"

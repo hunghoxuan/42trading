@@ -96,7 +96,7 @@ User returns to page
 ## File Structure
 
 ```
-web-ui/src/
+src/ui/src/
 ├── services/
 │   └── NotificationHub.js     ← new: singleton hub (emit + track + subscribe)
 ├── components/

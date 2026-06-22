@@ -36,4 +36,4 @@ New endpoint: `GET /v2/market-data/broker-bars?symbol=EURUSD&tf=15&limit=300`
 ## Files
 
 - `webhook/server.js` — new endpoint
-- `web-ui/src/components/charts/SymbolChart.jsx` — broker source handling
+- `src/ui/src/components/charts/SymbolChart.jsx` — broker source handling

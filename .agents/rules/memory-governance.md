@@ -26,4 +26,4 @@
   - update after meaningful fixes, deploy changes, or durable learnings
   - merge duplicate docs
   - archive or remove stale pages that conflict with current architecture/rules
-  - keep `STATE.md` rebuildable from canonical sources
+  - keep operational context rebuildable from canonical sources such as `.agents/sync/MAILBOX.md` and current rules/docs

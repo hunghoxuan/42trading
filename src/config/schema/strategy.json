@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "42trade.strategy.v1",
+  "title": "42trade Strategy",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "engine_version",
+    "kind",
+    "status",
+    "params",
+    "indicators",
+    "rules",
+    "risk"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9._-]{3,64}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "engine_version": {
+      "type": "string",
+      "enum": ["42trade.strategy.v1"]
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["custom"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "archived"]
+    },
+    "market": {
+      "type": "object",
+      "properties": {
+        "symbol": { "type": "string" },
+        "tf": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "params": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["number", "string", "boolean", "null"]
+      }
+    },
+    "indicators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["ema", "sma", "rsi", "roc", "macd", "bollinger", "stochastic"]
+          },
+          "source": {
+            "type": "string",
+            "enum": ["open", "high", "low", "close", "volume"]
+          },
+          "length": { "type": "number" },
+          "fast_length": { "type": "number" },
+          "slow_length": { "type": "number" },
+          "signal_length": { "type": "number" },
+          "stddev": { "type": "number" },
+          "smooth_period": { "type": "number" },
+          "field": {
+            "type": "string",
+            "enum": ["macd", "signal", "histogram", "upper", "mid", "lower", "k", "d"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": ["entry_long", "entry_short"],
+      "properties": {
+        "entry_long": {},
+        "entry_short": {},
+        "exit_long": {},
+        "exit_short": {},
+        "stop_loss_long": {},
+        "stop_loss_short": {},
+        "take_profit_long": {},
+        "take_profit_short": {}
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "type": "object",
+      "properties": {
+        "rr_target": { "type": "number" },
+        "stop_lookback": { "type": "number" },
+        "max_open_trades": { "type": "number" },
+        "fallback_stop_pct": { "type": "number" },
+        "fallback_tp_pct": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

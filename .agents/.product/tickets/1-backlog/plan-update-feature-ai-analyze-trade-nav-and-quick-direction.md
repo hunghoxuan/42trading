@@ -14,6 +14,6 @@
 - Context menu Entry/TP/SL: calls BOTH `onPlanLevelChange` and `onQuickTradeIntent` when available
 
 ## Files Changed
-- `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` — split nav buttons, toolbar condition
-- `web-ui/src/components/charts/SymbolChart.jsx` — Buy/Sell always sets direction+entry, context menu dual-fire
+- `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` — split nav buttons, toolbar condition
+- `src/ui/src/components/charts/SymbolChart.jsx` — Buy/Sell always sets direction+entry, context menu dual-fire
 

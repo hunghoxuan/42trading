@@ -1,0 +1,14 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#0B1020"/>
+  <g transform="translate(36 22)">
+    <rect x="0" y="0" width="136" height="136" rx="38" fill="#151B30" stroke="#2A3553" stroke-width="2"/>
+    <path d="M28 34H100" stroke="#FFF7FB" stroke-width="12" stroke-linecap="round"/>
+    <path d="M64 34V101" stroke="#FFF7FB" stroke-width="12" stroke-linecap="round"/>
+    <path d="M84 50V82C84 93 81 101 75 107C69 113 61 116 52 116C43 116 35 113 29 107C23 101 20 93 20 82V63" stroke="#F9A8D4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    <path d="M101 50V86C101 98 97 107 89 113C81 119 70 122 57 122" stroke="#C084FC" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+    <circle cx="101" cy="49" r="5" fill="#FBCFE8"/>
+    <text x="164" y="58" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="42" font-weight="800">42trade</text>
+    <text x="164" y="90" fill="#C4B5FD" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="1.2">Soft / feminine Tu</text>
+    <text x="164" y="120" fill="#94A3B8" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500">Rounded terminals, lighter feel, gentler palette</text>
+  </g>
+</svg>

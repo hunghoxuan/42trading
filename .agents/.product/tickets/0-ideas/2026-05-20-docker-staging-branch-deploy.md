@@ -29,7 +29,7 @@
   - `du -sh /opt/trading` => `227M`
   - biggest project dirs:
     - `/opt/trading/webhook` `88M`
-    - `/opt/trading/web-ui` `72M`
+    - `/opt/trading/src/ui` `72M`
 - Runtime availability check:
   - `docker` not installed
   - `podman`/`nerdctl`/`docker-compose` not found
@@ -47,7 +47,7 @@
 ## Disk Estimate
 - Expected extra disk for first Docker rollout on this VPS:
   - Docker engine + metadata: ~`200MB` to `400MB`
-  - App image layers (node runtime + webhook deps + built web-ui): ~`350MB` to `900MB`
+  - App image layers (node runtime + webhook deps + built src/ui): ~`350MB` to `900MB`
   - Running staging container writable layer/logs: ~`50MB` to `300MB` (growth over time)
 - Practical first-run budget: ~`0.8GB` to `1.6GB`.
 - Current free disk: `2.5GB` => feasible but tight; cleanup policy is required.

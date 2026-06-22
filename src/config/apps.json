@@ -1,0 +1,154 @@
+{
+  "apps": [
+    {
+      "id": "db-manager",
+      "name": "DB Manager",
+      "description": "Browse tables and run admin database operations.",
+      "route": "/apps/db-manager",
+      "entry": {
+        "type": "iframe",
+        "url": "/miniapps/db-manager/",
+        "embeddedQueryParam": "embedded=1"
+      },
+      "display": {
+        "mode": "container",
+        "mobileMode": "fullscreen",
+        "showHeader": false
+      },
+      "access": {
+        "requiredRole": "system"
+      },
+      "auth": {
+        "mode": "inherit-main",
+        "standaloneRedirectLogin": true,
+        "loginUrl": "/login"
+      },
+      "apis": {
+        "mode": "hybrid",
+        "commonBasePath": "/v2",
+        "standaloneBaseUrl": "/miniapps/db-manager/"
+      },
+      "status": "enabled"
+    },
+    {
+      "id": "system-files",
+      "name": "Files",
+      "description": "Browse user files and inspect local content.",
+      "route": "/apps/system-files",
+      "entry": {
+        "type": "iframe",
+        "url": "/miniapps/system-tools/files",
+        "embeddedQueryParam": "embedded=1"
+      },
+      "display": {
+        "mode": "container",
+        "mobileMode": "fullscreen",
+        "showHeader": false
+      },
+      "access": {
+        "requiredRole": "system"
+      },
+      "auth": {
+        "mode": "inherit-main",
+        "standaloneRedirectLogin": true,
+        "loginUrl": "/login"
+      },
+      "apis": {
+        "mode": "local",
+        "commonBasePath": "/api",
+        "standaloneBaseUrl": "/miniapps/system-tools/files"
+      },
+      "status": "enabled"
+    },
+    {
+      "id": "system-logs",
+      "name": "Logs",
+      "description": "Browse log folders and inspect file content.",
+      "route": "/apps/system-logs",
+      "entry": {
+        "type": "iframe",
+        "url": "/miniapps/system-tools/logs",
+        "embeddedQueryParam": "embedded=1"
+      },
+      "display": {
+        "mode": "container",
+        "mobileMode": "fullscreen",
+        "showHeader": false
+      },
+      "access": {
+        "requiredRole": "system"
+      },
+      "auth": {
+        "mode": "inherit-main",
+        "standaloneRedirectLogin": true,
+        "loginUrl": "/login"
+      },
+      "apis": {
+        "mode": "local",
+        "commonBasePath": "/api",
+        "standaloneBaseUrl": "/miniapps/system-tools/logs"
+      },
+      "status": "enabled"
+    },
+    {
+      "id": "system-health",
+      "name": "Health",
+      "description": "Inspect service health and diagnostics.",
+      "route": "/apps/system-health",
+      "entry": {
+        "type": "iframe",
+        "url": "/miniapps/system-tools/health",
+        "embeddedQueryParam": "embedded=1"
+      },
+      "display": {
+        "mode": "container",
+        "mobileMode": "fullscreen",
+        "showHeader": false
+      },
+      "access": {
+        "requiredRole": "system"
+      },
+      "auth": {
+        "mode": "inherit-main",
+        "standaloneRedirectLogin": true,
+        "loginUrl": "/login"
+      },
+      "apis": {
+        "mode": "local",
+        "commonBasePath": "/api",
+        "standaloneBaseUrl": "/miniapps/system-tools/health"
+      },
+      "status": "enabled"
+    },
+    {
+      "id": "system-cache",
+      "name": "Cache",
+      "description": "Inspect and clear runtime cache entries.",
+      "route": "/apps/system-cache",
+      "entry": {
+        "type": "iframe",
+        "url": "/miniapps/system-tools/cache",
+        "embeddedQueryParam": "embedded=1"
+      },
+      "display": {
+        "mode": "container",
+        "mobileMode": "fullscreen",
+        "showHeader": false
+      },
+      "access": {
+        "requiredRole": "system"
+      },
+      "auth": {
+        "mode": "inherit-main",
+        "standaloneRedirectLogin": true,
+        "loginUrl": "/login"
+      },
+      "apis": {
+        "mode": "local",
+        "commonBasePath": "/api",
+        "standaloneBaseUrl": "/miniapps/system-tools/cache"
+      },
+      "status": "enabled"
+    }
+  ]
+}

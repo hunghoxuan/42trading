@@ -3,12 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const mq5Source = readFileSync(
-  new URL("../mt5-bridge/clients/TVBridgeEA.mq5", import.meta.url),
+  new URL("../src/mt5-bridge/clients/TVBridgeEA.mq5", import.meta.url),
   "utf8",
 );
 
 const cTraderSource = readFileSync(
-  new URL("../mt5-bridge/clients/TVBridge_CTrader.cs", import.meta.url),
+  new URL("../src/mt5-bridge/clients/TVBridge_CTrader.cs", import.meta.url),
   "utf8",
 );
 

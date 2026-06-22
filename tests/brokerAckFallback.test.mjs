@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const serverSource = readFileSync(
-  new URL("../web/api/server.js", import.meta.url),
+  new URL("../src/api/server.js", import.meta.url),
   "utf8",
 );
 

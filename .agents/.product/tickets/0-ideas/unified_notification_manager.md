@@ -142,7 +142,7 @@ class NotificationManager {
 
 ## Files Changed
 - `webhook/server.js` — add NotificationManager class, replace all emitNotification/log calls
-- `web-ui/src/components/NotificationWatcher.jsx` — minor refactor
-- `web-ui/src/pages/system/EventsPage.jsx` → `NotificationSettings.jsx` — new settings UI
+- `src/ui/src/components/NotificationWatcher.jsx` — minor refactor
+- `src/ui/src/pages/system/EventsPage.jsx` → `NotificationSettings.jsx` — new settings UI
 - `.agents/.product/features/1-plan/sse_notification_system.md` — update
 - `.agents/.product/tickets/feature_tracker.md` — update

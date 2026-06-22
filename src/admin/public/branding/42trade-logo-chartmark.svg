@@ -1,0 +1,16 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#0A1020"/>
+  <g transform="translate(34 28)">
+    <rect x="0" y="0" width="136" height="124" rx="26" fill="#101827" stroke="#22304A"/>
+    <path d="M20 94L43 72L63 82L87 46L110 58" stroke="#38BDF8" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="28" y="78" width="12" height="22" rx="4" fill="#10B981"/>
+    <rect x="52" y="58" width="12" height="42" rx="4" fill="#10B981"/>
+    <rect x="76" y="68" width="12" height="32" rx="4" fill="#EF4444"/>
+    <rect x="100" y="38" width="12" height="62" rx="4" fill="#10B981"/>
+    <path d="M154 52L182 0H207L184 38H212V59H179V89H154V59H137V52H154Z" fill="#F8FAFC"/>
+    <path d="M227 0H303V21H248L242 49C248 45 255 43 263 43C276 43 286 47 294 55C302 63 306 74 306 88C306 106 299 120 287 130C274 141 258 146 239 146C228 146 216 144 206 140C196 136 187 131 181 125L194 107C206 116 220 121 235 121C245 121 253 118 259 113C265 108 268 101 268 92C268 83 265 76 259 71C253 66 244 64 232 64C225 64 217 65 209 68L203 64L215 0H227Z" fill="#F8FAFC"/>
+    <text x="333" y="63" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="42" font-weight="800">trade</text>
+    <text x="333" y="93" fill="#94A3B8" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700" letter-spacing="2">CHART / CANDLE HYBRID</text>
+    <text x="333" y="120" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500">Designed for dark admin + trading surfaces</text>
+  </g>
+</svg>

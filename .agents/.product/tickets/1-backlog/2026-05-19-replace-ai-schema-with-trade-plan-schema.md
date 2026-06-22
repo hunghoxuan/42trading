@@ -44,6 +44,6 @@ Delete `config/ai_response_schema.json`. Build AI response schema dynamically fr
 
 ## Verification
 - [ ] `node --check webhook/server.js`
-- [ ] `npm run build` (web-ui)
+- [ ] `npm run build` (src/ui)
 - [ ] AI analysis response parses correctly with new path
 - [ ] Trade plans extract correctly from AI responses

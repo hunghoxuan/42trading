@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VPS_HOST="${VPS_HOST:-root@139.59.211.192}"
-IMAGE_NAME="${IMAGE_NAME:-trading-webhook}"
+IMAGE_NAME="${IMAGE_NAME:-trading-src/api}"
 TAG="${TAG:-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
-CONTAINER_NAME="${CONTAINER_NAME:-webhook-prod}"
+CONTAINER_NAME="${CONTAINER_NAME:-src/api-prod}"
 APP_PORT="${APP_PORT:-80}"
-ENV_FILE="${ENV_FILE:-/opt/trading/webhook/.env}"
+ENV_FILE="${ENV_FILE:-/opt/trading/src/api/.env}"
 HEALTH_URL="${HEALTH_URL:-https://trade.mozasolution.com/health}"
 
 echo "[prod] host=${VPS_HOST} image=${IMAGE_NAME}:${TAG} port=${APP_PORT}"

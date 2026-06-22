@@ -235,6 +235,77 @@ async function resolveSymbolId(accountId, symbolRaw) {
   throw new Error(`Symbol not found on cTrader account: ${symbolRaw}`);
 }
 
+function toNullableNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+async function fetchSymbolCalibration(reqBody = {}) {
+  const accountId = String(reqBody.account_id || CFG.accountId || "").trim();
+  if (!accountId) throw new Error("account_id required");
+  const symbolRaw = String(reqBody.symbol || "").trim();
+  if (!symbolRaw) throw new Error("symbol required");
+
+  const { conn: connRef } = await ensureAuthorized(accountId);
+  const resolved = await resolveSymbolId(accountId, symbolRaw);
+  const symbolsRes = await connRef.sendCommand("ProtoOASymbolsListReq", {
+    ctidTraderAccountId: Number(accountId),
+    includeArchivedSymbols: false,
+  });
+  const symbolRow = Array.isArray(symbolsRes?.symbol)
+    ? symbolsRes.symbol.find(
+        (item) => Number(item?.symbolId) === Number(resolved.symbolId),
+      ) || null
+    : null;
+
+  const lotSize = toNullableNumber(
+    symbolRow?.lotSize ?? resolved?.lotSize ?? CFG.unitsPerLot,
+  );
+  const minVolumeUnits = toNullableNumber(
+    symbolRow?.minVolume ?? symbolRow?.minTradeAmount ?? CFG.minVolumeUnits,
+  );
+  const maxVolumeUnits = toNullableNumber(
+    symbolRow?.maxVolume ?? symbolRow?.maxTradeAmount,
+  );
+  const stepVolumeUnits = toNullableNumber(
+    symbolRow?.stepVolume ?? symbolRow?.volumeStep,
+  );
+  const pipPosition = toNullableNumber(symbolRow?.pipPosition);
+  const digits = toNullableNumber(symbolRow?.digits);
+  const pipSize =
+    pipPosition !== null
+      ? Number((1 / 10 ** pipPosition).toFixed(Math.max(0, pipPosition)))
+      : null;
+  const spread =
+    toNullableNumber(symbolRow?.spread) ??
+    toNullableNumber(symbolRow?.currentSpread) ??
+    null;
+  const commissionPerLot =
+    toNullableNumber(symbolRow?.commission) ??
+    toNullableNumber(symbolRow?.preciseTradingCommissionRate) ??
+    null;
+
+  return {
+    ok: true,
+    account_id: accountId,
+    symbol: String(resolved.symbolName || symbolRaw).toUpperCase(),
+    calibration: {
+      symbol_id: Number(resolved.symbolId),
+      symbol_name: String(resolved.symbolName || symbolRaw).toUpperCase(),
+      lot_size: lotSize,
+      volume_step_units: stepVolumeUnits,
+      min_volume_units: minVolumeUnits,
+      max_volume_units: maxVolumeUnits,
+      pip_position: pipPosition,
+      pip_size: pipSize,
+      digits,
+      spread,
+      commission_per_lot: commissionPerLot,
+    },
+    raw_symbol: symbolRow || null,
+  };
+}
+
 async function placeOrder(reqBody = {}) {
   const mode = envStr(reqBody.mode || CFG.mode || "demo").toLowerCase();
   if (!["demo", "live"].includes(mode)) throw new Error("Invalid mode");
@@ -380,7 +451,7 @@ async function fetchBars(reqBody = {}) {
             }],
           };
           try {
-            const pushRes = await fetch(`${webhookUrl.replace(/\/+$/, "")}/v2/broker/prices-sync`, {
+            const pushRes = await fetch(`${webhookUrl.replace(/\/+$/, "")}/api/broker/prices-sync`, {
               method: "POST",
               headers: {
                 "content-type": "application/json",
@@ -471,6 +542,23 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const out = await fetchBars(body);
+      return json(res, 200, out);
+    } catch (error) {
+      const message = error?.description || error?.message || String(error);
+      return json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/symbol-calibration") {
+    if (!requireApiKey(req)) return json(res, 401, { ok: false, error: "invalid api key" });
+    let body = {};
+    try {
+      body = await readBody(req);
+    } catch (error) {
+      return json(res, 400, { ok: false, error: `invalid json: ${error.message}` });
+    }
+    try {
+      const out = await fetchSymbolCalibration(body);
       return json(res, 200, out);
     } catch (error) {
       const message = error?.description || error?.message || String(error);

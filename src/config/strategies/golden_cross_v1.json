@@ -1,0 +1,13 @@
+{
+  "key": "golden_cross_v1",
+  "name": "Golden Cross v1",
+  "kind": "preset",
+  "description": "Longer-term 50/200 moving average crossover often used for macro trend direction.",
+  "params": {
+    "fast_period": 50,
+    "slow_period": 200,
+    "rr_target": 2.5,
+    "stop_lookback": 3
+  },
+  "min_bars": 240
+}

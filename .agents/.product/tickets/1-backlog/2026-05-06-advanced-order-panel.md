@@ -5,7 +5,7 @@ Create a new `AdvancedOrderPanel` component that combines the existing `SizeCalc
 
 ## Tasks
 - [ ] **Component Development**:
-    - Create `web-ui/src/components/AdvancedOrderPanel.jsx`.
+    - Create `src/ui/src/components/AdvancedOrderPanel.jsx`.
     - Port logic from `SizeCalculator.jsx` (Risk calc, Lot sizing).
     - Port UI from `TradePlanEditor.jsx` (Entry/SL/TP sliders and inputs).
 - [ ] **Execution Logic**:

@@ -25,5 +25,5 @@ Clicking the session clock timezone area (UTC/Local/NY) no longer switches modes
 - [x] Clicking timezone panel cycles Local -> New York -> UTC -> Local.
 - [x] Session clock label/time updates after click.
 - [x] Chart/session timeline reflects timezone changes again via normal rerender path.
-- [x] `rtk npm --prefix web-ui run build` passes.
+- [x] `rtk npm --prefix src/ui run build` passes.
 

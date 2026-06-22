@@ -1,7 +1,7 @@
 # Handoff Rules
 
 - Worklog is mandatory.
-- At START of significant work, add current task to `.agents/worklog.md`.
+- At START of significant work, post/update current task in `.agents/sync/MAILBOX.md`.
 - At FINISH, add:
   - changed files
   - technical decisions

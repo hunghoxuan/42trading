@@ -12,7 +12,7 @@ AI payloads that include both flattened plan fields and `__raw_plan` are being m
 This creates wrong prefilled order forms and invalid side/TP semantics.
 
 ## Scope
-- `web-ui/src/utils/signalDetailUtils.jsx`
+- `src/ui/src/utils/signalDetailUtils.jsx`
 
 ## Repro (from user report)
 - `__raw_plan.direction = SELL`

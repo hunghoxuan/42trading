@@ -34,8 +34,8 @@ Replace 296 raw `b.query()` SQL calls with Drizzle ORM. Same PostgreSQL backend.
 ## Implementation Plan
 
 ### Phase 1 — Schema (1 file)
-- [ ] Create `webhook/db/schema.js` — Drizzle schema for all 11 tables
-- [ ] Create `webhook/db/index.js` — Drizzle instance (`drizzle(pool)`)
+- [ ] Create `webhook/src/db/schema.js` — Drizzle schema for all 11 tables
+- [ ] Create `webhook/src/db/index.js` — Drizzle instance (`drizzle(pool)`)
 - [ ] Export typed `db` + schema objects
 
 ### Phase 2 — Custom methods (wrap existing API)
@@ -91,7 +91,7 @@ const rows = await db
 ## Affected Files
 - `webhook/server.js` — 57 query replacements
 - `webhook/mt5Backend.js` — PostgreSQL implementation → Drizzle
-- New: `webhook/db/schema.js`, `webhook/db/index.js`
+- New: `webhook/src/db/schema.js`, `webhook/src/db/index.js`
 - `scripts/daemons/ctrader_*.js` — if they access DB directly
 
 ## Constraints
@@ -102,7 +102,7 @@ const rows = await db
 - Backward-compatible config
 
 ## Verification
-- [ ] `node --check webhook/db/schema.js`
+- [ ] `node --check webhook/src/db/schema.js`
 - [ ] All existing integration tests pass
 - [ ] Trade create → read → update → delete cycle
 - [ ] Signal create → ack → cancel cycle

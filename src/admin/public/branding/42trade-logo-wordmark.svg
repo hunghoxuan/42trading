@@ -1,0 +1,13 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#0B1220"/>
+  <g transform="translate(36 32)">
+    <rect x="0" y="0" width="72" height="116" rx="18" fill="#111827" stroke="#233047"/>
+    <rect x="14" y="24" width="10" height="56" rx="5" fill="#10B981"/>
+    <rect x="30" y="12" width="10" height="78" rx="5" fill="#10B981"/>
+    <rect x="46" y="36" width="10" height="42" rx="5" fill="#EF4444"/>
+    <path d="M95 42L121 0H146L124 35H151V56H119V84H95V56H79V42H95Z" fill="#F8FAFC"/>
+    <path d="M167 0H243V21H188L182 49C188 45 195 43 204 43C217 43 227 47 234 55C242 63 246 74 246 88C246 106 240 120 227 131C215 141 199 146 180 146C168 146 157 144 146 140C136 136 128 131 122 125L134 107C146 116 160 121 176 121C185 121 193 118 199 113C205 108 208 101 208 92C208 83 205 76 199 71C193 66 184 64 172 64C166 64 158 65 149 68L144 64L155 0H167Z" fill="#F8FAFC"/>
+    <text x="280" y="85" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="56" font-weight="800" letter-spacing="0.5">trade</text>
+    <text x="281" y="114" fill="#94A3B8" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="600" letter-spacing="3">SYSTEMATIC TRADING UI</text>
+  </g>
+</svg>

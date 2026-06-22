@@ -20,7 +20,7 @@ Install: `@tanstack/react-table`, `react-virtuoso`, `@radix-ui/react-dialog`, `@
 
 Add design token block to `styles.css` — `--space-*`, `--radius-*`, `--text-*`, `--shadow-*`. Replace hardcoded pixel values with token references.
 
-**Verify:** `npm --prefix web-ui run build`. Visual identical.
+**Verify:** `npm --prefix src/ui run build`. Visual identical.
 
 ---
 
@@ -131,7 +131,7 @@ Defer `useSortableTable` and `TradeDetailPanel` (replaced by TanStack Table).
 - [ ] TanStack Table: sort + filter + pagination on all 7 migrated pages.
 - [ ] react-virtuoso: 10K+ rows scroll without jank, DOM node count bounded.
 - [ ] Component extractions: 7 components extracted with no visual change.
-- [ ] `npm --prefix web-ui run build` passes. Diagnostics clean.
+- [ ] `npm --prefix src/ui run build` passes. Diagnostics clean.
 - [ ] Dark/light theme toggle still works on every page.
 
 ---
@@ -153,5 +153,5 @@ Defer `useSortableTable` and `TradeDetailPanel` (replaced by TanStack Table).
 - **Total: ~44 KB gzipped**
 
 ## Related
-- Feature Doc: `../features/web-ui/design_system_and_performance_refactor.md`
+- Feature Doc: `../features/src/ui/design_system_and_performance_refactor.md`
 - Prerequisite Audit: `./2026-05-28-extract-reusable-components.md`

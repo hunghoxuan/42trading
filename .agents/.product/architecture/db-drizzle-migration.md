@@ -7,13 +7,13 @@
 - ✅ 57/57 server.js raw queries replaced
 - ✅ 15 unit tests passing
 - ✅ `const { eq, and, or, desc, sql, inArray } = require("drizzle-orm")` available globally
-- ✅ `const schema = require("../db/schema.js")` available globally
+- ✅ `const schema = require("../src/db/schema.js")` available globally
 
 ## Architecture
 
 ```
 trading/
-  db/                          ← shared DB package
+  src/db/                          ← shared DB package
     package.json               ← deps: drizzle-orm, pg
     schema.js                  ← 8 tables (mirrors actual DB)
     queries.js                 ← Drizzle query functions
@@ -45,12 +45,12 @@ Dropped/legacy tables (not in schema): `ai_templates`, `ui_auth_users`, `signal_
 
 | Method | Drizzle | Tests | Matches raw SQL? |
 |--------|---------|-------|-----------------|
-| `listTradesV2` | ✅ `db/queries.js` | ✅ 5 tests | ✅ |
-| `listSignals` | ✅ `db/queries.js` | ✅ 2 tests | ✅ |
-| `listUserAccounts` | ✅ `db/queries.js` | ✅ 1 test | ✅ |
-| `upsertSignal` | ✅ `db/queries.js` | ⚠️ flaky (works standalone) | — |
-| `findAccountByApiKeyHash` | ✅ `db/queries.js` | ✅ 1 test | ✅ |
-| `upsertUserAccount` | ✅ `db/queries.js` | ❌ | — |
+| `listTradesV2` | ✅ `src/db/queries.js` | ✅ 5 tests | ✅ |
+| `listSignals` | ✅ `src/db/queries.js` | ✅ 2 tests | ✅ |
+| `listUserAccounts` | ✅ `src/db/queries.js` | ✅ 1 test | ✅ |
+| `upsertSignal` | ✅ `src/db/queries.js` | ⚠️ flaky (works standalone) | — |
+| `findAccountByApiKeyHash` | ✅ `src/db/queries.js` | ✅ 1 test | ✅ |
+| `upsertUserAccount` | ✅ `src/db/queries.js` | ❌ | — |
 
 ## Remaining Methods to Migrate (~35 methods)
 
@@ -101,7 +101,7 @@ These are the ~35 methods listed above that use `pool.query()` directly. Once mi
 
 ## How to Add a New Query
 
-1. Add function to `db/queries.js` — use `schema.*` columns, `eq()`, `and()`, `desc()`, etc.
+1. Add function to `src/db/queries.js` — use `schema.*` columns, `eq()`, `and()`, `desc()`, etc.
 2. Add test to `tests/db-queries.test.js` — verify against raw SQL count
 3. Run: `node tests/db-queries.test.js`
 4. Commit
@@ -113,7 +113,7 @@ const b = await mt5Backend();
 // Raw SQL (old):
 const rows = await b.query("SELECT * FROM trades WHERE symbol = $1", ["XAUUSD"]);
 // Drizzle (new) — use b.db:
-const { listTradesV2 } = require("../db/queries");
+const { listTradesV2 } = require("../src/db/queries");
 const result = await listTradesV2(b.db, { symbol: "XAUUSD" });
 ```
 

@@ -1,0 +1,16 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#07111B"/>
+  <g transform="translate(38 26)">
+    <rect x="0" y="0" width="128" height="128" rx="30" fill="#0F172A" stroke="#1E293B" stroke-width="2"/>
+    <path d="M28 24H92V42H68V106H52V42H28V24Z" fill="#F8FAFC"/>
+    <rect x="56" y="24" width="12" height="82" rx="6" fill="#E2E8F0"/>
+    <path d="M76 34H102V78C102 90 99 99 92 106C85 113 75 116 64 116C53 116 43 113 36 106C29 99 26 90 26 78V50H44V77C44 85 46 91 50 95C54 99 59 101 64 101C69 101 74 99 78 95C82 91 84 85 84 77V34H76Z" fill="#38BDF8" opacity="0.9"/>
+    <path d="M84 34V77C84 85 82 91 78 95C74 99 69 101 64 101C59 101 54 99 50 95C46 91 44 85 44 77" stroke="#7DD3FC" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    <text x="162" y="60" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="44" font-weight="800">42trade</text>
+    <text x="162" y="92" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="1.5">Do it yourself</text>
+    <path d="M162 116H376" stroke="#1E293B" stroke-width="2"/>
+    <circle cx="392" cy="116" r="6" fill="#10B981"/>
+    <circle cx="418" cy="116" r="6" fill="#38BDF8"/>
+    <circle cx="444" cy="116" r="6" fill="#EF4444"/>
+  </g>
+</svg>

@@ -98,6 +98,13 @@ Recommended utility classes:
 - Buttons, inputs, and selects should share a consistent height rhythm.
 - Desktop controls should remain compact.
 - Mobile controls should remain easy to tap.
+- When implementing new UI, prioritize consistency and reusability.
+- Avoid hard-coded UI, copy-paste UI patterns, and inline-style-heavy UI when a reusable component or existing class can be used.
+- Design and implement component-first.
+- Use existing classes first before introducing new styling patterns.
+- Before adding a new UI part, first decide whether it is a reusable component or a true one-off surface.
+- If it may appear more than once, make it a reusable component first, or confirm with the user before keeping it as a one-off.
+- Reusable/common components must include `data-component` markers on the root node and important interactive subparts.
 - Toggle and collapse buttons should live in the relevant header row.
 - Modal dismiss actions must always be visible and clear.
 - Menus should close after selection on mobile.
@@ -180,6 +187,8 @@ Use these shared classes before inventing new one-off styling:
   - vertical layout with consistent spacing
 - `.panel`, `.card-flat`, `.card-dense`
   - consistent card surfaces
+- `ResponsivePanel`
+  - preferred reusable titled container panel when the surface may need desktop border, mobile borderless behavior, standard radius, responsive width, or collapsible layout
 - `.toolbar-panel`, `.toolbar-group`
   - shared header/filter/action rows
 - `.pager-area`
@@ -229,3 +238,99 @@ Use these shared classes before inventing new one-off styling:
 - If you need time emphasis, use the time utility classes from this file.
 - If you need layout spacing or alignment, prefer `.stack-layout`, `.toolbar-panel`, `.toolbar-group`, `.pager-area`, or a new shared class.
 - If you need a one-off style, keep it minimal and explain why it cannot be a class.
+
+---
+
+## Component Marking
+
+- Common reusable UI components should include:
+  - `<!-- COMPONENT: Name -->` at the beginning of the component render block
+  - `<!-- /COMPONENT: Name -->` at the end of the component render block
+  - `data-component="Name"` on the root DOM element when the component renders a DOM node
+
+---
+
+## Shared Component Inventory
+
+### Core Shared UI
+
+- `AppShell`
+- `ConfirmDialog`
+- `EmptyState`
+- `FormGroup`
+- `ImageViewer`
+- `MasterDetailLayout`
+- `MobileCollapseSection`
+- `NavDropdown`
+- `PageGate`
+- `SidebarListItem`
+- `SmartContent`
+- `TabBar`
+- `Tooltip`
+
+### Controls / Inputs
+
+- `CronInterval`
+- `CronRunLauncher`
+- `CronSectionCard`
+- `PaginationBar`
+- `SearchFilterBar`
+- `SecretInput`
+- `SizeCalculator`
+- `SymbolGroupSelector`
+- `SymbolTogglePicker`
+- `TimeframeSelector`
+- `ToggleButton`
+
+### Tables / Data Display
+
+- `DataTable`
+- `VirtualTable`
+- `KpiCard`
+- `PnlDisplay`
+- `StatusBadge`
+- `BrokerTicketBadge`
+
+### Notifications / Live Status
+
+- `NotificationDot`
+- `NotificationWatcher`
+- `SessionClockBar`
+- `TickerBar`
+- `ToastContainer`
+
+### Logs / Files
+
+- `LogViewer`
+- `LogsViewer`
+
+### Trade / Domain Components
+
+- `AdvancedOrderPanel`
+- `AiTradeDetailCard`
+- `InfoTabChart`
+- `SignalDetailCard`
+- `SignalDetailHeaderBuilder`
+- `TradeDraftTab`
+- `TradeDraftUpload`
+- `TradeLevelChart`
+- `TradePlanEditor`
+- `TradeSignalChart`
+- `TradeSignalListCells`
+- `UserDetailSection`
+
+### Chart Submodule
+
+- `SymbolChart`
+- `chartObjectModel`
+- `numberUtils`
+
+### Modal
+
+- `TradingViewLoginModal`
+
+### Component CSS
+
+- `SessionClockBar.css`
+- `TickerBar.css`
+- `ToastContainer.css`

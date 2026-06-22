@@ -53,7 +53,7 @@ From current SQL dump, both tables hold overlapping account fields such as:
 - `broker_name`
 
 ### 4) ORM/schema drift exists
-`db/schema.js` defines `user_accounts`, but it is missing fields that exist in SQL dump / real table:
+`src/db/schema.js` defines `user_accounts`, but it is missing fields that exist in SQL dump / real table:
 - `equity`
 - `margin`
 - `free_margin`
@@ -84,7 +84,7 @@ Make `user_accounts` the single canonical account table and remove dependency on
   - docs/examples only
 
 ### Phase 2 — Canonical schema alignment
-Update `db/schema.js` so `user_accounts` matches actual DB contract, including at least:
+Update `src/db/schema.js` so `user_accounts` matches actual DB contract, including at least:
 - `equity`
 - `margin`
 - `free_margin`
@@ -122,7 +122,7 @@ After verification:
 
 ## Acceptance Criteria
 - [ ] All active runtime account logic uses only `user_accounts`
-- [ ] `db/schema.js` matches actual `user_accounts` DB shape
+- [ ] `src/db/schema.js` matches actual `user_accounts` DB shape
 - [ ] All legacy `accounts` rows are safely migrated to `user_accounts`
 - [ ] No app feature requires `accounts` to function
 - [ ] Compatibility/backfill logic is either removed or isolated with a removal note
@@ -138,7 +138,7 @@ After verification:
 
 ## Impacted Areas
 - `webhook/server.js`
-- `db/schema.js`
+- `src/db/schema.js`
 - any DB migration/bootstrap SQL
 - account-related docs / scripts / tests
 

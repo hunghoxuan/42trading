@@ -30,7 +30,7 @@
 - **Frontend:** Rewrote CronPage with left panel (cron list) + right panel (unified edit form). New Cron button, delete, status toggle. Symbols group selector (Watchlist/Crypto/Forex/Indices/Metals/Custom). Interval: 15s/30s/1m/5m/15m/30m/1h/4h/1d.
 - **DB migration:** Backfilled existing rows with `cron_type` in `data` JSONB.
 
-**Files:** `webhook/server.js`, `web-ui/src/pages/settings/CronPage.jsx`
+**Files:** `webhook/server.js`, `src/ui/src/pages/settings/CronPage.jsx`
 
 ### 4. Change: Snapshots Folder Structure
 **Problem:** All snapshots saved flat in `/snapshots/` (e.g., `XAUUSD_1H.png`, `EURUSD_MASTER.png`). Messy with many symbols.
@@ -71,7 +71,7 @@
 | File | Summary |
 |------|---------|
 | `webhook/server.js` | Cron loop fix, multi-cron, snapshot folder, PNG format, TF dedup/sort, Playwright macOS path |
-| `web-ui/src/pages/settings/CronPage.jsx` | Full rewrite: left list + right form, multi-cron, symbols groups, intervals |
+| `src/ui/src/pages/settings/CronPage.jsx` | Full rewrite: left list + right form, multi-cron, symbols groups, intervals |
 | `scripts/daemons/mt5_csv_sync.sh` | Removed hardcoded API key |
 | `scripts/install/install_mt5_csv_sync_launchd.sh` | API_KEY env var in LaunchAgent plist |
 | `webhook/README.md` | Updated usage with API_KEY requirement |

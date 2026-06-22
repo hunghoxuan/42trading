@@ -3,8 +3,16 @@
 - Always run shell commands via `rtk` unless raw output is explicitly required.
 - Prefer targeted reads:
   - `rg` for search
-  - `sed -n 'start,endp'` for partial file reads
+  - `sed -n 'start,end'` for partial file reads
   - `head`/`tail` for logs
+- Use `.codegraph` for structural questions to reduce token use:
+  - where symbol is defined
+  - who calls a symbol
+  - what a symbol calls
+  - impact/breakage checks
+  - grouped code context for a task area
+- Use `rg` for literal text needs:
+  - strings, comments, log messages, README/docs, migration paths, environment names
 - Avoid broad scans of large folders (`.git`, `.codex/sessions`, `node_modules`, `dist`, logs) unless required.
 - Keep command output bounded (use `head`, `tail`, `--max-*`, or scoped paths).
 - Report concise summaries, not full dumps.

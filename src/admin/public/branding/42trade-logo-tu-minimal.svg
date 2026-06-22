@@ -1,0 +1,12 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#0A0F1A"/>
+  <g transform="translate(36 22)">
+    <rect x="0" y="0" width="136" height="136" rx="32" fill="#111827" stroke="#1F2937" stroke-width="2"/>
+    <path d="M32 38H100" stroke="#F8FAFC" stroke-width="10" stroke-linecap="round"/>
+    <path d="M66 38V102" stroke="#F8FAFC" stroke-width="10" stroke-linecap="round"/>
+    <path d="M92 52V80C92 90 89 98 83 104C77 110 69 113 60 113C51 113 44 110 38 104C32 98 29 90 29 80V64" stroke="#60A5FA" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="164" y="58" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="42" font-weight="800">42trade</text>
+    <text x="164" y="90" fill="#94A3B8" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="1.5">Minimal Tu mark</text>
+    <text x="164" y="120" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500">Simple overlap, fewer shapes, logo-first silhouette</text>
+  </g>
+</svg>

@@ -23,7 +23,7 @@ Drop the `signals` table and all associated UI pages, menu entries, and API rout
 - `POST /v2/trades/{id}/promote` → new route: Draft → PENDING
 - Signal-related helper functions → remove or deprecate
 
-### UI (`web-ui/src/`)
+### UI (`src/ui/src/`)
 - `SignalsPage.jsx` → deleted
 - `SignalDetailPage.jsx` → deleted
 - Menu/nav references to Signals → removed
@@ -31,7 +31,7 @@ Drop the `signals` table and all associated UI pages, menu entries, and API rout
 - `TradePlanEditor.jsx`: `+ Signal` button → `+ Draft` / `Save Draft` button, saves trade with `status: 'Draft'`
 - `V2TradeDetailPage.jsx`: when `execution_status === 'Draft'`, show `[+ Trade]` button → calls promote endpoint
 
-### API (`web-ui/src/api.js`)
+### API (`src/ui/src/api.js`)
 - Signal API functions → removed
 - `createDraftTrade` → new
 - `promoteDraftTrade` → new
@@ -43,7 +43,7 @@ Drop the `signals` table and all associated UI pages, menu entries, and API rout
 
 ## Verification
 - [ ] `node --check webhook/server.js`
-- [ ] `npm run build` (web-ui)
+- [ ] `npm run build` (src/ui)
 - [ ] `/health` returns ok
 - [ ] Broker POLL excludes Draft trades
 - [ ] `+ Draft` creates trade row with status `'Draft'`

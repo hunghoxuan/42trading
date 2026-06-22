@@ -15,13 +15,13 @@
 - Analyze backend fallback was too strict (session+provider+symbol match). If provider differs but symbol snapshots exist, pool became empty and returned no snapshots.
 
 ## Fix Scope
-- `web-ui/src/components/charts/SymbolChart.jsx`
+- `src/ui/src/components/charts/SymbolChart.jsx`
   - Make chart-object bootstrap run on `tradeSid` change only.
   - Guard `onTradePlanGroupChange` callback to fire only when plan group actually changes.
   - Remove noisy debug logs.
 - `webhook/server.js`
   - Add provider-agnostic symbol fallback and final all-snapshots fallback before returning "No snapshots found".
-- `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+- `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
   - If analyze returns `No snapshots found for analysis`, fetch recent snapshots and retry once with symbol-matched files.
 
 ## Validation Checklist

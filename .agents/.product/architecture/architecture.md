@@ -11,7 +11,7 @@ trading/
 ├── webhook/               ← BACKEND — Pure API server (no UI serving)
 │   └── server.js           ← Single monolithic file
 │
-├── web-ui/                 ← FRONTEND — React SPA
+├── src/ui/                 ← FRONTEND — React SPA
 │   ├── src/                ← Components, pages, hooks
 │   ├── dist/               ← Built static files (from npm run build)
 │   ├── Dockerfile          ← Multi-stage: Vite build → nginx serving
@@ -24,7 +24,7 @@ trading/
 │   ├── TVBridgeEA.mq5       ← MT5 Expert Advisor (MQL5)
 │   └── TVBridge_CTrader.cs  ← cTrader bridge (C#)
 │
-├── docker-compose.yml      ← ORCHESTRATION (db + webhook + web-ui)
+├── docker-compose.yml      ← ORCHESTRATION (db + src/api + src/ui)
 │
 ├── scripts/                ← OPS TOOLING
 │   ├── deploy/              ← deploy_webhook.sh, check_build_versions.sh
@@ -44,8 +44,8 @@ trading/
 | Directory | Role | Language | What it does |
 |-----------|------|----------|-------------|
 | **`webhook/`** | Backend API Server | Node.js | Pure REST API on `:3001`. No static file serving. PostgreSQL, Claude AI, TwelveData, Redis, Cron jobs, SSE push. |
-| **`web-ui/`** | Frontend SPA | React + Vite | UI rendering. Dev: Vite `:3000` with HMR. Prod: built `dist/` served by nginx. `api.js` calls webhook via fetch. |
-| **`nginx/`** | Reverse Proxy | nginx | Prod only. Serves `web-ui/dist/` static files, proxies API paths to webhook `:3001`. |
+| **`src/ui/`** | Frontend SPA | React + Vite | UI rendering. Dev: Vite `:3000` with HMR. Prod: built `dist/` served by nginx. `api.js` calls webhook via fetch. |
+| **`nginx/`** | Reverse Proxy | nginx | Prod only. Serves `src/ui/dist/` static files, proxies API paths to webhook `:3001`. |
 | **`bridge-clients/`** | Broker Bridges | MQL5 / C# | Pull tasks from webhook, execute trades on brokers, push status back. |
 | **`scripts/`** | Ops Tooling | Bash | Deploy, build-version checks, remote smoke tests. |
 | **`.agents/`** | AI Memory | Markdown | Architecture docs, feature specs, tickets, rules, worklog. |
@@ -73,7 +73,7 @@ trading/
 │  ┌────────────────────────────────────────────────────────────────────┐ │
 │  │                      nginx (port 443 HTTPS)                        │ │
 │  │                                                                    │ │
-│  │  / → serves web-ui/dist/ static files (SPA)                       │ │
+│  │  / → serves src/ui/dist/ static files (SPA)                       │ │
 │  │  /auth/* → proxy_pass http://webhook:3001                         │ │
 │  │  /v2/*    → proxy_pass http://webhook:3001                         │ │
 │  │  /health  → proxy_pass http://webhook:3001                         │ │
@@ -92,7 +92,7 @@ trading/
 │  │  │              Route Handlers                   │                 │ │
 │  │  │ /v2/signals/* /v2/trades/* /v2/chart/*       │                 │ │
 │  │  │ /v2/ai/* /v2/notifications/* /v2/settings/*  │                 │ │
-│  │  │ /v2/system/* /v2/broker/* /mt5/db/* /auth/*  │                 │ │
+│  │  │ /v2/system/* /v2/broker/* /mt5/src/db/* /auth/*  │                 │ │
 │  │  └──────────────────────────────────────────────┘                 │ │
 │  │  ┌──────────────┐  ┌──────────────┐                               │ │
 │  │  │  Cron Jobs   │  │  Market Data │                               │ │
@@ -105,7 +105,7 @@ trading/
           ┌────────────────┼────────────────┐
           │                │                │
      ┌────┴────┐     ┌─────┴─────┐    ┌─────┴──────┐
-     │ MT5 EA  │     │  cTrader  │    │  web-ui/   │
+     │ MT5 EA  │     │  cTrader  │    │  src/ui/   │
      │ (MQL5)  │     │  Bridge   │    │  (React)   │
      │         │     │  (C#)     │    │            │
      │ Pulls   │     │  Pulls    │    │ src/api.js │──► fetch() to webhook
@@ -171,7 +171,7 @@ Full schema: [db-schema.md](./db-schema.md)
 | `/v2/settings/*` | User settings (API keys, symbols, watchlist, execution profiles) |
 | `/v2/system/*` | Cache list/detail/delete, storage stats/cleanup |
 | `/v2/broker/*` | EA pull, EA sync, cTrader pull/sync, heartbeat |
-| `/mt5/db/*` | DB table browser (tables, rows, schema, create, update) |
+| `/mt5/src/db/*` | DB table browser (tables, rows, schema, create, update) |
 | `/mt5/health` | Health check (version, storage, enabled features) |
 
 ---
@@ -196,7 +196,7 @@ Full schema: [db-schema.md](./db-schema.md)
 4. MT5 EA polls GET /v2/broker/pull → gets task
 5. EA executes on broker → POST /v2/broker/sync status
 6. webhook updates trade → emitNotification SSE
-7. web-ui receives SSE → toast + ticker + optional refresh
+7. src/ui receives SSE → toast + ticker + optional refresh
 ```
 
 ---

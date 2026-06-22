@@ -1,0 +1,332 @@
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 14.14 (Homebrew)
+-- Dumped by pg_dump version 14.14 (Homebrew)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
+-- Name: gen_sid(text, integer); Type: FUNCTION; Schema: public; Owner: macmini
+--
+
+CREATE FUNCTION public.gen_sid(prefix text DEFAULT ''::text, chars_limit integer DEFAULT 8) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+      p TEXT := UPPER(COALESCE(prefix, ''));
+      n INT := GREATEST(4, LEAST(COALESCE(chars_limit, 8), 32));
+      rnd TEXT;
+    BEGIN
+      rnd := UPPER(SUBSTRING(ENCODE(GEN_RANDOM_BYTES(24), 'hex') FROM 1 FOR n));
+      IF p = '' THEN
+        RETURN rnd;
+      END IF;
+      RETURN p || '_' || rnd;
+    END;
+    $$;
+
+
+ALTER FUNCTION public.gen_sid(prefix text, chars_limit integer) OWNER TO macmini;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: trades; Type: TABLE; Schema: public; Owner: macmini
+--
+
+CREATE TABLE public.trades (
+    account_id text NOT NULL,
+    signal_id text,
+    source_id text,
+    symbol text NOT NULL,
+    action text NOT NULL,
+    entry double precision,
+    sl double precision,
+    tp double precision,
+    note text,
+    dispatch_status text DEFAULT 'NEW'::text NOT NULL,
+    lease_token text,
+    lease_expires_at timestamp with time zone,
+    execution_status text DEFAULT 'PENDING'::text NOT NULL,
+    close_reason text,
+    broker_trade_id text,
+    entry_exec double precision,
+    opened_at timestamp with time zone,
+    closed_at timestamp with time zone,
+    pnl_realized double precision,
+    metadata text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    volume double precision,
+    user_id text,
+    entry_model text,
+    signal_tf text,
+    chart_tf text,
+    id bigint NOT NULL,
+    sid text DEFAULT public.gen_sid('TRD'::text, 8) NOT NULL,
+    rejection_reason text,
+    order_type text,
+    raw_json text,
+    broker_pips numeric,
+    broker_lots numeric,
+    broker_commission numeric,
+    broker_swap numeric,
+    broker_volume numeric,
+    broker_pnl double precision,
+    broker_margin double precision,
+    broker_tp_pnl double precision,
+    broker_sl_pnl double precision,
+    strategy text,
+    profile text,
+    confidence_pct double precision,
+    invalidation text,
+    estimated_bars integer,
+    exit_condition text,
+    entry_condition text,
+    risk_management text,
+    skip_recommendation text,
+    confluence_checklist text,
+    be_trigger double precision,
+    rr_planned double precision,
+    risk_money_planned double precision,
+    risk_pct_planned double precision,
+    tp1 double precision,
+    tp2 double precision,
+    tp3 double precision,
+    planned_tp_pnl double precision,
+    planned_sl_pnl double precision
+);
+
+
+ALTER TABLE public.trades OWNER TO macmini;
+
+--
+-- Name: trades_id_seq; Type: SEQUENCE; Schema: public; Owner: macmini
+--
+
+CREATE SEQUENCE public.trades_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.trades_id_seq OWNER TO macmini;
+
+--
+-- Name: trades_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: macmini
+--
+
+ALTER SEQUENCE public.trades_id_seq OWNED BY public.trades.id;
+
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: macmini
+--
+
+CREATE TABLE public.users (
+    user_id text NOT NULL,
+    name text,
+    email text,
+    password_hash text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    metadata text,
+    password_salt text,
+    role text,
+    updated_at timestamp with time zone,
+    is_active boolean,
+    id bigint NOT NULL,
+    sid text DEFAULT public.gen_sid('USR'::text, 8) NOT NULL
+);
+
+
+ALTER TABLE public.users OWNER TO macmini;
+
+--
+-- Name: users_id_seq; Type: SEQUENCE; Schema: public; Owner: macmini
+--
+
+CREATE SEQUENCE public.users_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.users_id_seq OWNER TO macmini;
+
+--
+-- Name: users_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: macmini
+--
+
+ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
+
+
+--
+-- Name: trades id; Type: DEFAULT; Schema: public; Owner: macmini
+--
+
+ALTER TABLE ONLY public.trades ALTER COLUMN id SET DEFAULT nextval('public.trades_id_seq'::regclass);
+
+
+--
+-- Name: users id; Type: DEFAULT; Schema: public; Owner: macmini
+--
+
+ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
+
+
+--
+-- Name: trades trades_pkey; Type: CONSTRAINT; Schema: public; Owner: macmini
+--
+
+ALTER TABLE ONLY public.trades
+    ADD CONSTRAINT trades_pkey PRIMARY KEY (sid);
+
+
+--
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: macmini
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_pkey PRIMARY KEY (user_id);
+
+
+--
+-- Name: idx_trades_account; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_account ON public.trades USING btree (account_id);
+
+
+--
+-- Name: idx_trades_broker_ticket; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_broker_ticket ON public.trades USING btree (broker_trade_id);
+
+
+--
+-- Name: idx_trades_created_at; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_created_at ON public.trades USING btree (created_at DESC);
+
+
+--
+-- Name: idx_trades_dispatch_queue; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_dispatch_queue ON public.trades USING btree (account_id, dispatch_status, created_at);
+
+
+--
+-- Name: idx_trades_exec_status; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_exec_status ON public.trades USING btree (execution_status);
+
+
+--
+-- Name: idx_trades_sid; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX idx_trades_sid ON public.trades USING btree (sid);
+
+
+--
+-- Name: idx_trades_signal_id; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_signal_id ON public.trades USING btree (signal_id);
+
+
+--
+-- Name: idx_trades_signal_sid; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_signal_sid ON public.trades USING btree (signal_id);
+
+
+--
+-- Name: idx_trades_symbol; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_symbol ON public.trades USING btree (symbol);
+
+
+--
+-- Name: idx_trades_user; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE INDEX idx_trades_user ON public.trades USING btree (user_id);
+
+
+--
+-- Name: uq_trades_account_signal; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX uq_trades_account_signal ON public.trades USING btree (account_id, signal_id) WHERE (signal_id IS NOT NULL);
+
+
+--
+-- Name: uq_trades_id; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX uq_trades_id ON public.trades USING btree (id);
+
+
+--
+-- Name: uq_trades_sid; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX uq_trades_sid ON public.trades USING btree (sid);
+
+
+--
+-- Name: uq_users_id; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX uq_users_id ON public.users USING btree (id);
+
+
+--
+-- Name: uq_users_sid; Type: INDEX; Schema: public; Owner: macmini
+--
+
+CREATE UNIQUE INDEX uq_users_sid ON public.users USING btree (sid);
+
+
+--
+-- PostgreSQL database dump complete
+--
+

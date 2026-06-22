@@ -1,0 +1,39 @@
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.page-header__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  .page-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .page-header__actions {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .page-header__actions > * {
+    width: 100%;
+    min-width: 0;
+  }
+}

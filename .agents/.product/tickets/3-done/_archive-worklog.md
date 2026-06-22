@@ -29,7 +29,7 @@
   - Bumped server/EA versions to `v2026.05.01 08:38 - 5c630e7`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm --prefix web-ui run build`
+  - `npm --prefix src/ui run build`
   - `bash scripts/bump_build_versions.sh`
 
 # Session Log: 2026-04-30 18:26
@@ -42,7 +42,7 @@
   - Bumped server/EA versions to `v2026.04.30 16:26 - 02fca99`.
 - **Verification**:
   - staged `webhook/server.js` syntax check
-  - `npm --prefix web-ui run build`
+  - `npm --prefix src/ui run build`
   - staged `git diff --check`
 
 # Session Log: 2026-04-30 13:29
@@ -57,7 +57,7 @@
   - Bumped server/EA versions to `v2026.04.30 13:29 - 994e1f4`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm --prefix web-ui run build`
+  - `npm --prefix src/ui run build`
   - `bash scripts/check_build_versions.sh origin/main`
   - `git diff --check`
 
@@ -71,10 +71,10 @@
   - Bumped server/EA versions to `v2026.04.30 11:20 - 0e523ae`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm --prefix web-ui run build`
+  - `npm --prefix src/ui run build`
   - `bash scripts/check_build_versions.sh origin/main`
   - scoped `git diff --check` on touched files passed
-  - full `git diff --check` is blocked by existing trailing whitespace in `web-ui/src/pages/settings/SettingsPage.jsx`
+  - full `git diff --check` is blocked by existing trailing whitespace in `src/ui/src/pages/settings/SettingsPage.jsx`
 - **Deploy**:
   - Committed and pushed `ebf201f feat(system): add files manager`.
   - Deployed to VPS with `bash scripts/deploy_webhook.sh`.
@@ -99,7 +99,7 @@
   - Bumped server/EA versions to `v2026.04.30 11:06 - 0e523ae`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm --prefix web-ui run build`
+  - `npm --prefix src/ui run build`
   - `bash scripts/check_build_versions.sh origin/main`
   - `git diff --check`
 
@@ -143,7 +143,7 @@
   - Preserved per-plan ids for extra plan submit buttons instead of forcing all submits to `main`.
   - Routed AI plan `+Trade` through the existing `/v2/signals/create` pipeline with `only_signal:false`, matching the working `+Signal` path and avoiding the stricter direct-trade route.
 - **Verification**:
-  - `npm run build` in `web-ui`
+  - `npm run build` in `src/ui`
 
 # Session Log: 2026-04-29 10:22
 - **Starting Task**:
@@ -158,7 +158,7 @@
   - Bumped server/EA versions to `v2026.04.29 08:28 - 5fcd486`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm run build` in `web-ui`
+  - `npm run build` in `src/ui`
   - `git diff --check`
 
 # Session Log: 2026-04-29 08:28
@@ -166,7 +166,7 @@
   - Update backend/UI AI Prompt Response Schema and prompt guideline handling to the new ICT schema with per-timeframe price action/prediction, PD array ids, buy/sell confluence checklists, skip reasons, partial TPs, and final verdict risk tier.
 - **Files Expected**:
   - `webhook/server.js`
-  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+  - `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
   - related UI parsing/display helpers if required by compatibility.
 - **Work Accomplished**:
   - Updated backend canonical `AI_RESPONSE_SCHEMA` to `1.1.0` with the requested ICT contract.
@@ -176,14 +176,14 @@
   - Bumped server/EA versions to `v2026.04.29 06:37 - 923c4d4`.
 - **Verification**:
   - `node --check webhook/server.js`
-  - `npm run build` in `web-ui`
+  - `npm run build` in `src/ui`
   - `git diff --check`
 
 # Session Log: 2026-04-29 07:40
 - **Work Accomplished**:
   - Replaced the temporary simplified backend `AI_RESPONSE_SCHEMA` with the existing production-compatible structure (`symbol`, `market_analysis`, `trade_plan[]`, `final_verdict`).
   - Kept backend (`webhook`) as the canonical schema source and continued tagging AI results with `schema_version`.
-  - Removed duplicated `OUTPUT_FORMAT` JSON block from `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` prompt text to reduce FE/BE schema drift risk.
+  - Removed duplicated `OUTPUT_FORMAT` JSON block from `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` prompt text to reduce FE/BE schema drift risk.
   - Updated `.agents/plans/backlog.md` with schema solution items: modularization, compatibility normalizer, and formal schema contract docs.
 - **Pending Tasks / Backlog**:
   - [ ] Extract AI schema/enums/prompt builder into dedicated modules (`webhook/constants`, `webhook/prompts`).
@@ -259,7 +259,7 @@
 
 # Session Log: 2026-04-28 19:32
 - **Work Accomplished**:
-  - Physically moved page components into menu-aligned subfolders under `web-ui/src/pages/{ai,signals,trades,settings,system}`.
+  - Physically moved page components into menu-aligned subfolders under `src/ui/src/pages/{ai,signals,trades,settings,system}`.
   - Fixed all moved-page relative imports and verified the frontend build succeeds after the move.
   - Prepared deploy for the current metadata/user-settings refactor set, including `user_templates`, `user_accounts`, auth metadata APIs, and watchlist persistence in user metadata.
   - Bumped VPS/server and EA build versions to `v2026.04.28 17:31 - 75517db`.
@@ -436,7 +436,7 @@
   - Added UI status text to show Files API vs fallback mode.
 - **Verification**:
   - node --check webhook/server.js
-  - npm run build in web-ui
+  - npm run build in src/ui
   - git diff --check
 
 
@@ -459,7 +459,7 @@
     - cache-first snapshot reuse before capture
     - analyze preflight waits for warm-up with timeout fallback
 - **Work Accomplished**:
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Added `warmupState` and in-flight warm-up refs (`contextWarmupRef`, `snapshotWarmupRef`) for single-flight async jobs.
     - Added cache-first snapshot matcher (`resolveRecentSnapshots`) to reuse recent per-TF snapshots before triggering capture.
     - Added async warm-up starters:
@@ -475,7 +475,7 @@
   - Keep snapshots as best-effort with timeout fallback to avoid user-visible blocking.
   - Preserve existing freshness window (15 minutes, same-day) for snapshot cache reuse.
 - **Verification**:
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 - **Deploy Status**:
   - Not deployed in this task.
 
@@ -487,21 +487,21 @@
     - Changed `buildAiContextBundle(...)` from sequential TF loop to bounded parallel worker pool (`maxParallel=3`).
     - Preserved stable output ordering by writing results into indexed slots.
     - Preserved partial-failure tolerance by converting worker errors into per-TF `status:"error"` records.
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Added live readiness texts:
       - `Bars/Context: Ready|Loading|Pending`
       - `Snapshots: Ready|Loading|Pending (matched/target)`
     - Rendered both statuses beside Analyze button to expose async progress clearly.
 - **Follow-up Verification**:
   - `node --check webhook/server.js` ✅
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 
 - **Follow-up Task (2026-05-01 07:57)**:
   - Replace raw numeric trend fallback with percent change display and color.
   - Replace fresh/cache label with cached-age label.
   - Update datetime formatter to show relative minutes under 60 minutes.
 - **Follow-up Work Accomplished**:
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Removed `fresh/cache` text in live TF header.
     - Added `cached ${showDateTime(...)}` display.
     - Replaced `close_change_20` raw number display with percent (`* 100`) string.
@@ -509,10 +509,10 @@
       - positive: green (`var(--ok)`)
       - negative: red (`var(--danger)`)
       - zero: muted.
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/utils/format.js`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/utils/format.js`:
     - `showDateTime(...)` now returns `"x mins ago"` when timestamp is within last 60 minutes.
 - **Follow-up Verification**:
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 
 # Session Log: 2026-05-01 10:32
 - **Starting Task**:
@@ -536,9 +536,9 @@
       - `session_prefix`
       - `snapshot_max_age_ms`
     - Endpoint returns per-symbol context and snapshot status while reusing cached snapshots before capture.
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/api.js`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/api.js`:
     - Added `api.chartRefresh(...)`.
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Added UI flow state for `context`, `snapshots`, and `analysis`.
     - Added run-token based stale result guard so switching symbols invalidates old flow results.
     - Moved context/snapshot warm-up to the unified `chartRefresh` endpoint.
@@ -558,7 +558,7 @@
   - Auto-analysis is enabled; auto-add signals/trades is intentionally not enabled yet.
 - **Verification**:
   - `node --check webhook/server.js` ✅
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 - **Deploy Status**:
   - Deployed after verification.
   - Commit: `3d3826b feat(ai): auto-refresh chart context flow`
@@ -575,7 +575,7 @@
   - Remove duplicate context/snapshot status text.
   - Fix impossible percent-change display in live TF cards.
 - **Work Accomplished**:
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Replaced verbose `[CHART_CONTEXT] Last refreshed... Context...` label with compact single badge:
       - age only (`1 mins ago`)
       - `C:<state> | S:<matched>/<target> | A:<state>`
@@ -592,7 +592,7 @@
   - Bias/trend only appears when cached context includes prior AI analysis metadata. Bars-only context has price/summary but may not include trend/bias text yet.
 - **Verification**:
   - `node --check webhook/server.js` ✅
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 
 # Session Log: 2026-05-01 12:36
 - **Starting Task**:
@@ -707,7 +707,7 @@
   - Prevent duplicate warm-up races.
   - Remove redundant bottom-left status text in AI chart UI.
 - **Work Accomplished**:
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Added `withTimeout(...)` helper for bounded waiting without cancelling underlying warm-up.
     - Changed Analyze preflight to reuse in-flight warmups (`force: false`) instead of forcing duplicate refresh jobs.
     - Increased practical wait window (25s + 15s fallback) for context readiness before failing.
@@ -717,7 +717,7 @@
   - Keep warm-up async jobs single-source and join existing promises instead of starting parallel forced jobs.
   - Timeouts are for UI waiting only; they no longer imply background job cancellation.
 - **Verification**:
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 - **Deploy Status**:
   - Not deployed.
 
@@ -726,7 +726,7 @@
   - Verify why old `Bars/context still not ready` behavior is still visible in production.
   - Implement startup warm-up gate with timeout and disable action buttons until ready/timeout.
 - **Work Accomplished**:
-  - Updated `/Users/macmini/Trade/Bot/trading/web-ui/src/pages/ai/ChartSnapshotsPage.jsx`:
+  - Updated `/Users/macmini/Trade/Bot/trading/src/ui/src/pages/ai/ChartSnapshotsPage.jsx`:
     - Added warm-up gate state (`warmupGate`) and unlock timer.
     - Disabled Analyze button while warm-up lock is active.
     - Changed button labels to `Warming...` while locked.
@@ -740,7 +740,7 @@
   - Use one warm-up lock gate to prevent duplicate process races on initial load.
   - After timeout, prioritize operator control (manual trigger) over strict readiness waiting.
 - **Verification**:
-  - `npm --prefix web-ui run build` ✅
+  - `npm --prefix src/ui run build` ✅
 - **Deploy Status**:
   - Not deployed yet in this step.
 

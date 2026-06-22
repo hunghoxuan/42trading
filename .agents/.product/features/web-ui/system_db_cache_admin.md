@@ -15,9 +15,9 @@ Done
 - System users can inspect or delete individual cache keys, or clear the full cache store.
 
 ## Scope
-- UI: `web-ui/src/pages/system/DatabasePage.jsx`
-- UI: `web-ui/src/pages/system/CachePage.jsx`
-- API: `web-ui/src/api.js`
+- UI: `src/ui/src/pages/system/DatabasePage.jsx`
+- UI: `src/ui/src/pages/system/CachePage.jsx`
+- API: `src/ui/src/api.js`
 - Backend: `webhook/server.js`
 
 ## Notes

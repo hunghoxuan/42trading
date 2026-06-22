@@ -12,5 +12,5 @@ A high-density overview of trading performance, current risk, and system health.
 
 ## Technical Details
 - **Endpoints**: `/mt5/dashboard/summary`, `/mt5/dashboard/advanced`, `/mt5/dashboard/pnl-series`.
-- **Frontend**: Custom dashboard components in `web-ui/src/pages/dashboard/`.
+- **Frontend**: Custom dashboard components in `src/ui/src/pages/dashboard/`.
 - **Data Aggregation**: Real-time SQL aggregation of the `trades` and `user_accounts` tables.

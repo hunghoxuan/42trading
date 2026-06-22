@@ -2,13 +2,13 @@
 setlocal
 
 set ROOT=%~dp0..\..
-set WEBHOOK_DIR=%ROOT%\webhook
-set WEB_UI_DIR=%ROOT%\web-ui
+set WEB_API_DIR=%ROOT%\src/api
+set WEB_UI_DIR=%ROOT%\src/admin
 set VITE_PORT=3000
 set WEBHOOK_PORT=3001
 
-echo === Starting webhook on :%WEBHOOK_PORT% ===
-start "webhook" cmd /c "cd /d %WEBHOOK_DIR% && set PORT=%WEBHOOK_PORT% && node --watch server.js"
+echo === Starting web-api on :%WEBHOOK_PORT% ===
+start "web-api" cmd /c "cd /d %WEB_API_DIR% && set PORT=%WEBHOOK_PORT% && node --watch server.js"
 
 timeout /t 2 /nobreak >nul
 

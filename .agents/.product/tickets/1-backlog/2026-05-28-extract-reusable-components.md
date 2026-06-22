@@ -6,7 +6,7 @@
 - Goal: find copy-pasted code patterns across files that should be shared, then implement extraction in small phases.
 
 ## Scope
-Consolidate repeated UI and helper logic in `web-ui/src/` into shared components, hooks, or utilities.
+Consolidate repeated UI and helper logic in `src/ui/src/` into shared components, hooks, or utilities.
 
 Preferred shape:
 - Shared UI components receive props or JSON-shaped data and do not own data fetching.
@@ -20,7 +20,7 @@ Out of scope for this ticket:
 - Broad redesign.
 
 Recent note:
-- Broker ticket border/status rendering was already extracted into `web-ui/src/components/BrokerTicketBadge.jsx`; do not re-add that to this backlog unless new copies appear.
+- Broker ticket border/status rendering was already extracted into `src/ui/src/components/BrokerTicketBadge.jsx`; do not re-add that to this backlog unless new copies appear.
 
 ---
 
@@ -32,14 +32,14 @@ Repeated `pager-mini` block with previous/next buttons, page label, and page-siz
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 930-958 |
-| 2 | `web-ui/src/pages/system/LogsPage.jsx` | 217-238 |
-| 3 | `web-ui/src/pages/system/DatabasePage.jsx` | 396-428 |
-| 4 | `web-ui/src/pages/system/UsersPage.jsx` | 466-495 |
-| 5 | `web-ui/src/pages/system/SnapshotsPage.jsx` | 289-294 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 930-958 |
+| 2 | `src/ui/src/pages/system/LogsPage.jsx` | 217-238 |
+| 3 | `src/ui/src/pages/system/DatabasePage.jsx` | 396-428 |
+| 4 | `src/ui/src/pages/system/UsersPage.jsx` | 466-495 |
+| 5 | `src/ui/src/pages/system/SnapshotsPage.jsx` | 289-294 |
 
 Extract:
-- `web-ui/src/components/PaginationBar.jsx`
+- `src/ui/src/components/PaginationBar.jsx`
 
 Suggested props:
 ```ts
@@ -67,14 +67,14 @@ Repeated two-column layout with `gridTemplateColumns: "280px 1fr"` and `sidebar-
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/settings/CronPage.jsx` | 535-541, 608-628 |
-| 2 | `web-ui/src/pages/settings/ProvidersPage.jsx` | 339-345, 357-368 |
-| 3 | `web-ui/src/pages/settings/SettingsPage.jsx` | 112-128, 321-327 |
-| 4 | `web-ui/src/pages/system/AccountsV2Page.jsx` | 154-160, 170-187 |
+| 1 | `src/ui/src/pages/settings/CronPage.jsx` | 535-541, 608-628 |
+| 2 | `src/ui/src/pages/settings/ProvidersPage.jsx` | 339-345, 357-368 |
+| 3 | `src/ui/src/pages/settings/SettingsPage.jsx` | 112-128, 321-327 |
+| 4 | `src/ui/src/pages/system/AccountsV2Page.jsx` | 154-160, 170-187 |
 
 Extract:
-- `web-ui/src/components/MasterDetailLayout.jsx`
-- `web-ui/src/components/SidebarListItem.jsx`
+- `src/ui/src/components/MasterDetailLayout.jsx`
+- `src/ui/src/components/SidebarListItem.jsx`
 
 Suggested props:
 ```ts
@@ -108,24 +108,24 @@ Repeated raw browser confirm calls. This creates inconsistent copy, no shared da
 
 | Copy | File | Lines | Action |
 |---|---|---:|---|
-| 1 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 5243 | Delete template |
-| 2 | `web-ui/src/pages/settings/CronPage.jsx` | 432 | Delete cron |
-| 3 | `web-ui/src/pages/settings/ProvidersPage.jsx` | 305 | Delete provider settings |
-| 4 | `web-ui/src/pages/settings/SettingsPage.jsx` | 212 | Delete setting |
-| 5 | `web-ui/src/pages/system/AccountsV2Page.jsx` | 107 | Archive account |
-| 6 | `web-ui/src/pages/system/CachePage.jsx` | 168 | Clear cache |
-| 7 | `web-ui/src/pages/system/LogsPage.jsx` | 125 | Delete all events |
-| 8 | `web-ui/src/pages/system/SnapshotsPage.jsx` | 179 | Delete one file |
-| 9 | `web-ui/src/pages/system/SnapshotsPage.jsx` | 188 | Delete visible files |
-| 10 | `web-ui/src/pages/system/StoragePage.jsx` | 41 | Cleanup storage |
-| 11 | `web-ui/src/pages/system/UsersPage.jsx` | 296 | Deactivate user |
-| 12 | `web-ui/src/pages/system/UsersPage.jsx` | 326 | Delete user/account data |
-| 13 | `web-ui/src/pages/system/UsersPage.jsx` | 435 | Deactivate account |
-| 14 | `web-ui/src/pages/trades/TradesPage.jsx` | 463 | Bulk delete trades |
+| 1 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 5243 | Delete template |
+| 2 | `src/ui/src/pages/settings/CronPage.jsx` | 432 | Delete cron |
+| 3 | `src/ui/src/pages/settings/ProvidersPage.jsx` | 305 | Delete provider settings |
+| 4 | `src/ui/src/pages/settings/SettingsPage.jsx` | 212 | Delete setting |
+| 5 | `src/ui/src/pages/system/AccountsV2Page.jsx` | 107 | Archive account |
+| 6 | `src/ui/src/pages/system/CachePage.jsx` | 168 | Clear cache |
+| 7 | `src/ui/src/pages/system/LogsPage.jsx` | 125 | Delete all events |
+| 8 | `src/ui/src/pages/system/SnapshotsPage.jsx` | 179 | Delete one file |
+| 9 | `src/ui/src/pages/system/SnapshotsPage.jsx` | 188 | Delete visible files |
+| 10 | `src/ui/src/pages/system/StoragePage.jsx` | 41 | Cleanup storage |
+| 11 | `src/ui/src/pages/system/UsersPage.jsx` | 296 | Deactivate user |
+| 12 | `src/ui/src/pages/system/UsersPage.jsx` | 326 | Delete user/account data |
+| 13 | `src/ui/src/pages/system/UsersPage.jsx` | 435 | Deactivate account |
+| 14 | `src/ui/src/pages/trades/TradesPage.jsx` | 463 | Bulk delete trades |
 
 Extract:
-- `web-ui/src/components/ConfirmDialog.jsx`
-- `web-ui/src/hooks/useConfirmDialog.js`
+- `src/ui/src/components/ConfirmDialog.jsx`
+- `src/ui/src/hooks/useConfirmDialog.js`
 
 Suggested API:
 ```ts
@@ -150,13 +150,13 @@ Repeated `sortKey`, `sortDir`, `toggleSort()`, and `sortMarker()` logic, plus cl
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/DashboardPage.jsx` | 147-177, 209-253 |
-| 2 | `web-ui/src/pages/trades/TradesPage.jsx` | 836-847, 1332-1347 |
-| 3 | `web-ui/src/pages/system/DatabasePage.jsx` | 246-251, 359-364, 577-585 |
+| 1 | `src/ui/src/pages/DashboardPage.jsx` | 147-177, 209-253 |
+| 2 | `src/ui/src/pages/trades/TradesPage.jsx` | 836-847, 1332-1347 |
+| 3 | `src/ui/src/pages/system/DatabasePage.jsx` | 246-251, 359-364, 577-585 |
 
 Extract:
-- `web-ui/src/hooks/useSortableTable.js`
-- Optional `web-ui/src/components/SortableHeader.jsx`
+- `src/ui/src/hooks/useSortableTable.js`
+- Optional `src/ui/src/components/SortableHeader.jsx`
 
 Suggested API:
 ```ts
@@ -178,12 +178,12 @@ Repeated `<Suspense fallback={<div className="loading-card">Loading Details...</
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 1558-1720 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 563-639 |
-| 3 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 8151-8590 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 1558-1720 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 563-639 |
+| 3 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 8151-8590 |
 
 Extract:
-- `web-ui/src/components/TradeDetailPanel.jsx`
+- `src/ui/src/components/TradeDetailPanel.jsx`
 
 Suggested props:
 ```ts
@@ -211,14 +211,14 @@ Repeated tab button markup: `secondary-button`, active ternary styles/classes, a
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 6612-6674 |
-| 2 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 7328-7387 |
-| 3 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 8608-8750 |
-| 4 | `web-ui/src/pages/tools/ToolsPage.jsx` | 49-85 |
-| 5 | `web-ui/src/components/TradePlanEditor.jsx` | 1006-1040 |
+| 1 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 6612-6674 |
+| 2 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 7328-7387 |
+| 3 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 8608-8750 |
+| 4 | `src/ui/src/pages/tools/ToolsPage.jsx` | 49-85 |
+| 5 | `src/ui/src/components/TradePlanEditor.jsx` | 1006-1040 |
 
 Extract:
-- `web-ui/src/components/TabBar.jsx`
+- `src/ui/src/components/TabBar.jsx`
 - Optional `SegmentedButtonGroup.jsx` if some are action groups rather than tabs.
 
 Suggested props:
@@ -242,17 +242,17 @@ Repeated page-level loading and error guards, often with slightly different wrap
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/DashboardPage.jsx` | 409-410 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 478-479 |
-| 3 | `web-ui/src/pages/settings/CronPage.jsx` | 513-529 |
-| 4 | `web-ui/src/pages/system/DatabasePage.jsx` | 486-611 |
-| 5 | `web-ui/src/pages/system/UsersPage.jsx` | 576-691 |
-| 6 | `web-ui/src/pages/system/StoragePage.jsx` | 88-89 |
-| 7 | `web-ui/src/pages/system/CachePage.jsx` | 410-416 |
-| 8 | `web-ui/src/components/SignalDetailCard.jsx` | 2066, 3234, 3514 |
+| 1 | `src/ui/src/pages/DashboardPage.jsx` | 409-410 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 478-479 |
+| 3 | `src/ui/src/pages/settings/CronPage.jsx` | 513-529 |
+| 4 | `src/ui/src/pages/system/DatabasePage.jsx` | 486-611 |
+| 5 | `src/ui/src/pages/system/UsersPage.jsx` | 576-691 |
+| 6 | `src/ui/src/pages/system/StoragePage.jsx` | 88-89 |
+| 7 | `src/ui/src/pages/system/CachePage.jsx` | 410-416 |
+| 8 | `src/ui/src/components/SignalDetailCard.jsx` | 2066, 3234, 3514 |
 
 Extract:
-- `web-ui/src/components/PageGate.jsx`
+- `src/ui/src/components/PageGate.jsx`
 - `EmptyState.jsx` for table/body empties.
 
 Suggested props:
@@ -278,15 +278,15 @@ Repeated toolbar with search input, selects, refresh buttons, and compact filter
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 974-1100 |
-| 2 | `web-ui/src/pages/system/LogsPage.jsx` | 255-297 |
-| 3 | `web-ui/src/pages/system/UsersPage.jsx` | 498-528 |
-| 4 | `web-ui/src/pages/system/DatabasePage.jsx` | 438-474 |
-| 5 | `web-ui/src/pages/system/SnapshotsPage.jsx` | 301-320 |
-| 6 | `web-ui/src/pages/system/CachePage.jsx` | 221-240 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 974-1100 |
+| 2 | `src/ui/src/pages/system/LogsPage.jsx` | 255-297 |
+| 3 | `src/ui/src/pages/system/UsersPage.jsx` | 498-528 |
+| 4 | `src/ui/src/pages/system/DatabasePage.jsx` | 438-474 |
+| 5 | `src/ui/src/pages/system/SnapshotsPage.jsx` | 301-320 |
+| 6 | `src/ui/src/pages/system/CachePage.jsx` | 221-240 |
 
 Extract:
-- `web-ui/src/components/SearchFilterBar.jsx`
+- `src/ui/src/components/SearchFilterBar.jsx`
 
 Suggested props:
 ```ts
@@ -321,10 +321,10 @@ Logic: wrapper around `showDateTime(v)`.
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 55-57 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 58-60 |
-| 3 | `web-ui/src/pages/system/DatabasePage.jsx` | 22-24 |
-| 4 | `web-ui/src/pages/system/LogsPage.jsx` | 6-8 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 55-57 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 58-60 |
+| 3 | `src/ui/src/pages/system/DatabasePage.jsx` | 22-24 |
+| 4 | `src/ui/src/pages/system/LogsPage.jsx` | 6-8 |
 
 Action:
 - Delete local wrappers and import/use `showDateTime` directly, or export `formatDetailDateTime` from `utils/signalDetailUtils.jsx` consistently.
@@ -337,11 +337,11 @@ Logic: format a numeric PnL value, render `-` when null, and apply `money-neg`/`
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 275-284 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 23-32 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 275-284 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 23-32 |
 
 Action:
-- Extract `web-ui/src/components/PnlDisplay.jsx`.
+- Extract `src/ui/src/components/PnlDisplay.jsx`.
 
 Suggested props:
 ```ts
@@ -356,11 +356,11 @@ Logic: use `broker_trade_id`, fallback to `ticket`, trim, else `-`.
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 115-117 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 43-45 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 115-117 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 43-45 |
 
 Action:
-- Extract `getBrokerTicket(row)` to `web-ui/src/utils/tradeRow.js`.
+- Extract `getBrokerTicket(row)` to `src/ui/src/utils/tradeRow.js`.
 
 ---
 
@@ -370,11 +370,11 @@ Logic: convert with `asNum`, return finite number or `null`.
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/trades/TradesPage.jsx` | 132-135 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 67-70 |
+| 1 | `src/ui/src/pages/trades/TradesPage.jsx` | 132-135 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 67-70 |
 
 Action:
-- Move to `web-ui/src/utils/signalDetailUtils.jsx` next to `asNum`, or create `utils/number.js`.
+- Move to `src/ui/src/utils/signalDetailUtils.jsx` next to `asNum`, or create `utils/number.js`.
 
 ---
 
@@ -384,11 +384,11 @@ Logic: split by newline/comma, trim, optional uppercase, de-dupe with `Set`, dro
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/settings/SettingsPage.jsx` | 24-36 |
-| 2 | `web-ui/src/pages/settings/CronPage.jsx` | 98-110 |
+| 1 | `src/ui/src/pages/settings/SettingsPage.jsx` | 24-36 |
+| 2 | `src/ui/src/pages/settings/CronPage.jsx` | 98-110 |
 
 Action:
-- Extract `parseTextList(value, { uppercase?: boolean })` to `web-ui/src/utils/textList.js`.
+- Extract `parseTextList(value, { uppercase?: boolean })` to `src/ui/src/utils/textList.js`.
 
 ---
 
@@ -398,11 +398,11 @@ Logic: show empty string for blank, mask short secrets with first/last char, lon
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/pages/settings/SettingsPage.jsx` | 76-81 |
-| 2 | `web-ui/src/pages/settings/ProvidersPage.jsx` | 58-63 |
+| 1 | `src/ui/src/pages/settings/SettingsPage.jsx` | 76-81 |
+| 2 | `src/ui/src/pages/settings/ProvidersPage.jsx` | 58-63 |
 
 Action:
-- Extract `maskSecretPreview(value)` to `web-ui/src/utils/secrets.js`.
+- Extract `maskSecretPreview(value)` to `src/ui/src/utils/secrets.js`.
 
 ---
 
@@ -412,11 +412,11 @@ Logic: object guard for current AI trade-plan schema with `execution_plan` and p
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/components/SignalDetailCard.jsx` | 208-220 |
-| 2 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 1044-1056 |
+| 1 | `src/ui/src/components/SignalDetailCard.jsx` | 208-220 |
+| 2 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 1044-1056 |
 
 Action:
-- Extract to `web-ui/src/utils/tradePlanShape.js`.
+- Extract to `src/ui/src/utils/tradePlanShape.js`.
 
 ---
 
@@ -426,10 +426,10 @@ Logic: coerce numeric value, reject non-finite, trim to max 8 decimals.
 
 | Copy | File | Lines |
 |---|---|---|
-| 1 | `web-ui/src/utils/signalDetailUtils.jsx` | 190-195 |
-| 2 | `web-ui/src/pages/trades/V2TradeDetailPage.jsx` | 62-66 |
-| 3 | `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | 690-694 |
-| 4 | `web-ui/src/components/TradePlanEditor.jsx` | 94-97 |
+| 1 | `src/ui/src/utils/signalDetailUtils.jsx` | 190-195 |
+| 2 | `src/ui/src/pages/trades/V2TradeDetailPage.jsx` | 62-66 |
+| 3 | `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | 690-694 |
+| 4 | `src/ui/src/components/TradePlanEditor.jsx` | 94-97 |
 
 Action:
 - Keep the implementation in `signalDetailUtils.jsx` or move to `utils/numberFormat.js`.
@@ -467,7 +467,7 @@ Effort: low. No JSX layout changes except `PnlDisplay`.
 8. Extract `PnlDisplay`.
 
 Verification:
-- `npm --prefix web-ui run build`
+- `npm --prefix src/ui run build`
 - Smoke check `/trades`, `/trades/{sid}`, `/settings`, `/settings/providers`, `/system/logs`.
 
 ### Phase 2 — Small Presentational Components

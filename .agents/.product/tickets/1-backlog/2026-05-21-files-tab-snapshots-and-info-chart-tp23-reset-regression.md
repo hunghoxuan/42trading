@@ -57,8 +57,8 @@ Implemented three focused fixes:
 - [x] Info chart shows TP1, TP2, TP3 lines when values exist and arrive as numbers or numeric strings.
 - [x] Editing SL/TP/RR does not revert to original values after rerender per focused unit coverage.
 - [x] Selected plan retains its own edits without cross-plan overwrite per draft merge behavior.
-- [x] `rtk npm --prefix web-ui run test:unit -- tests/unit/tradePlanDrafts.test.mjs`
-- [x] `rtk npm --prefix web-ui run build`
+- [x] `rtk npm --prefix src/ui run test:unit -- tests/unit/tradePlanDrafts.test.mjs`
+- [x] `rtk npm --prefix src/ui run build`
 - [ ] Browser verification with screenshots for protected trade detail screen. Local Vite started, but clean in-app browser stopped at authentication.
 
 ## Handoff Prompt

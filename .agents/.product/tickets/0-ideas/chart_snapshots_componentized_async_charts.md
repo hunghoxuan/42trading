@@ -8,7 +8,7 @@ Replace monolithic all-timeframe bars/context fetch flow with independent per-ch
 ## What Was Built
 
 ### SymbolChart Component
-- File: `web-ui/src/components/charts/SymbolChart.jsx`
+- File: `src/ui/src/components/charts/SymbolChart.jsx`
 - Multi-TF per symbol: one card shows all TFs in a horizontal row
 - Props: `symbol`, `timeframes[]`, `defaultMode`, `onAnalyze`, `onRemove`, `entryPrice`, `slPrice`, `tpPrice`, `analysisSnapshot`, `hasTradePlan`, `hasAnalysis`, `skipFetch`
 - Modes: Live TV (iframe), Cache (TradeSignalChart), Snapshots (bars + snapshot pipeline)
@@ -50,7 +50,7 @@ Replace monolithic all-timeframe bars/context fetch flow with independent per-ch
 - Market data cron: 60s cadence, batch processing, BullMQ support
 
 ### SmartContent Component
-- `web-ui/src/components/SmartContent.jsx`
+- `src/ui/src/components/SmartContent.jsx`
 - Auto-detects: JSON → pretty-print, HTML → render, text → split by ". " or newline
 - Modes: readonly | editable (with ✏️/👁 toggle + 📋 copy)
 - Applied to: JSON tab, Strategic Note, Info tab NOTE section
@@ -58,16 +58,16 @@ Replace monolithic all-timeframe bars/context fetch flow with independent per-ch
 ## Files Created/Modified
 | File | Change |
 |------|--------|
-| `web-ui/src/components/charts/SymbolChart.jsx` | SymbolChart component |
-| `web-ui/src/hooks/useChartTileData.js` | useSymbolChartData hook |
-| `web-ui/src/services/chartFetchManager.js` | Per-TF fetch manager |
-| `web-ui/src/components/SmartContent.jsx` | Smart content renderer |
-| `web-ui/src/components/TradePlanEditor.jsx` | Entry Model, SmartContent note, slider fixes |
-| `web-ui/src/components/SignalDetailCard.jsx` | PlanHeader, plan selection, Info tab sections |
-| `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | SymbolChart integration, warmup cache check |
-| `web-ui/src/pages/system/LogsPage.jsx` | Log type toggles |
-| `web-ui/src/pages/system/CachePage.jsx` | Renamed to CACHE |
-| `web-ui/src/pages/settings/SettingsPage.jsx` | Exclude symbols, TRADE→OTHERS rename |
+| `src/ui/src/components/charts/SymbolChart.jsx` | SymbolChart component |
+| `src/ui/src/hooks/useChartTileData.js` | useSymbolChartData hook |
+| `src/ui/src/services/chartFetchManager.js` | Per-TF fetch manager |
+| `src/ui/src/components/SmartContent.jsx` | Smart content renderer |
+| `src/ui/src/components/TradePlanEditor.jsx` | Entry Model, SmartContent note, slider fixes |
+| `src/ui/src/components/SignalDetailCard.jsx` | PlanHeader, plan selection, Info tab sections |
+| `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | SymbolChart integration, warmup cache check |
+| `src/ui/src/pages/system/LogsPage.jsx` | Log type toggles |
+| `src/ui/src/pages/system/CachePage.jsx` | Renamed to CACHE |
+| `src/ui/src/pages/settings/SettingsPage.jsx` | Exclude symbols, TRADE→OTHERS rename |
 | `webhook/server.js` | Per-TF cache, trace logging, analyze timeout fix, cron fixes |
 
 ## Acceptance

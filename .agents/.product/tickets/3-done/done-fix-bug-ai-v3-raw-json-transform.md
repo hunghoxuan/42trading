@@ -16,10 +16,10 @@ Screenshot evidence:
 ## Investigation
 - Evidence:
   - `/system/logs/609933` `AI_RESPONSE.raw_json` contains the rich Claude v3 object.
-  - `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` ran `normalizeAnalysisContract(parsed)` inside `enrichParsedAnalysis()`.
+  - `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` ran `normalizeAnalysisContract(parsed)` inside `enrichParsedAnalysis()`.
   - `normalizeAnalysisContract()` mapped `trade_plan` into old flat fields when no legacy `market_analysis` existed.
-  - `web-ui/src/components/SignalDetailCard.jsx` displayed `selectedPlanRaw` in AI JSON mode, not guaranteed full raw response.
-  - `web-ui/src/utils/signalDetailUtils.jsx` did not recognize a direct v3 plan whose prices live under `execution_plan`.
+  - `src/ui/src/components/SignalDetailCard.jsx` displayed `selectedPlanRaw` in AI JSON mode, not guaranteed full raw response.
+  - `src/ui/src/utils/signalDetailUtils.jsx` did not recognize a direct v3 plan whose prices live under `execution_plan`.
 - Findings:
   - Raw AI data was not lost in the AI_RESPONSE log, but the active UI/editor path could still flatten it and label the flattened object as `__raw_plan`.
   - Direct v3 plan objects were not recognized by the shared trade-plan extractor before this fix.
@@ -34,10 +34,10 @@ Screenshot evidence:
 - Disabled the old server `normalizeAiAnalysisContract()` body so it cannot reshape AI payloads if accidentally called.
 
 ## Expected Output / Verification
-- [x] `rtk npm --prefix web-ui run test:unit -- tradePlanSchema.test.mjs`
-- [x] `rtk npm --prefix web-ui run test:unit`
+- [x] `rtk npm --prefix src/ui run test:unit -- tradePlanSchema.test.mjs`
+- [x] `rtk npm --prefix src/ui run test:unit`
 - [x] `rtk node --check webhook/server.js`
-- [x] `rtk npm --prefix web-ui run build`
+- [x] `rtk npm --prefix src/ui run build`
 - [ ] Version bump committed
 - [ ] Deploy completed
 - [ ] Live `/health` and UI asset verified

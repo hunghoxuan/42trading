@@ -3,13 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VPS_HOST="${VPS_HOST:-root@139.59.211.192}"
-IMAGE_NAME="${IMAGE_NAME:-trading-webhook}"
+IMAGE_NAME="${IMAGE_NAME:-trading-src/api}"
 TAG="${TAG:-$(git -C "${ROOT_DIR}" rev-parse --short HEAD)}"
 BUNDLE_FILE="${BUNDLE_FILE:-/tmp/${IMAGE_NAME}-${TAG}.tar.gz}"
 REMOTE_TMP="${REMOTE_TMP:-/tmp/${IMAGE_NAME}-${TAG}.tar.gz}"
-CONTAINER_NAME="${CONTAINER_NAME:-webhook-staging}"
+CONTAINER_NAME="${CONTAINER_NAME:-src/api-staging}"
 APP_PORT="${APP_PORT:-8081}"
-ENV_FILE="${ENV_FILE:-/opt/trading/webhook/.env}"
+ENV_FILE="${ENV_FILE:-/opt/trading/src/api/.env}"
 HEALTH_URL="${HEALTH_URL:-http://139.59.211.192:${APP_PORT}/health}"
 
 echo "[staging] host=${VPS_HOST} image=${IMAGE_NAME}:${TAG} port=${APP_PORT}"

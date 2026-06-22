@@ -1,0 +1,1814 @@
+//@version=5
+// @file-version: 0411-03
+indicator("Hung - Core", overlay = true, scale = scale.right, max_bars_back = 5000, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+
+import hunghoxuan/KitUI/32
+import hunghoxuan/KitCore/84
+import hunghoxuan/KitSMC/66
+// ==================== TYPES, CONSTANTS ====================
+
+PAPER_EQUITY_USD = 100000.0
+
+// ==================== LIB SINGLETONS (PERSISTENT) ====================
+var THEME = KitCore.Theme.new() // TradingKit visual theme (colors/symbols/styles/sizes).
+var UI_THEME = KitUI.Theme.new(COLOR_BEARISH = THEME.COLOR_BEARISH, COLOR_BULLISH = THEME.COLOR_BULLISH, COLOR_NEUTRAL = THEME.COLOR_NEUTRAL, COLOR_TRANSPARENT = THEME.COLOR_TRANSPARENT, COLOR_UI_BG = THEME.COLOR_UI_BG, COLOR_UI_FG = THEME.COLOR_UI_FG, STYLE_LABEL_NONE = THEME.STYLE_LABEL_NONE, SIZE_TINY = THEME.SIZE_TINY, SIZE_SMALL = THEME.SIZE_SMALL, SIZE_NORMAL = THEME.SIZE_NORMAL)
+var SETTINGS = KitCore.Settings.new() // TradingKit shared settings baseline.
+var CONST = KitCore.Const.new() // TradingKit shared immutable constants.
+
+PIVOT_LEN_SCALP = 15
+PIVOT_LEN_INTRADAY = 12
+PIVOT_LEN_MULTI_DAY = 8
+PIVOT_LEN_SWING = 6
+PIVOT_LEN_POSITION = 4
+
+// ==================== GLOBAL STATE (PERSISTENT BUSINESS DATA) ====================
+var array<KitCore.Trade> trades = array.new<KitCore.Trade>() // Strategy trades lifecycle (START/TP/SL).
+var array<KitSMC.Event> events = array.new<KitSMC.Event>() // Pending strategy signals owned locally by this indicator.
+var array<KitSMC.Event> signalHist = array.new<KitSMC.Event>() // Recent signal memory owned locally by this indicator.
+var array<int> triggerModelIds = array.new_int() // Strategy id aligned with `events` index.
+var array<string> tradeOrderIds = array.new_string() // Pine strategy order id aligned with `trades` index.
+
+var int maxarraysize = 20 // Divergence pivot cache capacity.
+var array<int> ph_positions = array.new_int(maxarraysize, 0) // Divergence pivot-high positions (bar_index).
+var array<int> pl_positions = array.new_int(maxarraysize, 0) // Divergence pivot-low positions (bar_index).
+var array<float> ph_vals = array.new_float(maxarraysize, 0.0) // Divergence pivot-high reference values (price).
+var array<float> pl_vals = array.new_float(maxarraysize, 0.0) // Divergence pivot-low reference values (price).
+var int vwap_bias_state = 0 // VWAP state: 1 bull, -1 bear, 0 unknown.
+var color hvbBarColor = na // HVB output: barcolor computed per-bar, applied in global scope.
+var array<int> tradeModelIds = array.new_int() // Strategy id aligned with `trades` index.
+var array<float> strategyStats = array.new_float(12 * CONST.SIG_METRIC_COUNT, 0.0) // Stats matrix by strategy bucket.
+var array<KitCore.EntryModelDef> strategyDefs = array.new<KitCore.EntryModelDef>() // Entry model config (enabled/type/when) by strategy key.
+var array<int> strategyDefsSigBox = array.new_int(1, na)
+var array<int> rtBarBox = array.new_int(1, na) // RuntimeContext (per-bar): cache reset marker.
+var array<string> rtStrategyKeys = array.new_string() // RuntimeContext (per-bar): cached strategy key lookup.
+var array<bool> rtStrategyEnabled = array.new_bool() // RuntimeContext (per-bar): cached strategy enabled.
+var array<int> rtStrategyScore = array.new_int() // RuntimeContext (per-bar): cached strategy score.
+var array<string> rtStrategyShort = array.new_string() // RuntimeContext (per-bar): cached strategy short name.
+var array<string> rtStrategyTriggerType = array.new_string() // RuntimeContext (per-bar): cached strategy trigger type.
+var array<string> rtStrategyTriggerWhen = array.new_string() // RuntimeContext (per-bar): cached strategy trigger when.
+var array<int> ltfBiasSignalBars = array.new_int() // LTF bias-memory cache: bar index of emitted signal.
+var array<float> ltfBiasSignalVals = array.new_float() // LTF bias-memory cache: signed signal score (+buy/-sell).
+var float ltfBiasMemoryScore = 0.0 // Current weighted memory score from recent LTF signals.
+var int ltfBiasFinal = 0 // Final LTF bias after combining raw LTF score + cached memory.
+var int biasGateDir = 0 // Final bias gate used by strategy/confluence buy-sell checks.
+var float powerPercent = 0.0 // Weighted cross-TF bias power percentage (-100..100).
+var KitCore.ChartContext chartCtx = KitCore.ChartContext.new()
+var KitCore.RuntimeContext runtimeCtx = KitCore.RuntimeContext.new()
+var KitCore.DataCfg ctxDataCfg = KitCore.DataCfg.new()
+var int workingFirstBar = na
+var line workingFirstBarLine = na
+var label workingFirstBarLabel = na
+var kzAsiaTop = KitUI.WindowLine.new() // Killzone: Asia (top line).
+var kzLondonTop = KitUI.WindowLine.new() // Killzone: London (top line).
+var kzNYAMTop = KitUI.WindowLine.new() // Killzone: NY AM (top line).
+var kzNYPMTop = KitUI.WindowLine.new() // Killzone: NY PM (top line).
+var sessAsiaBot = KitUI.WindowLine.new() // Session: Asia (bottom line).
+var sessLondonBot = KitUI.WindowLine.new() // Session: London (bottom line).
+var sessNYBot = KitUI.WindowLine.new() // Session: NY (bottom line).
+var sessOverlap = KitUI.WindowBox.new() // Session overlap highlight.
+var array<line> latestTimeEventLineBox = array.new_line(1, na) // Keep only the latest vertical time-event line.
+var array<label> latestTimeEventTopLabelBox = array.new_label(1, na) // Keep only the latest top event label.
+var array<label> latestTimeEventBottomLabelBox = array.new_label(1, na) // Keep only the latest bottom event label.
+var array<int> latestTimeEventDayKeyBox = array.new_int(1, na) // Day key (event timezone) for latest time-event visuals.
+var htf1_candles = KitUI.HTF_Data.new(array.new<box>(), array.new<line>(), array.new<line>(), array.new<float>())
+var htf2_candles = KitUI.HTF_Data.new(array.new<box>(), array.new<line>(), array.new<line>(), array.new<float>())
+var label htfLabel0 = na
+var label htfLabel1 = na
+var string prev_slot_tf_0 = ""
+var string prev_slot_tf_1 = ""
+// Keep one shared SMC runtime so Core uses the same ownership pattern as MSS/SMC.
+var KitSMC.SMCContext smcCtx = KitSMC.smc_context_new("LTF", "HTF1", "HTF2")
+// Keep MSS ledgers for target helpers/context; Market Structure visuals are moved to Hung - MSS.
+var KitSMC.TFData msLtfData = smcCtx.ltfData
+var KitSMC.TFData msHtf1Data = smcCtx.htf1Data
+var KitSMC.TFData msHtf2Data = smcCtx.htf2Data
+var array<float> propDayState = array.from(na, 0.0, -1.0) // [dayStartEquity, dailyRiskUsed, lastDayNum]
+var array<int> dbgSigFoundBox = array.new_int(1, 0)
+var array<int> dbgEntryAttemptBox = array.new_int(1, 0)
+var array<int> dbgPropBlockedBox = array.new_int(1, 0)
+var array<int> dbgTradePlanFailBox = array.new_int(1, 0)
+var array<int> dbgTradeCreatedBox = array.new_int(1, 0)
+var table dbgCoreTable = na
+
+// ==================== VISUAL CONFIG OVERRIDES (SINGLE SOURCE OF TRUTH) ====================
+// Keep all indicator-level visual overrides in this section (no inline cfg.new in logic).
+var KitCore.EntryVisualCfg ENTRY_VIS_CFG = KitCore.EntryVisualCfg.new() // Indicator-local entry visual overrides (no kit edits needed).
+ENTRY_VIS_CFG.startTouchedBgAlpha := 85
+ENTRY_VIS_CFG.startUntouchedBgAlpha := 85
+ENTRY_VIS_CFG.startTouchedBorderAlpha := 35
+ENTRY_VIS_CFG.startUntouchedBorderAlpha := 35
+ENTRY_VIS_CFG.resolvedWinnerBgAlpha := 80
+ENTRY_VIS_CFG.resolvedLoserBgAlpha := 100
+ENTRY_VIS_CFG.resolvedWinnerBorderAlpha := 25
+ENTRY_VIS_CFG.resolvedLoserBorderAlpha := 55
+ENTRY_VIS_CFG.compactWinnerBgAlpha := 78
+ENTRY_VIS_CFG.compactLoserBgAlpha := 100
+ENTRY_VIS_CFG.compactWinnerBorderAlpha := 20
+ENTRY_VIS_CFG.compactLoserBorderAlpha := 60
+var KitCore.CandlePatternVisualCfg CP_VIS_CFG = KitCore.CandlePatternVisualCfg.new(
+     bull = color.new(#00e5b0, 0),
+     bear = color.new(#ff3366, 0),
+     neutral = color.new(#888888, 50),
+     normBull = color.new(#26a69a, 0),
+     normBear = color.new(#ef5350, 0),
+     markerBull = color.new(#00e5b0, 0),
+     markerBear = color.new(#ff3366, 0),
+     markerNeutral = color.new(#888888, 50))
+var HTF_CANDLE_VIS_CFG = KitUI.HTFCandleVisualCfg.new(transparent = 60, labelSize = size.normal, patternBorderWidth = 1, clearBorderWidth = 0)
+var HTF_CANDLE_LAYOUT_CFG = KitUI.HTFCandleLayoutCfg.new(dynamicEnabled = true, fallbackCount0 = SETTINGS.HTF_CANDLES_BASE, fallbackCount1 = SETTINGS.HTF_CANDLES_BIAS1, firstSlotBaseOffsetBars = 15, secondSlotGapBars = 11, spanTrimBars = 3)
+
+type LocalCfg
+    int pivotPeriodShort = 5 // Divergence pivot length (short).
+    int pivotPeriodNormal = 9 // Divergence pivot length (normal).
+    string displayMode = "Normal" // All/Less/Normal/Extreme/None.
+    int workingLookbackBars = 0 // Active working window resolved from display mode.
+    int currPivotLen = 0 // Cached display-mode pivot length for current TF.
+    int htf1PivotLen = 0 // Cached display-mode pivot length for HTF1.
+    int htf2PivotLen = 0 // Cached display-mode pivot length for HTF2.
+    float slMinTicks = 0.5 // Lowered to prevent Plan Fail on tight scalps.
+    float slMinAtr = 0.05 // Lowered to prevent Plan Fail.
+    float slMaxAtr = 2.5 // Global maximum SL distance in ATR units.
+    float slMaxPct = 0.02 // Global maximum SL distance as % of entry price (2%).
+    float minTradeSizeTicks = 0.0 // Minimum total trade span in ticks.
+    int ltfBiasMemWindowBars = 20 // LTF-only memory window (recent bars).
+    int ltfBiasMemMaxEvents = 80 // Hard cap for cached LTF bias events.
+    float ltfBiasMemWeight = 0.35 // Contribution of cached signal memory into LTF bias score.
+    int signalContextBars = 20 // Dynamic short-term signal window by chart TF.
+
+get_data_local_cfg(string tf, int globalLookbackBars, string displayMode) =>
+    LocalCfg cfg = LocalCfg.new()
+    int tfSec = KitUI.get_tf_seconds(tf)
+    cfg.displayMode := displayMode
+    cfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(displayMode, globalLookbackBars)
+    cfg.signalContextBars := tfSec <= 60 ? 30 : tfSec <= 300 ? 20 : tfSec <= 900 ? 15 : 20
+    cfg
+
+get_data_history_cap_bars_for_chart() =>
+    int tfSec = timeframe.in_seconds(timeframe.period)
+    tfSec <= 60 ? 1000 :
+     tfSec <= 300 ? 1800 :
+     tfSec <= 900 ? 2200 :
+     tfSec <= 3600 ? 2400 :
+     tfSec <= 14400 ? 1800 :
+     tfSec <= 86400 ? 1600 : 1400
+
+get_data_effective_history_cap_bars(string timeRange) =>
+    str.lower(timeRange) == "dynamic" ? get_data_history_cap_bars_for_chart() : 10000
+
+GLOBAL_MAX_LOOKBACK_BARS = SETTINGS.GLOBAL_MAX_LOOKBACK_BARS
+var int htf2MasterRangeBars = SETTINGS.GLOBAL_MAX_LOOKBACK_BARS
+
+var LocalCfg localCfg = get_data_local_cfg(timeframe.period, GLOBAL_MAX_LOOKBACK_BARS, "Normal")
+TRIGGER_TYPE_SIGNAL = "Signal"
+TRIGGER_TYPE_TRADE = "Trade"
+TRIGGER_WHEN_TOUCH = "Touch"
+TRIGGER_WHEN_RETEST = "Retest"
+
+// ==================== INPUT SETTINGS ====================
+// ==================== CONSTANTS (UI/TEXT) ====================
+GROUP_UI_CONFIG = "1. UI Config" // Input group: chart UI toggles.
+GROUP_TRADE_MODELS = "2. Entry Models" // Input group: entry models.
+GROUP_TRADES_CONFIG = "3. Trade Config" // Input group: trade engine controls.
+
+type UIConfig
+    bool showEMA = true
+    bool showSMA = false
+    bool showVWAP = true
+    bool showCandles = true
+    bool showKillzones = true
+    bool showHtfCandles = true
+    bool showTradesDashboard = true
+    int emaShort = 50
+    int emaNormal = 100
+    int emaLong = 200
+
+get_data_ui_cfg(bool showEMA, bool showSMA, bool showVWAP, bool showCandles, bool showKillzones, bool showHtfCandles, bool showTradesDashboard, string tf) =>
+    UIConfig cfg = UIConfig.new()
+    cfg.showEMA := showEMA
+    cfg.showSMA := showSMA
+    cfg.showVWAP := showVWAP
+    cfg.showCandles := showCandles
+    cfg.showKillzones := showKillzones
+    cfg.showHtfCandles := showHtfCandles
+    cfg.showTradesDashboard := showTradesDashboard
+    if tf == "1" or tf == "3" or tf == "5"
+        cfg.emaShort := 5
+        cfg.emaNormal := 13
+        cfg.emaLong := 34
+    else if tf == "15"
+        cfg.emaShort := 9
+        cfg.emaNormal := 21
+        cfg.emaLong := 89
+    else if tf == "60" or tf == "240"
+        cfg.emaShort := 21
+        cfg.emaNormal := 55
+        cfg.emaLong := 200
+    cfg
+
+SHOW_MODEL_TRADES = true // Strategy trades are always shown; per-strategy checkboxes control processing/display.
+
+uiShowEMAInput = input.bool(true, "EMA", inline = "ui0", group = GROUP_UI_CONFIG)
+uiShowSMAInput = input.bool(false, "SMA", inline = "ui0", group = GROUP_UI_CONFIG)
+uiShowVWAPInput = input.bool(true, "VWAP", inline = "ui0", group = GROUP_UI_CONFIG)
+uiShowCandlesInput = input.bool(true, "Candles", inline = "ui1", group = GROUP_UI_CONFIG)
+uiShowKillzonesInput = input.bool(true, "Killzones", inline = "ui1", group = GROUP_UI_CONFIG)
+uiShowHtfCandlesInput = input.bool(true, "HTF Candles", inline = "ui2", group = GROUP_UI_CONFIG)
+uiShowCoreDebug = input.bool(false, "Debug Core", inline = "ui2", group = GROUP_UI_CONFIG)
+uiDisplayCombo = input.string("Normal", "Display", options = ["All", "Less", "Normal", "Extreme", "None"], inline = "ui_disp", group = GROUP_UI_CONFIG)
+uiTimeRangeCombo = input.string("dynamic", "", options = ["dynamic", "Today", "Yesterday", "Day", "This Week", "Last Week", "Week", "This Month", "Last Month", "Month", "This Year", "Year"], inline = "ui_disp", group = GROUP_UI_CONFIG)
+
+bool uiModeAll = uiDisplayCombo == "All"
+bool uiModeLess = uiDisplayCombo == "Less"
+bool uiModeExtreme = uiDisplayCombo == "Extreme"
+bool uiModeNone = uiDisplayCombo == "None"
+uiShowEMA = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? false : uiShowEMAInput
+uiShowSMA = uiModeNone ? false : uiModeAll ? true : uiModeLess ? false : uiModeExtreme ? false : uiShowSMAInput
+uiShowVWAP = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiShowVWAPInput
+uiShowCandles = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiShowCandlesInput
+kz_show = uiModeNone ? false : uiModeAll ? true : uiModeLess ? false : uiModeExtreme ? false : uiShowKillzonesInput // Draw killzone sessions (intraday only).
+uiShowHtfCandles = uiModeNone ? false : uiModeAll ? true : uiModeLess ? true : uiModeExtreme ? true : uiShowHtfCandlesInput
+kz_color = input.color(color.new(color.rgb(100, 210, 255), 25), "", inline = "ui1", group = "1. UI Config") // Killzone/session color.
+kz_size = input.string(size.tiny, "", options = [size.tiny, size.small, size.normal, "None"], inline = "ui1", group = "1. UI Config") // Killzone label size.
+uiCfg = get_data_ui_cfg(uiShowEMA, uiShowSMA, uiShowVWAP, uiShowCandles, kz_show, uiShowHtfCandles, true, timeframe.period)
+CP_VIS_CFG.showCandles := uiCfg.showCandles
+
+// Keep a simple-string HTF pair for request.security paths in this file.
+CORE_MS_CURR_SEC = timeframe.in_seconds(timeframe.period)
+CORE_MS_HTF1 = CORE_MS_CURR_SEC <= 60 ? "15" :
+ CORE_MS_CURR_SEC == 300 ? "60" :
+ CORE_MS_CURR_SEC == 900 ? "240" :
+ CORE_MS_CURR_SEC == 3600 ? "1D" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("15") ? "15" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("60") ? "60" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("240") ? "240" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("1D") ? "1D" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("1W") ? "1W" : na
+CORE_MS_HTF2 = CORE_MS_CURR_SEC <= 60 ? "60" :
+ CORE_MS_CURR_SEC == 300 ? "240" :
+ CORE_MS_CURR_SEC == 900 ? "1D" :
+ CORE_MS_CURR_SEC == 3600 ? "1W" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("15") ? "60" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("60") ? "240" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("240") ? "1D" :
+ CORE_MS_CURR_SEC < timeframe.in_seconds("1D") ? "1W" : na
+
+// Killzones: session config (UTC-5 to preserve legacy session times).
+asS   = "2000-0000" // Asia session time.
+ldnOS = "0200-0500" // London open time.
+nyS   = "0700-1000" // NY AM time.
+ldnCS = "1000-1200" // NY PM time.
+kzLB  = true        // Show killzone label.
+
+// Sessions (broader than killzones): used to display session context on the bottom line.
+// Times are anchored to UTC-5 to preserve existing behavior across chart timezones.
+sessSH = kz_show // Sessions enabled (reuse Killzones toggle to stay minimal).
+sessAsia = "2000-0200" // Asia session window (approx).
+sessLondon = "0200-0700" // London session window (approx).
+sessNY = "0700-1600" // New York session window (approx).
+sessOverlap_LdnNy = "0800-1000" // London/NY overlap highlight window (approx).
+
+// Time events: draw icon markers at specific times (UTC-5), e.g. 08:30 US data release window.
+// Time events: draw vertical line markers at specific times (UTC-5).
+TIME_EVENT_SHOW = true // Enable time-event markers (kept constant to reduce inputs).
+TIME_EVENT_SHOW_BOTTOM = false // Temporary: hide below-bar event labels (noise reduction).
+TIME_EVENT_LABEL_MODE = CONST.TIME_EVENT_LABEL_MODE_TEXT // Default: show short names instead of HH:mm.
+TIME_EVENT_LINE_TRANSP = 55
+
+// Sessions/Killzones label placement.
+WIN_LABEL_PAD_BARS = 2 // Horizontal padding from window start for time labels (in bars).
+WIN_LINE_TRANSP = 25 // Shared KZ+Session line/text transparency (lower = brighter/more solid).
+WIN_LINE_WIDTH  = 1           // Shared KZ+Session line width.
+
+perfLookbackBars = GLOBAL_MAX_LOOKBACK_BARS // Unified working zone bars.
+
+get_data_local_technical_ctx(string tf) =>
+    [atr14, ema9, ema20, ema21, ema50, ema200, sma20, sma200, rsi14, adx14, vwap, stochK, stochD, bbBasis, bbDev, bbUpper, bbLower, bbBandwidth, bbBandwidthAvg, bbSqueeze, ichiConv, ichiBase, ichiSpanA, ichiSpanB, ichiCloudTop, ichiCloudBtm, ichiAboveCloud, ichiBelowCloud, macdHist, macdFlipUp, macdFlipDn, fibHi55, fibLo55, fibRange55, fib618Bull, fib618Bear, fibTolerance, fibNearBull, fibNearBear, ema50Up, ema50Down] = KitCore.get_data_technical(tf)
+    KitCore.get_data_technical_ctx_from_tuple(atr14, ema9, ema20, ema21, ema50, ema200, sma20, sma200, rsi14, adx14, vwap, stochK, stochD, bbBasis, bbDev, bbUpper, bbLower, bbBandwidth, bbBandwidthAvg, bbSqueeze, ichiConv, ichiBase, ichiSpanA, ichiSpanB, ichiCloudTop, ichiCloudBtm, ichiAboveCloud, ichiBelowCloud, macdHist, macdFlipUp, macdFlipDn, fibHi55, fibLo55, fibRange55, fib618Bull, fib618Bear, fibTolerance, fibNearBull, fibNearBear, ema50Up, ema50Down)
+
+process_data_cache_ltf_bias_event(array<int> bars, array<float> vals, string dir, int scoreVal, int maxEvents) =>
+    if dir == "Buy" or dir == "Sell"
+        if array.size(bars) != array.size(vals)
+            array.clear(bars)
+            array.clear(vals)
+        float baseScore = na(scoreVal) ? 1.0 : math.max(float(scoreVal), 1.0)
+        float signedScore = (dir == "Buy" ? 1.0 : -1.0) * baseScore
+        int n = array.size(bars)
+        if n > 0
+            int lastBar = array.get(bars, n - 1)
+            if lastBar == bar_index
+                array.set(vals, n - 1, array.get(vals, n - 1) + signedScore)
+            else
+                array.push(bars, bar_index)
+                array.push(vals, signedScore)
+        else
+            array.push(bars, bar_index)
+            array.push(vals, signedScore)
+        while array.size(bars) > maxEvents and array.size(vals) > 0
+            array.remove(bars, 0)
+            array.remove(vals, 0)
+    bool(na)
+
+get_data_ltf_bias_memory_score(array<int> bars, array<float> vals, int windowBars) =>
+    float out = 0.0
+    int n = array.size(bars)
+    int i = n - 1
+    while i >= 0
+        int age = bar_index - array.get(bars, i)
+        if age > windowBars
+            array.remove(bars, i)
+            array.remove(vals, i)
+        else
+            float decay = 1.0 - (float(age) / float(math.max(windowBars, 1)))
+            out += array.get(vals, i) * math.max(decay, 0.0)
+        i -= 1
+    out
+
+signalContextBars = localCfg.signalContextBars
+drawLookbackBars = signalContextBars // Restrict entry/signal/context visuals to latest bars.
+
+// ── Divergence config (fixed, shared with SMA200-Div strategy if enabled) ──
+prd          = localCfg.pivotPeriodShort // Divergence pivot length.
+maxbars      = 50                 // Divergence scan max window (bars).
+dontconfirm  = false              // Require confirmation candle.
+calcrsi      = true               // Scan RSI.
+calcmacd     = true               // Scan MACD.
+calcobv      = true               // Scan OBV.
+searchdiv    = "Regular/Hidden"   // Divergence mode.
+showlabels   = false              // Stacked text labels (off by default).
+div_size     = size.tiny          // Label size for stacked divergence text (showlabels=false, so unused).
+
+// ── Trade Models (checkbox) ─────────────────────────────────────
+modelVwapEvt = input.bool(true, "VWP - VWAP Cross.", inline = "m0", group = GROUP_UI_CONFIG)
+modelRsiEvt = input.bool(true, "RSI - RSI Trend Zone.", inline = "m0", group = GROUP_UI_CONFIG)
+modelHvb = input.bool(true, "HVB - HVB.", inline = "m0", group = GROUP_UI_CONFIG)
+modelDiv = input.bool(true, "DIV - Divergence.", inline = "m0", group = GROUP_UI_CONFIG)
+modelVwapEma = input.bool(true, "VEM - VWAP+EMA [1m].", tooltip = "TF: 1m | Hiệu quả: Cao", inline = "m1", group = GROUP_TRADE_MODELS)
+modelVwapEmaRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m1", group = GROUP_TRADE_MODELS)
+modelVwapEmaGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m1", group = GROUP_TRADE_MODELS)
+modelEmaStoch = input.bool(true, "EMS - EMA+Stoch [5m].", tooltip = "TF: 5m | Hiệu quả: Cao", inline = "m2", group = GROUP_TRADE_MODELS)
+modelEmaStochRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m2", group = GROUP_TRADE_MODELS)
+modelEmaStochGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m2", group = GROUP_TRADE_MODELS)
+modelEmaBb = input.bool(true, "BBS - BB Squeeze [15m-1h].", tooltip = "TF: 15m-1h | Hiệu quả: Cao", inline = "m3", group = GROUP_TRADE_MODELS)
+modelEmaBbRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m3", group = GROUP_TRADE_MODELS)
+modelEmaBbGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m3", group = GROUP_TRADE_MODELS)
+modelIchMacd = input.bool(false, "ICH - Ichimoku+MACD [4h].", tooltip = "TF: 4h | Hiệu quả: Trung bình", inline = "m4", group = GROUP_TRADE_MODELS)
+modelIchMacdRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m4", group = GROUP_TRADE_MODELS)
+modelIchMacdGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m4", group = GROUP_TRADE_MODELS)
+modelFib = input.bool(false, "FIB - Fib [1D].", tooltip = "TF: 1D | Hiệu quả: Thấp", inline = "m5", group = GROUP_TRADE_MODELS)
+modelFibRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m5", group = GROUP_TRADE_MODELS)
+modelFibGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m5", group = GROUP_TRADE_MODELS)
+modelSmaDiv = input.bool(false, "SMD - SMA+Div [1W].", tooltip = "TF: 1W | Hiệu quả: Trung bình", inline = "m6", group = GROUP_TRADE_MODELS)
+modelSmaDivRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m6", group = GROUP_TRADE_MODELS)
+modelSmaDivGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m6", group = GROUP_TRADE_MODELS)
+modelGdCross = input.bool(false, "GDC - Golden/Death [1D-1W].", tooltip = "TF: 1D-1W | Hiệu quả: Thấp", inline = "m7", group = GROUP_TRADE_MODELS)
+modelGdCrossRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m7", group = GROUP_TRADE_MODELS)
+modelGdCrossGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m7", group = GROUP_TRADE_MODELS)
+modelCpBias = input.bool(true, "CPB - Candle Pattern.", tooltip = "TF: Mọi TF | Hiệu quả: Cao", inline = "m8", group = GROUP_TRADE_MODELS)
+modelCpBiasRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m8", group = GROUP_TRADE_MODELS)
+modelCpBiasGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m8", group = GROUP_TRADE_MODELS)
+modelSweep = input.bool(true, "SWP - Sweep.", tooltip = "TF: Mọi TF | Hiệu quả: Cao", inline = "m9", group = GROUP_TRADE_MODELS)
+modelSweepRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m9", group = GROUP_TRADE_MODELS)
+modelSweepGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m9", group = GROUP_TRADE_MODELS)
+modelTpgRsi = input.bool(true, "TPG - TPG RSI.", tooltip = "TF: Mọi TF | Hiệu quả: Cao", inline = "m10", group = GROUP_TRADE_MODELS)
+modelTpgRsiRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m10", group = GROUP_TRADE_MODELS)
+modelTpgRsiGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m10", group = GROUP_TRADE_MODELS)
+modelAdxEma = input.bool(false, "ADX - ADX+EMA.", tooltip = "TF: Mọi TF | Hiệu quả: Trung bình", inline = "m11", group = GROUP_TRADE_MODELS)
+modelAdxEmaRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m11", group = GROUP_TRADE_MODELS)
+modelAdxEmaGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m11", group = GROUP_TRADE_MODELS)
+modelStackBias = input.bool(false, "STK - MA+RSI+VWAP Bias.", tooltip = "TF: Mọi TF | Hiệu quả: Trung bình", inline = "m12", group = GROUP_TRADE_MODELS)
+modelStackBiasRrs = input.string("0.2, 0.5, 1", "RRs", inline = "m12", group = GROUP_TRADE_MODELS)
+modelStackBiasGap = input.float(0.0, "Gap", minval = 0.0, step = 0.05, inline = "m12", group = GROUP_TRADE_MODELS)
+
+tradeEntriesInput = input.bool(true, "Trades", inline = "tc0", group = GROUP_TRADES_CONFIG)
+strategyOrdersInput = input.bool(true, "Paper", inline = "tc0", group = GROUP_TRADES_CONFIG)
+propPreset = input.string("FTMO 2-Step", "Trade rules", options = ["None", "FTMO 2-Step", "FTMO 1-Step", "The5ers HS", "The5ers HG"], tooltip = "FTMO 2-Step: 2.5% daily cap, 0.5%/trade | FTMO 1-Step: 1.5%/0.5% | The5ers HS: 2.5%/0.5% | The5ers HG: 1.5%/0.5% | None: unlimited", inline = "tc0", group = GROUP_TRADES_CONFIG)
+tradeRiskValue = input.float(100.0, "1R", minval = 0.01, maxval = 10000.0, step = 0.1, inline = "tc1", group = GROUP_TRADES_CONFIG)
+tradeRiskMode  = input.string("$", "", options = ["%", "$"], inline = "tc1", group = GROUP_TRADES_CONFIG)
+tradeSpreadTicks = input.float(0.0, "Spread", minval = 0.0, step = 0.5, inline = "tc1", group = GROUP_TRADES_CONFIG)
+webhookEnabled = input.bool(false, "Webhook", inline = "wh0", group = GROUP_TRADES_CONFIG)
+
+tradeShowPending = input.bool(false, "Pending", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowStart = input.bool(false, "Start -> Active", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowTp = input.bool(false, "TP", inline = "tc2", group = GROUP_TRADES_CONFIG)
+tradeShowSl = input.bool(false, "SL", inline = "tc2", group = GROUP_TRADES_CONFIG)
+
+tradeEntriesEnabled = false
+strategyOrdersEnabled = false
+showTradesDashboard = false
+GLOBAL_MAX_LOOKBACK_BARS := KitCore.get_dynamic_global_max_lookback_bars(uiTimeRangeCombo, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS, htf2MasterRangeBars)
+GLOBAL_MAX_LOOKBACK_BARS := math.min(GLOBAL_MAX_LOOKBACK_BARS, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+float tradeRiskAmountUsd = tradeRiskMode == "%" ? (tradeRiskValue / 100.0 * math.max(PAPER_EQUITY_USD, 0.0)) : tradeRiskValue
+localCfg.displayMode := uiDisplayCombo
+localCfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(uiDisplayCombo, GLOBAL_MAX_LOOKBACK_BARS)
+if SETTINGS.DYN_LOOKBACK_ENABLE and uiTimeRangeCombo == "dynamic"
+    localCfg.workingLookbackBars := math.max(localCfg.workingLookbackBars, htf2MasterRangeBars)
+localCfg.workingLookbackBars := math.min(localCfg.workingLookbackBars, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+localCfg.currPivotLen := KitCore.get_pivot_len_for_tf(timeframe.period, timeframe.period, CONST.PIVOT_MODE_FIXED, uiDisplayCombo, PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+localCfg.htf1PivotLen := KitCore.get_pivot_len_for_tf(CORE_MS_HTF1, timeframe.period, CONST.PIVOT_MODE_FIXED, uiDisplayCombo, PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+localCfg.htf2PivotLen := KitCore.get_pivot_len_for_tf(CORE_MS_HTF2, timeframe.period, CONST.PIVOT_MODE_FIXED, uiDisplayCombo, PIVOT_LEN_SCALP, PIVOT_LEN_INTRADAY, PIVOT_LEN_MULTI_DAY, PIVOT_LEN_SWING, PIVOT_LEN_POSITION)
+perfLookbackBars := localCfg.workingLookbackBars
+workingFirstBar := KitCore.get_working_first_bar_from_lookback(localCfg.workingLookbackBars)
+[_wfLine0, _wfLabel0] = KitCore.update_working_first_bar_marker(workingFirstBarLine, workingFirstBarLabel, workingFirstBar, "Core", color.new(THEME.COLOR_LTF, 0), line.style_dotted, color.new(THEME.COLOR_LTF, 0), THEME.SIZE_TINY)
+workingFirstBarLine := _wfLine0
+workingFirstBarLabel := _wfLabel0
+
+// ==================== MAIN LOGIC ====================
+// barstate.isfirst
+if barstate.isfirst
+    localCfg := get_data_local_cfg(timeframe.period, GLOBAL_MAX_LOOKBACK_BARS, uiDisplayCombo)
+    workingFirstBar := KitCore.get_working_first_bar_from_lookback(localCfg.workingLookbackBars)
+    [_wfLine1, _wfLabel1] = KitCore.update_working_first_bar_marker(workingFirstBarLine, workingFirstBarLabel, workingFirstBar, "Core", color.new(THEME.COLOR_LTF, 0), line.style_dotted, color.new(THEME.COLOR_LTF, 0), THEME.SIZE_TINY)
+    workingFirstBarLine := _wfLine1
+    workingFirstBarLabel := _wfLabel1
+
+dispVwapEvt = modelVwapEvt ? CONST.DISP_MARKER : CONST.DISP_NONE
+dispRsiEvt = modelRsiEvt ? CONST.DISP_MARKER : CONST.DISP_NONE
+dispHvb = modelHvb ? CONST.DISP_MARKER : CONST.DISP_NONE
+dispDiv = modelDiv ? CONST.DISP_MARKER : CONST.DISP_NONE
+dispCpBias = modelCpBias ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispVwapEma = modelVwapEma ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispEmaStoch = modelEmaStoch ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispEmaBb = modelEmaBb ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispIchMacd = modelIchMacd ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispFib = modelFib ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispSmaDiv = modelSmaDiv ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispAdxEma = modelAdxEma ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispSweep = modelSweep ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispGdCross = modelGdCross ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispTpgRsi = modelTpgRsi ? CONST.DISP_ENTRY : CONST.DISP_NONE
+dispStackBias = modelStackBias ? CONST.DISP_ENTRY : CONST.DISP_NONE
+
+// Derived booleans for internal use (keep existing call-sites working)
+plotVWAP_F   = dispVwapEvt  != CONST.DISP_NONE
+plotRSI_F    = dispRsiEvt   != CONST.DISP_NONE
+plotHVB      = dispHvb      != CONST.DISP_NONE
+showDiv      = dispDiv      != CONST.DISP_NONE
+showlines    = showDiv // alias used in div scanning
+
+// TPG RSI scalping parameters (from strategies/good-TPG Buy Sell RSI Scalping.pine).
+tpgRsiLen = 7 // input.int(7, "RSI Length", group = STRATEGY_TEXT)
+tpgRsiOb = 85 // input.int(85, "RSI Overbought", group = STRATEGY_TEXT)
+tpgRsiOs = 15 // input.int(15, "RSI Oversold", group = STRATEGY_TEXT)
+
+// ── TPG RSI scalping pattern settings (fixed constants) ──
+tpgHammerBody        = 0.333
+tpgUseEngulf         = true
+tpgUseHammerShooting = false
+tpgUseTwoBars        = false
+
+hvbB_col = THEME.COLOR_BULLISH
+hvbS_col = THEME.COLOR_BEARISH
+
+// ==================== CANDLE PATTERN DETECTION (merged) ====================
+var KitCore.CandlePatternCfg cpCfg = KitCore.get_candle_pattern_cfg(SETTINGS, 1, 1)
+
+[cpAggName, cpAggBias, cpBaseScore, cpAggStrength] = KitCore.cp_detect(cpCfg)
+bool cpIsBull   = cpAggBias == 1
+bool cpIsBear   = cpAggBias == -1
+bool cpIsPat    = cpAggName != "None"
+int  cpPatScore = cpBaseScore + math.max(0, cpAggStrength - 1)
+
+float cpVolAvg   = ta.sma(volume, 20)
+float cpVolRatio = cpVolAvg > 0 ? volume / cpVolAvg : 1.0
+int   cpVolBonus = cpVolRatio >= SETTINGS.CP_VOL_EXTREME ? 2 : cpVolRatio >= SETTINGS.CP_VOL_HIGH ? 1 : 0
+int   cpConvScore = cpPatScore + cpVolBonus
+bool  cpShowPat   = cpIsPat and cpConvScore >= SETTINGS.CP_MIN_CONV and KitCore.is_in_draw_lookback_current(signalContextBars)
+
+// ── Pattern candle visuals ─────────────────────────────────────────────
+color cpNormBody = close >= open ? CP_VIS_CFG.normBull : CP_VIS_CFG.normBear
+
+color cpPatBody   = CP_VIS_CFG.showCandles and cpShowPat ? KitCore.cp_score_color(cpPatScore, cpAggBias, CP_VIS_CFG.bull, CP_VIS_CFG.bear, THEME)            : cpNormBody
+color cpPatBorder = CP_VIS_CFG.showCandles and cpShowPat ? KitCore.cp_border_color(cpPatScore, cpAggBias, CP_VIS_CFG.bull, CP_VIS_CFG.bear, THEME)           : cpNormBody
+color cpPatWick   = CP_VIS_CFG.showCandles and cpShowPat ? KitCore.cp_wick_color(cpPatScore, cpAggBias, cpVolRatio, CP_VIS_CFG.bull, CP_VIS_CFG.bear, THEME) : cpNormBody
+
+plotcandle(open, high, low, close, title="Pattern Candles", color=cpPatBody, wickcolor=cpPatWick, bordercolor=cpPatBorder)
+
+bool cpHasBg  = CP_VIS_CFG.showHalo and cpShowPat and cpPatScore >= 4
+color cpHaloC = cpIsBull ? color.new(CP_VIS_CFG.bull, cpPatScore >= 5 ? 92 : 95) : color.new(CP_VIS_CFG.bear, cpPatScore >= 5 ? 92 : 95)
+if cpHasBg
+    box.new(bar_index, high, bar_index + 1, low, bgcolor = cpHaloC, border_color = na)
+
+// Tier-1 CP markers deferred — drawn after final bias gate is known (below process_bias_stack) to allow deduplication with Tier-2 strategy signal.
+float cpAtr = ta.atr(14) // ATR pre-computed here; used both in marker placement and strategy engine.
+
+
+// ==================== INIT / SETUP (ENTRY MODELS, PDARRAYs..) ====================
+// ==================== LOCAL HELPERS ====================
+
+CORE_get_trade_order_qty(float entry, float stoploss, float riskPerRRUsd) =>
+    if na(entry) or na(stoploss)
+        float(na)
+    else
+        float riskPerUnitUsd = math.abs(entry - stoploss) * math.max(math.abs(syminfo.pointvalue), 1e-10)
+        riskPerUnitUsd <= 0.0 ? float(na) : (math.max(riskPerRRUsd, 0.0) / riskPerUnitUsd)
+
+CORE_track_trade_entry(array<KitCore.Trade> entriesRef, array<string> orderIdsRef, KitCore.Trade e, string orderId, bool shouldTrack) =>
+    if shouldTrack and not na(e)
+        array.push(entriesRef, e)
+        array.push(orderIdsRef, orderId)
+    bool(na)
+
+CORE_submit_strategy_trade_order(string orderId, string direction, float orderQty, float entry, float stoploss, float takeprofit) =>
+    if orderId != "" and not na(orderQty) and orderQty > 0.0
+        na
+    bool(na)
+
+CORE_cancel_strategy_trade_order(string orderId) =>
+    if orderId != ""
+        na
+    bool(na)
+
+// ==================== FEATURE: STRATEGIES ====================
+
+STRAT_TF_ANY = 0
+
+STRAT_ID_VWAP_EMA_CROSS = 1
+STRAT_ID_EMA_STOCH_PULLBACK = 2
+STRAT_ID_EMA200_BB_SQUEEZE = 3
+STRAT_ID_ICHIMOKU_MACD_FLIP = 4
+STRAT_ID_FIB_PULLBACK = 5
+STRAT_ID_SMA200_DIVERGENCE = 6
+STRAT_ID_ADX_EMA_CROSS = 7
+STRAT_ID_SWEEP = 8
+STRAT_ID_CANDLE_PATTERN = 9   // New: candle pattern bias alignment strategy.
+STRAT_ID_GOLDEN_DEATH_CROSS = 10
+STRAT_ID_STACK_BIAS = 11
+STRAT_ID_TPG_RSI_SCALP = 12
+
+// Helper (Strategy): True if strategy should be evaluated on current TF seconds.
+get_data_is_strategy_applicable(KitCore.Strategy s, int tfSec) =>
+    s.tfSecMin == STRAT_TF_ANY or (tfSec >= s.tfSecMin and tfSec <= s.tfSecMax)
+
+// Helper (Strategy): Builds the strategy list based on docs/features/STRATEGIES.md.
+process_data_init_strategies() =>
+    array<KitCore.Strategy> out = array.new<KitCore.Strategy>()
+    int tf1m = KitUI.get_tf_seconds("1")
+    int tf5m = KitUI.get_tf_seconds("5")
+    int tf15m = KitUI.get_tf_seconds("15")
+    int tf1h = KitUI.get_tf_seconds("60")
+    int tf4h = KitUI.get_tf_seconds("240")
+    int tf1d = KitUI.get_tf_seconds("1D")
+    int tf1w = KitUI.get_tf_seconds("1W")
+    array.push(out, KitCore.Strategy.new(STRAT_ID_VWAP_EMA_CROSS, "VWAP bias + EMA momentum cross", "vwp", tf1m, tf1m, "Bias is price above/below VWAP; enter when EMA(9) crosses EMA(21) in the bias direction.", 9))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_EMA_STOCH_PULLBACK, "EMA trend + pullback mean reversion", "stc", tf5m, tf5m, "Bias from EMA(50) slope; enter on pullback to EMA(21) plus Stoch cross from oversold/overbought in bias direction.", 7))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_EMA200_BB_SQUEEZE, "EMA200 regime + volatility breakout", "bbs", tf15m, tf1h, "Bias is price vs EMA(200) and RSI vs 50; enter after BB squeeze then close outside bands in bias direction.", 7))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_ICHIMOKU_MACD_FLIP, "Ichimoku regime + MACD momentum flip", "ich", tf4h, tf4h, "Bias is price above/below Kumo; enter when MACD histogram flips while price is outside cloud.", 6))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_FIB_PULLBACK, "Macro trend + fib pullback", "fib", tf1d, tf1d, "Bias from 50/200 cross plus swing structure; enter on pullback to 0.618 after trend confirmation.", 5))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_SMA200_DIVERGENCE, "SMA200 macro anchor + divergence reversal", "smd", tf1w, tf1w, "Bias from SMA(200) slope; enter on RSI divergence at/near SMA(200) contact.", 6))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_ADX_EMA_CROSS, "ADX + EMA crossover trend system", "adx", STRAT_TF_ANY, STRAT_TF_ANY, "Enter when EMA(20) crosses EMA(50) and ADX crosses above 25; exit on reverse EMA cross or ADX falling below 25.", 6))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_SWEEP, "Swing sweep reclaim", "swp", STRAT_TF_ANY, STRAT_TF_ANY, "Wick sweeps nearest swing liquidity then closes back through level (reclaim).", 7))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_CANDLE_PATTERN, "Candle pattern bias alignment", "cpb", STRAT_TF_ANY, STRAT_TF_ANY, "Score-3+ candle pattern (Engulfing/Marubozu/Star/3-line) aligned with composite MTF bias. Volume confirmation boosts conviction.", 8))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_GOLDEN_DEATH_CROSS, "Golden/Death cross (macro alignment)", "gdc", tf1d, tf1w, "Use EMA(50)/EMA(200) cross as macro trend alignment; treat cross events as regime shift signals.", 5))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_STACK_BIAS, "MA+RSI+VWAP bias stack", "stk", STRAT_TF_ANY, STRAT_TF_ANY, "EMA/SMA stack + RSI + VWAP alignment. Fires only when local stack bias agrees with composite bias.", 6))
+    array.push(out, KitCore.Strategy.new(STRAT_ID_TPG_RSI_SCALP, "TPG RSI Scalping", "tpg", STRAT_TF_ANY, STRAT_TF_ANY, "RSI OB/OS + engulfing/hammer/shooting/two-bars price-action trigger from TPG RSI scalping model.", 7))
+    out
+
+var array<KitCore.Strategy> STRATEGIES = process_data_init_strategies()
+
+get_data_parse_rr_array(string rrText) =>
+    array<float> out = array.new_float()
+    string cleaned = str.replace_all(rrText, "[", "")
+    cleaned := str.replace_all(cleaned, "]", "")
+    cleaned := str.replace_all(cleaned, " ", "")
+    array<string> parts = str.split(cleaned, ",")
+    if array.size(parts) > 0
+        for i = 0 to array.size(parts) - 1
+            string token = array.get(parts, i)
+            float v = str.tonumber(token)
+            if not na(v) and v > 0
+                bool exists = false
+                if array.size(out) > 0
+                    for j = 0 to array.size(out) - 1
+                        if math.abs(array.get(out, j) - v) <= 0.000001
+                            exists := true
+                            break
+                if not exists
+                    array.push(out, v)
+    if array.size(out) == 0
+        array.push(out, 1.0)
+    out
+
+get_data_rr_text_for_strategy_key(string key) =>
+    string k = str.upper(key)
+    k == "CP" ? modelCpBiasRrs :
+     k == "VWAP" ? modelVwapEmaRrs :
+     k == "STOCH" ? modelEmaStochRrs :
+     k == "BB" ? modelEmaBbRrs :
+     k == "ICHI" ? modelIchMacdRrs :
+     k == "FIB" ? modelFibRrs :
+     k == "SMADIV" ? modelSmaDivRrs :
+     k == "ADX" ? modelAdxEmaRrs :
+     k == "SWEEP" ? modelSweepRrs :
+     k == "GDC" ? modelGdCrossRrs :
+     k == "TPG" ? modelTpgRsiRrs :
+     k == "STACK" ? modelStackBiasRrs : "1"
+
+get_data_rr_array_for_strategy_key(string key) =>
+    get_data_parse_rr_array(get_data_rr_text_for_strategy_key(key))
+
+get_data_first_rr_for_strategy_key(string key, float fallback) =>
+    array<float> rrArr = get_data_rr_array_for_strategy_key(key)
+    array.size(rrArr) > 0 ? array.get(rrArr, 0) : fallback
+
+get_data_trade_tf_suffix(string sourceTf) =>
+    KitUI.get_friendly_tf(na(sourceTf) or sourceTf == "" ? timeframe.period : sourceTf)
+
+get_data_trade_source_label(string baseType) =>
+    string k = str.upper(baseType)
+    int dotPos = str.pos(k, ".")
+    k := dotPos >= 0 ? str.substring(k, 0, dotPos) : k
+    string fullName = k == "VEM" ? "VWAP+EMA [1m]" :
+                      k == "EMS" ? "EMA+Stoch [5m]" :
+                      k == "BBS" ? "BB Squeeze [15m-1h]" :
+                      k == "ICH" ? "Ichimoku+MACD [4h]" :
+                      k == "FIB" ? "Fib [1D]" :
+                      k == "SMD" ? "SMA+Div [1W]" :
+                      k == "GDC" ? "Golden/Death [1D-1W]" :
+                      k == "CPB" ? "Candle Pattern" :
+                      k == "SWP" ? "Sweep" :
+                      k == "TPG" ? "TPG RSI" :
+                      k == "ADX" ? "ADX+EMA" :
+                      k == "STK" ? "MA+RSI+VWAP Bias" : "Model"
+    k + " - " + fullName
+
+get_data_trade_type_for_source_rr(string baseType, string sourceTf, float rrVal) =>
+    string k = str.upper(baseType)
+    int dotPos = str.pos(k, ".")
+    k := dotPos >= 0 ? str.substring(k, 0, dotPos) : k
+    string rrText = na(rrVal) ? "na" : str.tostring(rrVal)
+    k + "." + get_data_trade_tf_suffix(sourceTf) + "." + rrText
+
+process_data_init_strategy_defs() =>
+    array.clear(strategyDefs)
+    array.push(strategyDefs, KitCore.EntryModelDef.new("CP", "CPB", 8, modelCpBias, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("CP", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelCpBiasGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("VWAP", "VEM", 9, modelVwapEma, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("VWAP", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelVwapEmaGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("STOCH", "EMS", 7, modelEmaStoch, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("STOCH", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelEmaStochGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("BB", "BBS", 7, modelEmaBb, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("BB", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelEmaBbGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("ICHI", "ICH", 6, modelIchMacd, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("ICHI", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelIchMacdGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("FIB", "FIB", 5, modelFib, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("FIB", 1.0), "edge", 1, 0, 0, "BOS", 200, "na", 1, true, modelFibGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("SMADIV", "SMD", 6, modelSmaDiv, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("SMADIV", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelSmaDivGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("ADX", "ADX", 6, modelAdxEma, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("ADX", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelAdxEmaGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("SWEEP", "SWP", 7, modelSweep, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("SWEEP", 1.0), "edge", 2, 0, 0, "SWEEP", 120, "na", 1, true, modelSweepGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("GDC", "GDC", 5, modelGdCross, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("GDC", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelGdCrossGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("TPG", "TPG", 7, modelTpgRsi, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("TPG", 1.0), "edge", 2, 0, 0, "", 120, "na", 2, true, modelTpgRsiGap, "AFTER RETEST"))
+    array.push(strategyDefs, KitCore.EntryModelDef.new("STACK", "STK", 6, modelStackBias, TRIGGER_TYPE_TRADE, TRIGGER_WHEN_TOUCH, get_data_first_rr_for_strategy_key("STACK", 1.0), "edge", 2, 0, 0, "", 120, "na", 1, true, modelStackBiasGap, "AFTER RETEST"))
+    bool(na)
+
+get_data_strategy_defs_sig() =>
+    int sig = 0
+    sig += (modelCpBias ? 1 : 0) * 100000000 + str.length(modelCpBiasRrs) * 1000 + int(math.round(modelCpBiasGap * 100.0))
+    sig += (modelVwapEma ? 1 : 0) * 100000 + str.length(modelVwapEmaRrs) * 101 + int(math.round(modelVwapEmaGap * 100.0)) * 103
+    sig += (modelEmaStoch ? 1 : 0) * 100 + str.length(modelEmaStochRrs) * 107 + int(math.round(modelEmaStochGap * 100.0)) * 109
+    sig += ((modelEmaBb ? 1 : 0) * 31 + (modelIchMacd ? 1 : 0) * 37 + (modelFib ? 1 : 0) * 41 + (modelSmaDiv ? 1 : 0) * 43 + (modelAdxEma ? 1 : 0) * 47 + (modelSweep ? 1 : 0) * 53 + (modelGdCross ? 1 : 0) * 59 + (modelTpgRsi ? 1 : 0) * 61 + (modelStackBias ? 1 : 0) * 67)
+    sig += str.length(modelEmaBbRrs) * 73 + int(math.round(modelEmaBbGap * 100.0)) * 79
+    sig += str.length(modelIchMacdRrs) * 89 + int(math.round(modelIchMacdGap * 100.0)) * 97
+    sig += str.length(modelFibRrs) * 103 + int(math.round(modelFibGap * 100.0)) * 107
+    sig += str.length(modelSmaDivRrs) * 113 + int(math.round(modelSmaDivGap * 100.0)) * 127
+    sig += str.length(modelAdxEmaRrs) * 137 + int(math.round(modelAdxEmaGap * 100.0)) * 139
+    sig += str.length(modelSweepRrs) * 151 + int(math.round(modelSweepGap * 100.0)) * 157
+    sig += str.length(modelGdCrossRrs) * 167 + int(math.round(modelGdCrossGap * 100.0)) * 173
+    sig += str.length(modelTpgRsiRrs) * 181 + int(math.round(modelTpgRsiGap * 100.0)) * 191
+    sig += str.length(modelStackBiasRrs) * 197 + int(math.round(modelStackBiasGap * 100.0)) * 199
+    sig
+
+process_data_refresh_strategy_defs() =>
+    int nextSig = get_data_strategy_defs_sig()
+    int cachedSig = array.get(strategyDefsSigBox, 0)
+    if na(cachedSig) or cachedSig != nextSig or array.size(strategyDefs) == 0
+        process_data_init_strategy_defs()
+        array.set(strategyDefsSigBox, 0, nextSig)
+    bool(na)
+
+process_data_reset_runtime_context_if_new_bar() =>
+    int cachedBar = array.get(rtBarBox, 0)
+    if na(cachedBar) or cachedBar != bar_index
+        array.set(rtBarBox, 0, bar_index)
+        array.clear(rtStrategyKeys)
+        array.clear(rtStrategyEnabled)
+        array.clear(rtStrategyScore)
+        array.clear(rtStrategyShort)
+        array.clear(rtStrategyTriggerType)
+        array.clear(rtStrategyTriggerWhen)
+    bool(na)
+
+get_data_strategy_meta_by_key(string key) =>
+    process_data_refresh_strategy_defs()
+    string k = str.upper(key)
+    process_data_reset_runtime_context_if_new_bar()
+    int cachedIdx = na
+    if array.size(rtStrategyKeys) > 0
+        for i = 0 to array.size(rtStrategyKeys) - 1
+            if array.get(rtStrategyKeys, i) == k
+                cachedIdx := i
+                break
+    if not na(cachedIdx)
+        [array.get(rtStrategyEnabled, cachedIdx), array.get(rtStrategyScore, cachedIdx), array.get(rtStrategyShort, cachedIdx), array.get(rtStrategyTriggerType, cachedIdx), array.get(rtStrategyTriggerWhen, cachedIdx)]
+    else
+        bool enabled = false
+        int score = 0
+        string shortName = ""
+        string triggerType = TRIGGER_TYPE_TRADE
+        string triggerWhen = TRIGGER_WHEN_TOUCH
+        if array.size(strategyDefs) > 0
+            for i = 0 to array.size(strategyDefs) - 1
+                KitCore.EntryModelDef s = array.get(strategyDefs, i)
+                if s.key == k
+                    enabled := s.enabled
+                    score := s.baseScore
+                    shortName := s.shortName
+                    triggerType := s.trigger_type
+                    triggerWhen := s.trigger_when
+                    break
+        array.push(rtStrategyKeys, k)
+        array.push(rtStrategyEnabled, enabled)
+        array.push(rtStrategyScore, score)
+        array.push(rtStrategyShort, shortName)
+        array.push(rtStrategyTriggerType, triggerType)
+        array.push(rtStrategyTriggerWhen, triggerWhen)
+        [enabled, score, shortName, triggerType, triggerWhen]
+
+get_data_strategy_cfg_key(int stratId) =>
+    stratId == STRAT_ID_CANDLE_PATTERN ? "CP" :
+     stratId == STRAT_ID_VWAP_EMA_CROSS ? "VWAP" :
+     stratId == STRAT_ID_EMA_STOCH_PULLBACK ? "STOCH" :
+     stratId == STRAT_ID_EMA200_BB_SQUEEZE ? "BB" :
+     stratId == STRAT_ID_ICHIMOKU_MACD_FLIP ? "ICHI" :
+     stratId == STRAT_ID_FIB_PULLBACK ? "FIB" :
+     stratId == STRAT_ID_SMA200_DIVERGENCE ? "SMADIV" :
+     stratId == STRAT_ID_ADX_EMA_CROSS ? "ADX" :
+     stratId == STRAT_ID_SWEEP ? "SWEEP" :
+     stratId == STRAT_ID_GOLDEN_DEATH_CROSS ? "GDC" :
+     stratId == STRAT_ID_TPG_RSI_SCALP ? "TPG" :
+     stratId == STRAT_ID_STACK_BIAS ? "STACK" : ""
+
+get_data_strategy_trigger_cfg(int stratId) =>
+    bool enabled = true
+    string triggerType = TRIGGER_TYPE_TRADE
+    string triggerWhen = TRIGGER_WHEN_TOUCH
+    string key = get_data_strategy_cfg_key(stratId)
+    if key != ""
+        [enabledVal, _, _, triggerTypeVal, triggerWhenVal] = get_data_strategy_meta_by_key(key)
+        enabled := enabledVal
+        triggerType := triggerTypeVal
+        triggerWhen := triggerWhenVal
+    [enabled, triggerType, triggerWhen]
+
+get_data_entry_model_dynamic_cfg(int stratId) =>
+    process_data_refresh_strategy_defs()
+    string key = get_data_strategy_cfg_key(stratId)
+    float rrCfg = 2.0
+    string entryPoint = "edge"
+    int biasLtfMode = 2
+    int biasHtf1Mode = 0
+    int biasHtf2Mode = 0
+    string requiredPrevEvents = ""
+    int requiredWindowBars = 120
+    string biasDirection = "na"
+    int maxActiveCfg = 1
+    bool dynamicTpCfg = true
+    float gapCfg = 0.10
+    string entryModeCfg = "AFTER RETEST"
+    if key != "" and array.size(strategyDefs) > 0
+        for i = 0 to array.size(strategyDefs) - 1
+            KitCore.EntryModelDef s = array.get(strategyDefs, i)
+            if s.key == key
+                rrCfg := s.rr
+                entryPoint := s.entry_point
+                biasLtfMode := s.bias_ltf
+                biasHtf1Mode := s.bias_htf1
+                biasHtf2Mode := s.bias_htf2
+                requiredPrevEvents := s.required_previous_events
+                requiredWindowBars := s.required_window_bars
+                biasDirection := s.bias_direction
+                maxActiveCfg := s.max_active
+                dynamicTpCfg := s.dynamic_tp_sl
+                gapCfg := s.risk_zone_pct
+                entryModeCfg := s.entry_mode
+                break
+    [rrCfg, entryPoint, biasLtfMode, biasHtf1Mode, biasHtf2Mode, requiredPrevEvents, requiredWindowBars, biasDirection, maxActiveCfg, dynamicTpCfg, gapCfg, entryModeCfg]
+
+get_data_has_recent_signal_event(string eventType, int lookbackBars) =>
+    bool hit = false
+    int n = array.size(signalHist)
+    if n > 0
+        for i = n - 1 to 0
+            KitSMC.Event ev = array.get(signalHist, i)
+            if (bar_index - ev.barDetected) <= lookbackBars and str.upper(ev.type) == eventType
+                hit := true
+                break
+    hit
+
+// Helper: Short signal/context window.
+get_data_is_in_signal_window() =>
+    KitCore.is_in_draw_lookback_current(signalContextBars)
+
+// ==================== FEATURE: MA STACK BIAS ====================
+get_data_stack_bias() =>
+    bool tfScalp = timeframe.period == "1" or timeframe.period == "3" or timeframe.period == "5"
+    bool tfM15 = timeframe.period == "15"
+    bool tfH1H4 = timeframe.period == "60" or timeframe.period == "240"
+
+    float emaS = tfScalp ? ta.ema(close, 5) : tfM15 ? ta.ema(close, 9) : tfH1H4 ? ta.ema(close, 21) : ta.ema(close, 50)
+    float emaN = tfScalp ? ta.ema(close, 13) : tfM15 ? ta.ema(close, 21) : tfH1H4 ? ta.ema(close, 55) : ta.ema(close, 100)
+    float emaL = tfScalp ? ta.ema(close, 34) : tfM15 ? ta.ema(close, 89) : tfH1H4 ? ta.ema(close, 200) : ta.ema(close, 200)
+    float smaS = tfScalp ? ta.sma(close, 10) : tfM15 ? ta.sma(close, 20) : tfH1H4 ? ta.sma(close, 50) : ta.sma(close, 100)
+    float smaN = tfScalp ? ta.sma(close, 20) : tfM15 ? ta.sma(close, 50) : tfH1H4 ? ta.sma(close, 100) : ta.sma(close, 200)
+    float smaL = tfScalp ? ta.sma(close, 50) : tfM15 ? ta.sma(close, 200) : tfH1H4 ? ta.sma(close, 200) : ta.sma(close, 300)
+    float rsiS = tfScalp ? ta.rsi(close, 7) : tfM15 ? ta.rsi(close, 9) : tfH1H4 ? ta.rsi(close, 14) : ta.rsi(close, 14)
+    float rsiN = tfScalp ? ta.rsi(close, 14) : tfM15 ? ta.rsi(close, 14) : tfH1H4 ? ta.rsi(close, 21) : ta.rsi(close, 21)
+    float rsiL = tfScalp ? ta.rsi(close, 21) : tfM15 ? ta.rsi(close, 28) : tfH1H4 ? ta.rsi(close, 28) : ta.rsi(close, 35)
+    float vwapVal = ta.vwap(hlc3)
+
+    int bull = 0
+    int bear = 0
+    if emaS > emaN and emaN > emaL and close > emaL
+        bull += 1
+    else if emaS < emaN and emaN < emaL and close < emaL
+        bear += 1
+    if smaS > smaN and smaN > smaL and close > smaL
+        bull += 1
+    else if smaS < smaN and smaN < smaL and close < smaL
+        bear += 1
+    if rsiN > 50
+        bull += 1
+    else if rsiN < 50
+        bear += 1
+    if close > vwapVal
+        bull += 1
+    else if close < vwapVal
+        bear += 1
+
+    int biasDir = bull > bear * 1.5 ? 1 : bear > bull * 1.5 ? -1 : 0
+    string biasText = biasDir == 1 ? "BULLISH" : biasDir == -1 ? "BEARISH" : "NEUTRAL"
+    bool buyCond = emaS > emaN and emaN > emaL and close > emaL and rsiN > 50 and close > vwapVal
+    bool sellCond = emaS < emaN and emaN < emaL and close < emaL and rsiN < 50 and close < vwapVal
+    [emaS, emaN, emaL, smaS, smaN, smaL, rsiS, rsiN, rsiL, vwapVal, bull, bear, biasDir, biasText, buyCond, sellCond]
+
+[stackEmaS, stackEmaN, stackEmaL, _stackSmaS, _stackSmaN, _stackSmaL, _stackRsiS, stackRsiN, _stackRsiL, stackVwap, stackBull, stackBear, stackBiasDir, stackBiasText, stackBuyCond, stackSellCond] = get_data_stack_bias()
+plot(stackEmaS, "Stack EMA Short", color = uiCfg.showEMA ? color.new(THEME.COLOR_LTF, 60) : na, linewidth = 1)
+plot(stackEmaN, "Stack EMA Normal", color = uiCfg.showEMA ? color.new(THEME.COLOR_HTF1, 60) : na, linewidth = 1)
+plot(stackEmaL, "Stack EMA Long", color = uiCfg.showEMA ? color.new(THEME.COLOR_HTF2, 70) : na, linewidth = 1)
+plot(_stackSmaS, "Stack SMA Short", color = uiCfg.showSMA ? color.new(THEME.COLOR_LTF, 72) : na, linewidth = 1)
+plot(_stackSmaN, "Stack SMA Normal", color = uiCfg.showSMA ? color.new(THEME.COLOR_HTF1, 72) : na, linewidth = 1)
+plot(_stackSmaL, "Stack SMA Long", color = uiCfg.showSMA ? color.new(THEME.COLOR_HTF2, 78) : na, linewidth = 1)
+plot(stackVwap, "Stack VWAP", color = uiCfg.showVWAP ? color.new(color.blue, 40) : na, linewidth = 2)
+
+// Helper (Strategy): Return display mode for a strategy ID.
+get_data_strategy_disp(int stratId) =>
+    stratId == STRAT_ID_VWAP_EMA_CROSS     ? dispVwapEma :
+     stratId == STRAT_ID_EMA_STOCH_PULLBACK ? dispEmaStoch :
+     stratId == STRAT_ID_EMA200_BB_SQUEEZE  ? dispEmaBb :
+     stratId == STRAT_ID_ICHIMOKU_MACD_FLIP ? dispIchMacd :
+     stratId == STRAT_ID_FIB_PULLBACK       ? dispFib :
+     stratId == STRAT_ID_SMA200_DIVERGENCE  ? dispSmaDiv :
+     stratId == STRAT_ID_ADX_EMA_CROSS      ? dispAdxEma :
+     stratId == STRAT_ID_SWEEP              ? dispSweep :
+     stratId == STRAT_ID_CANDLE_PATTERN     ? dispCpBias :
+     stratId == STRAT_ID_GOLDEN_DEATH_CROSS ? dispGdCross :
+     stratId == STRAT_ID_STACK_BIAS         ? dispStackBias :
+     stratId == STRAT_ID_TPG_RSI_SCALP      ? dispTpgRsi : CONST.DISP_NONE
+
+// Helper (Strategy): Enabled when display mode is not None.
+get_data_strategy_enabled(int stratId) =>
+    bool dispEnabled = get_data_strategy_disp(stratId) != CONST.DISP_NONE
+    if dispEnabled and get_data_strategy_disp(stratId) == CONST.DISP_ENTRY
+        [entryEnabled, _, _] = get_data_strategy_trigger_cfg(stratId)
+        dispEnabled := entryEnabled
+    dispEnabled
+
+// ==================== FEATURE: BIAS CONFLUENCE ====================
+
+// Bias toggle config: built once from input booleans, reused in get_bias_data.
+BIAS_TOG = KitCore.BiasToggles.new(true, true, true, true, true, true, true, true)
+
+process_data_prune_outside_working_zone_core() =>
+    if array.size(events) > 0 and array.size(triggerModelIds) == array.size(events)
+        for i = array.size(events) - 1 to 0
+            KitSMC.Event ev = array.get(events, i)
+            if not na(ev.barDetected) and ev.barDetected < workingFirstBar
+                array.remove(events, i)
+                array.remove(triggerModelIds, i)
+    if array.size(signalHist) > 0
+        for i = array.size(signalHist) - 1 to 0
+            KitSMC.Event ev = array.get(signalHist, i)
+            if not na(ev.barDetected) and ev.barDetected < workingFirstBar
+                array.remove(signalHist, i)
+    if array.size(ltfBiasSignalBars) == array.size(ltfBiasSignalVals) and array.size(ltfBiasSignalBars) > 0
+        for i = array.size(ltfBiasSignalBars) - 1 to 0
+            int sigBar = array.get(ltfBiasSignalBars, i)
+            if sigBar < workingFirstBar
+                array.remove(ltfBiasSignalBars, i)
+                array.remove(ltfBiasSignalVals, i)
+    if array.size(trades) > 0 and array.size(tradeModelIds) == array.size(trades) and array.size(tradeOrderIds) == array.size(trades)
+        int i = array.size(trades) - 1
+        while i >= 0
+            KitCore.Trade e = array.get(trades, i)
+            int anchorBar = not na(e.barClosed) ? e.barClosed : e.barCreated
+            if anchorBar < workingFirstBar
+                if e.state == CONST.SIGNAL_STATE_PENDING
+                    if strategyOrdersEnabled
+                        CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                else
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                array.remove(tradeModelIds, i)
+            i -= 1
+    bool(na)
+
+draw_data_htf_candle_panel() =>
+    [htf1, htf2] = KitCore.get_htf_pair()
+    [_o1, _h1, _l1, _c1, _htfPat1] = KitCore.get_data_htf_candles(htf1)
+    [_o2, _h2, _l2, _c2, _htfPat2] = KitCore.get_data_htf_candles(htf2)
+    // HTF panel width is always driven by dynamic-range logic, independent from selected UI time-range.
+    int panelLookbackBars = KitCore.get_dynamic_global_max_lookback_bars("dynamic", SETTINGS.GLOBAL_MAX_LOOKBACK_BARS, htf2MasterRangeBars)
+    panelLookbackBars := math.min(panelLookbackBars, get_data_effective_history_cap_bars("dynamic"))
+    int htf2Count = KitCore.get_tf_candle_count_from_range_bars(htf2, panelLookbackBars, 3, 1000, SETTINGS.HTF_CANDLES_BIAS1)
+    int htf1Sec = not na(htf1) ? math.max(KitUI.get_tf_seconds(htf1), 1) : na
+    int htf2Sec = not na(htf2) ? math.max(KitUI.get_tf_seconds(htf2), 1) : na
+    float htf2PerHtf1 = not na(htf1Sec) and not na(htf2Sec) and htf2Sec > htf1Sec ? float(htf2Sec) / float(htf1Sec) : na
+    int htf1Count = not na(htf2PerHtf1) ? int(math.ceil(float(htf2Count) * htf2PerHtf1)) : KitCore.get_tf_candle_count_from_range_bars(htf1, panelLookbackBars, 3, 1000, SETTINGS.HTF_CANDLES_BASE)
+    htf1Count := math.max(3, math.min(htf1Count, 1000))
+    int futureBudget = 498
+    int spanTrim = HTF_CANDLE_LAYOUT_CFG.spanTrimBars
+    int baseOffset = 25 + HTF_CANDLE_LAYOUT_CFG.firstSlotBaseOffsetBars
+    int gapBars = HTF_CANDLE_LAYOUT_CFG.secondSlotGapBars
+    int span0 = KitUI.get_htf_chart_span(htf1Count)
+    int span1 = KitUI.get_htf_chart_span(htf2Count)
+    int projectedRight = baseOffset + math.max(span0 - spanTrim, 0) + span1 + gapBars + 2
+    if projectedRight > futureBudget and not na(htf2PerHtf1)
+        int loCount = 3
+        int hiCount = math.max(htf2Count, 3)
+        int best = loCount
+        while loCount <= hiCount
+            int mid = int(math.floor((loCount + hiCount) * 0.5))
+            int h2Mid = math.max(mid, 3)
+            int h1Mid = math.max(3, int(math.ceil(float(h2Mid) * htf2PerHtf1)))
+            int span0Mid = KitUI.get_htf_chart_span(h1Mid)
+            int span1Mid = KitUI.get_htf_chart_span(h2Mid)
+            int rightMid = baseOffset + math.max(span0Mid - spanTrim, 0) + span1Mid + gapBars + 2
+            if rightMid <= futureBudget
+                best := h2Mid
+                loCount := mid + 1
+            else
+                hiCount := mid - 1
+        htf2Count := math.max(best, 3)
+        htf1Count := math.max(3, int(math.ceil(float(htf2Count) * htf2PerHtf1)))
+    [slot_tf_0, slot_tf_1, slot_count_0, slot_count_1, show_0, show_1, off_0, off_1, need_reset_0, need_reset_1] = KitUI.get_data_htf_candle_layout(htf1, htf2, htf1Count, htf2Count, prev_slot_tf_0, prev_slot_tf_1, 25, HTF_CANDLE_LAYOUT_CFG)
+    show_0 := show_0 and uiCfg.showHtfCandles
+    show_1 := show_1 and uiCfg.showHtfCandles
+    need_reset_0 := need_reset_0 or array.size(htf1_candles.boxes) != slot_count_0
+    need_reset_1 := need_reset_1 or array.size(htf2_candles.boxes) != slot_count_1
+    [nextHtfLabel0, nextHtfLabel1] = KitUI.process_data_htf_candles(htf1_candles, htf2_candles, htfLabel0, htfLabel1, slot_tf_0, slot_tf_1, slot_count_0, slot_count_1, show_0, show_1, off_0, off_1, need_reset_0, need_reset_1, _o1, _h1, _l1, _c1, _htfPat1, _o2, _h2, _l2, _c2, _htfPat2, THEME.COLOR_HTF1, THEME.COLOR_HTF2, UI_THEME, HTF_CANDLE_VIS_CFG)
+    [nextHtfLabel0, nextHtfLabel1, slot_tf_0, slot_tf_1]
+
+// Bias table is merged into trades dashboard row (draw_data_trades_dashboard).
+int _currPivotLen = localCfg.currPivotLen
+int _htf1PivotLen = localCfg.htf1PivotLen
+int _htf2PivotLen = localCfg.htf2PivotLen
+int _maxSafeHistOff = 90
+int _currPivotOffSafe = math.max(0, math.min(_currPivotLen, _maxSafeHistOff))
+float _currSh = ta.pivothigh(high, _currPivotLen, _currPivotLen)
+float _currSl = ta.pivotlow(low, _currPivotLen, _currPivotLen)
+float _sh1Real = not na(CORE_MS_HTF1) and CORE_MS_HTF1 != "" ? request.security(syminfo.tickerid, CORE_MS_HTF1, ta.pivothigh(high, _htf1PivotLen, _htf1PivotLen), lookahead = barmerge.lookahead_off) : na
+int _sh1RealT = not na(CORE_MS_HTF1) and CORE_MS_HTF1 != "" ? int(request.security(syminfo.tickerid, CORE_MS_HTF1, not na(ta.pivothigh(high, _htf1PivotLen, _htf1PivotLen)) ? time[_htf1PivotLen] : int(na), lookahead = barmerge.lookahead_off)) : na
+float _sl1Real = not na(CORE_MS_HTF1) and CORE_MS_HTF1 != "" ? request.security(syminfo.tickerid, CORE_MS_HTF1, ta.pivotlow(low, _htf1PivotLen, _htf1PivotLen), lookahead = barmerge.lookahead_off) : na
+int _sl1RealT = not na(CORE_MS_HTF1) and CORE_MS_HTF1 != "" ? int(request.security(syminfo.tickerid, CORE_MS_HTF1, not na(ta.pivotlow(low, _htf1PivotLen, _htf1PivotLen)) ? time[_htf1PivotLen] : int(na), lookahead = barmerge.lookahead_off)) : na
+float _sh2Real = not na(CORE_MS_HTF2) and CORE_MS_HTF2 != "" ? request.security(syminfo.tickerid, CORE_MS_HTF2, ta.pivothigh(high, _htf2PivotLen, _htf2PivotLen), lookahead = barmerge.lookahead_off) : na
+int _sh2RealT = not na(CORE_MS_HTF2) and CORE_MS_HTF2 != "" ? int(request.security(syminfo.tickerid, CORE_MS_HTF2, not na(ta.pivothigh(high, _htf2PivotLen, _htf2PivotLen)) ? time[_htf2PivotLen] : int(na), lookahead = barmerge.lookahead_off)) : na
+float _sl2Real = not na(CORE_MS_HTF2) and CORE_MS_HTF2 != "" ? request.security(syminfo.tickerid, CORE_MS_HTF2, ta.pivotlow(low, _htf2PivotLen, _htf2PivotLen), lookahead = barmerge.lookahead_off) : na
+int _sl2RealT = not na(CORE_MS_HTF2) and CORE_MS_HTF2 != "" ? int(request.security(syminfo.tickerid, CORE_MS_HTF2, not na(ta.pivotlow(low, _htf2PivotLen, _htf2PivotLen)) ? time[_htf2PivotLen] : int(na), lookahead = barmerge.lookahead_off)) : na
+int _structRecentTsCut = KitCore.get_recent_time_cutoff(perfLookbackBars)
+KitSMC.EngineCfg _engineCfg = KitSMC.EngineCfg.new()
+_engineCfg.runSwingCycle := false
+_engineCfg.runStructureState := true
+_engineCfg.runPDArray := false
+KitSMC.process_engine_base_cycle(
+ smcCtx, _engineCfg,
+ CORE_MS_HTF1, CORE_MS_HTF2,
+ _currSh, not na(_currSh) ? int(time[_currPivotOffSafe]) : na, _currSl, not na(_currSl) ? int(time[_currPivotOffSafe]) : na,
+ _sh1Real, int(_sh1RealT), _sl1Real, int(_sl1RealT),
+ _sh2Real, int(_sh2RealT), _sl2Real, int(_sl2RealT),
+ SETTINGS.SWING_HISTORY_MAX,
+ _structRecentTsCut, high, low, bar_index,
+ float(na), float(na), close, syminfo.mintick, KitSMC.ZoneQualityCfg.new())
+KitSMC.ingest_real_swings(msHtf1Data, _sh1Real, int(_sh1RealT), _sl1Real, int(_sl1RealT), SETTINGS.SWING_HISTORY_MAX)
+KitSMC.ingest_real_swings(msHtf2Data, _sh2Real, int(_sh2RealT), _sl2Real, int(_sl2RealT), SETTINGS.SWING_HISTORY_MAX)
+htf2MasterRangeBars := KitSMC.get_master_range_lookback_bars(msHtf2Data, smcCtx.zones, 3, 2, high, low, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS)
+GLOBAL_MAX_LOOKBACK_BARS := KitCore.get_dynamic_global_max_lookback_bars(uiTimeRangeCombo, SETTINGS.GLOBAL_MAX_LOOKBACK_BARS, htf2MasterRangeBars)
+GLOBAL_MAX_LOOKBACK_BARS := math.min(GLOBAL_MAX_LOOKBACK_BARS, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+localCfg.workingLookbackBars := KitCore.get_display_mode_working_lookback_bars(uiDisplayCombo, GLOBAL_MAX_LOOKBACK_BARS)
+if SETTINGS.DYN_LOOKBACK_ENABLE and uiTimeRangeCombo == "dynamic"
+    localCfg.workingLookbackBars := math.max(localCfg.workingLookbackBars, htf2MasterRangeBars)
+localCfg.workingLookbackBars := math.min(localCfg.workingLookbackBars, get_data_effective_history_cap_bars(uiTimeRangeCombo))
+perfLookbackBars := localCfg.workingLookbackBars
+workingFirstBar := KitCore.get_working_first_bar_from_lookback(localCfg.workingLookbackBars)
+[_wfLine2, _wfLabel2] = KitCore.update_working_first_bar_marker(workingFirstBarLine, workingFirstBarLabel, workingFirstBar, "Core", color.new(THEME.COLOR_LTF, 0), line.style_dotted, color.new(THEME.COLOR_LTF, 0), THEME.SIZE_TINY)
+workingFirstBarLine := _wfLine2
+workingFirstBarLabel := _wfLabel2
+process_data_prune_outside_working_zone_core()
+
+[nextHtfLabel0, nextHtfLabel1, nextSlotTf0, nextSlotTf1] = draw_data_htf_candle_panel()
+htfLabel0 := nextHtfLabel0
+htfLabel1 := nextHtfLabel1
+prev_slot_tf_0 := nextSlotTf0
+prev_slot_tf_1 := nextSlotTf1
+
+ctxDataCfg.needBias := true
+ctxDataCfg.needMsTrendDirs := true
+ctxDataCfg.needPdPw := false
+ctxDataCfg.needPriceRange := false
+ctxDataCfg.needHtfCandles := false
+ctxDataCfg.initBiasFactorArrays := true
+ctxDataCfg.rangeLookbackBars := math.max(perfLookbackBars, 50)
+int dir0 = KitSMC.get_tf_structure_dir(msLtfData)
+chartCtx := KitCore.get_data_context_for_dir(ctxDataCfg, SETTINGS, BIAS_TOG, dir0)
+int currSec = KitUI.get_tf_seconds(timeframe.period)
+bool use15 = KitUI.get_tf_seconds("15") > currSec
+bool use60 = KitUI.get_tf_seconds("60") > currSec
+bool use240 = KitUI.get_tf_seconds("240") > currSec
+bool use1d = KitUI.get_tf_seconds("1D") > currSec
+bool use1w = KitUI.get_tf_seconds("1W") > currSec
+float power = (chartCtx.b0 * chartCtx.s0 * 1.0) + (use15 ? (chartCtx.b15 * chartCtx.s15 * 1.5) : 0.0) + (use60 ? (chartCtx.b60 * chartCtx.s60 * 2.0) : 0.0) + (use240 ? (chartCtx.b240 * chartCtx.s240 * 2.5) : 0.0) + (use1d ? (chartCtx.b1d * chartCtx.s1d * 3.0) : 0.0) + (use1w ? (chartCtx.b1w * chartCtx.s1w * 4.0) : 0.0)
+float powerMax = (chartCtx.m0 * 1.0) + (use15 ? (chartCtx.m15 * 1.5) : 0.0) + (use60 ? (chartCtx.m60 * 2.0) : 0.0) + (use240 ? (chartCtx.m240 * 2.5) : 0.0) + (use1d ? (chartCtx.m1d * 3.0) : 0.0) + (use1w ? (chartCtx.m1w * 4.0) : 0.0)
+powerPercent := powerMax > 0 ? math.min(math.max((power / powerMax) * 100.0, -100.0), 100.0) : 0.0
+ltfBiasMemoryScore := get_data_ltf_bias_memory_score(ltfBiasSignalBars, ltfBiasSignalVals, localCfg.ltfBiasMemWindowBars)
+float ltfScoreEff = float(chartCtx.t0) + ltfBiasMemoryScore * localCfg.ltfBiasMemWeight
+ltfBiasFinal := ltfScoreEff > 0.5 ? 1 : ltfScoreEff < -0.5 ? -1 : 0
+biasGateDir := chartCtx.compositeBias != 0 ? chartCtx.compositeBias : ltfBiasFinal
+int strategyBiasDir = 0
+
+draw_data_trades_dashboard(KitCore.ChartContext biasCtx) =>
+    var table entriesDash = table.new(position.bottom_right, 5, 3, bgcolor = color.new(THEME.COLOR_UI_BG, 85), frame_color = color.new(THEME.COLOR_UI_FG, 75), frame_width = 1, border_color = color.new(THEME.COLOR_UI_FG, 80), border_width = 1)
+    table.clear(entriesDash, 0, 0, 4, 2)
+    KitCore.draw_bias_row_under_trades(entriesDash, 0, biasCtx, THEME, SETTINGS, CONST, "Core")
+    bool(na)
+
+// ── Tier-1 CP Context Marker (deduplicated vs Tier-2) ────────────────────
+// Suppressed when a Tier-2 Strategy Signal will fire on this same bar
+// (score≥3 + bias aligned) to avoid double-marking the same signal.
+bool cpTier2WillFire = cpShowPat and cpPatScore >= 3 and
+     ((cpIsBull and KitCore.bias_allows_direction(strategyBiasDir, "Buy")) or
+      (cpIsBear and KitCore.bias_allows_direction(strategyBiasDir, "Sell")))
+
+if CP_VIS_CFG.showMarkers and cpShowPat and not cpTier2WillFire
+    string cpIcon  = cpIsBull ? CONST.SYM_UP : cpIsBear ? CONST.SYM_DN : CONST.SYM_DOT
+    color  cpLCol  = THEME.COLOR_LTF
+    float  cpYPos  = cpIsBull ? low - cpAtr * 0.4 : high + cpAtr * 0.4
+    string cpBLbl  = cpIsBull ? "BULLISH" : cpIsBear ? "BEARISH" : "NEUTRAL"
+    string cpStars = KitCore.cp_score_stars(cpPatScore)
+    string cpVLbl  = cpVolRatio >= SETTINGS.CP_VOL_EXTREME ? "⚡ EXTREME VOL" : cpVolRatio >= SETTINGS.CP_VOL_HIGH ? "🟡 HIGH VOL" : "vol: normal"
+    string cpTip   = cpBLbl + "  |  " + cpAggName + "  |  Score: " + str.tostring(cpPatScore) + "  " + cpStars + "\nConviction: " + str.tostring(cpConvScore) + "  |  " + cpVLbl + (cpAggStrength > 1 ? "\nConfluence: ×" + str.tostring(cpAggStrength) + " patterns agree" : "")
+    label.new(bar_index, cpYPos, text = cpIcon, tooltip = cpTip, color = color.new(THEME.COLOR_UI_BG, 100), textcolor = cpLCol, style = label.style_none, size = THEME.SIZE_TINY)
+
+// Core (Sessions/Killzones): Top line = killzone, bottom line = session. Overlap highlighted by background box.
+get_data_tz_day_key(int ts, string tz) =>
+    year(ts, tz) * 10000 + month(ts, tz) * 100 + dayofmonth(ts, tz)
+
+reset_data_latest_time_event_visuals() =>
+    line oldLine = array.get(latestTimeEventLineBox, 0)
+    if not na(oldLine)
+        line.delete(oldLine)
+    label oldTop = array.get(latestTimeEventTopLabelBox, 0)
+    if not na(oldTop)
+        label.delete(oldTop)
+    label oldBottom = array.get(latestTimeEventBottomLabelBox, 0)
+    if not na(oldBottom)
+        label.delete(oldBottom)
+    array.set(latestTimeEventLineBox, 0, na)
+    array.set(latestTimeEventTopLabelBox, 0, na)
+    array.set(latestTimeEventBottomLabelBox, 0, na)
+    array.set(latestTimeEventDayKeyBox, 0, na)
+    bool(na)
+
+draw_data_latest_time_event(bool trigger, int eventDayKey, string bottomTxt, string topTxt, string tip, float yTop, color winClr) =>
+    if trigger
+        reset_data_latest_time_event_visuals()
+        line nextLine = line.new(time, low - syminfo.mintick * 10, time, high + syminfo.mintick * 10, xloc.bar_time, extend = extend.both, color = color.new(THEME.COLOR_NEUTRAL, TIME_EVENT_LINE_TRANSP), style = THEME.STYLE_BROKEN, width = 1)
+        array.set(latestTimeEventLineBox, 0, nextLine)
+        if TIME_EVENT_SHOW_BOTTOM
+            label nextBottom = label.new(time, na, bottomTxt, xloc.bar_time, yloc = yloc.belowbar, color = color.new(THEME.COLOR_TRANSPARENT, 100), textcolor = THEME.COLOR_LTF, style = label.style_label_up, size = THEME.SIZE_TINY, tooltip = tip)
+            array.set(latestTimeEventBottomLabelBox, 0, nextBottom)
+        label nextTop = KitUI.draw_time_event_top(time, yTop, topTxt, tip, winClr, UI_THEME)
+        array.set(latestTimeEventTopLabelBox, 0, nextTop)
+        array.set(latestTimeEventDayKeyBox, 0, eventDayKey)
+    bool(na)
+
+process_data_killzones_sessions() =>
+    bool enabled = kz_show and timeframe.isintraday and timeframe.multiplier < 60 and not na(workingFirstBar) and bar_index >= workingFirstBar
+    if enabled
+        bool isAsiaKz  = not na(time(timeframe.period, asS,   "UTC-5")) and kz_show
+        bool isLdnKz   = not na(time(timeframe.period, ldnOS, "UTC-5")) and kz_show
+        bool isNYAMKz  = not na(time(timeframe.period, nyS,   "UTC-5")) and kz_show
+        bool isNYPmKz  = not na(time(timeframe.period, ldnCS, "UTC-5")) and kz_show
+
+        bool isAsiaSess = not na(time(timeframe.period, sessAsia,         "UTC-5")) and kz_show
+        bool isLdnSess  = not na(time(timeframe.period, sessLondon,       "UTC-5")) and kz_show
+        bool isNYSess   = not na(time(timeframe.period, sessNY,           "UTC-5")) and kz_show
+        bool isOverlap  = not na(time(timeframe.period, sessOverlap_LdnNy,"UTC-5")) and kz_show
+
+        // Top lines: killzones (running highs).
+        color winClr = color.new(kz_color, WIN_LINE_TRANSP)
+        KitUI.manage_window_line(kzAsiaTop, isAsiaKz, high, low, time, winClr, "ASIA KZ", true, true, WIN_LINE_WIDTH, kzLB, kz_size, "Killzone: Asia dealing window.", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+        KitUI.manage_window_line(kzLondonTop, isLdnKz, high, low, time, winClr, "LONDON KZ", true, true, WIN_LINE_WIDTH, kzLB, kz_size, "Killzone: London dealing window (often sets AM range).", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+        KitUI.manage_window_line(kzNYAMTop, isNYAMKz, high, low, time, winClr, "NY AM KZ", true, true, WIN_LINE_WIDTH, kzLB, kz_size, "Killzone: NY AM dealing window (often expands/raids liquidity).", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+        KitUI.manage_window_line(kzNYPMTop, isNYPmKz, high, low, time, winClr, "NY PM KZ", true, true, WIN_LINE_WIDTH, kzLB, kz_size, "Killzone: NY PM dealing window (PM distribution).", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+
+        // Bottom lines: sessions (running lows). Use the same visual format as killzones.
+        KitUI.manage_window_line(sessAsiaBot, isAsiaSess, high, low, time, winClr, "ASIA", false, false, WIN_LINE_WIDTH, kzLB, kz_size, "Session: Asia liquidity regime.", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+        KitUI.manage_window_line(sessLondonBot, isLdnSess, high, low, time, winClr, "LONDON", false, false, WIN_LINE_WIDTH, kzLB, kz_size, "Session: London liquidity regime.", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+        KitUI.manage_window_line(sessNYBot, isNYSess, high, low, time, winClr, "NY", false, false, WIN_LINE_WIDTH, kzLB, kz_size, "Session: New York liquidity regime.", "ha", CONST.WIN_LABEL_TIMEZONE, WIN_LABEL_PAD_BARS)
+
+        // Overlap highlight: no border, very transparent.
+        color ovBg = color.new(kz_color, 80)
+        KitUI.manage_window_box(sessOverlap, isOverlap, high, low, time, ovBg)
+
+        // Specific time markers.
+        string eventTz = "UTC-5"
+        int todayKey = get_data_tz_day_key(timenow, eventTz)
+        int latestDayKey = array.get(latestTimeEventDayKeyBox, 0)
+        if not na(latestDayKey) and latestDayKey != todayKey
+            reset_data_latest_time_event_visuals()
+        bool isMidnight = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_MIDNIGHT, "UTC-5"))
+        bool is0830 = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_0830, "UTC-5"))
+        bool isNYOpen = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_NY_OPEN, "UTC-5"))
+        bool is1000 = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_1000, "UTC-5"))
+        bool isLdnClose = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_LDN_CLOSE, "UTC-5"))
+        bool isPMBull = not na(time(timeframe.period, CONST.TIME_EVENT_WINDOW_PM_BULL, "UTC-5"))
+        bool isTodayBar = get_data_tz_day_key(time, eventTz) == todayKey
+        
+        if TIME_EVENT_SHOW
+            float yTopMid = kzAsiaTop.active and not na(kzAsiaTop.extreme) ? kzAsiaTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and isMidnight and not isMidnight[1], todayKey, "NY Midnight", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_MIDNIGHT, CONST.TIME_EVENT_NAME_MIDNIGHT), CONST.TIME_EVENT_TT_MIDNIGHT, yTopMid, winClr)
+            float yTop0830 = kzNYAMTop.active and not na(kzNYAMTop.extreme) ? kzNYAMTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and is0830 and not is0830[1], todayKey, "8:30 Macro", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_0830, CONST.TIME_EVENT_NAME_0830), CONST.TIME_EVENT_TT_0830, yTop0830, winClr)
+            float yTopOpen = kzNYAMTop.active and not na(kzNYAMTop.extreme) ? kzNYAMTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and isNYOpen and not isNYOpen[1], todayKey, "NY Open", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_NY_OPEN, CONST.TIME_EVENT_NAME_NY_OPEN), CONST.TIME_EVENT_TT_NY_OPEN, yTopOpen, winClr)
+            float yTop1000 = kzNYAMTop.active and not na(kzNYAMTop.extreme) ? kzNYAMTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and is1000 and not is1000[1], todayKey, "10:00 AM Macro", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_1000, CONST.TIME_EVENT_NAME_1000), CONST.TIME_EVENT_TT_1000, yTop1000, winClr)
+            float yTopLdnClose = kzLondonTop.active and not na(kzLondonTop.extreme) ? kzLondonTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and isLdnClose and not isLdnClose[1], todayKey, "London Close", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_LDN_CLOSE, CONST.TIME_EVENT_NAME_LDN_CLOSE), CONST.TIME_EVENT_TT_LDN_CLOSE, yTopLdnClose, winClr)
+            float yTopPm = kzNYPMTop.active and not na(kzNYPMTop.extreme) ? kzNYPMTop.extreme : high
+            draw_data_latest_time_event(isTodayBar and isPMBull and not isPMBull[1], todayKey, "2:00 PM Bullet", KitCore.get_time_event_label(TIME_EVENT_LABEL_MODE, CONST.TIME_EVENT_LABEL_MODE_TIME, CONST.TIME_EVENT_TXT_PM_BULL, CONST.TIME_EVENT_NAME_PM_BULL), CONST.TIME_EVENT_TT_PM_BULL, yTopPm, winClr)
+    else
+        KitUI.reset_window_line(kzAsiaTop)
+        KitUI.reset_window_line(kzLondonTop)
+        KitUI.reset_window_line(kzNYAMTop)
+        KitUI.reset_window_line(kzNYPMTop)
+        KitUI.reset_window_line(sessAsiaBot)
+        KitUI.reset_window_line(sessLondonBot)
+        KitUI.reset_window_line(sessNYBot)
+        KitUI.reset_window_box(sessOverlap)
+        reset_data_latest_time_event_visuals()
+    bool(na)
+
+process_data_killzones_sessions()
+
+
+// HTF candle overlay ownership moved to core file (ict_smc_structure_zones.pine)
+   
+
+
+// Core SMC zone/liquidity/EQ/key-level blocks were removed from this file.
+
+// ==================== FEATURE: DIVERGENCE ====================
+
+// Core (Divergence): Scans a source series and returns [topText, bottomText] fragments for optional stacked labels.
+draw_data_scan_div(float _src, string _name, bool _showIcons) =>
+    [t, l] = KitCore.div_check_all(_src, searchdiv, prd, maxbars, dontconfirm, ph_positions, pl_positions, ph_vals, pl_vals)
+    string txt_b = ""
+    string txt_t = ""
+    if t == 1 // Pos Reg (Bullish Reversal)
+        if _showIcons
+            string tip = CONST.TT_BUY + SETTINGS.TOOLTIP_REASON_PREFIX + "Regular Bullish Divergence (" + _name + "): Price makes a Lower Low while momentum makes a Higher Low. Suggests a strong potential reversal from Bearish to Bullish."
+            KitUI.draw_icon_tooltip(bar_index, drawLookbackBars, get_data_is_in_signal_window(), "Bottom", THEME.COLOR_LTF, CONST.SYM_ARR1_UP, tip, THEME.SIZE_SMALL, UI_THEME)
+        txt_b := _name + "\n"
+    if t == 2 // Neg Reg (Bearish Reversal)
+        if _showIcons
+            string tip = CONST.TT_SELL + SETTINGS.TOOLTIP_REASON_PREFIX + "Regular Bearish Divergence (" + _name + "): Price makes a Higher High while momentum makes a Lower High. Suggests a strong potential reversal from Bullish to Bearish."
+            KitUI.draw_icon_tooltip(bar_index, drawLookbackBars, get_data_is_in_signal_window(), "Top", THEME.COLOR_LTF, CONST.SYM_ARR1_DN, tip, THEME.SIZE_SMALL, UI_THEME)
+        txt_t := _name + "\n"
+    if t == 3 // Pos Hid (Bullish Continuation)
+        if _showIcons
+            string tip = CONST.TT_BUY + SETTINGS.TOOLTIP_REASON_PREFIX + "Hidden Bullish Divergence (" + _name + "): Price makes a Higher Low while momentum makes a Lower Low. Suggests Bullish trend continuation."
+            KitUI.draw_icon_tooltip(bar_index, drawLookbackBars, get_data_is_in_signal_window(), "Bottom", THEME.COLOR_LTF, CONST.SYM_ARR2_UP, tip, THEME.SIZE_SMALL, UI_THEME)
+        txt_b := "h" + _name + "\n"
+    if t == 4 // Neg Hid (Bearish Continuation)
+        if _showIcons
+            string tip = CONST.TT_SELL + SETTINGS.TOOLTIP_REASON_PREFIX + "Hidden Bearish Divergence (" + _name + "): Price makes a Lower High while momentum makes a Higher High. Suggests Bearish trend continuation."
+            KitUI.draw_icon_tooltip(bar_index, drawLookbackBars, get_data_is_in_signal_window(), "Top", THEME.COLOR_LTF, CONST.SYM_ARR2_DN, tip, THEME.SIZE_SMALL, UI_THEME)
+        txt_t := "h" + _name + "\n"
+    [txt_t, txt_b]
+
+// Core (Divergence): Full divergence pipeline (maintains pivot caches + runs RSI/MACD/OBV scans + optional stacked labels).
+process_data_divergence(bool _showDiv, bool _calcRsi, bool _calcMacd, bool _calcObv, bool _showIcons, bool _showLabels, int _prd, int _maxArrSize, color _posTxtCol, color _negTxtCol, array<int> _phPos, array<int> _plPos, array<float> _phVals, array<float> _plVals) =>
+    if _showDiv
+        rsi = ta.rsi(close, 14)
+        [macd, signal, _] = ta.macd(close, 12, 26, 9)
+        Obv = ta.obv
+        
+        ph = ta.pivothigh(close, _prd, _prd)
+        pl = ta.pivotlow(close, _prd, _prd)
+        
+        if not na(ph)
+            array.unshift(_phPos, bar_index)
+            array.unshift(_phVals, ph)
+            if array.size(_phPos) > _maxArrSize
+                array.pop(_phPos)
+                array.pop(_phVals)
+        if not na(pl)
+            array.unshift(_plPos, bar_index)
+            array.unshift(_plVals, pl)
+            if array.size(_plPos) > _maxArrSize
+                array.pop(_plPos)
+                array.pop(_plVals)
+
+        txt_top = ""
+        txt_bot = ""
+        
+        if _calcRsi
+            [t_add, b_add] = draw_data_scan_div(rsi, "RSI", _showIcons)
+            txt_top += t_add
+            txt_bot += b_add
+
+        if _calcMacd
+            [t_add, b_add] = draw_data_scan_div(macd, "MACD", _showIcons)
+            txt_top += t_add
+            txt_bot += b_add
+
+        if _calcObv
+            [t_add, b_add] = draw_data_scan_div(Obv, "OBV", _showIcons)
+            txt_top += t_add
+            txt_bot += b_add
+
+
+        if _showLabels and div_size != "None"
+            if txt_top != ""
+                if get_data_is_in_signal_window()
+                    label.new(bar_index, high, txt_top, color=color(na), textcolor=_negTxtCol, style=label.style_label_down, yloc=yloc.abovebar, size=div_size, tooltip = "Potential Sell\nReason: Bearish Divergence: Price creates higher highs while momentum (RSI/MACD/OBV) creates lower highs, signaling a potential downward reversal.")
+            if txt_bot != ""
+                if get_data_is_in_signal_window()
+                    label.new(bar_index, low, txt_bot, color=color(na), textcolor=_posTxtCol, style=label.style_label_up, yloc=yloc.belowbar, size=div_size, tooltip = "Potential Buy\nReason: Bullish Divergence: Price creates lower lows while momentum (RSI/MACD/OBV) creates higher lows, signaling a potential upward reversal.")
+
+process_data_divergence(showDiv, calcrsi, calcmacd, calcobv, showlines, showlabels, prd, maxarraysize, THEME.COLOR_LTF, THEME.COLOR_LTF, ph_positions, pl_positions, ph_vals, pl_vals)
+
+
+// Helper (Aux): Computes lightweight current-TF events for strategies (no drawing side effects).
+// Returns: [hvbColor, vwapState, evtVwapBull, evtVwapBear, evtRsiBull, evtRsiBear, evtHvbBull, evtHvbBear]
+get_data_aux_events(float biasPowerPct, int prevVwapState) =>
+    float hvbMultiplier = 1.5
+    int hvbEMAPeriod = 12
+    float volEma = ta.ema(volume, hvbEMAPeriod)
+    bool isHighVolume = volume > (hvbMultiplier * volEma)
+    color hvbColor = plotHVB and isHighVolume ? (KitCore.is_bull_candle(0) ? hvbB_col : KitCore.is_bear_candle(0) ? hvbS_col : na) : na
+    bool evtHvbBull = isHighVolume and KitCore.is_bull_candle(0)
+    bool evtHvbBear = isHighVolume and KitCore.is_bear_candle(0)
+
+    float vwapVal = ta.vwap(hlc3)
+    // Pine requires `simple int` for RSI length; keep fixed 9 (same as prior default behavior).
+    float rsiVal = ta.rsi(close, 9)
+    int vwapState = prevVwapState
+    bool evtVwapBull = false
+    bool evtVwapBear = false
+    bool evtRsiBull = false
+    bool evtRsiBear = false
+
+    if plotVWAP_F
+        if ta.crossover(close, vwapVal) and vwapState != 1
+            vwapState := 1
+            evtVwapBull := true
+        else if ta.crossunder(close, vwapVal) and vwapState != -1
+            vwapState := -1
+            evtVwapBear := true
+
+    if plotRSI_F
+        if biasPowerPct > 20 and ta.crossover(rsiVal, 40)
+            evtRsiBull := true
+        else if biasPowerPct < -20 and ta.crossunder(rsiVal, 60)
+            evtRsiBear := true
+    [hvbColor, vwapState, evtVwapBull, evtVwapBear, evtRsiBull, evtRsiBear, evtHvbBull, evtHvbBear]
+
+// Core (Aux): Draw markers for VWAP/RSI/HVB events using draw_strategy for visual consistency.
+draw_data_aux_event_markers(bool show, int vwapStatePrev, int vwapStateNow, bool evtRsiBull, bool evtRsiBear) =>
+    if show and tradeEntriesEnabled
+        // VWAP cross
+        if dispVwapEvt != CONST.DISP_NONE
+            if vwapStateNow == 1 and vwapStatePrev != 1
+                KitUI.draw_strategy("VWAP Cross", get_data_is_in_signal_window(), dispVwapEvt, "Buy", CONST.SYM_VWAP, "VWAP BULLISH: Price has moved above the Session VWAP. Institutional value now supports the upside.", UI_THEME, CONST.DISP_NONE, CONST.DISP_MARKER, CONST.DISP_EVENT, CONST.DISP_ENTRY)
+            if vwapStateNow == -1 and vwapStatePrev != -1
+                KitUI.draw_strategy("VWAP Cross", get_data_is_in_signal_window(), dispVwapEvt, "Sell", CONST.SYM_VWAP, "VWAP BEARISH: Price has moved below the Session VWAP. Institutional value now resists the upside.", UI_THEME, CONST.DISP_NONE, CONST.DISP_MARKER, CONST.DISP_EVENT, CONST.DISP_ENTRY)
+        // RSI trend zone
+        if dispRsiEvt != CONST.DISP_NONE
+            if evtRsiBull
+                KitUI.draw_strategy("RSI Trend Zone", get_data_is_in_signal_window(), dispRsiEvt, "Buy", CONST.SYM_RSI, "RSI TREND ZONE (Bull): RSI dipped to 40 in an uptrend — institutional floor.", UI_THEME, CONST.DISP_NONE, CONST.DISP_MARKER, CONST.DISP_EVENT, CONST.DISP_ENTRY)
+            if evtRsiBear
+                KitUI.draw_strategy("RSI Trend Zone", get_data_is_in_signal_window(), dispRsiEvt, "Sell", CONST.SYM_RSI, "RSI TREND ZONE (Bear): RSI rallied to 60 in a downtrend — institutional ceiling.", UI_THEME, CONST.DISP_NONE, CONST.DISP_MARKER, CONST.DISP_EVENT, CONST.DISP_ENTRY)
+        // HVB
+        if dispHvb != CONST.DISP_NONE
+            bool isHvbBar = volume > ta.sma(volume, 12) * 1.5
+            if isHvbBar
+                string hvbDir = KitCore.is_bull_candle(0) ? "Buy" : "Sell"
+                KitUI.draw_strategy("HVB", get_data_is_in_signal_window(), dispHvb, hvbDir, "HVB", "High Volume Bar: ≥ 1.5× average. Possible institutional activity.", UI_THEME, CONST.DISP_NONE, CONST.DISP_MARKER, CONST.DISP_EVENT, CONST.DISP_ENTRY)
+    bool(na)
+
+// Helper (Strategy): Creates one Event payload.
+get_data_trade_signal(string setupName, string dir, string reasonText, int scoreVal, float qualityVal) =>
+    float signalBand = math.max(ta.atr(14) * 0.08, syminfo.mintick * 2.0)
+    float zoneTop = close + signalBand
+    float zoneBtm = close - signalBand
+    KitSMC.Event es = KitSMC.Event.new(setupName, dir, zoneTop, zoneBtm, na, bar_index, int(na), false, reasonText, "", qualityVal, scoreVal)
+    es
+
+get_data_strategy_short_name(int stratId) =>
+    string out = "str"
+    if array.size(STRATEGIES) > 0
+        for i = 0 to array.size(STRATEGIES) - 1
+            KitCore.Strategy s = array.get(STRATEGIES, i)
+            if s.id == stratId
+                out := s.shortName
+                break
+    out
+
+get_data_strategy_bucket_idx(int stratId) =>
+    stratId == STRAT_ID_VWAP_EMA_CROSS ? 0 :
+     stratId == STRAT_ID_EMA_STOCH_PULLBACK ? 1 :
+     stratId == STRAT_ID_EMA200_BB_SQUEEZE ? 2 :
+     stratId == STRAT_ID_ICHIMOKU_MACD_FLIP ? 3 :
+     stratId == STRAT_ID_FIB_PULLBACK ? 4 :
+     stratId == STRAT_ID_SMA200_DIVERGENCE ? 5 :
+     stratId == STRAT_ID_ADX_EMA_CROSS ? 6 :
+     stratId == STRAT_ID_CANDLE_PATTERN ? 7 :
+     stratId == STRAT_ID_GOLDEN_DEATH_CROSS ? 8 :
+     stratId == STRAT_ID_TPG_RSI_SCALP ? 9 :
+     stratId == STRAT_ID_SWEEP ? 10 :
+     stratId == STRAT_ID_STACK_BIAS ? 11 :
+     11
+
+get_data_strategy_risk_atr_mult(int stratId) =>
+    stratId == STRAT_ID_VWAP_EMA_CROSS ? 1.0 :
+     stratId == STRAT_ID_EMA_STOCH_PULLBACK ? 1.2 :
+     stratId == STRAT_ID_EMA200_BB_SQUEEZE ? 1.3 :
+     stratId == STRAT_ID_ICHIMOKU_MACD_FLIP ? 1.5 :
+     stratId == STRAT_ID_FIB_PULLBACK ? 1.1 :
+     stratId == STRAT_ID_SMA200_DIVERGENCE ? 1.6 :
+     stratId == STRAT_ID_ADX_EMA_CROSS ? 1.2 :
+     stratId == STRAT_ID_SWEEP ? 0.9 :
+     stratId == STRAT_ID_CANDLE_PATTERN ? 1.1 :
+     stratId == STRAT_ID_GOLDEN_DEATH_CROSS ? 2.0 :
+     stratId == STRAT_ID_STACK_BIAS ? 1.0 :
+     stratId == STRAT_ID_TPG_RSI_SCALP ? 0.8 :
+     1.2
+
+get_data_strategy_sl_max_atr(int stratId) =>
+    stratId == STRAT_ID_TPG_RSI_SCALP ? 1.2 :
+     stratId == STRAT_ID_CANDLE_PATTERN ? 1.8 :
+     stratId == STRAT_ID_STACK_BIAS ? 1.8 :
+     stratId == STRAT_ID_VWAP_EMA_CROSS ? 2.0 :
+     stratId == STRAT_ID_EMA_STOCH_PULLBACK ? 2.0 :
+     stratId == STRAT_ID_ADX_EMA_CROSS ? 2.2 :
+     stratId == STRAT_ID_EMA200_BB_SQUEEZE ? 2.2 :
+     stratId == STRAT_ID_FIB_PULLBACK ? 2.5 :
+     stratId == STRAT_ID_ICHIMOKU_MACD_FLIP ? 3.0 :
+     stratId == STRAT_ID_SMA200_DIVERGENCE ? 3.0 :
+     stratId == STRAT_ID_GOLDEN_DEATH_CROSS ? 3.5 :
+     stratId == STRAT_ID_SWEEP ? 1.6 :
+     localCfg.slMaxAtr
+
+// Core (Strategy): Builds entry/SL/TP plan per strategy profile.
+get_data_strategy_trade_plan(int stratId, bool isBuy, float rrInput) =>
+    tech = get_data_local_technical_ctx(timeframe.period)
+    float rrv = na(rrInput) or rrInput <= 0 ? SETTINGS.SIGNAL_RR_DEFAULT : rrInput
+    float entry = close
+    float atrRef = math.max(tech.atr14, syminfo.mintick)
+    float fallbackRisk = math.max(atrRef * get_data_strategy_risk_atr_mult(stratId), syminfo.mintick * 2)
+    float buffer = math.max(syminfo.mintick * 2.0, syminfo.mintick)
+
+    float stop = na
+    if stratId == STRAT_ID_VWAP_EMA_CROSS
+        stop := isBuy ? (math.min(tech.ema21, tech.vwap) - buffer) : (math.max(tech.ema21, tech.vwap) + buffer)
+    else if stratId == STRAT_ID_EMA_STOCH_PULLBACK
+        stop := isBuy ? (ta.lowest(low, 8) - buffer) : (ta.highest(high, 8) + buffer)
+    else if stratId == STRAT_ID_EMA200_BB_SQUEEZE
+        stop := isBuy ? (math.min(tech.bbBasis, tech.ema200) - buffer) : (math.max(tech.bbBasis, tech.ema200) + buffer)
+    else if stratId == STRAT_ID_ICHIMOKU_MACD_FLIP
+        stop := isBuy ? (math.min(tech.ichiBase, tech.ichiCloudBtm) - buffer) : (math.max(tech.ichiBase, tech.ichiCloudTop) + buffer)
+    else if stratId == STRAT_ID_FIB_PULLBACK
+        stop := isBuy ? (tech.fibLo55 - buffer) : (tech.fibHi55 + buffer)
+    else if stratId == STRAT_ID_SMA200_DIVERGENCE
+        stop := isBuy ? (math.min(tech.sma200, ta.lowest(low, 20)) - buffer) : (math.max(tech.sma200, ta.highest(high, 20)) + buffer)
+    else if stratId == STRAT_ID_ADX_EMA_CROSS
+        stop := isBuy ? (math.min(tech.ema50, ta.lowest(low, 10)) - buffer) : (math.max(tech.ema50, ta.highest(high, 10)) + buffer)
+    else if stratId == STRAT_ID_SWEEP
+        stop := isBuy ? (ta.lowest(low, 3) - buffer) : (ta.highest(high, 3) + buffer)
+    else if stratId == STRAT_ID_CANDLE_PATTERN
+        stop := isBuy ? (math.min(low, low[1]) - buffer) : (math.max(high, high[1]) + buffer)
+    else if stratId == STRAT_ID_GOLDEN_DEATH_CROSS
+        stop := isBuy ? (tech.ema200 - atrRef * 0.5) : (tech.ema200 + atrRef * 0.5)
+    else if stratId == STRAT_ID_STACK_BIAS
+        stop := isBuy ? (math.min(tech.ema50, tech.ema200) - buffer) : (math.max(tech.ema50, tech.ema200) + buffer)
+    else if stratId == STRAT_ID_TPG_RSI_SCALP
+        stop := isBuy ? (ta.lowest(low, 3) - buffer) : (ta.highest(high, 3) + buffer)
+    else
+        stop := isBuy ? (entry - fallbackRisk) : (entry + fallbackRisk)
+
+    // Sanitize stop: correct side and minimum distance.
+    bool stopInvalid = na(stop) or (isBuy and stop >= entry) or (not isBuy and stop <= entry)
+    if stopInvalid
+        stop := isBuy ? (entry - fallbackRisk) : (entry + fallbackRisk)
+
+    // Clamp SL risk so it is not too small or too large.
+    float riskRaw = math.max(math.abs(entry - stop), syminfo.mintick)
+    float riskMin = math.max(syminfo.mintick * localCfg.slMinTicks, atrRef * localCfg.slMinAtr)
+    float riskMaxAtr = atrRef * get_data_strategy_sl_max_atr(stratId)
+    float riskMaxPct = math.max(math.abs(entry) * localCfg.slMaxPct, syminfo.mintick * localCfg.slMinTicks)
+    float riskMax = math.max(math.min(riskMaxAtr, riskMaxPct), riskMin)
+    float risk = math.min(math.max(riskRaw, riskMin), riskMax)
+    stop := isBuy ? (entry - risk) : (entry + risk)
+    stop := isBuy ? math.min(stop, entry - syminfo.mintick) : math.max(stop, entry + syminfo.mintick)
+    float target = isBuy ? (entry + risk * rrv) : (entry - risk * rrv)
+    [entry, stop, target, rrv]
+
+get_data_strategy_name_by_id(int stratId) =>
+    string out = "Strategy"
+    if array.size(STRATEGIES) > 0
+        for i = 0 to array.size(STRATEGIES) - 1
+            KitCore.Strategy s = array.get(STRATEGIES, i)
+            if s.id == stratId
+                out := s.name
+                break
+    out
+
+process_data_add_trade(int stratId, KitSMC.Event sig, float zoneTop, float zoneBtm, float entry, float stoploss, float takeprofit, float rrUsed, float slGap) =>
+    if not na(sig)
+        string setupShort = str.length(sig.type) > 5 ? str.substring(sig.type, 0, 5) : sig.type
+        string sourceTf = na(sig.sourceTf) or sig.sourceTf == "" ? timeframe.period : sig.sourceTf
+        string tradeType = get_data_trade_type_for_source_rr(setupShort, sourceTf, rrUsed)
+        string sourceLabel = get_data_trade_source_label(setupShort)
+        bool passTradePlan = KitCore.is_trade_plan_valid_with_limits(entry, stoploss, takeprofit, localCfg.minTradeSizeTicks, 0.0)
+        string longName = get_data_strategy_name_by_id(stratId)
+        string eventsLine = "events: " + KitSMC.get_trade_relevant_events_text(signalHist, sig.direction, sig.type, "", 5, 40, 28, CONST.SYM_ARR2_UP, CONST.SYM_ARR2_DN, CONST.SYM_DASH)
+        KitCore.TradeTooltipMeta tipMeta = KitCore.TradeTooltipMeta.new(shortName = setupShort, longName = longName, reason = sig.reason, pdarrayText = "na", qualityPct = sig.quality, scoreVal = sig.score)
+        string reasonFinal = KitCore.format_trade_tooltip(chartCtx, tipMeta, sig.direction, entry, takeprofit, stoploss, rrUsed, slGap, eventsLine, CONST.SYM_ARR2_UP, CONST.SYM_ARR2_DN, CONST.SYM_DASH)
+        bool shouldTrackTrades = tradeEntriesEnabled or strategyOrdersEnabled
+        int orderSeq = array.size(trades)
+        KitCore.Trade e = na
+        float orderQty = na
+        string orderId = ""
+        passTradePlan := true // FORCED: bypass plan validator for debugging
+        orderId := sig.direction + "_" + str.tostring(bar_index) + "_" + str.tostring(orderSeq)
+        if passTradePlan
+            e := KitCore.Trade.new(direction = sig.direction, type = tradeType, zoneTop = zoneTop, zoneBtm = zoneBtm, entry = entry, stoploss = stoploss, takeprofit = takeprofit, rrValue = rrUsed, barCreated = bar_index, reason = reasonFinal, score = sig.score, riskUsd = tradeRiskAmountUsd, state = "PENDING", visualSig = "HC")
+            orderQty := 1.0 // MANUALLY FORCED TO 1.0
+        if not na(e)
+            if shouldTrackTrades
+                array.push(tradeModelIds, stratId)
+            CORE_track_trade_entry(trades, tradeOrderIds, e, orderId, shouldTrackTrades)
+            string webhookNote = sig.reason
+            KitCore.emit_trade_webhook_new_trade(webhookEnabled, true, sourceLabel, syminfo.ticker, sig.direction, sourceTf, entry, stoploss, takeprofit, webhookNote, orderId, "ctrader", "PENDING", rrUsed, sourceLabel, tradeRiskAmountUsd, tradeRiskMode == "%" ? tradeRiskValue : na, time, sig.reason, timeframe.period)
+            if tradeRiskMode == "%"
+                KitCore.prop_register_trade(propDayState, tradeRiskValue)
+            if strategyOrdersEnabled
+                CORE_submit_strategy_trade_order(orderId, sig.direction, orderQty, entry, stoploss, takeprofit)
+                array.set(dbgTradeCreatedBox, 0, array.get(dbgTradeCreatedBox, 0) + 1)
+    bool(na)
+
+process_data_add_strategy_entry(int stratId, KitSMC.Event sig, float rrInput, bool dynamicTpCfg, float gapCfg) =>
+    if not na(sig) and sig.direction != ""
+        if KitCore.prop_check_new_day(propDayState)
+            array.set(propDayState, 0, PAPER_EQUITY_USD)
+        KitCore.PropRiskGuard propGuard = KitCore.get_prop_profile(propPreset)
+        bool propAllowed = tradeRiskMode == "%" ? KitCore.prop_entry_allowed(propDayState, propGuard, tradeRiskValue) : true
+        if not propAllowed
+            bool(na)
+        else
+            bool isBuy = sig.direction == "Buy"
+            string stratKey = get_data_strategy_cfg_key(stratId)
+            array<float> rrArr = get_data_rr_array_for_strategy_key(stratKey)
+            for rrIdx = 0 to array.size(rrArr) - 1
+                float rrVal = array.get(rrArr, rrIdx)
+                [entryBase, stoplossBase, _takeprofitBase, rrv] = get_data_strategy_trade_plan(stratId, isBuy, rrVal)
+                float limitOff = syminfo.mintick // Aggressive entry: just 1 tick offset.
+                float entry = isBuy ? math.min(entryBase, close - limitOff) : math.max(entryBase, close + limitOff)
+                float slRaw = stoplossBase
+                float swAbove = na
+                float swBelow = na
+                [swAboveTmp, swBelowTmp] = KitSMC.get_nearest_swing_targets_from_tf_data(msLtfData, msHtf1Data, msHtf2Data, entry)
+                swAbove := swAboveTmp
+                swBelow := swBelowTmp
+                if isBuy and not na(swBelow)
+                    slRaw := math.min(slRaw, swBelow)
+                if not isBuy and not na(swAbove)
+                    slRaw := math.max(slRaw, swAbove)
+                float baseRisk = math.max(math.abs(entry - slRaw), syminfo.mintick)
+                KitCore.TradePlan plan = KitCore.build_trade_plan(sig.direction, entry, slRaw, rrv, math.max(gapCfg, 0.0) * baseRisk, na, true)
+                float slGap = plan.slGap
+                float minTp = isBuy ? (plan.entry + plan.risk) : (plan.entry - plan.risk)
+                float takeprofit = plan.takeprofit
+                if dynamicTpCfg
+                    if isBuy and not na(swAbove)
+                        float swingTp = swAbove - slGap
+                        plan := KitCore.cap_trade_plan_target(plan, sig.direction, swingTp, minTp)
+                    if not isBuy and not na(swBelow)
+                        float swingTp = swBelow + slGap
+                        plan := KitCore.cap_trade_plan_target(plan, sig.direction, swingTp, minTp)
+                takeprofit := plan.takeprofit
+                float zTop = float(na)
+                float zBtm = float(na)
+                process_data_add_trade(stratId, sig, zTop, zBtm, plan.entry, plan.stoploss, takeprofit, plan.rrUsed, slGap)
+    bool(na)
+
+process_data_trades() =>
+    bool doResolve = true
+    float rHi = high
+    float rLo = low
+    int rBar = bar_index
+    if array.size(trades) > 0 and array.size(tradeModelIds) == array.size(trades) and array.size(tradeOrderIds) == array.size(trades)
+        int i = array.size(trades) - 1
+        while i >= 0
+            KitCore.Trade e = array.get(trades, i)
+            int anchorBar = not na(e.barClosed) ? e.barClosed : e.barCreated
+            if anchorBar < workingFirstBar
+                if e.state == CONST.SIGNAL_STATE_PENDING
+                    if strategyOrdersEnabled
+                        CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                else
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                array.remove(tradeModelIds, i)
+                i -= 1
+                continue
+            int sid = array.get(tradeModelIds, i)
+            string orderId = array.get(tradeOrderIds, i)
+            if doResolve
+                [eResolved, outcome] = KitCore.resolve_trade_state(e, rHi, rLo, rBar, SETTINGS.ENTRY_REQUIRE_NEXT_BAR, SETTINGS.ENTRY_SL_FIRST_ON_DUAL_HIT, CONST)
+                e := eResolved
+                if outcome == 2
+                    if strategyOrdersEnabled
+                        CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, i))
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, i)
+                    array.remove(tradeOrderIds, i)
+                    array.remove(tradeModelIds, i)
+                    i -= 1
+                    continue
+                if outcome == 1 or outcome == -1
+                    int bIdx = get_data_strategy_bucket_idx(sid)
+                    KitCore.apply_trade_outcome_stats(strategyStats, bIdx, outcome, e.rrValue, CONST, CONST.SIG_METRIC_COUNT)
+            array.set(trades, i, e)
+
+            bool showActive = e.state == CONST.SIGNAL_STATE_PENDING ? tradeShowPending : e.state == CONST.SIGNAL_STATE_START ? tradeShowStart : false
+            if tradeEntriesEnabled
+                e := KitCore.draw_trade_visual(e, CONST, THEME, ENTRY_VIS_CFG, true, showActive, tradeShowTp, tradeShowSl, perfLookbackBars, 12, "RESULT_LINES", "RESULT_LINES", 1)
+            array.set(trades, i, e)
+            i -= 1
+        // Synchronized prune: remove stale resolved trades and enforce size cap.
+        int j = array.size(trades) - 1
+        while j >= 0
+            KitCore.Trade e = array.get(trades, j)
+            bool overCap = array.size(trades) > 120
+            if overCap
+                if e.state == CONST.SIGNAL_STATE_PENDING
+                    if strategyOrdersEnabled
+                        CORE_cancel_strategy_trade_order(array.get(tradeOrderIds, j))
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, j)
+                    array.remove(tradeOrderIds, j)
+                else
+                    KitCore.delete_trade_visuals(e)
+                    array.remove(trades, j)
+                    array.remove(tradeOrderIds, j)
+                array.remove(tradeModelIds, j)
+            j -= 1
+    bool(na)
+
+process_data_triggers_queue(array<KitSMC.Event> queuedEvents) =>
+    bool _ctxTouched = array.size(queuedEvents) >= 0
+    if array.size(queuedEvents) > 0 and array.size(triggerModelIds) == array.size(queuedEvents)
+        int i = array.size(queuedEvents) - 1
+        while i >= 0
+            KitSMC.Event ev = array.get(queuedEvents, i)
+            if not na(ev.barDetected) and ev.barDetected < workingFirstBar
+                array.remove(queuedEvents, i)
+                array.remove(triggerModelIds, i)
+                i -= 1
+                continue
+            int sid = array.get(triggerModelIds, i)
+            [modelEnabled, triggerType, triggerWhen] = get_data_strategy_trigger_cfg(sid)
+            [rrCfg, _, biasLtfMode, biasHtf1Mode, biasHtf2Mode, requiredPrevEvents, requiredWindowBars, biasDirection, _, dynamicTpCfg, gapCfg, _] = get_data_entry_model_dynamic_cfg(sid)
+            bool isEntryModel = get_data_strategy_disp(sid) == CONST.DISP_ENTRY
+            bool consumed = true
+            if ev.direction != "" and isEntryModel and modelEnabled
+                bool passDynamic = true
+                if triggerType == TRIGGER_TYPE_TRADE
+                    if triggerWhen == TRIGGER_WHEN_TOUCH and passDynamic
+                        process_data_add_strategy_entry(sid, ev, rrCfg, dynamicTpCfg, gapCfg)
+                    else
+                        int age = bar_index - ev.barDetected
+                        bool expired = age > signalContextBars
+                        bool touched = age > 0 and high >= ev.zoneBtm and low <= ev.zoneTop
+                        bool confirmed = touched and (ev.direction == "Buy" ? close > ev.zoneTop : close < ev.zoneBtm)
+                        bool invalid = ev.direction == "Buy" ? close < ev.zoneBtm : close > ev.zoneTop
+                        if confirmed and passDynamic
+                            process_data_add_strategy_entry(sid, ev, rrCfg, dynamicTpCfg, gapCfg)
+                        else if not expired and not invalid
+                            consumed := false
+            if consumed
+                array.remove(queuedEvents, i)
+                array.remove(triggerModelIds, i)
+            i -= 1
+    _ctxTouched
+
+// Core (Strategy): Evaluate all strategies applicable to current TF, return best Event.
+process_data_strategies(int tfSec, int biasDir, bool evtVwapBull, bool evtVwapBear, bool evtRsiBull, bool evtRsiBear, bool evtHvbBull, bool evtHvbBear) =>
+    KitSMC.Event best = na
+    int bestStratId = 0
+    int bestScore = 0
+    int bestEffect = 0
+    
+    tech = get_data_local_technical_ctx(timeframe.period)
+    
+    // ── Pre-calculate all dynamic triggers to ensure historical consistency ──
+    bool crossVwapUp = ta.crossover(close, tech.vwap)
+    bool crossVwapDn = ta.crossunder(close, tech.vwap)
+    bool crossEma9_21Up = ta.crossover(tech.ema9, tech.ema21)
+    bool crossEma9_21Dn = ta.crossunder(tech.ema9, tech.ema21)
+    bool crossEma20_50Up = ta.crossover(tech.ema20, tech.ema50)
+    bool crossEma20_50Dn = ta.crossunder(tech.ema20, tech.ema50)
+    bool crossEma50_200Up = ta.crossover(tech.ema50, tech.ema200)
+    bool crossEma50_200Dn = ta.crossunder(tech.ema50, tech.ema200)
+    bool crossStochUp = ta.crossover(tech.stochK, tech.stochD)
+    bool crossStochDn = ta.crossunder(tech.stochK, tech.stochD)
+    
+    float sma200w = ta.sma(close, 200)
+    float atrw = ta.atr(14)
+    [tDiv, _] = KitCore.div_check_all(tech.rsi14, searchdiv, prd, maxbars, dontconfirm, ph_positions, pl_positions, ph_vals, pl_vals)
+
+    bool allowBuy = KitCore.bias_allows_direction(biasDir, "Buy")
+    bool allowSell = KitCore.bias_allows_direction(biasDir, "Sell")
+
+    for i = 0 to array.size(STRATEGIES) - 1
+        s = array.get(STRATEGIES, i)
+        if not get_data_strategy_enabled(s.id) or not get_data_is_strategy_applicable(s, tfSec)
+            continue
+
+        string candDir = ""
+        int candScore = 0
+        string candWhy = ""
+
+        if s.id == STRAT_ID_VWAP_EMA_CROSS
+            if allowBuy and close > tech.vwap and crossEma9_21Up
+                candDir := "Buy", candScore := 4, candWhy := "VWAP bullish + EMA9 crosses above EMA21."
+            if allowSell and close < tech.vwap and crossEma9_21Dn
+                candDir := "Sell", candScore := 4, candWhy := "VWAP bearish + EMA9 crosses below EMA21."
+
+        else if s.id == STRAT_ID_EMA_STOCH_PULLBACK
+            bool pullbackBuy = low <= tech.ema21 and close >= tech.ema21
+            bool pullbackSell = high >= tech.ema21 and close <= tech.ema21
+            if allowBuy and tech.ema50Up and pullbackBuy and crossStochUp and tech.stochK < 20
+                candDir := "Buy", candScore := 4, candWhy := "EMA50 rising + pullback to EMA21 + Stoch cross up (<20)."
+            if allowSell and tech.ema50Down and pullbackSell and crossStochDn and tech.stochK > 80
+                candDir := "Sell", candScore := 4, candWhy := "EMA50 falling + pullback to EMA21 + Stoch cross down (>80)."
+
+        else if s.id == STRAT_ID_EMA200_BB_SQUEEZE
+            if allowBuy and close > tech.ema200 and tech.rsi14 > 50 and tech.bbSqueeze and close > tech.bbUpper
+                candDir := "Buy", candScore := 4, candWhy := "EMA200 bull + RSI>50 + BB squeeze + close above upper band."
+            if allowSell and close < tech.ema200 and tech.rsi14 < 50 and tech.bbSqueeze and close < tech.bbLower
+                candDir := "Sell", candScore := 4, candWhy := "EMA200 bear + RSI<50 + BB squeeze + close below lower band."
+
+        else if s.id == STRAT_ID_ICHIMOKU_MACD_FLIP
+            if allowBuy and tech.ichiAboveCloud and tech.macdFlipUp
+                candDir := "Buy", candScore := 4, candWhy := "Price above Kumo + MACD histogram flips up."
+            if allowSell and tech.ichiBelowCloud and tech.macdFlipDn
+                candDir := "Sell", candScore := 4, candWhy := "Price below Kumo + MACD histogram flips down."
+
+        else if s.id == STRAT_ID_FIB_PULLBACK
+            if allowBuy and tech.ema50 > tech.ema200 and tech.fibNearBull
+                candDir := "Buy", candScore := 3, candWhy := "Bull trend + pullback near ~0.618 with reclaim tolerance."
+            if allowSell and tech.ema50 < tech.ema200 and tech.fibNearBear
+                candDir := "Sell", candScore := 3, candWhy := "Bear trend + pullback near ~0.618 with rejection tolerance."
+
+        else if s.id == STRAT_ID_SMA200_DIVERGENCE
+            bool nearSma = math.abs(close - sma200w) <= atrw * 0.5
+            if nearSma
+                if allowBuy and tDiv == 1
+                    candDir := "Buy", candScore := 3, candWhy := "Near SMA200 + regular bullish RSI divergence."
+                if allowSell and tDiv == 2
+                    candDir := "Sell", candScore := 3, candWhy := "Near SMA200 + regular bearish RSI divergence."
+
+        else if s.id == STRAT_ID_ADX_EMA_CROSS
+            bool adxStrong = tech.adx14 > 25
+            if allowBuy and adxStrong and crossEma20_50Up
+                candDir := "Buy", candScore := 3, candWhy := "EMA20 crosses above EMA50 and ADX crosses above 25."
+            if allowSell and adxStrong and crossEma20_50Dn
+                candDir := "Sell", candScore := 3, candWhy := "EMA20 crosses below EMA50 and ADX crosses above 25."
+
+        else if s.id == STRAT_ID_SWEEP
+            [htf1Sw, _] = KitCore.get_htf_pair()
+            string sweepTf = na(htf1Sw) ? timeframe.period : htf1Sw
+            [topRef, btmRef] = KitSMC.get_first_swingrefs_around_price(sweepTf, 120, close)
+            if allowBuy and not na(btmRef) and KitSMC.sweep_reclaim_allowed(uiDisplayCombo, 1, btmRef.price, open, high, low, close, syminfo.mintick)
+                candDir := "Buy", candScore := 4, candWhy := "Sweep low + reclaim (" + sweepTf + ")."
+            if allowSell and not na(topRef) and KitSMC.sweep_reclaim_allowed(uiDisplayCombo, -1, topRef.price, open, high, low, close, syminfo.mintick)
+                candDir := "Sell", candScore := 4, candWhy := "Sweep high + reclaim (" + sweepTf + ")."
+
+        else if s.id == STRAT_ID_CANDLE_PATTERN
+            if cpShowPat and cpPatScore >= 3
+                string volTxt = cpVolBonus >= 2 ? " + extreme vol" : cpVolBonus >= 1 ? " + high vol" : ""
+                string conflTxt = cpAggStrength > 1 ? " (×" + str.tostring(cpAggStrength) + " confluence)" : ""
+                if allowBuy and cpIsBull
+                    candDir := "Buy", candScore := cpPatScore + cpVolBonus, candWhy := cpAggName + volTxt + conflTxt
+                if allowSell and cpIsBear
+                    candDir := "Sell", candScore := cpPatScore + cpVolBonus, candWhy := cpAggName + volTxt + conflTxt
+
+        else if s.id == STRAT_ID_GOLDEN_DEATH_CROSS
+            if allowBuy and crossEma50_200Up
+                candDir := "Buy", candScore := 2, candWhy := "EMA50 crosses above EMA200 (macro bull shift)."
+            if allowSell and crossEma50_200Dn
+                candDir := "Sell", candScore := 2, candWhy := "EMA50 crosses below EMA200 (macro bear shift)."
+
+        else if s.id == STRAT_ID_STACK_BIAS
+            if allowBuy and stackBiasDir == 1 and stackBuyCond
+                candDir := "Buy", candScore := math.max(3, stackBull + 1), candWhy := "MA stack bullish + Kit bias aligned: EMA/SMA/RSI/VWAP confluence."
+            if allowSell and stackBiasDir == -1 and stackSellCond
+                candDir := "Sell", candScore := math.max(3, stackBear + 1), candWhy := "MA stack bearish + Kit bias aligned: EMA/SMA/RSI/VWAP confluence."
+
+        else if s.id == STRAT_ID_TPG_RSI_SCALP
+            float myRsi = ta.rsi(close, tpgRsiLen)
+            bool rsiOB = myRsi >= tpgRsiOb, rsiOS = myRsi <= tpgRsiOs
+            float bullFib = (low - high) * tpgHammerBody + high, bearFib = (high - low) * tpgHammerBody + low
+            float bearCandle = math.min(close, open), bullCandle = math.max(close, open)
+            bool hammer = bearCandle >= bullFib and rsiOS, shooting = bullCandle <= bearFib and rsiOB
+            bool twoGreenBars = close > open and close[1] > open[1] and rsiOS
+            bool twoRedBars = close < open and close[1] < open[1] and rsiOB
+            bool bullE = close > open[1] and close[1] < open[1], bearE = close < open[1] and close[1] > open[1]
+            bool tradeSignal = ((rsiOS or rsiOS[1]) and bullE) or ((rsiOB or rsiOB[1]) and bearE)
+            int buyScore = 0, sellScore = 0
+            string whyB = "", whyS = ""
+            if tpgUseEngulf and tradeSignal and bullE
+                buyScore += 3, whyB += "engulfing+RSI OS, "
+            if tpgUseEngulf and tradeSignal and bearE
+                sellScore += 3, whyS += "engulfing+RSI OB, "
+            if tpgUseHammerShooting and hammer
+                buyScore += 2, whyB += "hammer+RSI OS, "
+            if tpgUseHammerShooting and shooting
+                sellScore += 2, whyS += "shooting+RSI OB, "
+            if tpgUseTwoBars and twoGreenBars
+                buyScore += 2, whyB += "two green bars+RSI OS, "
+            if tpgUseTwoBars and twoRedBars
+                sellScore += 2, whyS += "two red bars+RSI OB, "
+            if buyScore >= 2 and buyScore > sellScore
+                candDir := "Buy", candScore := buyScore, candWhy := "TPG scalp: " + whyB
+            if sellScore >= 2 and sellScore > buyScore
+                candDir := "Sell", candScore := sellScore, candWhy := "TPG scalp: " + whyS
+
+        bool hasCand = candDir != "" and candScore >= 2
+        bool tpgWins = hasCand and s.id == STRAT_ID_TPG_RSI_SCALP
+        bool better = tpgWins or (hasCand and (candScore > bestScore or (candScore == bestScore and s.effectiveness > bestEffect)))
+        if better
+            best := get_data_trade_signal(str.upper(s.shortName), candDir, s.description + " " + candWhy, candScore, float(s.effectiveness) / 10.0)
+            bestStratId := s.id, bestScore := candScore, bestEffect := s.effectiveness
+
+    [best, bestStratId, ""]
+
+// Aux state + strategy processing.
+int vwapPrev = vwap_bias_state
+[hvbColorNew, vwapStateNew, evtVwapBull, evtVwapBear, evtRsiBull, evtRsiBear, evtHvbBull, evtHvbBear] = get_data_aux_events(powerPercent, vwap_bias_state)
+hvbBarColor := hvbColorNew
+vwap_bias_state := vwapStateNew
+runtimeCtx := KitCore.update_runtime_context(runtimeCtx)
+if barstate.isnew
+    array.set(dbgSigFoundBox, 0, 0)
+    array.set(dbgEntryAttemptBox, 0, 0)
+    array.set(dbgPropBlockedBox, 0, 0)
+    array.set(dbgTradePlanFailBox, 0, 0)
+    array.set(dbgTradeCreatedBox, 0, 0)
+bool canProcessSignals = false
+bool canEmitSignals = false
+draw_data_trades_dashboard(chartCtx)
+if uiShowCoreDebug and (barstate.islast or barstate.islastconfirmedhistory)
+    if na(dbgCoreTable)
+        dbgCoreTable := table.new(position.top_right, 2, 6, bgcolor = color.new(THEME.COLOR_UI_BG, 80), frame_color = color.new(THEME.COLOR_UI_FG, 70), border_color = color.new(THEME.COLOR_UI_FG, 80), frame_width = 1, border_width = 1)
+    table.cell(dbgCoreTable, 0, 0, "Core Debug", text_color = THEME.COLOR_UI_FG, bgcolor = color.new(THEME.COLOR_UI_BG, 0))
+    table.cell(dbgCoreTable, 1, 0, "bar " + str.tostring(bar_index), text_color = THEME.COLOR_UI_FG, bgcolor = color.new(THEME.COLOR_UI_BG, 0))
+    table.cell(dbgCoreTable, 0, 1, "Signals", text_color = THEME.COLOR_UI_FG)
+    table.cell(dbgCoreTable, 1, 1, str.tostring(array.get(dbgSigFoundBox, 0)), text_color = THEME.COLOR_HTF1)
+    table.cell(dbgCoreTable, 0, 2, "Entry attempts", text_color = THEME.COLOR_UI_FG)
+    table.cell(dbgCoreTable, 1, 2, str.tostring(array.get(dbgEntryAttemptBox, 0)), text_color = THEME.COLOR_HTF1)
+    table.cell(dbgCoreTable, 0, 3, "Prop blocked", text_color = THEME.COLOR_UI_FG)
+    table.cell(dbgCoreTable, 1, 3, str.tostring(array.get(dbgPropBlockedBox, 0)), text_color = THEME.COLOR_BEARISH)
+    table.cell(dbgCoreTable, 0, 4, "Plan fail", text_color = THEME.COLOR_UI_FG)
+    table.cell(dbgCoreTable, 1, 4, str.tostring(array.get(dbgTradePlanFailBox, 0)), text_color = THEME.COLOR_BEARISH)
+    table.cell(dbgCoreTable, 0, 5, "Trades created", text_color = THEME.COLOR_UI_FG)
+    table.cell(dbgCoreTable, 1, 5, str.tostring(array.get(dbgTradeCreatedBox, 0)), text_color = THEME.COLOR_BULLISH)
+else
+    if not na(dbgCoreTable)
+        table.clear(dbgCoreTable, 0, 0, 1, 5)
+
+// barcolor(hvbBarColor, title = "HVB", editable = false)

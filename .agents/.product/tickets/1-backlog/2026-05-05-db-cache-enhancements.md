@@ -23,6 +23,6 @@
 2. Update `db-schema.md` with any missing schema changes
 
 ## Files
-- `web-ui/src/pages/system/DatabasePage.jsx`
-- `web-ui/src/pages/system/CachePage.jsx`
+- `src/ui/src/pages/system/DatabasePage.jsx`
+- `src/ui/src/pages/system/CachePage.jsx`
 - `.agents/.product/architecture/db-schema.md`

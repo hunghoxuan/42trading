@@ -1,0 +1,15 @@
+{
+  "key": "stoch_reversal_v1",
+  "name": "Stochastic Reversal v1",
+  "kind": "preset",
+  "description": "Uses stochastic oversold and overbought crossovers for reversal timing.",
+  "params": {
+    "period": 14,
+    "smooth_period": 3,
+    "oversold": 20,
+    "overbought": 80,
+    "rr_target": 1.5,
+    "stop_lookback": 3
+  },
+  "min_bars": 40
+}

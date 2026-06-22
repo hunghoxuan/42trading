@@ -17,10 +17,10 @@ services:
       timeout: 3s
       retries: 5
 
-  webhook:
+  src/api:
     build:
       context: ..
-      dockerfile: docker/webhook/Dockerfile
+      dockerfile: docker/src/api/Dockerfile
     environment:
       PORT: "3001"
       PG_CONNECTION_STRING: "postgres://trading:trading@db:5432/trading"
@@ -35,14 +35,14 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  web-ui:
+  src/admin:
     build:
       context: ..
-      dockerfile: docker/web-ui/Dockerfile
+      dockerfile: docker/src/admin/Dockerfile
     ports:
       - "8080:80"
     depends_on:
-      - webhook
+      - src/api
     restart: unless-stopped
 
 volumes:

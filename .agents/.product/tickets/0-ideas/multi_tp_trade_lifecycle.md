@@ -74,11 +74,11 @@ This feature must preserve backward compatibility with current single-TP behavio
   - `realized_pnl_total`
 
 ## 6. UI Components Impact
-- `web-ui/src/components/TradePlanEditor.jsx`
+- `src/ui/src/components/TradePlanEditor.jsx`
   - Add TP1/TP2/TP3 input rows + validators.
-- `web-ui/src/components/charts/SymbolChart.jsx`
+- `src/ui/src/components/charts/SymbolChart.jsx`
   - Context menu TP click should route to ordered TP slots.
-- `web-ui/src/components/SignalDetailCard.jsx` and trade/signal pages
+- `src/ui/src/components/SignalDetailCard.jsx` and trade/signal pages
   - Display multi-TP values where relevant.
 
 ## 7. Validation Rules

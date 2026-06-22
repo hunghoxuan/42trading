@@ -53,13 +53,13 @@ Added per-source connectivity tracking (MT5, cTrader, Binance) with real-time st
 | File | Change |
 |------|--------|
 | `webhook/server.js` | SOURCE_STATUS tracker, trackSourceActivity(), cronDetails, SNAPSHOTS_CRON, risk_money/risk_pct in pull, independent cron loop, OpenRouter headers/fallback |
-| `web-ui/src/pages/system/HealthPage.jsx` | Per-source display, per-cron status cards, notification item styling |
-| `web-ui/src/pages/DashboardPage.jsx` | Filter labels on top of selects |
-| `web-ui/src/pages/ai/ChartSnapshotsPage.jsx` | Direction fix, OpenRouter models, ImageViewer |
-| `web-ui/src/components/charts/SymbolChart.jsx` | Fullscreen mode, snapshot click-to-preview |
-| `web-ui/src/components/ImageViewer.jsx` | NEW: Reusable image viewer with modal, download, delete |
-| `web-ui/src/styles.css` | Font-size 10px for inputs/selects/buttons/toolbar |
-| `web-ui/index.html` | Auto-reload version poll script |
+| `src/ui/src/pages/system/HealthPage.jsx` | Per-source display, per-cron status cards, notification item styling |
+| `src/ui/src/pages/DashboardPage.jsx` | Filter labels on top of selects |
+| `src/ui/src/pages/ai/ChartSnapshotsPage.jsx` | Direction fix, OpenRouter models, ImageViewer |
+| `src/ui/src/components/charts/SymbolChart.jsx` | Fullscreen mode, snapshot click-to-preview |
+| `src/ui/src/components/ImageViewer.jsx` | NEW: Reusable image viewer with modal, download, delete |
+| `src/ui/src/styles.css` | Font-size 10px for inputs/selects/buttons/toolbar |
+| `src/ui/index.html` | Auto-reload version poll script |
 | `bridge-clients/TVBridge_CTrader.cs` | source_id="Ctrader" in payloads |
 | `bridge-clients/TVBridgeEA.mq5` | source_id="MT5" in payloads |
 | `config/response_mapping.json` | v2.7 schema mappings |

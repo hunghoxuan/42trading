@@ -8,7 +8,7 @@
 
 ## Runtime
 - Backend: `webhook/server.js`.
-- UI: `web-ui`.
+- UI: `src/ui`.
 - Broker clients: `bridge-clients`.
 - DB: Postgres.
 

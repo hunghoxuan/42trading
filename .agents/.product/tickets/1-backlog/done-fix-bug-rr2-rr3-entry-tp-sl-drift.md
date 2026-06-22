@@ -34,5 +34,5 @@ Screenshot evidence (BTCUSD):
 - [x] For SELL plans, SL displayed in editor is above Entry unless field is empty.
 - [x] RR2/RR3 no longer explode from direction-invalid or near-zero-risk denominators.
 - [x] Plan values in editor stay anchored to planned contract by precedence.
-- [x] `rtk npm --prefix web-ui run build` passes.
+- [x] `rtk npm --prefix src/ui run build` passes.
 

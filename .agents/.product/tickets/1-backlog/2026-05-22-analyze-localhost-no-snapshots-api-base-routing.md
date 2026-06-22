@@ -13,7 +13,7 @@ When opening UI on `localhost` / `127.0.0.1` and clicking **Analyze**, request c
 - Analyze flow fails although snapshots exist on VPS.
 
 ## Root Cause
-In `web-ui/src/api.js`, `runtimeApiBase()` was prioritizing the default base (`VITE_API_BASE` fallback `http://localhost`) before checking user-stored runtime override (`tvbridge_api_base`).
+In `src/ui/src/api.js`, `runtimeApiBase()` was prioritizing the default base (`VITE_API_BASE` fallback `http://localhost`) before checking user-stored runtime override (`tvbridge_api_base`).
 
 So local sessions could overwrite intended runtime target and force calls to a local backend with empty snapshot storage.
 
@@ -23,7 +23,7 @@ So local sessions could overwrite intended runtime target and force calls to a l
 - Preserve explicit env override support (`VITE_API_BASE`) for local development.
 
 ## Implementation
-- File: `web-ui/src/api.js`
+- File: `src/ui/src/api.js`
 - Changes:
   - Introduced `ENV_API_BASE` (trimmed env value).
   - In localhost mode, `tvbridge_api_base` is now checked before default fallback.

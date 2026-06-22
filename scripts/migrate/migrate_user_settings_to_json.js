@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
-const settingsStore = require("../../webhook/settingsStore");
+const settingsStore = require("../../src/api/services/settingsStore");
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -57,7 +57,7 @@ async function main() {
     return;
   }
 
-  loadEnvFile(path.join(__dirname, "..", "..", "webhook", ".env"));
+  loadEnvFile(path.join(__dirname, "..", "..", "src/api", ".env"));
   loadEnvFile(path.join(__dirname, "..", "..", ".env"));
 
   const connectionString =

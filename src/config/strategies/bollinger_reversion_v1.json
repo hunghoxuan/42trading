@@ -1,0 +1,13 @@
+{
+  "key": "bollinger_reversion_v1",
+  "name": "Bollinger Reversion v1",
+  "kind": "preset",
+  "description": "Looks for closes outside Bollinger Bands and re-entry toward the mean.",
+  "params": {
+    "period": 20,
+    "stddev": 2,
+    "rr_target": 1.5,
+    "stop_lookback": 2
+  },
+  "min_bars": 40
+}

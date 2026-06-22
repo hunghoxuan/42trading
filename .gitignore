@@ -1,18 +1,23 @@
 .env
 !.env.local
+.DS_Store
+*.log
+.playwright-cli/
+Parameters
+Rules
 node_modules/
 .local/
-.test-results/
+.tests/results/
 tradingview/.backup/
 .backup/
 data/
 data.db
 db/.local/
 
-web-ui/dist/
-web-ui/playwright-report/
-web-ui/test-results/
-web-ui/node_modules/
+web/ui/dist/
+tests/results/ui/playwright-report/
+web/ui/tests/results/
+web/ui/node_modules/
 
 webhook/.env
 webhook/node_modules/
@@ -22,10 +27,13 @@ webhook/trade_closed/
 webhook/logs
 webhook/dist/
 webhook/playwright-report/
-webhook/test-results/
+webhook/tests/results/
 webhook/data
 webhook/.data
 webhook/snapshots/
 webhook/trade_files/
 
 tests/logs/
+src/admin/.env.local
+src/api/.env.local
+src/admin/vite.log

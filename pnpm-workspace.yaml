@@ -1,0 +1,4 @@
+packages:
+  - "src/api"
+  - "src/admin"
+  - "src/db"

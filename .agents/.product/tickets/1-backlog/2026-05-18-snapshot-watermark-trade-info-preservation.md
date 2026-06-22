@@ -89,15 +89,15 @@ This must be fixed end-to-end: capture path -> storage path -> DB payload retent
   - trade create/save raw payload and metadata persistence
 
 ### Frontend
-- `web-ui/src/hooks/useChartTileData.js`
+- `src/ui/src/hooks/useChartTileData.js`
   - `trade_sid` propagation on snapshot refresh/capture
-- `web-ui/src/components/charts/SymbolChart.jsx`
+- `src/ui/src/components/charts/SymbolChart.jsx`
   - `[S]` path and mode usage
-- `web-ui/src/pages/trades/V2TradeDetailPage.jsx`
+- `src/ui/src/pages/trades/V2TradeDetailPage.jsx`
   - Info tab item construction / merged raw display
-- `web-ui/src/components/SignalDetailCard.jsx`
+- `src/ui/src/components/SignalDetailCard.jsx`
   - robust object rendering in Info tab
-- `web-ui/src/pages/ai/ChartSnapshotsPage.jsx`
+- `src/ui/src/pages/ai/ChartSnapshotsPage.jsx`
   - canonical raw payload preservation helper
 
 ---

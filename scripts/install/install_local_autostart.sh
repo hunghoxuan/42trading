@@ -2,7 +2,7 @@
 # =============================================================================
 # install_local_autostart.sh — Register start_local.sh as a macOS login service
 # =============================================================================
-# Installs a launchd user agent that runs Vite + webhook on login.
+# Installs a launchd user agent that runs Vite + src/api on login.
 # Both services auto-restart on crash (handled inside start_local.sh).
 # If the script itself dies, launchd KeepAlive restarts the whole thing.
 #
@@ -10,7 +10,7 @@
 #   bash scripts/install/install_local_autostart.sh
 #
 # To remove:
-#   bash scripts/uninstall/uninstall_local_autostart.sh
+#   bash scripts/install/uninstall_local_autostart.sh
 # =============================================================================
 set -euo pipefail
 

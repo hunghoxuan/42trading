@@ -37,11 +37,11 @@
 
 ### Files
 - `webhook/server.js` — SSE endpoint + emit + settings
-- `web-ui/src/components/NotificationWatcher.jsx` — SSE client
-- `web-ui/src/components/TickerBar.jsx` — new
-- `web-ui/src/pages/system/EventsPage.jsx` — new
-- `web-ui/src/App.jsx` — route + menu + TickerBar mount
-- `web-ui/src/api.js` — settings API
+- `src/ui/src/components/NotificationWatcher.jsx` — SSE client
+- `src/ui/src/components/TickerBar.jsx` — new
+- `src/ui/src/pages/system/EventsPage.jsx` — new
+- `src/ui/src/App.jsx` — route + menu + TickerBar mount
+- `src/ui/src/api.js` — settings API
 - `.agents/.product/features/1-plan/sse_notification_system.md` — feature doc
 - `.agents/.product/tickets/feature_tracker.md` — tracker update
 

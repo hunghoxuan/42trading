@@ -13,9 +13,9 @@ Stabilize deployed Multi-TP implementation after initial rollout. Current VPS ru
 
 ## Scope
 - `webhook/server.js`
-- `web-ui/src/components/SignalDetailCard.jsx`
-- `web-ui/src/components/TradePlanEditor.jsx`
-- `web-ui/src/utils/signalDetailUtils.jsx`
+- `src/ui/src/components/SignalDetailCard.jsx`
+- `src/ui/src/components/TradePlanEditor.jsx`
+- `src/ui/src/utils/signalDetailUtils.jsx`
 - `bridge-clients/TVBridgeEA.mq5`
 - `bridge-clients/TVBridge_CTrader.cs`
 - deploy/version + mailbox proof
@@ -32,7 +32,7 @@ Stabilize deployed Multi-TP implementation after initial rollout. Current VPS ru
 
 ## Validation Matrix (must capture evidence)
 - [ ] `webhook/server.js` syntax check passes.
-- [ ] `web-ui` build passes.
+- [ ] `src/ui` build passes.
 - [ ] Create trade plan with only `tp` => reload shows `tp1==tp`, `tp2/tp3 null`.
 - [ ] Add TP from chart context menu repeatedly:
   - BUY -> ascending slots

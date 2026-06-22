@@ -10,8 +10,8 @@ Current chart objects are mostly ratio-based and do not reliably preserve intent
 Implement TradingView-like object behavior by storing and editing objects in market coordinates (`time`, `price`) and projecting to each chart TF.
 
 ## Scope
-- `web-ui/src/components/charts/SymbolChart.jsx`
-- `web-ui/src/components/TradeSignalChart*` projection integration (next phases)
+- `src/ui/src/components/charts/SymbolChart.jsx`
+- `src/ui/src/components/TradeSignalChart*` projection integration (next phases)
 - no DB/API persistence in Phase 1
 
 ## Phase Breakdown

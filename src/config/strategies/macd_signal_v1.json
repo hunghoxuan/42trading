@@ -1,0 +1,14 @@
+{
+  "key": "macd_signal_v1",
+  "name": "MACD Signal Cross v1",
+  "kind": "preset",
+  "description": "Uses MACD line crossing its signal line to catch momentum shifts.",
+  "params": {
+    "fast_period": 12,
+    "slow_period": 26,
+    "signal_period": 9,
+    "rr_target": 2,
+    "stop_lookback": 2
+  },
+  "min_bars": 50
+}

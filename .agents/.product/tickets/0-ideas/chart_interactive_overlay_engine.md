@@ -19,7 +19,7 @@ Current object rendering is ratio-based (`xRatio`, `yRatio`) which breaks expect
 We need TradingView-like behavior where objects stick to market coordinates and reproject to pixel space each render.
 
 ## Scope
-- Target surface: `web-ui/src/components/charts/SymbolChart.jsx` and `TradeSignalChart` integration.
+- Target surface: `src/ui/src/components/charts/SymbolChart.jsx` and `TradeSignalChart` integration.
 - No backend schema change in Phase 1-2.
 - Keep existing C/S/Live chart modes compatible.
 

@@ -64,7 +64,7 @@ Fix mapping precedence and fallback behavior:
 - [x] Entry/SL/TP1/TP2/TP3 values match canonical execution_plan values.
 - [x] Strategy/entry_model/confidence fields are populated when present.
 - [x] Fallback zero template appears only when canonical payload is absent/invalid.
-- [x] `rtk npm --prefix web-ui run build`
+- [x] `rtk npm --prefix src/ui run build`
 - [ ] Add/run mapper-focused tests for precedence regression.
 - [ ] Browser verification with sample payload confirming displayed JSON parity.
 

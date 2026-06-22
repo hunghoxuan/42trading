@@ -1,0 +1,14 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="640" height="180" rx="24" fill="#08111C"/>
+  <g transform="translate(36 22)">
+    <rect x="0" y="0" width="136" height="136" rx="34" fill="#0F172A" stroke="#223047" stroke-width="2"/>
+    <path d="M31 34H101" stroke="#F8FAFC" stroke-width="11" stroke-linecap="round"/>
+    <path d="M66 34V104" stroke="#F8FAFC" stroke-width="11" stroke-linecap="round"/>
+    <path d="M84 46V80C84 92 81 101 74 107C68 113 59 116 48 116C38 116 30 113 24 107C18 101 15 92 15 80V58" stroke="#7DD3FC" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    <path d="M102 46V84C102 97 98 107 90 114C82 121 70 124 56 124" stroke="#38BDF8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.88"/>
+    <circle cx="98" cy="47" r="5" fill="#BAE6FD"/>
+    <text x="164" y="58" fill="#F8FAFC" font-family="Inter, Arial, sans-serif" font-size="42" font-weight="800">42trade</text>
+    <text x="164" y="90" fill="#94A3B8" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="1.5">Elegant Tu monogram</text>
+    <text x="164" y="120" fill="#64748B" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500">Balanced strokes, layered overlap, refined dark-theme finish</text>
+  </g>
+</svg>

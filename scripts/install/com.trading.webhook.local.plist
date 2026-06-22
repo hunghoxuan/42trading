@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.trading.webhook.local</string>
+    <string>com.trading.web-api.local</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -30,8 +30,8 @@
     <string>/Users/macmini/Projects/moza/42trade</string>
 
     <key>StandardOutPath</key>
-    <string>/Users/macmini/Projects/moza/42trade/.local/webhook.stdout.log</string>
+    <string>/Users/macmini/Projects/moza/42trade/.local/web-api.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/macmini/Projects/moza/42trade/.local/webhook.stderr.log</string>
+    <string>/Users/macmini/Projects/moza/42trade/.local/web-api.stderr.log</string>
 </dict>
 </plist>

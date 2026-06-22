@@ -1,0 +1,12 @@
+{
+  "key": "donchian_breakout_v1",
+  "name": "Donchian Breakout v1",
+  "kind": "preset",
+  "description": "Breakout strategy using prior channel highs and lows to join expansion moves.",
+  "params": {
+    "period": 20,
+    "rr_target": 2.5,
+    "stop_lookback": 5
+  },
+  "min_bars": 50
+}

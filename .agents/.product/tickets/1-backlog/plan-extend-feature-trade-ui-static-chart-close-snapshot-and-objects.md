@@ -33,8 +33,8 @@
 - `api.saveChartObjects()`, `api.loadChartObjects()` in api.js
 
 ## Files Changed
-- `web-ui/src/components/TradePlanEditor.jsx` — RR sliders, note removal, layout fix
-- `web-ui/src/components/charts/SymbolChart.jsx` — static controls, quick trade wiring
-- `web-ui/src/api.js` — chart objects API functions
+- `src/ui/src/components/TradePlanEditor.jsx` — RR sliders, note removal, layout fix
+- `src/ui/src/components/charts/SymbolChart.jsx` — static controls, quick trade wiring
+- `src/ui/src/api.js` — chart objects API functions
 - `webhook/server.js` — close auto-snapshot, chart objects routes
 

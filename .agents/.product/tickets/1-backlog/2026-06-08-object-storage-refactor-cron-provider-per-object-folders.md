@@ -282,7 +282,7 @@ But this is **not mandatory** for phase 1 if compatibility risk is too high.
 ## UI impact
 ### Cron page
 Current page:
-- `web-ui/src/pages/settings/CronPage.jsx`
+- `src/ui/src/pages/settings/CronPage.jsx`
 
 Expected phase-1 UI impact:
 - ideally none in behavior
@@ -303,8 +303,8 @@ Expected phase-1 UI impact:
 ### Existing modules likely to change
 - `webhook/settingsStore.js` (either shrink scope or delegate selected types)
 - `webhook/server.js`
-- `web-ui/src/pages/settings/CronPage.jsx` (only if endpoint contract needs minor adaptation)
-- `web-ui/src/api.js` (only if dedicated APIs are introduced)
+- `src/ui/src/pages/settings/CronPage.jsx` (only if endpoint contract needs minor adaptation)
+- `src/ui/src/api.js` (only if dedicated APIs are introduced)
 - scripts/tests that read legacy cron/settings paths
 
 ## Migration plan

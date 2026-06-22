@@ -1,24 +1,28 @@
-# Trading Bot Workspace
+# 42Trade Workspace
 
 ## 🚀 AI Entry Point
 All agents must start here:
 1. Read [AI.md](./AI.md) (Root Instructions).
-2. Read [.agents/BOOTSTRAP.md](./.agents/BOOTSTRAP.md) (Agent OS & Pathing).
-3. Follow [.agents/rules.md](./.agents/rules.md) (Mandatory Constraints).
 
 ## 📂 Project Organization
-- **`.agents/.product/`**: The "Knowledge" domain (Architecture, Features, Tickets).
-- **`.agents/.raw/`**: The "Memory" domain (Not for AI logic).
-- **`.agents/rules/`**: Global constraints and boundaries.
-- **`.agents/skills/`**: Task-specific playbooks and guidelines.
-- **`.agents/sync/`**: Agent-to-agent communication mailbox.
-- **`webhook/`**: Backend API server (Node.js, port 3001).
-- **`web-ui/`**: Frontend SPA (React + Vite, port 3000 with HMR).
+- **`.agents`: FOR AI AGENTS, The "Knowledge" domain (Architecture, Features, Tickets), rules, skills
+- **`docs`**: The "Knowledge" domain (Architecture, Features, Tickets).
+- **`src/api/`**: Backend API server (Node.js, port 3001).
+- **`src/admin/`**: Frontend SPA (React + Vite, port 3000 with HMR).
+- **`src/config/`**: Shared app config, AI guides, and JSON schemas used by API + UI.
 - **`docker/`**: Dockerfiles + docker-compose + nginx config.
-- **`bridge-clients/`**: MT5 EA (MQL5) and cTrader bridge (C#).
-- **`scripts/`**: Ops tooling (deploy, test, start scripts).
+- **`src/mt5-bridge/clients/`**: MT5 EA (MQL5) and cTrader bridge (C#).
+- **`src/mt5-bridge/python/`**: Python MT5 bridge API scaffold.
+- **`scripts/`**: Ops tooling (deploy, start, install, ops automation).
+- **`tests/`**: Canonical home for repo-level tests and smoke checks.
 
 ## 🏁 Quick Start
+
+Install workspace dependencies once from the repo root:
+
+```bash
+pnpm install
+```
 
 ### Local development (Vite + Node)
 ```bash
@@ -54,7 +58,7 @@ scripts\start\start_docker.bat
 ### Deploy to production VPS
 ```bash
 bash scripts/start/start_server.sh
-# pushes main → pulls on VPS → builds UI → restarts webhook → reloads nginx
+# pushes main → pulls on VPS → builds UI → restarts src/api → reloads nginx
 ```
 
 ## 🔁 Webhook Restart (Local)
@@ -67,18 +71,18 @@ bash scripts/start/reset_stack_once.sh
 Webhook-only restart:
 ```bash
 bash scripts/start/restart_webhook.sh manual
-bash scripts/test/verify_webhook_local.sh
+bash tests/verify_webhook_local.sh
 ```
 
 Manual (foreground/background shell run):
 ```bash
 bash scripts/start/restart_webhook.sh manual
-bash scripts/test/verify_webhook_local.sh
+bash tests/verify_webhook_local.sh
 ```
 
 Verification for agents:
 ```bash
-bash scripts/test/verify_webhook_local.sh
+bash tests/verify_webhook_local.sh
 # checks /health until timeout; exits non-zero on failure
 ```
 

@@ -11,7 +11,7 @@ User settings were stored in the `user_settings` database table. The requested c
 
 ## Investigation
 - Evidence:
-  - `web-ui/src/api.js` uses stable `/v2/settings`, `/v2/settings/secret`, and `DELETE /v2/settings/:type/:name` endpoints.
+  - `src/ui/src/api.js` uses stable `/v2/settings`, `/v2/settings/secret`, and `DELETE /v2/settings/:type/:name` endpoints.
   - `webhook/server.js` had centralized settings read/write routes and several runtime consumers for API keys, cron configs, notification config, and execution profiles.
   - Backend startup created/maintained `user_settings`, so it would recreate the table unless removed.
 - Findings:

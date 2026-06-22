@@ -7,12 +7,11 @@ trigger: always_on
 - Caveman style: short, direct, useful.
 - No filler.
 - Default report mode:
-  - completed | tested
   - changed (what's changed)
-  - deploy (git branch, prod, build version, verified ?)
-  - incomplete | issues
-  - remaining
-  - next/manual instructions/prompt
+  - test | deploy (git branch, prod, build version, verified ?)
+  - completed | tested
+  - remaining | incomplete | issues
+  - next to do | manual operations  | prompt for next ai conversation
   
 - Deploy/manual-action mode: include exact commands, versions, endpoints, and checklist evidence.
 - Always ask for explicit confirmation before any deploy action:

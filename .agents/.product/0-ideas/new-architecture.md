@@ -10,7 +10,7 @@
 trading/
 ├── v2 (production)
 │   ├── webhook/          ← Node.js server.js, :443 on VPS
-│   ├── web-ui/           ← React SPA (current web UI)
+│   ├── src/ui/           ← React SPA (current web UI)
 │   ├── bridge-clients/   ← MT5 EA + cTrader
 │   └── scripts/          ← Deploy ops, build scripts
 │
@@ -66,7 +66,7 @@ trading/
 | **Desktop first** | No backend migration. Desktop app connects to existing v2 API. |
 | **Tauri, not Electron** | 8.2MB vs 150MB. Same React code. |
 | **No Hono/Drizzle in Phase 1** | Avoid rewriting 100s of route handlers. v2 works. |
-| **Import v2 pages via alias** | `@v2/*` → `web-ui/src/*`. Zero rewrites. |
+| **Import v2 pages via alias** | `@v2/*` → `src/ui/src/*`. Zero rewrites. |
 | **Same PostgreSQL** | No data migration. v2 and v3 share tables. |
 | **Admin key auth** | `x-api-key` header bridges v3 to v2 auth. No session cookies needed. |
 | **Zed tasks** | `.zed/tasks.json` — Launch, Restart, Build, Deploy, Dev Server. |

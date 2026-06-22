@@ -19,7 +19,7 @@ on:
     branches: ["main"]
     paths:
       - "webhook/**"
-      - "web-ui/**"
+      - "src/admin/**"
       - "web/**"
       - "scripts/deploy/deploy_webhook.sh"
       - ".github/workflows/deploy-webhook.yml"

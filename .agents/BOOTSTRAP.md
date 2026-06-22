@@ -8,7 +8,6 @@ Read in this order:
 
 1. `AI.md`
 2. `.agents/BOOTSTRAP.md`
-3. `.agents/STATE.md`
 
 ## Read Later Only If Needed
 
@@ -21,3 +20,5 @@ Read in this order:
 - Keep boot small.
 - Load only task-needed docs.
 - Test real code changes.
+- Do not create new files in `scripts/` or `tests/` without explicit user request and approval.
+- Put scratch, one-off, and AI-only helper files in `.local/`.

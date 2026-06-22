@@ -1,0 +1,14 @@
+{
+  "key": "rsi_reversion_v1",
+  "name": "RSI Mean Reversion v1",
+  "kind": "preset",
+  "description": "Buys oversold RSI recoveries and sells overbought RSI rollovers for mean reversion.",
+  "params": {
+    "rsi_period": 14,
+    "oversold": 30,
+    "overbought": 70,
+    "rr_target": 1.5,
+    "stop_lookback": 3
+  },
+  "min_bars": 40
+}
