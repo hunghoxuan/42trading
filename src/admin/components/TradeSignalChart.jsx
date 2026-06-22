@@ -4896,28 +4896,6 @@ export default function TradeSignalChart({
           </div>
         )}
       </div>
-      <button
-        type="button"
-        aria-label={`Open ${tvSymbol} ${displayIntervalLabel(interval)} in TradingView`}
-        title={`Open ${tvSymbol} ${displayIntervalLabel(interval)} in TradingView`}
-        onClick={() => {
-          const url = `${TRADINGVIEW_CHART_URL}?symbol=${encodeURIComponent(tvSymbol)}&interval=${encodeURIComponent(tvInterval)}`;
-          window.open(url, "_blank", "noopener,noreferrer");
-        }}
-        style={{
-          position: "absolute",
-          left: 8,
-          bottom: 8,
-          width: 34,
-
-
-          border: "none",
-
-          background: "transparent",
-          cursor: "pointer",
-          zIndex: 12,
-        }}
-      />
     </div>
   );
 }

@@ -3262,13 +3262,29 @@ input[type="checkbox"]:disabled {
     min-width: 0;
 }
 .status-display__dot {
+    position: relative;
     width: 8px;
     height: 8px;
     min-width: 8px;
     min-height: 8px;
     border-radius: 999px;
     background: var(--status-display-color);
-    box-shadow: 0 0 8px var(--status-display-border);
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--status-display-color) 24%, transparent),
+        0 0 8px var(--status-display-border);
+}
+.status-display__dot::after {
+    content: "";
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    transform: translate(-50%, -50%);
+    background: color-mix(in srgb, var(--status-display-color) 26%, transparent);
+    filter: blur(4px);
+    opacity: 0.95;
+    pointer-events: none;
 }
 .status-display__label {
     min-width: 0;

@@ -3,11 +3,67 @@
   "name": "EMA Cross v1",
   "kind": "preset",
   "description": "Simple fast/slow EMA crossover with fixed 1:2 risk-reward and one open trade at a time.",
+  "engine_version": "42trade.strategy.v1",
   "params": {
     "fast_period": 9,
     "slow_period": 21,
     "rr_target": 2,
     "stop_lookback": 2
+  },
+  "indicators": [
+    {
+      "id": "ema_fast",
+      "type": "ema",
+      "source": "close",
+      "length": 9
+    },
+    {
+      "id": "ema_slow",
+      "type": "ema",
+      "source": "close",
+      "length": 21
+    }
+  ],
+  "rules": {
+    "entry_long": {
+      "and": [
+        {
+          "<=": [
+            { "var": "prev_indicators.ema_fast" },
+            { "var": "prev_indicators.ema_slow" }
+          ]
+        },
+        {
+          ">": [
+            { "var": "indicators.ema_fast" },
+            { "var": "indicators.ema_slow" }
+          ]
+        }
+      ]
+    },
+    "entry_short": {
+      "and": [
+        {
+          ">=": [
+            { "var": "prev_indicators.ema_fast" },
+            { "var": "prev_indicators.ema_slow" }
+          ]
+        },
+        {
+          "<": [
+            { "var": "indicators.ema_fast" },
+            { "var": "indicators.ema_slow" }
+          ]
+        }
+      ]
+    }
+  },
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 2,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
   },
   "min_bars": 40
 }

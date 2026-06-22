@@ -161,7 +161,14 @@ export function useRealtimeSymbolChartMatrix({
         last_price: Number(entry.state.lastPrice) || null,
         freshness: "stream",
         provider: "realtime",
-        metadata: entry.state.metadata || null,
+        metadata: {
+          ...(entry.state.metadata && typeof entry.state.metadata === "object"
+            ? entry.state.metadata
+            : {}),
+          stream_connected: Boolean(entry.state.connected),
+          stream_status: String(entry.state.status || "IDLE").toUpperCase(),
+          stream_topic: entry.topic,
+        },
         cache_source: "stream",
         reason: "realtime_stream",
         cached_at: entry.state.lastUpdatedAt || cachedAt || Date.now(),

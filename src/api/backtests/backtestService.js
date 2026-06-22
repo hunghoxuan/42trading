@@ -1412,16 +1412,6 @@ function fallbackTakeProfit(entry, action, strategy) {
     : Number(entry) * (1 - pct);
 }
 
-function simulateEmaCrossStrategy(bars, strategy, options = {}) {
-  const closes = bars.map((bar) => Number(bar.close));
-  const fast = emaSeries(closes, strategy.params.fast_period);
-  const slow = emaSeries(closes, strategy.params.slow_period);
-  return simulateSignalStrategy(bars, strategy, (i) => ({
-    buy: crossedAbove(fast[i - 1], fast[i], slow[i - 1], slow[i]),
-    sell: crossedBelow(fast[i - 1], fast[i], slow[i - 1], slow[i]),
-  }), options);
-}
-
 function simulateSmaCrossStrategy(bars, strategy, options = {}) {
   const closes = bars.map((bar) => Number(bar.close));
   const fast = smaSeries(closes, strategy.params.fast_period);
@@ -1567,12 +1557,21 @@ function simulateTripleEmaTrendStrategy(bars, strategy, options = {}) {
 }
 
 function simulateStrategy(bars, strategy, options = {}) {
+  const isRuleBasedStrategy =
+    strategy &&
+    typeof strategy === "object" &&
+    strategy.rules &&
+    typeof strategy.rules === "object" &&
+    !Array.isArray(strategy.rules) &&
+    Array.isArray(strategy.indicators) &&
+    String(strategy.engine_version || "").trim() === "42trade.strategy.v1";
+  if (isRuleBasedStrategy) {
+    return simulateRuleBasedStrategy(bars, strategy, options);
+  }
   if (String(strategy?.kind || "").trim() === "custom") {
-    return simulateCustomStrategy(bars, strategy, options);
+    return simulateRuleBasedStrategy(bars, strategy, options);
   }
   switch (strategy.key) {
-    case "ema_cross_v1":
-      return simulateEmaCrossStrategy(bars, strategy, options);
     case "sma_cross_v1":
     case "golden_cross_v1":
       return simulateSmaCrossStrategy(bars, strategy, options);
@@ -1591,15 +1590,44 @@ function simulateStrategy(bars, strategy, options = {}) {
     case "triple_ema_trend_v1":
       return simulateTripleEmaTrendStrategy(bars, strategy, options);
     default:
-      return simulateEmaCrossStrategy(bars, strategy, options);
+      throw new Error(
+        `Unsupported preset strategy: ${String(strategy?.key || "unknown")}`,
+      );
   }
 }
 
-function simulateCustomStrategy(bars, strategy, options = {}) {
+function resolveRuleIndicatorDefinition(indicator = {}, strategy = {}) {
+  const indicatorId = String(indicator?.id || "").trim();
+  const indicatorType = String(indicator?.type || "").trim();
+  const params = strategy?.params && typeof strategy.params === "object"
+    ? strategy.params
+    : {};
+  const resolvedLength =
+    indicator.length ??
+    indicator.period ??
+    params[`${indicatorId}_length`] ??
+    params[`${indicatorId}_period`] ??
+    (indicatorId === "ema_fast"
+      ? params.fast_period
+      : indicatorId === "ema_slow"
+        ? params.slow_period
+        : undefined);
+  return {
+    ...indicator,
+    ...(resolvedLength !== undefined ? { length: resolvedLength } : {}),
+    ...(resolvedLength !== undefined ? { period: resolvedLength } : {}),
+    type: indicatorType,
+  };
+}
+
+function simulateRuleBasedStrategy(bars, strategy, options = {}) {
   const indicators = {};
   for (const indicator of Array.isArray(strategy.indicators) ? strategy.indicators : []) {
     if (!indicator?.id) continue;
-    indicators[indicator.id] = computeIndicatorSeries(bars, indicator);
+    indicators[indicator.id] = computeIndicatorSeries(
+      bars,
+      resolveRuleIndicatorDefinition(indicator, strategy),
+    );
   }
   return simulateSignalStrategy(bars, strategy, (i) => {
     const currentIndicators = {};

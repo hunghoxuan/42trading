@@ -79,7 +79,11 @@ export function useRealtimeSymbolChartAdapter({
                       replay_playing: Boolean(replaySession?.playing),
                       replay_cursor_index: Number(replaySession?.cursorIndex) || 0,
                     }
-                  : null,
+                  : {
+                      stream_connected: Boolean(liveState.connected),
+                      stream_status: String(liveState.status || "IDLE").toUpperCase(),
+                      stream_topic: liveState.topic || "",
+                    },
                 cache_source: replayActive ? "replay" : "stream",
                 reason: replayActive ? "server_replay" : "realtime_stream",
                 cached_at: lastUpdatedAt,
@@ -92,10 +96,12 @@ export function useRealtimeSymbolChartAdapter({
     };
   }, [
     liveState.bars,
+    liveState.connected,
     liveState.error,
     liveState.lastPrice,
     liveState.lastUpdatedAt,
     liveState.status,
+    liveState.topic,
     replaySession?.cursorIndex,
     replaySession?.lastUpdatedAt,
     replaySession?.playing,

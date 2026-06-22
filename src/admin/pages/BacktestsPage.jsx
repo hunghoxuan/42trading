@@ -9,7 +9,8 @@ import MasterDetailLayout from "../../shared/components/MasterDetailLayout";
 import ResponsivePanel from "../../shared/components/ResponsivePanel";
 import FormComboSelect from "../../shared/components/FormComboSelect";
 import TabBar from "../../shared/components/TabBar";
-import { formatDateTimeWithDuration, showDateTime } from "../utils/format";
+import { deriveBacktestFormFromRun } from "../utils/backtestForm";
+import { showDateTime } from "../utils/format";
 import { SYSTEM_SYMBOL_GROUP_PRESETS } from "../utils/symbolGroups";
 
 function formatNumber(value, digits = 2) {
@@ -152,8 +153,34 @@ function formatRunSelectorLabel(run = {}) {
     .trim();
   const tfLabel = timeframeLabel(run?.tf);
   const symbolLabel = String(run?.symbol || "-").trim() || "-";
-  const startedLabel = showDateTime(run?.started_at);
-  return `${strategyLabel} - ${tfLabel} - ${symbolLabel}${startedLabel ? ` - ${startedLabel}` : ""}`;
+  const rangeLabel = formatBacktestDataRange(run);
+  return `${strategyLabel} - ${tfLabel} - ${symbolLabel}${rangeLabel ? ` - ${rangeLabel}` : ""}`;
+}
+
+function formatBacktestDateLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+  const currentYear = new Date().getFullYear();
+  return year === currentYear ? `${day}.${month}` : `${day}.${month}.${year}`;
+}
+
+function formatBacktestDataRange(run = {}, summaryOverride = null) {
+  const summary =
+    summaryOverride && typeof summaryOverride === "object"
+      ? summaryOverride
+      : run?.summary && typeof run.summary === "object"
+        ? run.summary
+        : {};
+  const startLabel = formatBacktestDateLabel(summary?.first_bar_at);
+  const endLabel = formatBacktestDateLabel(summary?.last_bar_at);
+  if (startLabel && endLabel) {
+    return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
+  }
+  return startLabel || endLabel || "";
 }
 
 function buildNewStrategyDraft(example, defaults = {}) {
@@ -295,7 +322,7 @@ export default function BacktestsPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [replayPlaying, setReplayPlaying] = useState(false);
-  const [replaySpeedMs, setReplaySpeedMs] = useState(1000);
+  const [replaySpeedMs, setReplaySpeedMs] = useState(200);
   const [replayStartTradeSid, setReplayStartTradeSid] = useState("");
   const [replayActiveTradeSid, setReplayActiveTradeSid] = useState("");
   const [form, setForm] = useState({
@@ -303,6 +330,7 @@ export default function BacktestsPage() {
     tf: "15",
     limit: "all",
     strategy_key: "ema_cross_v1",
+    one_r_value: "100",
   });
 
   async function loadRuns(preferredRunId = "") {
@@ -429,6 +457,21 @@ export default function BacktestsPage() {
       null,
     [effectiveTradeSid, sortedActiveTrades],
   );
+  const activeDataRangeLabel = useMemo(
+    () => formatBacktestDataRange(activeRun, activeSummary),
+    [activeRun, activeSummary],
+  );
+  const oneRValue = useMemo(() => {
+    const parsed = Number(form.one_r_value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 100;
+  }, [form.one_r_value]);
+  const activeTotalRr = useMemo(() => {
+    const totalPnl = Number(activeSummary?.total_pnl);
+    if (!Number.isFinite(totalPnl) || !Number.isFinite(oneRValue) || oneRValue <= 0) {
+      return null;
+    }
+    return totalPnl / oneRValue;
+  }, [activeSummary?.total_pnl, oneRValue]);
   const selectedTradeIndex = useMemo(
     () =>
       sortedActiveTrades.findIndex(
@@ -469,7 +512,7 @@ export default function BacktestsPage() {
       currentTradeIndex: selectedTradeIndex,
       totalTrades: sortedActiveTrades.length,
       onSpeedChange: (nextSpeedMs) =>
-        setReplaySpeedMs(Math.max(100, Number(nextSpeedMs) || 1000)),
+        setReplaySpeedMs(Math.max(100, Number(nextSpeedMs) || 200)),
       onToggle: () => {
         setReplayPlaying((prev) => {
           const next = !prev;
@@ -536,6 +579,11 @@ export default function BacktestsPage() {
     setSelectedTradeSid(String(replayActiveTradeSid));
     setReplayActiveTradeSid("");
   }, [replayActiveTradeSid, replayPlaying]);
+
+  useEffect(() => {
+    if (!activeRun) return;
+    setForm((prev) => deriveBacktestFormFromRun(activeRun, prev));
+  }, [activeRun]);
 
   async function handleRun(event) {
     event.preventDefault();
@@ -627,48 +675,56 @@ export default function BacktestsPage() {
   const runnerControls = (
     <form onSubmit={handleRun}>
       <div className="stack-layout" style={{ gap: 12 }}>
-        <label className="stack-layout" style={{ gap: 5 }}>
-          <span className="minor-text">Strategy</span>
-          <FormComboSelect
-            value={form.strategy_key}
-            searchable
-            onChange={(event) =>
-              setForm((prev) => ({
-                ...prev,
-                strategy_key: event.target.value,
-              }))
-            }
-          >
-            {strategyOptions.map((item) => (
-              <option key={item.key || item.id} value={item.key || item.id}>
-                {item.name || item.key || item.id}
-              </option>
-            ))}
-          </FormComboSelect>
-        </label>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+          }}
+        >
+          <label className="stack-layout" style={{ gap: 5 }}>
+            <span className="minor-text">Strategy</span>
+            <FormComboSelect
+              value={form.strategy_key}
+              searchable
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  strategy_key: event.target.value,
+                }))
+              }
+            >
+              {strategyOptions.map((item) => (
+                <option key={item.key || item.id} value={item.key || item.id}>
+                  {item.name || item.key || item.id}
+                </option>
+              ))}
+            </FormComboSelect>
+          </label>
 
-        <div className="stack-layout" style={{ gap: 5 }}>
-          <span className="minor-text">Symbols</span>
-          <FormComboSelect
-            value={form.symbol}
-            searchable
-            searchPlaceholder="Filter symbol..."
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, symbol: event.target.value }))
-            }
-          >
-            {symbolOptions.map((symbol) => (
-              <option key={symbol} value={symbol}>
-                {symbol}
-              </option>
-            ))}
-          </FormComboSelect>
+          <label className="stack-layout" style={{ gap: 5 }}>
+            <span className="minor-text">Symbols</span>
+            <FormComboSelect
+              value={form.symbol}
+              searchable
+              searchPlaceholder="Filter symbol..."
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, symbol: event.target.value }))
+              }
+            >
+              {symbolOptions.map((symbol) => (
+                <option key={symbol} value={symbol}>
+                  {symbol}
+                </option>
+              ))}
+            </FormComboSelect>
+          </label>
         </div>
 
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "1fr 1fr 1fr",
             gap: 10,
           }}
         >
@@ -703,6 +759,23 @@ export default function BacktestsPage() {
                 </option>
               ))}
             </FormComboSelect>
+          </label>
+          <label className="stack-layout" style={{ gap: 5 }}>
+            <span className="minor-text">1R ($)</span>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={form.one_r_value}
+              onChange={(event) =>
+                setForm((prev) => ({
+                  ...prev,
+                  one_r_value: event.target.value,
+                }))
+              }
+              className="text-input"
+              placeholder="100"
+            />
           </label>
         </div>
 
@@ -753,37 +826,62 @@ export default function BacktestsPage() {
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
+                    alignItems: "flex-start",
                     justifyContent: "space-between",
                     gap: 10,
                   }}
-                >
-                  <span style={{ fontSize: 12, fontWeight: 850 }}>
-                    {run.strategy_name || run.strategy_key} - {timeframeLabel(run.tf)} - {run.symbol || "-"}
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 11, fontWeight: 800 }}>
-                      <MetricValue type="pnl" value={pnl} digits={2} />
-                    </span>
-                    <span className="minor-text" style={{ fontSize: 10 }}>
-                      WR {formatNumber(run?.summary?.win_rate_pct || 0, 0)}%
-                    </span>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setActiveTab("backtest");
-                        openRun();
-                      }}
-                      style={{ minHeight: 24, padding: "0 8px", fontSize: 10 }}
-                    >
-                      &gt;&gt;
-                    </button>
+                  >
+                  <div
+                    style={{
+                      minWidth: 0,
+                      flex: "1 1 auto",
+                      fontSize: 12,
+                      fontWeight: 850,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {run.strategy_name || run.strategy_key} - {timeframeLabel(run.tf)} -{" "}
+                    {run.symbol || "-"}
                   </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setActiveTab("backtest");
+                      openRun();
+                    }}
+                    style={{ minHeight: 24, padding: "0 8px", fontSize: 10, flex: "0 0 auto" }}
+                  >
+                    &gt;&gt;
+                  </button>
                 </div>
-                <div className="minor-text" style={{ fontSize: 10 }}>
-                  {Number(run?.summary?.total_trades || 0)} trades. {formatNumber(run?.summary?.win_rate_pct || 0, 0)}% win rate.
+                <div
+                  className="minor-text"
+                  style={{
+                    fontSize: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span>{Number(run?.summary?.total_trades || 0)} trades</span>
+                  <span>
+                    PnL{" "}
+                    <span style={{ fontWeight: 700, color: pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                      {`${pnl >= 0 ? "+" : "-"}$${Math.abs(pnl).toFixed(2)}`}
+                    </span>
+                  </span>
+                  <span>
+                    RR{" "}
+                    <span style={{ fontWeight: 700 }}>
+                      {Number.isFinite(oneRValue) && oneRValue > 0
+                        ? formatNumber(pnl / oneRValue, 2)
+                        : "-"}
+                    </span>
+                  </span>
+                  <span>WR {formatNumber(run?.summary?.win_rate_pct || 0, 0)}%</span>
                 </div>
               </div>
             </div>
@@ -908,11 +1006,10 @@ export default function BacktestsPage() {
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
-                    title={`${activeRun.strategy_name || activeRun.strategy_key} · ${timeframeLabel(activeRun.tf)} · ${activeRun.symbol || "-"} · ${(activeSummary?.total_trades || 0)} trades · ${showDateTime(activeRun.started_at)} - ${showDateTime(activeRun.completed_at)}`}
+                    title={`${activeRun.strategy_name || activeRun.strategy_key} · ${timeframeLabel(activeRun.tf)} · ${activeRun.symbol || "-"} · ${(activeSummary?.total_trades || 0)} trades${activeDataRangeLabel ? ` · data ${activeDataRangeLabel}` : ""}`}
                   >
                     {(activeSummary?.total_trades || 0)} trades ·{" "}
-                    {showDateTime(activeRun.started_at)} -{" "}
-                    {showDateTime(activeRun.completed_at)}
+                    {activeDataRangeLabel || "-"}
                   </div>
                   <div style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>
                     <MetricValue
@@ -921,6 +1018,13 @@ export default function BacktestsPage() {
                       digits={2}
                     />
                   </div>
+                  <span
+                    className="minor-text"
+                    style={{ flex: "0 0 auto", fontSize: 10, whiteSpace: "nowrap" }}
+                    title={`Total RR using 1R = $${oneRValue.toFixed(0)}`}
+                  >
+                    RR {activeTotalRr != null ? formatNumber(activeTotalRr, 2) : "-"}
+                  </span>
                   <span
                     className="minor-text"
                     style={{ flex: "0 0 auto", fontSize: 10, whiteSpace: "nowrap" }}
@@ -941,15 +1045,27 @@ export default function BacktestsPage() {
             bodyClassName="stack-layout"
           >
             {activeRun && sortedActiveTrades.length ? (
-              sortedActiveTrades.map((trade) => (
-                <TradeListCard
-                  key={trade.sid}
-                  trade={trade}
-                  symbol={activeRun?.symbol}
-                  active={trade?.sid === selectedTrade?.sid}
-                  onClick={() => setSelectedTradeSid(String(trade?.sid || ""))}
-                />
-              ))
+              <div
+                style={{
+                  maxHeight: 700,
+                  overflowY: "auto",
+                  overflowX: "hidden",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  paddingRight: 4,
+                }}
+              >
+                {sortedActiveTrades.map((trade) => (
+                  <TradeListCard
+                    key={trade.sid}
+                    trade={trade}
+                    symbol={activeRun?.symbol}
+                    active={trade?.sid === selectedTrade?.sid}
+                    onClick={() => setSelectedTradeSid(String(trade?.sid || ""))}
+                  />
+                ))}
+              </div>
             ) : (
               <div className="empty-state">
                 {activeRun ? "No trades found for this run." : "Select a run to inspect trades."}

@@ -8,6 +8,7 @@ import TradingViewLoginModal from "../modals/TradingViewLoginModal";
 import ImageViewer from "../../../shared/components/ImageViewer";
 import GroupButtons from "../../../shared/components/GroupButtons";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import { StatusDisplay } from "../../../shared/components/StatusBadge";
 import { showToast } from "../../../shared/components/ToastContainer";
 import { resolveAdjusterValue, toNumLoose } from "./numberUtils";
 import {
@@ -29,8 +30,15 @@ import {
   asNumValue,
   formatNumValue,
 } from "../../utils/format";
+import {
+  resolveTradeChartRenderBars,
+  resolveTradeFetchBarsCount,
+  resolveTradeFetchEndTimeSec,
+  resolveTradeViewportEndTimeSec,
+} from "../../utils/tradeAnchor";
 
 const BASE_MODES = ["live", "cache", "svg"];
+const TRADINGVIEW_EMBED_AUTLOAD_PREF_KEY = "tv_embed_autoload_enabled";
 const MODE_LABELS = {
   live: "Live",
   cache: "Chart",
@@ -122,7 +130,6 @@ const DEFAULT_MASTER_CHART_CONFIG = {
 };
 
 const BACKTEST_REPLAY_MAX_BARS = 400;
-const DEFAULT_TRADE_ANCHOR_PADDING_SECONDS = 15 * 60;
 const MIN_REPLAY_BUFFER_SECONDS = 60 * 60;
 const REPLAY_HISTORY_BUFFER_SECONDS = 24 * 60 * 60;
 const ARTIFACT_AUTO_DEBOUNCE_MS = 350;
@@ -169,47 +176,6 @@ function timeframeToSeconds(tf) {
     return 7 * 24 * 60 * 60;
   }
   return null;
-}
-
-function tradeAnchorPaddingBars(tfSeconds) {
-  if (!Number.isFinite(tfSeconds) || tfSeconds <= 0) return 16;
-  if (tfSeconds >= 24 * 60 * 60) return 2;
-  if (tfSeconds >= 4 * 60 * 60) return 6;
-  if (tfSeconds >= 60 * 60) return 10;
-  if (tfSeconds >= 15 * 60) return 16;
-  if (tfSeconds >= 5 * 60) return 24;
-  return 40;
-}
-
-function resolveTradeAnchorEndTimeSec({
-  createdAt = null,
-  openedAt = null,
-  closedAt = null,
-  timeframes = [],
-}) {
-  const closedSec = toEpochSec(closedAt);
-  const openedSec = toEpochSec(openedAt);
-  const createdSec = toEpochSec(createdAt);
-  const baseSec =
-    (Number.isFinite(closedSec) && closedSec > 0
-      ? closedSec
-      : Math.floor(Date.now() / 1000));
-  if (!Number.isFinite(baseSec) || baseSec <= 0) return null;
-  if (
-    (!Number.isFinite(closedSec) || closedSec <= 0) &&
-    (!Number.isFinite(openedSec) || openedSec <= 0) &&
-    (!Number.isFinite(createdSec) || createdSec <= 0)
-  ) {
-    return null;
-  }
-  const tfSeconds = (Array.isArray(timeframes) ? timeframes : [])
-    .map(timeframeToSeconds)
-    .filter((value) => Number.isFinite(value) && value > 0)
-    .sort((a, b) => a - b)[0];
-  const paddingSeconds = Number.isFinite(tfSeconds)
-    ? tfSeconds * tradeAnchorPaddingBars(tfSeconds)
-    : DEFAULT_TRADE_ANCHOR_PADDING_SECONDS;
-  return baseSec + paddingSeconds;
 }
 
 function toHexColor(v) {
@@ -1481,6 +1447,27 @@ function TfHeader({
   const isStreamingMode = mode === "live";
   const sourceValue = normalizeHeaderSourceLabel(metadata?.source_kind, context);
   const fileTypeValue = normalizeHeaderFileType(metadata?.file_type, context);
+  const streamSourceActive =
+    context?.cache_source === "stream" ||
+    context?.freshness === "stream" ||
+    context?.reason === "realtime_stream";
+  const streamConnected = metadata?.stream_connected === true;
+  const liveBadge =
+    isStreamingMode
+      ? streamSourceActive && streamConnected
+        ? {
+            status: "live",
+            label: "Live",
+            title: "This timeframe is receiving realtime stream updates.",
+          }
+        : {
+            status: streamSourceActive ? "warning" : "neutral",
+            label: streamSourceActive ? "No live" : "Static",
+            title: streamSourceActive
+              ? "Live mode is selected, but the realtime stream is not currently connected."
+              : "This timeframe is not currently backed by realtime stream data.",
+          }
+      : null;
   const updatedBars =
     Number(metadata?.updated_bars) > 0 ? Number(metadata.updated_bars) : null;
   const storedBars =
@@ -1576,17 +1563,12 @@ function TfHeader({
           }}
         >
           {isStreamingMode ? (
-            <span
-              aria-hidden="true"
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: 999,
-                background: "#22c55e",
-                boxShadow: "0 0 0 3px rgba(34,197,94,0.18)",
-                flex: "0 0 auto",
-              }}
-              title="Streaming chart transport is active"
+            <StatusDisplay
+              status={liveBadge?.status || "neutral"}
+              label={liveBadge?.label || "Static"}
+              size="mini"
+              title={liveBadge?.title || "Live status unavailable"}
+              tooltipContent={liveBadge?.title || "Live status unavailable"}
             />
           ) : null}
           <span>{displayTfLabel(tf)}</span>
@@ -2095,6 +2077,10 @@ export default function SymbolChart({
   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
   const [snapshotGridModal, setSnapshotGridModal] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
+  const [tvEmbedAutoloadEnabled, setTvEmbedAutoloadEnabled] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(TRADINGVIEW_EMBED_AUTLOAD_PREF_KEY) === "1";
+  });
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth < 900 : false,
   );
@@ -2127,6 +2113,23 @@ export default function SymbolChart({
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || tvEmbedAutoloadEnabled) return undefined;
+    const enableTradingViewEmbeds = () => {
+      window.localStorage.setItem(TRADINGVIEW_EMBED_AUTLOAD_PREF_KEY, "1");
+      setTvEmbedAutoloadEnabled(true);
+    };
+    const options = { passive: true };
+    window.addEventListener("pointerdown", enableTradingViewEmbeds, options);
+    window.addEventListener("keydown", enableTradingViewEmbeds, options);
+    window.addEventListener("touchstart", enableTradingViewEmbeds, options);
+    return () => {
+      window.removeEventListener("pointerdown", enableTradingViewEmbeds, options);
+      window.removeEventListener("keydown", enableTradingViewEmbeds, options);
+      window.removeEventListener("touchstart", enableTradingViewEmbeds, options);
+    };
+  }, [tvEmbedAutoloadEnabled]);
   const [timezoneTick, setTimezoneTick] = useState(0);
   const canUseMarketUiConfig = Boolean(cleanSym);
   const loadedMarketUiConfigRef = useRef(false);
@@ -2376,9 +2379,18 @@ export default function SymbolChart({
     [normalizedSelectedTrade, normalizedTrades],
   );
   const effectiveReplayConfig = backtestReplay?.enabled ? backtestReplay : null;
-  const selectedTradeEndTimeSec = useMemo(() => {
+  const activeMode = pendingMode || mode;
+  const activeDataMode = activeMode;
+  const isCacheLikeMode = mode === "cache";
+  const replayEnabledInChart = Boolean(
+    effectiveReplayConfig?.enabled &&
+    effectiveReplayConfig?.playing &&
+    activeMode === "cache" &&
+    replayTrades.length > 0,
+  );
+  const selectedTradeViewportEndTimeSec = useMemo(() => {
     if (!anchorToTradeTime) return null;
-    return resolveTradeAnchorEndTimeSec({
+    return resolveTradeViewportEndTimeSec({
       createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
       openedAt: normalizedSelectedTrade?.openedAt ?? openedAt,
       closedAt: normalizedSelectedTrade?.closedAt ?? closedAt,
@@ -2388,6 +2400,42 @@ export default function SymbolChart({
     anchorToTradeTime,
     closedAt,
     createdAt,
+    normalizedSelectedTrade?.closedAt,
+    normalizedSelectedTrade?.createdAt,
+    normalizedSelectedTrade?.openedAt,
+    openedAt,
+    timeframes,
+  ]);
+  const selectedTradeFetchEndTimeSec = useMemo(() => {
+    if (!anchorToTradeTime) return null;
+    return resolveTradeFetchEndTimeSec({
+      createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
+      openedAt: normalizedSelectedTrade?.openedAt ?? openedAt,
+      closedAt: normalizedSelectedTrade?.closedAt ?? closedAt,
+    });
+  }, [
+    anchorToTradeTime,
+    closedAt,
+    createdAt,
+    normalizedSelectedTrade?.closedAt,
+    normalizedSelectedTrade?.createdAt,
+    normalizedSelectedTrade?.openedAt,
+    openedAt,
+  ]);
+  const selectedTradeFetchBarsCount = useMemo(() => {
+    if (!anchorToTradeTime) return null;
+    return resolveTradeFetchBarsCount({
+      createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
+      openedAt: normalizedSelectedTrade?.openedAt ?? openedAt,
+      closedAt: normalizedSelectedTrade?.closedAt ?? closedAt,
+      timeframes,
+      requestedBars: localBarsCount,
+    });
+  }, [
+    anchorToTradeTime,
+    closedAt,
+    createdAt,
+    localBarsCount,
     normalizedSelectedTrade?.closedAt,
     normalizedSelectedTrade?.createdAt,
     normalizedSelectedTrade?.openedAt,
@@ -2482,17 +2530,8 @@ export default function SymbolChart({
     },
     [replayBufferSeconds, replayNowAnchorSec, requestedReplayLastTrade],
   );
-  const activeMode = pendingMode || mode;
-  const activeDataMode = activeMode;
-  const isCacheLikeMode = mode === "cache";
-  const replayEnabledInChart = Boolean(
-      effectiveReplayConfig?.enabled &&
-      effectiveReplayConfig?.playing &&
-      activeMode === "cache" &&
-      replayTrades.length > 0,
-  );
   const replayAnchorEndTimeSec = replayEnabledInChart ? requestedReplayEndTimeSec : null;
-  const effectiveFetchEndTimeSec = replayAnchorEndTimeSec ?? selectedTradeEndTimeSec;
+  const effectiveFetchEndTimeSec = replayAnchorEndTimeSec ?? selectedTradeFetchEndTimeSec;
   const replayRequestedBarsCount = useMemo(() => {
     if (!replayEnabledInChart) return null;
     const startSec = Number(requestedReplayStartTimeSec);
@@ -2516,7 +2555,9 @@ export default function SymbolChart({
   const effectiveBarsCount =
     replayEnabledInChart && Number.isFinite(Number(replayRequestedBarsCount))
       ? Math.max(Number(localBarsCount) || 0, Number(replayRequestedBarsCount))
-      : localBarsCount;
+      : Number.isFinite(Number(selectedTradeFetchBarsCount))
+        ? Math.max(Number(localBarsCount) || 0, Number(selectedTradeFetchBarsCount))
+        : localBarsCount;
   const internalRealtimeChartData = useRealtimeSymbolChartMatrix({
     enabled: isStreamingMode && !externalChartData && !replayEnabledInChart,
     symbol: cleanSym,
@@ -5582,11 +5623,18 @@ export default function SymbolChart({
                       maxBars: BACKTEST_REPLAY_MAX_BARS,
                     })
                   : tradeFocusedBarsForTf;
-              const barsToRender = replayBarsForTf.length
-                ? replayBarsForTf
-                : tradeFocusedBarsForTf.length
-                  ? tradeFocusedBarsForTf
-                  : barsForTf;
+              const tradeChartBarsForTf = resolveTradeChartRenderBars({
+                loadedBars: barsForTf,
+                focusedBars: tradeFocusedBarsForTf,
+                replayBars: replayBarsForTf,
+                replayActive: isBacktestChartReplay,
+              });
+              const barsToRender =
+                isSvg && !isBacktestChartReplay
+                  ? tradeFocusedBarsForTf.length
+                    ? tradeFocusedBarsForTf
+                    : barsForTf
+                  : tradeChartBarsForTf;
               const replayCurrentBarTimeSec = isBacktestChartReplay
                 ? Number(replayClockTimeSec) || null
                 : null;
@@ -5782,7 +5830,7 @@ export default function SymbolChart({
                     onRepairTf={isCacheLikeMode ? handleRepairTf : null}
                     repairBusy={repairingTfKey === String(tf || "").trim().toLowerCase()}
                     forceRefresh={forceRefresh}
-                    allowHistoryRefresh={!selectedTradeEndTimeSec}
+                    allowHistoryRefresh={!selectedTradeViewportEndTimeSec}
                   />
                   {isLive ? (
                     <div style={{ position: "relative", height: chartHeight }}>
@@ -5821,17 +5869,47 @@ export default function SymbolChart({
                           />
                         );
                       })()}
-                      <iframe
-                        key={`tv-${toTradingViewSymbol(cleanSym, provider)}-${liveTfToTvInterval(tf)}`}
-                        title={`tv-${symbol}-${tf}`}
-                        className="browser-chart-v1"
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          border: "none",
-                        }}
-                        src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=${uiThemeMode}&style=1&locale=en&toolbarbg=${uiThemeMode === "light" ? "%23eef3f8" : "%230f1729"}&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
-                      />
+                      {tvEmbedAutoloadEnabled ? (
+                        <iframe
+                          key={`tv-${toTradingViewSymbol(cleanSym, provider)}-${liveTfToTvInterval(tf)}`}
+                          title={`tv-${symbol}-${tf}`}
+                          className="browser-chart-v1"
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            border: "none",
+                          }}
+                          src={`https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(toTradingViewSymbol(cleanSym, provider))}&interval=${encodeURIComponent(liveTfToTvInterval(tf))}&theme=${uiThemeMode}&style=1&locale=en&toolbarbg=${uiThemeMode === "light" ? "%23eef3f8" : "%230f1729"}&hide_side_toolbar=${tvSettings.sidebar ? "0" : "1"}&hide_top_toolbar=${tvSettings.toolbar ? "0" : "1"}&hide_legend=${tvSettings.legend ? "0" : "1"}&saveimage=0&timezone=${encodeURIComponent(tvTimezone)}`}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "100%",
+                            height: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: 6,
+                            border: "1px solid rgba(148, 163, 184, 0.18)",
+                            background:
+                              uiThemeMode === "light"
+                                ? "linear-gradient(180deg, rgba(248,250,252,0.98), rgba(226,232,240,0.95))"
+                                : "linear-gradient(180deg, rgba(15,23,42,0.92), rgba(2,6,23,0.98))",
+                            color: "var(--muted)",
+                            textAlign: "center",
+                            padding: 18,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+                              TradingView will auto-load after your first interaction
+                            </div>
+                            <div style={{ fontSize: 12, opacity: 0.85 }}>
+                              Click, tap, or press any key once to enable embedded live charts.
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       <button
                         className="secondary-button"
                         onClick={() => setFullscreenTf(tf)}
@@ -5937,7 +6015,7 @@ export default function SymbolChart({
                   ) : hasBars ? (
                     <>
                       <TradeSignalChart
-                        key={`tsc-${chartId}-${planRefreshNonce}`}
+                        key={`tsc-${chartId}-${planRefreshNonce}-${effectiveTradeOverlayRenderKey}`}
                         chartId={chartId}
                         symbol={cleanSym}
                         provider={provider}
@@ -6032,7 +6110,7 @@ export default function SymbolChart({
                         }
                         initialViewport={
                           disableViewportPersistence ||
-                          selectedTradeEndTimeSec ||
+                          selectedTradeViewportEndTimeSec ||
                           isStreamingMode
                             ? null
                             : savedTfViewportPrefs[chartId] || null
