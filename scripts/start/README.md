@@ -2,15 +2,26 @@
 
 Purpose: start or restart local services with predictable behavior.
 
-## Full Stack (Recommended)
+## Full Stack
 
-Deterministic local boot (starts `3001` first, verifies, then starts `3000`):
+Standard local dev entrypoint (foreground runner for admin + API):
+
+```bash
+bash scripts/start/start_dev.sh
+```
+
+Behavior note:
+- `src/api` on `:3001` is started through `start_api.sh launchctl` as a real LaunchAgent and kept independent from the foreground Vite runner.
+- `src/admin` on `:3000` still runs in the foreground with HMR.
+- Stopping the `start_dev.sh` terminal should no longer take the API down with it.
+
+Hard reset and relaunch flow (kills stale processes, verifies API health, then relaunches with `launchctl`):
 
 ```bash
 bash scripts/start/reset_stack_once.sh
 ```
 
-This uses raw `launchctl submit` labels:
+This reset flow uses raw temporary `launchctl submit` labels:
 - `trading-src/api-raw`
 - `trading-webui-raw`
 
@@ -30,16 +41,16 @@ bash scripts/start/local_host_remote_db.sh
 
 ## Webhook Only
 
-Persistent restart (survives shell exit):
+Background shell start:
 
 ```bash
-bash scripts/start/restart_webhook.sh manual
+bash scripts/start/start_api.sh background
 ```
 
-Manual restart (plain shell run):
+LaunchAgent-managed start:
 
 ```bash
-bash scripts/start/restart_webhook.sh manual
+bash scripts/start/start_api.sh launchctl
 ```
 
 Verify src/api health:
@@ -48,12 +59,26 @@ Verify src/api health:
 bash tests/verify_webhook_local.sh
 ```
 
+Inspect or repair a recurring local `3001` ownership/health issue:
+
+```bash
+bash scripts/start/fix_3001_being_killed.sh inspect
+bash scripts/start/fix_3001_being_killed.sh repair
+```
+
+Notes:
+- [fix_3001_being_killed.md](./fix_3001_being_killed.md)
+- confirmed findings there include:
+  - old ad-hoc `launchctl submit` ownership was unstable
+  - `launchctl --force` previously did not really force a restart
+  - JWT session cookies now prevent restart-only logout
+
 ## Web UI
 
 Start Vite directly:
 
 ```bash
-bash scripts/start/start_vite.sh
+bash scripts/start/start_admin.sh
 ```
 
 ## Mobile Access

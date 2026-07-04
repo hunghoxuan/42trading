@@ -108,6 +108,7 @@ if [ "${need_tailscale}" = "1" ]; then
   tailscale serve --https="${TAILSCALE_HTTPS_PORT}" off >/dev/null 2>&1 || true
   tailscale serve --bg --yes --https="${TAILSCALE_HTTPS_PORT}" localhost:"${WEB_PORT}" >/tmp/tailscale.serve.log 2>&1
   echo "[mobile] tailscale URL: https://${TAILSCALE_HOST}:${TAILSCALE_HTTPS_PORT}/"
+  echo "[mobile] note: HTTPS uses the ts.net hostname certificate; raw 100.x Tailscale IPs are not valid HTTPS targets here."
 fi
 
 start_cloudflare_ui_quick_tunnel() {

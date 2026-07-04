@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# install_local_autostart.sh — Register start_local.sh as a macOS login service
+# install_local_autostart.sh — Register start_dev.sh as a macOS login service
 # =============================================================================
 # Installs a launchd user agent that runs Vite + src/api on login.
-# Both services auto-restart on crash (handled inside start_local.sh).
+# Both services auto-restart on crash (handled inside start_dev.sh).
 # If the script itself dies, launchd KeepAlive restarts the whole thing.
 #
 # Usage:
@@ -35,4 +35,4 @@ launchctl bootstrap "gui/$(id -u)" "${DEST}" 2>/dev/null || \
 
 echo "✅ Installed. Services will start on next login."
 echo "   To start now: launchctl kickstart gui/$(id -u)/${LABEL}"
-echo "   Logs: ${ROOT}/.local/start_local.*.log"
+echo "   Logs: ${ROOT}/.local/start_dev.*.log"

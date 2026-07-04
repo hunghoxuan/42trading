@@ -3,19 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const detailSource = readFileSync(
-  new URL("../../pages/trades/V2TradeDetailPage.jsx", import.meta.url),
+  new URL("../../modules/42trade/pages/trades/V2TradeDetailPage.jsx", import.meta.url),
   "utf8",
 );
 const tradesSource = readFileSync(
-  new URL("../../pages/trades/TradesPage.jsx", import.meta.url),
+  new URL("../../modules/42trade/pages/trades/TradesPage.jsx", import.meta.url),
   "utf8",
 );
 const signalDetailSource = readFileSync(
-  new URL("../../components/SignalDetailCard.jsx", import.meta.url),
+  new URL("../../modules/42trade/components/TradeDetailCard.jsx", import.meta.url),
   "utf8",
 );
 const editorSource = readFileSync(
-  new URL("../../components/TradePlanEditor.jsx", import.meta.url),
+  new URL("../../modules/42trade/components/TradePlanEditor.jsx", import.meta.url),
   "utf8",
 );
 

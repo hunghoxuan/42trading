@@ -74,7 +74,6 @@ git checkout main
 git pull --ff-only origin main
 
 echo "  [vps] Removing local-only DB tooling..."
-rm -rf /opt/trading/src/apps/db-manager
 rm -f /opt/trading/src/db/start_db.sh
 
 echo "  [vps] Installing deps..."

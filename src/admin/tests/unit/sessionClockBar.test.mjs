@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sessionClockBarSource = readFileSync(
-  new URL("../../components/SessionClockBar.jsx", import.meta.url),
+  new URL("../../modules/42trade/components/SessionClockBar.jsx", import.meta.url),
   "utf8",
 );
 

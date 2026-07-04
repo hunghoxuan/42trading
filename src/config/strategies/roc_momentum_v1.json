@@ -3,10 +3,70 @@
   "name": "ROC Momentum v1",
   "kind": "preset",
   "description": "Trades rate-of-change momentum acceleration and reversal through zero.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "period": 12,
     "rr_target": 2,
     "stop_lookback": 3
+  },
+  "indicators": [
+    {
+      "id": "roc_main",
+      "type": "roc",
+      "source": "close",
+      "length": 12
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "crosses_above": [
+          {
+            "var": "indicators.roc_main"
+          },
+          0
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "crosses_below": [
+          {
+            "var": "indicators.roc_main"
+          },
+          0
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
   },
   "min_bars": 40
 }

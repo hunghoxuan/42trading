@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+WEB_API_ENTRY="${ROOT}/src/api/app/server.js"
 MT5_PYTHON_BRIDGE_LABEL="${MT5_PYTHON_BRIDGE_LABEL:-trading-mt5-python-bridge-raw}"
 WEBHOOK_LABEL="${WEBHOOK_LABEL:-trading-web-api-raw}"
 WEBUI_LABEL="${WEBUI_LABEL:-trading-webui-raw}"
@@ -18,7 +19,7 @@ launchctl remove "${WEBUI_LABEL}" 2>/dev/null || true
 launchctl remove trading-web-api-local 2>/dev/null || true
 launchctl remove trading-web-ui-local 2>/dev/null || true
 pkill -f "/Users/macmini/Projects/moza/42trade/src/mt5-bridge/python/main.py" 2>/dev/null || true
-pkill -f "/Users/macmini/Projects/moza/42trade/src/api/server.js" 2>/dev/null || true
+pkill -f "/Users/macmini/Projects/moza/42trade/src/api/app/server.js" 2>/dev/null || true
 pkill -f "vite --host 127.0.0.1 --port 3000" 2>/dev/null || true
 lsof -ti tcp:3002 | xargs kill -9 2>/dev/null || true
 lsof -ti tcp:3001 | xargs kill -9 2>/dev/null || true
@@ -45,7 +46,7 @@ fi
 
 echo "[reset] starting web-api :3001 via launchctl submit..."
 launchctl submit -l "${WEBHOOK_LABEL}" -- /bin/zsh -lc \
-  "cd ${ROOT} && PORT=3001 BARS_STORAGE_PROVIDER='${BARS_STORAGE_PROVIDER:-parquet_duckdb}' BARS_DUCKDB_PATH='${BARS_DUCKDB_PATH:-${ROOT}/data/bars.duckdb}' REMOTE_DB_AUTO_TUNNEL=1 MT5_REMOTE_DB_SSH_HOST='${MT5_REMOTE_DB_SSH_HOST:-root@139.59.211.192}' MT5_REMOTE_DB_LOCAL_PORT='${MT5_REMOTE_DB_LOCAL_PORT:-15432}' MT5_ENABLED=true SNAPSHOTS_CRON_ENABLED=0 MARKET_DATA_CRON_ENABLED=0 node src/api/server.js >> ${WEBHOOK_LOG} 2>&1"
+  "cd ${ROOT} && PORT=3001 BARS_STORAGE_PROVIDER='${BARS_STORAGE_PROVIDER:-parquet_duckdb}' BARS_DUCKDB_PATH='${BARS_DUCKDB_PATH:-${ROOT}/data/bars.duckdb}' REMOTE_DB_AUTO_TUNNEL=1 MT5_REMOTE_DB_SSH_HOST='${MT5_REMOTE_DB_SSH_HOST:-root@139.59.211.192}' MT5_REMOTE_DB_LOCAL_PORT='${MT5_REMOTE_DB_LOCAL_PORT:-15432}' MT5_ENABLED=true SNAPSHOTS_CRON_ENABLED=0 MARKET_DATA_CRON_ENABLED=0 node '${WEB_API_ENTRY}' >> ${WEBHOOK_LOG} 2>&1"
 
 echo "[reset] verifying web-api before UI..."
 ok_webhook=0

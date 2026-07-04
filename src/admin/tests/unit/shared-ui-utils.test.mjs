@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { asFiniteOrNull, formatNum3 } from "../../utils/numberFormat.js";
-import { getBrokerTicket } from "../../utils/tradeRow.js";
-import { parseTextList } from "../../utils/textList.js";
-import { maskSecretPreview } from "../../utils/secrets.js";
-import { isCurrentAiTradePlan } from "../../utils/tradePlanShape.js";
-import { formatWeekdayDateLabel } from "../../utils/format.js";
+import { asFiniteOrNull, formatNum3 } from "../../shared/utils/numberFormat.js";
+import { getBrokerTicket } from "../../shared/utils/tradeRow.js";
+import { parseTextList } from "../../shared/utils/textList.js";
+import { maskSecretPreview } from "../../shared/utils/secrets.js";
+import { isCurrentAiTradePlan } from "../../shared/utils/tradePlanShape.js";
+import { formatWeekdayDateLabel } from "../../shared/utils/format.js";
 import {
   BACKTEST_CHART_THEME,
   resolveClosedTradeLineStyle,
-} from "../../components/charts/backtestChartTheme.js";
+} from "../../modules/42trade/components/charts/backtestChartTheme.js";
 
 test("number helpers normalize finite values and preserve compact precision", () => {
   assert.equal(asFiniteOrNull("12.5"), 12.5);

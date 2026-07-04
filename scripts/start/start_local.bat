@@ -8,7 +8,7 @@ set VITE_PORT=3000
 set WEBHOOK_PORT=3001
 
 echo === Starting web-api on :%WEBHOOK_PORT% ===
-start "web-api" cmd /c "cd /d %WEB_API_DIR% && set PORT=%WEBHOOK_PORT% && node --watch server.js"
+start "web-api" cmd /c "cd /d %ROOT% && set PORT=%WEBHOOK_PORT% && node --watch src/api/app/server.js"
 
 timeout /t 2 /nobreak >nul
 

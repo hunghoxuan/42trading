@@ -3,10 +3,78 @@
   "name": "Donchian Breakout v1",
   "kind": "preset",
   "description": "Breakout strategy using prior channel highs and lows to join expansion moves.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "period": 20,
     "rr_target": 2.5,
     "stop_lookback": 5
+  },
+  "indicators": [
+    {
+      "id": "channel_high",
+      "type": "highest_high",
+      "length": 20
+    },
+    {
+      "id": "channel_low",
+      "type": "lowest_low",
+      "length": 20
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        ">": [
+          {
+            "var": "bar.close"
+          },
+          {
+            "var": "indicators.channel_high"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "<": [
+          {
+            "var": "bar.close"
+          },
+          {
+            "var": "indicators.channel_low"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2.5,
+    "stop_lookback": 5,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.0025
   },
   "min_bars": 50
 }

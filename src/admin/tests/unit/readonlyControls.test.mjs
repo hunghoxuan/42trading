@@ -3,19 +3,23 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const groupButtonsSource = readFileSync(
-  new URL("../../../shared/components/GroupButtons.jsx", import.meta.url),
+  new URL("../../shared/components/GroupButtons.jsx", import.meta.url),
   "utf8",
 );
-const comboSelectSource = readFileSync(
-  new URL("../../../shared/components/FormComboSelect.jsx", import.meta.url),
+const inputComboSelectSource = readFileSync(
+  new URL("../../shared/components/InputComboSelect.jsx", import.meta.url),
   "utf8",
 );
 const editorSource = readFileSync(
-  new URL("../../components/TradePlanEditor.jsx", import.meta.url),
+  new URL("../../modules/42trade/components/TradePlanEditor.jsx", import.meta.url),
+  "utf8",
+);
+const strategyEditorSource = readFileSync(
+  new URL("../../modules/42trade/components/StrategyEditorPanel.jsx", import.meta.url),
   "utf8",
 );
 const tradesPageSource = readFileSync(
-  new URL("../../pages/trades/TradesPage.jsx", import.meta.url),
+  new URL("../../modules/42trade/pages/trades/TradesPage.jsx", import.meta.url),
   "utf8",
 );
 
@@ -25,10 +29,20 @@ test("GroupButtons supports readOnly by disabling interaction and nested checks"
   assert.match(groupButtonsSource, /disabled=\{disabled\s*\|\|\s*readOnly\s*\|\|\s*item\?\.disabled\}/);
 });
 
-test("FormComboSelect supports readOnly by disabling the trigger and guarding changes", () => {
-  assert.match(comboSelectSource, /readOnly\s*=\s*false/);
-  assert.match(comboSelectSource, /if\s*\(\s*disabled\s*\|\|\s*readOnly\s*\)\s*return;/);
-  assert.match(comboSelectSource, /disabled=\{disabled\s*\|\|\s*readOnly\}/);
+test("InputComboSelect centralizes the shared combo and hybrid control logic", () => {
+  assert.match(inputComboSelectSource, /mode\s*=\s*"combo"/);
+  assert.match(inputComboSelectSource, /const effectiveMode =/);
+  assert.match(inputComboSelectSource, /if\s*\(\s*disabled\s*\|\|\s*readOnly\s*\)\s*return;/);
+  assert.match(inputComboSelectSource, /effectiveMode === "text"/);
+  assert.match(inputComboSelectSource, /effectiveMode === "both"/);
+  assert.match(inputComboSelectSource, /data-component=\{dataComponent \|\| "InputComboSelect"\}/);
+});
+
+test("Strategy editor uses one shared InputComboSelect for combo and hybrid inputs", () => {
+  assert.doesNotMatch(strategyEditorSource, /ValueParamInput/);
+  assert.match(strategyEditorSource, /import InputComboSelect from "\.\.\/\.\.\/\.\.\/shared\/components\/InputComboSelect"/);
+  assert.match(strategyEditorSource, /<InputComboSelect[\s\S]*text=\{operandText\}/);
+  assert.match(strategyEditorSource, /<InputComboSelect[\s\S]*value=\{resolveSelectValue\(indicator\?\.field/);
 });
 
 test("TradePlanEditor numeric controls render readOnly inputs and disabled nested controls", () => {
@@ -42,7 +56,7 @@ test("TradePlanEditor numeric controls render readOnly inputs and disabled neste
 test("TradePlanEditor numeric row switches to compact flex layout on mobile", () => {
   assert.match(
     editorSource,
-    /import GroupButtons from "\.\.\/\.\.\/shared\/components\/GroupButtons"/,
+    /import GroupButtons from "\.\.\/\.\.\/\.\.\/shared\/components\/GroupButtons"/,
   );
   assert.match(
     editorSource,

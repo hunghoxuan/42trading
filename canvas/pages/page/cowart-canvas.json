@@ -1,0 +1,345 @@
+{
+  "schema": {
+    "schemaVersion": 2,
+    "sequences": {
+      "com.tldraw.store": 5,
+      "com.tldraw.asset": 1,
+      "com.tldraw.camera": 1,
+      "com.tldraw.document": 2,
+      "com.tldraw.instance": 26,
+      "com.tldraw.instance_page_state": 5,
+      "com.tldraw.page": 1,
+      "com.tldraw.instance_presence": 6,
+      "com.tldraw.pointer": 1,
+      "com.tldraw.shape": 4,
+      "com.tldraw.user": 1,
+      "com.tldraw.asset.image": 6,
+      "com.tldraw.asset.video": 5,
+      "com.tldraw.asset.bookmark": 2,
+      "com.tldraw.shape.group": 0,
+      "com.tldraw.shape.text": 4,
+      "com.tldraw.shape.bookmark": 2,
+      "com.tldraw.shape.draw": 4,
+      "com.tldraw.shape.geo": 11,
+      "com.tldraw.shape.note": 12,
+      "com.tldraw.shape.line": 5,
+      "com.tldraw.shape.frame": 1,
+      "com.tldraw.shape.arrow": 8,
+      "com.tldraw.shape.highlight": 3,
+      "com.tldraw.shape.embed": 4,
+      "com.tldraw.shape.image": 5,
+      "com.tldraw.shape.video": 4,
+      "com.tldraw.binding.arrow": 1
+    }
+  },
+  "store": {
+    "asset:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28": {
+      "id": "asset:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28",
+      "typeName": "asset",
+      "type": "image",
+      "props": {
+        "name": "ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28.png",
+        "src": "/page-assets/page/ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28.png",
+        "w": 1254,
+        "h": 1254,
+        "fileSize": 747338,
+        "mimeType": "image/png",
+        "isAnimated": false
+      },
+      "meta": {}
+    },
+    "shape:QWA2XImQUJaXWhde7GGiV": {
+      "x": -77.84711727989486,
+      "y": 326.4859035256344,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:QWA2XImQUJaXWhde7GGiV",
+      "type": "draw",
+      "props": {
+        "segments": [
+          {
+            "type": "free",
+            "path": "AAAAAAAAAAAAAAA/XLkAAAAAcbkAAAAAXLkAAAAAXLkAAAAAZr0AAAAAXLlcOQAAxMi2RQAA6MqaSAAAn8e2RQAA6MqaSAAAV8lFSAAAn8e2RQAAn8e2RQAAZr1cPQAA5sHXOwAArMSsRAAAQ8OaPgAAXLlcOQAAcbkAAAAAXDkAAAAAXDkAAAAASDlxuQAAXDkAAAAAw0ifQwAAfk4AAAAAw0ikvwAAXD0AAAAASDlcuQAAxEgAAAAAw0gAAAAAUj0AAAAAXDkAAAAAXDkAAAAASDkAAAAA5kHsuwAAUj1cuQAAXDlxuQAAXDkAAAAAXDkAAAAASDkAAAAA"
+          }
+        ],
+        "color": "black",
+        "fill": "none",
+        "dash": "draw",
+        "size": "m",
+        "isComplete": true,
+        "isClosed": false,
+        "isPen": false,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1
+      },
+      "parentId": "page:page",
+      "index": "a2HEwzbG",
+      "typeName": "shape"
+    },
+    "shape:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51": {
+      "x": 65.40954541721419,
+      "y": 1505.6326779178814,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "cowartAnnotationSourceShapeId": "shape:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28"
+      },
+      "id": "shape:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51",
+      "type": "image",
+      "props": {
+        "w": 300,
+        "h": 300,
+        "assetId": "asset:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51",
+        "playing": true,
+        "url": "",
+        "crop": null,
+        "flipX": false,
+        "flipY": false,
+        "altText": "42trade logo concept 2"
+      },
+      "parentId": "page:page",
+      "index": "a7",
+      "typeName": "shape"
+    },
+    "shape:ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb": {
+      "x": 405.4095454172142,
+      "y": 1505.6326779178814,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "cowartAnnotationSourceShapeId": "shape:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51"
+      },
+      "id": "shape:ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb",
+      "type": "image",
+      "props": {
+        "w": 300,
+        "h": 300,
+        "assetId": "asset:ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb",
+        "playing": true,
+        "url": "",
+        "crop": null,
+        "flipX": false,
+        "flipY": false,
+        "altText": "42trade logo concept 3"
+      },
+      "parentId": "page:page",
+      "index": "a8",
+      "typeName": "shape"
+    },
+    "shape:4omAkbOV8qAaLCDyUFaBh": {
+      "x": -50.26981356767408,
+      "y": 353.65256334823624,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:4omAkbOV8qAaLCDyUFaBh",
+      "type": "draw",
+      "props": {
+        "segments": [
+          {
+            "type": "free",
+            "path": "AAAAAAAAAAAAAAA/AABcvQAAAABcuQAAAABxuQAAAABcvQAAmj/EyAAAmj/EyAAAmj/DyAAAOEI9xgAAUj1cvQAAXDlcvQAAAABxuQAAXDkAAAAAXDkAAAAASDlcuQAAO0YAAAAAaUoAAAAA4UEAAAAAXDkAAAAAXDkAAAAAUj1cOQAAXD1IOQAAUj1cPQAAXD1cOQAA4UHkRQAAXDlSPQAASDlcPQAA7DvhQQAAAABcOQAAAABSPQAAAABcPQAAAADDSAAAAAA7RgAA7LvkRQAAAADhQQAAAABcPQAAAABSPQAAAADmQQAAAABSPQAAcblcPQAAAABSPQAAAABcPQAAXL0AQAAA7LvhQQAAXLlcPQAAcblSPQAAXLlcPQAA7LvhQQAAXL1cOQAAXLlSPQAAcblcOQAASMFIRAAAcblcOQAAXLlcOQAAXLlSPQAAXL1cPQAAWMlFSAAAAABIOQAAXLlcOQAAXL1SPQAAZr0FQAAAXLlIOQAAXL1cPQAAZr1cOQAAXLlSPQAAXL1cPQAA5sHXOwAAcblIOQAAXLlcPQAAXL1SPQAAXLlcOQAAcblcPQAAXLlIOQAAXLlcOQAAcblcOQAAXL1SPQAAXL1cOQAAXLkAAAAAcbkAAAAAXL0AAAAAXLkAAAAAcbkAAAAAXL1cvQAAXLlcvQAArsSuxAAAXLlcuQAAAABxuQAAcbkAAAAAAADmwQAA4T/mwQAA1z/mwQAAXDlxuQAAXDlcuQAASDkAAAAAXD1cuQAASDkAAAAAXDkAAAAAXD0AAAAASDkAAAAAXDlxuQAAXDlcuQAAXDkAAAAAUj1cOQAA5kHXOwAARURDQQAAXD1cOQAAAABIOQAAUj1cOQAAXD1cPQAAXDlSPQAAUj1cOQAAXD1SPQAASDlcPQAAQ0E4QwAAXDlcOQAAXDlIOQAAXDkAAAAASDkAAAAAXD1cPQAA4UHXOwAAXD1SPQAA4UHhPwAA5kEAAAAAUj1IOQAAO0Y9PgAAXDkAAAAAXDkAAAAASDkAAAAAXD0AAAAAAABxuQAAUj0AAAAAXDkAAAAAUj0AAAAAXDkAAAAAXDkAAAAAXDkAAAAAUj0AAAAAXDlcuQAAXDkAAAAASDkAAAAA5kHhvwAAXDkAAAAA"
+          }
+        ],
+        "color": "black",
+        "fill": "none",
+        "dash": "draw",
+        "size": "m",
+        "isComplete": true,
+        "isClosed": false,
+        "isPen": false,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1
+      },
+      "parentId": "page:page",
+      "index": "a4nuEuPV",
+      "typeName": "shape"
+    },
+    "shape:zWK9v5H-ypoTabfeFsJD8": {
+      "x": -467.84866746057816,
+      "y": 809.3494978916003,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:zWK9v5H-ypoTabfeFsJD8",
+      "type": "image",
+      "props": {
+        "w": 899,
+        "h": 362,
+        "assetId": "asset:1539576787",
+        "playing": true,
+        "url": "",
+        "crop": null,
+        "flipX": false,
+        "flipY": false,
+        "altText": ""
+      },
+      "parentId": "page:page",
+      "index": "a9gmvL4V",
+      "typeName": "shape"
+    },
+    "user:0EbS8O-9YKaXcHEhIiLkv": {
+      "name": "",
+      "color": "#11B3A3",
+      "imageUrl": "",
+      "meta": {},
+      "id": "user:0EbS8O-9YKaXcHEhIiLkv",
+      "typeName": "user"
+    },
+    "asset:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51": {
+      "id": "asset:ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51",
+      "typeName": "asset",
+      "type": "image",
+      "props": {
+        "name": "ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51.png",
+        "src": "/page-assets/page/ig_0e3b300815f04ac5016a39540b1fdc8191bb3d2accd63bca51.png",
+        "w": 1254,
+        "h": 1254,
+        "fileSize": 755631,
+        "mimeType": "image/png",
+        "isAnimated": false
+      },
+      "meta": {}
+    },
+    "shape:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28": {
+      "x": -274.5904545827858,
+      "y": 1505.6326779178814,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {
+        "cowartAnnotationSourceShapeId": "shape:QaOqpHnBzSM8mS4QYF2le"
+      },
+      "id": "shape:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28",
+      "type": "image",
+      "props": {
+        "w": 300,
+        "h": 300,
+        "assetId": "asset:ig_0e3b300815f04ac5016a3953ec0df481919c9f024427bc8f28",
+        "playing": true,
+        "url": "",
+        "crop": null,
+        "flipX": false,
+        "flipY": false,
+        "altText": "42trade logo concept 1"
+      },
+      "parentId": "page:page",
+      "index": "a6",
+      "typeName": "shape"
+    },
+    "asset:1539576787": {
+      "id": "asset:1539576787",
+      "type": "image",
+      "typeName": "asset",
+      "props": {
+        "name": "asset-1539576787.png",
+        "src": "/page-assets/page/asset-1539576787.png",
+        "w": 899,
+        "h": 362,
+        "fileSize": 39942,
+        "mimeType": "image/png",
+        "isAnimated": false
+      },
+      "meta": {}
+    },
+    "shape:_tCULZcW8VowA1htZc2_P": {
+      "x": -77.47497125492771,
+      "y": 430.6996231379866,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:_tCULZcW8VowA1htZc2_P",
+      "type": "draw",
+      "props": {
+        "segments": [
+          {
+            "type": "free",
+            "path": "AAAAAAAAAAAAAAA/AABSPQAAAADmQQAAAABcOQAAXDlIOQAASDkAAAAAXDkAAAAAXDkAAAAAXDkAAAAASDkAAAAAXDkAAAAAXDkAAAAAUj0AAAAAXDkAAAAAXDkAAAAASDkAAAAAXD1cuQAAXDkAAAAASDlcuQAAXDlxuQAAXDlcuQAAAABcuQAAXDlmvQAASDlcuQAAAABcuQAAXDkAAAAAXLlxuQAAcblcuQAAXLkAAAAAXL0AAAAAcblcuQAAXLkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAXLkAAAAAcbkAAAAAXLkAAAAAcbkAAAAA"
+          }
+        ],
+        "color": "black",
+        "fill": "none",
+        "dash": "draw",
+        "size": "m",
+        "isComplete": true,
+        "isClosed": false,
+        "isPen": false,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1
+      },
+      "parentId": "page:page",
+      "index": "a5Wb4rRV",
+      "typeName": "shape"
+    },
+    "asset:ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb": {
+      "id": "asset:ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb",
+      "typeName": "asset",
+      "type": "image",
+      "props": {
+        "name": "ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb.png",
+        "src": "/page-assets/page/ig_0e3b300815f04ac5016a39544d9a7881919ecf914d88db53fb.png",
+        "w": 1254,
+        "h": 1254,
+        "fileSize": 709331,
+        "mimeType": "image/png",
+        "isAnimated": false
+      },
+      "meta": {}
+    },
+    "shape:yVA4beFP9J1C-UL_7P8am": {
+      "x": -93.63765809789749,
+      "y": 358.0220709862126,
+      "rotation": 0,
+      "isLocked": false,
+      "opacity": 1,
+      "meta": {},
+      "id": "shape:yVA4beFP9J1C-UL_7P8am",
+      "type": "draw",
+      "props": {
+        "segments": [
+          {
+            "type": "free",
+            "path": "AAAAAAAAAAAAAAA/AABoSgAAQ0BpSgAAAADDSAAASMBoSgAAAABpSgAAAADhQQAAAADDSAAAAADmQQAAAABIOQAAAABcOQAAAABcOQAAAABcOQAAAABSPQAAAABcOQAA"
+          }
+        ],
+        "color": "black",
+        "fill": "none",
+        "dash": "draw",
+        "size": "m",
+        "isComplete": true,
+        "isClosed": false,
+        "isPen": false,
+        "scale": 1,
+        "scaleX": 1,
+        "scaleY": 1
+      },
+      "parentId": "page:page",
+      "index": "a3HV74BV",
+      "typeName": "shape"
+    },
+    "page:page": {
+      "meta": {},
+      "id": "page:page",
+      "name": "Page 1",
+      "index": "a1",
+      "typeName": "page"
+    },
+    "document:document": {
+      "gridSize": 10,
+      "name": "",
+      "meta": {},
+      "id": "document:document",
+      "typeName": "document"
+    }
+  }
+}

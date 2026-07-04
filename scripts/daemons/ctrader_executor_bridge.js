@@ -28,6 +28,34 @@ const CFG = {
   tokenClientId: envStr(process.env.CTRADER_CLIENT_ID),
   tokenClientSecret: envStr(process.env.CTRADER_CLIENT_SECRET),
   tokenRefreshToken: envStr(process.env.CTRADER_REFRESH_TOKEN),
+  brokerBaseUrl: String(
+    process.env.CTRADER_BROKER_BASE_URL ||
+      process.env.V2_BROKER_BASE_URL ||
+      "https://127.0.0.1",
+  ).replace(/\/+$/, ""),
+  brokerAccountApiKey: envStr(
+    process.env.CTRADER_ACCOUNT_API_KEY ||
+      process.env.V2_BROKER_ACCOUNT_API_KEY,
+  ),
+  brokerPollMs: Math.max(
+    500,
+    Number(
+      process.env.CTRADER_BROKER_POLL_MS ||
+        process.env.V2_BROKER_POLL_MS ||
+        2000,
+    ),
+  ),
+  brokerPullMaxItems: Math.max(
+    1,
+    Math.min(
+      20,
+      Number(
+        process.env.CTRADER_BROKER_PULL_MAX_ITEMS ||
+          process.env.V2_BROKER_PULL_MAX_ITEMS ||
+          5,
+      ),
+    ),
+  ),
 };
 
 let tokenState = {
@@ -96,22 +124,45 @@ function normalizeOrderType(raw) {
   return "market";
 }
 
+function normalizeTaskType(raw) {
+  const s = String(raw || "").trim().toUpperCase();
+  if (!s) return "OPEN";
+  if (["OPEN", "CANCEL", "CLOSE", "MODIFY"].includes(s)) return s;
+  throw new Error("Invalid task type");
+}
+
 function normalizeSignal(signalRaw) {
   const s = signalRaw && typeof signalRaw === "object" ? signalRaw : {};
+  const type = normalizeTaskType(s.type || s.task_type || s.taskType);
   const symbol = String(s.symbol || s.ticker || "").trim().toUpperCase();
   if (!symbol) throw new Error("Missing symbol");
-  const action = normalizeAction(s.action || s.side);
+  const action = normalizeAction(s.action || s.side || "BUY");
   const entry = asNum(s.entry ?? s.price, NaN);
-  if (!Number.isFinite(entry) || entry <= 0) throw new Error("Invalid entry/price");
   const slN = asNum(s.sl, NaN);
   const tpN = asNum(s.tp, NaN);
   const volumeN = asNum(s.volume ?? s.quantity, NaN);
+  const ticket = envStr(
+    s.ticket ??
+      s.broker_trade_id ??
+      s.order_id ??
+      s.orderId ??
+      s.position_id ??
+      s.positionId,
+  );
+  if (type === "OPEN" && (!Number.isFinite(entry) || entry <= 0)) {
+    throw new Error("Invalid entry/price");
+  }
+  if (["CANCEL", "CLOSE", "MODIFY"].includes(type) && !ticket && !symbol) {
+    throw new Error("Ticket or symbol is required");
+  }
   return {
     id: envStr(s.id ?? s.signal_id ?? s.trade_id) || `sig_${Date.now().toString(36)}`,
+    type,
     symbol,
     action,
     order_type: normalizeOrderType(s.order_type),
-    entry,
+    ticket: ticket || null,
+    entry: Number.isFinite(entry) ? entry : null,
     sl: Number.isFinite(slN) ? slN : null,
     tp: Number.isFinite(tpN) ? tpN : null,
     volume: Number.isFinite(volumeN) && volumeN > 0 ? volumeN : null,
@@ -125,6 +176,21 @@ function normalizeSignal(signalRaw) {
 
 function inferExecutionStatus(orderType) {
   return orderType === "market" ? "OPEN" : "PENDING";
+}
+
+function downstreamStatusForTask(signal = {}, out = {}) {
+  const taskType = normalizeTaskType(signal.type);
+  const explicit = envStr(out.execution_status || out.status).toUpperCase();
+  if (explicit) return explicit;
+  if (taskType === "OPEN") return inferExecutionStatus(signal.order_type);
+  if (taskType === "MODIFY") {
+    return String(signal.order_type || "").trim().toLowerCase() === "market"
+      ? "FILLED"
+      : "PENDING";
+  }
+  if (taskType === "CLOSE") return "CLOSED";
+  if (taskType === "CANCEL") return "CANCELLED";
+  return "PENDING";
 }
 
 async function refreshAccessTokenIfNeeded(force = false) {
@@ -193,6 +259,7 @@ async function submitToDownstream(normalized, mode) {
     mode,
     account_id: normalized?.account_id || CFG.accountId || null,
     account_number: normalized?.account_number || CFG.accountNumber || null,
+    type: normalized?.type || "OPEN",
     signal: normalized,
     auth: {
       access_token: tokenState.accessToken || null,
@@ -221,6 +288,127 @@ async function submitToDownstream(normalized, mode) {
     backend: "downstream",
     ...body,
   };
+}
+
+async function postBrokerJson(path, payload) {
+  if (!CFG.brokerAccountApiKey) {
+    throw new Error("CTRADER_ACCOUNT_API_KEY is not configured");
+  }
+  const url = `${CFG.brokerBaseUrl}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": CFG.brokerAccountApiKey,
+    },
+    body: JSON.stringify(payload || {}),
+  });
+  const raw = await res.text();
+  let data = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = { raw };
+  }
+  if (!res.ok) {
+    throw new Error(`${path} ${res.status}: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+function normalizeBrokerTaskItem(item = {}) {
+  const type = normalizeTaskType(item.type || item.task_type || item.taskType);
+  const id = envStr(item.sid || item.trade_id || item.signal_id || item.id);
+  if (!id) throw new Error("Broker task missing sid");
+  return {
+    id,
+    type,
+    ticket: envStr(item.ticket || item.broker_trade_id || item.order_id),
+    symbol: String(item.symbol || "").trim().toUpperCase(),
+    action: String(item.action || item.side || "BUY").trim().toUpperCase(),
+    order_type: normalizeOrderType(item.order_type),
+    entry: Number.isFinite(Number(item.entry)) ? Number(item.entry) : null,
+    sl: Number.isFinite(Number(item.sl)) ? Number(item.sl) : null,
+    tp: Number.isFinite(Number(item.tp)) ? Number(item.tp) : null,
+    volume: Number.isFinite(Number(item.volume ?? item.lots))
+      ? Number(item.volume ?? item.lots)
+      : null,
+    note: String(item.note || "").trim(),
+    account_id: envStr(item.account_id || CFG.accountId || null),
+    account_number: envStr(item.account_number || CFG.accountNumber || null),
+    raw: item,
+  };
+}
+
+async function ackBrokerTask(item = {}, signal = {}, out = {}, error = null) {
+  const tradeId = envStr(item.sid || item.trade_id || signal.id);
+  const leaseToken = envStr(item.lease_token);
+  if (!tradeId || !leaseToken) {
+    throw new Error("Broker task ack missing trade_id or lease_token");
+  }
+  const status = error
+    ? "ERROR"
+    : downstreamStatusForTask(signal, out);
+  return postBrokerJson("/api/broker/ack", {
+    trade_id: tradeId,
+    lease_token: leaseToken,
+    execution_status: status,
+    broker_trade_id:
+      envStr(out.broker_trade_id || out.order_id || signal.ticket) || null,
+    entry_exec:
+      Number.isFinite(Number(out.entry_exec ?? out.execution_price ?? signal.entry))
+        ? Number(out.entry_exec ?? out.execution_price ?? signal.entry)
+        : null,
+    payload_json: {
+      via: TAG,
+      backend: out.backend || "downstream",
+      task_type: signal.type,
+      symbol: signal.symbol,
+      action: signal.action,
+      error: error ? String(error.message || error) : null,
+    },
+  });
+}
+
+async function processBrokerTask(item = {}) {
+  const signal = normalizeBrokerTaskItem(item);
+  await refreshAccessTokenIfNeeded(false).catch(() => null);
+  try {
+    const out = await submitToDownstream(signal, CFG.mode);
+    await ackBrokerTask(item, signal, out, null);
+    console.log(
+      `[${TAG}] broker task ok sid=${signal.id} type=${signal.type} status=${downstreamStatusForTask(signal, out)} ticket=${out.order_id || out.broker_trade_id || signal.ticket || "-"}`,
+    );
+    return true;
+  } catch (error) {
+    await ackBrokerTask(item, signal, {}, error).catch((ackError) => {
+      console.error(
+        `[${TAG}] broker task ack failed sid=${signal.id} err=${ackError?.message || ackError}`,
+      );
+    });
+    throw error;
+  }
+}
+
+async function pollBrokerTasksOnce() {
+  if (!CFG.brokerAccountApiKey) return 0;
+  const out = await postBrokerJson("/api/broker/pull", {
+    max_items: CFG.brokerPullMaxItems,
+  });
+  const items = Array.isArray(out?.items) ? out.items : [];
+  if (items.length === 0) return 0;
+  let processed = 0;
+  for (const item of items) {
+    try {
+      await processBrokerTask(item);
+      processed += 1;
+    } catch (error) {
+      console.error(
+        `[${TAG}] broker task failed sid=${item?.sid || item?.trade_id || "-"} err=${error?.message || error}`,
+      );
+    }
+  }
+  return processed;
 }
 
 async function proxyDownstreamJson(pathname, payload = {}) {
@@ -297,9 +485,12 @@ async function handleExecute(req, res) {
       account_id: accountId || null,
       account_number: accountNumber || null,
     }, mode);
-    const executionStatus = envStr(out.execution_status, inferExecutionStatus(signal.order_type));
+    const executionStatus = envStr(
+      out.execution_status,
+      downstreamStatusForTask(signal, out),
+    );
     console.log(
-      `[${TAG}] execute ok signal=${signal.id} ${signal.action} ${signal.symbol} mode=${mode} type=${signal.order_type} status=${executionStatus} backend=${out.backend || "-"}`,
+      `[${TAG}] execute ok signal=${signal.id} ${signal.action} ${signal.symbol} mode=${mode} task=${signal.type} type=${signal.order_type} status=${executionStatus} backend=${out.backend || "-"}`,
     );
     return json(res, 200, {
       ok: true,
@@ -307,6 +498,7 @@ async function handleExecute(req, res) {
       account_id: accountId || CFG.accountId || null,
       account_number: accountNumber || CFG.accountNumber || null,
       signal_id: signal.id,
+      task_type: signal.type,
       symbol: signal.symbol,
       action: signal.action,
       order_type: signal.order_type,
@@ -318,6 +510,24 @@ async function handleExecute(req, res) {
   } catch (error) {
     console.error(`[${TAG}] execute failed signal=${signal.id} err=${error.message || error}`);
     return json(res, 500, { ok: false, error: error.message || String(error), signal_id: signal.id });
+  }
+}
+
+async function brokerPollLoop() {
+  if (!CFG.brokerAccountApiKey) {
+    console.log(`[${TAG}] broker polling disabled (missing CTRADER_ACCOUNT_API_KEY)`);
+    return;
+  }
+  console.log(
+    `[${TAG}] broker polling enabled base=${CFG.brokerBaseUrl} poll_ms=${CFG.brokerPollMs} max_items=${CFG.brokerPullMaxItems}`,
+  );
+  while (true) {
+    try {
+      await pollBrokerTasksOnce();
+    } catch (error) {
+      console.error(`[${TAG}] broker loop error: ${error?.message || error}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, CFG.brokerPollMs));
   }
 }
 
@@ -382,8 +592,26 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { ok: false, error: "not found" });
 });
 
-server.listen(CFG.port, "0.0.0.0", () => {
-  console.log(
-    `[${TAG}] listening on :${CFG.port} mode=${CFG.mode} account_id=${CFG.accountId || "-"} account_no=${CFG.accountNumber || "-"} downstream=${CFG.downstreamUrl || "paper"}`,
-  );
-});
+function startServer() {
+  server.listen(CFG.port, "0.0.0.0", () => {
+    console.log(
+      `[${TAG}] listening on :${CFG.port} mode=${CFG.mode} account_id=${CFG.accountId || "-"} account_no=${CFG.accountNumber || "-"} downstream=${CFG.downstreamUrl || "paper"}`,
+    );
+  });
+  void brokerPollLoop();
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  CFG,
+  downstreamStatusForTask,
+  normalizeBrokerTaskItem,
+  normalizeSignal,
+  normalizeTaskType,
+  pollBrokerTasksOnce,
+  processBrokerTask,
+  startServer,
+};

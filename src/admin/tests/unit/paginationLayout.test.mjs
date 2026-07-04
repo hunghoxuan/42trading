@@ -3,12 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const paginationBarSource = readFileSync(
-  new URL("../../../shared/components/PaginationBar.jsx", import.meta.url),
+  new URL("../../shared/components/PaginationBar.jsx", import.meta.url),
   "utf8",
 );
 
 const masterDetailLayoutSource = readFileSync(
-  new URL("../../../shared/components/MasterDetailLayout.jsx", import.meta.url),
+  new URL("../../shared/components/MasterDetailLayout.jsx", import.meta.url),
   "utf8",
 );
 

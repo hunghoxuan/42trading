@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   mergePlanPreservingEdits,
   normalizePlanLinePrice,
-} from "../../src/utils/tradePlanDrafts.js";
+} from "../../shared/utils/tradePlanDrafts.js";
 
 test("mergePlanPreservingEdits keeps valid edited trade levels over refreshed source values", () => {
   const basePlan = {

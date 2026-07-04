@@ -39,6 +39,7 @@ Phone usage:
 Notes:
 - This is private to your tailnet.
 - The script uses a non-default HTTPS port (`8443`) because `443` may already be occupied on the Mac.
+- Use the printed `https://...tail...ts.net:8443/` hostname for HTTPS. Do not use the raw `100.x.x.x` Tailscale IP with HTTPS here; the certificate is issued for the `ts.net` name, not the IP.
 
 ## Cloudflare Tunnel
 

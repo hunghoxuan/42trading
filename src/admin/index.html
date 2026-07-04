@@ -10,6 +10,14 @@
             // Guard against broken browser extensions that monkey-patch JS built-ins.
             // Save originals and restore them before app modules execute.
             (function () {
+                var devtoolsBanner =
+                    "Download the React DevTools for a better development experience";
+                var originalInfo = console.info;
+                console.info = function () {
+                    var firstArg = String(arguments[0] || "");
+                    if (firstArg.includes(devtoolsBanner)) return;
+                    return originalInfo.apply(console, arguments);
+                };
                 var _apply = Reflect.apply.bind(Reflect);
                 var _toString = Function.prototype.toString;
                 var _defProp = Object.defineProperty;
@@ -42,7 +50,7 @@
     </head>
     <body>
         <div id="root"></div>
-        <script type="module" src="/main.jsx"></script>
+        <script type="module" src="/app/main.jsx"></script>
 
     </body>
 </html>

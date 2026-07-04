@@ -3,12 +3,88 @@
   "name": "MACD Signal Cross v1",
   "kind": "preset",
   "description": "Uses MACD line crossing its signal line to catch momentum shifts.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "fast_period": 12,
     "slow_period": 26,
     "signal_period": 9,
     "rr_target": 2,
     "stop_lookback": 2
+  },
+  "indicators": [
+    {
+      "id": "macd_line",
+      "type": "macd",
+      "source": "close",
+      "fast_length": 12,
+      "slow_length": 26,
+      "signal_length": 9,
+      "field": "macd"
+    },
+    {
+      "id": "signal_line",
+      "type": "macd",
+      "source": "close",
+      "fast_length": 12,
+      "slow_length": 26,
+      "signal_length": 9,
+      "field": "signal"
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "crosses_above": [
+          {
+            "var": "indicators.macd_line"
+          },
+          {
+            "var": "indicators.signal_line"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "crosses_below": [
+          {
+            "var": "indicators.macd_line"
+          },
+          {
+            "var": "indicators.signal_line"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 2,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
   },
   "min_bars": 50
 }

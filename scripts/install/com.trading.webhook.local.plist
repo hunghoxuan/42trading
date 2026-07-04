@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/macmini/Projects/moza/42trade/scripts/start/start_webhook.sh</string>
+        <string>/Users/macmini/Projects/moza/42trade/scripts/start/start_api.sh</string>
     </array>
 
     <key>EnvironmentVariables</key>

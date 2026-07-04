@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE,
   password_hash TEXT,
   password_salt TEXT,
+  roles JSONB,
+  permissions JSONB,
   role TEXT,
   is_active BOOLEAN DEFAULT TRUE,
   metadata JSONB,
@@ -36,11 +38,11 @@ CREATE TABLE IF NOT EXISTS trades (
   sid TEXT PRIMARY KEY,
   account_id TEXT NOT NULL,
   user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  signal_id TEXT NULL,
+  trade_id TEXT NULL,
   source_id TEXT NULL,
   strategy TEXT NULL,
   entry_model TEXT NULL,
-  signal_tf TEXT NULL,
+  trade_tf TEXT NULL,
   chart_tf TEXT NULL,
   symbol TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -296,9 +298,29 @@ BEGIN
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'trades'
-      AND column_name = 'signal_id'
+      AND column_name = 'trade_id'
   ) THEN
-    ALTER TABLE trades RENAME COLUMN signal_sid TO signal_id;
+    ALTER TABLE trades RENAME COLUMN signal_sid TO trade_id;
+  END IF;
+END
+$$;
+--> statement-breakpoint
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'trades'
+      AND column_name = 'signal_id'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'trades'
+      AND column_name = 'trade_id'
+  ) THEN
+    ALTER TABLE trades RENAME COLUMN signal_id TO trade_id;
   END IF;
 END
 $$;
@@ -409,7 +431,27 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS user_id TEXT NULL;
 --> statement-breakpoint
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS entry_model TEXT NULL;
 --> statement-breakpoint
-ALTER TABLE trades ADD COLUMN IF NOT EXISTS signal_tf TEXT NULL;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'trades'
+      AND column_name = 'signal_tf'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'trades'
+      AND column_name = 'trade_tf'
+  ) THEN
+    ALTER TABLE trades RENAME COLUMN signal_tf TO trade_tf;
+  END IF;
+END
+$$;
+--> statement-breakpoint
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS trade_tf TEXT NULL;
 --> statement-breakpoint
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS chart_tf TEXT NULL;
 --> statement-breakpoint
@@ -467,7 +509,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_account ON trades(account_id);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_trades_dispatch_queue ON trades(account_id, dispatch_status, created_at DESC);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS idx_trades_signal_id ON trades(signal_id);
+CREATE INDEX IF NOT EXISTS idx_trades_trade_id ON trades(trade_id);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_trades_broker_ticket ON trades(broker_trade_id);
 --> statement-breakpoint

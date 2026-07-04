@@ -3,7 +3,7 @@
   "name": "EMA Cross v1",
   "kind": "preset",
   "description": "Simple fast/slow EMA crossover with fixed 1:2 risk-reward and one open trade at a time.",
-  "engine_version": "42trade.strategy.v1",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "fast_period": 9,
     "slow_period": 21,
@@ -24,40 +24,54 @@
       "length": 21
     }
   ],
-  "rules": {
-    "entry_long": {
-      "and": [
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "crosses_above": [
+          {
+            "var": "indicators.ema_fast"
+          },
+          {
+            "var": "indicators.ema_slow"
+          }
+        ]
+      },
+      "actions": [
         {
-          "<=": [
-            { "var": "prev_indicators.ema_fast" },
-            { "var": "prev_indicators.ema_slow" }
-          ]
-        },
-        {
-          ">": [
-            { "var": "indicators.ema_fast" },
-            { "var": "indicators.ema_slow" }
-          ]
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
         }
       ]
     },
-    "entry_short": {
-      "and": [
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "crosses_below": [
+          {
+            "var": "indicators.ema_fast"
+          },
+          {
+            "var": "indicators.ema_slow"
+          }
+        ]
+      },
+      "actions": [
         {
-          ">=": [
-            { "var": "prev_indicators.ema_fast" },
-            { "var": "prev_indicators.ema_slow" }
-          ]
-        },
-        {
-          "<": [
-            { "var": "indicators.ema_fast" },
-            { "var": "indicators.ema_slow" }
-          ]
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
         }
       ]
     }
-  },
+  ],
   "risk": {
     "rr_target": 2,
     "stop_lookback": 2,

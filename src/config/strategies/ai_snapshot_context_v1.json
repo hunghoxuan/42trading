@@ -1,0 +1,131 @@
+{
+  "key": "ai_snapshot_context_v1",
+  "name": "AI Snapshot Context v1",
+  "kind": "preset",
+  "description": "Backtests AI-produced trade context per bar using ai.direction, ai.confidence, ai.entry, ai.sl, and ai.tp supplied in ai_context_rows.",
+  "engine_version": "42trade.strategy.v2",
+  "status": "active",
+  "market": {
+    "symbol": "XAUUSD",
+    "tf": "15"
+  },
+  "params": {
+    "min_confidence": 0.7
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_rule",
+      "name": "Bullish",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "==": [
+              {
+                "var": "ai.direction"
+              },
+              "buy"
+            ]
+          },
+          {
+            ">=": [
+              {
+                "var": "ai.confidence"
+              },
+              {
+                "var": "params.min_confidence"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "bullish_trade",
+          "action": "trade",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": {
+              "var": "ai.entry"
+            },
+            "tp": {
+              "var": "ai.tp"
+            },
+            "sl": {
+              "var": "ai.sl"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "bearish_rule",
+      "name": "Bearish",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "==": [
+              {
+                "var": "ai.direction"
+              },
+              "sell"
+            ]
+          },
+          {
+            ">=": [
+              {
+                "var": "ai.confidence"
+              },
+              {
+                "var": "params.min_confidence"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "bearish_trade",
+          "action": "trade",
+          "trade_plan": {
+            "direction": "sell",
+            "type": "market",
+            "entry": {
+              "var": "ai.entry"
+            },
+            "tp": {
+              "var": "ai.tp"
+            },
+            "sl": {
+              "var": "ai.sl"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
+  },
+  "metadata": {
+    "strategy_type": "ai",
+    "signal_source": "ai_snapshot",
+    "context_requirements": [
+      "ai.direction",
+      "ai.confidence",
+      "ai.entry",
+      "ai.sl",
+      "ai.tp"
+    ]
+  },
+  "min_bars": 20
+}

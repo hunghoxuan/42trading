@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   resolveAdjusterValue,
   toNumLoose,
-} from "../../components/charts/numberUtils.js";
+} from "../../modules/42trade/components/charts/numberUtils.js";
 
 test("toNumLoose parses dot decimal", () => {
   assert.equal(toNumLoose("79827.83695"), 79827.83695);

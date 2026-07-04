@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT UNIQUE,
   password_hash TEXT,
   password_salt TEXT,
+  roles TEXT,
+  permissions TEXT,
   role TEXT,
   is_active INTEGER DEFAULT 1,
   metadata TEXT,
@@ -15,11 +17,11 @@ CREATE TABLE IF NOT EXISTS trades (
   sid TEXT PRIMARY KEY,
   account_id TEXT,
   user_id TEXT NOT NULL,
-  signal_id TEXT,
+  trade_id TEXT,
   source_id TEXT,
   strategy TEXT,
   entry_model TEXT,
-  signal_tf TEXT,
+  trade_tf TEXT,
   chart_tf TEXT,
   symbol TEXT NOT NULL,
   action TEXT NOT NULL,
@@ -91,11 +93,11 @@ CREATE INDEX IF NOT EXISTS idx_trades_account
 CREATE INDEX IF NOT EXISTS idx_trades_dispatch_queue
   ON trades(account_id, dispatch_status, created_at DESC);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS idx_trades_signal_id
-  ON trades(signal_id);
+CREATE INDEX IF NOT EXISTS idx_trades_trade_id
+  ON trades(trade_id);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_trades_broker_ticket
   ON trades(broker_trade_id);
 --> statement-breakpoint
-INSERT OR IGNORE INTO users (user_id, email, role)
-VALUES ('default', 'System', 'system');
+INSERT OR IGNORE INTO users (user_id, email, roles, permissions, role)
+VALUES ('default', 'System', '["admin"]', '[]', 'system');

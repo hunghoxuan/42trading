@@ -197,6 +197,15 @@ test("brokerLinkedManualStatus maps pending cancel", () => {
   assert.equal(result.dispatch_status, "CANCEL");
 });
 
+test("brokerLinkedManualStatus re-queues repeated cancel for broker-linked cancelled orders", () => {
+  const result = guards.brokerLinkedManualStatus(
+    { broker_trade_id: "ord-1", execution_status: "CANCELLED" },
+    "CANCELLED",
+  );
+  assert.equal(result.execution_status, "CANCELLED");
+  assert.equal(result.dispatch_status, "CANCEL");
+});
+
 test("brokerLinkedManualStatus leaves local-only terminal edits unchanged", () => {
   const result = guards.brokerLinkedManualStatus(
     { broker_trade_id: "", execution_status: "PENDING" },

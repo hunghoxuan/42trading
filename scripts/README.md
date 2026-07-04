@@ -6,8 +6,10 @@ This folder is for reusable teammate-facing automation only. If a script is one-
 
 ### Local development
 - `start/reset_stack_once.sh`: canonical local boot for `src/api` on `3001` and `src/admin` on `3000`
-- `start/start_local.sh`: foreground local runtime
-- `start/restart_webhook.sh`: restart only the API service
+- `start/start_dev.sh`: foreground local runtime
+- `start/start_api.sh`: API-only runtime
+- `start/start_admin.sh`: admin-only runtime
+- `start/fix_3001_being_killed.sh`: inspect/repair local API port-ownership issues on `3001`
 - `start/start_docker.sh`: local Docker stack
 - `start/start_mobile_access.sh`: expose local UI to phone via Tailscale or Cloudflare
 - `start/local_host_db.sh`: run app against local Postgres

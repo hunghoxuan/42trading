@@ -13,7 +13,8 @@ const users = pgTable("users", {
   email: text("email").unique(),
   passwordHash: text("password_hash"),
   passwordSalt: text("password_salt"),
-  role: text("role"),
+  roles: text("roles"),
+  permissions: text("permissions"),
   isActive: boolean("is_active").default(true),
   metadata: text("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -26,11 +27,11 @@ const trades = pgTable("trades", {
   userId: text("user_id")
     .notNull()
     .references(() => users.userId, { onDelete: "cascade" }),
-  signalId: text("signal_id"),
+  tradeId: text("trade_id"),
   sourceId: text("source_id"),
   strategy: text("strategy"),
   entryModel: text("entry_model"),
-  signalTf: text("signal_tf"),
+  tradeTf: text("trade_tf"),
   chartTf: text("chart_tf"),
   symbol: text("symbol").notNull(),
   action: text("action").notNull(),

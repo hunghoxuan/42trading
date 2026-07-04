@@ -1,0 +1,51 @@
+export const flowTheme = {
+  colors: {
+    bg: "#eef6ff",
+    grid: "#dfeafa",
+    ink: "#08284a",
+    sub: "#5e7893",
+    line: "#bfd8ff",
+    lineDone: "#1a90ff",
+    lineReturn: "#7a5bc2",
+    active: "#48ddff",
+    selected: "#235cff",
+    card: "rgba(255,255,255,0.97)",
+    cardBorder: "#c6ddff",
+    panel: "rgba(255,255,255,0.96)",
+    brand1: "#3b28f1",
+    brand2: "#7b25d7",
+    accentText: "#1184db",
+    accentInk: "#0d4f88",
+    tagBg: "#edf5ff",
+    tagText: "#0d5fa8",
+  },
+  radii: {
+    shell: 0,
+    stage: 26,
+    card: 24,
+    panel: 22,
+    pill: 16,
+    round: 999,
+  },
+  shadows: {
+    shell: "0 28px 70px rgba(8,40,74,.10)",
+    panel: "0 14px 32px rgba(8,40,74,.06)",
+    card: "0 18px 40px rgba(10,76,148,.08)",
+    cardActive: "0 0 0 4px rgba(35,92,255,0.12), 0 22px 48px rgba(10,76,148,0.14)",
+    badge: "0 8px 20px rgba(64,42,240,.22)",
+    button: "0 10px 24px rgba(8,40,74,.06)",
+    float: "0 10px 24px rgba(8,40,74,.08)",
+  },
+  spacing: {
+    shellX: 20,
+    shellTop: 18,
+    shellBottom: 20,
+    gap: 16,
+    rail: 60,
+    sidePanel: 340,
+  },
+} as const;
+
+export const flowFonts = {
+  base: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+};

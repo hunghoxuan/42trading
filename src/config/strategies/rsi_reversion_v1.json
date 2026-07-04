@@ -3,12 +3,76 @@
   "name": "RSI Mean Reversion v1",
   "kind": "preset",
   "description": "Buys oversold RSI recoveries and sells overbought RSI rollovers for mean reversion.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "rsi_period": 14,
     "oversold": 30,
     "overbought": 70,
     "rr_target": 1.5,
     "stop_lookback": 3
+  },
+  "indicators": [
+    {
+      "id": "rsi_main",
+      "type": "rsi",
+      "source": "close",
+      "length": 14
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "crosses_above": [
+          {
+            "var": "indicators.rsi_main"
+          },
+          {
+            "var": "params.oversold"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "crosses_below": [
+          {
+            "var": "indicators.rsi_main"
+          },
+          {
+            "var": "params.overbought"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 1.5,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.0015
   },
   "min_bars": 40
 }

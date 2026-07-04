@@ -1,0 +1,32 @@
+{
+  "base": [
+    "bar.open",
+    "bar.high",
+    "bar.low",
+    "bar.close",
+    "bar.volume",
+    "prev.open",
+    "prev.high",
+    "prev.low",
+    "prev.close",
+    "prev.volume",
+    "session.current",
+    "entry",
+    "ai.direction",
+    "ai.confidence",
+    "ai.entry",
+    "ai.sl",
+    "ai.tp",
+    "ai.bias",
+    "artifacts.fvg.bias",
+    "artifacts.fvg.low",
+    "artifacts.fvg.high",
+    "structure.bias",
+    "structure.breakout",
+    "levels.pd_top",
+    "levels.pd_bottom",
+    "levels.pd_mid",
+    "levels.session_high",
+    "levels.session_low"
+  ]
+}

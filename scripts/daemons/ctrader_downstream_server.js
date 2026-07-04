@@ -150,6 +150,13 @@ function normalizeOrderType(value) {
   return "market";
 }
 
+function normalizeTaskType(value) {
+  const v = String(value || "").trim().toUpperCase();
+  if (!v) return "OPEN";
+  if (["OPEN", "CANCEL", "CLOSE", "MODIFY"].includes(v)) return v;
+  throw new Error("Invalid task type");
+}
+
 function normalizeTradeSide(actionRaw) {
   const a = String(actionRaw || "").trim().toUpperCase();
   if (a === "BUY" || a === "LONG") return "BUY";
@@ -304,6 +311,244 @@ async function fetchSymbolCalibration(reqBody = {}) {
     },
     raw_symbol: symbolRow || null,
   };
+}
+
+async function fetchAccountSnapshot(accountIdRaw) {
+  const accountId = String(accountIdRaw || CFG.accountId || "").trim();
+  if (!accountId) throw new Error("account_id required");
+  const { conn: connRef } = await ensureAuthorized(accountId);
+  const res = await connRef.sendCommand("ProtoOAReconcileReq", {
+    ctidTraderAccountId: Number(accountId),
+    returnProtectionOrders: true,
+  });
+  return {
+    accountId,
+    conn: connRef,
+    positions: Array.isArray(res?.position) ? res.position : [],
+    orders: Array.isArray(res?.order) ? res.order : [],
+  };
+}
+
+function entityTradeData(entity = {}) {
+  return entity?.tradeData && typeof entity.tradeData === "object"
+    ? entity.tradeData
+    : {};
+}
+
+function normalizeTicket(value) {
+  const raw = envStr(value);
+  if (!raw) return "";
+  const num = Number(raw);
+  return Number.isFinite(num) ? String(num) : raw;
+}
+
+function entityTicket(entity = {}) {
+  const orderId = Number(entity?.orderId);
+  if (Number.isFinite(orderId)) return String(orderId);
+  const positionId = Number(entity?.positionId);
+  if (Number.isFinite(positionId)) return String(positionId);
+  return "";
+}
+
+function entityVolume(entity = {}) {
+  const volume = Number(entityTradeData(entity).volume);
+  return Number.isFinite(volume) ? volume : null;
+}
+
+function normalizeIncomingTask(reqBody = {}) {
+  const signal =
+    reqBody?.signal && typeof reqBody.signal === "object" ? reqBody.signal : reqBody;
+  const type = normalizeTaskType(
+    reqBody.type || signal.type || signal.task_type || signal.taskType,
+  );
+  const entry = asNum(signal.entry ?? signal.price, NaN);
+  const sl = asNum(signal.sl, NaN);
+  const tp = asNum(signal.tp, NaN);
+  const volume = asNum(signal.volume ?? signal.quantity ?? signal.lots, NaN);
+  return {
+    type,
+    id:
+      envStr(signal.id || signal.signal_id || signal.trade_id) ||
+      `sig_${Date.now().toString(36)}`,
+    symbol: normalizeSymbolName(signal.symbol || signal.ticker),
+    action: normalizeTradeSide(signal.action || signal.side || "BUY"),
+    orderType: normalizeOrderType(signal.order_type),
+    ticket: normalizeTicket(
+      signal.ticket ??
+        signal.broker_trade_id ??
+        signal.order_id ??
+        signal.orderId ??
+        signal.position_id ??
+        signal.positionId,
+    ),
+    entry: Number.isFinite(entry) ? entry : null,
+    sl: Number.isFinite(sl) ? sl : null,
+    tp: Number.isFinite(tp) ? tp : null,
+    volume: Number.isFinite(volume) && volume > 0 ? volume : null,
+    note: String(signal.note || "").trim(),
+    accountId: String(reqBody.account_id || signal.account_id || CFG.accountId || "").trim(),
+  };
+}
+
+function matchesTaskEntity(entity = {}, task = {}, symbolResolved = null) {
+  if (task.ticket && entityTicket(entity) === task.ticket) return true;
+  const tradeData = entityTradeData(entity);
+  const label = envStr(tradeData.label);
+  const comment = envStr(tradeData.comment);
+  if (task.id && (label === task.id || comment.includes(task.id))) {
+    if (!symbolResolved) return true;
+    return Number(tradeData.symbolId) === Number(symbolResolved.symbolId);
+  }
+  return false;
+}
+
+async function executeTask(reqBody = {}) {
+  const task = normalizeIncomingTask(reqBody);
+  if (task.type === "OPEN") {
+    return placeOrder({
+      ...reqBody,
+      signal: {
+        ...(reqBody?.signal && typeof reqBody.signal === "object" ? reqBody.signal : reqBody),
+        id: task.id,
+        symbol: task.symbol,
+        action: task.action,
+        order_type: task.orderType,
+        entry: task.entry,
+        sl: task.sl,
+        tp: task.tp,
+        volume: task.volume,
+      },
+      account_id: task.accountId,
+    });
+  }
+
+  const snapshot = await fetchAccountSnapshot(task.accountId);
+  const symbolResolved =
+    task.symbol && task.accountId
+      ? await resolveSymbolId(task.accountId, task.symbol).catch(() => null)
+      : null;
+  const position = snapshot.positions.find((entity) =>
+    matchesTaskEntity(entity, task, symbolResolved),
+  );
+  const order = snapshot.orders.find((entity) =>
+    matchesTaskEntity(entity, task, symbolResolved),
+  );
+
+  if (task.type === "CANCEL") {
+    if (order) {
+      const res = await snapshot.conn.sendCommand("ProtoOACancelOrderReq", {
+        ctidTraderAccountId: Number(task.accountId),
+        orderId: Number(order.orderId),
+      });
+      return {
+        ok: true,
+        backend: "ctrader-openapi",
+        execution_status: "CANCELLED",
+        broker_trade_id: entityTicket(order) || task.ticket || null,
+        raw: res || {},
+      };
+    }
+    if (position) {
+      const volumeUnits = entityVolume(position);
+      if (!Number.isFinite(volumeUnits) || volumeUnits <= 0) {
+        throw new Error("Unable to resolve position volume for cancel");
+      }
+      const res = await snapshot.conn.sendCommand("ProtoOAClosePositionReq", {
+        ctidTraderAccountId: Number(task.accountId),
+        positionId: Number(position.positionId),
+        volume: volumeUnits,
+      });
+      return {
+        ok: true,
+        backend: "ctrader-openapi",
+        execution_status: "CANCELLED",
+        broker_trade_id: entityTicket(position) || task.ticket || null,
+        raw: res || {},
+      };
+    }
+    throw new Error(`Broker task target not found for CANCEL ${task.id}`);
+  }
+
+  if (task.type === "CLOSE") {
+    if (!position) throw new Error(`Broker task target not found for CLOSE ${task.id}`);
+    const volumeUnits = entityVolume(position);
+    if (!Number.isFinite(volumeUnits) || volumeUnits <= 0) {
+      throw new Error("Unable to resolve position volume for close");
+    }
+    const res = await snapshot.conn.sendCommand("ProtoOAClosePositionReq", {
+      ctidTraderAccountId: Number(task.accountId),
+      positionId: Number(position.positionId),
+      volume: volumeUnits,
+    });
+    return {
+      ok: true,
+      backend: "ctrader-openapi",
+      execution_status: "CLOSED",
+      broker_trade_id: entityTicket(position) || task.ticket || null,
+      raw: res || {},
+    };
+  }
+
+  if (task.type === "MODIFY") {
+    if (order) {
+      const effectiveOrderType =
+        task.orderType !== "market"
+          ? task.orderType
+          : Number.isFinite(Number(order?.stopPrice))
+            ? "stop"
+            : Number.isFinite(Number(order?.limitPrice))
+              ? "limit"
+              : "market";
+      const amendPayload = {
+        ctidTraderAccountId: Number(task.accountId),
+        orderId: Number(order.orderId),
+      };
+      if (Number.isFinite(task.volume) && task.volume > 0) {
+        amendPayload.volume = lotsToUnits(task.volume);
+      }
+      if (effectiveOrderType === "limit" && Number.isFinite(task.entry) && task.entry > 0) {
+        amendPayload.limitPrice = task.entry;
+      }
+      if (effectiveOrderType === "stop" && Number.isFinite(task.entry) && task.entry > 0) {
+        amendPayload.stopPrice = task.entry;
+      }
+      if (Number.isFinite(task.sl) && task.sl > 0) amendPayload.stopLoss = task.sl;
+      if (Number.isFinite(task.tp) && task.tp > 0) amendPayload.takeProfit = task.tp;
+      const res = await snapshot.conn.sendCommand(
+        "ProtoOAAmendOrderReq",
+        amendPayload,
+      );
+      return {
+        ok: true,
+        backend: "ctrader-openapi",
+        execution_status: "PENDING",
+        broker_trade_id: entityTicket(order) || task.ticket || null,
+        raw: res || {},
+      };
+    }
+    if (position) {
+      const amendPayload = {
+        ctidTraderAccountId: Number(task.accountId),
+        positionId: Number(position.positionId),
+      };
+      if (Number.isFinite(task.sl) && task.sl > 0) amendPayload.stopLoss = task.sl;
+      if (Number.isFinite(task.tp) && task.tp > 0) amendPayload.takeProfit = task.tp;
+      const res = await snapshot.conn.sendCommand(
+        "ProtoOAAmendPositionSLTPReq",
+        amendPayload,
+      );
+      return {
+        ok: true,
+        backend: "ctrader-openapi",
+        execution_status: "FILLED",
+        broker_trade_id: entityTicket(position) || task.ticket || null,
+        raw: res || {},
+      };
+    }
+    throw new Error(`Broker task target not found for MODIFY ${task.id}`);
+  }
+
+  throw new Error(`Unsupported task type ${task.type}`);
 }
 
 async function placeOrder(reqBody = {}) {
@@ -524,7 +769,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { ok: false, error: `invalid json: ${error.message}` });
     }
     try {
-      const out = await placeOrder(body);
+      const out = await executeTask(body);
       return json(res, 200, out);
     } catch (error) {
       const message = error?.description || error?.message || String(error);
@@ -569,8 +814,22 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { ok: false, error: "not found" });
 });
 
-server.listen(CFG.port, "0.0.0.0", () => {
-  console.log(
-    `[${TAG}] listening :${CFG.port} mode=${CFG.mode} account_id=${CFG.accountId || "-"} api=${CFG.host}:${CFG.portApi}`,
-  );
-});
+function startServer() {
+  server.listen(CFG.port, "0.0.0.0", () => {
+    console.log(
+      `[${TAG}] listening :${CFG.port} mode=${CFG.mode} account_id=${CFG.accountId || "-"} api=${CFG.host}:${CFG.portApi}`,
+    );
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  executeTask,
+  matchesTaskEntity,
+  normalizeIncomingTask,
+  normalizeTaskType,
+  startServer,
+};

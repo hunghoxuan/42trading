@@ -5,7 +5,7 @@ import {
   getNotificationBadgeCount,
   mergeNotificationEntries,
   normalizeHubEntry,
-} from "../../src/services/NotificationManager.js";
+} from "../../modules/42trade/services/NotificationManager.js";
 
 test("normalizeHubEntry preserves core fields and seen state", () => {
   const entry = normalizeHubEntry({
@@ -37,6 +37,8 @@ test("mergeNotificationEntries merges local seen state onto server entries", () 
       {
         requestId: "srv:1",
         createdAt: Date.now(),
+        event: "remote_api_call",
+        type: "system_event",
         status: "ok",
         extra: "From server",
       },

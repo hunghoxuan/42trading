@@ -1,0 +1,355 @@
+{
+  "roles": {
+    "admin": {
+      "inherits": [
+        "seller",
+        "buyer"
+      ],
+      "permissions": [
+        "pages.*",
+        "apis.*"
+      ]
+    },
+    "seller": {
+      "inherits": [
+        "buyer"
+      ],
+      "permissions": [
+        "pages.42pay.dashboard",
+        "pages.42pay.products",
+        "pages.42pay.offers",
+        "pages.42pay.orders",
+        "pages.settings.profile",
+        "pages.settings.notification",
+        "apis.auth.me",
+        "apis.auth.profile.read",
+        "apis.auth.profile.write",
+        "apis.auth.metadata.write",
+        "apis.42pay.dashboard.read",
+        "apis.42pay.products.read",
+        "apis.42pay.products.write",
+        "apis.42pay.offers.read",
+        "apis.42pay.offers.write",
+        "apis.42pay.orders.read"
+      ]
+    },
+    "buyer": {
+      "inherits": [],
+      "permissions": [
+        "pages.42pay.dashboard",
+        "pages.42pay.offers",
+        "pages.42pay.scan",
+        "pages.42pay.orders",
+        "pages.42pay.topup",
+        "pages.settings.profile",
+        "pages.settings.notification",
+        "apis.auth.me",
+        "apis.auth.profile.read",
+        "apis.auth.profile.write",
+        "apis.auth.metadata.write",
+        "apis.42pay.dashboard.read",
+        "apis.42pay.offers.read",
+        "apis.42pay.wallet.read",
+        "apis.42pay.wallet.write",
+        "apis.42pay.orders.read",
+        "apis.42pay.orders.write",
+        "apis.42pay.scan.read",
+        "apis.42pay.scan.write"
+      ]
+    }
+  },
+  "pages": [
+    {
+      "label": "42Pay Dashboard",
+      "to": "/admin/42pay/dashboard",
+      "permission": "pages.42pay.dashboard"
+    },
+    {
+      "label": "42Pay Products",
+      "to": "/admin/42pay/products",
+      "permission": "pages.42pay.products"
+    },
+    {
+      "label": "42Pay Offers",
+      "to": "/admin/42pay/offers",
+      "permission": "pages.42pay.offers"
+    },
+    {
+      "label": "42Pay Scan QR 2 Pay",
+      "to": "/admin/42pay/scan",
+      "permission": "pages.42pay.scan"
+    },
+    {
+      "label": "42Pay Orders",
+      "to": "/admin/42pay/orders",
+      "permission": "pages.42pay.orders"
+    },
+    {
+      "label": "42Pay Top Up",
+      "to": "/admin/42pay/topup",
+      "permission": "pages.42pay.topup"
+    },
+    {
+      "label": "42Pay Admin",
+      "to": "/admin/42pay/admin/users",
+      "permission": "pages.42pay.admin.users"
+    },
+    {
+      "label": "Dashboard",
+      "to": "/dashboard",
+      "permission": "pages.dashboard"
+    },
+    {
+      "label": "AI Analyze",
+      "to": "/ai/analyze",
+      "permission": "pages.ai.analyze"
+    },
+    {
+      "label": "AI Response",
+      "to": "/ai/response",
+      "permission": "pages.ai.response"
+    },
+    {
+      "label": "AI Realtime Chart",
+      "to": "/ai/realtime-chart",
+      "permission": "pages.ai.realtime_chart"
+    },
+    {
+      "label": "AI News",
+      "to": "/ai/news",
+      "permission": "pages.ai.news"
+    },
+    {
+      "label": "Trades",
+      "to": "/trades",
+      "permission": "pages.trades"
+    },
+    {
+      "label": "Backtests",
+      "to": "/backtests",
+      "permission": "pages.backtests"
+    },
+    {
+      "label": "Studio",
+      "to": "/studio",
+      "permission": "pages.studio"
+    },
+    {
+      "label": "Profile",
+      "to": "/settings/profile",
+      "permission": "pages.settings.profile"
+    },
+    {
+      "label": "Accounts",
+      "to": "/settings/accounts",
+      "permission": "pages.settings.accounts"
+    },
+    {
+      "label": "Cron",
+      "to": "/settings/crons",
+      "permission": "pages.settings.crons"
+    },
+    {
+      "label": "Providers",
+      "to": "/settings/providers",
+      "permission": "pages.settings.providers"
+    },
+    {
+      "label": "Settings",
+      "to": "/settings/notification",
+      "permission": "pages.settings.notification"
+    },
+    {
+      "label": "Analyse",
+      "to": "/settings/analyse",
+      "permission": "pages.settings.analyse"
+    },
+    {
+      "label": "Execution Profile",
+      "to": "/settings/execution_profile",
+      "permission": "pages.settings.execution_profile"
+    },
+    {
+      "label": "Symbol Groups",
+      "to": "/settings/symbol_groups",
+      "permission": "pages.settings.symbol_groups"
+    },
+    {
+      "label": "System Files",
+      "to": "/system/files",
+      "permission": "pages.system.files"
+    },
+    {
+      "label": "System Cache",
+      "to": "/system/cache",
+      "permission": "pages.system.cache"
+    },
+    {
+      "label": "System Logs",
+      "to": "/system/logs",
+      "permission": "pages.system.logs"
+    },
+    {
+      "label": "DB Manager",
+      "to": "/system/db",
+      "permission": "pages.system.db_manager"
+    },
+    {
+      "label": "System Health",
+      "to": "/system/health",
+      "permission": "pages.system.health"
+    },
+    {
+      "label": "Users",
+      "to": "/system/users",
+      "permission": "pages.system.users"
+    },
+    {
+      "label": "System Accounts",
+      "to": "/system/accounts",
+      "permission": "pages.system.accounts"
+    },
+    {
+      "label": "Hosted Apps",
+      "to": "/system/db",
+      "permission": "pages.system.db_manager"
+    }
+  ],
+  "apis": [
+    {
+      "label": "42Pay Dashboard Read",
+      "to": "/api/42pay/dashboard",
+      "permission": "apis.42pay.dashboard.read"
+    },
+    {
+      "label": "42Pay Products Read",
+      "to": "/api/42pay/products",
+      "permission": "apis.42pay.products.read"
+    },
+    {
+      "label": "42Pay Products Write",
+      "to": "/api/42pay/products",
+      "permission": "apis.42pay.products.write"
+    },
+    {
+      "label": "42Pay Offers Read",
+      "to": "/api/42pay/offers",
+      "permission": "apis.42pay.offers.read"
+    },
+    {
+      "label": "42Pay Offers Write",
+      "to": "/api/42pay/offers",
+      "permission": "apis.42pay.offers.write"
+    },
+    {
+      "label": "42Pay Wallet Read",
+      "to": "/api/42pay/wallet",
+      "permission": "apis.42pay.wallet.read"
+    },
+    {
+      "label": "42Pay Wallet Write",
+      "to": "/api/42pay/wallet/topups",
+      "permission": "apis.42pay.wallet.write"
+    },
+    {
+      "label": "42Pay Orders Read",
+      "to": "/api/42pay/orders",
+      "permission": "apis.42pay.orders.read"
+    },
+    {
+      "label": "42Pay Orders Write",
+      "to": "/api/42pay/orders",
+      "permission": "apis.42pay.orders.write"
+    },
+    {
+      "label": "42Pay QR Scan Preview",
+      "to": "/api/42pay/scan/preview",
+      "permission": "apis.42pay.scan.read"
+    },
+    {
+      "label": "42Pay QR Scan Write",
+      "to": "/api/42pay/scan",
+      "permission": "apis.42pay.scan.write"
+    },
+    {
+      "label": "42Pay Admin Users Read",
+      "to": "/api/42pay/admin/users",
+      "permission": "apis.42pay.admin.users.read"
+    },
+    {
+      "label": "Auth Me",
+      "to": "/auth/me",
+      "permission": "apis.auth.me"
+    },
+    {
+      "label": "Auth Profile Read",
+      "to": "/auth/profile",
+      "permission": "apis.auth.profile.read"
+    },
+    {
+      "label": "Auth Profile Write",
+      "to": "/auth/profile",
+      "permission": "apis.auth.profile.write"
+    },
+    {
+      "label": "Auth Metadata Write",
+      "to": "/auth/metadata",
+      "permission": "apis.auth.metadata.write"
+    },
+    {
+      "label": "Auth Users Read",
+      "to": "/auth/users",
+      "permission": "apis.auth.users.read"
+    },
+    {
+      "label": "Auth Users Write",
+      "to": "/auth/users",
+      "permission": "apis.auth.users.write"
+    },
+    {
+      "label": "Auth User Detail Read",
+      "to": "/auth/users/:userId/detail",
+      "permission": "apis.auth.user_detail.read"
+    },
+    {
+      "label": "Auth User Accounts Write",
+      "to": "/auth/users/:userId/accounts",
+      "permission": "apis.auth.user_accounts.write"
+    },
+    {
+      "label": "Settings Read",
+      "to": "/v2/settings",
+      "permission": "apis.v2.settings.read"
+    },
+    {
+      "label": "Settings Write",
+      "to": "/v2/settings",
+      "permission": "apis.v2.settings.write"
+    },
+    {
+      "label": "Settings Secret Read",
+      "to": "/v2/settings/secret",
+      "permission": "apis.v2.settings.secret.read"
+    },
+    {
+      "label": "Accounts Read",
+      "to": "/v2/accounts",
+      "permission": "apis.v2.accounts.read"
+    },
+    {
+      "label": "Accounts Write",
+      "to": "/v2/accounts",
+      "permission": "apis.v2.accounts.write"
+    },
+    {
+      "label": "Notifications Read",
+      "to": "/v2/notifications",
+      "permission": "apis.v2.notifications.read"
+    },
+    {
+      "label": "Calendar Read",
+      "to": "/v2/calendar/today",
+      "permission": "apis.v2.calendar.read"
+    }
+  ]
+}

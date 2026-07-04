@@ -1,0 +1,174 @@
+{
+  "key": "price_action_fvg_context_v1",
+  "name": "Price Action FVG Context v1",
+  "kind": "preset",
+  "description": "Context-driven price action strategy that reacts to structure bias, fair value gaps, and session levels supplied in backtest context rows.",
+  "engine_version": "42trade.strategy.v2",
+  "status": "active",
+  "market": {
+    "symbol": "XAUUSD",
+    "tf": "15"
+  },
+  "params": {
+    "min_gap_size": 0
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bullish_rule",
+      "name": "Bullish",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "fn": "bias",
+            "args": [
+              "bullish"
+            ]
+          },
+          {
+            "==": [
+              {
+                "var": "artifacts.fvg.bias"
+              },
+              "bullish"
+            ]
+          },
+          {
+            "fn": "is_true",
+            "args": [
+              {
+                "and": [
+                  {
+                    "fn": "touches",
+                    "args": [
+                      {
+                        "var": "levels.pd_mid"
+                      }
+                    ]
+                  },
+                  {
+                    ">": [
+                      {
+                        "var": "bar.close"
+                      },
+                      {
+                        "var": "levels.pd_mid"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "bullish_trade",
+          "action": "trade",
+          "trade_plan": {
+            "direction": "buy",
+            "type": "market",
+            "entry": null,
+            "tp": {
+              "var": "levels.session_high"
+            },
+            "sl": {
+              "var": "artifacts.fvg.low"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "bearish_rule",
+      "name": "Bearish",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "fn": "bias",
+            "args": [
+              "bearish"
+            ]
+          },
+          {
+            "==": [
+              {
+                "var": "artifacts.fvg.bias"
+              },
+              "bearish"
+            ]
+          },
+          {
+            "fn": "is_true",
+            "args": [
+              {
+                "and": [
+                  {
+                    "fn": "touches",
+                    "args": [
+                      {
+                        "var": "levels.pd_mid"
+                      }
+                    ]
+                  },
+                  {
+                    "<": [
+                      {
+                        "var": "bar.close"
+                      },
+                      {
+                        "var": "levels.pd_mid"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "bearish_trade",
+          "action": "trade",
+          "trade_plan": {
+            "direction": "sell",
+            "type": "market",
+            "entry": null,
+            "tp": {
+              "var": "levels.session_low"
+            },
+            "sl": {
+              "var": "artifacts.fvg.high"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
+  },
+  "metadata": {
+    "strategy_type": "price_action",
+    "signal_source": "context_rows",
+    "context_requirements": [
+      "artifacts.fvg.bias",
+      "artifacts.fvg.low",
+      "artifacts.fvg.high",
+      "levels.pd_mid",
+      "levels.session_high",
+      "levels.session_low"
+    ]
+  },
+  "min_bars": 20
+}

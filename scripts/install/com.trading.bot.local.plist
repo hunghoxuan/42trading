@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/ABSOLUTE/PATH/TO/trading/scripts/start/start_local.sh</string>
+        <string>/ABSOLUTE/PATH/TO/trading/scripts/start/start_dev.sh</string>
     </array>
 
     <key>EnvironmentVariables</key>
@@ -31,8 +31,8 @@
     <string>/ABSOLUTE/PATH/TO/trading</string>
 
     <key>StandardOutPath</key>
-    <string>/ABSOLUTE/PATH/TO/trading/.local/start_local.stdout.log</string>
+    <string>/ABSOLUTE/PATH/TO/trading/.local/start_dev.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/ABSOLUTE/PATH/TO/trading/.local/start_local.stderr.log</string>
+    <string>/ABSOLUTE/PATH/TO/trading/.local/start_dev.stderr.log</string>
 </dict>
 </plist>

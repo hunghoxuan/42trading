@@ -6,15 +6,15 @@ Canonical API domain architecture:
 - [docs/api-domain-architecture.md](/Users/macmini/Projects/moza/42trade/docs/api-domain-architecture.md)
 
 That document defines the target domain folders and canonical route groups, including:
-- `marketData` -> `/v2/market-data`
-- `trades` -> `/v2/trades`
-- `mt5Bridge` -> `/v2/mt5-bridge`
+- `marketData` -> `/api/market-data`
+- `trades` -> `/api/trades`
+- `mt5Bridge` -> `/api/mt5-bridge`
 
 It is the source of truth for the current domain-splitting refactor.
 
 ## Current `src/api` Layout
 
-- `server.js`: main HTTP entrypoint and route handler
+- `app/server.js`: main HTTP entrypoint and route handler
 - `clients/`: external runtime clients
 - domain folders now own service/orchestration logic
 - `utils/`: pure helpers and normalization logic
@@ -22,10 +22,10 @@ It is the source of truth for the current domain-splitting refactor.
 - object/file persistence now lives under `objects/`
 
 Current note:
-- route handlers still live inside `server.js`
+- route handlers still live inside `app/server.js`
 - next refactor step would be extracting grouped handlers into `endpoints/`
 
-Single webhook gateway at `/signal` (and tokenized path `/signal/<token>`).
+Legacy-compatible webhook gateway at `/signal` (and tokenized path `/signal/<token>`).
 
 It can:
 - send Telegram notification (optional)
@@ -50,6 +50,7 @@ Webhook payload minimum requirements (`POST /signal` or `POST /mt5/tv/webhook`):
 - `symbol` (string)
 - `side` (`BUY` or `SELL`)
 - `price` (number > 0)
+- `sid` / `trade_id` is the canonical trade reference when provided
 
 ## Config model (simplified)
 
@@ -78,6 +79,41 @@ Health check:
 ```bash
 curl http://localhost:80/health
 ```
+
+## Runtime provider configuration
+
+- `AUTOMATION_PROVIDER=node_timer|bullmq`
+- `STREAMING_PROVIDER=socketio|sse`
+- `PUBSUB_PROVIDER=memory|redis`
+- `CACHE_PROVIDER=memory|redis`
+- `APP_ROLE=all|web|runtime`
+- `RUNTIME_LEADER_LOCK_ENABLED=true|false`
+- `RUNTIME_LEADER_LOCK_KEY=42trade:runtime:leader`
+- `RUNTIME_LEADER_LOCK_TTL_MS=45000`
+- `RUNTIME_LEADER_HEARTBEAT_MS=15000`
+
+Recommended setups:
+
+- local dev: `node_timer + socketio + memory + memory`
+- production: `bullmq + socketio + redis + redis`
+
+Current runtime slice:
+
+- realtime transports are wired through the runtime streaming facade
+- realtime topic fanout can run through memory or Redis pub/sub
+- live market-data publishing now goes through the runtime pub/sub seam
+- automation provider selection supports `node_timer` and `bullmq`
+- `/health` now reports active runtime provider diagnostics and readiness
+
+Recommended production safety shape:
+
+- `APP_ROLE=web` for UI/API instances
+- `APP_ROLE=runtime` for exactly one background runner
+- keep `RUNTIME_LEADER_LOCK_ENABLED=true` when Redis is enabled
+- `/health?verbose=1` and the System Health UI now show:
+  - current runtime role
+  - leader-lock status and owner
+  - duplicate `server.js` process detection
 
 ### cTrader bridge service (separate executor)
 
@@ -125,7 +161,7 @@ Script file:
 - `/Users/macmini/Projects/moza/42trade/scripts/deploy/deploy_webhook.sh`
 
 Default behavior:
-1. Run local syntax check (`node --check src/api/server.js`)
+1. Run local syntax check (`node --check src/api/app/server.js`)
 2. Push local `main` to origin
 3. SSH to VPS, pull latest, restart src/api service, verify health endpoints
 
@@ -170,7 +206,7 @@ git push origin main
 ssh root@139.59.211.192
 cd /opt/trading
 git pull --ff-only origin main
-node --check src/api/server.js
+node --check src/api/app/server.js
 pm2 restart src/api
 curl -fsS http://127.0.0.1:80/health
 curl -fsS http://127.0.0.1:80/mt5/health
@@ -182,8 +218,8 @@ Rollback commands:
 ssh root@139.59.211.192
 cd /opt/trading
 git log --oneline -n 5
-git checkout <PREVIOUS_COMMIT> -- src/api/server.js src/api/README.md
-node --check src/api/server.js
+git checkout <PREVIOUS_COMMIT> -- src/api/app/server.js src/api/README.md
+node --check src/api/app/server.js
 pm2 restart src/api
 ```
 
@@ -302,15 +338,15 @@ Header auth alternative (recommended for non-TV clients):
 - `GET /mt5/dashboard/pnl-series?period=today|week|month` (admin API)
 - `GET /mt5/filters/symbols` (admin API)
 - `GET /mt5/trades/search?page=1&pageSize=20&symbol=&status=&range=` (admin API)
-- `GET /mt5/trades/:signal_id` (admin API; detail + chart levels + `events[]` timeline)
+- `GET /mt5/trades/:trade_id` (admin API; detail + chart levels + `events[]` timeline)
 - `GET /csv?apiKey=...&limit=2000&status=&header=1` (admin API, download EA backtest CSV)
 - `GET /mt5/csv?apiKey=...&limit=2000&status=&header=1` (same as `/csv`)
 - `GET /mt5/ui` (lightweight web monitor, admin protected)
 - `POST /mt5/prune` (admin API, optional body: `{"days":14}`)
 - `POST /api/broker/pull` (v2, account API key auth, feature-flagged)
 - `POST /api/broker/ack` (v2, lease-token ack, feature-flagged)
-- `POST /api/broker/sync` (v2, reconcile account snapshot, feature-flagged)
-- `POST /api/broker/heartbeat` (v2 broker liveness update, feature-flagged)
+- `POST /api/broker/sync` (reconcile account snapshot, feature-flagged)
+- `POST /api/broker/heartbeat` (broker liveness update, feature-flagged)
 - `POST /api/broker/trades/create` (v2 broker-originated trade, feature-flagged)
 - `GET /api/accounts` (v2 admin account list)
 - `GET /api/sources` (v2 admin source list)
@@ -340,7 +376,7 @@ EA file:
 - `/Users/macmini/Projects/moza/42trade/src/mt5-bridge/clients/TVBridgeEA.mq5`
 
 Backtest CSV columns:
-- `timestamp;signal_id;action;symbol;volume;sl;tp;note`
+- `timestamp;trade_id;action;symbol;volume;sl;tp;note`
 - timestamp format is UTC: `YYYY.MM.DD HH:MM:SS`
 
 EA key behavior:
@@ -410,6 +446,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Legacy table kept only for old bridge compatibility. The canonical object is now `trades`.
 CREATE TABLE IF NOT EXISTS signals (
   signal_id TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL,
@@ -526,7 +563,7 @@ What this script validates:
 - create signal via `/mt5/tv/webhook`
 - pull signal via `/mt5/ea/pull`
 - ack signal via `/mt5/ea/ack`
-- query trade via `/mt5/trades/:signal_id`
+- query trade via `/mt5/trades/:trade_id`
 - `/mt5/trades/search`
 - `/mt5/dashboard/summary`
 - `/mt5/dashboard/pnl-series`
@@ -570,7 +607,7 @@ For remote-only validation (VPS URL + live API), use the Node built-in test runn
 What it tests:
 - TradingView webhook push: `POST /mt5/tv/webhook`
 - CSV download: `GET /csv`
-- EA pull: `GET /mt5/ea/pull` (supports `signal_id` for deterministic pull)
+- EA pull: `GET /mt5/ea/pull` (supports `trade_id` or legacy `signal_id` for deterministic pull)
 
 Run from repo root:
 

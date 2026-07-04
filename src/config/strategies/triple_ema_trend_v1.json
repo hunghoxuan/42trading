@@ -3,12 +3,136 @@
   "name": "Triple EMA Trend v1",
   "kind": "preset",
   "description": "Aligns fast, medium, and slow EMAs to ride trend continuation phases.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "fast_period": 8,
     "mid_period": 21,
     "slow_period": 55,
     "rr_target": 2,
     "stop_lookback": 3
+  },
+  "indicators": [
+    {
+      "id": "ema_fast",
+      "type": "ema",
+      "source": "close",
+      "length": 8
+    },
+    {
+      "id": "ema_mid",
+      "type": "ema",
+      "source": "close",
+      "length": 21
+    },
+    {
+      "id": "ema_slow",
+      "type": "ema",
+      "source": "close",
+      "length": 55
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "crosses_above": [
+              {
+                "var": "indicators.ema_fast"
+              },
+              {
+                "var": "indicators.ema_mid"
+              }
+            ]
+          },
+          {
+            ">": [
+              {
+                "var": "indicators.ema_fast"
+              },
+              {
+                "var": "indicators.ema_mid"
+              }
+            ]
+          },
+          {
+            ">": [
+              {
+                "var": "indicators.ema_mid"
+              },
+              {
+                "var": "indicators.ema_slow"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "crosses_below": [
+              {
+                "var": "indicators.ema_fast"
+              },
+              {
+                "var": "indicators.ema_mid"
+              }
+            ]
+          },
+          {
+            "<": [
+              {
+                "var": "indicators.ema_fast"
+              },
+              {
+                "var": "indicators.ema_mid"
+              }
+            ]
+          },
+          {
+            "<": [
+              {
+                "var": "indicators.ema_mid"
+              },
+              {
+                "var": "indicators.ema_slow"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 3,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
   },
   "min_bars": 80
 }

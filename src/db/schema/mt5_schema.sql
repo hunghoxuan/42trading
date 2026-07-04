@@ -63,7 +63,7 @@ SET default_table_access_method = heap;
 
 CREATE TABLE public.trades (
     account_id text NOT NULL,
-    signal_id text,
+    trade_id text,
     source_id text,
     symbol text NOT NULL,
     action text NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE public.trades (
     volume double precision,
     user_id text,
     entry_model text,
-    signal_tf text,
+    trade_tf text,
     chart_tf text,
     id bigint NOT NULL,
     sid text DEFAULT public.gen_sid('TRD'::text, 8) NOT NULL,
@@ -264,17 +264,17 @@ CREATE UNIQUE INDEX idx_trades_sid ON public.trades USING btree (sid);
 
 
 --
--- Name: idx_trades_signal_id; Type: INDEX; Schema: public; Owner: macmini
+-- Name: idx_trades_trade_id; Type: INDEX; Schema: public; Owner: macmini
 --
 
-CREATE INDEX idx_trades_signal_id ON public.trades USING btree (signal_id);
+CREATE INDEX idx_trades_trade_id ON public.trades USING btree (trade_id);
 
 
 --
--- Name: idx_trades_signal_sid; Type: INDEX; Schema: public; Owner: macmini
+-- Name: idx_trades_trade_sid; Type: INDEX; Schema: public; Owner: macmini
 --
 
-CREATE INDEX idx_trades_signal_sid ON public.trades USING btree (signal_id);
+CREATE INDEX idx_trades_trade_sid ON public.trades USING btree (trade_id);
 
 
 --
@@ -292,10 +292,10 @@ CREATE INDEX idx_trades_user ON public.trades USING btree (user_id);
 
 
 --
--- Name: uq_trades_account_signal; Type: INDEX; Schema: public; Owner: macmini
+-- Name: uq_trades_account_trade; Type: INDEX; Schema: public; Owner: macmini
 --
 
-CREATE UNIQUE INDEX uq_trades_account_signal ON public.trades USING btree (account_id, signal_id) WHERE (signal_id IS NOT NULL);
+CREATE UNIQUE INDEX uq_trades_account_trade ON public.trades USING btree (account_id, trade_id) WHERE (trade_id IS NOT NULL);
 
 
 --
@@ -329,4 +329,3 @@ CREATE UNIQUE INDEX uq_users_sid ON public.users USING btree (sid);
 --
 -- PostgreSQL database dump complete
 --
-

@@ -1,0 +1,204 @@
+{
+  "operators": [
+    { "value": "var", "label": "Variable", "category": "core" },
+    { "value": "and", "label": "AND", "category": "logic" },
+    { "value": "or", "label": "OR", "category": "logic" },
+    { "value": "then", "label": "THEN", "category": "logic" },
+    { "value": "not", "label": "NOT", "category": "logic" },
+    { "value": "if", "label": "IF", "category": "logic" },
+    { "value": ">", "label": ">", "category": "comparator" },
+    { "value": "<", "label": "<", "category": "comparator" },
+    { "value": ">=", "label": ">=", "category": "comparator" },
+    { "value": "<=", "label": "<=", "category": "comparator" },
+    { "value": "==", "label": "==", "category": "comparator" },
+    { "value": "!=", "label": "!=", "category": "comparator" },
+    { "value": "crosses_above", "label": "Crosses Above", "category": "comparator", "arity": 2, "family": "momentum" },
+    { "value": "crosses_below", "label": "Crosses Below", "category": "comparator", "arity": 2, "family": "momentum" },
+    { "value": "touches", "label": "Touches", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "retest", "label": "Retest", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "rejected", "label": "Rejected", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "holds_above", "label": "Holds Above", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "holds_below", "label": "Holds Below", "category": "comparator", "arity": 2, "family": "price_action" },
+    { "value": "sweeps_above", "label": "Sweeps Above", "category": "comparator", "arity": 2, "family": "ict" },
+    { "value": "sweeps_below", "label": "Sweeps Below", "category": "comparator", "arity": 2, "family": "ict" },
+    { "value": "+", "label": "+", "category": "math" },
+    { "value": "-", "label": "-", "category": "math" },
+    { "value": "*", "label": "*", "category": "math" },
+    { "value": "/", "label": "/", "category": "math" },
+    { "value": "abs", "label": "Abs", "category": "math" },
+    { "value": "min", "label": "Min", "category": "math" },
+    { "value": "max", "label": "Max", "category": "math" }
+  ],
+  "functions": [
+    {
+      "value": "touches",
+      "label": "Touches",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "retest",
+      "label": "Retest",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "rejected",
+      "label": "Rejected",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "holds_above",
+      "label": "Holds Above",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "holds_below",
+      "label": "Holds Below",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "sweeps_above",
+      "label": "Sweeps Above",
+      "kind": "predicate",
+      "family": "ict",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "sweeps_below",
+      "label": "Sweeps Below",
+      "kind": "predicate",
+      "family": "ict",
+      "args": [{ "key": "level", "label": "Level" }]
+    },
+    {
+      "value": "sweep",
+      "label": "Sweep",
+      "kind": "predicate",
+      "family": "ict",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "has_sweep",
+      "label": "Has Sweep",
+      "kind": "predicate",
+      "family": "ict",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "bos",
+      "label": "BOS",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "has_bos",
+      "label": "Has BOS",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "choch",
+      "label": "CHOCH",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "has_choch",
+      "label": "Has CHOCH",
+      "kind": "predicate",
+      "family": "structure",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "breakout",
+      "label": "Breakout",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [
+        { "key": "level", "label": "Level (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "reversal",
+      "label": "Reversal",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [
+        { "key": "level", "label": "Level (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "trend",
+      "label": "Trend",
+      "kind": "predicate",
+      "family": "context",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "bias",
+      "label": "Bias",
+      "kind": "predicate",
+      "family": "context",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "is_true",
+      "label": "IS_TRUE",
+      "kind": "predicate",
+      "family": "wrappers",
+      "args": []
+    },
+    {
+      "value": "get_artifacts",
+      "label": "GET_ARTIFACTS",
+      "kind": "predicate",
+      "family": "wrappers",
+      "args": []
+    },
+    {
+      "value": "draw",
+      "label": "DRAW",
+      "kind": "predicate",
+      "family": "wrappers",
+      "args": []
+    }
+  ]
+}

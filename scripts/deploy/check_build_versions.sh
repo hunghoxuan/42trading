@@ -17,7 +17,7 @@ if [[ -z "$CHANGED" ]]; then
   exit 0
 fi
 
-CODE_CHANGED="$(echo "$CHANGED" | grep -vE '^(docs/|\.agents/|AI\.md$|.*\.md$|tests/results/|tests/results/ui/playwright-report/|src/admin/tests/results/)' || true)"
+CODE_CHANGED="$(echo "$CHANGED" | grep -vE '^(docs/|agents/|AI\.md$|.*\.md$|tests/results/|tests/results/ui/playwright-report/|src/admin/tests/results/)' || true)"
 if [[ -z "$CODE_CHANGED" ]]; then
   echo "[build-version-check] only docs/artifacts changed; version bump not required"
   exit 0

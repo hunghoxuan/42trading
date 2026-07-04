@@ -3,11 +3,121 @@
   "name": "Bollinger Reversion v1",
   "kind": "preset",
   "description": "Looks for closes outside Bollinger Bands and re-entry toward the mean.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "period": 20,
     "stddev": 2,
     "rr_target": 1.5,
     "stop_lookback": 2
+  },
+  "indicators": [
+    {
+      "id": "bb_mid",
+      "type": "bollinger",
+      "source": "close",
+      "length": 20,
+      "stddev": 2,
+      "field": "mid"
+    },
+    {
+      "id": "bb_upper",
+      "type": "bollinger",
+      "source": "close",
+      "length": 20,
+      "stddev": 2,
+      "field": "upper"
+    },
+    {
+      "id": "bb_lower",
+      "type": "bollinger",
+      "source": "close",
+      "length": 20,
+      "stddev": 2,
+      "field": "lower"
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            "<": [
+              {
+                "var": "prev.close"
+              },
+              {
+                "var": "prev_indicators.bb_lower"
+              }
+            ]
+          },
+          {
+            ">": [
+              {
+                "var": "bar.close"
+              },
+              {
+                "var": "indicators.bb_mid"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "and": [
+          {
+            ">": [
+              {
+                "var": "prev.close"
+              },
+              {
+                "var": "prev_indicators.bb_upper"
+              }
+            ]
+          },
+          {
+            "<": [
+              {
+                "var": "bar.close"
+              },
+              {
+                "var": "indicators.bb_mid"
+              }
+            ]
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 1.5,
+    "stop_lookback": 2,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.0015
   },
   "min_bars": 40
 }

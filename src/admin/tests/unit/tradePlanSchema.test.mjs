@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractPlans, resolvePlans } from "../../src/services/TradePlanSchema.js";
+import { extractPlans, resolvePlans } from "../../modules/42trade/services/TradePlanSchema.js";
 
 test("resolvePlans prefers __raw_plan and keeps multi-tp values", () => {
   const root = {

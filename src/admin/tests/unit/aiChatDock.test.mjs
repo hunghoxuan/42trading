@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const aiChatDockSource = readFileSync(
-  new URL("../../components/AiChatDock.jsx", import.meta.url),
+  new URL("../../modules/42trade/components/AiChatDock.jsx", import.meta.url),
   "utf8",
 );
 

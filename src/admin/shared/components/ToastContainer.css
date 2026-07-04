@@ -1,0 +1,87 @@
+.toast-container {
+  position: fixed;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.toast-bottom-right { bottom: 16px; right: 16px; align-items: flex-end; }
+.toast-bottom-left  { bottom: 16px; left: 16px; align-items: flex-start; }
+.toast-top-right    { top: 16px; right: 16px; align-items: flex-end; }
+.toast-top-left     { top: 16px; left: 16px; align-items: flex-start; }
+
+.toast-item {
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  pointer-events: auto;
+  animation: toast-in 0.25s ease-out;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.toast-info    { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+.toast-success { background: #14532d; color: #86efac; border: 1px solid #22c55e; }
+.toast-warning { background: #5c4a0a; color: #fde68a; border: 1px solid #eab308; }
+.toast-error   { background: #5f1a1a; color: #fca5a5; border: 1px solid #ef4444; }
+
+.toast-item__type {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
+.toast-item__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toast-item__badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.toast-item__badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 2px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.08);
+  color: inherit;
+}
+
+.toast-item__source {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.92;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-item__message {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

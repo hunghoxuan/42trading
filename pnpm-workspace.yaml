@@ -2,3 +2,8 @@ packages:
   - "src/api"
   - "src/admin"
   - "src/db"
+allowBuilds:
+  better-sqlite3: set this to true or false
+  esbuild: set this to true or false
+  msgpackr-extract: set this to true or false
+  tesseract.js: set this to true or false

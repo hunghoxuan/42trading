@@ -3,11 +3,81 @@
   "name": "SMA Cross v1",
   "kind": "preset",
   "description": "Classic short/long simple moving average crossover for medium-term trend following.",
+  "engine_version": "42trade.strategy.v2",
   "params": {
     "fast_period": 20,
     "slow_period": 50,
     "rr_target": 2,
     "stop_lookback": 2
+  },
+  "indicators": [
+    {
+      "id": "sma_fast",
+      "type": "sma",
+      "source": "close",
+      "length": 20
+    },
+    {
+      "id": "sma_slow",
+      "type": "sma",
+      "source": "close",
+      "length": 50
+    }
+  ],
+  "rules": [
+    {
+      "id": "entry_long",
+      "name": "Buy",
+      "bias": "bullish",
+      "priority": "medium",
+      "when": {
+        "crosses_above": [
+          {
+            "var": "indicators.sma_fast"
+          },
+          {
+            "var": "indicators.sma_slow"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_long",
+          "action": "trade.open.long",
+          "label": "Buy"
+        }
+      ]
+    },
+    {
+      "id": "entry_short",
+      "name": "Sell",
+      "bias": "bearish",
+      "priority": "medium",
+      "when": {
+        "crosses_below": [
+          {
+            "var": "indicators.sma_fast"
+          },
+          {
+            "var": "indicators.sma_slow"
+          }
+        ]
+      },
+      "actions": [
+        {
+          "id": "open_short",
+          "action": "trade.open.short",
+          "label": "Sell"
+        }
+      ]
+    }
+  ],
+  "risk": {
+    "rr_target": 2,
+    "stop_lookback": 2,
+    "max_open_trades": 1,
+    "fallback_stop_pct": 0.001,
+    "fallback_tp_pct": 0.002
   },
   "min_bars": 70
 }

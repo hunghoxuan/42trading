@@ -3763,8 +3763,13 @@ void SyncWithVps()
    }
 
    // 3. Recently closed deals (manual close + TP/SL realized pnl)
+   // Re-send a recent overlap window so the server can backfill newly-added
+   // close metadata (opened_at / exit_price) for just-closed trades.
    datetime fromTs = g_lastClosedDealSyncTime;
-   if(fromTs <= 0) fromTs = TimeCurrent() - 3600; // bootstrap window
+   if(fromTs <= 0)
+      fromTs = TimeCurrent() - 7200; // bootstrap window
+   else
+      fromTs = fromTs - 7200;
    datetime toTs = TimeCurrent();
    if(HistorySelect(fromTs, toTs))
    {
@@ -3784,19 +3789,47 @@ void SyncWithVps()
             continue;
 
          datetime dealTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
-         if(dealTime <= g_lastClosedDealSyncTime)
+         if(g_lastClosedDealSyncTime > 0
+            && dealTime <= g_lastClosedDealSyncTime
+            && dealTime < (TimeCurrent() - 7200))
             continue;
 
          ulong posTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
          ulong orderTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_ORDER);
          if(posTicket == 0)
             continue;
+         if(PositionSelectByTicket(posTicket))
+            continue; // partial close still has a live position; keep trade open
 
          string sid = "";
          int idx = -1;
          GetSignalIdByPositionTicket(posTicket, sid, idx);
          if(sid == "")
             sid = HistoryDealGetString(dealTicket, DEAL_COMMENT);
+
+         string sym = HistoryDealGetString(dealTicket, DEAL_SYMBOL);
+         double vol = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+         double exitPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+         double entryPrice = 0.0;
+         string openTimeIso = "";
+         if(HistorySelectByPosition(posTicket))
+         {
+            int posDealsTotal = HistoryDealsTotal();
+            for(int j = 0; j < posDealsTotal; j++)
+            {
+               ulong posDealTicket = HistoryDealGetTicket(j);
+               if(posDealTicket == 0 || !HistoryDealSelect(posDealTicket))
+                  continue;
+               if((ulong)HistoryDealGetInteger(posDealTicket, DEAL_POSITION_ID) != posTicket)
+                  continue;
+               ENUM_DEAL_ENTRY posEntryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(posDealTicket, DEAL_ENTRY);
+               if(posEntryType != DEAL_ENTRY_IN)
+                  continue;
+               openTimeIso = IsoTime((datetime)HistoryDealGetInteger(posDealTicket, DEAL_TIME));
+               entryPrice = HistoryDealGetDouble(posDealTicket, DEAL_PRICE);
+               break;
+            }
+         }
 
          ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(dealTicket, DEAL_REASON);
          string closeStatus = "CLOSED";
@@ -3819,8 +3852,13 @@ void SyncWithVps()
          closedUpdates += "\"position_ticket\":\"" + IntegerToString((long)posTicket) + "\",";
          closedUpdates += "\"deal_ticket\":\"" + IntegerToString((long)dealTicket) + "\",";
          closedUpdates += "\"order_ticket\":\"" + IntegerToString((long)orderTicket) + "\",";
+         closedUpdates += "\"symbol\":\"" + JsonEscape(sym) + "\",";
+         closedUpdates += "\"volume\":" + DoubleToString(vol, 2) + ",";
+         closedUpdates += "\"entry\":" + DoubleToString(entryPrice, 5) + ",";
          closedUpdates += "\"pnl\":" + DoubleToString(pnl, 2) + ",";
-         closedUpdates += "\"closed_at\":\"" + IsoTime(dealTime) + "\"";
+         closedUpdates += "\"opened_at\":\"" + openTimeIso + "\",";
+         closedUpdates += "\"closed_at\":\"" + IsoTime(dealTime) + "\",";
+         closedUpdates += "\"exit_price\":" + DoubleToString(exitPrice, 5);
          closedUpdates += "}";
          closedCount++;
 
@@ -3903,7 +3941,7 @@ void SyncWithVps()
    body += "\"symbol_metrics\":[" + symMetrics + "]";
    body += "}";
 
-   string url = BuildApiUrl("/mt5/ea/sync-v2");
+   string url = BuildApiUrl("/api/broker/sync");
    string resp = "";
    if(HttpPostJsonWithResponse(url, body, resp))
    {

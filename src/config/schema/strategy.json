@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "42trade.strategy.v1",
+  "$id": "42trade.strategy.v2",
   "title": "42trade Strategy",
   "type": "object",
   "required": [
@@ -30,7 +30,7 @@
     },
     "engine_version": {
       "type": "string",
-      "enum": ["42trade.strategy.v1"]
+      "enum": ["42trade.strategy.v1", "42trade.strategy.v2"]
     },
     "kind": {
       "type": "string",
@@ -66,7 +66,7 @@
           },
           "type": {
             "type": "string",
-            "enum": ["ema", "sma", "rsi", "roc", "macd", "bollinger", "stochastic"]
+            "enum": ["ema", "sma", "rsi", "roc", "macd", "bollinger", "stochastic", "highest_high", "lowest_low"]
           },
           "source": {
             "type": "string",
@@ -86,20 +86,136 @@
         "additionalProperties": true
       }
     },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "when", "actions"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "when": {},
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "action"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "trade",
+                    "notify.toast",
+                    "notify.notification",
+                    "chart.note",
+                    "webhook.post"
+                  ]
+                },
+                "type": {
+                  "type": "string"
+                },
+                "trade_plan": {
+                  "type": "object",
+                  "properties": {
+                    "direction": { "type": "string", "enum": ["buy", "sell"] },
+                    "type": { "type": "string", "enum": ["market", "limit", "stop"] },
+                    "entry": { "type": ["number", "string", "object", "null"] },
+                    "sl": { "type": ["number", "string", "object", "null"] },
+                    "tp": { "type": ["number", "string", "object", "null"] }
+                  },
+                  "additionalProperties": true
+                },
+                "message": { "type": "string" },
+                "url": { "type": "string" },
+                "method": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
     "rules": {
-      "type": "object",
-      "required": ["entry_long", "entry_short"],
-      "properties": {
-        "entry_long": {},
-        "entry_short": {},
-        "exit_long": {},
-        "exit_short": {},
-        "stop_loss_long": {},
-        "stop_loss_short": {},
-        "take_profit_long": {},
-        "take_profit_short": {}
-      },
-      "additionalProperties": false
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "when", "actions"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "bias": {
+            "type": "string",
+            "enum": ["bullish", "bearish", "neutral"]
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["strong", "medium", "weak"]
+          },
+          "when": {},
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "action"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9._-]{1,64}$"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "trade",
+                    "draw",
+                    "notify.toast",
+                    "notify.notification",
+                    "webhook.post"
+                  ]
+                },
+                "trade_plan": {
+                  "type": "object",
+                  "properties": {
+                    "direction": { "type": "string", "enum": ["buy", "sell"] },
+                    "type": { "type": "string", "enum": ["market", "limit", "stop"] },
+                    "entry": { "type": ["number", "string", "object", "null"] },
+                    "sl": { "type": ["number", "string", "object", "null"] },
+                    "tp": { "type": ["number", "string", "object", "null"] }
+                  },
+                  "additionalProperties": true
+                },
+                "label": { "type": "string" },
+                "color": { "type": "string" },
+                "message": { "type": "string" },
+                "url": { "type": "string" },
+                "method": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
     },
     "risk": {
       "type": "object",

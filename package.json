@@ -4,8 +4,6 @@
   "packageManager": "pnpm@9.13.2",
   "scripts": {
     "install:workspace": "pnpm install",
-    "dev:db-manager": "node --watch --watch-path=src/apps/db-manager --watch-path=src/shared/styles --watch-path=src/shared/components --watch-path=src/shared/bridge src/apps/db-manager/server.js",
-    "dev:system-tools": "node --watch --watch-path=src/apps/system-tools --watch-path=src/shared/styles --watch-path=src/shared/bridge src/apps/system-tools/server.js",
     "test:verify-webhook-local": "bash tests/verify_webhook_local.sh",
     "test:remote-api": "bash tests/test_remote_api_default.sh",
     "test:remote-ui": "bash tests/test_remote_ui.sh",

@@ -1,0 +1,24 @@
+# Bootstrap
+
+Read this first on every new chat.
+
+## Start Here
+
+1. Read `README.md`
+2. Use `rtk` for shell commands
+3. Load only the rule docs needed for the task
+
+## Keep Only What Matters
+
+- DB work: `agents/rules/db.md`
+- UI work: `agents/rules/ui-rules.md`
+- User-facing reports: `agents/rules/communication.md`
+- Deploy or release work: `agents/rules/deploy.md`
+
+## Core Law
+
+- Keep context small.
+- Read only task-needed docs.
+- Test real code changes.
+- Do not create new files in `scripts/` or `tests/` without explicit user approval.
+- Put scratch or one-off files in `.local/`.

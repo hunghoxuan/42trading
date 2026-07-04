@@ -1,0 +1,98 @@
+{
+  "key": "price_action_event_detector_v1",
+  "name": "Price Action Event Detector v1",
+  "kind": "preset",
+  "description": "Detector-only strategy for chart validation. Walks loaded bars and marks BOS, CHOCH, Rejection, and Sweep events wherever the rule engine finds them.",
+  "engine_version": "42trade.strategy.v2",
+  "status": "active",
+  "market": {
+    "symbol": "XAUUSD",
+    "tf": "15"
+  },
+  "indicators": [],
+  "rules": [
+    {
+      "id": "bos_event",
+      "name": "BOS",
+      "bias": "neutral",
+      "priority": "medium",
+      "when": {
+        "fn": "bos",
+        "args": []
+      },
+      "actions": [
+        {
+          "id": "bos_draw",
+          "action": "draw",
+          "label": "Break of structure detected.",
+          "message": "Break of structure detected."
+        }
+      ]
+    },
+    {
+      "id": "choch_event",
+      "name": "CHOCH",
+      "bias": "neutral",
+      "priority": "medium",
+      "when": {
+        "fn": "choch",
+        "args": []
+      },
+      "actions": [
+        {
+          "id": "choch_draw",
+          "action": "draw",
+          "label": "Change of character detected.",
+          "message": "Change of character detected."
+        }
+      ]
+    },
+    {
+      "id": "rejection_event",
+      "name": "Rejection",
+      "bias": "neutral",
+      "priority": "medium",
+      "when": {
+        "fn": "rejected",
+        "args": []
+      },
+      "actions": [
+        {
+          "id": "rejection_draw",
+          "action": "draw",
+          "label": "Price rejection detected.",
+          "message": "Price rejection detected."
+        }
+      ]
+    },
+    {
+      "id": "sweep_event",
+      "name": "Sweep",
+      "bias": "neutral",
+      "priority": "medium",
+      "when": {
+        "fn": "sweep",
+        "args": []
+      },
+      "actions": [
+        {
+          "id": "sweep_draw",
+          "action": "draw",
+          "label": "Liquidity sweep detected.",
+          "message": "Liquidity sweep detected."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "strategy_type": "detector",
+    "signal_source": "chart_artifacts",
+    "artifacts_drawn": [
+      "bos",
+      "choch",
+      "rejection",
+      "sweep"
+    ]
+  },
+  "min_bars": 20
+}

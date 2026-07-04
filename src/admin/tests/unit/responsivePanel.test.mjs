@@ -6,7 +6,7 @@ import {
   normalizeResponsivePanelWidth,
   resolveResponsivePanelBorderClass,
   resolveResponsivePanelMotionClass,
-} from "../../../shared/components/ResponsivePanel.utils.js";
+} from "../../shared/components/ResponsivePanel.utils.js";
 
 test("normalizeResponsivePanelWidth supports px numbers and percentage strings", () => {
   assert.equal(normalizeResponsivePanelWidth(280), "280px");

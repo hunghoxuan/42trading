@@ -1,0 +1,98 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const backtestService = require("./backtestService");
+const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
+
+function makeStructureBars() {
+  return [
+    { time: 60, open: 100, high: 101, low: 99, close: 100, volume: 10 },
+    { time: 120, open: 100, high: 102, low: 98, close: 101, volume: 10 },
+    { time: 180, open: 101, high: 106, low: 100, close: 105, volume: 10 },
+    { time: 240, open: 105, high: 105.5, low: 101, close: 102, volume: 10 },
+    { time: 300, open: 102, high: 103, low: 97, close: 98, volume: 10 },
+    { time: 360, open: 98, high: 99, low: 94, close: 95, volume: 10 },
+    { time: 420, open: 95, high: 100, low: 94.5, close: 99, volume: 10 },
+    { time: 480, open: 99, high: 106.5, low: 98, close: 101, volume: 10 },
+    { time: 540, open: 101, high: 108, low: 100, close: 107, volume: 10 },
+    { time: 600, open: 107, high: 107.5, low: 95.5, close: 96, volume: 10 },
+    { time: 660, open: 96, high: 97, low: 92, close: 93, volume: 10 },
+  ];
+}
+
+function makeBaseBars() {
+  return [
+    { time: 180, open: 99.5, high: 100.2, low: 99.1, close: 99.8, volume: 10 },
+    { time: 360, open: 99.8, high: 100.1, low: 99.2, close: 99.4, volume: 10 },
+    { time: 540, open: 99.4, high: 100.5, low: 99.2, close: 100.1, volume: 10 },
+    { time: 660, open: 100.1, high: 100.4, low: 99.6, close: 99.9, volume: 10 },
+  ];
+}
+
+test("evaluateRule supports multi-timeframe BOS lookups", () => {
+  const h1Bars = makeStructureBars();
+  const baseBars = makeBaseBars();
+  const multiTfData = {
+    "1h": {
+      bars: h1Bars,
+      derivedArtifacts: sharedArtifactDetection.buildDerivedItemsFromBars(h1Bars, "1h"),
+    },
+  };
+  const ctx = {
+    bars: baseBars,
+    index: baseBars.length - 1,
+    bar: baseBars[baseBars.length - 1],
+    prev: baseBars[baseBars.length - 2],
+    tf: "15m",
+    strategy: {},
+    params: {},
+    risk: {},
+    indicators: {},
+    prev_indicators: {},
+    derivedArtifacts: sharedArtifactDetection.buildDerivedItemsFromBars(baseBars, "15m"),
+    multiTf: multiTfData,
+  };
+  const result = backtestService.__test.evaluateRule(
+    { fn: "bos", args: ["bullish", "1h"] },
+    ctx,
+  );
+
+  assert.equal(Boolean(result), true);
+  assert.equal(Array.isArray(result.matches), true);
+  assert.equal(result.matches.some((item) => item?.type === "bos"), true);
+  assert.equal(String(result.timeframe || "").toLowerCase(), "1h");
+});
+
+test("simulateStrategy preserves detector-style events with draw actions in the event log", () => {
+  const strategy = {
+    id: "price_action_event_detector_v1",
+    name: "Price Action Event Detector v1",
+    engine_version: "42trade.strategy.v2",
+    indicators: [],
+    events: [
+      {
+        id: "bos_event",
+        name: "BOS",
+        when: { fn: "bos", args: ["bullish"] },
+        actions: [{ id: "bos_draw", action: "draw", message: "BOS detected." }],
+      },
+    ],
+  };
+
+  const result = backtestService.__test.simulateStrategy(
+    makeStructureBars(),
+    strategy,
+    {
+      tf: "15m",
+      symbol: "EURUSD",
+      returnDetails: true,
+    },
+  );
+
+  assert.equal(Array.isArray(result?.event_log), true);
+  assert.equal(result.event_log.length > 0, true);
+  assert.equal(result.event_log.some((entry) => entry?.action_type === "draw"), true);
+  assert.equal(result.event_log.some((entry) => entry?.event_id === "bos_event"), true);
+});

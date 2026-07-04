@@ -10,6 +10,8 @@ const {
   createTradeRepository,
   resolveUserTradeDbPath,
 } = require("../src/api/trades/tradesRepo");
+const ctraderExecutorBridge = require("../scripts/daemons/ctrader_executor_bridge.js");
+const ctraderDownstreamServer = require("../scripts/daemons/ctrader_downstream_server.js");
 
 function makeTempProjectRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "trade-repo-"));
@@ -412,4 +414,177 @@ test("sqlite repository broker sync inserts new trades using normalized symbol a
   assert.equal(inserted.action, "SELL");
   assert.equal(inserted.brokerTradeId, "TK-NEW-1");
   assert.equal(inserted.metadata.last_sync_source, "broker_sync_v2");
+});
+
+test("sqlite repository broker sync does not resurrect closed rows by reused broker comment", async () => {
+  const projectRoot = makeTempProjectRoot();
+  const repo = createTradeRepository({
+    storageBackend: "sqlite",
+    projectRoot,
+  });
+
+  await repo.seedTrades("sync_user", [
+    {
+      sid: "M_OLD_ETH",
+      account_id: "acct-sync",
+      user_id: "sync_user",
+      symbol: "ETHUSD",
+      action: "SELL",
+      execution_status: "CLOSED",
+      dispatch_status: "CONSUMED",
+      broker_trade_id: "639768310",
+      note: "TGRIPIT9N",
+      entry: 1800,
+      created_at: "2026-06-19T09:31:25.272Z",
+      updated_at: "2026-06-19T09:31:25.272Z",
+    },
+  ]);
+
+  const out = await repo.brokerSyncTrades(
+    "sync_user",
+    "acct-sync",
+    [
+      {
+        sid: "TGRIPIT9N",
+        note: "TGRIPIT9N",
+        comment: "TGRIPIT9N",
+        ticket: "OID983812667",
+        ticket_candidates: ["OID983812667"],
+        symbol: "ETHUSD",
+        action: "SELL",
+        execution_status: "PENDING",
+        entry: 1837.55,
+        sl: 1859.61,
+        tp: 1778.5,
+        lots: 2.5,
+        broker_volume: 250000,
+        order_type: "LIMIT",
+      },
+    ],
+    {
+      snapshotComplete: true,
+      brokerName: "Test Broker",
+      providerCode: "TEST",
+      sourceId: "BROKER",
+      now: "2026-06-28T07:53:36.214Z",
+      generateSid: () => "GEN_SHOULD_NOT_BE_USED",
+    },
+  );
+
+  assert.equal(out.ok, true);
+  assert.equal(out.results[0].status, "Added");
+  assert.equal(out.results[0].sid, "TGRIPIT9N");
+
+  const closed = await repo.loadTrade("sync_user", "M_OLD_ETH", {
+    user_id: "sync_user",
+  });
+  assert.equal(closed.executionStatus, "CLOSED");
+  assert.equal(closed.brokerTradeId, "639768310");
+
+  const inserted = await repo.loadTrade("sync_user", "TGRIPIT9N", {
+    user_id: "sync_user",
+  });
+  assert.equal(inserted.executionStatus, "PENDING");
+  assert.equal(inserted.brokerTradeId, "OID983812667");
+  assert.equal(inserted.note, "TGRIPIT9N");
+});
+
+test("pullAndLockNextTask normalizes OID broker tickets for cTrader cancel tasks", async () => {
+  const projectRoot = makeTempProjectRoot();
+  const repo = createTradeRepository({
+    storageBackend: "sqlite",
+    projectRoot,
+  });
+
+  await repo.seedTrades("broker_user", [
+    {
+      sid: "M_OID988046010",
+      account_id: "acct-broker",
+      user_id: "broker_user",
+      symbol: "ETHUSD",
+      action: "SELL",
+      execution_status: "CANCELLED",
+      dispatch_status: "CANCEL",
+      broker_trade_id: "OID988046010",
+      note: "THBD03JEE",
+      entry: 1595,
+      sl: 1615,
+      tp: 1563,
+      created_at: "2026-06-28T08:00:00.000Z",
+      updated_at: "2026-06-28T08:00:00.000Z",
+    },
+  ]);
+
+  const task = await repo.pullAndLockNextTask("acct-broker", {
+    userId: "broker_user",
+    now: "2026-06-28T08:01:00.000Z",
+    generateLeaseToken: () => "LEASE_OID_TASK",
+    maxAgeHours: 24,
+    maxLeaseRetries: 3,
+  });
+
+  assert.equal(task.sid, "M_OID988046010");
+  assert.equal(task.type, "CANCEL");
+  assert.equal(task.ticket, "988046010");
+  assert.equal(task.lease_token, "LEASE_OID_TASK");
+});
+
+test("ctrader executor normalizes queued cancel tasks without requiring entry price", () => {
+  const task = ctraderExecutorBridge.normalizeBrokerTaskItem({
+    sid: "TRD_CANCEL_1",
+    type: "CANCEL",
+    ticket: "998877",
+    symbol: "ethusd",
+    action: "sell",
+    account_id: "acct-ctrader",
+  });
+
+  assert.equal(task.id, "TRD_CANCEL_1");
+  assert.equal(task.type, "CANCEL");
+  assert.equal(task.ticket, "998877");
+  assert.equal(task.symbol, "ETHUSD");
+  assert.equal(task.entry, null);
+});
+
+test("ctrader downstream matches broker tasks by ticket and label fallback", () => {
+  const task = ctraderDownstreamServer.normalizeIncomingTask({
+    signal: {
+      id: "TRD_MODIFY_1",
+      type: "MODIFY",
+      ticket: "445566",
+      symbol: "XAUUSD",
+      action: "BUY",
+      sl: 3340,
+      tp: 3360,
+    },
+    account_id: "acct-ctrader",
+  });
+
+  const orderMatchByTicket = ctraderDownstreamServer.matchesTaskEntity(
+    {
+      orderId: 445566,
+      tradeData: {
+        label: "other",
+        comment: "",
+        symbolId: 77,
+      },
+    },
+    task,
+    null,
+  );
+  assert.equal(orderMatchByTicket, true);
+
+  const orderMatchByLabel = ctraderDownstreamServer.matchesTaskEntity(
+    {
+      orderId: 778899,
+      tradeData: {
+        label: "TRD_MODIFY_1",
+        comment: "",
+        symbolId: 77,
+      },
+    },
+    { ...task, ticket: "" },
+    { symbolId: 77 },
+  );
+  assert.equal(orderMatchByLabel, true);
 });

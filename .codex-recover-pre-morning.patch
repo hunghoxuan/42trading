@@ -1,0 +1,4724 @@
+*** Begin Patch
+*** Update File: /Users/macmini/Projects/moza/42trade/src/api/server.js
+@@
+   if (req.method === "GET" && url.pathname === "/api/strategies") {
+     const sess = getUiSessionFromReq(req);
+     if (!sess.ok) return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+     try {
+       const userId = uiEffectiveUserId(req, url, null) || CFG.mt5DefaultUserId;
+-      const items = await strategyConfigService.listStrategies(userId);
++      const items = await backtestService.listAvailableStrategies(userId);
+       return json(res, 200, {
+         ok: true,
+         items,
+         example: strategyConfigService.buildExampleStrategy(),
+         schema: strategyConfigService.readSchema(),
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/api.js
+@@
+   listBacktests: () => get("/api/backtests"),
+   runBacktest: (payload = {}) => post("/api/backtests/run", payload),
+   saveBacktest: (payload = {}) => post("/api/backtests/save", payload),
+   getBacktest: (runId) => get(`/api/backtests/${encodeURIComponent(runId)}`),
+   deleteBacktest: (runId) => del(`/api/backtests/${encodeURIComponent(runId)}`),
+   listStrategies: () => get("/api/strategies"),
+-  listAvailableStrategies: () => get("/api/strategies/available"),
++  listAvailableStrategies: () => get("/api/strategies"),
+   getStrategy: (strategyId) => get(`/api/strategies/${encodeURIComponent(strategyId)}`),
+   saveStrategy: (payload = {}) => post("/api/strategies", payload),
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/pages/BacktestsPage.jsx
+@@
+   async function loadCustomStrategies() {
+     try {
+       const res = await api.listStrategies();
+-      const items = mergeStrategiesById(res?.items);
++      const items = mergeStrategiesById(res?.items).filter(
++        (item) => String(item?.kind || "").trim() === "custom",
++      );
+       setCustomStrategies(items);
+       setStrategyExample(res?.example || null);
+     } catch {
+       // noop
+     }
+@@
+   async function handleSaveStrategy(payload) {
+     const sourceId = String(
+       payload?.id || payload?.key || selectedStrategyId || "",
+     ).trim();
+     const existingCustom = customStrategies.find((item) => {
+       const itemId = String(item?.id || item?.key || "").trim();
+-      return itemId && itemId === sourceId;
++      return (
++        itemId &&
++        itemId === sourceId &&
++        String(item?.kind || "").trim() === "custom"
++      );
+     });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const loadAvailableStrategies = useCallback(async () => {
+     setStrategiesLoading(true);
+     setStrategiesError("");
+     try {
+-      const response = await api.listAvailableStrategies();
++      const response = await api.listStrategies();
+       setAvailableStrategies(dedupeStrategiesById(response?.items));
+       loadedStrategiesRef.current = true;
+     } catch (error) {
+       setStrategiesError(
+         String(error?.message || error || "Failed to load strategies"),
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function applyCompactBarsViewport(chart, candles = [], visibleBarsCount = 100) {
+   if (!chart || !Array.isArray(candles) || !candles.length) return false;
+-  return applyLatestBarsViewport(
+-    chart,
+-    candles,
+-    Math.max(20, Math.round(Number(visibleBarsCount) || 100)),
+-  );
++  const requestedVisibleBars = Math.max(
++    20,
++    Math.min(
++      candles.length,
++      Math.round(Number(visibleBarsCount) || 100),
++    ),
++  );
++  try {
++    const chartElement =
++      typeof chart.chartElement === "function" ? chart.chartElement() : null;
++    const chartWidth = Number(
++      chartElement?.clientWidth ||
++        chartElement?.getBoundingClientRect?.().width ||
++        0,
++    );
++    const minBarSpacing = 0.5;
++    const rightPaddingBars = Math.max(
++      2,
++      Math.round(requestedVisibleBars * 0.2),
++    );
++    const totalLogicalBars = requestedVisibleBars + rightPaddingBars;
++    if (chartWidth > 0) {
++      const targetBarSpacing = Math.max(
++        minBarSpacing,
++        chartWidth / Math.max(totalLogicalBars, 1),
++      );
++      chart.applyOptions({
++        timeScale: {
++          barSpacing: targetBarSpacing,
++          minBarSpacing,
++          rightOffset: rightPaddingBars,
++          lockVisibleTimeRangeOnResize: true,
++        },
++      });
++    }
++    const lastIndex = candles.length - 1;
++    const firstIndex = Math.max(0, lastIndex - requestedVisibleBars + 1);
++    const nextRange = {
++      from: firstIndex,
++      to: lastIndex + rightPaddingBars,
++    };
++    chart.timeScale().setVisibleLogicalRange(nextRange);
++    rememberLogicalRange(chart, nextRange);
++    return true;
++  } catch {
++    return false;
++  }
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function resolveViewportLabelColor(status = "idle") {
+   switch (String(status || "").trim().toLowerCase()) {
+@@
+   }
+ }
++
++function ViewportNavIcon({ action }) {
++  const stroke = "currentColor";
++  const commonProps = {
++    width: 12,
++    height: 12,
++    viewBox: "0 0 12 12",
++    fill: "none",
++    xmlns: "http://www.w3.org/2000/svg",
++    "aria-hidden": "true",
++  };
++  if (action === "show_all_loaded") {
++    return (
++      <svg {...commonProps}>
++        <path d="M4 1.5H1.5V4" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M8 1.5H10.5V4" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M4 10.5H1.5V8" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M8 10.5H10.5V8" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++      </svg>
++    );
++  }
++  if (action === "show_compact") {
++    return (
++      <svg {...commonProps}>
++        <path d="M5 3.5H1.5V1.5" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M7 3.5H10.5V1.5" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M5 8.5H1.5V10.5" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M7 8.5H10.5V10.5" stroke={stroke} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++      </svg>
++    );
++  }
++  return (
++    <svg {...commonProps}>
++      <rect x="1.75" y="2" width="8.5" height="8" rx="1.25" stroke={stroke} strokeWidth="1.2" />
++      <path d="M4.25 2V10" stroke={stroke} strokeWidth="1" opacity="0.75" />
++      <path d="M7.75 2V10" stroke={stroke} strokeWidth="1" opacity="0.75" />
++    </svg>
++  );
++}
+@@
+           {[
+             { action: "jump_first", label: "<<", title: "Go to first loaded bars. If already there, load older history." },
+             { action: "pan_left", label: "<", title: "Pan left by 50 bars" },
+-            { action: "show_all_loaded", label: "Enlarge", title: "Show all currently loaded bars in the viewport" },
+-            { action: "fit_trade", label: "[]", title: "Fit viewport to trade timeline and TP/SL" },
+-            { action: "show_compact", label: "Small", title: "Show a compact viewport of about 100 bars" },
++            { action: "show_all_loaded", label: "Enlarge", title: "Show all currently loaded bars in the viewport", iconOnly: true },
++            { action: "fit_trade", label: "[]", title: "Fit viewport to trade timeline and TP/SL", iconOnly: true },
++            { action: "show_compact", label: "Small", title: "Show a compact viewport of about 100 bars", iconOnly: true },
+             { action: "pan_right", label: ">", title: "Pan right by 50 bars" },
+             { action: "jump_latest", label: ">>", title: "Go to latest loaded bars" },
+           ].map((item) => (
+@@
+               title={item.title}
+               style={{
+                 minHeight: 16,
+-                minWidth:
+-                  item.label === "[]"
+-                    ? 28
+-                    : item.label === "Enlarge" || item.label === "Small"
+-                      ? 54
+-                      : 24,
++                minWidth: item.iconOnly ? 28 : 24,
+                 padding: "0 5px",
+                 lineHeight: 1.1,
+                 fontSize: 10,
+                 fontWeight: 700,
++                display: "inline-flex",
++                alignItems: "center",
++                justifyContent: "center",
+               }}
+             >
+-              {item.label}
++              {item.iconOnly ? <ViewportNavIcon action={item.action} /> : item.label}
+             </button>
+           ))}
+         </div>
+       ) : null}
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function applyCompactBarsViewport(chart, candles = [], visibleBarsCount = 100) {
+   if (!chart || !Array.isArray(candles) || !candles.length) return false;
+-  return applyLatestBarsViewport(
+-    chart,
+-    candles,
+-    Math.max(20, Math.round(Number(visibleBarsCount) || 100)),
+-  );
++  const requestedVisibleBars = Math.max(
++    20,
++    Math.min(candles.length, Math.round(Number(visibleBarsCount) || 100)),
++  );
++  try {
++    const chartElement =
++      typeof chart.chartElement === "function" ? chart.chartElement() : null;
++    const chartWidth = Number(
++      chartElement?.clientWidth ||
++        chartElement?.getBoundingClientRect?.().width ||
++        0,
++    );
++    const minBarSpacing = 0.5;
++    const rightPaddingBars = Math.max(
++      2,
++      Math.round(requestedVisibleBars * 0.2),
++    );
++    const totalLogicalBars = requestedVisibleBars + rightPaddingBars;
++    if (chartWidth > 0) {
++      const targetBarSpacing = Math.max(
++        minBarSpacing,
++        chartWidth / Math.max(totalLogicalBars, 1),
++      );
++      chart.applyOptions({
++        timeScale: {
++          barSpacing: targetBarSpacing,
++          minBarSpacing,
++          rightOffset: rightPaddingBars,
++          lockVisibleTimeRangeOnResize: true,
++        },
++      });
++    }
++    const lastIndex = candles.length - 1;
++    const firstIndex = Math.max(0, lastIndex - requestedVisibleBars + 1);
++    const nextRange = {
++      from: firstIndex,
++      to: lastIndex + rightPaddingBars,
++    };
++    chart.timeScale().setVisibleLogicalRange(nextRange);
++    rememberLogicalRange(chart, nextRange);
++    return true;
++  } catch {
++    return false;
++  }
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function formatHeaderTimeExact(ts) {
+   const ms = Number(ts);
+   if (!Number.isFinite(ms) || ms <= 0) return "--";
+@@
+   }
+ }
++
++function ViewportNavIcon({ action }) {
++  const commonProps = {
++    width: 12,
++    height: 12,
++    viewBox: "0 0 12 12",
++    fill: "none",
++    xmlns: "http://www.w3.org/2000/svg",
++    "aria-hidden": "true",
++  };
++  if (action === "show_all_loaded") {
++    return (
++      <svg {...commonProps}>
++        <path d="M4 1.5H1.5V4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M8 1.5H10.5V4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M4 10.5H1.5V8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M8 10.5H10.5V8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++      </svg>
++    );
++  }
++  if (action === "show_compact") {
++    return (
++      <svg {...commonProps}>
++        <path d="M5 3.5H1.5V1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M7 3.5H10.5V1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M5 8.5H1.5V10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++        <path d="M7 8.5H10.5V10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
++      </svg>
++    );
++  }
++  return (
++    <svg {...commonProps}>
++      <rect x="1.75" y="2" width="8.5" height="8" rx="1.25" stroke="currentColor" strokeWidth="1.2" />
++      <path d="M4.25 2V10" stroke="currentColor" strokeWidth="1" opacity="0.75" />
++      <path d="M7.75 2V10" stroke="currentColor" strokeWidth="1" opacity="0.75" />
++    </svg>
++  );
++}
+@@
+           {[
+             { action: "jump_first", label: "<<", title: "Go to first loaded bars. If already there, load older history." },
+             { action: "pan_left", label: "<", title: "Pan left by 50 bars" },
+-            { action: "show_all_loaded", label: "Enlarge", title: "Show all currently loaded bars in the viewport" },
+-            { action: "fit_trade", label: "[]", title: "Fit viewport to trade timeline and TP/SL" },
+-            { action: "show_compact", label: "Small", title: "Show a compact viewport of about 100 bars" },
++            { action: "show_all_loaded", label: "Enlarge", title: "Show all currently loaded bars in the viewport", iconOnly: true },
++            { action: "fit_trade", label: "[]", title: "Fit viewport to trade timeline and TP/SL", iconOnly: true },
++            { action: "show_compact", label: "Small", title: "Show a compact viewport of about 100 bars", iconOnly: true },
+             { action: "pan_right", label: ">", title: "Pan right by 50 bars" },
+             { action: "jump_latest", label: ">>", title: "Go to latest loaded bars" },
+           ].map((item) => (
+@@
+               title={item.title}
+               style={{
+                 minHeight: 16,
+-                minWidth:
+-                  item.label === "[]"
+-                    ? 28
+-                    : item.label === "Enlarge" || item.label === "Small"
+-                      ? 54
+-                      : 24,
++                minWidth: item.iconOnly ? 28 : 24,
+                 padding: "0 5px",
+                 lineHeight: 1.1,
+                 fontSize: 10,
+                 fontWeight: 700,
++                display: "inline-flex",
++                alignItems: "center",
++                justifyContent: "center",
+               }}
+             >
+-              {item.label}
++              {item.iconOnly ? <ViewportNavIcon action={item.action} /> : item.label}
+             </button>
+           ))}
+         </div>
+       ) : null}
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function getCurrentLogicalRangeMetrics(chart, candles = []) {
+   if (!chart || !Array.isArray(candles) || !candles.length) return null;
+   let currentRange = null;
+   try {
+     currentRange = chart.timeScale().getVisibleLogicalRange();
+   } catch {
+     currentRange = null;
+   }
++  const hasPendingVisibleRangeAnimation =
++    typeof chart.__codexCancelVisibleRangeAnimation === "function";
++  if (
++    hasPendingVisibleRangeAnimation &&
++    chart.__codexLastLogicalRange &&
++    Number.isFinite(Number(chart.__codexLastLogicalRange.from)) &&
++    Number.isFinite(Number(chart.__codexLastLogicalRange.to))
++  ) {
++    currentRange = chart.__codexLastLogicalRange;
++  }
+   if (
+     (!currentRange ||
+       !Number.isFinite(Number(currentRange.from)) ||
+       !Number.isFinite(Number(currentRange.to))) &&
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-      {mode === "cache" &&
+-        (sourceValue ||
+-          fileInfoLabel ||
+-          loadedRangeLabel ||
+-          visibleRangeLabel ||
+-          typeof onViewportNavigate === "function" ||
+-          typeof onRefreshTf === "function" ||
+-          typeof onRepairTf === "function") && (
+-        <div
+-          ref={dataMenuRef}
+-          style={{
+-            marginLeft: "auto",
+-            position: "relative",
+-            display: "inline-flex",
+-            alignItems: "center",
+-            justifyContent: "flex-end",
+-            minWidth: 0,
+-          }}
+-        >
+-          <button
+-            type="button"
+-            className="secondary-button"
+-            onClick={() => setShowDataMenu((prev) => !prev)}
+-            title={`${showDataMenu ? "Close" : "Open"} ${displayTfLabel(tf)} data details`}
+-            style={{
+-              lineHeight: 1.2,
+-              minHeight: 16,
+-              minWidth: 28,
+-              padding: "0 6px",
+-              fontSize: 11,
+-              fontWeight: 700,
+-            }}
+-          >
+-            {"\u2699"}
+-          </button>
+-          {showDataMenu ? (
+-            <div
+-              style={{
+-                position: "absolute",
+-                top: "calc(100% + 6px)",
+-                right: 0,
+-                width: 338,
+-                zIndex: 30,
+-                borderRadius: 12,
+-                border: "1px solid rgba(148,163,184,0.2)",
+-                background: "rgba(9,15,28,0.97)",
+-                boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
+-                padding: 10,
+-                display: "grid",
+-                gap: 10,
+-              }}
+-            >
+-              <div style={{ display: "grid", gap: 6 }}>
+-                <div
+-                  style={{
+-                    fontSize: 11,
+-                    fontWeight: 800,
+-                    color: "#e2e8f0",
+-                    letterSpacing: "0.02em",
+-                  }}
+-                >
+-                  {storageSummaryLabel || "storage"}
+-                </div>
+-                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
+-                  {`${storedBarsLabel} bars in file: `}
+-                  <span style={{ color: "#94a3b8" }}>
+-                    {fileStartMs && fileEndMs
+-                      ? `${formatHeaderTimeExact(fileStartMs)} -> ${formatHeaderTimeExact(fileEndMs)} (${formatRelativeDateTime(fileEndMs)})`
+-                      : "n/a"}
+-                  </span>
+-                </div>
+-                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
+-                  {`${loadedBars} bars in chart: `}
+-                  <span style={{ color: "#94a3b8" }}>
+-                    {loadedStartMs && loadedEndMs
+-                      ? `${formatHeaderTimeExact(loadedStartMs)} -> ${formatHeaderTimeExact(loadedEndMs)} (${formatRelativeDateTime(loadedEndMs)})`
+-                      : "n/a"}
+-                  </span>
+-                </div>
+-                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
+-                  {`${visibleBars || 0} bars in view: `}
+-                  <span style={{ color: "#94a3b8" }}>
+-                    {viewportStartMs && viewportEndMs
+-                      ? `${formatHeaderTimeExact(viewportStartMs)} -> ${formatHeaderTimeExact(viewportEndMs)} (${formatRelativeDateTime(viewportEndMs)})`
+-                      : "n/a"}
+-                  </span>
+-                </div>
+-              </div>
+-              <div
+-                style={{
+-                  display: "grid",
+-                  gridTemplateColumns: "1fr auto auto",
+-                  gap: 8,
+-                  alignItems: "center",
+-                }}
+-              >
+-                {typeof onRefreshTf === "function" ? (
+-                  <>
+-                    <input
+-                      type="number"
+-                      min="50"
+-                      max="5000"
+-                      step="50"
+-                      className="text-input"
+-                      value={loadMoreBarsInput}
+-                      onChange={(event) => setLoadMoreBarsInput(event.target.value)}
+-                      title="How many older bars to load"
+-                      disabled={busy}
+-                    />
+-                    <button
+-                      type="button"
+-                      className="secondary-button"
+-                      onClick={handleLoadMoreBars}
+-                      title={`Load older ${tf} bars`}
+-                      disabled={busy}
+-                    >
+-                      Load
+-                    </button>
+-                  </>
+-                ) : null}
+-                {typeof onRepairTf === "function" ? (
+-                  <button
+-                    type="button"
+-                    className="secondary-button"
+-                    onClick={() => onRepairTf(tf)}
+-                    disabled={busy}
+-                    title={`Fix current ${tf} data`}
+-                    style={{ whiteSpace: "nowrap" }}
+-                  >
+-                    {busy ? (
+-                      <span
+-                        style={{
+-                          display: "inline-flex",
+-                          alignItems: "center",
+-                          gap: 6,
+-                        }}
+-                      >
+-                        <span className="spinner" style={{ width: 12, height: 12 }} />
+-                        {actionBusyLabel || "Loading..."}
+-                      </span>
+-                    ) : (
+-                      "Refresh & fix"
+-                    )}
+-                  </button>
+-                ) : null}
+-              </div>
+-            </div>
+-          ) : null}
+-        </div>
+-      )}
+       {mode === "cache" && typeof onViewportNavigate === "function" ? (
+         <div
+           style={{
+             display: "inline-flex",
+             alignItems: "center",
+             gap: 4,
+-            marginLeft: mode === "cache" ? 0 : "auto",
++            marginLeft: "auto",
+           }}
+         >
+@@
+           ))}
+         </div>
+       ) : null}
++      {mode === "cache" &&
++        (sourceValue ||
++          fileInfoLabel ||
++          loadedRangeLabel ||
++          visibleRangeLabel ||
++          typeof onViewportNavigate === "function" ||
++          typeof onRefreshTf === "function" ||
++          typeof onRepairTf === "function") && (
++        <div
++          ref={dataMenuRef}
++          style={{
++            position: "relative",
++            display: "inline-flex",
++            alignItems: "center",
++            justifyContent: "flex-end",
++            minWidth: 0,
++          }}
++        >
++          <button
++            type="button"
++            className="secondary-button"
++            onClick={() => setShowDataMenu((prev) => !prev)}
++            title={`${showDataMenu ? "Close" : "Open"} ${displayTfLabel(tf)} data details`}
++            style={{
++              lineHeight: 1.2,
++              minHeight: 16,
++              minWidth: 28,
++              padding: "0 6px",
++              fontSize: 11,
++              fontWeight: 700,
++            }}
++          >
++            {"\u2699"}
++          </button>
++          {showDataMenu ? (
++            <div
++              style={{
++                position: "absolute",
++                top: "calc(100% + 6px)",
++                right: 0,
++                width: 338,
++                zIndex: 30,
++                borderRadius: 12,
++                border: "1px solid rgba(148,163,184,0.2)",
++                background: "rgba(9,15,28,0.97)",
++                boxShadow: "0 18px 48px rgba(0,0,0,0.28)",
++                padding: 10,
++                display: "grid",
++                gap: 10,
++              }}
++            >
++              <div style={{ display: "grid", gap: 6 }}>
++                <div
++                  style={{
++                    fontSize: 11,
++                    fontWeight: 800,
++                    color: "#e2e8f0",
++                    letterSpacing: "0.02em",
++                  }}
++                >
++                  {storageSummaryLabel || "storage"}
++                </div>
++                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
++                  {`${storedBarsLabel} bars in file: `}
++                  <span style={{ color: "#94a3b8" }}>
++                    {fileStartMs && fileEndMs
++                      ? `${formatHeaderTimeExact(fileStartMs)} -> ${formatHeaderTimeExact(fileEndMs)} (${formatRelativeDateTime(fileEndMs)})`
++                      : "n/a"}
++                  </span>
++                </div>
++                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
++                  {`${loadedBars} bars in chart: `}
++                  <span style={{ color: "#94a3b8" }}>
++                    {loadedStartMs && loadedEndMs
++                      ? `${formatHeaderTimeExact(loadedStartMs)} -> ${formatHeaderTimeExact(loadedEndMs)} (${formatRelativeDateTime(loadedEndMs)})`
++                      : "n/a"}
++                  </span>
++                </div>
++                <div style={{ fontSize: 10, color: "#cbd5e1", lineHeight: 1.45 }}>
++                  {`${visibleBars || 0} bars in view: `}
++                  <span style={{ color: "#94a3b8" }}>
++                    {viewportStartMs && viewportEndMs
++                      ? `${formatHeaderTimeExact(viewportStartMs)} -> ${formatHeaderTimeExact(viewportEndMs)} (${formatRelativeDateTime(viewportEndMs)})`
++                      : "n/a"}
++                  </span>
++                </div>
++              </div>
++              <div
++                style={{
++                  display: "grid",
++                  gridTemplateColumns: "1fr auto auto",
++                  gap: 8,
++                  alignItems: "center",
++                }}
++              >
++                {typeof onRefreshTf === "function" ? (
++                  <>
++                    <input
++                      type="number"
++                      min="50"
++                      max="5000"
++                      step="50"
++                      className="text-input"
++                      value={loadMoreBarsInput}
++                      onChange={(event) => setLoadMoreBarsInput(event.target.value)}
++                      title="How many older bars to load"
++                      disabled={busy}
++                    />
++                    <button
++                      type="button"
++                      className="secondary-button"
++                      onClick={handleLoadMoreBars}
++                      title={`Load older ${tf} bars`}
++                      disabled={busy}
++                    >
++                      Load
++                    </button>
++                  </>
++                ) : null}
++                {typeof onRepairTf === "function" ? (
++                  <button
++                    type="button"
++                    className="secondary-button"
++                    onClick={() => onRepairTf(tf)}
++                    disabled={busy}
++                    title={`Fix current ${tf} data`}
++                    style={{ whiteSpace: "nowrap" }}
++                  >
++                    {busy ? (
++                      <span
++                        style={{
++                          display: "inline-flex",
++                          alignItems: "center",
++                          gap: 6,
++                        }}
++                      >
++                        <span className="spinner" style={{ width: 12, height: 12 }} />
++                        {actionBusyLabel || "Loading..."}
++                      </span>
++                    ) : (
++                      "Refresh & fix"
++                    )}
++                  </button>
++                ) : null}
++              </div>
++            </div>
++          ) : null}
++        </div>
++      )}
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/utils/chartStrategyChecks.js
+@@
+ export function buildChartStrategyNotificationPayload(match = {}) {
+@@
+   };
+ }
++
++function resolveStrategyMarkerMeta(actions = [], fallbackEventName = "") {
++  const normalizedActionTypes = (Array.isArray(actions) ? actions : [])
++    .map((action) => String(action?.type || "").trim().toLowerCase())
++    .filter(Boolean);
++  const eventHint = String(fallbackEventName || "").trim().toLowerCase();
++  const combinedHints = [...normalizedActionTypes, eventHint].join(" ");
++  if (
++    normalizedActionTypes.some(
++      (type) =>
++        type === "trade.open.long" ||
++        type === "trade.close.short",
++    ) ||
++    /\blong\b|\bbuy\b|\bentry long\b/.test(combinedHints)
++  ) {
++    return {
++      direction: "up",
++      color: "#22c55e",
++      shape: "arrowUp",
++      position: "belowBar",
++    };
++  }
++  if (
++    normalizedActionTypes.some(
++      (type) =>
++        type === "trade.open.short" ||
++        type === "trade.close.long",
++    ) ||
++    /\bshort\b|\bsell\b|\bentry short\b/.test(combinedHints)
++  ) {
++    return {
++      direction: "down",
++      color: "#ef4444",
++      shape: "arrowDown",
++      position: "aboveBar",
++    };
++  }
++  return {
++    direction: "up",
++    color: "#22c55e",
++    shape: "arrowUp",
++    position: "belowBar",
++  };
++}
+ 
+ export function evaluateChartStrategies({
+   bars = [],
+   strategies = [],
+@@
+         const hit = {
+           strategyId: String(strategy?.id || strategy?.key || "").trim(),
+           strategyName:
+             String(strategy?.name || strategy?.id || strategy?.key || "Strategy").trim() ||
+             "Strategy",
+@@
+           barClose: Number(normalizedBars[index]?.close ?? null),
++          barHigh: Number(normalizedBars[index]?.high ?? null),
++          barLow: Number(normalizedBars[index]?.low ?? null),
+           symbol: String(symbol || strategy?.market?.symbol || "").trim().toUpperCase(),
+           tf: String(tf || strategy?.market?.tf || "").trim(),
+         };
++        const markerMeta = resolveStrategyMarkerMeta(
++          hit.actions,
++          hit.eventName,
++        );
+         hit.displayText = buildChartStrategyHitMessage(hit);
++        hit.markerText = hit.strategyName;
++        hit.markerDirection = markerMeta.direction;
++        hit.markerColor = markerMeta.color;
++        hit.markerShape = markerMeta.shape;
++        hit.markerPosition = markerMeta.position;
+         hit.matchKey = [
+           hit.symbol,
+           hit.tf,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+               const strategyMarkerObjects = strategyMatchesForTf
+                 .map((match) => {
+                   const timeSec = Number(match?.barTimeUnix || 0);
+-                  const price = Number(match?.barClose);
++                  const isDownMarker =
++                    String(match?.markerDirection || "").trim().toLowerCase() === "down";
++                  const price = Number(
++                    isDownMarker ? match?.barHigh : match?.barLow,
++                  );
+                   if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
+                   if (!Number.isFinite(price)) return null;
+                   return {
+                     id: `strategy-marker:${match.matchKey}`,
+                     kind: "point",
+                     type: "strategy",
+-                    label: match.displayText,
+-                    color: "#22d3ee",
++                    label: match.markerText || match.strategyName || match.displayText,
++                    color: String(match?.markerColor || "#22c55e"),
+                     tf: String(tf).toLowerCase(),
+                     time: timeSec,
+                     price,
+-                    marker_shape: "circle",
+-                    marker_text: match.displayText,
++                    marker_position: String(match?.markerPosition || "belowBar"),
++                    marker_shape: String(match?.markerShape || "arrowUp"),
++                    marker_text: String(
++                      match?.markerText || match?.strategyName || match?.displayText || "",
++                    ).trim(),
+                     visible: true,
+                   };
+                 })
+                 .filter(Boolean);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+                 if (obj.kind === "point") {
+                   const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
+                   const price = Number(obj.price ?? obj.anchorPrice);
+                   const resolvedTimeSec = Number.isFinite(timeSec)
+                     ? resolveEventMarkerTimeSec(candles, timeSec, interval)
+                     : null;
+-                  if (
+-                    obj.type === "strategy" &&
+-                    Number.isFinite(price) &&
+-                    Number.isFinite(resolvedTimeSec)
+-                  ) {
+-                    const strategyMarkerPrimitive =
+-                      new EventTimeMarkerPrimitive({
+-                        timeSec: Number(resolvedTimeSec),
+-                        price: Number(
+-                          resolveEventMarkerAnchorPrice(
+-                            candles,
+-                            timeSec,
+-                            "aboveBar",
+-                            price,
+-                          ),
+-                        ),
+-                        color: lineColor,
+-                        text: String(obj.marker_text ?? "").trim(),
+-                        textColor: "#e6fffb",
+-                        backgroundColor: "rgba(8, 47, 73, 0.92)",
+-                        lineColor,
+-                        placement: "aboveBar",
+-                      });
+-                    candleSeries.attachPrimitive(strategyMarkerPrimitive);
+-                    sharedOverlayPrimitivesRef.current.push(
+-                      strategyMarkerPrimitive,
+-                    );
+-                  } else if (
+-                    Number.isFinite(price) &&
+-                    Number.isFinite(timeSec)
+-                  ) {
++                  if (
++                    Number.isFinite(price) &&
++                    Number.isFinite(timeSec)
++                  ) {
+                     markers.push({
+                       time: Number(resolvedTimeSec ?? timeSec),
+-                      position: "inBar",
++                      position:
++                        obj.type === "strategy"
++                          ? String(obj.marker_position || "belowBar")
++                          : "inBar",
+                       color: lineColor,
+-                      shape: String(obj.marker_shape || "circle"),
++                      shape: String(
++                        obj.marker_shape || (obj.type === "strategy" ? "arrowUp" : "circle"),
++                      ),
+                       text: String(obj.marker_text ?? "").trim(),
+                     });
+                   } else if (Number.isFinite(price)) {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/tests/unit/chartStrategyChecks.test.mjs
+@@
+ test("evaluateChartStrategies only applies a strategy to its own timeframe when market.tf is set", () => {
+@@
+   assert.equal(
+     evaluateChartStrategies({
+       bars,
+       strategies: [strategy],
+@@
+     }).matches.length,
+     1,
+   );
+ });
++
++test("evaluateChartStrategies derives directional marker metadata for long entries", () => {
++  const strategy = {
++    id: "ema_cross",
++    name: "EMA Cross",
++    engine_version: "42trade.strategy.v2",
++    indicators: [
++      { id: "ema_fast", type: "ema", length: 2, source: "close" },
++      { id: "ema_slow", type: "ema", length: 4, source: "close" },
++    ],
++    events: [
++      {
++        id: "entry_long",
++        name: "Entry Long",
++        when: {
++          crosses_above: [
++            { var: "indicators.ema_fast" },
++            { var: "indicators.ema_slow" },
++          ],
++        },
++        actions: [{ id: "open_long", type: "trade.open.long" }],
++      },
++    ],
++  };
++
++  const result = evaluateChartStrategies({
++    bars: makeBars([10, 9, 8, 9, 11, 13, 14]),
++    strategies: [strategy],
++    lookbackBars: 5,
++    symbol: "EURUSD",
++    tf: "1m",
++  });
++
++  assert.equal(result.matches.length, 1);
++  assert.equal(result.matches[0].markerDirection, "up");
++  assert.equal(result.matches[0].markerShape, "arrowUp");
++  assert.equal(result.matches[0].markerPosition, "belowBar");
++  assert.equal(result.matches[0].markerText, "EMA Cross");
++});
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ import {
+-  buildChartStrategyNotificationPayload,
+   evaluateChartStrategies,
+ } from "../../utils/chartStrategyChecks";
+@@
+-  const [chartStrategyEvalBusy, setChartStrategyEvalBusy] = useState(false);
+   const [strategiesLoading, setStrategiesLoading] = useState(false);
+   const [strategiesError, setStrategiesError] = useState("");
+@@
+-  const emittedChartStrategyMatchKeysRef = useRef(new Set());
+   const artifactRequestKeyRef = useRef({});
+   const artifactRequestSeqRef = useRef({});
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  useEffect(() => {
+-    if (activeMode !== "cache" || !selectedChartStrategies.length) {
+-      setChartStrategyEvalBusy(false);
+-      setChartStrategyMatchesByChartId({});
+-      setChartStrategyLatestMatchesByChartId({});
+-      return;
+-    }
+-
+-    let cancelled = false;
+-    setChartStrategyEvalBusy(true);
+-    const timer = window.setTimeout(() => {
+-      const nextMatchesByChartId = {};
+-      const nextLatestMatchesByChartId = {};
+-      visibleChartTfs.forEach((tf) => {
+-        const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+-        const initialVisibleBars =
+-          Number(savedTfVisibleBars?.[chartId]) > 0
+-            ? Number(savedTfVisibleBars[chartId])
+-            : visibleBarsDefaultForTf(masterChartConfig, tf);
+-        const barsForTf = master?.bars?.[String(tf).toLowerCase()]?.length
+-          ? master.bars[String(tf).toLowerCase()]
+-          : [];
+-        const createdAtSec = effectiveCreatedAtSec;
+-        const openedAtSec = effectiveOpenedAtSec;
+-        const closedAtSec = effectiveClosedAtSec;
+-        const tradeFocusedBarsForTf =
+-          anchorToTradeTime &&
+-          !isBacktestChartReplay &&
+-          barsForTf.length > 0
+-            ? resolveTradeFocusedBars(barsForTf, {
+-                createdAt: effectiveCreatedAt,
+-                openedAt: effectiveOpenedAt,
+-                closedAt: effectiveClosedAt,
+-                createdAtSec,
+-                openedAtSec,
+-                closedAtSec,
+-                requestedBars: initialVisibleBars,
+-              })
+-            : barsForTf;
+-        const replayBarsForTf =
+-          isBacktestChartReplay &&
+-          Number.isFinite(replayClockTimeSec) &&
+-          barsForTf.length > 0
+-            ? buildReplayBarsForTf({
+-                bars: barsForTf,
+-                baseBars: primaryReplayBars,
+-                tf,
+-                replayClockTimeSec,
+-                replayStartTimeSec: requestedReplayStartTimeSec,
+-                maxBars: BACKTEST_REPLAY_MAX_BARS,
+-              })
+-            : tradeFocusedBarsForTf;
+-        const barsToEvaluate = resolveTradeChartRenderBars({
+-          loadedBars: barsForTf,
+-          focusedBars: tradeFocusedBarsForTf,
+-          replayBars: replayBarsForTf,
+-          replayActive: isBacktestChartReplay,
+-        });
+-        const result = evaluateChartStrategies({
+-          bars: barsToEvaluate,
+-          strategies: selectedChartStrategies,
+-          lookbackBars: barsToEvaluate.length,
+-          symbol: cleanSym,
+-          tf,
+-        });
+-        nextMatchesByChartId[chartId] = Array.isArray(result?.matches)
+-          ? result.matches
+-          : [];
+-        nextLatestMatchesByChartId[chartId] = Array.isArray(result?.latestMatches)
+-          ? result.latestMatches
+-          : [];
+-      });
+-      if (cancelled) return;
+-      startTransition(() => {
+-        setChartStrategyMatchesByChartId(nextMatchesByChartId);
+-        setChartStrategyLatestMatchesByChartId(nextLatestMatchesByChartId);
+-        setChartStrategyEvalBusy(false);
+-      });
+-    }, 0);
+-
+-    return () => {
+-      cancelled = true;
+-      window.clearTimeout(timer);
+-    };
+-  }, [
+-    activeMode,
+-    anchorToTradeTime,
+-    cleanSym,
+-    effectiveClosedAt,
+-    effectiveClosedAtSec,
+-    effectiveCreatedAt,
+-    effectiveCreatedAtSec,
+-    effectiveOpenedAt,
+-    effectiveOpenedAtSec,
+-    isBacktestChartReplay,
+-    master?.bars,
+-    masterChartConfig,
+-    primaryReplayBars,
+-    replayClockTimeSec,
+-    requestedReplayStartTimeSec,
+-    savedTfVisibleBars,
+-    selectedChartStrategies,
+-    visibleChartTfs,
+-  ]);
+-
+-  useEffect(() => {
+-    emittedChartStrategyMatchKeysRef.current = new Set();
+-  }, [
+-    cleanSym,
+-    effectiveReplayConfig?.runKey,
+-    effectiveReplayConfig?.startTradeSid,
+-    selectedChartStrategyIds,
+-  ]);
+-
+-  useEffect(() => {
+-    const nextMatches = Object.values(chartStrategyLatestMatchesByChartId || {}).flat();
+-    if (!nextMatches.length) return;
+-    nextMatches.forEach((match) => {
+-      if (!match?.matchKey) return;
+-      if (emittedChartStrategyMatchKeysRef.current.has(match.matchKey)) return;
+-      emittedChartStrategyMatchKeysRef.current.add(match.matchKey);
+-      api
+-        .chartStrategyCheckNotify({
+-          ...buildChartStrategyNotificationPayload(match),
+-          symbol: match.symbol || cleanSym,
+-          tf: match.tf || "",
+-          strategy: match.strategyName || "",
+-          strategy_id: match.strategyId || "",
+-          rule_name: match.eventName || "",
+-          event_id: match.eventId || "",
+-          bar_time_unix: match.barTimeUnix || 0,
+-        })
+-        .catch(() => {});
+-    });
+-  }, [chartStrategyLatestMatchesByChartId, cleanSym]);
++  const recalcSelectedChartStrategyMatches = useCallback(() => {
++    if (activeMode !== "cache" || !selectedChartStrategies.length) {
++      startTransition(() => {
++        setChartStrategyMatchesByChartId({});
++        setChartStrategyLatestMatchesByChartId({});
++      });
++      return {
++        timeframeCount: 0,
++        matchCount: 0,
++      };
++    }
++
++    const nextMatchesByChartId = {};
++    const nextLatestMatchesByChartId = {};
++    visibleChartTfs.forEach((tf) => {
++      const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
++      const initialVisibleBars =
++        Number(savedTfVisibleBars?.[chartId]) > 0
++          ? Number(savedTfVisibleBars[chartId])
++          : visibleBarsDefaultForTf(masterChartConfig, tf);
++      const barsForTf = master?.bars?.[String(tf).toLowerCase()]?.length
++        ? master.bars[String(tf).toLowerCase()]
++        : [];
++      const createdAtSec = effectiveCreatedAtSec;
++      const openedAtSec = effectiveOpenedAtSec;
++      const closedAtSec = effectiveClosedAtSec;
++      const tradeFocusedBarsForTf =
++        anchorToTradeTime &&
++        !isBacktestChartReplay &&
++        barsForTf.length > 0
++          ? resolveTradeFocusedBars(barsForTf, {
++              createdAt: effectiveCreatedAt,
++              openedAt: effectiveOpenedAt,
++              closedAt: effectiveClosedAt,
++              createdAtSec,
++              openedAtSec,
++              closedAtSec,
++              requestedBars: initialVisibleBars,
++            })
++          : barsForTf;
++      const replayBarsForTf =
++        isBacktestChartReplay &&
++        Number.isFinite(replayClockTimeSec) &&
++        barsForTf.length > 0
++          ? buildReplayBarsForTf({
++              bars: barsForTf,
++              baseBars: primaryReplayBars,
++              tf,
++              replayClockTimeSec,
++              replayStartTimeSec: requestedReplayStartTimeSec,
++              maxBars: BACKTEST_REPLAY_MAX_BARS,
++            })
++          : tradeFocusedBarsForTf;
++      const barsToEvaluate = resolveTradeChartRenderBars({
++        loadedBars: barsForTf,
++        focusedBars: tradeFocusedBarsForTf,
++        replayBars: replayBarsForTf,
++        replayActive: isBacktestChartReplay,
++      });
++      const result = evaluateChartStrategies({
++        bars: barsToEvaluate,
++        strategies: selectedChartStrategies,
++        lookbackBars: barsToEvaluate.length,
++        symbol: cleanSym,
++        tf,
++      });
++      nextMatchesByChartId[chartId] = Array.isArray(result?.matches)
++        ? result.matches
++        : [];
++      nextLatestMatchesByChartId[chartId] = Array.isArray(result?.latestMatches)
++        ? result.latestMatches
++        : [];
++    });
++
++    startTransition(() => {
++      setChartStrategyMatchesByChartId(nextMatchesByChartId);
++      setChartStrategyLatestMatchesByChartId(nextLatestMatchesByChartId);
++    });
++
++    return {
++      timeframeCount: visibleChartTfs.length,
++      matchCount: Object.values(nextMatchesByChartId).reduce(
++        (sum, matches) => sum + (Array.isArray(matches) ? matches.length : 0),
++        0,
++      ),
++    };
++  }, [
++    activeMode,
++    anchorToTradeTime,
++    cleanSym,
++    effectiveClosedAt,
++    effectiveClosedAtSec,
++    effectiveCreatedAt,
++    effectiveCreatedAtSec,
++    effectiveOpenedAt,
++    effectiveOpenedAtSec,
++    isBacktestChartReplay,
++    master?.bars,
++    masterChartConfig,
++    primaryReplayBars,
++    replayClockTimeSec,
++    requestedReplayStartTimeSec,
++    savedTfVisibleBars,
++    selectedChartStrategies,
++    visibleChartTfs,
++  ]);
++
++  useEffect(() => {
++    startTransition(() => {
++      setChartStrategyMatchesByChartId({});
++      setChartStrategyLatestMatchesByChartId({});
++    });
++  }, [activeMode, cleanSym, selectedChartStrategyIds]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const handleRecalcArtifacts = useCallback(async () => {
+     const targetTfs = (Array.isArray(sortedTfs) ? sortedTfs : []).filter((tf) => {
+       const tfKey = String(tf || "").trim().toLowerCase();
+       return Array.isArray(master?.bars?.[tfKey]) && master.bars[tfKey].length > 0;
+     });
+@@
+     const itemCount = results.reduce((sum, result) => {
+       const items =
+         result.status === "fulfilled" ? result.value?.artifacts?.items : null;
+       return sum + (Array.isArray(items) ? items.length : 0);
+     }, 0);
++    const strategyEval = recalcSelectedChartStrategyMatches();
+     setLastError(null);
+     setChartStatus(
+       "success",
+       targetTfs.length > 0
+-        ? `Rebuilt artifacts for ${targetTfs.length} TFs${itemCount > 0 ? ` (${itemCount} items)` : ""}.`
++        ? `Rebuilt artifacts for ${targetTfs.length} TFs${itemCount > 0 ? ` (${itemCount} items)` : ""}${strategyEval.matchCount > 0 ? ` and recalculated ${strategyEval.matchCount} strategy markers` : selectedChartStrategies.length ? " and cleared strategy markers" : ""}.`
+         : "No timeframes available for artifact recalculation.",
+     );
+-  }, [sortedTfs, master?.bars, loadArtifactsForTf, setChartStatus]);
++  }, [
++    sortedTfs,
++    master?.bars,
++    loadArtifactsForTf,
++    recalcSelectedChartStrategyMatches,
++    selectedChartStrategies.length,
++    setChartStatus,
++  ]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ import { normalizeStrategyCatalog } from "../../utils/strategyCatalog";
+ import {
+-  buildChartStrategyNotificationPayload,
+   evaluateChartStrategies,
+ } from "../../utils/chartStrategyChecks";
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const [chartStrategyMatchesByChartId, setChartStrategyMatchesByChartId] = useState(
+     {},
+   );
+   const [chartStrategyLatestMatchesByChartId, setChartStrategyLatestMatchesByChartId] =
+     useState({});
+-  const [chartStrategyEvalBusy, setChartStrategyEvalBusy] = useState(false);
+@@
+-  const emittedChartStrategyMatchKeysRef = useRef(new Set());
+   const loadedStrategiesRef = useRef(false);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  useEffect(() => {
+-    if (activeMode !== "cache" || !selectedChartStrategies.length) {
+-      setChartStrategyEvalBusy(false);
+-      setChartStrategyMatchesByChartId({});
+-      setChartStrategyLatestMatchesByChartId({});
+-      return;
+-    }
+-
+-    let cancelled = false;
+-    setChartStrategyEvalBusy(true);
+-    const timer = window.setTimeout(() => {
+-      const nextMatchesByChartId = {};
+-      const nextLatestMatchesByChartId = {};
+-      visibleChartTfs.forEach((tf) => {
+-        const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
+-        const initialVisibleBars =
+-          Number(savedTfVisibleBars?.[chartId]) > 0
+-            ? Number(savedTfVisibleBars[chartId])
+-            : visibleBarsDefaultForTf(masterChartConfig, tf);
+-        const barsForTf = master?.bars?.[String(tf).toLowerCase()]?.length
+-          ? master.bars[String(tf).toLowerCase()]
+-          : [];
+-        const createdAtSec = effectiveCreatedAtSec;
+-        const openedAtSec = effectiveOpenedAtSec;
+-        const closedAtSec = effectiveClosedAtSec;
+-        const tradeFocusedBarsForTf =
+-          anchorToTradeTime &&
+-          !isBacktestChartReplay &&
+-          barsForTf.length > 0
+-            ? resolveTradeFocusedBars(barsForTf, {
+-                createdAt: effectiveCreatedAt,
+-                openedAt: effectiveOpenedAt,
+-                closedAt: effectiveClosedAt,
+-                createdAtSec,
+-                openedAtSec,
+-                closedAtSec,
+-                requestedBars: initialVisibleBars,
+-              })
+-            : barsForTf;
+-        const replayBarsForTf =
+-          isBacktestChartReplay &&
+-          Number.isFinite(replayClockTimeSec) &&
+-          barsForTf.length > 0
+-            ? buildReplayBarsForTf({
+-                bars: barsForTf,
+-                baseBars: primaryReplayBars,
+-                tf,
+-                replayClockTimeSec,
+-                replayStartTimeSec: requestedReplayStartTimeSec,
+-                maxBars: BACKTEST_REPLAY_MAX_BARS,
+-              })
+-            : tradeFocusedBarsForTf;
+-        const barsToEvaluate = resolveTradeChartRenderBars({
+-          loadedBars: barsForTf,
+-          focusedBars: tradeFocusedBarsForTf,
+-          replayBars: replayBarsForTf,
+-          replayActive: isBacktestChartReplay,
+-        });
+-        const result = evaluateChartStrategies({
+-          bars: barsToEvaluate,
+-          strategies: selectedChartStrategies,
+-          lookbackBars: barsToEvaluate.length,
+-          symbol: cleanSym,
+-          tf,
+-        });
+-        nextMatchesByChartId[chartId] = Array.isArray(result?.matches)
+-          ? result.matches
+-          : [];
+-        nextLatestMatchesByChartId[chartId] = Array.isArray(result?.latestMatches)
+-          ? result.latestMatches
+-          : [];
+-      });
+-      if (cancelled) return;
+-      startTransition(() => {
+-        setChartStrategyMatchesByChartId(nextMatchesByChartId);
+-        setChartStrategyLatestMatchesByChartId(nextLatestMatchesByChartId);
+-        setChartStrategyEvalBusy(false);
+-      });
+-    }, 0);
+-
+-    return () => {
+-      cancelled = true;
+-      window.clearTimeout(timer);
+-    };
+-  }, [
++  const recalcSelectedChartStrategyMatches = useCallback(() => {
++    if (activeMode !== "cache" || !selectedChartStrategies.length) {
++      startTransition(() => {
++        setChartStrategyMatchesByChartId({});
++        setChartStrategyLatestMatchesByChartId({});
++      });
++      return {
++        timeframeCount: 0,
++        matchCount: 0,
++      };
++    }
++
++    const nextMatchesByChartId = {};
++    const nextLatestMatchesByChartId = {};
++    visibleChartTfs.forEach((tf) => {
++      const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
++      const initialVisibleBars =
++        Number(savedTfVisibleBars?.[chartId]) > 0
++          ? Number(savedTfVisibleBars[chartId])
++          : visibleBarsDefaultForTf(masterChartConfig, tf);
++      const barsForTf = master?.bars?.[String(tf).toLowerCase()]?.length
++        ? master.bars[String(tf).toLowerCase()]
++        : [];
++      const createdAtSec = effectiveCreatedAtSec;
++      const openedAtSec = effectiveOpenedAtSec;
++      const closedAtSec = effectiveClosedAtSec;
++      const tradeFocusedBarsForTf =
++        anchorToTradeTime &&
++        !isBacktestChartReplay &&
++        barsForTf.length > 0
++          ? resolveTradeFocusedBars(barsForTf, {
++              createdAt: effectiveCreatedAt,
++              openedAt: effectiveOpenedAt,
++              closedAt: effectiveClosedAt,
++              createdAtSec,
++              openedAtSec,
++              closedAtSec,
++              requestedBars: initialVisibleBars,
++            })
++          : barsForTf;
++      const replayBarsForTf =
++        isBacktestChartReplay &&
++        Number.isFinite(replayClockTimeSec) &&
++        barsForTf.length > 0
++          ? buildReplayBarsForTf({
++              bars: barsForTf,
++              baseBars: primaryReplayBars,
++              tf,
++              replayClockTimeSec,
++              replayStartTimeSec: requestedReplayStartTimeSec,
++              maxBars: BACKTEST_REPLAY_MAX_BARS,
++            })
++          : tradeFocusedBarsForTf;
++      const barsToEvaluate = resolveTradeChartRenderBars({
++        loadedBars: barsForTf,
++        focusedBars: tradeFocusedBarsForTf,
++        replayBars: replayBarsForTf,
++        replayActive: isBacktestChartReplay,
++      });
++      const result = evaluateChartStrategies({
++        bars: barsToEvaluate,
++        strategies: selectedChartStrategies,
++        lookbackBars: barsToEvaluate.length,
++        symbol: cleanSym,
++        tf,
++      });
++      nextMatchesByChartId[chartId] = Array.isArray(result?.matches)
++        ? result.matches
++        : [];
++      nextLatestMatchesByChartId[chartId] = Array.isArray(result?.latestMatches)
++        ? result.latestMatches
++        : [];
++    });
++
++    startTransition(() => {
++      setChartStrategyMatchesByChartId(nextMatchesByChartId);
++      setChartStrategyLatestMatchesByChartId(nextLatestMatchesByChartId);
++    });
++
++    return {
++      timeframeCount: visibleChartTfs.length,
++      matchCount: Object.values(nextMatchesByChartId).reduce(
++        (sum, matches) => sum + (Array.isArray(matches) ? matches.length : 0),
++        0,
++      ),
++    };
++  }, [
+     activeMode,
+     anchorToTradeTime,
+     cleanSym,
+@@
+     savedTfVisibleBars,
+     selectedChartStrategies,
+     visibleChartTfs,
+   ]);
+ 
+   useEffect(() => {
+-    emittedChartStrategyMatchKeysRef.current = new Set();
+-  }, [
+-    cleanSym,
+-    effectiveReplayConfig?.runKey,
+-    effectiveReplayConfig?.startTradeSid,
+-    selectedChartStrategyIds,
+-  ]);
+-
+-  useEffect(() => {
+-    const nextMatches = Object.values(chartStrategyLatestMatchesByChartId || {}).flat();
+-    if (!nextMatches.length) return;
+-    nextMatches.forEach((match) => {
+-      if (!match?.matchKey) return;
+-      if (emittedChartStrategyMatchKeysRef.current.has(match.matchKey)) return;
+-      emittedChartStrategyMatchKeysRef.current.add(match.matchKey);
+-      api
+-        .chartStrategyCheckNotify({
+-          ...buildChartStrategyNotificationPayload(match),
+-          symbol: match.symbol || cleanSym,
+-          tf: match.tf || "",
+-          strategy: match.strategyName || "",
+-          strategy_id: match.strategyId || "",
+-          rule_name: match.eventName || "",
+-          event_id: match.eventId || "",
+-          bar_time_unix: match.barTimeUnix || 0,
+-        })
+-        .catch(() => {});
+-    });
+-  }, [chartStrategyLatestMatchesByChartId, cleanSym]);
++    startTransition(() => {
++      setChartStrategyMatchesByChartId({});
++      setChartStrategyLatestMatchesByChartId({});
++    });
++  }, [activeMode, cleanSym, selectedChartStrategyIds]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const handleRecalcArtifacts = useCallback(async () => {
+     const targetTfs = (Array.isArray(sortedTfs) ? sortedTfs : []).filter((tf) => {
+       const tfKey = String(tf || "").trim().toLowerCase();
+       return Array.isArray(master?.bars?.[tfKey]) && master.bars[tfKey].length > 0;
+@@
+     const itemCount = results.reduce((sum, result) => {
+       const items =
+         result.status === "fulfilled" ? result.value?.artifacts?.items : null;
+       return sum + (Array.isArray(items) ? items.length : 0);
+     }, 0);
++    const strategyEval = recalcSelectedChartStrategyMatches();
+     setLastError(null);
+     setChartStatus(
+       "success",
+       targetTfs.length > 0
+-        ? `Rebuilt artifacts for ${targetTfs.length} TFs${itemCount > 0 ? ` (${itemCount} items)` : ""}.`
++        ? `Rebuilt artifacts for ${targetTfs.length} TFs${itemCount > 0 ? ` (${itemCount} items)` : ""}${selectedChartStrategies.length ? ` and recalculated ${strategyEval.matchCount} strategy markers` : ""}.`
+         : "No timeframes available for artifact recalculation.",
+     );
+-  }, [sortedTfs, master?.bars, loadArtifactsForTf, setChartStatus]);
++  }, [
++    sortedTfs,
++    master?.bars,
++    loadArtifactsForTf,
++    recalcSelectedChartStrategyMatches,
++    selectedChartStrategies.length,
++    setChartStatus,
++  ]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const [chartStrategyMatchesByChartId, setChartStrategyMatchesByChartId] = useState(
+     {},
+   );
+-  const [chartStrategyLatestMatchesByChartId, setChartStrategyLatestMatchesByChartId] =
+-    useState({});
+   const [configSaveState, setConfigSaveState] = useState("");
+@@
+     if (activeMode !== "cache" || !selectedChartStrategies.length) {
+       startTransition(() => {
+         setChartStrategyMatchesByChartId({});
+-        setChartStrategyLatestMatchesByChartId({});
+       });
+       return {
+         timeframeCount: 0,
+         matchCount: 0,
+       };
+     }
+ 
+     const nextMatchesByChartId = {};
+-    const nextLatestMatchesByChartId = {};
+     visibleChartTfs.forEach((tf) => {
+@@
+       const result = evaluateChartStrategies({
+         bars: barsToEvaluate,
+         strategies: selectedChartStrategies,
+         lookbackBars: barsToEvaluate.length,
+         symbol: cleanSym,
+         tf,
+       });
+       nextMatchesByChartId[chartId] = Array.isArray(result?.matches)
+         ? result.matches
+         : [];
+-      nextLatestMatchesByChartId[chartId] = Array.isArray(result?.latestMatches)
+-        ? result.latestMatches
+-        : [];
+     });
+ 
+     startTransition(() => {
+       setChartStrategyMatchesByChartId(nextMatchesByChartId);
+-      setChartStrategyLatestMatchesByChartId(nextLatestMatchesByChartId);
+     });
+@@
+   useEffect(() => {
+     startTransition(() => {
+       setChartStrategyMatchesByChartId({});
+-      setChartStrategyLatestMatchesByChartId({});
+     });
+   }, [activeMode, cleanSym, selectedChartStrategyIds]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-                        <div
+-                          style={{
+-                            display: "flex",
+-                            alignItems: "center",
+-                            justifyContent: "space-between",
+-                            gap: 8,
+-                            marginBottom: 10,
+-                          }}
+-                        >
+-                          <span style={{ fontSize: 11, color: "#cbd5e1" }}>
+-                            {artifactLoadFromFiles
+-                              ? "Load artifacts from files"
+-                              : "Calculate artifacts from scratch"}
+-                          </span>
+-                          <button
+-                            type="button"
+-                            className="secondary-button"
+-                            onClick={() => handleRecalcArtifacts().catch(() => {})}
+-                            style={{
+-                              fontSize: 10,
+-                              fontWeight: 700,
+-                              minWidth: 108,
+-                              color: "#22d3ee",
+-                              borderColor: "rgba(34,211,238,0.35)",
+-                            }}
+-                            title="Delete old artifact data for loaded chart timeframes and rebuild artifacts from scratch."
+-                          >
+-                            Recalc Artifacts
+-                          </button>
+-                        </div>
+-                        <label
+-                          style={{
+-                            display: "flex",
+-                            alignItems: "center",
+-                            justifyContent: "space-between",
+-                            gap: 8,
+-                            padding: "0 0 10px",
+-                            fontSize: 11,
+-                            color: "#cbd5e1",
+-                            cursor: "pointer",
+-                          }}
+-                          title="When on, load artifact layers from saved files. When off, recalculate artifact layers from scratch for the current chart window."
+-                        >
+-                          <span>{artifactLoadFromFiles ? "From files" : "From scratch"}</span>
+-                          <input
+-                            type="checkbox"
+-                            checked={artifactLoadFromFiles}
+-                            onChange={(evt) =>
+-                              setArtifactLoadFromFiles(Boolean(evt.target.checked))
+-                            }
+-                          />
+-                        </label>
+                         <div style={{ display: "grid", gap: 6 }}>
+                           {artifactPanelGroups.length ? (
+                             artifactPanelGroups.map(({ groupKey, label, color, count, visible }) => {
+@@
+           {mode === "cache" && backtestReplay && (
+             <>
+@@
+               <button
+                 type="button"
+                 className={
+                   effectiveReplayConfig?.playing ? "primary-button" : "secondary-button"
+                 }
+@@
+               >
+                 {effectiveReplayConfig?.playing ? "Pause" : "Replay"}
+               </button>
+             </>
+           )}
++          {mode === "cache" ? (
++            <button
++              type="button"
++              className="secondary-button"
++              onClick={() => handleRecalcArtifacts().catch(() => {})}
++              style={{
++                minWidth: 84,
++                height: "30px",
++                padding: "0 12px",
++                fontSize: "12px",
++                fontWeight: 700,
++                color: "#22d3ee",
++                borderColor: "rgba(34,211,238,0.35)",
++              }}
++              title="Recalculate artifacts from scratch for the loaded chart timeframes."
++            >
++              Refresh
++            </button>
++          ) : null}
+           {typeof onTimeframesChange === "function" &&
+           Array.isArray(timeframeOptions) &&
+           timeframeOptions.length > 0 ? (
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const currentBarsRef = useRef([]);
++  const chartDataFetchErrorKeyRef = useRef("");
+   const pricePrecisionRef = useRef(5);
+@@
+           if (!candles.length) {
+             const warningKey = `${String(symbol || "")
+               .trim()
+               .toUpperCase()}::${String(interval || "").trim()}`;
+@@
+             }
+             setLoading(false);
+             return;
+           }
++          chartDataFetchErrorKeyRef.current = "";
+           noValidBarsWarningKeyRef.current = "";
+@@
+-        } catch (err) {
+-          console.error("Chart data fetch failed:", err);
++        } catch (err) {
++          const errorMessage = String(
++            err?.message || err || "Unknown chart data fetch error",
++          ).trim();
++          const errorKey = [
++            String(symbol || "").trim().toUpperCase(),
++            String(interval || "").trim().toLowerCase(),
++            errorMessage,
++          ].join("|");
++          if (chartDataFetchErrorKeyRef.current !== errorKey) {
++            chartDataFetchErrorKeyRef.current = errorKey;
++            console.error("Chart data fetch failed:", err);
++          }
+         } finally {
+           if (isMounted) setLoading(false);
+         }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const currentBarsRef = useRef([]);
+   const noValidBarsWarningKeyRef = useRef("");
++  const chartDataFetchErrorKeyRef = useRef("");
+   const pricePrecisionRef = useRef(5);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+           }
++          chartDataFetchErrorKeyRef.current = "";
+           noValidBarsWarningKeyRef.current = "";
+@@
+-        } catch (err) {
+-          console.error("Chart data fetch failed:", err);
++        } catch (err) {
++          const errorMessage = String(
++            err?.message || err || "Unknown chart data fetch error",
++          ).trim();
++          const errorKey = [
++            String(symbol || "").trim().toUpperCase(),
++            String(interval || "").trim().toLowerCase(),
++            errorMessage,
++          ].join("|");
++          if (chartDataFetchErrorKeyRef.current !== errorKey) {
++            chartDataFetchErrorKeyRef.current = errorKey;
++            console.error("Chart data fetch failed:", err);
++          }
+         } finally {
+           if (isMounted) setLoading(false);
+         }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const emitViewportRef = useRef(() => {});
+   const lastRenderedBarsSignatureRef = useRef("");
+   const lastAutoFitSignatureRef = useRef("");
+   const noValidBarsWarningKeyRef = useRef("");
++  const chartDataFetchErrorKeyRef = useRef("");
+   const pricePrecisionRef = useRef(5);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+           }
++          chartDataFetchErrorKeyRef.current = "";
+           noValidBarsWarningKeyRef.current = "";
+@@
+-        } catch (err) {
+-          console.error("Chart data fetch failed:", err);
++        } catch (err) {
++          const errorMessage = String(
++            err?.message || err || "Unknown chart data fetch error",
++          ).trim();
++          const errorKey = [
++            String(symbol || "").trim().toUpperCase(),
++            String(interval || "").trim().toLowerCase(),
++            errorMessage,
++          ].join("|");
++          if (chartDataFetchErrorKeyRef.current !== errorKey) {
++            chartDataFetchErrorKeyRef.current = errorKey;
++            console.error("Chart data fetch failed:", err);
++          }
+         } finally {
+           if (isMounted) setLoading(false);
+         }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ const RSI_PANE_HEIGHT = 72;
+ const MACD_PANE_HEIGHT = 68;
+ const TRADINGVIEW_CHART_URL = "https://www.tradingview.com/chart/N6SBLK6M/";
++const CHART_FETCH_ERROR_LOG_THROTTLE_MS = 15000;
++const recentChartFetchErrorLogs = new Map();
+ const TRADE_MARKER_YELLOW = "#facc15";
+@@
+ const samePriceWithinTolerance = (a, b, precision = 4) => {
+@@
+   return Math.abs(left - right) <= epsilon;
+ };
++
++function shouldLogChartFetchError(errorKey = "") {
++  const key = String(errorKey || "").trim();
++  if (!key) return true;
++  const now = Date.now();
++  const lastLoggedAt = Number(recentChartFetchErrorLogs.get(key) || 0);
++  if (Number.isFinite(lastLoggedAt) && now - lastLoggedAt < CHART_FETCH_ERROR_LOG_THROTTLE_MS) {
++    return false;
++  }
++  recentChartFetchErrorLogs.set(key, now);
++  if (recentChartFetchErrorLogs.size > 200) {
++    for (const [entryKey, loggedAt] of recentChartFetchErrorLogs.entries()) {
++      if (now - Number(loggedAt || 0) > CHART_FETCH_ERROR_LOG_THROTTLE_MS * 4) {
++        recentChartFetchErrorLogs.delete(entryKey);
++      }
++    }
++  }
++  return true;
++}
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const emitViewportRef = useRef(() => {});
+   const lastRenderedBarsSignatureRef = useRef("");
+   const lastAutoFitSignatureRef = useRef("");
+   const noValidBarsWarningKeyRef = useRef("");
+-  const chartDataFetchErrorKeyRef = useRef("");
+   const pricePrecisionRef = useRef(5);
+@@
+-          chartDataFetchErrorKeyRef.current = "";
+           noValidBarsWarningKeyRef.current = "";
+@@
+           const errorKey = [
+             String(symbol || "").trim().toUpperCase(),
+             String(interval || "").trim().toLowerCase(),
+             errorMessage,
+           ].join("|");
+-          if (chartDataFetchErrorKeyRef.current !== errorKey) {
+-            chartDataFetchErrorKeyRef.current = errorKey;
++          if (shouldLogChartFetchError(errorKey)) {
+             console.error("Chart data fetch failed:", err);
+           }
+         } finally {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const updatePlanOverlays = useCallback(
+     (snapshotOverride = effectiveAnalysisSnapshot) => {
+@@
+       ];
+     },
+     [
+@@
+       tpPrice,
+     ],
+   );
++
++  const renderTradeOverlays = useCallback(
++    (candles = [], markers = [], options = {}) => {
++      const candleSeries = seriesRef.current;
++      if (!candleSeries || !Array.isArray(candles) || !candles.length) {
++        return markers;
++      }
++
++      const canRenderOverlay = options?.canRenderTradeOverlay === true;
++      const createdTs = resolveEventMarkerTimeSec(
++        candles,
++        normalizedCreatedAtEpochSec,
++        interval,
++      );
++      const openedTs = hasExplicitOpenedEvent
++        ? resolveEventMarkerTimeSec(candles, effectiveOpenedAtEpochSec, interval)
++        : null;
++      const replayNowSec = Number(replayClockTimeSec);
++      const canShowCreatedEvent =
++        !isReplayActive ||
++        !Number.isFinite(replayNowSec) ||
++        replayNowSec >= Number(normalizedCreatedAtEpochSec);
++      const canShowOpenedEvent =
++        !isReplayActive ||
++        !Number.isFinite(replayNowSec) ||
++        replayNowSec >= Number(effectiveOpenedAtEpochSec);
++      const canShowClosedEvent =
++        !isReplayActive ||
++        !Number.isFinite(replayNowSec) ||
++        replayNowSec >= Number(effectiveClosedAtEpochSec);
++      const showStandaloneCreatedMarker =
++        Number.isFinite(createdTs) &&
++        (!Number.isFinite(openedTs) || Math.abs(openedTs - createdTs) > 60);
++
++      if (showStandaloneCreatedMarker && canShowCreatedEvent) {
++        const createdMarkerStyle = resolveTradeMarkerPresentation({
++          side: effectiveSide,
++          kind: "created",
++        });
++        const createdMarkerPrice = resolveEventMarkerAnchorPrice(
++          candles,
++          normalizedCreatedAtEpochSec,
++          createdMarkerStyle.chartPosition,
++          effectiveEntryPrice,
++        );
++        const createdMarkerPrimitive = new EventTimeMarkerPrimitive({
++          timeSec: Number(createdTs),
++          price: Number(createdMarkerPrice),
++          color: TRADE_MARKER_YELLOW,
++          text: buildTradeCreatedLabel(effectiveTradeLabel, effectiveSide),
++          placement: createdMarkerStyle.chartPosition,
++        });
++        candleSeries.attachPrimitive(createdMarkerPrimitive);
++        tradeOverlayPrimitivesRef.current.push(createdMarkerPrimitive);
++      }
++
++      if (Number.isFinite(openedTs)) {
++        const openLineColor =
++          String(effectiveSide || "").toUpperCase() === "SELL"
++            ? PLAN_COLORS.sell.entry
++            : PLAN_COLORS.buy.entry;
++        if (Number.isFinite(Number(effectiveEntryPrice))) {
++          const openedPriceLine = candleSeries.createPriceLine({
++            price: Number(effectiveEntryPrice),
++            color: openLineColor,
++            lineWidth: 1,
++            lineStyle: LineStyle.Solid,
++            axisLabelVisible: true,
++            title: "",
++            axisLabelColor: openLineColor,
++            axisLabelTextColor: "#ffffff",
++          });
++          tradeOverlayPriceLinesRef.current.push(openedPriceLine);
++        }
++        if (
++          canShowOpenedEvent &&
++          (!showStandaloneCreatedMarker || Math.abs(openedTs - createdTs) > 60)
++        ) {
++          const openedMarkerStyle = resolveTradeMarkerPresentation({
++            side: effectiveSide,
++            kind: "opened",
++          });
++          const openedMarkerPrice = resolveEventMarkerAnchorPrice(
++            candles,
++            effectiveOpenedAtEpochSec,
++            openedMarkerStyle.chartPosition,
++            effectiveEntryPrice,
++          );
++          const openedMarkerPrimitive = new EventTimeMarkerPrimitive({
++            timeSec: Number(openedTs),
++            price: Number(openedMarkerPrice),
++            color: TRADE_MARKER_YELLOW,
++            text: buildTradeOpenedLabel(),
++            placement: openedMarkerStyle.chartPosition,
++          });
++          candleSeries.attachPrimitive(openedMarkerPrimitive);
++          tradeOverlayPrimitivesRef.current.push(openedMarkerPrimitive);
++        }
++      }
++
++      if (Number.isFinite(effectiveClosedAtEpochSec)) {
++        const closeTs = resolveEventMarkerTimeSec(
++          candles,
++          effectiveClosedAtEpochSec,
++          interval,
++        );
++        const closeBadge = resolveTradeBadgeMeta({
++          side: effectiveSide,
++          closeStatus: effectiveCloseStatus,
++          pnlRealized: effectivePnlRealized,
++          kind: "close",
++        });
++        const closeLineColor =
++          String(effectiveCloseStatus || "").toUpperCase() === "TP" ||
++          (Number.isFinite(Number(effectivePnlRealized)) &&
++            Number(effectivePnlRealized) > 0)
++            ? TRADE_TP_DARK
++            : TRADE_SL_DARK;
++        const resolvedCloseLinePrice = resolveTradeCloseDisplayPrice({
++          closeStatus: effectiveCloseStatus,
++          pnlRealized: effectivePnlRealized,
++          exitPrice: effectiveExitPrice,
++          tpPrice: tpPrice ?? tp1Price,
++          slPrice,
++        });
++        const closeLine = resolveClosedTradeLineStyle(
++          {
++            closeStatus: effectiveCloseStatus,
++            pnlRealized: effectivePnlRealized,
++            exitPrice: effectiveExitPrice,
++            tpPrice: tpPrice ?? tp1Price,
++            slPrice,
++          },
++          computePriceBoundsFromBars(candles),
++        );
++        const resolvedCloseBadgePrice = Number.isFinite(Number(effectiveExitPrice))
++          ? Number(effectiveExitPrice)
++          : closeLine?.value ?? resolvedCloseLinePrice;
++        const closeAxisLabel = resolveTradeLevelRLabel({
++          kind: "close",
++          entryPrice: effectiveEntryPrice,
++          levelPrice: closeLine?.value ?? resolvedCloseLinePrice,
++          tpPrice: tp1Price ?? tpPrice,
++          slPrice,
++          side: effectiveSide,
++          rMultiple: overlayTrade?.rMultiple,
++          pnlRealized: effectivePnlRealized,
++          closeStatus: effectiveCloseStatus,
++          exitPrice: resolvedCloseBadgePrice,
++        });
++
++        if (Number.isFinite(closeTs) && canShowClosedEvent) {
++          const closeMarkerStyle = resolveTradeMarkerPresentation({
++            side: effectiveSide,
++            closeStatus: effectiveCloseStatus,
++            pnlRealized: effectivePnlRealized,
++            kind: "close",
++          });
++          const closeMarkerPrice = resolveEventMarkerAnchorPrice(
++            candles,
++            effectiveClosedAtEpochSec,
++            closeMarkerStyle.chartPosition,
++            resolvedCloseBadgePrice,
++          );
++          const closeMarkerPrimitive = new EventTimeMarkerPrimitive({
++            timeSec: Number(closeTs),
++            price: Number(closeMarkerPrice),
++            color: closeBadge.color,
++            text: buildTradeCloseLabel(
++              effectivePnlRealized,
++              effectiveCloseStatus,
++              resolvedCloseLinePrice,
++              {
++                rMultiple: overlayTrade?.rMultiple,
++                entryPrice: effectiveEntryPrice,
++                exitPrice: resolvedCloseBadgePrice,
++                tpPrice: tp1Price ?? tpPrice,
++                slPrice,
++                side: effectiveSide,
++              },
++            ),
++            placement: closeMarkerStyle.chartPosition,
++          });
++          candleSeries.attachPrimitive(closeMarkerPrimitive);
++          tradeOverlayPrimitivesRef.current.push(closeMarkerPrimitive);
++        }
++
++        if (Number.isFinite(closeLine?.value)) {
++          const closePriceLine = candleSeries.createPriceLine({
++            price: closeLine.value,
++            color: closeLine.color || closeLineColor,
++            lineWidth: 1,
++            lineStyle: LineStyle.Solid,
++            axisLabelVisible: true,
++            title: closeAxisLabel || closeBadge.label || "Closed",
++            axisLabelColor: closeLine.color || closeLineColor,
++            axisLabelTextColor: "#ffffff",
++          });
++          tradeOverlayPriceLinesRef.current.push(closePriceLine);
++        }
++
++        if (
++          canRenderOverlay &&
++          Number.isFinite(Number(effectiveEntryPrice)) &&
++          Number.isFinite(resolvedCloseBadgePrice) &&
++          Number.isFinite(openedTs) &&
++          Number.isFinite(closeTs)
++        ) {
++          const timeRangeBoxPrimitive = new TimeRangeBoxPrimitive({
++            startTimeSec: openedTs,
++            endTimeSec: closeTs,
++            priceLow: Math.min(
++              Number(effectiveEntryPrice),
++              resolvedCloseBadgePrice,
++            ),
++            priceHigh: Math.max(
++              Number(effectiveEntryPrice),
++              resolvedCloseBadgePrice,
++            ),
++            lineColor: closeBadge.color,
++            fillColor:
++              closeBadge.color === BACKTEST_CHART_THEME.profit
++                ? BACKTEST_CHART_THEME.tradeBoxProfit
++                : BACKTEST_CHART_THEME.tradeBoxLoss,
++          });
++          candleSeries.attachPrimitive(timeRangeBoxPrimitive);
++          tradeOverlayPrimitivesRef.current.push(timeRangeBoxPrimitive);
++        }
++      }
++
++      return markers;
++    },
++    [
++      effectiveClosedAtEpochSec,
++      effectiveCloseStatus,
++      effectiveEntryPrice,
++      effectiveExitPrice,
++      effectiveOpenedAtEpochSec,
++      effectivePnlRealized,
++      effectiveSide,
++      effectiveTradeLabel,
++      hasExplicitOpenedEvent,
++      interval,
++      isReplayActive,
++      normalizedCreatedAtEpochSec,
++      overlayTrade?.rMultiple,
++      replayClockTimeSec,
++      slPrice,
++      tp1Price,
++      tpPrice,
++    ],
++  );
+ 
+   useEffect(() => {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+             }
+ 
+             // --- ENTRY / TP / SL for all plans ---
+             updatePlanOverlays(snapshot);
++            const markers = [];
+ 
+-            renderTradeOverlays(candles);
++            renderTradeOverlays(candles, markers, {
++              canRenderTradeOverlay,
++            });
+@@
+               });
+             }
++
++            if (markers.length > 0) {
++              seriesMarkersRef.current = createSeriesMarkers(
++                candleSeries,
++                markers,
++              );
++            }
+ 
+             const enableLevelDrag =
+               typeof onPlanLevelChange === "function" &&
+@@
+     clearIndicatorHoverPriceLines,
+     setCandleHoverGuide,
+     setIndicatorHoverGuides,
++    renderTradeOverlays,
+     isReplayActive,
+     replayClockTimeSec,
+     autoFitNonce,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+             }
+ 
+             // --- ENTRY / TP / SL for all plans ---
+             updatePlanOverlays(snapshot);
++            const markers = [];
+ 
+-            renderTradeOverlays(candles);
++            renderTradeOverlays(candles, markers, {
++              canRenderTradeOverlay,
++            });
+@@
+                 }
+               });
+             }
++
++            if (markers.length > 0) {
++              seriesMarkersRef.current = createSeriesMarkers(
++                candleSeries,
++                markers,
++              );
++            }
+ 
+             const enableLevelDrag =
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+     clearIndicatorHoverPriceLines,
+     sharedLinesSignature,
+     sharedObjectsSignature,
+     setCandleHoverGuide,
+     setIndicatorHoverGuides,
++    renderTradeOverlays,
+     isReplayActive,
+     isReplayActive ? replayEventVisibilitySignature : replayClockTimeSec,
+     autoFitNonce,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const seriesRef = useRef(null);
+   const chartContainerRef = useRef(null);
+   const currentBarsRef = useRef([]);
++  const preserveViewportOnBarsChangeRef = useRef(
++    Boolean(preserveViewportOnBarsChange),
++  );
+@@
+   const renderedBarsSignatureRef = useRef("");
+@@
+   const effectiveIndicatorVisibility = useMemo(
+@@
+   );
++
++  useEffect(() => {
++    preserveViewportOnBarsChangeRef.current = Boolean(
++      preserveViewportOnBarsChange,
++    );
++  }, [preserveViewportOnBarsChange]);
+@@
+-          if (barsChanged && !preserveViewportOnBarsChange) {
++          if (barsChanged && !preserveViewportOnBarsChangeRef.current) {
+             runtimeViewportRef.current = null;
+           }
+@@
+-    autoFitNonce,
+-    preserveViewportOnBarsChange,
++    autoFitNonce,
+   ]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const chartContainerRef = useRef(null);
+   const chartRef = useRef(null);
+   const seriesRef = useRef(null);
+   const currentBarsRef = useRef([]);
++  const preserveViewportOnBarsChangeRef = useRef(
++    Boolean(preserveViewportOnBarsChange),
++  );
+@@
+   const effectiveIndicatorVisibility =
+     indicatorVisibilityConfig || indicatorVisibility;
+   const showRsiPanel = effectiveIndicatorVisibility.rsiPanel !== false;
+   const showMacdPanel = showRsiPanel;
++
++  useEffect(() => {
++    preserveViewportOnBarsChangeRef.current = Boolean(
++      preserveViewportOnBarsChange,
++    );
++  }, [preserveViewportOnBarsChange]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-          if (barsChanged && !preserveViewportOnBarsChange) {
++          if (barsChanged && !preserveViewportOnBarsChangeRef.current) {
+             runtimeViewportRef.current = null;
+           }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-    autoFitNonce,
+-    preserveViewportOnBarsChange,
++    autoFitNonce,
+   ]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const [showTvLogin, setShowTvLogin] = useState(false);
+   const [showTvControls, setShowTvControls] = useState(true);
+   const [fullscreenTf, setFullscreenTf] = useState(null);
+   const [snapshotModalFiles, setSnapshotModalFiles] = useState(null);
+   const [snapshotGridModal, setSnapshotGridModal] = useState(null);
+   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
++  const lastRenderableBarsByChartIdRef = useRef({});
+   const [tvEmbedAutoloadEnabled, setTvEmbedAutoloadEnabled] = useState(() => {
+     if (typeof window === "undefined") return false;
+     return window.localStorage.getItem(TRADINGVIEW_EMBED_AUTLOAD_PREF_KEY) === "1";
+   });
+@@
+   useEffect(() => {
+     loadedMarketUiConfigRef.current = false;
+     autoChartFixKeyRef.current = "";
++    lastRenderableBarsByChartIdRef.current = {};
+     setLoadedTfs({});
+     setSavedTfVisibleBars({});
+     setSavedTfViewportPrefs({});
+@@
+   useEffect(() => {
+     startTransition(() => {
+       setChartStrategyMatchesByChartId({});
+     });
+   }, [activeMode, cleanSym, selectedChartStrategyIds]);
++
++  useEffect(() => {
++    if (!cleanSym) {
++      lastRenderableBarsByChartIdRef.current = {};
++      return;
++    }
++    const nextCache = { ...lastRenderableBarsByChartIdRef.current };
++    let changed = false;
++    (visibleChartTfs || []).forEach((tf) => {
++      const chartId = `${cleanSym}-${String(tf || "").trim().toLowerCase()}`;
++      const tfKey = String(tf || "").trim().toLowerCase();
++      if (!chartId || !tfKey) return;
++      const barsForTf = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
++      if (barsForTf.length > 0) {
++        nextCache[chartId] = barsForTf;
++        changed = true;
++      }
++    });
++    if (changed) {
++      lastRenderableBarsByChartIdRef.current = nextCache;
++    }
++  }, [cleanSym, master?.bars, visibleChartTfs]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+               const tradeChartBarsForTf = resolveTradeChartRenderBars({
+                 loadedBars: barsForTf,
+                 focusedBars: tradeFocusedBarsForTf,
+                 replayBars: replayBarsForTf,
+                 replayActive: isBacktestChartReplay,
+               });
+-              const barsToRender =
++              const primaryBarsToRender =
+                 isSvg && !isBacktestChartReplay
+                   ? tradeFocusedBarsForTf.length
+                     ? tradeFocusedBarsForTf
+                     : barsForTf
+                   : tradeChartBarsForTf;
++              const fallbackRenderableBars =
++                !isLive && !isBacktestChartReplay
++                  ? lastRenderableBarsByChartIdRef.current[chartId] || []
++                  : [];
++              const barsToRender =
++                primaryBarsToRender.length > 0
++                  ? primaryBarsToRender
++                  : Array.isArray(fallbackRenderableBars) &&
++                      fallbackRenderableBars.length > 0
++                    ? fallbackRenderableBars
++                    : primaryBarsToRender;
+               const replayCurrentBarTimeSec = isBacktestChartReplay
+                 ? Number(replayClockTimeSec) || null
+                 : null;
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ import { api } from "../../api";
+ import { useSymbolChartData } from "../../hooks/useChartTileData";
+ import { useRealtimeSymbolChartMatrix } from "../../hooks/useRealtimeSymbolChartMatrix";
++import { realtimeClient } from "../../realtime/realtimeClientSingleton";
+ import TradeSignalChart from "../TradeSignalChart";
+@@
+ function getStrategyCatalogId(strategy = {}) {
+@@
+ }
++
++function buildRealtimeChartTopic(symbol = "") {
++  const sym = String(symbol || "").trim().toUpperCase();
++  return sym ? `chart:${sym}` : "";
++}
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
++
++  const applyRealtimeArtifactEnvelope = useCallback(
++    (payload = {}) => {
++      const tfKey = String(payload?.timeframe || "").trim().toLowerCase();
++      if (!cleanSym || !tfKey) return;
++      const chartId = `${cleanSym}-${tfKey}`;
++      const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
++      const nextObjects = limitArtifactObjectsNearLastBar(
++        artifactEnvelopeToChartObjects(payload?.artifacts, tfKey),
++        bars,
++      ).map((item) => {
++        const groupKey = artifactGroupKeyForItem(item);
++        const storedVisible = artifactGroupVisibility?.[groupKey];
++        if (typeof storedVisible === "boolean") {
++          return { ...item, visible: storedVisible };
++        }
++        return item;
++      });
++      setArtifactObjectsByChartId((prev) => {
++        const current = prev?.[chartId] || [];
++        if (JSON.stringify(current) === JSON.stringify(nextObjects)) return prev;
++        return { ...prev, [chartId]: nextObjects };
++      });
++    },
++    [artifactGroupVisibility, cleanSym, master?.bars],
++  );
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   useEffect(() => {
+     if (!tradeSid) return;
+@@
+     return () => {
+       cancelled = true;
+     };
+   }, [tradeSid]);
++
++  useEffect(() => {
++    const topic = buildRealtimeChartTopic(cleanSym);
++    if (!topic) return undefined;
++    const unsubscribe = realtimeClient.subscribe(
++      topic,
++      {},
++      (envelope) => {
++        const type = String(envelope?.type || "").trim().toLowerCase();
++        if (type !== "artifact_snapshot" && type !== "artifact_patch") return;
++        if (!envelope?.data) return;
++        applyRealtimeArtifactEnvelope(envelope.data);
++      },
++      {
++        onError: () => {},
++      },
++    );
++    return () => {
++      unsubscribe();
++    };
++  }, [applyRealtimeArtifactEnvelope, cleanSym]);
+ 
+   const handleSaveObjects = useCallback(() => {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
+-
+-  const applyRealtimeArtifactEnvelope = useCallback(
+-    (payload = {}) => {
+-      const tfKey = String(payload?.timeframe || "").trim().toLowerCase();
+-      if (!cleanSym || !tfKey) return;
+-      const chartId = `${cleanSym}-${tfKey}`;
+-      const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
+-      const nextObjects = limitArtifactObjectsNearLastBar(
+-        artifactEnvelopeToChartObjects(payload?.artifacts, tfKey),
+-        bars,
+-      ).map((item) => {
+-        const groupKey = artifactGroupKeyForItem(item);
+-        const storedVisible = artifactGroupVisibility?.[groupKey];
+-        if (typeof storedVisible === "boolean") {
+-          return { ...item, visible: storedVisible };
+-        }
+-        return item;
+-      });
+-      setArtifactObjectsByChartId((prev) => {
+-        const current = prev?.[chartId] || [];
+-        if (JSON.stringify(current) === JSON.stringify(nextObjects)) return prev;
+-        return { ...prev, [chartId]: nextObjects };
+-      });
+-    },
+-    [artifactGroupVisibility, cleanSym, master?.bars],
+-  );
++  const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
+@@
+-  useEffect(() => {
+-    const topic = buildRealtimeChartTopic(cleanSym);
+-    if (!topic) return undefined;
+-    const unsubscribe = realtimeClient.subscribe(
+-      topic,
+-      {},
+-      (envelope) => {
+-        const type = String(envelope?.type || "").trim().toLowerCase();
+-        if (type !== "artifact_snapshot" && type !== "artifact_patch") return;
+-        if (!envelope?.data) return;
+-        applyRealtimeArtifactEnvelope(envelope.data);
+-      },
+-      {
+-        onError: () => {},
+-      },
+-    );
+-    return () => {
+-      unsubscribe();
+-    };
+-  }, [applyRealtimeArtifactEnvelope, cleanSym]);
+-
+   const handleSaveObjects = useCallback(() => {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  useEffect(() => {
+-    const topic = buildRealtimeChartTopic(cleanSym);
+-    if (!topic) return undefined;
+-    const unsubscribe = realtimeClient.subscribe(
+-      topic,
+-      {},
+-      (envelope) => {
+-        const type = String(envelope?.type || "").trim().toLowerCase();
+-        if (type !== "artifact_snapshot" && type !== "artifact_patch") return;
+-        if (!envelope?.data) return;
+-        applyRealtimeArtifactEnvelope(envelope.data);
+-      },
+-      {
+-        onError: () => {},
+-      },
+-    );
+-    return () => {
+-      unsubscribe();
+-    };
+-  }, [applyRealtimeArtifactEnvelope, cleanSym]);
+-
+   const handleSaveObjects = useCallback(() => {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const {
+     status,
+     master,
+     error,
+@@
+     snapshotState,
+   } = effectiveExternalChartData || internalChartData;
+   const autoLoadKeyRef = useRef("");
++
++  const applyRealtimeArtifactEnvelope = useCallback(
++    (payload = {}) => {
++      const tfKey = String(payload?.timeframe || "").trim().toLowerCase();
++      if (!cleanSym || !tfKey) return;
++      const chartId = `${cleanSym}-${tfKey}`;
++      const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
++      const nextObjects = limitArtifactObjectsNearLastBar(
++        artifactEnvelopeToChartObjects(payload?.artifacts, tfKey),
++        bars,
++      ).map((item) => {
++        const groupKey = artifactGroupKeyForItem(item);
++        const storedVisible = artifactGroupVisibility?.[groupKey];
++        if (typeof storedVisible === "boolean") {
++          return { ...item, visible: storedVisible };
++        }
++        return item;
++      });
++      setArtifactObjectsByChartId((prev) => {
++        const current = prev?.[chartId] || [];
++        if (JSON.stringify(current) === JSON.stringify(nextObjects)) return prev;
++        return { ...prev, [chartId]: nextObjects };
++      });
++    },
++    [artifactGroupVisibility, cleanSym, master?.bars],
++  );
++
++  useEffect(() => {
++    const topic = buildRealtimeChartTopic(cleanSym);
++    if (!topic) return undefined;
++    const unsubscribe = realtimeClient.subscribe(
++      topic,
++      {},
++      (envelope) => {
++        const type = String(envelope?.type || "").trim().toLowerCase();
++        if (type !== "artifact_snapshot" && type !== "artifact_patch") return;
++        if (!envelope?.data) return;
++        applyRealtimeArtifactEnvelope(envelope.data);
++      },
++      {
++        onError: () => {},
++      },
++    );
++    return () => {
++      unsubscribe();
++    };
++  }, [applyRealtimeArtifactEnvelope, cleanSym]);
+ 
+   const sortedTfs = useMemo(
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
+-
+-  const applyRealtimeArtifactEnvelope = useCallback(
+-    (payload = {}) => {
+-      const tfKey = String(payload?.timeframe || "").trim().toLowerCase();
+-      if (!cleanSym || !tfKey) return;
+-      const chartId = `${cleanSym}-${tfKey}`;
+-      const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
+-      const nextObjects = limitArtifactObjectsNearLastBar(
+-        artifactEnvelopeToChartObjects(payload?.artifacts, tfKey),
+-        bars,
+-      ).map((item) => {
+-        const groupKey = artifactGroupKeyForItem(item);
+-        const storedVisible = artifactGroupVisibility?.[groupKey];
+-        if (typeof storedVisible === "boolean") {
+-          return { ...item, visible: storedVisible };
+-        }
+-        return item;
+-      });
+-      setArtifactObjectsByChartId((prev) => {
+-        const current = prev?.[chartId] || [];
+-        if (JSON.stringify(current) === JSON.stringify(nextObjects)) return prev;
+-        return { ...prev, [chartId]: nextObjects };
+-      });
+-    },
+-    [artifactGroupVisibility, cleanSym, master?.bars],
+-  );
++  const [browserSnapshotBusy, setBrowserSnapshotBusy] = useState(false);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactSourceTfTag(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+-  return label ? label.toUpperCase() : "";
++  return label || "";
+ }
+ 
+ function artifactTimeframeColor(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+-  if (label === "15m") return "#60a5fa";
++  if (label === "1h" || label === "15m") return "#60a5fa";
++  if (label === "5m" || label === "1m") return "#94a3b8";
+   if (label === "5m") return "#94a3b8";
+   return "#94a3b8";
+ }
+@@
+-  const label = String(item.label || item.type || "").trim();
+   const tf = String(item.timeframe || fallbackTf || "").trim();
+   const color = artifactColorForItem(item);
+@@
+-      line_style: "solid",
+-      line_width: 1,
++      line_style: "dot",
++      line_width: 0.5,
+@@
+-      line_style: "dot",
+-      line_width: 0.1,
++      line_style: "dot",
++      line_width: 0.5,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const handleRecalcArtifacts = useCallback(async () => {
+     const targetTfs = (Array.isArray(sortedTfs) ? sortedTfs : []).filter((tf) => {
+       const tfKey = String(tf || "").trim().toLowerCase();
+       return Array.isArray(master?.bars?.[tfKey]) && master.bars[tfKey].length > 0;
+     });
+     artifactRequestKeyRef.current = {};
+     artifactRequestSeqRef.current = {};
+-    setArtifactObjectsByChartId({});
+     const results = await Promise.allSettled(
+       targetTfs.map((tf) =>
+         loadArtifactsForTf(tf, {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function displayIntervalLabel(tfRaw) {
+@@
+   return String(tfRaw || "");
+ }
++
++function artifactPaletteColorForTf(tfRaw = "") {
++  const label = displayIntervalLabel(tfRaw);
++  if (label === "1d") return "#facc15";
++  if (label === "4h") return "#a855f7";
++  if (label === "1h" || label === "15m") return "#60a5fa";
++  if (label === "5m" || label === "1m") return "#94a3b8";
++  return "#94a3b8";
++}
+@@
+ class TimeRangeBoxPrimitive {
+@@
+-                  const fontPx = Math.max(11, Math.round(11 * pixelRatioY));
++                  const fontPx = Math.max(8, Math.round(8 * pixelRatioY));
+                   ctx.font = `${fontPx}px sans-serif`;
+                   ctx.textBaseline = "top";
+                   const textWidth = ctx.measureText(self._label).width;
+-                  const padX = Math.max(4, Math.round(4 * pixelRatioX));
+-                  const padY = Math.max(2, Math.round(2 * pixelRatioY));
+-                  const chipX = x0 + padX;
+-                  const chipY = Math.max(0, y0 + padY);
++                  const padX = Math.max(3, Math.round(3 * pixelRatioX));
++                  const padY = Math.max(1, Math.round(1 * pixelRatioY));
+                   const chipH = fontPx + padY * 2;
+                   const chipW = Math.min(
+                     x1 - x0 - padX * 2,
+                     Math.ceil(textWidth + padX * 2),
+                   );
+                   if (chipW >= 24) {
++                    const chipX = Math.max(
++                      x0 + padX,
++                      x1 - chipW - padX,
++                    );
++                    const chipY = Math.max(
++                      0,
++                      Math.min(y1 - chipH, Math.round((y0 + y1 - chipH) / 2)),
++                    );
+                     ctx.fillStyle = "rgba(2, 6, 23, 0.82)";
+                     ctx.fillRect(chipX, chipY, chipW, chipH);
+                     ctx.fillStyle = self._lineColor;
+@@
+   constructor({
+@@
+     this._lineWidth = Number.isFinite(Number(lineWidth))
+-      ? Math.max(1, Number(lineWidth))
+-      : 1;
++      ? Math.max(0.5, Number(lineWidth))
++      : 0.5;
+@@
+-                  const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
+-                  const padX = Math.max(4, Math.round(4 * pixelRatioX));
+-                  const padY = Math.max(2, Math.round(2 * pixelRatioY));
++                  const fontPx = Math.max(8, Math.round(8 * pixelRatioY));
++                  const padX = Math.max(3, Math.round(3 * pixelRatioX));
++                  const padY = Math.max(1, Math.round(1 * pixelRatioY));
+                   ctx.font = `${fontPx}px sans-serif`;
+                   const textWidth = ctx.measureText(self._label).width;
+                   const chipW = Math.ceil(textWidth + padX * 2);
+                   const chipH = fontPx + padY * 2;
+-                  const chipX = Math.max(4, Math.round(6 * pixelRatioX));
++                  const chipX = Math.max(
++                    Math.round(6 * pixelRatioX),
++                    r.width - chipW - Math.round(6 * pixelRatioX),
++                  );
+                   const chipY = Math.max(
+                     0,
+                     Math.min(
+                       r.height - chipH,
+-                      yPos - chipH - Math.round(2 * pixelRatioY),
++                      Math.round(yPos - chipH / 2),
+                     ),
+                   );
+@@
+   constructor({
+@@
+     this._lineWidth = Number.isFinite(Number(lineWidth))
+-      ? Math.max(1, Number(lineWidth))
+-      : 1;
++      ? Math.max(0.5, Number(lineWidth))
++      : 0.5;
+@@
+-                  const fontPx = Math.max(9, Math.round(9 * pixelRatioY));
+-                  const padX = Math.max(3, Math.round(3 * pixelRatioX));
++                  const fontPx = Math.max(8, Math.round(8 * pixelRatioY));
++                  const padX = Math.max(2, Math.round(2 * pixelRatioX));
+                   const padY = Math.max(1, Math.round(1 * pixelRatioY));
+                   ctx.font = `${fontPx}px sans-serif`;
+                   const textWidth = ctx.measureText(self._label).width;
+                   const chipW = Math.ceil(textWidth + padX * 2);
+                   const chipH = fontPx + padY * 2;
+-                  const chipX = x0 + padX;
+-                  const chipY = Math.max(0, yPos - chipH - padY);
++                  const chipX = Math.max(
++                    x0 + padX,
++                    x1 - chipW - padX,
++                  );
++                  const chipY = Math.max(
++                    0,
++                    Math.min(r.height - chipH, Math.round(yPos - chipH / 2)),
++                  );
+                   ctx.fillStyle = self._background;
+                   ctx.fillRect(chipX, chipY, chipW, chipH);
+                   ctx.fillStyle = self._color;
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+         zigzag: chart.addSeries(LineSeries, {
+-          color: INDICATOR_LINE_STYLE.colors.zigzag,
+-          lineWidth: INDICATOR_LINE_STYLE.accentWidth,
+-          lineStyle: LineStyle.Solid,
++          color: artifactPaletteColorForTf(interval),
++          lineWidth: 1,
++          lineStyle: LineStyle.Dotted,
+           priceLineVisible: false,
+           lastValueVisible: false,
+           visible: Boolean(effectiveIndicatorVisibility.zigzag),
+@@
+-                const lineWidth = Math.max(1, Number(obj.line_width) || 1);
++                const lineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
+                 const lineStyle = lineStyleToChartValue(obj.line_style);
+                 if (obj.kind === "line") {
+@@
+                         endTimeSec,
+                         label,
+                         color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [4, 4] : [],
+-                        lineWidth: 1,
++                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                        lineWidth,
+                       })
+                     : new HorizontalPriceLinePrimitive({
+                         price,
+                         label,
+                         color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [4, 4] : [],
+-                        lineWidth: 1,
++                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                        lineWidth,
+                       });
+@@
+                       const pointPrimitive = new HorizontalPriceLinePrimitive({
+                         price,
+                         label: label || obj.type || `P${idx + 1}`,
+                         color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [4, 4] : [],
+-                        lineWidth: 1,
++                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                        lineWidth,
+                       });
+@@
+                     lineColor,
+                     fillColor:
+                       String(obj.bg_color || "").trim() || `${lineColor}22`,
+                     extendRight: !Number.isFinite(endTimeSec),
+-                    lineDash: isFvg
+-                      ? []
+-                      : obj.line_style === "dot"
+-                        ? [4, 3]
+-                        : [],
+-                    lineWidth: isFvg ? 0 : 1,
+-                    shadowBlur: isFvg ? 3 : obj.artifact_group === "ob" ? 8 : 0,
++                    lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                    lineWidth,
++                    shadowBlur: 0,
+                     label,
+                   });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactTimeframeColor(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+   if (label === "1h" || label === "15m") return "#60a5fa";
+   if (label === "5m" || label === "1m") return "#94a3b8";
+-  if (label === "5m") return "#94a3b8";
+   return "#94a3b8";
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function getCandleSeriesOptions({
+   candlesVisible = true,
+   zigzagVisible = true,
+ } = {}) {
+   const muted = Boolean(zigzagVisible);
+   return {
+     visible: Boolean(candlesVisible),
+-    upColor: muted ? "rgba(45, 212, 191, 0.38)" : BACKTEST_CHART_THEME.candleUp,
++    upColor: muted ? "rgba(45, 212, 191, 0.18)" : BACKTEST_CHART_THEME.candleUp,
+     downColor: muted
+-      ? "rgba(248, 113, 113, 0.34)"
++      ? "rgba(248, 113, 113, 0.16)"
+       : BACKTEST_CHART_THEME.candleDown,
+     borderVisible: false,
+     wickUpColor: muted
+-      ? "rgba(148, 163, 184, 0.38)"
++      ? "rgba(148, 163, 184, 0.18)"
+       : BACKTEST_CHART_THEME.wickUp,
+     wickDownColor: muted
+-      ? "rgba(148, 163, 184, 0.38)"
++      ? "rgba(148, 163, 184, 0.18)"
+       : BACKTEST_CHART_THEME.wickDown,
+     priceLineColor: "#9ca3af",
+   };
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+         zigzag: chart.addSeries(LineSeries, {
+           color: artifactPaletteColorForTf(interval),
+-          lineWidth: 1,
++          lineWidth: 2,
+           lineStyle: LineStyle.Dotted,
+           priceLineVisible: false,
+           lastValueVisible: false,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+     return {
+       id: String(item.id || `${family}-${type}-${timeSec || top}`),
+       kind: "zone",
+       type: type.toUpperCase() || "ZONE",
+       label: artifactSourceTfTag(tf),
+@@
+       tf,
+       color,
+       bg_color:
+-        groupKey === "fvg" ? "rgba(148, 163, 184, 0.08)" : `${color}22`,
++        groupKey === "fvg"
++          ? `${color}18`
++          : groupKey === "ob"
++            ? `${color}18`
++            : `${color}22`,
+@@
+-      line_style: "dot",
+-      line_width: 0.1,
++      line_style: groupKey === "ob" ? "solid" : "dot",
++      line_width: groupKey === "fvg" ? 0 : groupKey === "ob" ? 0.5 : 0.5,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   width: 1.2,
+   accentWidth: 1,
+   histogramWidth: 1,
+   colors: {
+-    sma20: "rgba(96, 165, 250, 0.6)",
+-    sma50: "rgba(249, 115, 22, 0.58)",
+-    sma200: "rgba(34, 197, 94, 0.56)",
+-    vwap: "rgba(14, 165, 233, 0.7)",
+-    bbMid: "rgba(148, 163, 184, 0.55)",
+-    bbUpper: "rgba(244, 114, 182, 0.5)",
+-    bbLower: "rgba(244, 114, 182, 0.5)",
+-    ichiTenkan: "rgba(239, 68, 68, 0.62)",
+-    ichiKijun: "rgba(37, 99, 235, 0.62)",
+-    ichiSpanA: "rgba(34, 197, 94, 0.45)",
+-    ichiSpanB: "rgba(245, 158, 11, 0.45)",
+-    ichiChikou: "rgba(168, 85, 247, 0.35)",
++    sma20: "rgba(96, 165, 250, 0.28)",
++    sma50: "rgba(249, 115, 22, 0.26)",
++    sma200: "rgba(34, 197, 94, 0.24)",
++    vwap: "rgba(14, 165, 233, 0.28)",
++    bbMid: "rgba(148, 163, 184, 0.24)",
++    bbUpper: "rgba(244, 114, 182, 0.22)",
++    bbLower: "rgba(244, 114, 182, 0.22)",
++    ichiTenkan: "rgba(239, 68, 68, 0.26)",
++    ichiKijun: "rgba(37, 99, 235, 0.26)",
++    ichiSpanA: "rgba(34, 197, 94, 0.2)",
++    ichiSpanB: "rgba(245, 158, 11, 0.2)",
++    ichiChikou: "rgba(168, 85, 247, 0.16)",
+     zigzag: "rgba(250, 204, 21, 0.62)",
+-    rsi: "rgba(168, 85, 247, 0.62)",
+-    rsiEma9: "rgba(250, 204, 21, 0.56)",
+-    rsiWma45: "rgba(52, 211, 153, 0.56)",
+-    stochK: "rgba(59, 130, 246, 0.7)",
+-    stochD: "rgba(245, 158, 11, 0.7)",
+-    macd: "rgba(34, 197, 94, 0.7)",
+-    macdSignal: "rgba(239, 68, 68, 0.7)",
++    rsi: "rgba(168, 85, 247, 0.24)",
++    rsiEma9: "rgba(250, 204, 21, 0.22)",
++    rsiWma45: "rgba(52, 211, 153, 0.22)",
++    stochK: "rgba(59, 130, 246, 0.26)",
++    stochD: "rgba(245, 158, 11, 0.26)",
++    macd: "rgba(34, 197, 94, 0.26)",
++    macdSignal: "rgba(239, 68, 68, 0.26)",
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactSourceTfTag(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+   return label || "";
+ }
++
++function artifactInlineLabel(item = {}, fallbackTf = "") {
++  const type = String(item?.type || item?.artifact_type || "")
++    .trim()
++    .toLowerCase();
++  const tf = artifactSourceTfTag(item?.timeframe || item?.tf || item?.source_tf || fallbackTf);
++  return [type, tf].filter(Boolean).join(" ");
++}
+@@
+       id: String(item.id || `${family}-${type}-${timeSec}`),
+       kind: "line",
+       type: type.toUpperCase() || "LEVEL",
+-      label: artifactSourceTfTag(tf),
++      label: artifactInlineLabel(item, tf),
+@@
+       id: String(item.id || `${family}-${type}-${timeSec || top}`),
+       kind: "zone",
+       type: type.toUpperCase() || "ZONE",
+-      label: artifactSourceTfTag(tf),
++      label: artifactInlineLabel(item, tf),
+@@
+-      line_width: groupKey === "fvg" ? 0 : groupKey === "ob" ? 0.5 : 0.5,
++      line_width: groupKey === "fvg" ? 0 : groupKey === "ob" ? 0.35 : 0.5,
+@@
+       id: String(item.id || `${family}-${type}-${timeSec}`),
+       kind: "point",
+       type: type.toUpperCase() || "POINT",
+-      label: artifactSourceTfTag(tf),
++      label: artifactInlineLabel(item, tf),
+@@
+       id: String(item.id || `${family}-${type}-${price}`),
+       kind: "line",
+       type: type.toUpperCase() || "LEVEL",
+-      label: artifactSourceTfTag(tf),
++      label: artifactInlineLabel(item, tf),
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                  const fontPx = Math.max(8, Math.round(8 * pixelRatioY));
++                  const fontPx = Math.max(7, Math.round(7 * pixelRatioY));
+                   ctx.font = `${fontPx}px sans-serif`;
+@@
+-                  if (chipW >= 24) {
++                  if (chipW >= 18) {
+                     const chipX = Math.max(
+                       x0 + padX,
+                       x1 - chipW - padX,
+@@
+-                    ctx.fillStyle = "rgba(2, 6, 23, 0.82)";
++                    ctx.fillStyle = "rgba(2, 6, 23, 0.62)";
+                     ctx.fillRect(chipX, chipY, chipW, chipH);
+                     ctx.fillStyle = self._lineColor;
+                     ctx.fillText(self._label, chipX + padX, chipY + padY);
+@@
+-                    shadowBlur: 0,
++                    shadowBlur: obj.artifact_group === "ob" ? 2 : 0,
+                     label,
+                   });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactSourceTfLabel(tf = "") {
+   const t = String(tf || "").trim().toLowerCase();
+-  if (t === "1440" || t === "1d" || t === "d") return "1d";
+-  if (t === "240" || t === "4h") return "4h";
+-  if (t === "60" || t === "1h") return "1h";
++  if (t === "1440" || t === "1d" || t === "d" || t === "day" || t === "1day" || t === "daily") {
++    return "1d";
++  }
++  if (t === "240" || t === "4h" || t === "4hour" || t === "4hours") return "4h";
++  if (t === "60" || t === "1h" || t === "1hour" || t === "hourly") return "1h";
+   if (t === "15" || t === "15m") return "15m";
+   if (t === "5" || t === "5m") return "5m";
+   if (t === "1" || t === "1m") return "1m";
+   return t;
+ }
+@@
++function artifactTypeAbbr(typeRaw = "") {
++  const type = String(typeRaw || "").trim().toLowerCase();
++  if (!type) return "";
++  if (type === "swing_low") return "SL";
++  if (type === "swing_high") return "SH";
++  if (type === "liquidity_low") return "LL";
++  if (type === "liquidity_high") return "LH";
++  if (type === "support") return "SUP";
++  if (type === "demand") return "DEM";
++  if (type === "pdh") return "PDH";
++  if (type === "pdl") return "PDL";
++  if (type === "fvg") return "FVG";
++  if (type === "ob") return "OB";
++  if (type === "key_level") return "KL";
++  if (type === "strategy") return "STR";
++  return type.replaceAll("_", " ");
++}
++
+ function artifactInlineLabel(item = {}, fallbackTf = "") {
+-  const type = String(item?.type || item?.artifact_type || "")
+-    .trim()
+-    .toLowerCase();
++  const type = artifactTypeAbbr(item?.type || item?.artifact_type || "");
+   const tf = artifactSourceTfTag(item?.timeframe || item?.tf || item?.source_tf || fallbackTf);
+   return [type, tf].filter(Boolean).join(" ");
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactTimeframeColor(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+-  if (label === "1h" || label === "15m") return "#60a5fa";
+-  if (label === "5m" || label === "1m") return "#94a3b8";
++  if (label === "1h") return "#60a5fa";
++  if (label === "15m") return "#2563eb";
++  if (label === "5m") return "#9ca3af";
++  if (label === "1m") return "#6b7280";
+   return "#94a3b8";
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function artifactPaletteColorForTf(tfRaw = "") {
+   const label = displayIntervalLabel(tfRaw);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+-  if (label === "1h" || label === "15m") return "#60a5fa";
+-  if (label === "5m" || label === "1m") return "#94a3b8";
++  if (label === "1h") return "#60a5fa";
++  if (label === "15m") return "#2563eb";
++  if (label === "5m") return "#9ca3af";
++  if (label === "1m") return "#6b7280";
+   return "#94a3b8";
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ 	              const strategyMarkerObjects = strategyMatchesForTf
+ 	                .map((match) => {
+ 	                  const timeSec = Number(match?.barTimeUnix || 0);
+-	                  const isDownMarker =
+-	                    String(match?.markerDirection || "").trim().toLowerCase() === "down";
++	                  const markerDirection = String(match?.markerDirection || "")
++	                    .trim()
++	                    .toLowerCase();
++	                  const markerShape = String(match?.markerShape || "")
++	                    .trim()
++	                    .toLowerCase();
++	                  const markerText = String(
++	                    match?.markerText || match?.strategyName || match?.displayText || "",
++	                  ).trim();
++	                  const directionHint = [
++	                    markerDirection,
++	                    markerShape,
++	                    markerText.toLowerCase(),
++	                  ].join(" ");
++	                  const isDownMarker =
++	                    markerDirection === "down" ||
++	                    markerShape.includes("down") ||
++	                    /\b(sell|short|bear)\b/.test(directionHint);
+ 	                  const price = Number(
+ 	                    isDownMarker ? match?.barHigh : match?.barLow,
+ 	                  );
+ 	                  if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
+ 	                  if (!Number.isFinite(price)) return null;
+@@
+ 	                    id: `strategy-marker:${match.matchKey}`,
+ 	                    kind: "point",
+ 	                    type: "strategy",
+-	                    label: match.markerText || match.strategyName || match.displayText,
+-	                    color: String(match?.markerColor || "#22c55e"),
++	                    label: markerText,
++	                    color: isDownMarker ? "#ef4444" : "#22c55e",
+ 	                    tf: String(tf).toLowerCase(),
+ 	                    time: timeSec,
+ 	                    price,
+ 	                    marker_position: String(match?.markerPosition || "belowBar"),
+-	                    marker_shape: String(match?.markerShape || "arrowUp"),
+-	                    marker_text: String(
+-	                      match?.markerText || match?.strategyName || match?.displayText || "",
+-	                    ).trim(),
++	                    marker_shape: String(match?.markerShape || (isDownMarker ? "arrowDown" : "arrowUp")),
++	                    marker_text: markerText,
+ 	                    visible: true,
+ 	                  };
+ 	                })
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+       tf,
+       color,
+-      bg_color:
+-        groupKey === "fvg"
+-          ? `${color}18`
+-          : groupKey === "ob"
+-            ? `${color}18`
+-            : `${color}22`,
++      bg_color: `${color}12`,
+@@
+-      line_style: groupKey === "ob" ? "solid" : "dot",
+-      line_width: groupKey === "fvg" ? 0 : groupKey === "ob" ? 0.35 : 0.5,
++      line_style: groupKey === "ob" ? "solid" : "dot",
++      line_width: groupKey === "fvg" ? 0.15 : 0.15,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                    shadowBlur: obj.artifact_group === "ob" ? 2 : 0,
++                    shadowBlur: 4,
+                     label,
+                   });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+       chart = createChart(container, {
+         width: container.clientWidth,
+         height: container.clientHeight || height,
+         layout: {
+@@
+           horzLines: {
+             color: isLight ? "rgba(148,163,184,0.18)" : "rgba(42, 46, 57, 0.1)",
+           },
+         },
++        crosshair: {
++          mode: CrosshairMode.Normal,
++          vertLine: {
++            color: isLight ? "rgba(148,163,184,0.20)" : "rgba(148,163,184,0.22)",
++            width: 1,
++            style: LineStyle.Dotted,
++            labelBackgroundColor: "rgba(15, 23, 42, 0.72)",
++          },
++          horzLine: {
++            color: isLight ? "rgba(148,163,184,0.20)" : "rgba(148,163,184,0.22)",
++            width: 1,
++            style: LineStyle.Dotted,
++            labelBackgroundColor: "rgba(15, 23, 42, 0.72)",
++          },
++        },
+         timeScale: {
+           borderColor: isLight
+             ? "rgba(148,163,184,0.35)"
+             : "rgba(197, 203, 206, 0.4)",
+@@
+   const setCandleHoverGuide = useCallback(
+     (value) => {
+       const candleSeries = seriesRef.current;
+       const nextValue = Number(value);
+@@
+       clearCandleHoverPriceLine();
+       try {
+         candleHoverPriceLineRef.current = candleSeries.createPriceLine({
+           price: nextValue,
+-          color: "#9ca3af",
++          color: "rgba(156, 163, 175, 0.45)",
+           lineWidth: 1,
+-          lineStyle: 2,
++          lineStyle: LineStyle.Dotted,
+           axisLabelVisible: true,
+-          axisLabelColor: "#9ca3af",
++          axisLabelColor: "rgba(156, 163, 175, 0.65)",
+           axisLabelTextColor: "#ffffff",
+           title: "",
+         });
+       } catch {}
+@@
+         if (!param?.point || !param?.time) {
+           clearCandleHoverPriceLine();
+           clearIndicatorHoverPriceLines();
+           onCrosshairSync({ sourceId: chartId, active: false });
+           return;
+         }
+ 
+         const candleData = param.seriesData?.get?.(candleSeries);
+-        const rawPrice =
+-          candleData?.close ??
+-          candleData?.value ??
+-          (param.point ? candleSeries.coordinateToPrice(param.point.y) : null);
+-        const price = Number(rawPrice);
++        const exactHoverPrice = param.point
++          ? candleSeries.coordinateToPrice(param.point.y)
++          : null;
++        const fallbackPrice = candleData?.close ?? candleData?.value ?? null;
++        const price = Number(
++          Number.isFinite(Number(exactHoverPrice)) ? exactHoverPrice : fallbackPrice,
++        );
+         if (!Number.isFinite(price)) return;
+         setCandleHoverGuide(price);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+       clearCandleHoverPriceLine();
+       try {
+         candleHoverPriceLineRef.current = candleSeries.createPriceLine({
+           price: nextValue,
+-          color: "#9ca3af",
++          color: "rgba(148, 163, 184, 0.42)",
+           lineWidth: 1,
+-          lineStyle: 2,
++          lineStyle: LineStyle.Dotted,
+           axisLabelVisible: true,
+-          axisLabelColor: "#9ca3af",
++          axisLabelColor: "rgba(148, 163, 184, 0.58)",
+           axisLabelTextColor: "#ffffff",
+           title: "",
+         });
+       } catch {}
+@@
+         grid: {
+           vertLines: {
+             color: isLight ? "rgba(148,163,184,0.18)" : "rgba(42, 46, 57, 0.1)",
+           },
+           horzLines: {
+             color: isLight ? "rgba(148,163,184,0.18)" : "rgba(42, 46, 57, 0.1)",
+           },
+         },
++        crosshair: {
++          mode: CrosshairMode.Normal,
++          vertLine: {
++            color: isLight ? "rgba(148,163,184,0.18)" : "rgba(148,163,184,0.18)",
++            width: 1,
++            style: LineStyle.Dotted,
++            labelBackgroundColor: "rgba(15, 23, 42, 0.66)",
++          },
++          horzLine: {
++            color: isLight ? "rgba(148,163,184,0.18)" : "rgba(148,163,184,0.18)",
++            width: 1,
++            style: LineStyle.Dotted,
++            labelBackgroundColor: "rgba(15, 23, 42, 0.66)",
++          },
++        },
+         timeScale: {
+           borderColor: isLight
+             ? "rgba(148,163,184,0.35)"
+             : "rgba(197, 203, 206, 0.4)",
+@@
+ 
+         const candleData = param.seriesData?.get?.(candleSeries);
+-        const rawPrice =
+-          candleData?.close ??
+-          candleData?.value ??
+-          (param.point ? candleSeries.coordinateToPrice(param.point.y) : null);
+-        const price = Number(rawPrice);
++        const exactHoverPrice = param.point
++          ? candleSeries.coordinateToPrice(param.point.y)
++          : null;
++        const fallbackPrice = candleData?.close ?? candleData?.value ?? null;
++        const price = Number(
++          Number.isFinite(Number(exactHoverPrice)) ? exactHoverPrice : fallbackPrice,
++        );
+         if (!Number.isFinite(price)) return;
+         setCandleHoverGuide(price);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+       clearCandleHoverPriceLine();
++      const hoverGuideColor = artifactPaletteColorForTf(interval);
+       try {
+         candleHoverPriceLineRef.current = candleSeries.createPriceLine({
+           price: nextValue,
+-          color: "rgba(148, 163, 184, 0.42)",
++          color: hoverGuideColor,
+           lineWidth: 1,
+           lineStyle: LineStyle.Dotted,
+           axisLabelVisible: true,
+-          axisLabelColor: "rgba(148, 163, 184, 0.58)",
++          axisLabelColor: hoverGuideColor,
+           axisLabelTextColor: "#ffffff",
+           title: "",
+         });
+       } catch {}
+-    },
+-    [clearCandleHoverPriceLine],
++    },
++    [clearCandleHoverPriceLine, interval],
+   );
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const handleDrawLine = useCallback(() => {
+     if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
+     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+     const price = Number(ctxMenu?.price);
+     const time = Number(ctxMenu?.time);
++    const lineColor = artifactTimeframeColor(ctxMenu?.interval || activeChartId?.split("-").slice(-1)[0] || "");
+     setAnnotations((prev) =>
+       dedupeManualLinesByPrice(
+         [
+           ...prev,
+           {
+             ...createLineObject({
+               id,
+               type: "LINE",
+-              color: "#60a5fa",
++              color: lineColor,
+               yRatio: Number(ctxMenu.yRatio),
+               ctxMenu,
+             }),
+@@
+             price: Number.isFinite(price) ? price : null,
+             time: Number.isFinite(time) ? time : null,
+             line_style: "dot",
+             line_width: 0.1,
+-            bg_color: "rgba(96,165,250,0.14)",
++            bg_color: `${lineColor}12`,
+             label: "Line",
+           },
+         ],
+         id,
+       ),
+     );
+     setSelectedObjectId(id);
+     setCtxMenu(null);
+-  }, [ctxMenu]);
++  }, [activeChartId, ctxMenu]);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+           {(() => {
+             const price = Number(ctxMenu?.price || 0);
+             const priceStr = price.toFixed(
+               price >= 1000 ? 1 : price >= 100 ? 2 : 3,
+             );
++            const menuTfColor = artifactTimeframeColor(
++              ctxMenu?.interval || activeChartId?.split("-").slice(-1)[0] || "",
++            );
+             return [
+-              { label: "Line", color: "#60a5fa", fn: handleDrawLine },
++              { label: "Line", color: menuTfColor, fn: handleDrawLine },
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactTimeframeColor(tf = "") {
+   const label = artifactSourceTfLabel(tf);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+   if (label === "1h") return "#60a5fa";
+-  if (label === "15m") return "#2563eb";
++  if (label === "15m") return "#3b82f6";
+   if (label === "5m") return "#9ca3af";
+   if (label === "1m") return "#6b7280";
+   return "#94a3b8";
+ }
+@@
+-      bg_color: `${color}12`,
++      bg_color: `${color}0d`,
+@@
+-      line_width: groupKey === "fvg" ? 0.15 : 0.15,
++      line_width: 0.1,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function artifactPaletteColorForTf(tfRaw = "") {
+   const label = displayIntervalLabel(tfRaw);
+   if (label === "1d") return "#facc15";
+   if (label === "4h") return "#a855f7";
+   if (label === "1h") return "#60a5fa";
+-  if (label === "15m") return "#2563eb";
++  if (label === "15m") return "#3b82f6";
+   if (label === "5m") return "#9ca3af";
+   if (label === "1m") return "#6b7280";
+   return "#94a3b8";
+ }
+@@
+   const muted = Boolean(zigzagVisible);
+   return {
+     visible: Boolean(candlesVisible),
+-    upColor: muted ? "rgba(45, 212, 191, 0.18)" : BACKTEST_CHART_THEME.candleUp,
++    upColor: muted ? "rgba(45, 212, 191, 0.34)" : BACKTEST_CHART_THEME.candleUp,
+     downColor: muted
+-      ? "rgba(248, 113, 113, 0.16)"
++      ? "rgba(248, 113, 113, 0.30)"
+       : BACKTEST_CHART_THEME.candleDown,
+     borderVisible: false,
+     wickUpColor: muted
+-      ? "rgba(148, 163, 184, 0.18)"
++      ? "rgba(148, 163, 184, 0.30)"
+       : BACKTEST_CHART_THEME.wickUp,
+     wickDownColor: muted
+-      ? "rgba(148, 163, 184, 0.18)"
++      ? "rgba(148, 163, 184, 0.30)"
+       : BACKTEST_CHART_THEME.wickDown,
+     priceLineColor: "#9ca3af",
+   };
+ }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const handleDrawLine = useCallback(() => {
+@@
+     setSelectedObjectId(id);
+     setCtxMenu(null);
+   }, [activeChartId, ctxMenu]);
++
++  const handleDrawSegment = useCallback(() => {
++    if (!ctxMenu || !Number.isFinite(Number(ctxMenu.yRatio))) return;
++    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
++    const price = Number(ctxMenu?.price);
++    const time = Number(ctxMenu?.time);
++    const lineColor = artifactTimeframeColor(
++      ctxMenu?.interval || activeChartId?.split("-").slice(-1)[0] || "",
++    );
++    setAnnotations((prev) =>
++      dedupeManualLinesByPrice(
++        [
++          ...prev,
++          {
++            ...createLineObject({
++              id,
++              type: "LINE",
++              color: lineColor,
++              yRatio: Number(ctxMenu.yRatio),
++              ctxMenu,
++            }),
++            tf: null,
++            price_top: Number.isFinite(price) ? price : null,
++            price_bottom: Number.isFinite(price) ? price : null,
++            price: Number.isFinite(price) ? price : null,
++            time: Number.isFinite(time) ? time : null,
++            line_style: "dot",
++            line_width: 0.1,
++            bg_color: `${lineColor}12`,
++            label: "Segment",
++            line_scope: "segment",
++          },
++        ],
++        id,
++      ),
++    );
++    setSelectedObjectId(id);
++    setCtxMenu(null);
++  }, [activeChartId, ctxMenu]);
+@@
+-              { label: "Line", color: menuTfColor, fn: handleDrawLine },
++              { label: "Line", color: menuTfColor, fn: handleDrawLine },
++              { label: "Segment", color: menuTfColor, fn: handleDrawSegment },
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+                 if (obj.kind === "line") {
+                   const price = Number(obj.price ?? obj.anchorPrice);
+                   if (!Number.isFinite(price)) return;
+                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
++                  const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+                   const linePrimitive = Number.isFinite(startTimeSec)
+                     ? new HorizontalPriceSegmentPrimitive({
+                         price,
+                         startTimeSec,
+                         endTimeSec,
+@@
+                     ? new HorizontalPriceLinePrimitive({
+                         price,
+                         label,
+                         color: lineColor,
+                         lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                         lineWidth,
+                       });
+                   candleSeries.attachPrimitive(linePrimitive);
+                   sharedOverlayPrimitivesRef.current.push(linePrimitive);
+-                  const sharedLine = candleSeries.createPriceLine({
+-                    price,
+-                    color: lineColor,
+-                    lineWidth,
+-                    lineStyle,
+-                    axisLabelVisible: false,
+-                    title: "",
+-                  });
+-                  sharedOverlayPriceLinesRef.current.push(sharedLine);
+-                  hoverPriceLinesRef.current.lines.push({
+-                    overlayType: "shared",
+-                    price,
+-                    label: label || obj.type || `L${idx + 1}`,
+-                    priceText: formatPriceWithPrecision(
+-                      price,
+-                      pricePrecisionRef.current,
+-                    ),
+-                  });
++                  if (lineScope !== "segment") {
++                    const sharedLine = candleSeries.createPriceLine({
++                      price,
++                      color: lineColor,
++                      lineWidth,
++                      lineStyle,
++                      axisLabelVisible: false,
++                      title: "",
++                    });
++                    sharedOverlayPriceLinesRef.current.push(sharedLine);
++                    hoverPriceLinesRef.current.lines.push({
++                      overlayType: "shared",
++                      price,
++                      label: label || obj.type || `L${idx + 1}`,
++                      priceText: formatPriceWithPrecision(
++                        price,
++                        pricePrecisionRef.current,
++                      ),
++                    });
++                  }
+                   return;
+                 }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+                 if (obj.kind === "line") {
+                   const price = Number(obj.price ?? obj.anchorPrice);
+                   if (!Number.isFinite(price)) return;
+                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
++                  const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+                   const linePrimitive = Number.isFinite(startTimeSec)
+                     ? new HorizontalPriceSegmentPrimitive({
+                         price,
+                         startTimeSec,
+@@
+                       });
+                   candleSeries.attachPrimitive(linePrimitive);
+                   sharedOverlayPrimitivesRef.current.push(linePrimitive);
+-                  const sharedLine = candleSeries.createPriceLine({
+-                    price,
+-                    color: lineColor,
+-                    lineWidth,
+-                    lineStyle,
+-                    axisLabelVisible: false,
+-                    title: "",
+-                  });
+-                  sharedOverlayPriceLinesRef.current.push(sharedLine);
+-                  hoverPriceLinesRef.current.lines.push({
+-                    overlayType: "shared",
+-                    price,
+-                    label: label || obj.type || `L${idx + 1}`,
+-                    priceText: formatPriceWithPrecision(
+-                      price,
+-                      pricePrecisionRef.current,
+-                    ),
+-                  });
++                  if (lineScope !== "segment") {
++                    const sharedLine = candleSeries.createPriceLine({
++                      price,
++                      color: lineColor,
++                      lineWidth,
++                      lineStyle,
++                      axisLabelVisible: false,
++                      title: "",
++                    });
++                    sharedOverlayPriceLinesRef.current.push(sharedLine);
++                    hoverPriceLinesRef.current.lines.push({
++                      overlayType: "shared",
++                      price,
++                      label: label || obj.type || `L${idx + 1}`,
++                      priceText: formatPriceWithPrecision(
++                        price,
++                        pricePrecisionRef.current,
++                      ),
++                    });
++                  }
+                   return;
+                 }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   }) {
+     this._price = Number(price);
+     this._startTime = Number(startTimeSec);
+-    this._endTime = Number(endTimeSec);
++    this._endTime = Number.isFinite(Number(endTimeSec))
++      ? Number(endTimeSec)
++      : NaN;
+     this._label = String(label || "").trim();
+     this._color = color;
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+       anchorPrice: price,
+       line_style: "dot",
+       line_width: 0.1,
++      line_scope: "segment",
+       artifact_family: family,
+       artifact_type: type,
+       artifact_group: groupKey,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   if (Number.isFinite(price)) {
++    const normalizedType = String(type || "").trim().toLowerCase();
++    const normalizedLabel = String(item?.label || "").trim().toLowerCase();
++    const isKeyLevelArtifact =
++      normalizedType === "key_level" || normalizedLabel.includes("key level");
+     return {
+       id: String(item.id || `${family}-${type}-${price}`),
+       kind: "line",
+       type: type.toUpperCase() || "LEVEL",
+@@
+       tf,
+       color,
+       price,
+       time: Number.isFinite(timeSec) ? timeSec : null,
+       anchorTimeMs: Number.isFinite(timeSec) ? timeSec * 1000 : null,
++      anchorTimeMs2: isKeyLevelArtifact ? null : undefined,
+       anchorPrice: price,
+       line_style: "dot",
+       line_width: 0.5,
++      line_scope: isKeyLevelArtifact ? "segment" : "full",
+       artifact_family: family,
+       artifact_type: type,
+       artifact_group: groupKey,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
+                   const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
++                  const reachesChartEnd =
++                    lineScope === "segment" && !Number.isFinite(endTimeSec);
+                   const linePrimitive = Number.isFinite(startTimeSec)
+                     ? new HorizontalPriceSegmentPrimitive({
+                         price,
+                         startTimeSec,
+@@
+-                  if (lineScope !== "segment") {
++                  if (lineScope !== "segment") {
+                     const sharedLine = candleSeries.createPriceLine({
+                       price,
+                       color: lineColor,
+                       lineWidth,
+@@
+                       ),
+                     });
++                  } else if (reachesChartEnd) {
++                    const sharedLine = candleSeries.createPriceLine({
++                      price,
++                      color: "rgba(0,0,0,0)",
++                      lineWidth: 1,
++                      lineStyle,
++                      axisLabelVisible: true,
++                      axisLabelColor: lineColor,
++                      axisLabelTextColor: "#ffffff",
++                      title: "",
++                    });
++                    sharedOverlayPriceLinesRef.current.push(sharedLine);
+                   }
+                   return;
+                 }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+       color,
+       price,
+       time: timeSec,
+       anchorTimeMs: timeSec * 1000,
+-      anchorTimeMs2:
+-        Number.isFinite(timeSec)
+-          ? (timeSec + Math.max(1, Number(timeframeToSeconds(tf)) || 60) * 3) * 1000
+-          : null,
++      anchorTimeMs2: null,
+       anchorPrice: price,
+       line_style: "dot",
+       line_width: 0.1,
+       line_scope: "segment",
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+ function artifactObjectTypeKey(item = {}) {
+   const group = String(
+     item?.artifact_group || artifactGroupKeyForItem(item) || "",
+   )
+@@
+     .trim()
+     .toLowerCase();
+-  if (group) return group;
++  if (group) {
++    const tf = artifactSourceTfLabel(item?.source_tf || item?.tf || item?.timeframe || "");
++    if (group === "swings") return `${group}|${tf || "na"}`;
++    return group;
++  }
+   const family = String(item?.artifact_family || item?.family || "").trim().toLowerCase();
+   const type = String(item?.artifact_type || item?.type || "").trim().toLowerCase();
+   return `${family}|${type}`;
+ }
+@@
+       anchorPrice: price,
+       line_style: "dot",
+-      line_width: 0.1,
++      line_width: 0.5,
+       line_scope: "segment",
+       artifact_family: family,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+   const group = String(
+     item?.artifact_group || artifactGroupKeyForItem(item) || "",
+   )
+     .trim()
+     .toLowerCase();
+-  if (group) return group;
++  if (group) {
++    const tf = artifactSourceTfLabel(item?.source_tf || item?.tf || item?.timeframe || "");
++    if (group === "swings") return `${group}|${tf || "na"}`;
++    return group;
++  }
+@@
+       anchorTimeMs: timeSec * 1000,
+       anchorTimeMs2: null,
+       anchorPrice: price,
+       line_style: "dot",
+-      line_width: 0.1,
++      line_width: 0.5,
+       line_scope: "segment",
+       artifact_family: family,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-  if (group) return group;
++  if (group) {
++    const tf = artifactSourceTfLabel(
++      item?.source_tf || item?.tf || item?.timeframe || "",
++    );
++    if (group === "swings") return `${group}|${tf || "na"}`;
++    return group;
++  }
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/charts/SymbolChart.jsx
+@@
+-      line_width: 0.1,
++      line_width: 0.5,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                ctx.save();
+-                ctx.strokeStyle = self._color;
+-                ctx.lineWidth = self._lineWidth;
+-                if (self._lineDash.length) ctx.setLineDash(self._lineDash);
++                const strokeWidth = Math.max(1, self._lineWidth * pixelRatioY);
++                const strokeDash = self._lineDash.length
++                  ? self._lineDash.map((part) =>
++                      Math.max(1, Number(part || 0) * pixelRatioX),
++                    )
++                  : [];
++
++                ctx.save();
++                ctx.strokeStyle = self._color;
++                ctx.lineWidth = strokeWidth;
++                ctx.lineCap = "round";
++                if (strokeDash.length) ctx.setLineDash(strokeDash);
+                 ctx.beginPath();
+                 ctx.moveTo(0, yPos);
+                 ctx.lineTo(r.width, yPos);
+                 ctx.stroke();
+@@
+-                ctx.save();
+-                ctx.strokeStyle = self._color;
+-                ctx.lineWidth = self._lineWidth;
+-                if (self._lineDash.length) ctx.setLineDash(self._lineDash);
++                const strokeWidth = Math.max(1, self._lineWidth * pixelRatioY);
++                const strokeDash = self._lineDash.length
++                  ? self._lineDash.map((part) =>
++                      Math.max(1, Number(part || 0) * pixelRatioX),
++                    )
++                  : [];
++
++                ctx.save();
++                ctx.strokeStyle = self._color;
++                ctx.lineWidth = strokeWidth;
++                ctx.lineCap = "round";
++                if (strokeDash.length) ctx.setLineDash(strokeDash);
+                 ctx.beginPath();
+                 ctx.moveTo(x0, yPos);
+                 ctx.lineTo(x1, yPos);
+                 ctx.stroke();
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                const lineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
++                const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
+                 const lineStyle = lineStyleToChartValue(obj.line_style);
+                 if (obj.kind === "line") {
+                   const price = Number(obj.price ?? obj.anchorPrice);
+                   if (!Number.isFinite(price)) return;
+                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
+                   const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
++                  const lineWidth =
++                    lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+                   const reachesChartEnd =
+                     lineScope === "segment" && !Number.isFinite(endTimeSec);
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                        lineWidth,
++                        rawLineWidth,
+@@
+-                      lineWidth,
++                      rawLineWidth,
+@@
+-                    lineWidth,
++                    rawLineWidth,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                      const pointPrimitive = new HorizontalPriceLinePrimitive({
+-                        price,
+-                        label: label || obj.type || `P${idx + 1}`,
+-                        color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                        lineWidth,
+-                      });
++                    const pointPrimitive = new HorizontalPriceLinePrimitive({
++                      price,
++                      label: label || obj.type || `P${idx + 1}`,
++                      color: lineColor,
++                      lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                      lineWidth: rawLineWidth,
++                    });
+                     candleSeries.attachPrimitive(pointPrimitive);
+                     sharedOverlayPrimitivesRef.current.push(pointPrimitive);
+                     const sharedLine = candleSeries.createPriceLine({
+                       price,
+                       color: lineColor,
+-                      lineWidth,
++                      lineWidth: rawLineWidth,
+                       lineStyle,
+                       axisLabelVisible: false,
+                       title: "",
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+ function toEpochSec(value) {
+   const n = Number(value);
+   if (!Number.isFinite(n) || n <= 0) return null;
+   return n > 100000000000 ? Math.floor(n / 1000) : Math.floor(n);
+ }
++
++function lwTimeToEpochSec(value) {
++  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
++    return Math.floor(value);
++  }
++  if (value && typeof value === "object") {
++    if (
++      Number.isFinite(Number(value.timestamp)) &&
++      Number(value.timestamp) > 0
++    ) {
++      return Math.floor(Number(value.timestamp));
++    }
++    if (
++      Number.isFinite(Number(value.year)) &&
++      Number.isFinite(Number(value.month)) &&
++      Number.isFinite(Number(value.day))
++    ) {
++      const ms = Date.UTC(
++        Number(value.year),
++        Number(value.month) - 1,
++        Number(value.day),
++      );
++      return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
++    }
++  }
++  return null;
++}
+@@
+-                const visibleStartTime = Number(timeAtLogicalStart);
+-                const visibleEndTime = Number(timeAtLogicalEnd);
++                const visibleStartTime = lwTimeToEpochSec(timeAtLogicalStart);
++                const visibleEndTime = lwTimeToEpochSec(timeAtLogicalEnd);
+@@
+-                const visibleStartTime =
+-                  Number.isFinite(logicalStart) &&
+-                  typeof ts.coordinateToTime === "function"
+-                    ? Number(ts.coordinateToTime(logicalStart))
+-                    : null;
++                const visibleStartTime =
++                  Number.isFinite(logicalStart) &&
++                  typeof ts.coordinateToTime === "function"
++                    ? lwTimeToEpochSec(ts.coordinateToTime(logicalStart))
++                    : null;
+@@
+-                const xStart =
+-                  rawXStart == null
+-                    ? Number.isFinite(visibleStartTime) &&
+-                      self._startTime < visibleStartTime
+-                      ? 0
+-                      : null
+-                    : rawXStart;
++                const xStart =
++                  rawXStart == null
++                    ? Number.isFinite(visibleStartTime)
++                      ? self._startTime < visibleStartTime
++                        ? 0
++                        : null
++                      : 0
++                    : rawXStart;
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const tradeOverlayPriceLinesRef = useRef([]);
+   const tradeOverlayPrimitivesRef = useRef([]);
+   const sharedOverlayPriceLinesRef = useRef([]);
++  const sharedOverlayLineSeriesRef = useRef([]);
+   const sharedOverlayPrimitivesRef = useRef([]);
+@@
+   const clearSharedOverlayArtifacts = useCallback(() => {
+     const series = seriesRef.current;
++    const chart = chartRef.current;
++    for (const overlaySeries of sharedOverlayLineSeriesRef.current) {
++      if (!chart || !overlaySeries) continue;
++      try {
++        chart.removeSeries(overlaySeries);
++      } catch {}
++    }
++    sharedOverlayLineSeriesRef.current = [];
+     for (const line of sharedOverlayPriceLinesRef.current) {
+       try {
+         series.removePriceLine(line);
+@@
+                 if (obj.kind === "line") {
+                   const price = Number(obj.price ?? obj.anchorPrice);
+                   if (!Number.isFinite(price)) return;
+                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
+                   const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+                   const lineWidth =
+                     lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+                   const reachesChartEnd =
+                     lineScope === "segment" && !Number.isFinite(endTimeSec);
+-                  const linePrimitive = Number.isFinite(startTimeSec)
+-                    ? new HorizontalPriceSegmentPrimitive({
+-                        price,
+-                        startTimeSec,
+-                        endTimeSec,
+-                        label,
+-                        color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                        lineWidth,
+-                      })
+-                    : new HorizontalPriceLinePrimitive({
+-                        price,
+-                        label,
+-                        color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                        lineWidth,
+-                      });
+-                  candleSeries.attachPrimitive(linePrimitive);
+-                  sharedOverlayPrimitivesRef.current.push(linePrimitive);
+-                  if (lineScope !== "segment") {
++                  if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
++                    const segmentEndTime = Number.isFinite(endTimeSec)
++                      ? Math.max(startTimeSec, endTimeSec)
++                      : Math.max(
++                          startTimeSec,
++                          Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec,
++                        );
++                    try {
++                      const overlaySeries = chart.addSeries(LineSeries, {
++                        color: lineColor,
++                        lineWidth: Math.max(1, lineWidth),
++                        lineStyle,
++                        priceLineVisible: false,
++                        lastValueVisible: false,
++                        crosshairMarkerVisible: false,
++                        pointMarkersVisible: false,
++                      });
++                      overlaySeries.setData([
++                        { time: startTimeSec, value: price },
++                        { time: segmentEndTime, value: price },
++                      ]);
++                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
++                    } catch {}
++                  } else {
++                    const linePrimitive = Number.isFinite(startTimeSec)
++                      ? new HorizontalPriceSegmentPrimitive({
++                          price,
++                          startTimeSec,
++                          endTimeSec,
++                          label,
++                          color: lineColor,
++                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                          lineWidth,
++                        })
++                      : new HorizontalPriceLinePrimitive({
++                          price,
++                          label,
++                          color: lineColor,
++                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                          lineWidth,
++                        });
++                    candleSeries.attachPrimitive(linePrimitive);
++                    sharedOverlayPrimitivesRef.current.push(linePrimitive);
++                  }
++                  if (lineScope !== "segment") {
+                     const sharedLine = candleSeries.createPriceLine({
+                       price,
+                       color: lineColor,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const planPriceLinesRef = useRef([]);
+   const tradeOverlayPriceLinesRef = useRef([]);
+   const tradeOverlayPrimitivesRef = useRef([]);
+   const sharedOverlayPriceLinesRef = useRef([]);
++  const sharedOverlayLineSeriesRef = useRef([]);
+   const sharedOverlayPrimitivesRef = useRef([]);
+@@
+   const clearSharedOverlayArtifacts = useCallback(() => {
+     const series = seriesRef.current;
+-    if (!series) return;
++    const chart = chartRef.current;
++    if (chart) {
++      for (const overlaySeries of sharedOverlayLineSeriesRef.current) {
++        if (!overlaySeries) continue;
++        try {
++          chart.removeSeries(overlaySeries);
++        } catch {}
++      }
++    }
++    sharedOverlayLineSeriesRef.current = [];
++    if (!series) return;
+     for (const line of sharedOverlayPriceLinesRef.current) {
+       try {
+         series.removePriceLine(line);
+@@
+                   const lineWidth =
+                     lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+                   const reachesChartEnd =
+                     lineScope === "segment" && !Number.isFinite(endTimeSec);
+-                  const linePrimitive = Number.isFinite(startTimeSec)
+-                    ? new HorizontalPriceSegmentPrimitive({
+-                        price,
+-                        startTimeSec,
+-                        endTimeSec,
+-                        label,
+-                        color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                        rawLineWidth,
+-                      })
+-                    : new HorizontalPriceLinePrimitive({
+-                        price,
+-                        label,
+-                        color: lineColor,
+-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                        lineWidth,
+-                      });
+-                  candleSeries.attachPrimitive(linePrimitive);
+-                  sharedOverlayPrimitivesRef.current.push(linePrimitive);
++                  if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
++                    const segmentEndTime = Number.isFinite(endTimeSec)
++                      ? Math.max(startTimeSec, endTimeSec)
++                      : Math.max(
++                          startTimeSec,
++                          Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec,
++                        );
++                    try {
++                      const overlaySeries = chart.addSeries(LineSeries, {
++                        color: lineColor,
++                        lineWidth: Math.max(1, lineWidth),
++                        lineStyle,
++                        priceLineVisible: false,
++                        lastValueVisible: false,
++                        crosshairMarkerVisible: false,
++                        pointMarkersVisible: false,
++                      });
++                      overlaySeries.setData([
++                        { time: startTimeSec, value: price },
++                        { time: segmentEndTime, value: price },
++                      ]);
++                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
++                    } catch {}
++                  } else {
++                    const linePrimitive = Number.isFinite(startTimeSec)
++                      ? new HorizontalPriceSegmentPrimitive({
++                          price,
++                          startTimeSec,
++                          endTimeSec,
++                          label,
++                          color: lineColor,
++                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                          lineWidth,
++                        })
++                      : new HorizontalPriceLinePrimitive({
++                          price,
++                          label,
++                          color: lineColor,
++                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                          lineWidth,
++                        });
++                    candleSeries.attachPrimitive(linePrimitive);
++                    sharedOverlayPrimitivesRef.current.push(linePrimitive);
++                  }
+                   if (lineScope !== "segment") {
+                     const sharedLine = candleSeries.createPriceLine({
+                       price,
+                       color: lineColor,
+-                      rawLineWidth,
++                      lineWidth,
+                       lineStyle,
+                       axisLabelVisible: false,
+                       title: "",
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+                   const zonePrimitive = new TimeRangeBoxPrimitive({
+                     startTimeSec,
+                     endTimeSec,
+                     priceLow: Math.min(top, bottom),
+                     priceHigh: Math.max(top, bottom),
+@@
+                     fillColor:
+                       String(obj.bg_color || "").trim() || `${lineColor}22`,
+                     extendRight: !Number.isFinite(endTimeSec),
+                     lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                    rawLineWidth,
++                    lineWidth: rawLineWidth,
+                     shadowBlur: 4,
+                     label,
+                   });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-  const sharedOverlayLineSeriesRef = useRef([]);
++  const sharedOverlayLineSeriesRef = useRef([]);
+@@
+-    if (chart) {
+-      for (const overlaySeries of sharedOverlayLineSeriesRef.current) {
+-        if (!overlaySeries) continue;
++    if (chart) {
++      for (const overlayEntry of sharedOverlayLineSeriesRef.current) {
++        const overlaySeries = overlayEntry?.series || null;
++        if (!overlaySeries) continue;
+         try {
+           chart.removeSeries(overlaySeries);
+         } catch {}
+       }
+@@
+-        debugChartLog("viewport-emitted", runtimeViewportRef.current);
++        const visibleEndSec = Number.isFinite(
++          Number(runtimeViewportRef.current?.timeEndMs),
++        )
++          ? Math.max(
++              0,
++              Math.floor(Number(runtimeViewportRef.current.timeEndMs) / 1000),
++            )
++          : null;
++        const lastVisibleSeriesTime =
++          Array.isArray(currentBarsRef.current) && currentBarsRef.current.length
++            ? Number(currentBarsRef.current[currentBarsRef.current.length - 1]?.time) ||
++              null
++            : null;
++        for (const overlayEntry of sharedOverlayLineSeriesRef.current) {
++          const overlaySeries = overlayEntry?.series || null;
++          const startTimeSec = Number(overlayEntry?.startTimeSec);
++          const price = Number(overlayEntry?.price);
++          if (
++            !overlaySeries ||
++            !Number.isFinite(startTimeSec) ||
++            !Number.isFinite(price)
++          ) {
++            continue;
++          }
++          const resolvedEndSec = Math.max(
++            startTimeSec,
++            Number.isFinite(visibleEndSec)
++              ? visibleEndSec
++              : Number.isFinite(lastVisibleSeriesTime)
++                ? lastVisibleSeriesTime
++                : startTimeSec,
++          );
++          try {
++            overlaySeries.setData([
++              { time: startTimeSec, value: price },
++              { time: resolvedEndSec, value: price },
++            ]);
++          } catch {}
++        }
++        debugChartLog("viewport-emitted", runtimeViewportRef.current);
+@@
+-                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
++                      sharedOverlayLineSeriesRef.current.push({
++                        series: overlaySeries,
++                        startTimeSec,
++                        price,
++                      });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+         for (const overlayEntry of sharedOverlayLineSeriesRef.current) {
+           const overlaySeries = overlayEntry?.series || null;
+           const startTimeSec = Number(overlayEntry?.startTimeSec);
+           const price = Number(overlayEntry?.price);
+@@
+           const resolvedEndSec = Math.max(
+             startTimeSec,
+             Number.isFinite(visibleEndSec)
+               ? visibleEndSec
+               : Number.isFinite(lastVisibleSeriesTime)
+                 ? lastVisibleSeriesTime
+                 : startTimeSec,
+           );
++          if (Number(overlayEntry?.endTimeSec) === resolvedEndSec) {
++            continue;
++          }
+           try {
+             overlaySeries.setData([
+               { time: startTimeSec, value: price },
+               { time: resolvedEndSec, value: price },
+             ]);
++            overlayEntry.endTimeSec = resolvedEndSec;
+           } catch {}
+         }
+@@
+                       overlaySeries.setData([
+                         { time: startTimeSec, value: price },
+                         { time: segmentEndTime, value: price },
+                       ]);
+                       sharedOverlayLineSeriesRef.current.push({
+                         series: overlaySeries,
+                         startTimeSec,
++                        endTimeSec: segmentEndTime,
+                         price,
+                       });
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-                  const lineWidth =
+-                    lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
++                  const resolvedLineWidth =
++                    lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+@@
+                       const overlaySeries = chart.addSeries(LineSeries, {
+                         color: lineColor,
+-                        lineWidth: Math.max(1, lineWidth),
++                        lineWidth: Math.max(1, resolvedLineWidth),
+                         lineStyle,
+                         priceLineVisible: false,
+@@
+                           label,
+                           color: lineColor,
+                           lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                          lineWidth,
++                          lineWidth: resolvedLineWidth,
+                         })
+                       : new HorizontalPriceLinePrimitive({
+                           price,
+                           label,
+                           color: lineColor,
+                           lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                          lineWidth,
++                          lineWidth: resolvedLineWidth,
+                         });
+@@
+                     const sharedLine = candleSeries.createPriceLine({
+                       price,
+                       color: lineColor,
+-                      lineWidth,
++                      lineWidth: resolvedLineWidth,
+                       lineStyle,
+                       axisLabelVisible: false,
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-  const sharedOverlayPriceLinesRef = useRef([]);
+-  const sharedOverlayLineSeriesRef = useRef([]);
++  const sharedOverlayPriceLinesRef = useRef([]);
++  const sharedOverlayLineSeriesRef = useRef([]);
+@@
+-    if (chart) {
+-      for (const overlayEntry of sharedOverlayLineSeriesRef.current) {
+-        const overlaySeries = overlayEntry?.series || null;
+-        if (!overlaySeries) continue;
++    if (chart) {
++      for (const overlaySeries of sharedOverlayLineSeriesRef.current) {
++        if (!overlaySeries) continue;
+         try {
+           chart.removeSeries(overlaySeries);
+         } catch {}
+       }
+@@
+-        const visibleEndSec = Number.isFinite(
+-          Number(runtimeViewportRef.current?.timeEndMs),
+-        )
+-          ? Math.max(
+-              0,
+-              Math.floor(Number(runtimeViewportRef.current.timeEndMs) / 1000),
+-            )
+-          : null;
+-        const lastVisibleSeriesTime =
+-          Array.isArray(currentBarsRef.current) && currentBarsRef.current.length
+-            ? Number(currentBarsRef.current[currentBarsRef.current.length - 1]?.time) ||
+-              null
+-            : null;
+-        for (const overlayEntry of sharedOverlayLineSeriesRef.current) {
+-          const overlaySeries = overlayEntry?.series || null;
+-          const startTimeSec = Number(overlayEntry?.startTimeSec);
+-          const price = Number(overlayEntry?.price);
+-          if (
+-            !overlaySeries ||
+-            !Number.isFinite(startTimeSec) ||
+-            !Number.isFinite(price)
+-          ) {
+-            continue;
+-          }
+-          const resolvedEndSec = Math.max(
+-            startTimeSec,
+-            Number.isFinite(visibleEndSec)
+-              ? visibleEndSec
+-              : Number.isFinite(lastVisibleSeriesTime)
+-                ? lastVisibleSeriesTime
+-                : startTimeSec,
+-          );
+-          if (Number(overlayEntry?.endTimeSec) === resolvedEndSec) {
+-            continue;
+-          }
+-          try {
+-            overlaySeries.setData([
+-              { time: startTimeSec, value: price },
+-              { time: resolvedEndSec, value: price },
+-            ]);
+-            overlayEntry.endTimeSec = resolvedEndSec;
+-          } catch {}
+-        }
+         debugChartLog("viewport-emitted", runtimeViewportRef.current);
+@@
+                   if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
+-                    const segmentEndTime = Number.isFinite(endTimeSec)
+-                      ? Math.max(startTimeSec, endTimeSec)
+-                      : Math.max(
+-                          startTimeSec,
+-                          Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec,
+-                        );
++                    const intervalSec = Math.max(
++                      60,
++                      Number(intervalToSeconds(interval)) || 60,
++                    );
++                    const segmentEndTime = Number.isFinite(endTimeSec)
++                      ? Math.max(startTimeSec, endTimeSec)
++                      : Math.max(
++                          startTimeSec,
++                          (Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec) +
++                            intervalSec * 2000,
++                        );
+                     try {
+                       const overlaySeries = chart.addSeries(LineSeries, {
+                         color: lineColor,
+@@
+                       overlaySeries.setData([
+                         { time: startTimeSec, value: price },
+                         { time: segmentEndTime, value: price },
+                       ]);
+-                      sharedOverlayLineSeriesRef.current.push({
+-                        series: overlaySeries,
+-                        startTimeSec,
+-                        endTimeSec: segmentEndTime,
+-                        price,
+-                      });
++                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
+                     } catch {}
+                   } else {
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+   const clearSharedOverlayArtifacts = useCallback(() => {
+@@
+     sharedOverlayPrimitivesRef.current = [];
+   }, []);
++
++  const applySharedOverlays = useCallback(
++    (candlesInput = currentBarsRef.current, candleSeriesArg = seriesRef.current, chartArg = chartRef.current) => {
++      const candleSeries = candleSeriesArg;
++      const chart = chartArg;
++      const candles = Array.isArray(candlesInput) ? candlesInput : [];
++      clearSharedOverlayArtifacts();
++      if (!chart || !candleSeries || !candles.length) return;
++
++      if (Array.isArray(sharedLines) && sharedLines.length > 0) {
++        sharedLines.forEach((ln, idx) => {
++          const p = Number(ln?.price);
++          if (!Number.isFinite(p)) return;
++          const sharedLine = candleSeries.createPriceLine({
++            price: p,
++            color: String(ln?.color || "#60a5fa"),
++            lineWidth: 1,
++            lineStyle: 2,
++            axisLabelVisible: true,
++            title: ln?.label || `L${idx + 1}`,
++          });
++          sharedOverlayPriceLinesRef.current.push(sharedLine);
++          hoverPriceLinesRef.current.lines.push({
++            overlayType: "shared",
++            price: p,
++            label: ln?.label || `L${idx + 1}`,
++            priceText: formatPriceWithPrecision(
++              p,
++              pricePrecisionRef.current,
++            ),
++          });
++        });
++      }
++
++      const markers = [];
++      if (Array.isArray(sharedObjects) && sharedObjects.length > 0) {
++        const firstCandleTime = candles.length
++          ? toEpochSec(candles[0]?.time)
++          : null;
++        const lastCandleTime = candles.length
++          ? toEpochSec(candles[candles.length - 1]?.time)
++          : null;
++        sharedObjects.forEach((obj, idx) => {
++          if (!obj || obj.visible === false) return;
++          const label = formatSharedObjectLabel(
++            obj.type,
++            obj.label || "",
++          );
++          const lineColor = String(obj.color || "#60a5fa");
++          const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
++          const lineStyle = lineStyleToChartValue(obj.line_style);
++          if (obj.kind === "line") {
++            const price = Number(obj.price ?? obj.anchorPrice);
++            if (!Number.isFinite(price)) return;
++            const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
++            const endTimeSec = toEpochSec(obj.anchorTimeMs2);
++            const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
++            const resolvedLineWidth =
++              lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
++            const reachesChartEnd =
++              lineScope === "segment" && !Number.isFinite(endTimeSec);
++            if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
++              const intervalSec = Math.max(
++                60,
++                Number(intervalToSeconds(interval)) || 60,
++              );
++              const segmentEndTime = Number.isFinite(endTimeSec)
++                ? Math.max(startTimeSec, endTimeSec)
++                : Math.max(
++                    startTimeSec,
++                    (Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec) +
++                      intervalSec * 2000,
++                  );
++              try {
++                const overlaySeries = chart.addSeries(LineSeries, {
++                  color: lineColor,
++                  lineWidth: Math.max(1, resolvedLineWidth),
++                  lineStyle,
++                  priceLineVisible: false,
++                  lastValueVisible: false,
++                  crosshairMarkerVisible: false,
++                  pointMarkersVisible: false,
++                });
++                overlaySeries.setData([
++                  { time: startTimeSec, value: price },
++                  { time: segmentEndTime, value: price },
++                ]);
++                sharedOverlayLineSeriesRef.current.push(overlaySeries);
++              } catch {}
++            } else {
++              const linePrimitive = Number.isFinite(startTimeSec)
++                ? new HorizontalPriceSegmentPrimitive({
++                    price,
++                    startTimeSec,
++                    endTimeSec,
++                    label,
++                    color: lineColor,
++                    lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                    lineWidth: resolvedLineWidth,
++                  })
++                : new HorizontalPriceLinePrimitive({
++                    price,
++                    label,
++                    color: lineColor,
++                    lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                    lineWidth: resolvedLineWidth,
++                  });
++              candleSeries.attachPrimitive(linePrimitive);
++              sharedOverlayPrimitivesRef.current.push(linePrimitive);
++            }
++            if (lineScope !== "segment") {
++              const sharedLine = candleSeries.createPriceLine({
++                price,
++                color: lineColor,
++                lineWidth: resolvedLineWidth,
++                lineStyle,
++                axisLabelVisible: false,
++                title: "",
++              });
++              sharedOverlayPriceLinesRef.current.push(sharedLine);
++              hoverPriceLinesRef.current.lines.push({
++                overlayType: "shared",
++                price,
++                label: label || obj.type || `L${idx + 1}`,
++                priceText: formatPriceWithPrecision(
++                  price,
++                  pricePrecisionRef.current,
++                ),
++              });
++            } else if (reachesChartEnd) {
++              const sharedLine = candleSeries.createPriceLine({
++                price,
++                color: "rgba(0,0,0,0)",
++                lineWidth: 1,
++                lineStyle,
++                axisLabelVisible: true,
++                axisLabelColor: lineColor,
++                axisLabelTextColor: "#ffffff",
++                title: "",
++              });
++              sharedOverlayPriceLinesRef.current.push(sharedLine);
++            }
++            return;
++          }
++          if (obj.kind === "point") {
++            const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
++            const price = Number(obj.price ?? obj.anchorPrice);
++            const resolvedTimeSec = Number.isFinite(timeSec)
++              ? resolveEventMarkerTimeSec(candles, timeSec, interval)
++              : null;
++            if (
++              Number.isFinite(price) &&
++              Number.isFinite(timeSec)
++            ) {
++              markers.push({
++                time: Number(resolvedTimeSec ?? timeSec),
++                position:
++                  obj.type === "strategy"
++                    ? String(obj.marker_position || "belowBar")
++                    : "inBar",
++                color: lineColor,
++                shape: String(
++                  obj.marker_shape || (obj.type === "strategy" ? "arrowUp" : "circle"),
++                ),
++                text: String(obj.marker_text ?? "").trim(),
++              });
++            } else if (Number.isFinite(price)) {
++              const pointPrimitive = new HorizontalPriceLinePrimitive({
++                price,
++                label: label || obj.type || `P${idx + 1}`,
++                color: lineColor,
++                lineDash: obj.line_style === "dot" ? [2, 2] : [],
++                lineWidth: rawLineWidth,
++              });
++              candleSeries.attachPrimitive(pointPrimitive);
++              sharedOverlayPrimitivesRef.current.push(pointPrimitive);
++              const sharedLine = candleSeries.createPriceLine({
++                price,
++                color: lineColor,
++                lineWidth: rawLineWidth,
++                lineStyle,
++                axisLabelVisible: false,
++                title: "",
++              });
++              sharedOverlayPriceLinesRef.current.push(sharedLine);
++              hoverPriceLinesRef.current.lines.push({
++                overlayType: "shared",
++                price,
++                label: label || obj.type || `P${idx + 1}`,
++                priceText: formatPriceWithPrecision(
++                  price,
++                  pricePrecisionRef.current,
++                ),
++              });
++            }
++            return;
++          }
++          if (obj.kind === "zone") {
++            const top = Number(
++              obj.price_top ?? obj.anchorPrice ?? obj.price,
++            );
++            const bottom = Number(
++              obj.price_bottom ?? obj.anchorPrice2 ?? obj.price,
++            );
++            if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
++            const startTimeSec =
++              toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
++            const endTimeSec =
++              toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
++            if (!Number.isFinite(startTimeSec)) return;
++            const zonePrimitive = new TimeRangeBoxPrimitive({
++              startTimeSec,
++              endTimeSec,
++              priceLow: Math.min(top, bottom),
++              priceHigh: Math.max(top, bottom),
++              lineColor,
++              fillColor:
++                String(obj.bg_color || "").trim() || `${lineColor}22`,
++              extendRight: !Number.isFinite(endTimeSec),
++              lineDash: obj.line_style === "dot" ? [2, 2] : [],
++              lineWidth: rawLineWidth,
++              shadowBlur: 4,
++              label,
++            });
++            candleSeries.attachPrimitive(zonePrimitive);
++            sharedOverlayPrimitivesRef.current.push(zonePrimitive);
++          }
++        });
++      }
++
++      if (seriesMarkersRef.current) {
++        try {
++          seriesMarkersRef.current.setMarkers([]);
++        } catch {}
++        try {
++          seriesMarkersRef.current.detach();
++        } catch {}
++        seriesMarkersRef.current = null;
++      }
++      if (markers.length > 0) {
++        seriesMarkersRef.current = createSeriesMarkers(
++          candleSeries,
++          markers,
++        );
++      }
++    },
++    [clearSharedOverlayArtifacts, interval, sharedLines, sharedObjects],
++  );
+*** Update File: /Users/macmini/Projects/moza/42trade/src/admin/components/TradeSignalChart.jsx
+@@
+-            // Shared horizontal lines (added from context menu, replicated per TF)
+-            if (Array.isArray(sharedLines) && sharedLines.length > 0) {
+-              sharedLines.forEach((ln, idx) => {
+-                const p = Number(ln?.price);
+-                if (!Number.isFinite(p)) return;
+-                candleSeries.createPriceLine({
+-                  price: p,
+-                  color: String(ln?.color || "#60a5fa"),
+-                  lineWidth: 1,
+-                  lineStyle: 2,
+-                  axisLabelVisible: true,
+-                  title: ln?.label || `L${idx + 1}`,
+-                });
+-                hoverPriceLinesRef.current.lines.push({
+-                  overlayType: "shared",
+-                  price: p,
+-                  label: ln?.label || `L${idx + 1}`,
+-                  priceText: formatPriceWithPrecision(
+-                    p,
+-                    pricePrecisionRef.current,
+-                  ),
+-                });
+-              });
+-            }
+-
+-            clearSharedOverlayArtifacts();
+-            if (Array.isArray(sharedObjects) && sharedObjects.length > 0) {
+-              const firstCandleTime = candles.length
+-                ? toEpochSec(candles[0]?.time)
+-                : null;
+-              const lastCandleTime = candles.length
+-                ? toEpochSec(candles[candles.length - 1]?.time)
+-                : null;
+-              sharedObjects.forEach((obj, idx) => {
+-                if (!obj || obj.visible === false) return;
+-                const label = formatSharedObjectLabel(
+-                  obj.type,
+-                  obj.label || "",
+-                );
+-                const lineColor = String(obj.color || "#60a5fa");
+-                const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
+-                const lineStyle = lineStyleToChartValue(obj.line_style);
+-                if (obj.kind === "line") {
+-                  const price = Number(obj.price ?? obj.anchorPrice);
+-                  if (!Number.isFinite(price)) return;
+-                  const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+-                  const endTimeSec = toEpochSec(obj.anchorTimeMs2);
+-                  const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+-                  const resolvedLineWidth =
+-                    lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+-                  const reachesChartEnd =
+-                    lineScope === "segment" && !Number.isFinite(endTimeSec);
+-                  if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
+-                    const intervalSec = Math.max(
+-                      60,
+-                      Number(intervalToSeconds(interval)) || 60,
+-                    );
+-                    const segmentEndTime = Number.isFinite(endTimeSec)
+-                      ? Math.max(startTimeSec, endTimeSec)
+-                      : Math.max(
+-                          startTimeSec,
+-                          (Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec) +
+-                            intervalSec * 2000,
+-                        );
+-                    try {
+-                      const overlaySeries = chart.addSeries(LineSeries, {
+-                        color: lineColor,
+-                        lineWidth: Math.max(1, resolvedLineWidth),
+-                        lineStyle,
+-                        priceLineVisible: false,
+-                        lastValueVisible: false,
+-                        crosshairMarkerVisible: false,
+-                        pointMarkersVisible: false,
+-                      });
+-                      overlaySeries.setData([
+-                        { time: startTimeSec, value: price },
+-                        { time: segmentEndTime, value: price },
+-                      ]);
+-                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
+-                    } catch {}
+-                  } else {
+-                    const linePrimitive = Number.isFinite(startTimeSec)
+-                      ? new HorizontalPriceSegmentPrimitive({
+-                          price,
+-                          startTimeSec,
+-                          endTimeSec,
+-                          label,
+-                          color: lineColor,
+-                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                          lineWidth: resolvedLineWidth,
+-                        })
+-                      : new HorizontalPriceLinePrimitive({
+-                          price,
+-                          label,
+-                          color: lineColor,
+-                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                          lineWidth: resolvedLineWidth,
+-                        });
+-                    candleSeries.attachPrimitive(linePrimitive);
+-                    sharedOverlayPrimitivesRef.current.push(linePrimitive);
+-                  }
+-                  if (lineScope !== "segment") {
+-                    const sharedLine = candleSeries.createPriceLine({
+-                      price,
+-                      color: lineColor,
+-                      lineWidth: resolvedLineWidth,
+-                      lineStyle,
+-                      axisLabelVisible: false,
+-                      title: "",
+-                    });
+-                    sharedOverlayPriceLinesRef.current.push(sharedLine);
+-                    hoverPriceLinesRef.current.lines.push({
+-                      overlayType: "shared",
+-                      price,
+-                      label: label || obj.type || `L${idx + 1}`,
+-                      priceText: formatPriceWithPrecision(
+-                        price,
+-                        pricePrecisionRef.current,
+-                      ),
+-                    });
+-                  } else if (reachesChartEnd) {
+-                    const sharedLine = candleSeries.createPriceLine({
+-                      price,
+-                      color: "rgba(0,0,0,0)",
+-                      lineWidth: 1,
+-                      lineStyle,
+-                      axisLabelVisible: true,
+-                      axisLabelColor: lineColor,
+-                      axisLabelTextColor: "#ffffff",
+-                      title: "",
+-                    });
+-                    sharedOverlayPriceLinesRef.current.push(sharedLine);
+-                  }
+-                  return;
+-                }
+-                if (obj.kind === "point") {
+-                  const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
+-                  const price = Number(obj.price ?? obj.anchorPrice);
+-                  const resolvedTimeSec = Number.isFinite(timeSec)
+-                    ? resolveEventMarkerTimeSec(candles, timeSec, interval)
+-                    : null;
+-                  if (
+-                    Number.isFinite(price) &&
+-                    Number.isFinite(timeSec)
+-                  ) {
+-                    markers.push({
+-                      time: Number(resolvedTimeSec ?? timeSec),
+-                      position:
+-                        obj.type === "strategy"
+-                          ? String(obj.marker_position || "belowBar")
+-                          : "inBar",
+-                      color: lineColor,
+-                      shape: String(
+-                        obj.marker_shape || (obj.type === "strategy" ? "arrowUp" : "circle"),
+-                      ),
+-                      text: String(obj.marker_text ?? "").trim(),
+-                    });
+-                  } else if (Number.isFinite(price)) {
+-                    const pointPrimitive = new HorizontalPriceLinePrimitive({
+-                      price,
+-                      label: label || obj.type || `P${idx + 1}`,
+-                      color: lineColor,
+-                      lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                      lineWidth: rawLineWidth,
+-                    });
+-                    candleSeries.attachPrimitive(pointPrimitive);
+-                    sharedOverlayPrimitivesRef.current.push(pointPrimitive);
+-                    const sharedLine = candleSeries.createPriceLine({
+-                      price,
+-                      color: lineColor,
+-                      lineWidth: rawLineWidth,
+-                      lineStyle,
+-                      axisLabelVisible: false,
+-                      title: "",
+-                    });
+-                    sharedOverlayPriceLinesRef.current.push(sharedLine);
+-                    hoverPriceLinesRef.current.lines.push({
+-                      overlayType: "shared",
+-                      price,
+-                      label: label || obj.type || `P${idx + 1}`,
+-                      priceText: formatPriceWithPrecision(
+-                        price,
+-                        pricePrecisionRef.current,
+-                      ),
+-                    });
+-                  }
+-                  return;
+-                }
+-                if (obj.kind === "zone") {
+-                  const top = Number(
+-                    obj.price_top ?? obj.anchorPrice ?? obj.price,
+-                  );
+-                  const bottom = Number(
+-                    obj.price_bottom ?? obj.anchorPrice2 ?? obj.price,
+-                  );
+-                  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
+-                  const startTimeSec =
+-                    toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
+-                  const endTimeSec =
+-                    toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
+-                  if (!Number.isFinite(startTimeSec)) return;
+-                  const isFvg = obj.artifact_group === "fvg";
+-                  const zonePrimitive = new TimeRangeBoxPrimitive({
+-                    startTimeSec,
+-                    endTimeSec,
+-                    priceLow: Math.min(top, bottom),
+-                    priceHigh: Math.max(top, bottom),
+-                    lineColor,
+-                    fillColor:
+-                      String(obj.bg_color || "").trim() || `${lineColor}22`,
+-                    extendRight: !Number.isFinite(endTimeSec),
+-                    lineDash: obj.line_style === "dot" ? [2, 2] : [],
+-                    lineWidth: rawLineWidth,
+-                    shadowBlur: 4,
+-                    label,
+-                  });
+-                  candleSeries.attachPrimitive(zonePrimitive);
+-                  sharedOverlayPrimitivesRef.current.push(zonePrimitive);
+-                  return;
+-                }
+-              });
+-            }
+-
+-            if (markers.length > 0) {
+-              seriesMarkersRef.current = createSeriesMarkers(
+-                candleSeries,
+-                markers,
+-              );
+-            }
++            applySharedOverlays(candles, candleSeries, chart);
+*** End Patch
