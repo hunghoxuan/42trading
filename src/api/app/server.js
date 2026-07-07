@@ -4895,7 +4895,7 @@ const UI_USER_ROLE_ID = UI_BUYER_ROLE_ID;
 const RETIRED_UI_LOGINS = new Set(["42hub.admin"]);
 const MARKET_DATA_MEMORY_CACHE = new Map();
 const MARKET_DATA_TF_CACHE = new Map(); // key: "EURUSD_4H" → { bars, bar_start, bar_end, last_price, created_at, snapshot }
-const MARKET_DATA_REFRESH_JOBS = new Map(); // symbol -> Promise<refresh summary>
+const MARKET_DATA_REFRESH_JOBS = new Map(); // `${symbol}:${tf}:${direction}` -> Promise<refresh summary>
 
 // ── Trace ID generation ──────────────────────────────────────────
 function genTraceId(prefix = "") {
@@ -18347,6 +18347,13 @@ function normalizeBarsDownloadDirection(value = "") {
   return raw === "history" ? "history" : "latest";
 }
 
+function marketDataRefreshJobKey(symbolNorm = "", tfNorm = "", direction = "latest") {
+  const symbolKey = String(symbolNorm || "").trim().toUpperCase();
+  const tfKey = normalizeMarketDataTf(tfNorm || "1min");
+  const directionKey = normalizeBarsDownloadDirection(direction);
+  return `${symbolKey}:${tfKey}:${directionKey}`;
+}
+
 function providerMaxBarsPerCall(provider = "") {
   return String(provider || "").trim().toLowerCase() === "binance"
     ? BINANCE_MAX_BARS_PER_CALL
@@ -18617,12 +18624,17 @@ async function refreshSelectedTimeframeBars({
   if (!symbolNorm) {
     return { ok: false, reason: "invalid symbol" };
   }
-  const existingJob = MARKET_DATA_REFRESH_JOBS.get(symbolNorm);
+  const selectedTfNorm = normalizeMarketDataTf(requestedTfNorm || "1min");
+  const refreshDirection = normalizeBarsDownloadDirection(direction);
+  const refreshJobKey = marketDataRefreshJobKey(
+    symbolNorm,
+    selectedTfNorm,
+    refreshDirection,
+  );
+  const existingJob = MARKET_DATA_REFRESH_JOBS.get(refreshJobKey);
   if (existingJob) return existingJob;
 
   const job = (async () => {
-    const selectedTfNorm = normalizeMarketDataTf(requestedTfNorm || "1min");
-    const refreshDirection = normalizeBarsDownloadDirection(direction);
     const historyLoadTraceId =
       refreshDirection === "history" ? genTraceId("mdhist_") : "";
     const requestedSourceBars = Math.max(50, Number(requestedBars) || 1000);
@@ -18897,7 +18909,7 @@ async function refreshSelectedTimeframeBars({
     };
   })();
 
-  MARKET_DATA_REFRESH_JOBS.set(symbolNorm, job);
+  MARKET_DATA_REFRESH_JOBS.set(refreshJobKey, job);
   try {
     const result = await job;
     notifyMutationResult({
@@ -18922,7 +18934,7 @@ async function refreshSelectedTimeframeBars({
     });
     return result;
   } finally {
-    MARKET_DATA_REFRESH_JOBS.delete(symbolNorm);
+    MARKET_DATA_REFRESH_JOBS.delete(refreshJobKey);
   }
 }
 

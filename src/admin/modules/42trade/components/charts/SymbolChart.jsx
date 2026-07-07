@@ -3387,6 +3387,7 @@ export default function SymbolChart({
     snapshotState,
   } = resolvedChartData;
   const autoLoadKeyRef = useRef("");
+  const backgroundRefreshKeyRef = useRef("");
 
   const sortedTfs = useMemo(
     () => sortTimeframes(timeframes, "desc"),
@@ -3938,8 +3939,7 @@ export default function SymbolChart({
       (isReplayMode && canFreezeReplayChartData) ||
       !autoLoadOnMount ||
       !cleanSym ||
-      skipFetch ||
-      !liveBarsEnabled
+      skipFetch
     ) {
       return;
     }
@@ -3972,7 +3972,7 @@ export default function SymbolChart({
     tradeSid,
     timeframes,
     localBarsCount,
-    liveBarsEnabled,
+    isCacheLikeMode,
     refresh,
   ]);
 
@@ -3983,8 +3983,7 @@ export default function SymbolChart({
       !cleanSym ||
       skipFetch ||
       !isCacheLikeMode ||
-      status === "LOADING" ||
-      !liveBarsEnabled
+      status === "LOADING"
     ) {
       return;
     }
@@ -4013,7 +4012,48 @@ export default function SymbolChart({
     tradeSid,
     timeframes,
     localBarsCount,
-    liveBarsEnabled,
+    refresh,
+  ]);
+
+  useEffect(() => {
+    if (
+      (isReplayMode && canFreezeReplayChartData) ||
+      !cleanSym ||
+      skipFetch ||
+      !isCacheLikeMode ||
+      mode === "live" ||
+      pendingMode ||
+      status === "LOADING"
+    ) {
+      return;
+    }
+    const hasBars = Object.values(master?.bars || {}).some(
+      (bars) => Array.isArray(bars) && bars.length > 0,
+    );
+    if (!hasBars) return;
+    const refreshKey = [
+      cleanSym,
+      mode,
+      tradeSid,
+      timeframes.join(","),
+      localBarsCount,
+    ].join("|");
+    if (backgroundRefreshKeyRef.current === refreshKey) return;
+    backgroundRefreshKeyRef.current = refreshKey;
+    refresh({ force: true }).catch(() => {});
+  }, [
+    cleanSym,
+    canFreezeReplayChartData,
+    isReplayMode,
+    skipFetch,
+    isCacheLikeMode,
+    mode,
+    pendingMode,
+    status,
+    master,
+    tradeSid,
+    timeframes,
+    localBarsCount,
     refresh,
   ]);
 
@@ -7796,6 +7836,7 @@ export default function SymbolChart({
                     border: "1px solid",
                     borderColor: isActiveTf ? "#22d3ee" : "transparent",
                     borderRadius: 8,
+                    overflow: "hidden",
                     padding: 0,
                   }}
                   onMouseEnter={() => setActiveChartId(chartId)}

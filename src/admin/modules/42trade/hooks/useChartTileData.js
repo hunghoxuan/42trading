@@ -504,6 +504,15 @@ export function useSymbolChartData({
                         local?.bar_end ||
                         local?.bars?.[local?.bars?.length - 1]?.time,
                       last_price: local?.last_price ?? null,
+                      provider: local?.provider || null,
+                      indicators:
+                        local?.indicators && typeof local.indicators === "object"
+                          ? local.indicators
+                          : null,
+                      metadata:
+                        local?.metadata && typeof local.metadata === "object"
+                          ? local.metadata
+                          : null,
                       cache_source: local?.cache_source || "memory",
                       cached_at: local?.cached_at || local?.created_at || null,
                       reason: local?.reason || "",
