@@ -3,8 +3,12 @@ import { Easing, interpolate, useCurrentFrame } from "remotion";
 import type { StepDefinition } from "../data/steps";
 import { FlowStepCard } from "../shared/ui";
 
+type VideoStepDefinition = StepDefinition & {
+  indexLabel?: string;
+};
+
 type StepCardProps = {
-  step: StepDefinition;
+  step: VideoStepDefinition;
   displayTitle: string;
   displaySubtitle: string;
   isActive: boolean;
@@ -44,7 +48,7 @@ export const StepCard: React.FC<StepCardProps> = ({
 
   return (
     <FlowStepCard
-      indexLabel={step.id.replace("step-", "")}
+      indexLabel={step.indexLabel || step.id.replace("step-", "")}
       title={displayTitle}
       subtitle={displaySubtitle}
       isActive={isActive}

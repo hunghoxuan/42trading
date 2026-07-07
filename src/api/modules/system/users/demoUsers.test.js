@@ -33,6 +33,9 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
     UI_DEMO_SELLER_USERNAME: "seller",
     UI_DEMO_SELLER_PASSWORD: "seller-pass",
     UI_DEMO_SELLER_EMAIL: "seller@example.test",
+    UI_DEMO_TRADER_USERNAME: "trader",
+    UI_DEMO_TRADER_PASSWORD: "trader-pass",
+    UI_DEMO_TRADER_EMAIL: "trader@example.test",
   };
   const result = await seedDemoUsers(repo, {
     makeSalt: () => `salt-${++saltCounter}`,
@@ -42,10 +45,10 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.written, 2);
+  assert.equal(result.written, 3);
 
   const users = await repo.listUsers();
-  assert.equal(users.length, 2);
+  assert.equal(users.length, 3);
   assert.deepEqual(
     users.map((user) => ({
       user_id: user.user_id,
@@ -72,6 +75,14 @@ test("seedDemoUsers seeds the configured demo accounts", async () => {
         password_salt: "salt-2",
         password_hash: "hash(seller-pass|salt-2)",
       },
+      {
+        user_id: "trader",
+        name: "trader",
+        email: "trader@example.test",
+        roles: ["trader"],
+        password_salt: "salt-3",
+        password_hash: "hash(trader-pass|salt-3)",
+      },
     ],
   );
 });
@@ -96,6 +107,8 @@ test("seedDemoUsers refreshes existing demo accounts to the canonical role and p
     UI_DEMO_USER_PASSWORD: "user-pass",
     UI_DEMO_SELLER_USERNAME: "seller",
     UI_DEMO_SELLER_PASSWORD: "seller-pass",
+    UI_DEMO_TRADER_USERNAME: "trader",
+    UI_DEMO_TRADER_PASSWORD: "trader-pass",
   };
 
   const result = await seedDemoUsers(repo, {
@@ -106,12 +119,17 @@ test("seedDemoUsers refreshes existing demo accounts to the canonical role and p
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.written, 2);
+  assert.equal(result.written, 3);
 
   const seller = await repo.getUserById("seller");
   assert.equal(seller.password_salt, "unused");
   assert.equal(seller.password_hash, "seller-pass:unused");
   assert.deepEqual(seller.roles, ["seller"]);
+
+  const trader = await repo.getUserById("trader");
+  assert.equal(trader.password_salt, "unused");
+  assert.equal(trader.password_hash, "trader-pass:unused");
+  assert.deepEqual(trader.roles, ["trader"]);
 
   const users = await repo.listUsers();
   assert.equal(users.length, getDemoUsers(env).length);
@@ -158,6 +176,8 @@ test("seedDemoUsers migrates legacy 42pay demo ids to the new user and seller id
     UI_DEMO_USER_PASSWORD: "user-pass",
     UI_DEMO_SELLER_USERNAME: "seller",
     UI_DEMO_SELLER_PASSWORD: "seller-pass",
+    UI_DEMO_TRADER_USERNAME: "trader",
+    UI_DEMO_TRADER_PASSWORD: "trader-pass",
   };
 
   const result = await seedDemoUsers(repo, {
@@ -174,8 +194,10 @@ test("seedDemoUsers migrates legacy 42pay demo ids to the new user and seller id
 
   const migratedUser = await repo.getUserById("user");
   const migratedSeller = await repo.getUserById("seller");
+  const migratedTrader = await repo.getUserById("trader");
   assert.equal(migratedUser.email, "user@example.test");
   assert.equal(migratedUser.password_hash, "user-pass:salt");
   assert.equal(migratedSeller.email, "seller@example.test");
   assert.equal(migratedSeller.password_hash, "seller-pass:salt");
+  assert.equal(migratedTrader.password_hash, "trader-pass:salt");
 });

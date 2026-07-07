@@ -1908,6 +1908,7 @@ export default function TradesPage() {
                   return (
                     <article
                       key={t.sid || t.id || `row-${i}`}
+                      className="card-flat compact-list-card"
                       onClick={() => {
                         const k = tradeKeyOf(t);
                         selectedTradeIdRef.current = k;
@@ -1916,9 +1917,6 @@ export default function TradesPage() {
                       }}
                       style={{
                         cursor: "pointer",
-                        padding: "4px 6px",
-                        marginBottom: 3,
-                        borderRadius: 6,
                         fontSize: 10,
                         border: isActive
                           ? "1px solid var(--accent)"
@@ -2156,13 +2154,13 @@ export default function TradesPage() {
                       }),
                     onGoTrade: () =>
                       navigate(
-                        `/ai/trade/${encodeURIComponent(
+                        `/trades/trade/${encodeURIComponent(
                           String(selectedTrade.symbol || "").toUpperCase(),
                         )}`,
                       ),
                     onGoAnalyze: () =>
                       navigate(
-                        `/ai/analyze/${encodeURIComponent(
+                        `/trades/analyze/${encodeURIComponent(
                           String(selectedTrade.symbol || "").toUpperCase(),
                         )}`,
                       ),

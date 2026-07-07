@@ -73,7 +73,7 @@
 .group-buttons--border-multiple {
   gap: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   overflow: hidden;
   background: transparent;
 }
@@ -95,14 +95,14 @@
 }
 
 .group-buttons--border-multiple .group-buttons__item:first-child {
-  border-top-left-radius: var(--radius-md);
-  border-bottom-left-radius: var(--radius-md);
+  border-top-left-radius: var(--radius-xl);
+  border-bottom-left-radius: var(--radius-xl);
   height: 34px;
 }
 
 .group-buttons--border-multiple .group-buttons__item:last-child {
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-xl);
+  border-bottom-right-radius: var(--radius-xl);
 }
 
 .group-buttons--border-multiple .group-buttons__item.active {

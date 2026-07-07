@@ -149,7 +149,7 @@
 .db-manager-query-result pre {
   margin: 0;
   padding: 12px;
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: rgba(15, 23, 42, 0.5);
   overflow: auto;
   white-space: pre-wrap;

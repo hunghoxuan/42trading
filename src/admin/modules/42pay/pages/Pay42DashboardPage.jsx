@@ -396,6 +396,40 @@ export default function Pay42DashboardPage({ authUser }) {
     [dashboardRole],
   );
 
+  const mobileCard = useMemo(
+    () => ({
+      getImageSrc: (row) => row.product_image || "",
+      getImageAlt: (row) => row.product_name || row.sid,
+      getImageLabel: (row) => row.product_name || row.sid,
+      getTitle: (row) => row.product_name || row.sid || "-",
+      getSubtitle: (row) => row.offer_name || row.product_offer_id || "",
+      getAmount: (row) => ({
+        value: asMoneySigned(amountForOrder(row, dashboardRole)),
+        tone:
+          amountForOrder(row, dashboardRole) > 0
+            ? "positive"
+            : amountForOrder(row, dashboardRole) < 0
+              ? "negative"
+              : "accent",
+        subvalue: showDateTime(row.create_at),
+      }),
+      getBadges: (row) => [
+        {
+          label: String(row.status || "-").toUpperCase(),
+          tone: String(row.status || "-").toUpperCase(),
+        },
+      ],
+      getRows: (row) => [
+        [{ value: row.sid || "-" }],
+        [
+          { value: row.buyer_id || "-" },
+          { value: row.seller_id || "-" },
+        ],
+      ],
+    }),
+    [dashboardRole],
+  );
+
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekStart = startOfWeek(todayStart);
@@ -502,13 +536,13 @@ export default function Pay42DashboardPage({ authUser }) {
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
         className="trades-page-header"
-        title={dashboardRole === "buyer" ? "42Pay Wallet" : "42Pay Dashboard"}
+        title={dashboardRole === "buyer" ? "Wallet" : "Dashboard"}
         actions={
           <div className="pay42-inline-actions">
             {dashboardRole === "buyer" ? (
               <>
                 <Link className="secondary-button" to="/admin/42pay/scan">
-                  Scan to Pay
+                  Pay
                 </Link>
                 <Link className="secondary-button" to="/admin/42pay/topup">
                   Top Up
@@ -970,7 +1004,7 @@ export default function Pay42DashboardPage({ authUser }) {
 
       <ResponsivePanel
         title="Recent Activity"
-        subtitle="Latest 42Pay orders and purchases"
+        subtitle="Latest orders and purchases"
         className="component-frozen-wrap"
         showToggle={false}
       >
@@ -980,6 +1014,7 @@ export default function Pay42DashboardPage({ authUser }) {
           loading={loading}
           emptyText="No 42Pay activity yet."
           className="events-table"
+          mobileCard={mobileCard}
         />
       </ResponsivePanel>
     </section>

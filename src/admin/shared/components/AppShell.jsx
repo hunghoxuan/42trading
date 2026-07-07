@@ -2,11 +2,18 @@ import { useState, useEffect, useCallback } from "react";
 
 const MOBILE_BREAKPOINT = 768;
 
-export default function AppShell({ topbar, mobileTopbar, mobileDrawer, children }) {
+export default function AppShell({
+  topbar,
+  mobileTopbar,
+  mobileDrawer,
+  mobileBottomBar,
+  children,
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(
     () => window.innerWidth < MOBILE_BREAKPOINT,
   );
+  const useMobileBottomBar = Boolean(isMobile && mobileBottomBar);
 
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
@@ -24,10 +31,12 @@ export default function AppShell({ topbar, mobileTopbar, mobileDrawer, children 
   const close = useCallback(() => setMobileOpen(false), []);
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell${useMobileBottomBar ? " app-shell--mobile-bottom-bar" : ""}`}
+    >
       {/* Desktop: sticky topbar. Mobile: hamburger toggle */}
       <header className="topbar">
-        {isMobile && (
+        {isMobile && !useMobileBottomBar && (
           <>
             <button
               className="mobile-nav-toggle icon-button"
@@ -41,11 +50,11 @@ export default function AppShell({ topbar, mobileTopbar, mobileDrawer, children 
             </div>
           </>
         )}
-        {!isMobile && topbar}
+        {(!isMobile || useMobileBottomBar) && topbar}
       </header>
 
       {/* Mobile slide-out drawer */}
-      {isMobile && mobileOpen && (
+      {isMobile && !useMobileBottomBar && mobileOpen && (
         <>
           <div className="mobile-nav-backdrop" onClick={close} />
           <nav className="mobile-nav-drawer">
@@ -55,6 +64,9 @@ export default function AppShell({ topbar, mobileTopbar, mobileDrawer, children 
       )}
 
       <main className="page-wrap">{children}</main>
+      {useMobileBottomBar ? (
+        <nav className="mobile-bottom-bar">{mobileBottomBar}</nav>
+      ) : null}
     </div>
   );
 }

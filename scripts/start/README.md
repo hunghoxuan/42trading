@@ -12,8 +12,8 @@ bash scripts/start/start_dev.sh
 
 Behavior note:
 - `src/api` on `:3001` is started through `start_api.sh launchctl` as a real LaunchAgent and kept independent from the foreground Vite runner.
-- `src/admin` on `:3000` still runs in the foreground with HMR.
-- Stopping the `start_dev.sh` terminal should no longer take the API down with it.
+- `src/admin` on `:3000` is started through `start_admin.sh launchctl` as a real LaunchAgent.
+- Stopping the `start_dev.sh` terminal should no longer take the API or admin UI down with it.
 
 Hard reset and relaunch flow (kills stale processes, verifies API health, then relaunches with `launchctl`):
 
@@ -75,10 +75,22 @@ Notes:
 
 ## Web UI
 
-Start Vite directly:
+Start Vite directly in foreground:
 
 ```bash
 bash scripts/start/start_admin.sh
+```
+
+Background shell start:
+
+```bash
+bash scripts/start/start_admin.sh background
+```
+
+LaunchAgent-managed start:
+
+```bash
+bash scripts/start/start_admin.sh launchctl
 ```
 
 ## Mobile Access

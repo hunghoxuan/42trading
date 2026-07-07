@@ -56,6 +56,21 @@
         "apis.42pay.scan.read",
         "apis.42pay.scan.write"
       ]
+    },
+    "trader": {
+      "inherits": [],
+      "permissions": [
+        "pages.dashboard",
+        "pages.ai.analyze",
+        "pages.trades",
+        "pages.backtests",
+        "pages.settings.profile",
+        "pages.settings.notification",
+        "apis.auth.me",
+        "apis.auth.profile.read",
+        "apis.auth.profile.write",
+        "apis.auth.metadata.write"
+      ]
     }
   },
   "pages": [
@@ -96,27 +111,22 @@
     },
     {
       "label": "Dashboard",
-      "to": "/dashboard",
+      "to": "/trades/dashboard",
       "permission": "pages.dashboard"
     },
     {
       "label": "AI Analyze",
-      "to": "/ai/analyze",
+      "to": "/trades/analyze",
       "permission": "pages.ai.analyze"
     },
     {
       "label": "AI Response",
-      "to": "/ai/response",
+      "to": "/trades/response",
       "permission": "pages.ai.response"
     },
     {
-      "label": "AI Realtime Chart",
-      "to": "/ai/realtime-chart",
-      "permission": "pages.ai.realtime_chart"
-    },
-    {
       "label": "AI News",
-      "to": "/ai/news",
+      "to": "/trades/news",
       "permission": "pages.ai.news"
     },
     {
@@ -126,7 +136,7 @@
     },
     {
       "label": "Backtests",
-      "to": "/backtests",
+      "to": "/trades/backtests",
       "permission": "pages.backtests"
     },
     {

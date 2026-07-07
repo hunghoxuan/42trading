@@ -10,7 +10,6 @@ import {
 } from "react-router-dom";
 import DashboardPage from "../modules/42trade/pages/DashboardPage";
 import ChartSnapshotsPage from "../modules/42trade/pages/ai/ChartSnapshotsPage";
-import RealtimeChartPage from "../modules/42trade/pages/ai/RealtimeChartPage";
 import AiNewsPage from "../modules/42trade/pages/ai/AiNewsPage";
 import TradesPage from "../modules/42trade/pages/trades/TradesPage";
 import TempTradesPage from "../modules/42trade/pages/trades/TempTradesPage";
@@ -81,6 +80,10 @@ import {
 } from "../shared/utils/permissions";
 import { ConfirmDialogProvider } from "../shared/components/ConfirmDialog";
 
+const payHubBrandLogo = (
+  <img src="/logo/payhub-p-payhub-final.png" alt="PayHub" />
+);
+
 class RouteLoadBoundary extends Component {
   constructor(props) {
     super(props);
@@ -122,9 +125,10 @@ class RouteLoadBoundary extends Component {
 
 function resolveHomePath(user) {
   if (canAccessPage(user, "pages.42pay.dashboard")) return "/admin/42pay/dashboard";
-  if (canAccessPage(user, "pages.dashboard")) return "/dashboard";
-  if (canAccessPage(user, "pages.trades")) return "/trades";
-  if (canAccessPage(user, "pages.backtests")) return "/backtests";
+  if (canAccessPage(user, "pages.dashboard")) return "/trades/dashboard";
+  if (canAccessPage(user, "pages.ai.analyze")) return "/trades/analyze";
+  if (canAccessPage(user, "pages.trades")) return "/trades/filled";
+  if (canAccessPage(user, "pages.backtests")) return "/trades/backtests";
   if (canAccessPage(user, "pages.settings.profile")) return "/settings/profile";
   if (canAccessPage(user, "pages.system.db_manager")) return "/system/db";
   return "/login";
@@ -177,6 +181,15 @@ export default function App() {
     const p = String(location?.pathname || "");
     return p.startsWith("/studio");
   }, [location?.pathname]);
+  const tradesMenuActive = useMemo(() => {
+    const p = String(location?.pathname || "");
+    return (
+      p.startsWith("/trades") ||
+      p.startsWith("/dashboard") ||
+      p.startsWith("/backtests") ||
+      p.startsWith("/ai/")
+    );
+  }, [location?.pathname]);
   const suppressTradeCountsPolling = useMemo(() => {
     const p = String(location?.pathname || "");
     return p.startsWith("/system/health") || p.startsWith("/miniapps/");
@@ -185,6 +198,12 @@ export default function App() {
     const p = String(location?.pathname || "");
     return p === "/login";
   }, [location?.pathname]);
+  const loginReturnUrl = useMemo(() => {
+    const path = String(location?.pathname || "");
+    const search = String(location?.search || "");
+    const hash = String(location?.hash || "");
+    return encodeURIComponent(`${path}${search}${hash}`);
+  }, [location?.hash, location?.pathname, location?.search]);
 
   const displayTimezone = useMemo(() => {
     return normalizeDisplayTimezone(
@@ -222,7 +241,7 @@ export default function App() {
   }
 
   const adminSwitchRoleOptions = useMemo(() => {
-    const discovered = new Set(["admin", "seller", "buyer"]);
+    const discovered = new Set(["admin", "seller", "buyer", "trader"]);
     adminSwitchUsers.forEach((user) => {
       (Array.isArray(user?.roles) ? user.roles : []).forEach((role) => {
         const normalized = String(role || "").trim().toLowerCase();
@@ -310,14 +329,9 @@ export default function App() {
   ].filter((item) => canAccessPage(navigationUser, item.permission));
 
   const aiMenuItems = [
-    { to: "/ai/analyze", label: "Analyze", permission: "pages.ai.analyze" },
-    { to: "/ai/response", label: "Response", permission: "pages.ai.response" },
-    {
-      to: "/ai/realtime-chart",
-      label: "Realtime Chart",
-      permission: "pages.ai.realtime_chart",
-    },
-    { to: "/ai/news", label: "News", permission: "pages.ai.news" },
+    { to: "/trades/analyze", label: "Analyze", permission: "pages.ai.analyze" },
+    { to: "/trades/response", label: "Response", permission: "pages.ai.response" },
+    { to: "/trades/news", label: "News", permission: "pages.ai.news" },
   ].filter((item) => canAccessPage(navigationUser, item.permission));
 
   const pay42MenuItems = [
@@ -328,7 +342,7 @@ export default function App() {
     navigationUser.roles.length === 1 &&
     String(navigationUser.roles[0] || "").trim().toLowerCase() === "buyer"
       ? [
-          { to: "/admin/42pay/scan", label: "Scan to Pay", permission: "pages.42pay.scan" },
+          { to: "/admin/42pay/scan", label: "Pay", permission: "pages.42pay.scan" },
           { to: "/admin/42pay/topup", label: "Top Up", permission: "pages.42pay.topup" },
         ]
       : []),
@@ -336,14 +350,39 @@ export default function App() {
     { to: "/admin/42pay/admin/users", label: "Admin", permission: "pages.42pay.admin.users" },
   ].filter((item) => canAccessPage(navigationUser, item.permission));
 
+  const primaryNavGroupCount = [
+    pay42MenuItems.length > 0,
+    !navShows42PayOnly && canAccessPage(navigationUser, "pages.trades"),
+    !navShows42PayOnly && canAccessPage(navigationUser, "pages.studio"),
+  ].filter(Boolean).length;
+  const flattenPay42Navigation =
+    primaryNavGroupCount === 1 && pay42MenuItems.length > 0;
+
+  const tradesHomePath = canAccessPage(navigationUser, "pages.dashboard")
+    ? "/trades/dashboard"
+    : canAccessPage(navigationUser, "pages.ai.analyze")
+      ? "/trades/analyze"
+      : canAccessPage(navigationUser, "pages.backtests")
+        ? "/trades/backtests"
+        : "/trades/filled";
+
   const tradeMenuItems = [
+    { to: "/trades/dashboard", label: "Dashboard", permission: "pages.dashboard" },
+    { to: "/trades/analyze", label: "Analyze", permission: "pages.ai.analyze" },
+    { to: "/trades/backtests", label: "Backtests", permission: "pages.backtests" },
     { to: "/trades/filled", label: `Positions${countBadge("FILLED")}` },
     { to: "/trades/pending", label: `Orders${countBadge("PENDING")}` },
     { to: "/trades/closed", label: `Closed${countBadge("CLOSED")}` },
     { to: "/trades/rejected", label: `Rejected${countBadge("REJECTED")}` },
     { to: "/trades/cancelled", label: `Cancelled${countBadge("CANCELLED")}` },
     { to: "/trades/draft", label: `Draft${countBadge("DRAFT")}` },
-  ];
+  ].filter((item) =>
+    item.permission ? canAccessPage(navigationUser, item.permission) : true,
+  );
+  const flattenTradesNavigation =
+    primaryNavGroupCount === 1 &&
+    pay42MenuItems.length === 0 &&
+    tradeMenuItems.length > 0;
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -358,7 +397,7 @@ export default function App() {
     }
     let cancelled = false;
     api
-      .listUsers()
+      .listUserSelectOptions()
       .then((out) => {
         if (cancelled) return;
         const users = Array.isArray(out?.users) ? out.users : [];
@@ -606,7 +645,7 @@ export default function App() {
               path="/login"
               element={<LoginPage onLogin={handleLogin} />}
             />
-            <Route path="*" element={<Navigate to="/login" replace />} />
+            <Route path="*" element={<Navigate to={`/login?return_url=${loginReturnUrl}`} replace />} />
           </Routes>
         </main>
       </div>
@@ -696,24 +735,27 @@ export default function App() {
 
   const topbarContent = (
     <SiteNavigation
-      logo="📈"
-      title="42trade"
+      logo={payHubBrandLogo}
+      title={null}
       onHomeClick={closeMobileNav}
+      homeTo={homePath}
       brandExtras={<>{actingAsBadge}</>}
       nav={
         <nav>
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.dashboard") && (
-            <NavLink
-              to="/dashboard"
-              className={({ isActive }) =>
-                `mobile-nav-link ${isActive ? "active" : ""}`
-              }
-              onClick={closeMobileNav}
-            >
-              Dashboard
-            </NavLink>
-          )}
-          {pay42MenuItems.length > 0 && (
+          {flattenPay42Navigation
+            ? pay42MenuItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `mobile-nav-link ${isActive ? "active" : ""}`
+                  }
+                  onClick={closeMobileNav}
+                >
+                  {item.label}
+                </NavLink>
+              ))
+            : pay42MenuItems.length > 0 && (
             <NavDropdown
               align="start"
               trigger={
@@ -723,7 +765,7 @@ export default function App() {
                     `mobile-nav-link ${pay42MenuActive ? "active" : ""}`
                   }
                 >
-                  42Pay
+                  Pay
                 </NavLink>
               }
             >
@@ -734,59 +776,41 @@ export default function App() {
               ))}
             </NavDropdown>
           )}
-          {!navShows42PayOnly && aiMenuItems.length > 0 && (
-            <NavDropdown
-              align="start"
-              trigger={
-                <NavLink
-                  to={aiMenuItems[0].to}
-                  className={({ isActive }) =>
-                    `mobile-nav-link ${isActive ? "active" : ""}`
+          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") &&
+            (flattenTradesNavigation
+              ? tradeMenuItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      `mobile-nav-link ${isActive ? "active" : ""}`
+                    }
+                    onClick={closeMobileNav}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))
+              : (
+                <NavDropdown
+                  align="start"
+                  trigger={
+                    <NavLink
+                      to={tradesHomePath}
+                      className={() =>
+                        `mobile-nav-link ${tradesMenuActive ? "active" : ""}`
+                      }
+                    >
+                      Trades
+                    </NavLink>
                   }
                 >
-                  AI
-                </NavLink>
-              }
-            >
-              {aiMenuItems.map((item) => (
-                <NavLink key={item.to} to={item.to}>
-                  {item.label}
-                </NavLink>
+                  {tradeMenuItems.map((item) => (
+                    <NavLink key={item.to} to={item.to}>
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </NavDropdown>
               ))}
-            </NavDropdown>
-          )}
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
-            <NavDropdown
-              align="start"
-              trigger={
-                <NavLink
-                  to="/trades"
-                  className={({ isActive }) =>
-                    `mobile-nav-link ${isActive ? "active" : ""}`
-                  }
-                >
-                  Trades
-                </NavLink>
-              }
-            >
-              {tradeMenuItems.map((item) => (
-                <NavLink key={item.to} to={item.to}>
-                  {item.label}
-                </NavLink>
-              ))}
-            </NavDropdown>
-          )}
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.backtests") && (
-            <NavLink
-              to="/backtests"
-              className={({ isActive }) =>
-                `mobile-nav-link ${isActive ? "active" : ""}`
-              }
-              onClick={closeMobileNav}
-            >
-              Backtests
-            </NavLink>
-          )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.studio") && (
             <NavLink
               to="/studio"
@@ -895,23 +919,26 @@ export default function App() {
 
   const mobileDrawerContent = (
     <SiteNavigation
-      logo="📈"
-      title="42trade"
+      logo={payHubBrandLogo}
+      title={null}
       onHomeClick={closeMobileNav}
+      homeTo={homePath}
       nav={
         <nav>
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.dashboard") && (
-            <NavLink
-              to="/dashboard"
-              className={({ isActive }) =>
-                `mobile-nav-link ${isActive ? "active" : ""}`
-              }
-              onClick={closeMobileNav}
-            >
-              Dashboard
-            </NavLink>
-          )}
-          {pay42MenuItems.length > 0 && (
+          {flattenPay42Navigation
+            ? pay42MenuItems.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `mobile-nav-link ${isActive ? "active" : ""}`
+                  }
+                  onClick={closeMobileNav}
+                >
+                  {item.label}
+                </NavLink>
+              ))
+            : pay42MenuItems.length > 0 && (
             <NavDropdown
               align="start"
               trigger={
@@ -921,7 +948,7 @@ export default function App() {
                     `mobile-nav-link ${pay42MenuActive ? "active" : ""}`
                   }
                 >
-                  42Pay
+                  Pay
                 </NavLink>
               }
             >
@@ -932,59 +959,41 @@ export default function App() {
               ))}
             </NavDropdown>
           )}
-          {!navShows42PayOnly && aiMenuItems.length > 0 && (
-            <NavDropdown
-              align="start"
-              trigger={
-                <NavLink
-                  to={aiMenuItems[0].to}
-                  className={({ isActive }) =>
-                    `mobile-nav-link ${isActive ? "active" : ""}`
+          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") &&
+            (flattenTradesNavigation
+              ? tradeMenuItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      `mobile-nav-link ${isActive ? "active" : ""}`
+                    }
+                    onClick={closeMobileNav}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))
+              : (
+                <NavDropdown
+                  align="start"
+                  trigger={
+                    <NavLink
+                      to={tradesHomePath}
+                      className={() =>
+                        `mobile-nav-link ${tradesMenuActive ? "active" : ""}`
+                      }
+                    >
+                      Trades
+                    </NavLink>
                   }
                 >
-                  AI
-                </NavLink>
-              }
-            >
-              {aiMenuItems.map((item) => (
-                <NavLink key={item.to} to={item.to}>
-                  {item.label}
-                </NavLink>
+                  {tradeMenuItems.map((item) => (
+                    <NavLink key={item.to} to={item.to}>
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </NavDropdown>
               ))}
-            </NavDropdown>
-          )}
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.trades") && (
-            <NavDropdown
-              align="start"
-              trigger={
-                <NavLink
-                  to="/trades"
-                  className={({ isActive }) =>
-                    `mobile-nav-link ${isActive ? "active" : ""}`
-                  }
-                >
-                  Trades
-                </NavLink>
-              }
-            >
-              {tradeMenuItems.map((item) => (
-                <NavLink key={item.to} to={item.to}>
-                  {item.label}
-                </NavLink>
-              ))}
-            </NavDropdown>
-          )}
-          {!navShows42PayOnly && canAccessPage(navigationUser, "pages.backtests") && (
-            <NavLink
-              to="/backtests"
-              className={({ isActive }) =>
-                `mobile-nav-link ${isActive ? "active" : ""}`
-              }
-              onClick={closeMobileNav}
-            >
-              Backtests
-            </NavLink>
-          )}
           {!navShows42PayOnly && canAccessPage(navigationUser, "pages.studio") && (
             <NavLink
               to="/studio"
@@ -1091,11 +1100,28 @@ export default function App() {
     />
   );
 
+  const mobileBottomBarContent = flattenPay42Navigation ? (
+    <>
+      {pay42MenuItems.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          className={({ isActive }) =>
+            `mobile-bottom-bar__link ${isActive ? "active" : ""}`
+          }
+        >
+          <span className="mobile-bottom-bar__label">{item.label}</span>
+        </NavLink>
+      ))}
+    </>
+  ) : null;
+
   return (
     <AppShell
       topbar={topbarContent}
       mobileTopbar={mobileTopbarContent}
       mobileDrawer={mobileDrawerContent}
+      mobileBottomBar={mobileBottomBarContent}
     >
       <ConfirmDialogProvider>
         <NotificationWatcher />
@@ -1234,11 +1260,67 @@ export default function App() {
               />
               <Route
                 path="/dashboard"
-                element={guardPageElement("pages.dashboard", <DashboardPage />)}
+                element={<Navigate to="/trades/dashboard" replace />}
               />
               <Route
                 path="/trades"
-                element={guardPageElement("pages.trades", <TradesPage />)}
+                element={<Navigate to={tradesHomePath} replace />}
+              />
+              <Route
+                path="/trades/dashboard"
+                element={guardPageElement("pages.dashboard", <DashboardPage />)}
+              />
+              <Route
+                path="/trades/analyze"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/analyze/:symbol"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/result"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/result/:symbol"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/trade"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/trade/:symbol"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/manual"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/manual/:symbol"
+                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+              />
+              <Route
+                path="/trades/response"
+                element={guardPageElement("pages.ai.response", <TempTradesPage />)}
+              />
+              <Route
+                path="/trades/response/:symbol"
+                element={guardPageElement("pages.ai.response", <TempTradesPage />)}
+              />
+              <Route
+                path="/trades/news"
+                element={guardPageElement("pages.ai.news", <AiNewsPage />)}
+              />
+              <Route
+                path="/trades/backtests"
+                element={guardPageElement("pages.backtests", <BacktestsPage />)}
+              />
+              <Route
+                path="/trades/backtests/:runId"
+                element={guardPageElement("pages.backtests", <BacktestsPage />)}
               />
               <Route
                 path="/trades/:status"
@@ -1254,11 +1336,11 @@ export default function App() {
               />
               <Route
                 path="/backtests"
-                element={guardPageElement("pages.backtests", <BacktestsPage />)}
+                element={<Navigate to="/trades/backtests" replace />}
               />
               <Route
                 path="/backtests/:runId"
-                element={guardPageElement("pages.backtests", <BacktestsPage />)}
+                element={<Navigate to="/trades/backtests" replace />}
               />
               <Route
                 path="/studio"
@@ -1266,66 +1348,59 @@ export default function App() {
               />
               <Route
                 path="/ai"
-                element={<Navigate to="/ai/analyze" replace />}
+                element={<Navigate to="/trades/analyze" replace />}
               />
               <Route
                 path="/ai/analyze"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/analyze" replace />}
               />
               <Route
                 path="/ai/analyze/:symbol"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/analyze" replace />}
               />
               <Route
                 path="/ai/result"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/result" replace />}
               />
               <Route
                 path="/ai/result/:symbol"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/result" replace />}
               />
               <Route
                 path="/ai/trade"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/trade" replace />}
               />
               <Route
                 path="/ai/trade/:symbol"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/trade" replace />}
               />
               <Route
                 path="/ai/manual"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/manual" replace />}
               />
               <Route
                 path="/ai/manual/:symbol"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/manual" replace />}
               />
               <Route
                 path="/ai/response"
-                element={guardPageElement("pages.ai.response", <TempTradesPage />)}
+                element={<Navigate to="/trades/response" replace />}
               />
               <Route
                 path="/ai/response/:symbol"
-                element={guardPageElement("pages.ai.response", <TempTradesPage />)}
-              />
-              <Route
-                path="/ai/realtime-chart"
-                element={guardPageElement(
-                  "pages.ai.realtime_chart",
-                  <RealtimeChartPage />,
-                )}
+                element={<Navigate to="/trades/response" replace />}
               />
               <Route
                 path="/ai/news"
-                element={guardPageElement("pages.ai.news", <AiNewsPage />)}
+                element={<Navigate to="/trades/news" replace />}
               />
               <Route
                 path="/ai/browser"
-                element={<Navigate to="/ai/analyze" replace />}
+                element={<Navigate to="/trades/analyze" replace />}
               />
               <Route
                 path="/ai/browser/:symbol"
-                element={guardPageElement("pages.ai.analyze", <ChartSnapshotsPage />)}
+                element={<Navigate to="/trades/analyze" replace />}
               />
               <Route
                 path="/settings/profile"

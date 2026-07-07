@@ -22,8 +22,8 @@ const LEGACY_PAY42_ACTOR_ID_MAP = Object.freeze({
 const SEEDED_PRODUCTS = [
   {
     sid: "P42P_MARINA_BAY_SUITES",
-    name: "Marina Bay Suites Singapore",
-    image: "https://images.example.test/42pay/marina-bay-suites-singapore.jpg",
+    name: "Grand Hyatt Singapore",
+    image: "/pay42/grand-hyatt-singapore.jpg",
     type: "hotel",
     status: "ACTIVE",
     metadata: {
@@ -32,55 +32,59 @@ const SEEDED_PRODUCTS = [
       country: "Singapore",
       nights: 2,
       seller_name: "Sofia Chen",
-      description: "Skyline-view suites with rooftop pool access and breakfast for two.",
+      description:
+        "Renovated Orchard Road stay with club lounge access, pool deck, and breakfast for two.",
     },
     create_sid: PAY42_SELLER_ID,
   },
   {
     sid: "P42P_KYOTO_GARDEN_RYOKAN",
-    name: "Kyoto Garden Ryokan Escape",
-    image: "https://images.example.test/42pay/kyoto-garden-ryokan-escape.jpg",
+    name: "Park Hyatt Kyoto",
+    image: "/pay42/park-hyatt-kyoto.jpg",
     type: "hotel",
     status: "ACTIVE",
     metadata: {
-      category: "Ryokan",
+      category: "Luxury Hotel",
       city: "Kyoto",
       country: "Japan",
       nights: 1,
       seller_name: "Sofia Chen",
-      description: "Tatami suite with private onsen slot and kaiseki dinner.",
+      description:
+        "Higashiyama hillside stay with temple-view rooms, evening tea service, and curated dining.",
     },
     create_sid: PAY42_SELLER_ID,
   },
   {
     sid: "P42P_ALPINE_LAKE_RETREAT",
-    name: "Alpine Lake Retreat Zurich",
-    image: "https://images.example.test/42pay/alpine-lake-retreat-zurich.jpg",
-    type: "hotel",
+    name: "Whole Foods Market SoMa",
+    image: "/pay42/whole-foods-soma.jpg",
+    type: "supermarket",
     status: "ACTIVE",
     metadata: {
-      category: "Boutique Hotel",
-      city: "Zurich",
-      country: "Switzerland",
-      nights: 3,
+      category: "Supermarket",
+      city: "San Francisco",
+      country: "United States",
+      nights: 0,
       seller_name: "Sofia Chen",
-      description: "Quiet lakeside stay with wellness spa credit and airport transfer.",
+      description:
+        "Premium grocery basket pickup with organic produce, bakery staples, and ready-to-eat meals.",
     },
     create_sid: PAY42_SELLER_ID,
   },
   {
     sid: "P42P_OLD_QUARTER_HERITAGE",
-    name: "Old Quarter Heritage Hanoi",
-    image: "https://images.example.test/42pay/old-quarter-heritage-hanoi.jpg",
-    type: "hotel",
+    name: "Carrefour City Louvre",
+    image: "/pay42/carrefour-city-louvre.jpg",
+    type: "supermarket",
     status: "ACTIVE",
     metadata: {
-      category: "City Hotel",
-      city: "Hanoi",
-      country: "Vietnam",
-      nights: 2,
+      category: "Supermarket",
+      city: "Paris",
+      country: "France",
+      nights: 0,
       seller_name: "Sofia Chen",
-      description: "Central heritage stay with walking food tour and airport pickup.",
+      description:
+        "Central neighbourhood grocery with fresh essentials, wine pairings, and family pantry bundles.",
     },
     create_sid: PAY42_SELLER_ID,
   },
@@ -90,60 +94,60 @@ const SEEDED_OFFERS = [
   {
     sid: "P42O_MARINA_BAY_2N",
     product_id: "P42P_MARINA_BAY_SUITES",
-    price: 680,
-    tax: 47.6,
+    price: 428,
+    tax: 36.38,
     seller_id: PAY42_SELLER_ID,
     status: "ACTIVE",
     start_at: "2026-07-01T00:00:00.000Z",
     end_at: "2026-12-31T23:59:59.999Z",
     metadata: {
       currency: "USD",
-      offer_name: "2 Nights Skyline Escape",
+      offer_name: "2-Night Club Room Escape",
       inventory: 20,
     },
   },
   {
     sid: "P42O_KYOTO_GARDEN_1N",
     product_id: "P42P_KYOTO_GARDEN_RYOKAN",
-    price: 315,
-    tax: 22.05,
+    price: 512,
+    tax: 43.52,
     seller_id: PAY42_SELLER_ID,
     status: "ACTIVE",
     start_at: "2026-07-01T00:00:00.000Z",
     end_at: "2026-11-30T23:59:59.999Z",
     metadata: {
       currency: "USD",
-      offer_name: "Ryokan Discovery Night",
+      offer_name: "Temple View Night Stay",
       inventory: 12,
     },
   },
   {
     sid: "P42O_ALPINE_RETREAT_3N",
     product_id: "P42P_ALPINE_LAKE_RETREAT",
-    price: 930,
-    tax: 65.1,
+    price: 84.5,
+    tax: 6.76,
     seller_id: PAY42_SELLER_ID,
     status: "ACTIVE",
     start_at: "2026-07-01T00:00:00.000Z",
     end_at: "2027-01-31T23:59:59.999Z",
     metadata: {
       currency: "USD",
-      offer_name: "3 Nights Wellness Retreat",
+      offer_name: "Weekly Pantry Basket",
       inventory: 8,
     },
   },
   {
     sid: "P42O_HANOI_HERITAGE_2N",
     product_id: "P42P_OLD_QUARTER_HERITAGE",
-    price: 225,
-    tax: 15.75,
+    price: 129,
+    tax: 10.32,
     seller_id: PAY42_SELLER_ID,
     status: "ACTIVE",
     start_at: "2026-07-01T00:00:00.000Z",
     end_at: "2026-10-31T23:59:59.999Z",
     metadata: {
       currency: "USD",
-      offer_name: "2 Nights Old Quarter Stay",
+      offer_name: "Weekend Family Essentials",
       inventory: 30,
     },
   },
@@ -775,43 +779,47 @@ function create42PayRepo(options = {}) {
       const existingOrders = await listType(repo, ORDER_TYPE);
       const existingTopups = await listType(repo, TOPUP_TYPE);
 
-      if (existingProducts.length === 0) {
-        for (let index = 0; index < SEEDED_PRODUCTS.length; index += 1) {
-          const product = SEEDED_PRODUCTS[index];
-          await putType(repo, PRODUCT_TYPE, product.sid, {
-            id: index + 1,
-            sid: product.sid,
-            name: product.name,
-            image: product.image,
-            type: product.type,
-            status: product.status,
-            metadata: clone(product.metadata),
-            create_at: nowIso(),
-            create_sid: product.create_sid,
-          });
-        }
+      for (let index = 0; index < SEEDED_PRODUCTS.length; index += 1) {
+        const product = SEEDED_PRODUCTS[index];
+        const current = existingProducts.find((row) => row.sid === product.sid) || null;
+        const createdAt = current?.create_at || nowIso();
+        await putType(repo, PRODUCT_TYPE, product.sid, {
+          id: current?.id || index + 1,
+          sid: product.sid,
+          name: product.name,
+          image: product.image,
+          type: product.type,
+          status: product.status,
+          metadata: clone(product.metadata),
+          create_at: createdAt,
+          created_at: current?.created_at || createdAt,
+          updated_at: nowIso(),
+          create_sid: current?.create_sid || product.create_sid,
+        });
       }
 
-      if (existingOffers.length === 0) {
-        for (let index = 0; index < SEEDED_OFFERS.length; index += 1) {
-          const offer = SEEDED_OFFERS[index];
-          const qrCode = createQrPayload(offer);
-          await putType(repo, OFFER_TYPE, offer.sid, {
-            id: index + 1,
-            sid: offer.sid,
-            product_id: offer.product_id,
-            price: offer.price,
-            tax: offer.tax,
-            qr_code: qrCode,
-            qr_code_image: await generateQrCodeImage(qrCode),
-            seller_id: offer.seller_id,
-            metadata: clone(offer.metadata),
-            status: offer.status,
-            create_at: nowIso(),
-            start_at: offer.start_at,
-            end_at: offer.end_at,
-          });
-        }
+      for (let index = 0; index < SEEDED_OFFERS.length; index += 1) {
+        const offer = SEEDED_OFFERS[index];
+        const current = existingOffers.find((row) => row.sid === offer.sid) || null;
+        const qrCode = createQrPayload(offer);
+        const createdAt = current?.create_at || nowIso();
+        await putType(repo, OFFER_TYPE, offer.sid, {
+          id: current?.id || index + 1,
+          sid: offer.sid,
+          product_id: offer.product_id,
+          price: offer.price,
+          tax: offer.tax,
+          qr_code: qrCode,
+          qr_code_image: await generateQrCodeImage(qrCode),
+          seller_id: current?.seller_id || offer.seller_id,
+          metadata: clone(offer.metadata),
+          status: offer.status,
+          create_at: createdAt,
+          created_at: current?.created_at || createdAt,
+          updated_at: nowIso(),
+          start_at: offer.start_at,
+          end_at: offer.end_at,
+        });
       }
 
       if (existingOrders.length === 0) {

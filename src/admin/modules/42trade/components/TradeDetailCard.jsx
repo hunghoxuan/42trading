@@ -1337,7 +1337,7 @@ export default function TradeDetailCard({
       "PLANNED",
     ].includes(statusText);
     const isFilledLike = ["FILLED", "OPEN", "START"].includes(statusText);
-    if (path.startsWith("/ai/response")) return "analysis";
+    if (path.startsWith("/trades/response") || path.startsWith("/ai/response")) return "analysis";
     if (
       (path.startsWith("/trades") || path.startsWith("/ai/trade")) &&
       !isPendingLike &&

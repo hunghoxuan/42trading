@@ -17,6 +17,7 @@ const dbQueries = require("../../db/queries");
 const settingsDomain = require("../modules/system/settings");
 const dbManagerSystem = require("../modules/system/dbManager");
 const fileBrowserSystem = require("../modules/system/fileBrowser");
+const studioDomain = require("../modules/studio/service");
 const marketDataDomain = require("../modules/42trade/marketData");
 const backtestsDomain = require("../modules/42trade/backtests");
 const strategiesDomain = require("../modules/42trade/strategies");
@@ -133,6 +134,15 @@ const {
   getReplaySession,
   updateReplaySession,
 } = replaySessionService;
+const {
+  createStudioProject,
+  getLatestStudioSlideVideo,
+  listStudioProjects,
+  loadStudioFlowData,
+  resolveStudioSession,
+  persistStudioProject,
+  renderStudioVideo,
+} = studioDomain;
 const {
   createUserObjectStore,
   parseJsonField: parseUserObjectJsonField,
@@ -2153,18 +2163,77 @@ function resolveMetadataPath(symbol, tf) {
   return path.join(dir, `${tfKey}.json`);
 }
 function readMarketDataMetadata(symbol, tf) {
+  const p = resolveMetadataPath(symbol, tf);
+  let sidecar = null;
+  if (p && fs.existsSync(p)) {
+    try {
+      sidecar = JSON.parse(fs.readFileSync(p, "utf8"));
+    } catch {
+      sidecar = null;
+    }
+  }
   const artifact = chartArtifactService.readMarketArtifacts(symbol, tf, {
     dataRoot: GLOBAL_DATA_DIR,
   });
-  if (artifact?.meta?.legacy_metadata && typeof artifact.meta.legacy_metadata === "object") {
-    return artifact.meta.legacy_metadata;
+  const legacy =
+    artifact?.meta?.legacy_metadata &&
+    typeof artifact.meta.legacy_metadata === "object"
+      ? artifact.meta.legacy_metadata
+      : null;
+  if (sidecar && legacy) {
+    return { ...legacy, ...sidecar };
   }
-  const p = resolveMetadataPath(symbol, tf);
-  if (!p || !fs.existsSync(p)) return null;
+  if (sidecar) return sidecar;
+  if (legacy) return legacy;
+  return null;
+}
+
+function buildBrokerStorageMetadata(symbol, tf, baseMetadata = {}) {
+  const provider = barsStorage.getBarsStorageProvider({
+    dataRoot: GLOBAL_DATA_DIR,
+    duckdbPath: process.env.BARS_DUCKDB_PATH,
+  });
+  const brokerFilePath = resolveBrokerCsvPath(symbol, tf);
+  const fullBars = barsStorage.readBrokerBarsFromFile(symbol, tf, 0, {
+    dataRoot: GLOBAL_DATA_DIR,
+    duckdbPath: process.env.BARS_DUCKDB_PATH,
+    fullFile: true,
+  });
+  const storedBars = Array.isArray(fullBars) ? fullBars.length : 0;
+  const tfSec = Math.max(60, parseTfTokenToSeconds(tf));
+  const computedBarStart = Number(fullBars?.[0]?.time || 0) || null;
+  const computedBarEnd =
+    storedBars > 0
+      ? Number(fullBars?.[storedBars - 1]?.time || 0) + tfSec || null
+      : null;
+  const fileUpdatedAt =
+    brokerFilePath && fs.existsSync(brokerFilePath)
+      ? fs.statSync(brokerFilePath).mtime.toISOString()
+      : null;
   try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
+    return {
+      ...(baseMetadata && typeof baseMetadata === "object" ? baseMetadata : {}),
+      source_kind: "broker",
+      file_type: provider === "parquet_duckdb" ? "parquet" : provider === "csv" ? "csv" : provider,
+      stored_bars: storedBars > 0 ? storedBars : null,
+      file_updated_at: fileUpdatedAt,
+      bar_start:
+        Number(baseMetadata?.bar_start) > 0
+          ? Number(baseMetadata.bar_start)
+          : computedBarStart,
+      bar_end:
+        Number(baseMetadata?.bar_end) > 0
+          ? Number(baseMetadata.bar_end)
+          : computedBarEnd,
+    };
   } catch {
-    return null;
+    return {
+      ...(baseMetadata && typeof baseMetadata === "object" ? baseMetadata : {}),
+      source_kind: "broker",
+      file_type: provider === "parquet_duckdb" ? "parquet" : provider === "csv" ? "csv" : provider,
+      stored_bars: storedBars > 0 ? storedBars : null,
+      file_updated_at: fileUpdatedAt,
+    };
   }
 }
 function writeMarketDataMetadata(symbol, tf, metadata) {
@@ -2228,15 +2297,22 @@ function buildBrokerSnapshotFromBars(
     extras?.metadata && typeof extras.metadata === "object"
       ? extras.metadata
       : {};
+  const brokerMetadata = buildBrokerStorageMetadata(symbol, tfNorm, extrasMetadata);
   const storedBars =
-    Number(extrasMetadata.stored_bars) > 0
-      ? Number(extrasMetadata.stored_bars)
+    Number(brokerMetadata.stored_bars) > 0
+      ? Number(brokerMetadata.stored_bars)
       : countBrokerBarsInFile(symbol, tfNorm);
-  const barStart = bars[0]?.time || null;
-  const barEnd = bars.length
-    ? Number(bars[bars.length - 1].time) +
-      Math.max(60, parseTfTokenToSeconds(tfNorm))
-    : null;
+  const barStart =
+    Number(brokerMetadata.bar_start) > 0
+      ? Number(brokerMetadata.bar_start)
+      : bars[0]?.time || null;
+  const barEnd =
+    Number(brokerMetadata.bar_end) > 0
+      ? Number(brokerMetadata.bar_end)
+      : bars.length
+        ? Number(bars[bars.length - 1].time) +
+          Math.max(60, parseTfTokenToSeconds(tfNorm))
+        : null;
   return attachIndicatorDataToMarketSnapshot({
     provider: brokerCacheSource,
     status: "ok",
@@ -2256,12 +2332,14 @@ function buildBrokerSnapshotFromBars(
     bars,
     cache_source: brokerCacheSource,
     metadata: {
+      ...brokerMetadata,
       source_kind: "broker",
-      file_type: storageFileTypeLabelFromCacheSource(brokerCacheSource),
-      file_updated_at: brokerFileUpdatedAt,
+      file_type:
+        brokerMetadata.file_type ||
+        storageFileTypeLabelFromCacheSource(brokerCacheSource),
+      file_updated_at: brokerMetadata.file_updated_at || brokerFileUpdatedAt,
       loaded_bars: bars.length,
       stored_bars: storedBars > 0 ? storedBars : null,
-      ...extrasMetadata,
     },
     gap_candidates: detectMarketDataGapCandidates(bars, tfNorm).slice(0, 20),
     ...extras,
@@ -6103,7 +6181,11 @@ function marketDataFileRead(symbolNorm, tfNorm, reqStart, reqEnd) {
   const barEnd = bars[bars.length - 1].time;
   if (barStart > reqEnd || barEnd < reqStart) return null;
   const tfSec = Math.max(60, parseTfTokenToSeconds(tfNorm));
-  const metadata = readMarketDataMetadata(symbolNorm, tfNorm);
+  const metadata = buildBrokerStorageMetadata(
+    symbolNorm,
+    tfNorm,
+    readMarketDataMetadata(symbolNorm, tfNorm),
+  );
   const chartArtifacts =
     chartArtifactService.readMarketArtifacts(symbolNorm, tfNorm, {
       dataRoot: GLOBAL_DATA_DIR,
@@ -7350,8 +7432,26 @@ async function uiAuthUpdateProfile(sess, patch = {}) {
 }
 
 async function uiListUsers() {
+  await uiEnsureDemoUsers();
   const rows = await authUserRepo().listUsers();
   return (Array.isArray(rows) ? rows : []).map(uiPublicUserView);
+}
+
+function uiUserSelectOptionView(user) {
+  return {
+    user_id: String(user?.user_id || ""),
+    name: String(user?.name || ""),
+    roles: normalizeUserRoles(user?.roles),
+    is_active: normalizeUserActive(user?.is_active, true),
+  };
+}
+
+async function uiListUserSelectOptions() {
+  await uiEnsureDemoUsers();
+  const rows = await authUserRepo().listUsers();
+  return (Array.isArray(rows) ? rows : [])
+    .map(uiUserSelectOptionView)
+    .filter((user) => user.is_active);
 }
 
 async function uiCreateUser(payload = {}) {
@@ -7546,11 +7646,15 @@ async function uiDeleteUserAccount(userIdRaw, accountIdRaw) {
   return { ok: true };
 }
 
-async function uiEnsureAuthBootstrap() {
+async function uiEnsureDemoUsers() {
   await seedDemoUsers(authUserRepo(), {
     makeSalt: makeSaltHex,
     hashPassword,
   });
+}
+
+async function uiEnsureAuthBootstrap() {
+  await uiEnsureDemoUsers();
   const targetEmail = normalizeEmail(CFG.uiBootstrapEmail);
   const existing = await uiReadAuthStateByEmail(targetEmail);
   const legacy = parseLegacyUiAuthStateFromFile();
@@ -7781,6 +7885,7 @@ function getUiSessionFromReq(req) {
 }
 
 async function uiAuthGetVerifiedUser(loginRaw, passwordRaw) {
+  await uiEnsureDemoUsers();
   const login = String(loginRaw || "").trim();
   if (RETIRED_UI_LOGINS.has(String(login).toLowerCase())) return null;
   const email = normalizeEmail(login);
@@ -17124,16 +17229,31 @@ function mt5NormalizeSkipDecisionText(rawValue) {
   return String(rawValue || "")
     .trim()
     .toLowerCase()
-    .replace(/[_-]+/g, " ");
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function mt5IsSkipTradeDecision(rawValue) {
-  return mt5NormalizeSkipDecisionText(rawValue) === "skip";
+  const normalized = mt5NormalizeSkipDecisionText(rawValue);
+  return (
+    normalized === "skip" ||
+    normalized === "skip trade" ||
+    normalized === "do not trade" ||
+    normalized === "dont trade" ||
+    normalized === "no trade" ||
+    normalized === "notrade"
+  );
 }
 
 function mt5IsNoTradeOrderType(rawValue) {
   const normalized = mt5NormalizeSkipDecisionText(rawValue);
-  return normalized === "no trade" || normalized.startsWith("no trade ");
+  return (
+    normalized === "no trade" ||
+    normalized === "notrade" ||
+    normalized.startsWith("no trade ") ||
+    normalized.startsWith("notrade ")
+  );
 }
 
 function mt5CollectTradeIntentNodes(root) {
@@ -18131,6 +18251,14 @@ function timeframeToBinance(tf) {
     .trim()
     .toLowerCase();
   const map = {
+    "1": "1m",
+    "5": "5m",
+    "15": "15m",
+    "30": "30m",
+    "60": "1h",
+    "240": "4h",
+    "1440": "1d",
+    "10080": "1w",
     "1m": "1m",
     "5m": "5m",
     "15m": "15m",
@@ -21661,7 +21789,15 @@ async function mt5CreateTradeFanoutViaRepo(payload = {}) {
         : { event: "DIRECT_TRADE_CREATE" },
       userId,
     ).catch(() => {});
-    moveTradeFolder(sid, "draft", "active", payload.symbol || "");
+    if (forcedExecutionStatus === "DRAFT") {
+      ensureTradeDir(sid, payload.symbol || "", "draft");
+    } else if (
+      ["CANCELLED", "REJECTED", "CLOSED"].includes(forcedExecutionStatus)
+    ) {
+      moveTradeFolder(sid, "draft", "closed", payload.symbol || "");
+    } else {
+      moveTradeFolder(sid, "draft", "active", payload.symbol || "");
+    }
   }
   bumpPulse(userId);
   return { created: rows.length, account_ids: accountIds, sids };
@@ -23796,6 +23932,217 @@ const appHandler = async (req, res) => {
     }
   }
 
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/studio/flow-data" || url.pathname === "/api/studio/flow-data")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const userId = sess.user_id || url.searchParams.get("userId") || "default";
+      const projectSid = url.searchParams.get("projectSid") || url.searchParams.get("sid") || null;
+      const payload = await loadStudioFlowData({
+        userId,
+        sid: projectSid,
+      });
+      return json(res, 200, {
+        ok: true,
+        flowData: payload.flowData,
+        sessionMeta: payload.sessionMeta,
+        projectPath: payload.projectPath,
+        projects: payload.projects,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/studio/projects" || url.pathname === "/api/studio/projects")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const userId = sess.user_id || url.searchParams.get("userId") || "default";
+      const projects = await listStudioProjects(userId);
+      return json(res, 200, {
+        ok: true,
+        userId,
+        projects,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/studio/slide-video" || url.pathname === "/api/studio/slide-video")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const userId = sess.user_id || url.searchParams.get("userId") || "default";
+      const sid = url.searchParams.get("projectSid") || url.searchParams.get("sid") || null;
+      const slideId = url.searchParams.get("slideId") || null;
+      const payload = await getLatestStudioSlideVideo({
+        userId,
+        sid,
+        slideId,
+      });
+      return json(res, 200, payload);
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/studio/projects" || url.pathname === "/api/studio/projects")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const body = await readJson(req);
+      const title = String(body?.title || body?.name || "New Studio Project").trim();
+      const userId =
+        body?.userId ||
+        body?.user_id ||
+        sess.user_id ||
+        "default";
+      const payload = await createStudioProject({
+        userId,
+        name: title,
+        sid: body?.sid || null,
+      });
+      return json(res, 200, {
+        ok: true,
+        flowData: payload.flowData,
+        sessionMeta: payload.sessionMeta,
+        projectPath: payload.projectPath,
+        projects: payload.projects,
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/studio/save-flow" || url.pathname === "/api/studio/save-flow")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const body = await readJson(req);
+      const flowData = body?.flowData || body?.flow || null;
+      if (!flowData || typeof flowData !== "object") {
+        return json(res, 400, { ok: false, error: "FLOW_DATA_REQUIRED" });
+      }
+      const sessionMeta = resolveStudioSession(
+        {
+          ...(body?.session || {}),
+          userId:
+            body?.session?.userId ||
+            body?.session?.user_id ||
+            sess.user_id ||
+            body?.session?.userId,
+        },
+        flowData,
+      );
+      const persisted = await persistStudioProject(flowData, sessionMeta);
+      return json(res, 200, {
+        ok: true,
+        sessionMeta,
+        activeSlideId: persisted.activeSlide?.id || flowData.activeSlideId || null,
+        activeSlideFolder: persisted.activeSlide?.folderName || null,
+        slideCount: Array.isArray(persisted.slides) ? persisted.slides.length : 0,
+        projectPath: persisted.dataProjectPath,
+        projects: await listStudioProjects(sessionMeta.userId),
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/studio/render-video" ||
+      url.pathname === "/api/studio/render-video")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) === CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const body = await readJson(req);
+      const flowData = body?.flowData || body?.flow || null;
+      if (!flowData || typeof flowData !== "object") {
+        return json(res, 400, { ok: false, error: "FLOW_DATA_REQUIRED" });
+      }
+      const sessionMeta = resolveStudioSession(
+        {
+          ...(body?.session || {}),
+          userId:
+            body?.session?.userId ||
+            body?.session?.user_id ||
+            sess.user_id ||
+            body?.session?.userId,
+        },
+        flowData,
+      );
+      const renderResult = await renderStudioVideo(
+        flowData,
+        body?.renderOptions || {},
+        sessionMeta,
+      );
+      return json(res, 200, renderResult);
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (req.method === "POST" && url.pathname === "/v2/realtime/replay/session") {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
@@ -24786,6 +25133,17 @@ const appHandler = async (req, res) => {
     if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
     try {
       const users = await uiListUsers();
+      return json(res, 200, { ok: true, users });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      return json(res, 400, { ok: false, error: message });
+    }
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/users/select") {
+    if (!requireUiPermission(req, res, "apis.auth.users.read")) return;
+    try {
+      const users = await uiListUserSelectOptions();
       return json(res, 200, { ok: true, users });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
@@ -31086,12 +31444,11 @@ const appHandler = async (req, res) => {
         duckdbPath: process.env.BARS_DUCKDB_PATH,
         endTimeSec: Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
       });
-      const storedBars = countBrokerBarsInFile(symbol, tf);
-      const brokerFilePath = resolveBrokerCsvPath(symbol, tf);
-      const fileUpdatedAt =
-        brokerFilePath && fs.existsSync(brokerFilePath)
-          ? fs.statSync(brokerFilePath).mtime.toISOString()
-          : null;
+      const metadata = buildBrokerStorageMetadata(
+        symbol,
+        tf,
+        readMarketDataMetadata(symbol, tf),
+      );
       if (!rows.length) {
         return json(res, 200, {
           ok: true,
@@ -31099,15 +31456,7 @@ const appHandler = async (req, res) => {
           tf,
           bars: [],
           source: "cache",
-          metadata: {
-            source_kind: "broker",
-            file_type: storageFileTypeLabelFromCacheSource(
-              brokerBarsCacheSourceLabel(),
-            ),
-            stored_bars: storedBars > 0 ? storedBars : null,
-            updated_bars: 0,
-            file_updated_at: fileUpdatedAt,
-          },
+          metadata: { ...metadata, updated_bars: 0 },
         });
       }
       return json(res, 200, {
@@ -31123,15 +31472,7 @@ const appHandler = async (req, res) => {
           v: Number(row.volume || 0),
         })),
         source: barsStorage.getBarsStorageProvider(),
-        metadata: {
-          source_kind: "broker",
-          file_type: storageFileTypeLabelFromCacheSource(
-            brokerBarsCacheSourceLabel(),
-          ),
-          stored_bars: storedBars > 0 ? storedBars : null,
-          updated_bars: 0,
-          file_updated_at: fileUpdatedAt,
-        },
+        metadata: { ...metadata, updated_bars: 0 },
       });
     } catch (error) {
       return json(res, 500, {
@@ -31765,14 +32106,23 @@ const appHandler = async (req, res) => {
             trade_plan: picks.map((x) => x.plan),
           };
           if (mode === "signals") {
-            // Create trade with DRAFT status (no dispatch to broker)
+            // Create one saved order per analyzed plan.
             const savedTrades = [];
-            for (const pick of picks) {
+            for (const [index, pick] of picks.entries()) {
               const plan = pick.plan || {};
               const planSymbol = String(pick.symbol || symbol)
                 .trim()
                 .toUpperCase();
               if (!planSymbol) continue;
+              const perPlanPayload = {
+                ...sharedRawJson,
+                symbol: planSymbol,
+                trade_plan: [plan],
+              };
+              const skipDirective = mt5ResolveSkipTradeDirective({
+                ...perPlanPayload,
+                raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+              });
               const sourceId = mt5SlugId(source, "tradingview");
               const fanout = await mt5FanoutSignalTradeV2({
                 signal_id: null,
@@ -31789,19 +32139,32 @@ const appHandler = async (req, res) => {
                 note: String(
                   plan?.note || parsedJson?.final_verdict?.note || "",
                 ).trim(),
-                sid: sessionId,
-                execution_status: "DRAFT",
+                sid: normalizePublicSidBase(
+                  `${sessionId}_${planSymbol}_${index + 1}`,
+                  "TRD",
+                ),
+                execution_status: skipDirective.cancelled ? "CANCELLED" : "DRAFT",
                 metadata: {
-                  event_type: "AI_ANALYZE_AUTO_SAVE_DRAFT",
+                  event_type: skipDirective.cancelled
+                    ? "AI_ANALYZE_AUTO_SAVE_CANCELLED"
+                    : "AI_ANALYZE_AUTO_SAVE_DRAFT",
                   raw_json: plan && typeof plan === "object" ? { ...plan } : {},
-                  ...sharedRawJson,
+                  ...perPlanPayload,
                 },
               });
               const tradeSid =
                 Array.isArray(fanout?.sids) && fanout.sids[0]
                   ? fanout.sids[0]
-                  : sessionId;
-              savedTrades.push({ sid: tradeSid, symbol: planSymbol });
+                  : normalizePublicSidBase(
+                      `${sessionId}_${planSymbol}_${index + 1}`,
+                      "TRD",
+                    );
+              copyAnalyzeSnapshotToTradeSession(tradeSid, planSymbol);
+              savedTrades.push({
+                sid: tradeSid,
+                symbol: planSymbol,
+                execution_status: skipDirective.cancelled ? "CANCELLED" : "DRAFT",
+              });
             }
             if (!savedTrades.length) {
               return {
@@ -31819,10 +32182,6 @@ const appHandler = async (req, res) => {
               trades: savedTrades,
             };
           }
-          const pick = picks[0];
-          const plan = pick.plan || {};
-          const tradePlanRawJson = { ...sharedRawJson };
-          const action = normalizeDirectionToAction(plan?.direction);
           const sourceId = mt5SlugId(source, "tradingview");
           await mt5UpsertSourceV2({
             source_id: sourceId,
@@ -31835,46 +32194,79 @@ const appHandler = async (req, res) => {
               signal_source: source,
             },
           }).catch(() => null);
-          const fanout = await mt5FanoutSignalTradeV2({
-            signal_id: null,
-            source_id: sourceId,
-            user_id: userId,
-            entry_model: String(plan?.entry_model || "").trim() || null,
-            trade_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-            chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
-            symbol,
-            action,
-            entry: pick.entry,
-            sl: pick.sl,
-            tp: pick.tp,
-            volume: asNum(body?.volume ?? body?.lots, null),
-            rr_planned: asNum(plan?.rr, null),
-            risk_pct_planned: asNum(plan?.risk_pct, null),
-            note: String(
-              plan?.note || parsedJson?.final_verdict?.note || "",
-            ).trim(),
-            sid: sessionId,
-            session_prefix: reqSessionPrefix || null,
-            metadata: {
-              event_type: "AI_ANALYZE_AUTO_SAVE_TRADE",
-              order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+          let totalCreated = 0;
+          const createdTrades = [];
+          for (const [index, pick] of picks.entries()) {
+            const plan = pick.plan || {};
+            const planSymbol = String(pick.symbol || symbol)
+              .trim()
+              .toUpperCase();
+            if (!planSymbol) continue;
+            const perPlanPayload = {
+              ...sharedRawJson,
+              symbol: planSymbol,
+              trade_plan: [plan],
+            };
+            const skipDirective = mt5ResolveSkipTradeDirective({
+              ...perPlanPayload,
+              raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+            });
+            const fanout = await mt5FanoutSignalTradeV2({
+              signal_id: null,
+              source_id: sourceId,
+              user_id: userId,
+              entry_model: String(plan?.entry_model || "").trim() || null,
+              trade_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              chart_tf: mt5TfToMinutes(body?.timeframe || body?.tf) || null,
+              symbol: planSymbol,
+              action: normalizeDirectionToAction(plan?.direction),
+              entry: pick.entry,
+              sl: pick.sl,
+              tp: pick.tp,
+              volume: asNum(body?.volume ?? body?.lots, null),
+              rr_planned: asNum(plan?.rr, null),
+              risk_pct_planned: asNum(plan?.risk_pct, null),
+              note: String(
+                plan?.note || parsedJson?.final_verdict?.note || "",
+              ).trim(),
+              sid: normalizePublicSidBase(
+                `${sessionId}_${planSymbol}_${index + 1}`,
+                "TRD",
+              ),
               session_prefix: reqSessionPrefix || null,
-              analyze_session_id: sessionId,
-              raw_json: tradePlanRawJson,
-            },
-          });
-          // Move folder from files to active (trade is now PENDING, not draft)
-          if (fanout?.created > 0) {
-            moveTradeFolder(sessionId, "draft", "active", symbol);
+              execution_status: skipDirective.cancelled ? "CANCELLED" : undefined,
+              metadata: {
+                event_type: skipDirective.cancelled
+                  ? "AI_ANALYZE_AUTO_SAVE_CANCELLED"
+                  : "AI_ANALYZE_AUTO_SAVE_TRADE",
+                order_type: mt5NormalizeOrderTypeValue(plan?.type, "limit"),
+                session_prefix: reqSessionPrefix || null,
+                analyze_session_id: sessionId,
+                raw_json: plan && typeof plan === "object" ? { ...plan } : {},
+                ...perPlanPayload,
+              },
+            });
+            totalCreated += Number(fanout?.created || 0);
+            const tradeSid =
+              Array.isArray(fanout?.sids) && fanout.sids[0]
+                ? fanout.sids[0]
+                : normalizePublicSidBase(
+                    `${sessionId}_${planSymbol}_${index + 1}`,
+                    "TRD",
+                  );
+            copyAnalyzeSnapshotToTradeSession(tradeSid, planSymbol);
+            createdTrades.push({
+              sid: tradeSid,
+              symbol: planSymbol,
+              execution_status: skipDirective.cancelled ? "CANCELLED" : "PENDING",
+            });
           }
           return {
             enabled: true,
             mode,
             saved: true,
-            created: Number(fanout?.created || 0),
-            account_ids: Array.isArray(fanout?.account_ids)
-              ? fanout.account_ids
-              : [],
+            created: totalCreated,
+            trades: createdTrades,
           };
         } catch (error) {
           return {

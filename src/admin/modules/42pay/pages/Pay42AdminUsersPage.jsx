@@ -104,11 +104,34 @@ export default function Pay42AdminUsersPage() {
     [],
   );
 
+  const mobileCard = useMemo(
+    () => ({
+      getImageLabel: (row) => row.name || row.user_id,
+      getTitle: (row) => row.name || row.user_id || "-",
+      getSubtitle: (row) => row.user_id || "",
+      getBadges: (row) =>
+        Array.isArray(row.roles)
+          ? row.roles.map((role) => ({ label: String(role || "").toUpperCase() }))
+          : [],
+      getRows: (row) => [
+        [
+          { value: `${row.product_count || 0} products` },
+          { value: `${row.offer_count || 0} offers` },
+        ],
+        [
+          { value: `${row.sales_count || 0} sales` },
+          { value: `${row.buyer_order_count || 0} purchases` },
+        ],
+      ],
+    }),
+    [],
+  );
+
   return (
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
         className="trades-page-header"
-        title="42Pay Users"
+        title="Users"
         actions={
           <Link className="secondary-button" to="/system/users">
             Open System User Manager
@@ -156,7 +179,7 @@ export default function Pay42AdminUsersPage() {
 
       <ResponsivePanel
         title={`${filteredItems.length} Users`}
-        subtitle="42Pay role coverage and activity"
+        subtitle="Role coverage and activity"
         className="component-frozen-wrap"
         showToggle={false}
       >
@@ -166,6 +189,7 @@ export default function Pay42AdminUsersPage() {
           loading={loading}
           emptyText="No 42Pay users found."
           className="events-table"
+          mobileCard={mobileCard}
         />
       </ResponsivePanel>
     </section>

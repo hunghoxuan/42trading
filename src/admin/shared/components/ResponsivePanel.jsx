@@ -128,7 +128,7 @@ export default function ResponsivePanel({
               <button
                 type="button"
                 data-component="ResponsivePanel.Toggle"
-                className="secondary-button responsive-panel__toggle"
+                className="combo-button-menu-trigger responsive-panel__toggle"
                 onClick={handleToggle}
                 title={toggleTitle}
                 aria-label={toggleTitle}

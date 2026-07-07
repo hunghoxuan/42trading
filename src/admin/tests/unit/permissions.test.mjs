@@ -47,3 +47,13 @@ test("page helpers expose only allowed pages", () => {
   );
   assert.equal(canAccessPage({ roles: ["seller"] }, "pages.42pay.products"), true);
 });
+
+test("trader role is scoped to trades pages", () => {
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.trades"), true);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.dashboard"), true);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.ai.analyze"), true);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.backtests"), true);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.settings.profile"), true);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.42pay.dashboard"), false);
+  assert.equal(canAccessPage({ roles: ["trader"] }, "pages.system.users"), false);
+});

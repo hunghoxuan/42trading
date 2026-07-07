@@ -781,11 +781,11 @@ export function resolveNotificationTarget(entry) {
   }
   var tradeDraftSid = resolveSignalSid(entry);
   if (tradeDraftSid) return "/trades/" + tradeDraftSid;
-  if (entry && entry.type === "news_alert") return "/ai/news";
+  if (entry && entry.type === "news_alert") return "/trades/news";
   if (entry && entry.type === "snapshot") return "/system/files";
   if (entry && entry.type === "cron_snapshot") return "/system/files";
   if (entry && entry.type === "analyze") {
-    return "/ai/result?result=" + encodeURIComponent(entry.requestId || "");
+    return "/trades/result?result=" + encodeURIComponent(entry.requestId || "");
   }
   var pagePath = resolvePagePath(entry);
   if (pagePath) return pagePath;

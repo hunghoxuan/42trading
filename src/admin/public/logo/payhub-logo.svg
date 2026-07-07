@@ -1,0 +1,40 @@
+<svg width="760" height="220" viewBox="0 0 760 220" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(18 18)">
+    <rect x="20" y="12" width="92" height="24" rx="12" fill="#163A93"/>
+    <path
+      d="M87 12H113C146.137 12 173 38.8629 173 72C173 105.137 146.137 132 113 132H103C96.3726 132 91 126.627 91 120V103C91 96.3726 96.3726 91 103 91H113C123.493 91 132 82.4934 132 72C132 61.5066 123.493 53 113 53H87V12Z"
+      fill="#163A93"
+    />
+    <path
+      d="M42 81C42 74.3726 47.3726 69 54 69H67C73.6274 69 79 74.3726 79 81V155C79 161.627 73.6274 167 67 167H54C47.3726 167 42 161.627 42 155V81Z"
+      fill="#F3B21B"
+      transform="rotate(11 60.5 118)"
+    />
+  </g>
+
+  <text
+    x="228"
+    y="144"
+    fill="#F2B21A"
+    font-family="Nunito, 'Avenir Next', 'Trebuchet MS', Arial, sans-serif"
+    font-size="74"
+    font-style="italic"
+    font-weight="800"
+    letter-spacing="-2.5"
+  >
+    Pay
+  </text>
+
+  <text
+    x="396"
+    y="144"
+    fill="#0F2C8A"
+    font-family="Nunito, 'Avenir Next', 'Trebuchet MS', Arial, sans-serif"
+    font-size="74"
+    font-style="italic"
+    font-weight="800"
+    letter-spacing="-2.5"
+  >
+    hub
+  </text>
+</svg>

@@ -5,7 +5,7 @@ export default function SiteNavigation({
   logo = "📈",
   title = "42trade",
   version = "",
-  homeTo = "/dashboard",
+  homeTo = "/trades/dashboard",
   onHomeClick,
   brandExtras = null,
   nav = null,
@@ -28,7 +28,7 @@ export default function SiteNavigation({
           <span className="site-navigation__logo" aria-hidden="true">
             {logo}
           </span>
-          <span className="site-navigation__title">{title}</span>
+          {title ? <span className="site-navigation__title">{title}</span> : null}
           {version ? (
             <span
               data-component="SiteNavigation.Version"

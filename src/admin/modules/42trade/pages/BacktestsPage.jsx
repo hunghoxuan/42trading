@@ -1724,7 +1724,7 @@ export default function BacktestsPage() {
     setSelectedRunDetail(null);
     setSelectedRunId("");
     setSelectedTradeSid("");
-    navigate("/backtests");
+    navigate("/trades/backtests");
     try {
       const payload = {
         ...form,
@@ -1772,7 +1772,7 @@ export default function BacktestsPage() {
       await loadRuns(runId);
       if (runId) {
         setSelectedRunId(runId);
-        navigate(`/backtests/${encodeURIComponent(runId)}`);
+        navigate(`/trades/backtests/${encodeURIComponent(runId)}`);
       }
       if (res) {
         setSelectedRunDetail(res);
@@ -1845,7 +1845,7 @@ export default function BacktestsPage() {
     if (!nextId) return;
     handleStrategySelect(nextId);
     setActiveTab("backtest");
-    navigate("/backtests", { replace: false });
+    navigate("/trades/backtests", { replace: false });
   }
 
   function handleCreateStrategyDraft() {
@@ -1856,7 +1856,7 @@ export default function BacktestsPage() {
     setDraftStrategySeed(draft);
     setSelectedStrategyId("__new__");
     setActiveTab("strategies");
-    navigate("/backtests#edit", { replace: false });
+    navigate("/trades/backtests#edit", { replace: false });
   }
 
   async function handleSaveStrategy(payload) {
@@ -1922,18 +1922,18 @@ export default function BacktestsPage() {
     const nextTab = String(nextValue || "backtest").trim().toLowerCase() || "backtest";
     setActiveTab(nextTab);
     if (nextTab === "rules") {
-      navigate("/backtests#rules", { replace: false });
+      navigate("/trades/backtests#rules", { replace: false });
       return;
     }
     if (nextTab === "history") {
-      navigate("/backtests#history", { replace: false });
+      navigate("/trades/backtests#history", { replace: false });
       return;
     }
     if (nextTab === "strategies") {
-      navigate("/backtests#edit", { replace: false });
+      navigate("/trades/backtests#edit", { replace: false });
       return;
     }
-    navigate("/backtests", { replace: false });
+    navigate("/trades/backtests", { replace: false });
   }
 
   async function handleDeleteRun(run) {
@@ -1953,7 +1953,7 @@ export default function BacktestsPage() {
         setSelectedRunId("");
         setSelectedRunDetail(null);
         setSelectedTradeSid("");
-        navigate("/backtests");
+        navigate("/trades/backtests");
       }
       await loadRuns("");
     } catch (deleteError) {

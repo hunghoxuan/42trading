@@ -1,4 +1,4 @@
-import React from "react";
+import React, {useMemo} from "react";
 import {AbsoluteFill, Audio, Easing, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig} from "remotion";
 import {ArrowFlow} from "./components/ArrowFlow";
 import {Background} from "./components/Background";
@@ -10,17 +10,14 @@ import {ProcessingGear} from "./components/micro/ProcessingGear";
 import {ResultPulse} from "./components/micro/ResultPulse";
 import {RiskRadar} from "./components/micro/RiskRadar";
 import {ScanPulse} from "./components/micro/ScanPulse";
-import {PAYMENT_FLOW} from "./data/payment-flow";
-import {PLAYBACK_TIMELINE} from "./data/playback";
+import {PAYMENT_FLOW, type FlowConnector, type FlowStep, type PaymentFlowDocument, type MicroAnimationKind} from "./data/payment-flow";
+import {buildPlaybackTimeline} from "./data/playback";
 import {
-  REMOTION_STAGE,
-  REMOTION_STAGE_WIDTH,
-  SHARED_STAGE_BOXES,
-  SHARED_STAGE_LAYOUT,
-  STEPS,
-  type MicroAnimationKind,
+  type StepDefinition,
 } from "./data/steps";
 import {
+  buildStepBoxes,
+  computeLayout,
   getConnectorBreakPoint,
   getConnectorLaneOffset,
   hasReverseLane,
@@ -48,55 +45,50 @@ const renderMicro = (kind: MicroAnimationKind) => {
   }
 };
 
-const orderedSteps = PAYMENT_FLOW.steps.slice().sort((a, b) => a.order - b.order);
-const connectors = PAYMENT_FLOW.connectors.slice();
-
-const connectorVisuals = connectors.map((connector) => {
-  const forwardPath = pathForConnector({
-    connector,
-    connectors,
-    boxes: SHARED_STAGE_BOXES,
-    mobile: SHARED_STAGE_LAYOUT.mobile,
-    direction: "forward",
-  });
-  const reversePath = hasReverseLane(connector)
-    ? pathForConnector({
-        connector,
-        connectors,
-        boxes: SHARED_STAGE_BOXES,
-        mobile: SHARED_STAGE_LAYOUT.mobile,
-        direction: "reverse",
-      })
-    : null;
-  return {
-    connector,
-    forwardPath,
-    reversePath,
-    forwardBreak: getConnectorBreakPoint({
-      connector,
-      connectors,
-      boxes: SHARED_STAGE_BOXES,
-      direction: "forward",
-    }),
-    reverseBreak: reversePath
-      ? getConnectorBreakPoint({
-          connector,
-          connectors,
-          boxes: SHARED_STAGE_BOXES,
-          direction: "reverse",
-        })
-      : null,
-    forwardOffset: getConnectorLaneOffset({connector, connectors, direction: "forward"}),
-    reverseOffset: getConnectorLaneOffset({connector, connectors, direction: "reverse"}),
-  };
-});
-
 const shellPaddingX = 20;
 const shellPaddingTop = 18;
 const shellPaddingBottom = 20;
-const contentHeight = 1080 - shellPaddingTop - shellPaddingBottom;
-const stageHeight = SHARED_STAGE_LAYOUT.stageHeight;
-const stageTopPadding = Math.max(0, (contentHeight - stageHeight) / 2);
+const slideRailWidth = 60;
+const sidePanelWidth = 340;
+const contentGap = 16;
+
+export type PaymentFlowVideoProps = {
+  flowData?: PaymentFlowDocument;
+};
+
+const resolveRenderableFlow = (flowData?: PaymentFlowDocument): PaymentFlowDocument => {
+  const baseFlow = flowData && typeof flowData === "object" ? flowData : PAYMENT_FLOW;
+  const slides = Array.isArray(baseFlow.slides) ? baseFlow.slides : [];
+  if (!slides.length) return baseFlow;
+  const activeSlideId = baseFlow.activeSlideId || slides[0]?.id || null;
+  const activeSlide =
+    slides.find((slide) => slide?.id === activeSlideId) ||
+    slides[0] ||
+    null;
+  if (!activeSlide) return baseFlow;
+  return {
+    ...baseFlow,
+    meta: {
+      ...baseFlow.meta,
+      ...(activeSlide.meta || {}),
+    },
+    steps: Array.isArray(activeSlide.steps) ? activeSlide.steps : baseFlow.steps,
+    connectors: Array.isArray(activeSlide.connectors) ? activeSlide.connectors : baseFlow.connectors,
+    stepLayouts: activeSlide.stepLayouts || baseFlow.stepLayouts || {},
+  };
+};
+
+export const getPaymentFlowVideoMetadata = (flowData?: PaymentFlowDocument) => {
+  const resolvedFlow = resolveRenderableFlow(flowData);
+  const timeline = buildPlaybackTimeline(resolvedFlow);
+  return {
+    flowData: resolvedFlow,
+    durationInFrames: Math.max(1, timeline.totalFrames || resolvedFlow.video?.durationInFrames || 1),
+    fps: resolvedFlow.video?.fps || PAYMENT_FLOW.video.fps,
+    width: resolvedFlow.video?.width || PAYMENT_FLOW.video.width,
+    height: resolvedFlow.video?.height || PAYMENT_FLOW.video.height,
+  };
+};
 
 const labelStyle = (
   x: number,
@@ -127,9 +119,124 @@ const audioSourceForStep = (step: typeof orderedSteps[number]) => {
   return staticFile(`generated-audio/${step.id}.wav`);
 };
 
-export const PaymentFlowVideo: React.FC = () => {
+export const PaymentFlowVideo: React.FC<PaymentFlowVideoProps> = ({flowData}) => {
   const frame = useCurrentFrame();
-  const {fps} = useVideoConfig();
+  const {fps, width, height} = useVideoConfig();
+  const resolved = useMemo(() => getPaymentFlowVideoMetadata(flowData), [flowData]);
+  const documentData = resolved.flowData;
+  const orderedSteps = useMemo(
+    () => (documentData.steps || []).slice().sort((a, b) => a.order - b.order),
+    [documentData.steps],
+  );
+  const connectors = useMemo(
+    () => (documentData.connectors || []).slice(),
+    [documentData.connectors],
+  );
+  const playbackTimeline = useMemo(
+    () => buildPlaybackTimeline(documentData),
+    [documentData],
+  );
+  const remotionStageWidth =
+    width -
+    shellPaddingX * 2 -
+    slideRailWidth -
+    sidePanelWidth -
+    contentGap * 2;
+  const contentHeight = height - shellPaddingTop - shellPaddingBottom;
+  const layout = useMemo(
+    () =>
+      computeLayout({
+        viewportWidth: width,
+        stageWidth: remotionStageWidth,
+        stageAvailableHeight: contentHeight,
+        steps: orderedSteps,
+        stepLayouts: documentData.stepLayouts || {},
+      }),
+    [contentHeight, documentData.stepLayouts, orderedSteps, remotionStageWidth, width],
+  );
+  const stageHeight = layout.stageHeight;
+  const stageTopPadding = Math.max(0, (contentHeight - stageHeight) / 2);
+  const boxes = useMemo(
+    () =>
+      buildStepBoxes({
+        positions: layout.positions,
+        stepLayouts: documentData.stepLayouts || {},
+        defaultWidth: layout.cardWidth,
+        defaultHeight: layout.cardHeight,
+      }) as Record<string, {x: number; y: number; w: number; h: number}>,
+    [documentData.stepLayouts, layout.cardHeight, layout.cardWidth, layout.positions],
+  );
+  const connectorVisuals = useMemo(
+    () =>
+      connectors.map((connector) => {
+        const forwardPath = pathForConnector({
+          connector,
+          connectors,
+          boxes,
+          mobile: layout.mobile,
+          direction: "forward",
+        });
+        const reversePath = hasReverseLane(connector)
+          ? pathForConnector({
+              connector,
+              connectors,
+              boxes,
+              mobile: layout.mobile,
+              direction: "reverse",
+            })
+          : null;
+        return {
+          connector,
+          forwardPath,
+          reversePath,
+          forwardBreak: getConnectorBreakPoint({
+            connector,
+            connectors,
+            boxes,
+            direction: "forward",
+          }),
+          reverseBreak: reversePath
+            ? getConnectorBreakPoint({
+                connector,
+                connectors,
+                boxes,
+                direction: "reverse",
+              })
+            : null,
+          forwardOffset: getConnectorLaneOffset({connector, connectors, direction: "forward"}),
+          reverseOffset: getConnectorLaneOffset({connector, connectors, direction: "reverse"}),
+        };
+      }),
+    [boxes, connectors, layout.mobile],
+  );
+  const visualSteps = useMemo(
+    () =>
+      orderedSteps.map((step, index) => {
+        const timing = playbackTimeline.steps[index];
+        const box = boxes[step.id] || {
+          x: 24,
+          y: 24 + index * (layout.cardHeight + 24),
+          w: layout.cardWidth,
+          h: layout.cardHeight,
+        };
+        return {
+          id: step.id,
+          indexLabel: String(step.order),
+          title: step.video?.title || step.business.title,
+          subtitle: step.video?.subtitle || step.business.subtitle,
+          x: box.x,
+          y: box.y,
+          width: box.w,
+          height: box.h,
+          startFrame: timing?.narrationStartFrame ?? 0,
+          endFrame: timing?.narrationEndFrame ?? 0,
+          arrowStartFrame: timing?.forwardStartFrame ?? 0,
+          arrowEndFrame: timing?.forwardEndFrame ?? 0,
+          micro: step.micro,
+        } satisfies StepDefinition & {indexLabel?: string};
+      }),
+    [boxes, layout.cardHeight, layout.cardWidth, orderedSteps, playbackTimeline.steps],
+  );
 
   const introOpacity = interpolate(frame, [0, 1.4 * fps], [0, 1], {
     extrapolateLeft: "clamp",
@@ -138,23 +245,32 @@ export const PaymentFlowVideo: React.FC = () => {
   });
 
   const playbackViewMode =
-    frame >= PLAYBACK_TIMELINE.learnModeStartFrame
-      ? PLAYBACK_TIMELINE.config.finalViewMode
-      : PLAYBACK_TIMELINE.config.initialViewMode;
+    frame >= playbackTimeline.learnModeStartFrame
+      ? playbackTimeline.config.finalViewMode
+      : playbackTimeline.config.initialViewMode;
 
   const activeStepIndex = Math.max(
     0,
-    PLAYBACK_TIMELINE.steps.reduce((lastIndex, timing, index) => (
+    playbackTimeline.steps.reduce((lastIndex, timing, index) => (
       frame >= timing.narrationStartFrame ? index : lastIndex
     ), 0),
   );
   const currentStep = orderedSteps[activeStepIndex] ?? orderedSteps[0];
-  const finalHold = frame >= PLAYBACK_TIMELINE.learnModeStartFrame;
+  const finalHold = frame >= playbackTimeline.learnModeStartFrame;
+  const logoPath = (documentData.presentation?.logoPath || documentData.meta.logoPath || "").replace(/^\/+/, "");
+
+  if (!currentStep) {
+    return (
+      <AbsoluteFill>
+        <Background />
+      </AbsoluteFill>
+    );
+  }
 
   return (
     <AbsoluteFill>
       {orderedSteps.map((step, index) => {
-        const timing = PLAYBACK_TIMELINE.steps[index];
+        const timing = playbackTimeline.steps[index];
         if (!timing || !step.narration?.trim()) return null;
         return (
           <Sequence key={`audio-${step.id}`} from={timing.narrationStartFrame}>
@@ -184,8 +300,8 @@ export const PaymentFlowVideo: React.FC = () => {
           style={{
             position: "relative",
             display: "grid",
-            gridTemplateColumns: `minmax(0, 1fr) ${REMOTION_STAGE.sidePanelWidth}px`,
-            gap: 16,
+            gridTemplateColumns: `minmax(0, 1fr) ${sidePanelWidth}px`,
+            gap: contentGap,
             alignItems: "stretch",
             flex: 1,
             minHeight: 0,
@@ -204,9 +320,9 @@ export const PaymentFlowVideo: React.FC = () => {
               }}
             >
               <svg
-                width={REMOTION_STAGE_WIDTH}
+                width={remotionStageWidth}
                 height={stageHeight}
-                viewBox={`0 0 ${REMOTION_STAGE_WIDTH} ${stageHeight}`}
+                viewBox={`0 0 ${remotionStageWidth} ${stageHeight}`}
                 style={{position: "absolute", inset: 0, overflow: "visible"}}
               >
                 <defs>
@@ -220,7 +336,7 @@ export const PaymentFlowVideo: React.FC = () => {
               </svg>
 
               {connectorVisuals.map((visual, index) => {
-                const timing = PLAYBACK_TIMELINE.steps[index];
+                const timing = playbackTimeline.steps[index];
                 if (!timing) return null;
 
                 const forwardDone = timing.forwardEndFrame !== null && frame >= timing.forwardEndFrame;
@@ -239,7 +355,7 @@ export const PaymentFlowVideo: React.FC = () => {
                 return (
                   <React.Fragment key={`${visual.connector.from}-${visual.connector.to}`}>
                     {forwardDone || finalHold ? (
-                      <svg width={REMOTION_STAGE_WIDTH} height={stageHeight} style={{position: "absolute", inset: 0, overflow: "visible"}}>
+                      <svg width={remotionStageWidth} height={stageHeight} style={{position: "absolute", inset: 0, overflow: "visible"}}>
                         <path
                           d={visual.forwardPath}
                           fill="none"
@@ -252,7 +368,7 @@ export const PaymentFlowVideo: React.FC = () => {
                       </svg>
                     ) : null}
                     {reverseDone || finalHold ? (
-                      <svg width={REMOTION_STAGE_WIDTH} height={stageHeight} style={{position: "absolute", inset: 0, overflow: "visible"}}>
+                      <svg width={remotionStageWidth} height={stageHeight} style={{position: "absolute", inset: 0, overflow: "visible"}}>
                         <path
                           d={visual.reversePath || ""}
                           fill="none"
@@ -310,8 +426,8 @@ export const PaymentFlowVideo: React.FC = () => {
                 );
               })}
 
-              {STEPS.map((step, index) => {
-                const sourceStep = orderedSteps.find((item) => item.id === step.id);
+              {visualSteps.map((step, index) => {
+                const sourceStep = orderedSteps[index];
                 const visible = finalHold || index <= activeStepIndex;
                 if (!visible || !sourceStep) return null;
 
@@ -348,18 +464,20 @@ export const PaymentFlowVideo: React.FC = () => {
                 overflow: "hidden",
               }}
             >
-              <Img
-                src={staticFile(PAYMENT_FLOW.meta.logoPath)}
-                style={{
-                  position: "absolute",
-                  top: 18,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  width: 108,
-                  height: "auto",
-                  objectFit: "contain",
-                }}
-              />
+              {logoPath ? (
+                <Img
+                  src={staticFile(logoPath)}
+                  style={{
+                    position: "absolute",
+                    top: 18,
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    width: 108,
+                    height: "auto",
+                    objectFit: "contain",
+                  }}
+                />
+              ) : null}
               <div style={{fontSize: 12, fontWeight: 800, letterSpacing: 1.6, textTransform: "uppercase", color: "#1184db"}}>
                 {currentStep[playbackViewMode].kicker}
               </div>

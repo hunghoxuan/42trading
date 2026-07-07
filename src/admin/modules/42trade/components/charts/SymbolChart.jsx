@@ -676,9 +676,9 @@ function normalizeHeaderFileType(rawFileType = "", context = {}) {
   if (fileType === "sqlite" || fileType === "postgres" || fileType === "postgresql") {
     return "db";
   }
-  if (fileType === "db") return "json";
-  if (cacheSource === "db") return "json";
-  return fileType || "json";
+  if (fileType === "db") return "db";
+  if (cacheSource === "db") return "db";
+  return fileType || "n/a";
 }
 
 function toEpochMs(v) {
@@ -2332,7 +2332,9 @@ function TfHeader({
                         try {
                           setBusy(true);
                           setActionBusyLabel("Loading...");
-                          await onRepairTf(tf);
+                          await onRepairTf(tf, {
+                            syncViewportHistory: true,
+                          });
                         } finally {
                           setBusy(false);
                           setActionBusyLabel("");
@@ -4737,20 +4739,31 @@ export default function SymbolChart({
     const usableWidth = Math.max(0, containerWidth - gapPx * (cols - 1));
     const tileWidth = usableWidth > 0 ? usableWidth / cols : 0;
     const isNarrowViewport = containerWidth > 0 && containerWidth < 768;
-    const targetAspectRatio = isNarrowViewport ? 1.02 : cols <= 2 ? 1.48 : 1.32;
+    const isSingleColumnChart = !isNarrowViewport && cols === 1;
+    const targetAspectRatio = isNarrowViewport
+      ? 1.02
+      : isSingleColumnChart
+        ? 2.18
+        : cols <= 2
+          ? 1.48
+          : 1.32;
     const widthBasedHeight = !tileWidth
       ? isNarrowViewport
         ? 300
-        : cols <= 2
+        : isSingleColumnChart
+          ? 520
+          : cols <= 2
           ? 410
           : 340
       : Math.round(
           Math.max(
-            isNarrowViewport ? 280 : 330,
-            Math.min(
-              isNarrowViewport ? 380 : 520,
-              tileWidth / targetAspectRatio,
-            ),
+            isNarrowViewport ? 280 : isSingleColumnChart ? 520 : 330,
+            isSingleColumnChart
+              ? tileWidth / targetAspectRatio
+              : Math.min(
+                  isNarrowViewport ? 380 : 520,
+                  tileWidth / targetAspectRatio,
+                ),
           ),
         );
     const shouldFillViewportForFourCharts =
@@ -5068,7 +5081,7 @@ export default function SymbolChart({
 
   const handleRefreshTf = useCallback(
     async (tf, opts = {}) => {
-      if (!tf) return;
+      if (!tf) return null;
       const result = await refreshTf?.(tf, { force: true, ...(opts || {}) });
       const summary =
         result?.refresh_result && typeof result.refresh_result === "object"
@@ -5102,7 +5115,12 @@ export default function SymbolChart({
             type: "error",
           });
         }
-        return;
+        return {
+          ok: false,
+          chartUpdated: false,
+          result,
+          summary,
+        };
       }
       if (!summary) {
         jumpViewportToLatest();
@@ -5120,7 +5138,12 @@ export default function SymbolChart({
             type: "success",
           });
         }
-        return;
+        return {
+          ok: true,
+          chartUpdated: true,
+          result,
+          summary: null,
+        };
       }
       if (summary.direction === "history") {
         if (summary.addedBars > 0) {
@@ -5138,7 +5161,12 @@ export default function SymbolChart({
               type: "success",
             });
           }
-          return;
+          return {
+            ok: true,
+            chartUpdated: true,
+            result,
+            summary,
+          };
         }
         if (summary.updatedBars > 0) {
           if (typeof window !== "undefined") {
@@ -5155,7 +5183,12 @@ export default function SymbolChart({
               type: "info",
             });
           }
-          return;
+          return {
+            ok: true,
+            chartUpdated: true,
+            result,
+            summary,
+          };
         }
         if (!silent) {
           showToast({
@@ -5166,7 +5199,12 @@ export default function SymbolChart({
             type: "info",
           });
         }
-        return;
+        return {
+          ok: true,
+          chartUpdated: false,
+          result,
+          summary,
+        };
       }
       jumpViewportToLatest();
       if (typeof window !== "undefined") {
@@ -5183,6 +5221,12 @@ export default function SymbolChart({
           type: "success",
         });
       }
+      return {
+        ok: true,
+        chartUpdated: true,
+        result,
+        summary,
+      };
     },
     [cleanSym, loadArtifactsForTf, refreshTf],
   );
@@ -5191,6 +5235,7 @@ export default function SymbolChart({
     async (tf, opts = {}) => {
       const requestedTf = String(tf || "").trim().toLowerCase();
       const silent = opts?.silent === true;
+      const background = opts?.background === true;
       const latestBars =
         Number(effectiveBarsCountByTf?.[requestedTf]) > 0
           ? Number(effectiveBarsCountByTf[requestedTf])
@@ -5203,23 +5248,66 @@ export default function SymbolChart({
         base_tf: "1",
         latest_bars: Math.max(300, Math.min(MAX_HISTORY_BARS, Math.round(latestBars))),
         repair_history_gaps: opts?.repairHistoryGaps === true,
-        notification: opts?.background !== true,
+        notification: background !== true,
       });
-      await handleRefreshTf(requestedTf, {
+      const latestRefresh = await handleRefreshTf(requestedTf, {
         force: true,
         silent: true,
-        background: opts?.background === true,
+        background,
       });
+      let chartUpdated = latestRefresh?.chartUpdated === true;
+      const shouldSyncViewportHistory = opts?.syncViewportHistory !== false;
+      if (shouldSyncViewportHistory) {
+        const chartId = `${cleanSym}-${requestedTf}`;
+        const viewport = viewports?.[chartId] || null;
+        const tfBars = Array.isArray(master?.bars?.[requestedTf])
+          ? master.bars[requestedTf]
+          : [];
+        const firstBarSec = Number(tfBars?.[0]?.time || 0) || 0;
+        const viewportStartMs = Number(viewport?.timeStartMs || 0) || 0;
+        const tfMs = Math.max(
+          1000,
+          (Number(timeframeToSeconds(requestedTf)) || 60) * 1000,
+        );
+        const firstBarMs =
+          Number.isFinite(firstBarSec) && firstBarSec > 0
+            ? firstBarSec * 1000
+            : null;
+        const needsOlderBars =
+          tfBars.length > 0 &&
+          Number.isFinite(firstBarMs) &&
+          Number.isFinite(viewportStartMs) &&
+          viewportStartMs < firstBarMs - tfMs;
+        if (needsOlderBars) {
+          const historyRefresh = await handleRefreshTf(requestedTf, {
+            force: true,
+            direction: "history",
+            bars: HISTORY_BARS_ACTION_COUNT,
+            silent: true,
+            background,
+          });
+          chartUpdated = chartUpdated || historyRefresh?.chartUpdated === true;
+        }
+      }
       if (result?.ok === false || result?.error) {
         if (!silent) {
-          showToast({
-            message:
-              result?.error ||
-              `Failed to refresh & fix ${cleanSym || "symbol"} ${formatTfForToast(requestedTf)}.`,
-            type: "error",
-          });
+          if (chartUpdated) {
+            showToast({
+              message:
+                `${cleanSym || "symbol"} ${formatTfForToast(requestedTf)} latest bars refreshed. ` +
+                `Some deeper historical gaps may still remain.`,
+              type: "info",
+            });
+          } else {
+            showToast({
+              message:
+                result?.error ||
+                `Failed to refresh & fix ${cleanSym || "symbol"} ${formatTfForToast(requestedTf)}.`,
+              type: "error",
+            });
+          }
         }
-        return result;
+        return { ...result, chart_updated: chartUpdated };
       }
       if (!silent) {
         showToast({
@@ -5227,9 +5315,9 @@ export default function SymbolChart({
           type: "success",
         });
       }
-      return result;
+      return { ...result, chart_updated: chartUpdated };
     },
-    [cleanSym, effectiveBarsCountByTf, handleRefreshTf, localBarsCount],
+    [cleanSym, effectiveBarsCountByTf, handleRefreshTf, localBarsCount, master?.bars, viewports],
   );
 
   const handleViewportNavigate = useCallback(
@@ -5294,6 +5382,25 @@ export default function SymbolChart({
     [cleanSym, repairingTfKey, runRefreshFixChain],
   );
 
+  const findStaleTailTimeframes = useCallback(
+    (nowMs = Date.now()) => {
+      const availableTfs = (Array.isArray(requestedSortedTfs) ? requestedSortedTfs : [])
+        .map((tf) => String(tf || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!availableTfs.length) return [];
+      const stale = availableTfs.filter((tfKey) => {
+        const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
+        const loadedEndSec = Number(bars[bars.length - 1]?.time || 0) || 0;
+        const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 0);
+        const expectedLatestBarSec = expectedLatestClosedBarStartSec(tfKey, nowMs);
+        if (!loadedEndSec || !tfSeconds || !expectedLatestBarSec) return false;
+        return Number(expectedLatestBarSec) > Number(loadedEndSec);
+      });
+      return sortTimeframes(stale, "asc");
+    },
+    [master?.bars, requestedSortedTfs],
+  );
+
   useEffect(() => {
     if (
       !cleanSym ||
@@ -5320,26 +5427,13 @@ export default function SymbolChart({
     }
     if (bootstrapRepairRef.current.status !== "idle") return;
 
-    const nowMs = Date.now();
-    const needsRepair = availableTfs.some((tfKey) => {
-      const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
-      const loadedEndSec = Number(bars[bars.length - 1]?.time || 0) || 0;
-      const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 0);
-      const expectedLatestBarSec = expectedLatestClosedBarStartSec(tfKey, nowMs);
-      if (!loadedEndSec || !tfSeconds || !expectedLatestBarSec) return false;
-      return Number(expectedLatestBarSec) > Number(loadedEndSec);
-    });
-    if (!needsRepair) {
+    const staleTfs = findStaleTailTimeframes(Date.now());
+    if (!staleTfs.length) {
       bootstrapRepairRef.current.status = "done";
       return;
     }
 
-    const targetTf = availableTfs.reduce((best, tfKey) => {
-      if (!best) return tfKey;
-      return Number(timeframeToSeconds(tfKey)) > Number(timeframeToSeconds(best))
-        ? tfKey
-        : best;
-    }, "");
+    const targetTf = String(staleTfs[0] || "").trim().toLowerCase();
     if (!targetTf) return;
 
     bootstrapRepairRef.current.status = "running";
@@ -5358,6 +5452,7 @@ export default function SymbolChart({
     isBacktestChartReplay,
     isReplayMode,
     isCacheLikeMode,
+    findStaleTailTimeframes,
     master?.bars,
     liveBarsEnabled,
     mode,
@@ -5378,28 +5473,9 @@ export default function SymbolChart({
     const runTailCatchup = () => {
       if (document?.visibilityState === "hidden") return;
       if (status === "LOADING" || repairingTfKey) return;
-      const availableTfs = (Array.isArray(requestedSortedTfs) ? requestedSortedTfs : [])
-        .map((tf) => String(tf || "").trim().toLowerCase())
-        .filter(Boolean);
-      if (!availableTfs.length) return;
-
-      const nowMs = Date.now();
-      const needsRepair = availableTfs.some((tfKey) => {
-        const bars = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
-        const loadedEndSec = Number(bars[bars.length - 1]?.time || 0) || 0;
-        const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 0);
-        const expectedLatestBarSec = expectedLatestClosedBarStartSec(tfKey, nowMs);
-        if (!loadedEndSec || !tfSeconds || !expectedLatestBarSec) return false;
-        return Number(expectedLatestBarSec) > Number(loadedEndSec);
-      });
-      if (!needsRepair) return;
-
-      const targetTf = availableTfs.reduce((best, tfKey) => {
-        if (!best) return tfKey;
-        return Number(timeframeToSeconds(tfKey)) > Number(timeframeToSeconds(best))
-          ? tfKey
-          : best;
-      }, "");
+      const staleTfs = findStaleTailTimeframes(Date.now());
+      if (!staleTfs.length) return;
+      const targetTf = String(staleTfs[0] || "").trim().toLowerCase();
       if (!targetTf) return;
 
       handleRepairTf(targetTf, {
@@ -5417,6 +5493,7 @@ export default function SymbolChart({
     isBacktestChartReplay,
     isReplayMode,
     isCacheLikeMode,
+    findStaleTailTimeframes,
     master?.bars,
     repairingTfKey,
     requestedSortedTfs,
@@ -6329,7 +6406,7 @@ export default function SymbolChart({
             type="button"
             onClick={() =>
               window.open(
-                `/ai/analyze/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
+                `/trades/analyze/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
                 "_self",
               )
             }
@@ -6407,7 +6484,7 @@ export default function SymbolChart({
               }
               if (nextMode === "__trade__") {
                 window.open(
-                  `/ai/manual/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
+                  `/trades/manual/${encodeURIComponent(String(symbol || "").toUpperCase())}`,
                   "_self",
                 );
                 return;

@@ -2,7 +2,7 @@
   position: relative;
   width: 100%;
   min-width: 0;
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: var(--surface);
   padding: 12px;
   overflow: visible;
@@ -35,8 +35,9 @@
 }
 
 .responsive-panel__header.is-toggle-only {
-  width: fit-content;
+  width: 100%;
   margin-left: auto;
+  justify-content: flex-end;
 }
 
 .responsive-panel__title {
@@ -53,24 +54,29 @@
 }
 
 .responsive-panel__toggle {
-  min-width: 24px !important;
-  min-height: 24px !important;
-  width: 24px;
-  height: 24px;
-  padding: 0 5px !important;
+  display: inline-flex;
+  align-items: center;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  width: 34px;
+  height: 34px;
+  padding: 0 !important;
   font-size: 11px;
+  font-weight: 400;
   line-height: 1;
   flex-shrink: 0;
   white-space: nowrap;
   margin-left: auto;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  justify-content: center;
+  text-align: center;
+  padding-right: 0 !important;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .responsive-panel__toggle:hover {
-  background: var(--accent-soft);
+  background: rgba(15, 23, 42, 0.5);
+  color: var(--text);
 }
 
 .responsive-panel__body {

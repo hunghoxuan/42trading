@@ -3,13 +3,14 @@
 # start_dev.sh — Run admin :3000 + api :3001 locally.
 # =============================================================================
 # - Starts api :3001 only when no healthy API is already running.
-# - Keeps admin :3000 in the foreground with HMR.
+# - Starts admin :3000 via launchctl so it survives shell exits.
 # - Keeps mt5-python-bridge :3002 in the foreground for local development.
 # =============================================================================
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 API_START_SCRIPT="${ROOT}/scripts/start/start_api.sh"
+ADMIN_START_SCRIPT="${ROOT}/scripts/start/start_admin.sh"
 LOCK_DIR="/tmp/com.trading.bot.local.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
 FORCE_RECLAIM=0
@@ -54,9 +55,8 @@ release_lock() {
 
 acquire_lock
 
-WEB_UI_DIR="${ROOT}/src/admin"
 MT5_PYTHON_BRIDGE_DIR="${ROOT}/src/mt5-bridge/python"
-VITE_PORT=3000
+ADMIN_PORT=3000
 API_PORT=3001
 MT5_PYTHON_BRIDGE_PORT=3002
 VITE_ALLOWED_HOSTS="${VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS:-}"
@@ -65,7 +65,6 @@ MT5_PYTHON_BRIDGE_ENABLED="${MT5_PYTHON_BRIDGE_ENABLED:-1}"
 cleanup() {
   echo "[dev] shutting down..."
   kill "${MT5_PYTHON_BRIDGE_PID:-}" 2>/dev/null || true
-  kill "${VITE_PID:-}" 2>/dev/null || true
   wait 2>/dev/null || true
   release_lock
 }
@@ -81,12 +80,12 @@ free_port() {
   fi
 }
 
-port_in_use() {
-  lsof -ti "tcp:$1" >/dev/null 2>&1 && return 0 || return 1
-}
-
 api_healthy() {
   /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:${API_PORT}/health" >/dev/null 2>&1
+}
+
+admin_healthy() {
+  /usr/bin/curl -fsS --max-time 2 "http://127.0.0.1:${ADMIN_PORT}/" >/dev/null 2>&1
 }
 
 start_mt5_python_bridge() {
@@ -129,19 +128,17 @@ start_api() {
 }
 
 start_admin() {
-  if port_in_use "${VITE_PORT}"; then
-    echo "[dev] port ${VITE_PORT} already in use, skipping admin start"
-    VITE_PID=
+  if admin_healthy; then
+    echo "[dev] healthy admin already running on :${ADMIN_PORT}, skipping admin start"
     return
-  fi
-  free_port "${VITE_PORT}"
-  echo "[dev] starting admin on :${VITE_PORT}..."
-  if [ -n "${VITE_ALLOWED_HOSTS}" ]; then
-    (cd "${WEB_UI_DIR}" && VITE_API_PROXY_TARGET="http://127.0.0.1:${API_PORT}" VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${VITE_ALLOWED_HOSTS}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${VITE_ALLOWED_HOSTS}" npx vite --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) &
   else
-    (cd "${WEB_UI_DIR}" && VITE_API_PROXY_TARGET="http://127.0.0.1:${API_PORT}" npx vite --host 127.0.0.1 --port "${VITE_PORT}" --strictPort) &
+    echo "[dev] starting admin on :${ADMIN_PORT} via start_admin.sh launchctl..."
+    env \
+      PORT="${ADMIN_PORT}" \
+      API_PORT="${API_PORT}" \
+      VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${VITE_ALLOWED_HOSTS}" \
+      bash "${ADMIN_START_SCRIPT}" launchctl
   fi
-  VITE_PID=$!
 }
 
 start_mt5_python_bridge
@@ -149,7 +146,7 @@ start_api
 start_admin
 
 echo ""
-echo "  open:     http://localhost:${VITE_PORT}"
+echo "  open:     http://localhost:${ADMIN_PORT}"
 echo "  backend:  http://localhost:${API_PORT}"
 echo "  mt5-py:   http://localhost:${MT5_PYTHON_BRIDGE_PORT}"
 echo ""
@@ -158,11 +155,6 @@ while true; do
   if [ -n "${MT5_PYTHON_BRIDGE_PID:-}" ] && ! kill -0 "${MT5_PYTHON_BRIDGE_PID}" 2>/dev/null; then
     wait "${MT5_PYTHON_BRIDGE_PID}" 2>/dev/null || true
     echo "[dev] mt5-python-bridge exited. dev mode will not auto-restart."
-    exit 1
-  fi
-  if [ -n "${VITE_PID:-}" ] && ! kill -0 "${VITE_PID}" 2>/dev/null; then
-    wait "${VITE_PID}" 2>/dev/null || true
-    echo "[dev] admin exited. dev mode will not auto-restart."
     exit 1
   fi
   sleep 1

@@ -3174,17 +3174,17 @@ export default function ChartSnapshotsPage() {
     const list = (Array.isArray(symbols) ? symbols : [])
       .map((x) => normalizeWatchSymbol(x))
       .filter(Boolean);
-    if (!list.length) return "/ai/analyze";
+    if (!list.length) return "/trades/analyze";
     const slug = list.join("-");
-    return `/ai/analyze/${encodeURIComponent(slug)}`;
+    return `/trades/analyze/${encodeURIComponent(slug)}`;
   }
   function buildAiManualRoute(symbols = []) {
     const list = (Array.isArray(symbols) ? symbols : [])
       .map((x) => normalizeWatchSymbol(x))
       .filter(Boolean);
-    if (!list.length) return "/ai/manual";
+    if (!list.length) return "/trades/manual";
     const slug = list.join("-");
-    return `/ai/manual/${encodeURIComponent(slug)}`;
+    return `/trades/manual/${encodeURIComponent(slug)}`;
   }
 
   const [selectedFiles, setSelectedFiles] = useState(new Set());
@@ -3244,15 +3244,15 @@ export default function ChartSnapshotsPage() {
   const [tradeDetailPlan, setTradeDetailPlan] = useState({});
   const [tradeDetailTfTab, setTradeDetailTfTab] = useState("4h");
   const isResultRoute =
-    location.pathname.startsWith("/ai/result") ||
-    location.pathname.startsWith("/ai/trade") ||
-    location.pathname.startsWith("/ai/manual") ||
-    location.pathname.startsWith("/ai/response");
+    location.pathname.startsWith("/trades/result") ||
+    location.pathname.startsWith("/trades/trade") ||
+    location.pathname.startsWith("/trades/manual") ||
+    location.pathname.startsWith("/trades/response");
   const isTradeRoute =
-    location.pathname.startsWith("/ai/trade") &&
+    location.pathname.startsWith("/trades/trade") &&
     Boolean((paramSymbol || "").trim());
-  const isManualRoute = location.pathname.startsWith("/ai/manual");
-  const isResponseRoute = location.pathname.startsWith("/ai/response");
+  const isManualRoute = location.pathname.startsWith("/trades/manual");
+  const isResponseRoute = location.pathname.startsWith("/trades/response");
   const isSidLike = (value) =>
     /^[A-Z0-9]{9,10}$/.test(String(value || "").trim());
   const tradeSidFromRoute = isResponseRoute
@@ -3491,7 +3491,7 @@ export default function ChartSnapshotsPage() {
       cancelled = true;
     };
   }, [tradeRouteParam]);
-  const isAnalyzeRoute = location.pathname.startsWith("/ai/analyze");
+  const isAnalyzeRoute = location.pathname.startsWith("/trades/analyze");
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(() =>
     buildPrompt(DEFAULT_CONFIG, "", "{}"),
@@ -3928,7 +3928,7 @@ export default function ChartSnapshotsPage() {
       if (value) {
         navigate(buildAiAnalyzeRoute([value]), { replace: true });
       } else {
-        navigate("/ai/analyze", { replace: true });
+        navigate("/trades/analyze", { replace: true });
       }
     }
   };
@@ -4591,7 +4591,7 @@ export default function ChartSnapshotsPage() {
 
       // Redirect IMMEDIATELY — before any state updates that might interfere
       if (result?.trade_sid) {
-        window.location.href = `/ai/response/${encodeURIComponent(result.trade_sid)}`;
+        window.location.href = `/trades/response/${encodeURIComponent(result.trade_sid)}`;
         return result;
       }
 
@@ -4621,7 +4621,7 @@ export default function ChartSnapshotsPage() {
           autoEntity?.id
         ) {
           navigate(
-            withCurrentHash(`/ai/trade/${encodeURIComponent(autoEntity.id)}`),
+            withCurrentHash(`/trades/trade/${encodeURIComponent(autoEntity.id)}`),
             {
               replace: true,
             },
@@ -4702,7 +4702,7 @@ export default function ChartSnapshotsPage() {
       console.log("[analyzeFiles] trade_sid:", JSON.stringify(out?.trade_sid));
       // Navigate to trade page using trade_sid from response (after all state updates)
       if (out?.trade_sid) {
-        const target = `/ai/response/${encodeURIComponent(out.trade_sid)}`;
+        const target = `/trades/response/${encodeURIComponent(out.trade_sid)}`;
         console.log("[analyzeFiles] REDIRECTING to:", target);
         window.location.href = target;
         return;
@@ -5376,7 +5376,7 @@ export default function ChartSnapshotsPage() {
         isResponseRoute
       ) {
         navigate(
-          withCurrentHash(`/ai/trade/${encodeURIComponent(createdEntity.id)}`),
+          withCurrentHash(`/trades/trade/${encodeURIComponent(createdEntity.id)}`),
           {
             replace: true,
           },
@@ -5845,7 +5845,7 @@ export default function ChartSnapshotsPage() {
       if (isTradeRoute && decoded) return;
       // Response route with a SID — don't treat as symbol
       if (
-        location.pathname.startsWith("/ai/response") &&
+        location.pathname.startsWith("/trades/response") &&
         /^[A-Z0-9]{9,10}$/.test(decoded)
       ) {
         return;
@@ -5875,7 +5875,7 @@ export default function ChartSnapshotsPage() {
     const symbols = Array.isArray(cfg?.symbols)
       ? cfg.symbols.map((x) => normalizeWatchSymbol(x)).filter(Boolean)
       : [];
-    const next = symbols.length ? buildAiAnalyzeRoute(symbols) : "/ai/analyze";
+    const next = symbols.length ? buildAiAnalyzeRoute(symbols) : "/trades/analyze";
     const nextWithHash = withCurrentHash(next);
     if (`${location.pathname}${location.search}${location.hash || ""}` !== nextWithHash) {
       navigate(nextWithHash, { replace: true });
@@ -6542,7 +6542,7 @@ export default function ChartSnapshotsPage() {
       }
       setSelectedSymbols([sym]);
       setCfg((prev) => ({ ...prev, symbol: sym, symbols: [sym] }));
-      navigate(withCurrentHash(`/ai/trade/${encodeURIComponent(sym)}`), {
+      navigate(withCurrentHash(`/trades/trade/${encodeURIComponent(sym)}`), {
         replace: false,
       });
     },
@@ -7153,7 +7153,7 @@ export default function ChartSnapshotsPage() {
               onClick={() => {
                 setCfgField("symbol", "");
                 setSelectedSymbols([]);
-                navigate("/ai/analyze", { replace: false });
+                navigate("/trades/analyze", { replace: false });
               }}
             >
               {"< List"}
@@ -7894,12 +7894,9 @@ export default function ChartSnapshotsPage() {
                         return (
                           <article
                             key={`filled-${ref || `${t?.symbol}_${t?.created_at}`}`}
-                            className="snapshot-activity-card-v4 compact"
+                            className="snapshot-activity-card-v4 compact compact-list-card"
                             style={{
                               cursor: "pointer",
-                              padding: "4px 6px",
-                              marginBottom: 3,
-                              borderRadius: 6,
                               fontSize: 10,
                               border:
                                 isTradeRoute &&
@@ -7918,7 +7915,7 @@ export default function ChartSnapshotsPage() {
                               if (ref)
                                 navigate(
                                   withCurrentHash(
-                                    `/ai/trade/${encodeURIComponent(ref)}`,
+                                    `/trades/trade/${encodeURIComponent(ref)}`,
                                   ),
                                 );
                             }}
@@ -8048,12 +8045,9 @@ export default function ChartSnapshotsPage() {
                         return (
                           <article
                             key={`pending-${ref || `${t?.symbol}_${t?.created_at}`}`}
-                            className="snapshot-activity-card-v4 compact"
+                            className="snapshot-activity-card-v4 compact compact-list-card"
                             style={{
                               cursor: "pointer",
-                              padding: "4px 6px",
-                              marginBottom: 3,
-                              borderRadius: 6,
                               fontSize: 10,
                               border:
                                 isTradeRoute &&
@@ -8072,7 +8066,7 @@ export default function ChartSnapshotsPage() {
                               if (ref)
                                 navigate(
                                   withCurrentHash(
-                                    `/ai/trade/${encodeURIComponent(ref)}`,
+                                    `/trades/trade/${encodeURIComponent(ref)}`,
                                   ),
                                 );
                             }}
@@ -8457,7 +8451,7 @@ export default function ChartSnapshotsPage() {
                           const sym =
                             paramSymbol || cfg.symbol || selectedSymbol || "";
                           navigate(
-                            `/ai/analyze/${encodeURIComponent(sym || "")}`,
+                            `/trades/analyze/${encodeURIComponent(sym || "")}`,
                           );
                         }}
                         style={{
@@ -8744,13 +8738,13 @@ export default function ChartSnapshotsPage() {
               onGoTrade={() =>
                 navigate(
                   withCurrentHash(
-                    `/ai/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`,
+                    `/trades/trade/${encodeURIComponent(tradeDetailRow.sid || tradeDetailRow.id || "")}`,
                   ),
                 )
               }
               onGoAnalyze={() =>
                 navigate(
-                  `/ai/analyze/${encodeURIComponent(String(tradeDetailRow.symbol || "").toUpperCase())}`,
+                  `/trades/analyze/${encodeURIComponent(String(tradeDetailRow.symbol || "").toUpperCase())}`,
                 )
               }
               onCancel={
@@ -9158,7 +9152,7 @@ export default function ChartSnapshotsPage() {
                     if (ent?.kind === "trade" && ent?.id) {
                       navigate(
                         withCurrentHash(
-                          `/ai/trade/${encodeURIComponent(ent.id)}`,
+                          `/trades/trade/${encodeURIComponent(ent.id)}`,
                         ),
                       );
                       return;
@@ -9217,7 +9211,7 @@ export default function ChartSnapshotsPage() {
               onClick={() =>
                 navigate(
                   withCurrentHash(
-                    `/ai/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`,
+                    `/trades/trade/${encodeURIComponent(Object.values(addedEntities).pop()?.id || "")}`,
                   ),
                 )
               }

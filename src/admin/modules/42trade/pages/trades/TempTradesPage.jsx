@@ -43,7 +43,7 @@ export default function TempTradesPage() {
         if (!paramSid && arr.length > 0) {
           const first = arr[0];
           const sid = normalizeTempResponseSid(first.sid || first.folder);
-          navigate(`/ai/response/${encodeURIComponent(sid)}`, { replace: true });
+          navigate(`/trades/response/${encodeURIComponent(sid)}`, { replace: true });
         }
       } catch (_) {
         // ignore
@@ -55,7 +55,7 @@ export default function TempTradesPage() {
 
   const handleSelect = (folder) => {
     const sid = normalizeTempResponseSid(folder);
-    navigate(`/ai/response/${encodeURIComponent(sid)}`);
+    navigate(`/trades/response/${encodeURIComponent(sid)}`);
   };
 
   return (

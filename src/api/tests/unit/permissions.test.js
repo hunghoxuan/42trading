@@ -35,3 +35,14 @@ test("hasPermission respects inherited and wildcard permissions", () => {
   assert.equal(hasPermission({ roles: ["buyer"] }, "pages.system.users"), false);
   assert.equal(hasPermission({ roles: ["buyer"] }, "apis.42pay.orders.write"), true);
 });
+
+test("trader role is limited to trades area", () => {
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.trades"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.dashboard"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.ai.analyze"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.backtests"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.settings.profile"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "apis.auth.profile.read"), true);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.42pay.dashboard"), false);
+  assert.equal(hasPermission({ roles: ["trader"] }, "pages.system.users"), false);
+});

@@ -234,6 +234,79 @@ export const computeLayout = ({
   steps,
   stepLayouts = {},
 }) => {
+  const pickMedian = (values) => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  };
+
+  const hasExplicitLayout = steps.length > 0 && steps.every((step) => {
+    const override = stepLayouts[step.id];
+    return override && Number.isFinite(override.x) && Number.isFinite(override.y);
+  });
+
+  if (hasExplicitLayout) {
+    const padding = viewportWidth <= 820 ? 12 : 18;
+    const widthCandidates = steps
+      .map((step) => stepLayouts[step.id]?.w)
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const heightCandidates = steps
+      .map((step) => stepLayouts[step.id]?.h)
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const rawCardWidth = pickMedian(widthCandidates) || (viewportWidth <= 820 ? Math.min(220, stageWidth - 72) : 184);
+    const rawCardHeight = pickMedian(heightCandidates) || (viewportWidth <= 820 ? 128 : 215);
+    const rawStageRight = steps.reduce((maxRight, step) => {
+      const override = stepLayouts[step.id] || {};
+      const x = Number.isFinite(override.x) ? override.x : 0;
+      const w = Number.isFinite(override.w) ? override.w : rawCardWidth;
+      return Math.max(maxRight, x + w);
+    }, 0);
+    const rawStageBottom = steps.reduce((maxBottom, step) => {
+      const override = stepLayouts[step.id] || {};
+      const y = Number.isFinite(override.y) ? override.y : 0;
+      const h = Number.isFinite(override.h) ? override.h : rawCardHeight;
+      return Math.max(maxBottom, y + h);
+    }, 0);
+    const scaleX = rawStageRight > 0 ? Math.min(1, Math.max(0.2, (stageWidth - padding * 2) / rawStageRight)) : 1;
+    const scaleY = rawStageBottom > 0 ? Math.min(1, Math.max(0.2, (stageAvailableHeight - padding * 2) / rawStageBottom)) : 1;
+    const scale = Math.min(scaleX, scaleY);
+    const cardWidth = Math.round(rawCardWidth * scale);
+    const cardHeight = Math.round(rawCardHeight * scale);
+    const positions = {};
+    const scaledStepLayouts = {};
+
+    steps.forEach((step) => {
+      const override = stepLayouts[step.id] || {};
+      const scaledOverride = {
+        x: Math.round((Number.isFinite(override.x) ? override.x : 0) * scale) + padding,
+        y: Math.round((Number.isFinite(override.y) ? override.y : 0) * scale) + padding,
+        w: Math.round((Number.isFinite(override.w) ? override.w : rawCardWidth) * scale),
+        h: Math.round((Number.isFinite(override.h) ? override.h : rawCardHeight) * scale),
+      };
+      scaledStepLayouts[step.id] = scaledOverride;
+      positions[step.id] = {
+        x: scaledOverride.x,
+        y: scaledOverride.y,
+      };
+    });
+
+    const stageBottom = steps.reduce((maxBottom, step) => {
+      const override = scaledStepLayouts[step.id] || {};
+      const y = Number.isFinite(override.y) ? override.y : 0;
+      const h = Number.isFinite(override.h) ? override.h : cardHeight;
+      return Math.max(maxBottom, y + h);
+    }, 0);
+
+    return {
+      cardWidth,
+      cardHeight,
+      stageHeight: Math.max(stageAvailableHeight, Math.ceil(stageBottom + 48)),
+      positions,
+      scaledStepLayouts,
+      mobile: viewportWidth <= 820,
+    };
+  }
+
   if (viewportWidth <= 820) {
     const cardWidth = Math.min(220, stageWidth - 72);
     const cardHeight = 128;
@@ -256,6 +329,7 @@ export const computeLayout = ({
       cardHeight,
       stageHeight,
       positions,
+      scaledStepLayouts: stepLayouts,
       mobile: true,
     };
   }
@@ -295,12 +369,14 @@ export const computeLayout = ({
     : topY;
 
   if (bottomCount > 0) {
+    const bottomGap = Math.max(
+      minGap,
+      Math.floor((stageWidth - sidePad * 2 - cardWidth * bottomCount) / Math.max(1, bottomCount - 1)),
+    );
+    const bottomLeft = sidePad;
     bottomSteps.forEach((step, index) => {
-      const topFrom = positions[steps[index].id];
-      const topTo = positions[steps[index + 1].id];
-      const midpoint = ((topFrom.x + cardWidth) + topTo.x) / 2;
       positions[step.id] = {
-        x: Math.max(sidePad, Math.min(stageWidth - sidePad - cardWidth, Math.floor(midpoint - cardWidth / 2))),
+        x: bottomLeft + index * (cardWidth + bottomGap),
         y: bottomY,
       };
     });
@@ -318,6 +394,7 @@ export const computeLayout = ({
     cardHeight,
     stageHeight,
     positions,
+    scaledStepLayouts: stepLayouts,
     mobile: false,
   };
 };

@@ -32,6 +32,12 @@
   flex: 0 0 auto;
 }
 
+.site-navigation__logo img {
+  display: block;
+  height: 30px;
+  width: auto;
+}
+
 .site-navigation__title {
   font-size: 18px;
   font-weight: 800;
@@ -55,6 +61,10 @@
 @media (max-width: 767px) {
   .site-navigation {
     gap: 10px;
+  }
+
+  .site-navigation__logo img {
+    height: 26px;
   }
 
   .site-navigation__title {

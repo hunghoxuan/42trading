@@ -10,6 +10,7 @@ export function normalizeRoleId(value) {
   if (raw === "admin") return "admin";
   if (raw === "seller") return "seller";
   if (raw === "buyer") return "buyer";
+  if (raw === "trader") return "trader";
   if (raw === "user") return "buyer";
   return raw;
 }
@@ -108,9 +109,17 @@ export function pagePermissionForPath(pathname = "") {
     ["/system/health/", "pages.system.health"],
     ["/system/users/", "pages.system.users"],
     ["/system/accounts/", "pages.system.accounts"],
-    ["/backtests/", "pages.backtests"],
+    ["/trades/dashboard/", "pages.dashboard"],
+    ["/trades/analyze/", "pages.ai.analyze"],
+    ["/trades/result/", "pages.ai.analyze"],
+    ["/trades/trade/", "pages.ai.analyze"],
+    ["/trades/manual/", "pages.ai.analyze"],
+    ["/trades/response/", "pages.ai.response"],
+    ["/trades/news/", "pages.ai.news"],
+    ["/trades/backtests/", "pages.backtests"],
     ["/studio/", "pages.studio"],
     ["/trades/", "pages.trades"],
+    ["/backtests/", "pages.backtests"],
     ["/ai/analyze/", "pages.ai.analyze"],
     ["/ai/result/", "pages.ai.analyze"],
     ["/ai/trade/", "pages.ai.analyze"],

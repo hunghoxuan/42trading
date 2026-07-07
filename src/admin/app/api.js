@@ -229,12 +229,14 @@ function redirectToLogin() {
     // ignore
   }
   if (window.location.pathname.endsWith("/login")) return;
-  const base = window.location.pathname.startsWith("/ui") ? "/ui" : "";
-  const returnUrl = encodeURIComponent(
-    window.location.pathname + window.location.search,
-  );
-  const loginPath = `${base}/login?return_url=${returnUrl}`;
-  window.location.assign(loginPath);
+  try {
+    sessionStorage.setItem(
+      "tvbridge_pending_return_url",
+      `${window.location.pathname}${window.location.search}${window.location.hash || ""}`,
+    );
+  } catch {
+    // ignore
+  }
 }
 
 function parseTimingNumber(value) {
@@ -960,6 +962,7 @@ export const api = {
   authProfile: () => get("/auth/profile"),
   updateAuthProfile: (name, email) => put("/auth/profile", { name, email }),
   updateMetadata: (payload = {}) => put("/auth/metadata", payload),
+  listUserSelectOptions: () => get("/auth/users/select"),
   listUsers: () => get("/auth/users"),
   createUser: (payload = {}) => post("/auth/users", payload),
   updateUser: (userId, payload = {}) =>

@@ -88,7 +88,7 @@ var TYPE_META = {
   analyze: {
     label: "Analysis",
     nav: function (r) {
-      return "/ai/result?result=" + (r.requestId || "");
+      return "/trades/result?result=" + (r.requestId || "");
     },
   },
   snapshot: {
@@ -106,13 +106,13 @@ var TYPE_META = {
   twelve_data: {
     label: "Twelve Data",
     nav: function (r) {
-      return "/ai/analyze";
+      return "/trades/analyze";
     },
   },
   news_alert: {
     label: "News Alert",
     nav: function () {
-      return "/ai/news";
+      return "/trades/news";
     },
   },
   cancel_trade: {
@@ -216,7 +216,7 @@ export default function NotificationDot() {
       return String(item || "").startsWith("CHART_");
     });
     if (chartChannel) {
-      return "/ai/trade/" + encodeURIComponent(chartChannel.slice("CHART_".length));
+      return "/trades/trade/" + encodeURIComponent(chartChannel.slice("CHART_".length));
     }
     var meta = TYPE_META[entry.type] || {};
     return meta.nav ? meta.nav(entry) : "/";

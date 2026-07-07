@@ -31,7 +31,7 @@ export const flowTheme = {
     shell: "0 28px 70px rgba(8,40,74,.10)",
     panel: "0 14px 32px rgba(8,40,74,.06)",
     card: "0 18px 40px rgba(10,76,148,.08)",
-    cardActive: "0 0 0 4px rgba(35,92,255,0.12), 0 22px 48px rgba(10,76,148,0.14)",
+    cardActive: "0 0 0 5px rgba(35,92,255,0.18), 0 0 28px rgba(58,162,255,0.24), 0 24px 54px rgba(10,76,148,0.16)",
     badge: "0 8px 20px rgba(64,42,240,.22)",
     button: "0 10px 24px rgba(8,40,74,.06)",
     float: "0 10px 24px rgba(8,40,74,.08)",

@@ -9,6 +9,39 @@ import { showToast } from "../../../shared/components/ToastContainer";
 import Pay42MediaThumb from "./Pay42MediaThumb";
 import { formatMetric, formatMoney } from "./pay42Ui";
 
+const PAY_TABS = [
+  { value: "qr-sepa", label: "QR / SEPA" },
+  { value: "card", label: "Card" },
+  { value: "gift-card", label: "Gift Card" },
+];
+
+const SAVED_CARDS = [
+  {
+    id: "visa-4291",
+    brand: "VISA",
+    label: "Visa •• 4291",
+    last4: "4291",
+    expiry: "09/27",
+  },
+  {
+    id: "mc-7735",
+    brand: "CARD",
+    label: "Card •• 7735",
+    last4: "7735",
+    expiry: "11/28",
+  },
+];
+
+const GIFT_CARDS = [
+  {
+    id: "gift-8823",
+    label: "Ledger gift card •• 8823",
+    balance: 32.5,
+  },
+];
+
+const LOCAL_PAY_DRAFT_KEY = "pay42.local-pay-draft";
+
 function cameraStateLabel({ settling, cameraOpen, cameraReady }) {
   if (settling) return "Processing payment...";
   if (cameraOpen && cameraReady) return "Scanning live camera feed";
@@ -59,6 +92,7 @@ export default function Pay42ScanPage() {
   const prefilledQrRef = useRef("");
 
   const [wallet, setWallet] = useState(null);
+  const [activeTab, setActiveTab] = useState("qr-sepa");
   const [manualQr, setManualQr] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -78,6 +112,18 @@ export default function Pay42ScanPage() {
     lastEvent: "Camera idle",
     lastAt: "",
   });
+  const [sepaEnabled, setSepaEnabled] = useState(false);
+  const [cardForm, setCardForm] = useState({
+    paymentAmount: "24.00",
+    note: "",
+    selectedCardId: SAVED_CARDS[0].id,
+  });
+  const [giftForm, setGiftForm] = useState({
+    paymentAmount: "10.00",
+    code: "",
+    selectedGiftId: GIFT_CARDS[0].id,
+  });
+  const [localSubmitting, setLocalSubmitting] = useState(false);
   const cameraStatus = cameraStateLabel({ settling, cameraOpen, cameraReady });
 
   function updateScanFeed(patch = {}) {
@@ -151,17 +197,6 @@ export default function Pay42ScanPage() {
     previewingRef.current = previewing;
   }, [previewing]);
 
-  useEffect(() => {
-    if (paymentPreview) return undefined;
-    window.clearTimeout(autoStartTimerRef.current);
-    autoStartTimerRef.current = window.setTimeout(() => {
-      startCamera();
-    }, 80);
-    return () => {
-      window.clearTimeout(autoStartTimerRef.current);
-    };
-  }, [paymentPreview]);
-
   async function previewQrCode(
     qrCode,
     { stopAfterPreview = false, source = "manual" } = {},
@@ -204,6 +239,36 @@ export default function Pay42ScanPage() {
         scanLockRef.current = false;
       }
     }
+  }
+
+  function persistLocalPayDraft(payload = {}) {
+    try {
+      sessionStorage.setItem(LOCAL_PAY_DRAFT_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage issues
+    }
+  }
+
+  async function completeLocalPay({
+    method = "card",
+    amount = 0,
+    note = "",
+    label = "",
+    subtitle = "",
+  } = {}) {
+    const sid = `LOCAL-${Date.now()}`;
+    const draft = {
+      sid,
+      method,
+      amount: Number(amount || 0),
+      note: String(note || "").trim(),
+      label,
+      subtitle,
+      createdAt: new Date().toISOString(),
+      status: method === "sepa" ? "PENDING" : "COMPLETED",
+    };
+    persistLocalPayDraft(draft);
+    navigate(`/admin/42pay/orders/${encodeURIComponent(sid)}/confirmation?draft=1`);
   }
 
   async function confirmPayment() {
@@ -494,192 +559,334 @@ export default function Pay42ScanPage() {
     if (!qr || qr === prefilledQrRef.current) return;
     prefilledQrRef.current = qr;
     setManualQr(qr);
+    setActiveTab("qr-sepa");
     previewQrCode(qr, { source: "offer" });
   }, [searchParams]);
+
+  async function submitCardPayment() {
+    const selectedCard =
+      SAVED_CARDS.find((item) => item.id === cardForm.selectedCardId) || SAVED_CARDS[0];
+    try {
+      setLocalSubmitting(true);
+      await completeLocalPay({
+        method: "card",
+        amount: cardForm.paymentAmount,
+        note: cardForm.note,
+        label: selectedCard.label,
+        subtitle: `Pay ${formatMoney(cardForm.paymentAmount || 0)} with ${selectedCard.label}`,
+      });
+    } finally {
+      setLocalSubmitting(false);
+    }
+  }
+
+  async function submitGiftCardPayment() {
+    const selectedGift =
+      GIFT_CARDS.find((item) => item.id === giftForm.selectedGiftId) || GIFT_CARDS[0];
+    try {
+      setLocalSubmitting(true);
+      await completeLocalPay({
+        method: "gift_card",
+        amount: giftForm.paymentAmount,
+        note: giftForm.code,
+        label: selectedGift.label,
+        subtitle: `Pay ${formatMoney(giftForm.paymentAmount || 0)} with gift card`,
+      });
+    } finally {
+      setLocalSubmitting(false);
+    }
+  }
+
+  async function submitSepaPayment() {
+    try {
+      setLocalSubmitting(true);
+      await completeLocalPay({
+        method: "sepa",
+        amount: cardForm.paymentAmount,
+        note: "SEPA transfer",
+        label: "SEPA transfer",
+        subtitle: "Transfer submitted. Settlement pending.",
+      });
+    } finally {
+      setLocalSubmitting(false);
+    }
+  }
+
+  const selectedCard =
+    SAVED_CARDS.find((item) => item.id === cardForm.selectedCardId) || SAVED_CARDS[0];
+  const selectedGift =
+    GIFT_CARDS.find((item) => item.id === giftForm.selectedGiftId) || GIFT_CARDS[0];
 
   return (
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
         className="trades-page-header"
-        title="Scan QR 2 Pay"
+        title="PAY"
         actions={
-          <div className="pay42-inline-actions">
-            <Link className="secondary-button" to="/admin/42pay/orders">
-              Orders
-            </Link>
-            {cameraOpen ? (
-              <button type="button" className="secondary-button" onClick={stopCamera}>
-                Close Camera
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Use Camera Photo
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              style={{ display: "none" }}
-              onChange={handleCaptureFile}
-            />
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: "none" }}
+            onChange={handleCaptureFile}
+          />
         }
       />
 
       {error ? <div className="error">{error}</div> : null}
       {cameraError ? <div className="error">{cameraError}</div> : null}
 
-      <div className="pay42-split-layout">
+      <div className="pay42-pay-shell">
         <ResponsivePanel
-          title="Camera Scan"
-          subtitle="Mobile-first QR payment entry"
+          title=""
+          subtitle=""
           showToggle={false}
+          className="pay42-pay-panel"
         >
-          <div className="stack-layout">
-            <div className="pay42-scan-stage">
-              <div className="pay42-scan-viewport">
-                <video
-                  ref={videoRef}
-                  playsInline
-                  muted
-                  autoPlay
-                  className={`pay42-scan-video${cameraOpen ? " is-live" : ""}`}
-                />
-                <canvas
-                  ref={frameCanvasRef}
-                  aria-hidden="true"
-                  style={{ display: "none" }}
-                />
-                {!cameraOpen ? (
-                  <div className="pay42-scan-placeholder">
-                    <div className="pay42-scan-window pay42-scan-window--placeholder">
-                      <span className="pay42-scan-corner pay42-scan-corner--tl" />
-                      <span className="pay42-scan-corner pay42-scan-corner--tr" />
-                      <span className="pay42-scan-corner pay42-scan-corner--bl" />
-                      <span className="pay42-scan-corner pay42-scan-corner--br" />
+          <div className="stack-layout pay42-pay-layout">
+            <div className="pay42-pay-heading">
+              <div className="minor-text pay42-pay-eyebrow">
+                CHOOSE HOW YOU WANT TO PAY
+              </div>
+            </div>
+
+            <div className="pay42-pay-tabs" role="tablist" aria-label="Pay methods">
+              {PAY_TABS.map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  className={`pay42-pay-tab${activeTab === tab.value ? " is-active" : ""}`}
+                  onClick={() => setActiveTab(tab.value)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === "qr-sepa" ? (
+              <div className="stack-layout" style={{ gap: 18 }}>
+                <div className="pay42-pay-qr-card">
+                  <div className="pay42-scan-stage pay42-pay-qr-stage">
+                    <div className="pay42-scan-viewport pay42-pay-qr-viewport">
+                      <video
+                        ref={videoRef}
+                        playsInline
+                        muted
+                        autoPlay
+                        className={`pay42-scan-video${cameraOpen ? " is-live" : ""}`}
+                      />
+                      <canvas
+                        ref={frameCanvasRef}
+                        aria-hidden="true"
+                        style={{ display: "none" }}
+                      />
+                      {!cameraOpen ? (
+                        <div className="pay42-scan-placeholder pay42-pay-qr-placeholder">
+                          <div className="pay42-scan-window pay42-scan-window--placeholder">
+                            <span className="pay42-scan-corner pay42-scan-corner--tl" />
+                            <span className="pay42-scan-corner pay42-scan-corner--tr" />
+                            <span className="pay42-scan-corner pay42-scan-corner--bl" />
+                            <span className="pay42-scan-corner pay42-scan-corner--br" />
+                          </div>
+                          <strong className="pay42-pay-qr-caption">SCAN TO PAY</strong>
+                          <span className="minor-text pay42-scan-copy">
+                            Point your camera at a merchant QR code
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="pay42-scan-overlay" aria-hidden="true">
+                        <div className="pay42-scan-window pay42-scan-window--placeholder">
+                          <span className="pay42-scan-corner pay42-scan-corner--tl" />
+                          <span className="pay42-scan-corner pay42-scan-corner--tr" />
+                          <span className="pay42-scan-corner pay42-scan-corner--bl" />
+                          <span className="pay42-scan-corner pay42-scan-corner--br" />
+                          {cameraOpen ? <span className="pay42-scan-beam" /> : null}
+                        </div>
+                      </div>
                     </div>
-                    <strong>Open the rear camera to scan a 42Pay QR code.</strong>
-                    <span className="minor-text pay42-scan-copy">
-                      The camera opens automatically and will preview payment details after a QR is detected.
+                  </div>
+                </div>
+
+                <div className="pay42-pay-sepa-row">
+                  <div className="cell-wrap">
+                    <strong>Pay by SEPA transfer Instead</strong>
+                    <span className="minor-text">
+                      For merchants in the EU · 1–2 business days
                     </span>
                   </div>
-                ) : null}
-                <div className="pay42-scan-overlay" aria-hidden="true">
-                  <div className="pay42-scan-window pay42-scan-window--placeholder">
-                    <span className="pay42-scan-corner pay42-scan-corner--tl" />
-                    <span className="pay42-scan-corner pay42-scan-corner--tr" />
-                    <span className="pay42-scan-corner pay42-scan-corner--bl" />
-                    <span className="pay42-scan-corner pay42-scan-corner--br" />
-                    {cameraOpen ? <span className="pay42-scan-beam" /> : null}
-                  </div>
+                  <button
+                    type="button"
+                    className={`pay42-pay-toggle${sepaEnabled ? " is-on" : ""}`}
+                    onClick={() => setSepaEnabled((current) => !current)}
+                    aria-pressed={sepaEnabled}
+                  />
                 </div>
+
+                {!cameraOpen ? (
+                  <div className="pay42-inline-actions">
+                    <button
+                      type="button"
+                      className="pay42-pay-primary-cta"
+                      disabled={previewing || settling || localSubmitting}
+                      onClick={sepaEnabled ? submitSepaPayment : startCamera}
+                    >
+                      {sepaEnabled
+                        ? localSubmitting
+                          ? "Submitting SEPA..."
+                          : "Continue with SEPA"
+                        : "Open camera to scan"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="pay42-inline-actions">
+                    <button
+                      type="button"
+                      className="pay42-pay-primary-cta"
+                      onClick={stopCamera}
+                    >
+                      Close camera
+                    </button>
+                    <button
+                      type="button"
+                      className="pay42-pay-ghost-button"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      Use camera photo
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="pay42-scan-controls">
-              <div className="pay42-inline-actions">
-                <button type="button" className="secondary-button" onClick={stopCamera}>
-                  Close Camera
-                </button>
-              </div>
-              <div className="pay42-scan-status-card">
-                <div className="pay42-scan-status-row">
-                  <span className="minor-text">SCAN USING CAMERA</span>
-                  <span
-                    className={`pay42-scan-status-pill${cameraOpen ? " is-live" : ""}${settling || previewing ? " is-busy" : ""}`}
-                  >
-                    {previewing ? "Previewing payment..." : cameraStatus}
-                  </span>
+            ) : null}
+
+            {activeTab === "card" ? (
+              <div className="stack-layout" style={{ gap: 18 }}>
+                <div className="minor-text pay42-pay-section-label">SAVED METHODS</div>
+                <div className="pay42-pay-card-list">
+                  {SAVED_CARDS.map((card) => {
+                    const active = card.id === cardForm.selectedCardId;
+                    return (
+                      <button
+                        key={card.id}
+                        type="button"
+                        className={`pay42-pay-card-face${active ? " is-active" : ""}`}
+                        onClick={() =>
+                          setCardForm((current) => ({
+                            ...current,
+                            selectedCardId: card.id,
+                          }))
+                        }
+                      >
+                        <div className="pay42-pay-card-top">
+                          <span className="pay42-pay-card-chip" />
+                          <span className="pay42-pay-card-brand">{card.brand}</span>
+                        </div>
+                        <div className="pay42-pay-card-number">•••• •••• •••• {card.last4}</div>
+                        <div className="pay42-pay-card-bottom">
+                          <span>EXP {card.expiry}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="minor-text pay42-scan-hint">
-                  {detectorSupported
-                    ? "Keep the QR code inside the frame. The live feed below will show frame activity and the last decoded payload."
-                    : "Live camera preview is available here. The debug feed below will show whether fallback scanning is running."}
-                </p>
-                <div className="pay42-scan-debug-grid">
-                  <div className="summary-item">
-                    <span className="minor-text" style={{ fontSize: "10px" }}>FRAMES</span>
-                    <div style={{ fontSize: "16px" }}>{formatMetric(scanFeed.frames)}</div>
-                  </div>
-                  <div className="summary-item">
-                    <span className="minor-text" style={{ fontSize: "10px" }}>DECODER</span>
-                    <div style={{ fontSize: "12px" }}>{scanFeed.decoder || "-"}</div>
-                  </div>
-                </div>
+
                 <label className="pay42-form-field">
-                  <span className="minor-text">LIVE SCAN FEED</span>
-                  <textarea
-                    rows={5}
-                    readOnly
-                    value={`Status: ${scanFeed.lastEvent || "-"}\nLast payload: ${scanFeed.lastPayload || "-"}\nLast update: ${scanFeed.lastAt || "-"}`}
+                  <span className="minor-text pay42-pay-section-label">PAYMENT AMOUNT</span>
+                  <input
+                    value={cardForm.paymentAmount}
+                    onChange={(event) =>
+                      setCardForm((current) => ({
+                        ...current,
+                        paymentAmount: event.target.value,
+                      }))
+                    }
+                    placeholder="24.00"
                   />
                 </label>
-              </div>
-            </div>
-          </div>
-        </ResponsivePanel>
 
-        <ResponsivePanel
-          title={paymentPreview ? "Payment Confirmation" : "Fallback / Result"}
-          subtitle={
-            paymentPreview
-              ? previewSource === "camera"
-                ? "Camera scan complete. Review this offer before payment."
-                : "Review this offer before payment."
-              : "Manual QR paste and latest payment"
-          }
-          showToggle={false}
-        >
-          <div className="stack-layout">
-            <label className="pay42-form-field">
-              <span className="minor-text">MANUAL QR PAYLOAD</span>
-              <textarea
-                rows={6}
-                value={manualQr}
-                onChange={(e) => setManualQr(e.target.value)}
-                placeholder="Paste 42pay:{...}"
-              />
-            </label>
-            <div className="pay42-inline-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={settling || previewing || !manualQr.trim()}
-                onClick={() => previewQrCode(manualQr, { source: "manual" })}
-              >
-                {previewing ? "Previewing..." : "Preview QR Payment"}
-              </button>
-              {paymentPreview ? (
-                <>
-                  <button
-                    type="button"
-                    className="primary-button"
-                    disabled={settling || previewing || paymentPreview?.payment?.can_pay === false}
-                    onClick={confirmPayment}
-                  >
-                    {settling ? "Paying..." : "Pay Now"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={settling || previewing}
-                    onClick={cancelPaymentPreview}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : null}
-            </div>
+                <label className="pay42-form-field">
+                  <span className="minor-text pay42-pay-section-label">MERCHANT OR NOTE</span>
+                  <input
+                    value={cardForm.note}
+                    onChange={(event) =>
+                      setCardForm((current) => ({
+                        ...current,
+                        note: event.target.value,
+                      }))
+                    }
+                    placeholder="Coffee Shop, Rent, etc."
+                  />
+                </label>
 
-            {paymentPreview ? (
-              <div className="minor-text">
-                Offer preview is open. Review it, then confirm payment or cancel to return to the scanner.
+                <div className="pay42-pay-total-card">
+                  <span className="minor-text pay42-pay-section-label">
+                    TRANSACTION TOTAL
+                  </span>
+                  <strong>{formatMoney(cardForm.paymentAmount || 0)}</strong>
+                </div>
+
+                <button
+                  type="button"
+                  className="pay42-pay-primary-cta"
+                  disabled={localSubmitting}
+                  onClick={submitCardPayment}
+                >
+                  {localSubmitting
+                    ? "Processing card payment..."
+                    : `Pay ${formatMoney(cardForm.paymentAmount || 0)} with ${selectedCard.label}`}
+                </button>
               </div>
-            ) : lastOrder ? (
+            ) : null}
+
+            {activeTab === "gift-card" ? (
+              <div className="stack-layout" style={{ gap: 18 }}>
+                <div className="pay42-pay-gift-box">
+                  <div className="minor-text pay42-pay-section-label">
+                    {selectedGift.label}
+                  </div>
+                  <strong>{formatMoney(selectedGift.balance)}</strong>
+                </div>
+
+                <label className="pay42-form-field">
+                  <input
+                    value={giftForm.code}
+                    onChange={(event) =>
+                      setGiftForm((current) => ({
+                        ...current,
+                        code: event.target.value,
+                      }))
+                    }
+                    placeholder="Or enter a gift card code"
+                  />
+                </label>
+
+                <label className="pay42-form-field">
+                  <input
+                    value={giftForm.paymentAmount}
+                    onChange={(event) =>
+                      setGiftForm((current) => ({
+                        ...current,
+                        paymentAmount: event.target.value,
+                      }))
+                    }
+                    placeholder="10.00"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  className="pay42-pay-primary-cta"
+                  disabled={localSubmitting}
+                  onClick={submitGiftCardPayment}
+                >
+                  {localSubmitting
+                    ? "Processing gift card..."
+                    : `Pay ${formatMoney(giftForm.paymentAmount || 0)} with gift card`}
+                </button>
+              </div>
+            ) : null}
+
+            {lastOrder && activeTab !== "card" && activeTab !== "gift-card" ? (
               <div className="stack-layout" style={{ gap: 10 }}>
                 <div className="pay42-stat-card">
                   <span className="minor-text">ORDER</span>
@@ -697,14 +904,8 @@ export default function Pay42ScanPage() {
                   <span className="minor-text">TOTAL</span>
                   <strong>{formatMetric(lastOrder.total_amount || 0)}</strong>
                 </div>
-                <div className="pay42-stat-card">
-                  <span className="minor-text">CREATED</span>
-                  <strong>{showDateTime(lastOrder.create_at)}</strong>
-                </div>
               </div>
-            ) : (
-              <div className="minor-text">No payment completed yet in this session.</div>
-            )}
+            ) : null}
           </div>
         </ResponsivePanel>
       </div>

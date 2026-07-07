@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../../app/api";
 import { showDateTime } from "../../../shared/utils/format";
 import DataTable from "../../../shared/components/DataTable";
@@ -12,6 +12,7 @@ import InputComboSelect from "../../../shared/components/InputComboSelect";
 import PaginationBar from "../../../shared/components/PaginationBar";
 import DateTimePicker from "../../../shared/components/DateTimePicker";
 import { showToast } from "../../../shared/components/ToastContainer";
+import MobileFullscreenModal from "../../../shared/components/MobileFullscreenModal";
 import Pay42MediaThumb from "./Pay42MediaThumb";
 import {
   formatMoney,
@@ -46,9 +47,16 @@ function validateOfferForm(form = {}) {
   return "";
 }
 
+const MOBILE_BREAKPOINT = 768;
+
 export default function Pay42OffersPage({ authUser }) {
+  const [searchParams] = useSearchParams();
   const [offers, setOffers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [isMobileEditor, setIsMobileEditor] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false,
+  );
+  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [form, setForm] = useState(emptyOfferForm());
   const [filter, setFilter] = useState({
     q: "",
@@ -85,6 +93,15 @@ export default function Pay42OffersPage({ authUser }) {
     load();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    const onChange = (event) => setIsMobileEditor(event.matches);
+    setIsMobileEditor(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
   const filteredOffers = useMemo(() => {
     const query = String(filter.q || "").trim().toLowerCase();
     return offers.filter((row) => {
@@ -118,6 +135,21 @@ export default function Pay42OffersPage({ authUser }) {
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    const seededProductId = String(searchParams.get("product_id") || "").trim();
+    const wantsNew = String(searchParams.get("new") || "").trim() === "1";
+    if (!seededProductId) return;
+    setFilter((current) => ({ ...current, product_id: seededProductId }));
+    setForm((current) => ({
+      ...emptyOfferForm(),
+      product_id: seededProductId,
+      offer_name: wantsNew ? current.offer_name || "" : current.offer_name,
+    }));
+    if (isMobileEditor && wantsNew) {
+      setMobileEditorOpen(true);
+    }
+  }, [searchParams, isMobileEditor]);
 
   const columns = useMemo(
     () => [
@@ -174,6 +206,36 @@ export default function Pay42OffersPage({ authUser }) {
         cell: ({ row }) => showDateTime(row.original.end_at),
       },
     ],
+    [],
+  );
+
+  const mobileCard = useMemo(
+    () => ({
+      getImageSrc: (row) => row.product_image || "",
+      getImageAlt: (row) => row.product_name || row.sid,
+      getImageLabel: (row) => row.product_name || row.sid,
+      getTitle: (row) => row.metadata?.offer_name || row.product_name || "-",
+      getSubtitle: (row) => row.sid || "",
+      getAmount: (row) => ({
+        value: formatMoney(Number(row.price || 0) + Number(row.tax || 0)),
+        tone: "accent",
+        subvalue: showDateTime(row.end_at),
+      }),
+      getBadges: (row) => [
+        {
+          label: String(row.status || "-").toUpperCase(),
+          tone: String(row.status || "-").toUpperCase(),
+        },
+      ],
+      getRows: (row) => [
+        [{ value: row.product_name || "-" }],
+        [
+          { value: `Base ${formatMoney(row.price)}` },
+          { value: `Tax ${formatMoney(row.tax)}` },
+        ],
+      ],
+      getFooterText: (row) => showDateTime(row.end_at).replace(" ", " · "),
+    }),
     [],
   );
 
@@ -235,18 +297,174 @@ export default function Pay42OffersPage({ authUser }) {
     }
   }
 
+  function selectOffer(row) {
+    setForm({
+      sid: row.sid,
+      product_id: row.product_id || "",
+      price: String(row.price || ""),
+      tax: String(row.tax || ""),
+      start_at: row.start_at || "",
+      end_at: row.end_at || "",
+      offer_name: row.metadata?.offer_name || "",
+      qr_code: row.qr_code || "",
+      qr_code_image: row.qr_code_image || "",
+    });
+    if (isMobileEditor) setMobileEditorOpen(true);
+  }
+
+  function startNewOffer() {
+    setForm(emptyOfferForm());
+    if (isMobileEditor) setMobileEditorOpen(true);
+  }
+
+  function closeMobileEditor() {
+    setMobileEditorOpen(false);
+  }
+
+  const offerFormPanel = (
+    <ResponsivePanel
+      title={isMobileEditor ? "" : form.sid ? "Edit Offer" : "Create Offer"}
+      subtitle={isMobileEditor ? "" : form.sid ? form.sid : "Seller pricing"}
+      showToggle={false}
+    >
+      <div className="pay42-form-grid pay42-offer-form-grid">
+        <label className="pay42-form-field pay42-form-field--full">
+          <span className="minor-text">PRODUCT</span>
+          <InputComboSelect
+            value={form.product_id}
+            onChange={(e) =>
+              setForm((prev) => ({ ...prev, product_id: e.target.value }))
+            }
+          >
+            <option value="">SELECT PRODUCT</option>
+            {products.map((product) => (
+              <option key={product.sid} value={product.sid}>
+                {product.name}
+              </option>
+            ))}
+          </InputComboSelect>
+        </label>
+        {form.product_id ? (
+          <>
+            <label className="pay42-form-field pay42-form-field--full">
+              <span className="minor-text">OFFER NAME</span>
+              <input
+                value={form.offer_name}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, offer_name: e.target.value }))
+                }
+                placeholder="2 Nights Skyline Escape"
+              />
+            </label>
+            <label className="pay42-form-field">
+              <span className="minor-text">PRICE</span>
+              <input
+                value={form.price}
+                onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
+                placeholder="680"
+              />
+            </label>
+            <label className="pay42-form-field">
+              <span className="minor-text">TAX</span>
+              <input
+                value={form.tax}
+                onChange={(e) => setForm((prev) => ({ ...prev, tax: e.target.value }))}
+                placeholder="47.6"
+              />
+            </label>
+            <label className="pay42-form-field">
+              <span className="minor-text">START AT</span>
+              <DateTimePicker
+                mode="datetime"
+                value={form.start_at}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, start_at: e.target.value }))
+                }
+              />
+            </label>
+            <label className="pay42-form-field">
+              <span className="minor-text">END AT</span>
+              <DateTimePicker
+                mode="datetime"
+                value={form.end_at}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, end_at: e.target.value }))
+                }
+              />
+            </label>
+            <ResponsivePanel
+              title="Buyer Payment QR"
+              subtitle="Scan-ready payment code for buyers"
+              className="pay42-form-field pay42-form-field--full pay42-inline-panel"
+              bodyClassName="pay42-inline-panel__body"
+              border="always"
+              defaultOpen
+            >
+              <div className="pay42-offer-hero pay42-offer-hero--qr-only">
+                <Pay42MediaThumb
+                  src={form.qr_code_image}
+                  alt={`${form.sid || form.offer_name || "offer"} qr`}
+                  label={form.sid || form.offer_name || "offer"}
+                  className="pay42-qr-thumb pay42-qr-thumb--detail"
+                  kind="qr"
+                />
+              </div>
+            </ResponsivePanel>
+            <div className="pay42-inline-actions pay42-form-field--full">
+              <button
+                type="button"
+                className="primary-button"
+                disabled={saving || !form.product_id || !form.offer_name.trim()}
+                onClick={submitOffer}
+              >
+                {saving ? "Saving..." : form.sid ? "Update Offer" : "Create Offer"}
+              </button>
+              {isMobileEditor ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closeMobileEditor}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setForm(emptyOfferForm())}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </>
+        ) : isMobileEditor ? (
+          <div className="pay42-inline-actions pay42-form-field--full">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={closeMobileEditor}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </ResponsivePanel>
+  );
+
   return (
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
         className="trades-page-header"
-        title="42Pay Offers"
+        title="Offers"
         actions={
           <div className="pay42-inline-actions">
             {canManage ? (
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => setForm(emptyOfferForm())}
+                onClick={startNewOffer}
               >
                 New Offer
               </button>
@@ -311,7 +529,7 @@ export default function Pay42OffersPage({ authUser }) {
         <div className="pay42-split-layout pay42-split-layout--list-first">
           <ResponsivePanel
             title={`${filteredOffers.length} Offers`}
-            subtitle="Select a row to edit"
+            subtitle={isMobileEditor ? "Tap a card to open the editor" : "Select a row to edit"}
             className="component-frozen-wrap"
             headerActions={
               <PaginationBar
@@ -332,130 +550,12 @@ export default function Pay42OffersPage({ authUser }) {
               loading={loading}
               emptyText="No offers yet."
               className="events-table"
-              onRowClick={(row) =>
-                setForm({
-                  sid: row.sid,
-                  product_id: row.product_id || "",
-                  price: String(row.price || ""),
-                  tax: String(row.tax || ""),
-                  start_at: row.start_at || "",
-                  end_at: row.end_at || "",
-                  offer_name: row.metadata?.offer_name || "",
-                  qr_code: row.qr_code || "",
-                  qr_code_image: row.qr_code_image || "",
-                })
-              }
+              onRowClick={selectOffer}
+              mobileCard={mobileCard}
             />
           </ResponsivePanel>
 
-          <ResponsivePanel
-            title={form.sid ? "Edit Offer" : "Create Offer"}
-            subtitle={form.sid ? form.sid : "Seller pricing"}
-          >
-            <div className="pay42-form-grid">
-              <label className="pay42-form-field pay42-form-field--full">
-                <span className="minor-text">PRODUCT</span>
-                <InputComboSelect
-                  value={form.product_id}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, product_id: e.target.value }))
-                  }
-                >
-                  <option value="">SELECT PRODUCT</option>
-                  {products.map((product) => (
-                    <option key={product.sid} value={product.sid}>
-                      {product.name}
-                    </option>
-                  ))}
-                </InputComboSelect>
-              </label>
-              {form.product_id ? (
-                <>
-              <label className="pay42-form-field pay42-form-field--full">
-                <span className="minor-text">OFFER NAME</span>
-                <input
-                  value={form.offer_name}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, offer_name: e.target.value }))
-                  }
-                  placeholder="2 Nights Skyline Escape"
-                />
-              </label>
-              <label className="pay42-form-field">
-                <span className="minor-text">PRICE</span>
-                <input
-                  value={form.price}
-                  onChange={(e) => setForm((prev) => ({ ...prev, price: e.target.value }))}
-                  placeholder="680"
-                />
-              </label>
-              <label className="pay42-form-field">
-                <span className="minor-text">TAX</span>
-                <input
-                  value={form.tax}
-                  onChange={(e) => setForm((prev) => ({ ...prev, tax: e.target.value }))}
-                  placeholder="47.6"
-                />
-              </label>
-              <label className="pay42-form-field">
-                <span className="minor-text">START AT</span>
-                <DateTimePicker
-                  mode="datetime"
-                  value={form.start_at}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, start_at: e.target.value }))
-                  }
-                />
-              </label>
-              <label className="pay42-form-field">
-                <span className="minor-text">END AT</span>
-                <DateTimePicker
-                  mode="datetime"
-                  value={form.end_at}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, end_at: e.target.value }))
-                  }
-                />
-              </label>
-              <ResponsivePanel
-                title="Buyer Payment QR"
-                subtitle="Scan-ready payment code for buyers"
-                className="pay42-form-field pay42-form-field--full pay42-inline-panel"
-                bodyClassName="pay42-inline-panel__body"
-                border="always"
-                defaultOpen
-              >
-                <div className="pay42-offer-hero pay42-offer-hero--qr-only">
-                  <Pay42MediaThumb
-                    src={form.qr_code_image}
-                    alt={`${form.sid || form.offer_name || "offer"} qr`}
-                    label={form.sid || form.offer_name || "offer"}
-                    className="pay42-qr-thumb pay42-qr-thumb--detail"
-                    kind="qr"
-                  />
-                </div>
-              </ResponsivePanel>
-              <div className="pay42-inline-actions pay42-form-field--full">
-                <button
-                  type="button"
-                  className="primary-button"
-                  disabled={saving || !form.product_id || !form.offer_name.trim()}
-                  onClick={submitOffer}
-                >
-                  {saving ? "Saving..." : form.sid ? "Update Offer" : "Create Offer"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => setForm(emptyOfferForm())}
-                >
-                  Clear
-                </button>
-              </div>
-                </>
-              ) : null}
-            </div>
-          </ResponsivePanel>
+          {!isMobileEditor ? offerFormPanel : null}
         </div>
       ) : (
         <div className="pay42-card-grid">
@@ -509,6 +609,17 @@ export default function Pay42OffersPage({ authUser }) {
           ))}
         </div>
       )}
+
+      {canManage && isMobileEditor ? (
+        <MobileFullscreenModal
+          open={mobileEditorOpen}
+          title={form.sid ? "Edit Offer" : "Create Offer"}
+          subtitle={form.sid ? form.sid : "Seller pricing"}
+          onClose={closeMobileEditor}
+        >
+          {offerFormPanel}
+        </MobileFullscreenModal>
+      ) : null}
     </section>
   );
 }

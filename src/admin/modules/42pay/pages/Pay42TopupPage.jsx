@@ -1,26 +1,46 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../app/api";
 import PageHeader from "../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
-import InputComboSelect from "../../../shared/components/InputComboSelect";
 import { showDateTime } from "../../../shared/utils/format";
 import { formatMoney, statusTone } from "./pay42Ui";
 
 const TOPUP_METHODS = [
-  { value: "SEPA", label: "SEPA Bank Transfer" },
-  { value: "PAYPAL", label: "PayPal" },
-  { value: "CARD", label: "Credit Card" },
+  {
+    value: "CARD",
+    label: "Visa •• 4291",
+    subtitle: "Instant · No fee",
+    arrival: "Instantly",
+    fee: "$0.00",
+    icon: "💳",
+  },
+  {
+    value: "SEPA",
+    label: "Chase Checking •• 0148",
+    subtitle: "1–3 business days · No fee",
+    arrival: "1–3 business days",
+    fee: "$0.00",
+    icon: "🏦",
+  },
+  {
+    value: "PAYPAL",
+    label: "On-chain deposit",
+    subtitle: "USDC · ~10 min · Network fee applies",
+    arrival: "~10 min",
+    fee: "Network fee",
+    icon: "◈",
+  },
 ];
 
-const PRESET_AMOUNTS = [50, 100, 250, 500];
+const PRESET_AMOUNTS = [10, 50, 100, 250];
 
 export default function Pay42TopupPage() {
+  const amountInputRef = useRef(null);
   const [wallet, setWallet] = useState(null);
   const [topups, setTopups] = useState([]);
   const [form, setForm] = useState({
-    amount: "100",
-    method: "SEPA",
+    amount: "50",
+    method: "CARD",
     note: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -48,6 +68,16 @@ export default function Pay42TopupPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!amountInputRef.current) return;
+    amountInputRef.current.style.setProperty("font-size", "42px", "important");
+  }, []);
+
+  const selectedMethod = useMemo(
+    () => TOPUP_METHODS.find((item) => item.value === form.method) || TOPUP_METHODS[0],
+    [form.method],
+  );
 
   async function submit(event) {
     event.preventDefault();
@@ -83,17 +113,7 @@ export default function Pay42TopupPage() {
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
         className="trades-page-header"
-        title="Top Up Wallet"
-        actions={
-          <div className="pay42-inline-actions">
-            <Link className="secondary-button" to="/admin/42pay/scan">
-              Scan to Pay
-            </Link>
-            <Link className="secondary-button" to="/admin/42pay/orders">
-              My Purchases
-            </Link>
-          </div>
-        }
+        title="TOP UP"
       />
 
       {error ? <div className="error">{error}</div> : null}
@@ -101,27 +121,18 @@ export default function Pay42TopupPage() {
 
       <div className="pay42-split-layout">
         <ResponsivePanel
-          title="Add Funds"
-          subtitle="Choose a funding method and add money to the wallet"
+          title=""
+          subtitle=""
           showToggle={false}
+          className="pay42-topup-panel"
         >
-          <form className="stack-layout" onSubmit={submit}>
-            <div className="pay42-inline-actions" style={{ flexWrap: "wrap" }}>
-              {PRESET_AMOUNTS.map((amount) => (
-                <button
-                  key={amount}
-                  type="button"
-                  className={`secondary-button${String(form.amount) === String(amount) ? " is-active" : ""}`}
-                  onClick={() => setForm((current) => ({ ...current, amount: String(amount) }))}
-                >
-                  {formatMoney(amount)}
-                </button>
-              ))}
-            </div>
-
-            <label className="pay42-form-field">
-              <span className="minor-text">AMOUNT</span>
+          <form className="stack-layout pay42-topup-form" onSubmit={submit}>
+            <label className="pay42-topup-amount-display" aria-label="Top up amount">
+              <span className="pay42-topup-amount-currency" style={{ fontSize: "26px" }}>
+                $
+              </span>
               <input
+                ref={amountInputRef}
                 type="number"
                 min="1"
                 step="0.01"
@@ -129,66 +140,91 @@ export default function Pay42TopupPage() {
                 onChange={(event) =>
                   setForm((current) => ({ ...current, amount: event.target.value }))
                 }
-                placeholder="100"
+                className="pay42-topup-amount-input"
+                placeholder="50"
+                style={{
+                  lineHeight: 0.92,
+                  fontWeight: 900,
+                  minHeight: 0,
+                  height: "auto",
+                  padding: 0,
+                  border: 0,
+                  background: "transparent",
+                }}
               />
             </label>
 
-            <label className="pay42-form-field">
-              <span className="minor-text">PAYMENT METHOD</span>
-              <InputComboSelect
-                value={form.method}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, method: event.target.value }))
-                }
-              >
-                {TOPUP_METHODS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </InputComboSelect>
-            </label>
-
-            <label className="pay42-form-field">
-              <span className="minor-text">NOTE</span>
-              <textarea
-                rows={4}
-                value={form.note}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, note: event.target.value }))
-                }
-                placeholder="Prototype reference or memo"
-              />
-            </label>
-
-            <div className="pay42-stat-card">
-              <span className="minor-text">FUNDING METHOD</span>
-              <strong>
-                {TOPUP_METHODS.find((item) => item.value === form.method)?.label || form.method}
-              </strong>
-              <span className="minor-text">
-                Prototype mode applies funds immediately after confirmation. We can connect the real provider flow later.
-              </span>
-            </div>
-
-            <div className="pay42-inline-actions">
-              <button type="submit" className="primary-button" disabled={submitting}>
-                {submitting ? "Adding Funds..." : "Top Up Wallet"}
-              </button>
+            <div className="pay42-topup-chip-row">
+              {PRESET_AMOUNTS.map((amount) => (
+                <button
+                  key={amount}
+                  type="button"
+                  className={`pay42-topup-chip${String(form.amount) === String(amount) ? " is-active" : ""}`}
+                  onClick={() => setForm((current) => ({ ...current, amount: String(amount) }))}
+                >
+                  {`$${amount}`}
+                </button>
+              ))}
               <button
                 type="button"
-                className="secondary-button"
-                onClick={() => setForm({ amount: "100", method: "SEPA", note: "" })}
+                className={`pay42-topup-chip${!PRESET_AMOUNTS.includes(Number(form.amount)) ? " is-active" : ""}`}
+                onClick={() => setForm((current) => ({ ...current, amount: "" }))}
               >
-                Clear
+                Custom
               </button>
             </div>
+
+            <div className="minor-text pay42-topup-section-label">FUNDING SOURCE</div>
+
+            <div className="pay42-topup-method-list">
+              {TOPUP_METHODS.map((item) => {
+                const active = item.value === form.method;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={`pay42-topup-method-card${active ? " is-active" : ""}`}
+                    onClick={() =>
+                      setForm((current) => ({ ...current, method: item.value }))
+                    }
+                  >
+                    <span className="pay42-topup-method-icon" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                    <span className="pay42-topup-method-copy">
+                      <span className="pay42-topup-method-name">{item.label}</span>
+                      <span className="pay42-topup-method-subtitle">{item.subtitle}</span>
+                    </span>
+                    <span className="pay42-topup-method-radio" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pay42-topup-meta-row">
+              <span>Fee</span>
+              <span>{selectedMethod?.fee || "$0.00"}</span>
+            </div>
+            <div className="pay42-topup-meta-row">
+              <span>Arrives</span>
+              <span>{selectedMethod?.arrival || "Instantly"}</span>
+            </div>
+
+            <button
+              type="submit"
+              className="pay42-topup-confirm"
+              disabled={submitting}
+            >
+              {submitting
+                ? "Confirming top up..."
+                : `Confirm top up of ${formatMoney(Number(form.amount || 0))}`}
+            </button>
           </form>
         </ResponsivePanel>
 
         <ResponsivePanel
-          title="Funding History"
-          subtitle="Most recent wallet top-ups"
+          title="Recent Top Ups"
+          subtitle="Wallet funding activity"
           showToggle={false}
         >
           <div className="stack-layout">

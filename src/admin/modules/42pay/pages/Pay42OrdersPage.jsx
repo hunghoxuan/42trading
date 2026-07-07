@@ -25,7 +25,7 @@ export default function Pay42OrdersPage({ authUser }) {
   const [error, setError] = useState("");
 
   const currentRole = roleLabel(authUser);
-  const title = currentRole === "seller" ? "42Pay Transactions" : "My Purchases";
+  const title = currentRole === "seller" ? "Transactions" : "My Purchases";
   const isBuyer = currentRole === "buyer";
   const focusedSid = String(searchParams.get("focus") || "").trim();
 
@@ -139,6 +139,35 @@ export default function Pay42OrdersPage({ authUser }) {
     [],
   );
 
+  const mobileCard = useMemo(
+    () => ({
+      getImageSrc: (row) => row.product_image || "",
+      getImageAlt: (row) => row.product_name || row.sid,
+      getImageLabel: (row) => row.product_name || row.sid,
+      getTitle: (row) => row.product_name || row.sid || "-",
+      getSubtitle: (row) => row.offer_name || row.sid || "",
+      getAmount: (row) => ({
+        value: formatMoney(row.total_amount || 0),
+        tone: "accent",
+        subvalue: showDateTime(row.create_at),
+      }),
+      getBadges: (row) => [
+        {
+          label: String(row.status || "-").toUpperCase(),
+          tone: String(row.status || "-").toUpperCase(),
+        },
+      ],
+      getRows: (row) => [
+        [{ value: row.sid || "-" }],
+        [
+          { value: row.buyer_id || "-" },
+          { value: row.seller_id || "-" },
+        ],
+      ],
+    }),
+    [],
+  );
+
   return (
     <section className="logs-page-container trades-page-container pay42-page-container stack-layout fadeIn">
       <PageHeader
@@ -152,7 +181,7 @@ export default function Pay42OrdersPage({ authUser }) {
                   Top Up
                 </Link>
                 <Link className="secondary-button" to="/admin/42pay/scan">
-                  Scan to Pay
+                  Pay
                 </Link>
               </>
             ) : null}
@@ -210,11 +239,11 @@ export default function Pay42OrdersPage({ authUser }) {
           >
             <div className="stack-layout">
               <p className="minor-text">
-                Use the buyer scanner to pay a seller QR code, then review your booking confirmations here.
+                Use Pay to scan a seller QR code, or complete card and gift card flows before reviewing confirmations here.
               </p>
               <div className="pay42-inline-actions">
                 <Link className="primary-button" to="/admin/42pay/scan">
-                  Open Scanner
+                  Open Pay
                 </Link>
                 <Link className="secondary-button" to="/admin/42pay/topup">
                   Top Up Wallet
@@ -233,13 +262,14 @@ export default function Pay42OrdersPage({ authUser }) {
           className="component-frozen-wrap"
           showToggle={false}
         >
-          <DataTable
-            columns={columns}
-            data={filteredItems}
-            loading={loading}
-            emptyText="No orders yet."
-            className="events-table"
-          />
+        <DataTable
+          columns={columns}
+          data={filteredItems}
+          loading={loading}
+          emptyText="No orders yet."
+          className="events-table"
+          mobileCard={mobileCard}
+        />
         </ResponsivePanel>
 
         {isBuyer ? (

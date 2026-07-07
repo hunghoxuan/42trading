@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("dashboard page loads data", async ({ page }) => {
-  await page.goto("dashboard");
+  await page.goto("trades/dashboard");
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText("Loading dashboard...")).toHaveCount(0);
   await expect(page.locator(".error")).toHaveCount(0);

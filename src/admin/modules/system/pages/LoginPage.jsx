@@ -33,6 +33,12 @@ function buildQuickUsers() {
       login: text(env.VITE_UI_LOGIN_ADMIN_USERNAME, "admin"),
       password: text(env.VITE_UI_LOGIN_ADMIN_PASSWORD, "123456"),
     },
+    {
+      user_id: text(env.VITE_UI_LOGIN_TRADER_USERNAME, "trader"),
+      name: text(env.VITE_UI_LOGIN_TRADER_USERNAME, "trader"),
+      login: text(env.VITE_UI_LOGIN_TRADER_USERNAME, "trader"),
+      password: text(env.VITE_UI_LOGIN_TRADER_PASSWORD, "123456"),
+    },
   ].filter((user, index, all) => {
     const userId = String(user?.user_id || "").trim();
     if (!userId) return false;
@@ -84,6 +90,15 @@ export default function LoginPage({ onLogin }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const selectableUsers = useMemo(() => buildQuickUsers(), []);
+  const effectiveReturnUrl = useMemo(() => {
+    const queryValue = searchParams.get("return_url");
+    if (queryValue) return queryValue;
+    try {
+      return sessionStorage.getItem("tvbridge_pending_return_url") || "";
+    } catch {
+      return "";
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     let active = true;
@@ -125,9 +140,14 @@ export default function LoginPage({ onLogin }) {
       // Use client-side navigation to avoid full page reload
       // (full reload would re-init React and re-check authMe, which can fail
       //  when cookie isn't yet established on cross-origin dev setups).
-      // React Router will automatically redirect /login → /dashboard via
-      // the authenticated route's <Navigate to="/dashboard" replace />.
-      const returnUrl = searchParams.get("return_url");
+      // React Router will automatically redirect /login → /trades/dashboard via
+      // the authenticated route's <Navigate to="/trades/dashboard" replace />.
+      const returnUrl = effectiveReturnUrl;
+      try {
+        sessionStorage.removeItem("tvbridge_pending_return_url");
+      } catch {
+        // ignore
+      }
       if (returnUrl) {
         const decoded = decodeURIComponent(returnUrl);
         if (/^https?:\/\//i.test(decoded)) {
@@ -164,7 +184,31 @@ export default function LoginPage({ onLogin }) {
       className="panel stack-layout login-page fadeIn"
       style={{ maxWidth: "400px", margin: "100px auto" }}
     >
-      <div className="panel-label">AUTHENTICATION</div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 4,
+        }}
+      >
+        <img
+          src="/logo/payhub-p-payhub-final.png"
+          alt="42Trade"
+          style={{ width: 56, height: 56, objectFit: "contain" }}
+        />
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 700,
+            lineHeight: 1.2,
+            color: "var(--text-primary)",
+          }}
+        >
+          Login
+        </div>
+      </div>
       <form onSubmit={submit} className="stack-layout" style={{ gap: 20 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
           <div className="minor-text">Username or Email</div>
@@ -216,7 +260,7 @@ export default function LoginPage({ onLogin }) {
           disabled={loading}
           style={{ width: "100%"}}
         >
-          {loading ? "🔐 AUTHORIZING..." : "🔐 SIGN IN"}
+          {loading ? "Signing in..." : "Sign in"}
         </button>
       </form>
     </section>

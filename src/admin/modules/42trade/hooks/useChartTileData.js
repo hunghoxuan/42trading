@@ -13,6 +13,7 @@ import {
 
 const DEFAULT_BARS_COUNT = 2000;
 const MAX_CHART_HISTORY_BARS = 20000;
+const BROKER_HISTORY_PAGE_SIZE = 5000;
 
 function tfNorm(tf) {
   return String(tf || "")
@@ -151,6 +152,27 @@ function tfRankMinutes(tf) {
   return Number.MAX_SAFE_INTEGER;
 }
 
+function normalizeBrokerHistoryBars(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((bar) => ({
+      time: Number(bar?.t ?? bar?.time),
+      open: Number(bar?.o ?? bar?.open),
+      high: Number(bar?.h ?? bar?.high),
+      low: Number(bar?.l ?? bar?.low),
+      close: Number(bar?.c ?? bar?.close),
+      volume: Number(bar?.v ?? bar?.volume ?? 0),
+    }))
+    .filter(
+      (bar) =>
+        Number.isFinite(bar.time) &&
+        Number.isFinite(bar.open) &&
+        Number.isFinite(bar.high) &&
+        Number.isFinite(bar.low) &&
+        Number.isFinite(bar.close),
+    )
+    .sort((left, right) => left.time - right.time);
+}
+
 const BARS_BY_PROFILE = {
   position: { d: 300, "4h": 500, "1h": 800, "15m": 0, "5m": 0, "1m": 0 },
   swing:    { d: 250, "4h": 400, "1h": 640, "15m": 720, "5m": 0, "1m": 0 },
@@ -279,6 +301,79 @@ export function useSymbolChartData({
     }
     return out;
   }, [barsCountByTf]);
+  const loadBrokerHistoryWindow = useCallback(
+    async (tf, totalBars, endTimeSecValue = null) => {
+      const tfKey = tfNorm(tf);
+      const targetBars = Math.max(
+        50,
+        Math.min(MAX_CHART_HISTORY_BARS, Math.round(Number(totalBars) || 0)),
+      );
+      const tfSeconds = Math.max(60, tfRankMinutes(tfKey) * 60 || 60);
+      const dedup = new Map();
+      let cursorEndTimeSec =
+        Number.isFinite(Number(endTimeSecValue)) && Number(endTimeSecValue) > 0
+          ? Math.floor(Number(endTimeSecValue))
+          : null;
+      let metadata = null;
+      let source = "broker_history_paged";
+      let exhausted = false;
+
+      while (dedup.size < targetBars) {
+        const remaining = targetBars - dedup.size;
+        const limit = Math.max(1, Math.min(BROKER_HISTORY_PAGE_SIZE, remaining));
+        const response = await api.brokerBars(sym, tfKey, limit, cursorEndTimeSec);
+        const bars = normalizeBrokerHistoryBars(response?.bars);
+        if (
+          response?.metadata &&
+          typeof response.metadata === "object" &&
+          !Array.isArray(response.metadata)
+        ) {
+          metadata = { ...(metadata || {}), ...response.metadata };
+        }
+        if (response?.source) source = String(response.source || source);
+        if (!bars.length) {
+          exhausted = true;
+          break;
+        }
+        for (const bar of bars) {
+          dedup.set(bar.time, bar);
+        }
+        if (bars.length < limit) {
+          exhausted = true;
+          break;
+        }
+        const earliest = Number(bars[0]?.time || 0);
+        if (!Number.isFinite(earliest) || earliest <= tfSeconds) {
+          exhausted = true;
+          break;
+        }
+        cursorEndTimeSec = earliest - tfSeconds;
+      }
+
+      const mergedBars = [...dedup.values()].sort((left, right) => left.time - right.time);
+      return {
+        out: {
+          source,
+          cached_at: Date.now(),
+        },
+        snap: {
+          bars: mergedBars,
+          bar_start: mergedBars[0]?.time || null,
+          bar_end: mergedBars[mergedBars.length - 1]?.time || null,
+          last_price: mergedBars.length
+            ? Number(mergedBars[mergedBars.length - 1]?.close)
+            : null,
+          metadata: {
+            ...(metadata || {}),
+            loaded_bars: mergedBars.length,
+            history_exhausted:
+              metadata?.history_exhausted === true ? true : exhausted,
+          },
+        },
+      };
+    },
+    [sym],
+  );
 
   const fetchAll = useCallback(
     async (opts = {}) => {
@@ -798,28 +893,8 @@ export function useSymbolChartData({
                 firstLoadedBarSec,
                 firstLoadedBarIso: formatHistoryTimeSec(firstLoadedBarSec),
               });
-              const loadHistorySnapshotFromStorage = async () => {
-                const bootstrapOut = await api.realtimeChartBootstrap(
-                  sym,
-                  tfKey,
-                  requestedBars,
-                  historyEndTimeSec,
-                  "history",
-                );
-                const bootstrapSnap =
-                  bootstrapOut?.snapshot && typeof bootstrapOut.snapshot === "object"
-                    ? bootstrapOut.snapshot
-                    : null;
-                if (!bootstrapSnap) return null;
-                return {
-                  out: {
-                    ...bootstrapOut,
-                    source: "history_storage",
-                    cached_at: Date.now(),
-                  },
-                  snap: bootstrapSnap,
-                };
-              };
+              const loadHistorySnapshotFromStorage = async () =>
+                loadBrokerHistoryWindow(tfKey, requestedBars, historyEndTimeSec);
               const localHistory = await loadHistorySnapshotFromStorage().catch(() => null);
               if (localHistory?.snap) {
                 out = localHistory.out;
@@ -852,23 +927,16 @@ export function useSymbolChartData({
                   forcedRefreshOut = null;
                   forcedRefreshSnap = null;
                 }
-                const reloadedHistory = await api
-                  .realtimeChartBootstrap(
-                    sym,
-                    tfKey,
-                    requestedBars,
-                    historyEndTimeSec,
-                    "history",
-                  )
-                  .catch(() => null);
+                const reloadedHistory = await loadHistorySnapshotFromStorage().catch(
+                  () => null,
+                );
                 const reloadedSnap =
-                  reloadedHistory?.snapshot &&
-                  typeof reloadedHistory.snapshot === "object"
-                    ? reloadedHistory.snapshot
+                  reloadedHistory?.snap && typeof reloadedHistory.snap === "object"
+                    ? reloadedHistory.snap
                     : null;
                 if (reloadedSnap) {
                   out = {
-                    ...reloadedHistory,
+                    ...reloadedHistory.out,
                     source: "remote_history_refresh",
                     cached_at: Date.now(),
                   };
@@ -1075,23 +1143,19 @@ export function useSymbolChartData({
                   ? historyRefreshSnap.metadata
                   : null;
               if (historyRefreshSnap) {
-                const reloadedHistory = await api
-                  .realtimeChartBootstrap(
-                    sym,
-                    tfKey,
-                    requestedBars,
-                    historyRequestEndTimeSec,
-                    "history",
-                  )
-                  .catch(() => null);
+                const reloadedHistory = await loadBrokerHistoryWindow(
+                  tfKey,
+                  requestedBars,
+                  historyRequestEndTimeSec,
+                ).catch(() => null);
                 const reloadedSnap =
-                  reloadedHistory?.snapshot &&
-                  typeof reloadedHistory.snapshot === "object"
-                    ? reloadedHistory.snapshot
+                  reloadedHistory?.snap &&
+                  typeof reloadedHistory.snap === "object"
+                    ? reloadedHistory.snap
                     : null;
                 if (reloadedSnap) {
                   out = {
-                    ...reloadedHistory,
+                    ...reloadedHistory.out,
                     source: "history_storage_reloaded",
                     cached_at: Date.now(),
                   };
@@ -1630,6 +1694,7 @@ export function useSymbolChartData({
       skipFetch,
       refresh,
       fetchAll,
+      loadBrokerHistoryWindow,
       barsCount,
       normalizedBarsCountByTf,
       profile,
