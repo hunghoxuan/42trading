@@ -382,6 +382,38 @@ export function buildExpressionFromVisualNode(node) {
   return null;
 }
 
+function normalizeOperandDraft(
+  value,
+  fallback = { kind: "literal", value: "" },
+) {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value.kind === "var" || value.kind === "literal")
+  ) {
+    return value;
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 1 &&
+    Object.prototype.hasOwnProperty.call(value, "var")
+  ) {
+    return { kind: "var", value: String(value.var || "") };
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return { kind: "literal", value };
+  }
+  return fallback;
+}
+
 function ensureConditionDraft(node) {
   const base =
     node && typeof node === "object" && !Array.isArray(node)
@@ -402,18 +434,53 @@ function ensureConditionDraft(node) {
   const meta = getFunctionMeta(functionName);
   const expectedArgs = Array.isArray(meta?.args) ? meta.args : [];
   const nextArgs = expectedArgs.map((_, index) => {
-    const currentArg = Array.isArray(base?.args) ? base.args[index] : null;
-    return currentArg && typeof currentArg === "object"
-      ? currentArg
-      : createDefaultFunctionArg(meta, index);
+    const argKey = String(meta?.args?.[index]?.key || "").trim();
+    const currentArg = Array.isArray(base?.args)
+      ? base.args[index]
+      : base?.args && typeof base.args === "object"
+        ? base.args[argKey]
+        : null;
+    if (argKey === "bias" || argKey === "tf") {
+      const normalizedSelectValue =
+        currentArg &&
+        typeof currentArg === "object" &&
+        !Array.isArray(currentArg) &&
+        Object.prototype.hasOwnProperty.call(currentArg, "var")
+          ? String(currentArg.var || "")
+          : currentArg &&
+              typeof currentArg === "object" &&
+              !Array.isArray(currentArg) &&
+              currentArg.kind === "literal"
+            ? String(currentArg.value ?? "")
+            : currentArg &&
+                typeof currentArg === "object" &&
+                !Array.isArray(currentArg) &&
+                currentArg.kind === "var"
+              ? String(currentArg.value ?? "")
+              : String(currentArg ?? "");
+      return {
+        kind: "literal",
+        value: normalizedSelectValue,
+      };
+    }
+    return normalizeOperandDraft(
+      currentArg,
+      createDefaultFunctionArg(meta, index),
+    );
   });
   return {
     ...makeEmptyConditionDraft(),
     ...base,
     mode,
     comparator: String(base?.comparator || ">") || ">",
-    left: base?.left || { kind: "var", value: "bar.close" },
-    right: base?.right || { kind: "var", value: "levels.pd_mid" },
+    left: normalizeOperandDraft(base?.left, {
+      kind: "var",
+      value: "bar.close",
+    }),
+    right: normalizeOperandDraft(base?.right, {
+      kind: "var",
+      value: "levels.pd_mid",
+    }),
     functionName,
     args: nextArgs,
     target:
@@ -545,11 +612,20 @@ export function createEmptyRuleDraft(options = {}) {
   };
 }
 
+function inferRuleBiasFromName(name = "") {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (/\b(buy|bull|bullish)\b/.test(normalized)) return "bullish";
+  if (/\b(sell|bear|bearish)\b/.test(normalized)) return "bearish";
+  return "";
+}
+
 export function normalizeRuleDraft(rule = {}) {
   const name = normalizeRuleName(rule?.name || rule?.label, "Rule");
   const normalizedBias = normalizeRuleBias(rule?.bias);
+  const inferredBiasFromName = inferRuleBiasFromName(name);
   const inferredBias =
-    name === "Buy" ? "bullish" : name === "Sell" ? "bearish" : normalizedBias;
+    inferredBiasFromName || normalizedBias;
   return {
     id: String(rule?.id || createNodeId("rule")).trim() || createNodeId("rule"),
     name,
@@ -1083,12 +1159,7 @@ export default function RuleBuilder({
 
   return (
     <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        padding: 12,
-        background: "rgba(255,255,255,0.02)",
-      }}
+      className="form-item"
     >
       <div className="stack-layout" style={{ gap: 12 }}>
         {(showName || showMeta || onRemove) ? (

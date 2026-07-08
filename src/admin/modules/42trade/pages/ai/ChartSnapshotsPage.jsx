@@ -7894,7 +7894,7 @@ export default function ChartSnapshotsPage() {
                         return (
                           <article
                             key={`filled-${ref || `${t?.symbol}_${t?.created_at}`}`}
-                            className="snapshot-activity-card-v4 compact compact-list-card"
+                            className="snapshot-activity-card-v4 compact card-item"
                             style={{
                               cursor: "pointer",
                               fontSize: 10,
@@ -8045,7 +8045,7 @@ export default function ChartSnapshotsPage() {
                         return (
                           <article
                             key={`pending-${ref || `${t?.symbol}_${t?.created_at}`}`}
-                            className="snapshot-activity-card-v4 compact compact-list-card"
+                            className="snapshot-activity-card-v4 compact card-item"
                             style={{
                               cursor: "pointer",
                               fontSize: 10,

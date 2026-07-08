@@ -826,10 +826,6 @@ export function TradePlanEditor({
         >
           <div
             style={{
-              padding: "10px 12px",
-              background: "rgba(255,255,255,0.02)",
-              borderRadius: 8,
-              borderLeft: "2px solid var(--accent-soft)",
               fontSize: "12px",
               color: "var(--foreground)",
               lineHeight: 1.5,

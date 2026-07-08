@@ -709,22 +709,15 @@ export default function App() {
             ? userId === runtimeActiveUserId || (isLoggedInUser && isActingAsLoggedInUser)
             : isLoggedInUser;
           return (
-          <button
-            key={userId}
-            type="button"
-            className={`nav-item-button ${isSelected ? "active" : ""}`}
-            onClick={() => applyAdminSwitchUser(isLoggedInUser ? "" : userId)}
-            style={{
-              width: "100%",
-              textAlign: "left",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-            }}
-            title={`${userId} (${Array.isArray(user.roles) ? user.roles.join(", ") : "-"})`}
-          >
-            {formatAdminSwitchUserLabel(user)}
-          </button>
+            <button
+              key={userId}
+              type="button"
+              className={`nav-item-button ${isSelected ? "active" : ""}`}
+              onClick={() => applyAdminSwitchUser(isLoggedInUser ? "" : userId)}
+              title={`${userId} (${Array.isArray(user.roles) ? user.roles.join(", ") : "-"})`}
+            >
+              {formatAdminSwitchUserLabel(user)}
+            </button>
           );
         })}
       </NavDropdown>
@@ -748,7 +741,7 @@ export default function App() {
                   key={item.to}
                   to={item.to}
                   className={({ isActive }) =>
-                    `mobile-nav-link ${isActive ? "active" : ""}`
+                    `secondary-button nav-dropdown-trigger topbar-single-nav-link ${isActive ? "active" : ""}`
                   }
                   onClick={closeMobileNav}
                 >
@@ -762,7 +755,7 @@ export default function App() {
                 <NavLink
                   to={pay42MenuItems[0].to}
                   className={() =>
-                    `mobile-nav-link ${pay42MenuActive ? "active" : ""}`
+                    `secondary-button nav-dropdown-trigger topbar-single-nav-link ${pay42MenuActive ? "active" : ""}`
                   }
                 >
                   Pay
@@ -783,7 +776,7 @@ export default function App() {
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `mobile-nav-link ${isActive ? "active" : ""}`
+                      `secondary-button nav-dropdown-trigger topbar-single-nav-link ${isActive ? "active" : ""}`
                     }
                     onClick={closeMobileNav}
                   >
@@ -797,7 +790,7 @@ export default function App() {
                     <NavLink
                       to={tradesHomePath}
                       className={() =>
-                        `mobile-nav-link ${tradesMenuActive ? "active" : ""}`
+                        `secondary-button nav-dropdown-trigger topbar-single-nav-link ${tradesMenuActive ? "active" : ""}`
                       }
                     >
                       Trades
@@ -815,7 +808,7 @@ export default function App() {
             <NavLink
               to="/studio"
               className={() =>
-                `mobile-nav-link ${studioMenuActive ? "active" : ""}`
+                `secondary-button nav-dropdown-trigger topbar-single-nav-link ${studioMenuActive ? "active" : ""}`
               }
               onClick={closeMobileNav}
             >
@@ -884,14 +877,6 @@ export default function App() {
               <button
                 onClick={handleLogout}
                 className="nav-item-button danger-text"
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  background: "none",
-                  border: "none",
-                  color: "#ff4d4f",
-                  cursor: "pointer",
-                }}
               >
                 Logout
               </button>

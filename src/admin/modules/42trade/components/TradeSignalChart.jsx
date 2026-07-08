@@ -1767,23 +1767,6 @@ function formatSharedObjectLabel(type, rawLabel) {
   const labelText = String(rawLabel || "").trim();
   if (!labelText) return "";
   const normalized = labelText.replace(/^All\s+/i, "").trim();
-  const key = normalized.toLowerCase().replace(/[\s_-]+/g, " ");
-  if (key === "swing high") return "SH";
-  if (key === "swing low") return "SL";
-  if (key === "liquidity high") return "LQH";
-  if (key === "liquidity low") return "LQL";
-  if (key === "bullish engulfing") return "Bull Eng";
-  if (key === "bearish engulfing") return "Bear Eng";
-  if (key === "bullish pin bar") return "Bull Pin";
-  if (key === "bearish pin bar") return "Bear Pin";
-  if (key === "inside bar") return "Inside";
-  if (key === "outside bar") return "Outside";
-  if (key === "order block" || key === "ob") return "OB";
-  if (key === "fair value gap" || key === "fvg") return "FVG";
-  if (key === "previous day high" || key === "pdh") return "PDH";
-  if (key === "previous day low" || key === "pdl") return "PDL";
-  if (key === "support") return "Support";
-  if (key === "demand") return "Demand";
   return normalized;
 }
 
@@ -2144,7 +2127,7 @@ class TimeRangeBoxPrimitive {
                 if (self._label && x1 - x0 >= 20) {
                   ctx.setLineDash([]);
                   ctx.shadowBlur = 0;
-                  const fontPx = Math.max(6, Math.round(6 * pixelRatioY));
+                  const fontPx = Math.max(12, Math.round(12 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
                   ctx.textBaseline = "top";
                   const textWidth = ctx.measureText(self._label).width;
@@ -2259,7 +2242,7 @@ class EventTimeMarkerPrimitive {
 
                 if (self._text) {
                   ctx.fillStyle = self._color;
-                  const fontSize = Math.max(10, Math.round(10 * ratioY));
+                  const fontSize = Math.max(14, Math.round(14 * ratioY));
                   ctx.font = `${fontSize}px sans-serif`;
                   const labelY = markerY + Math.round(textOffsetY * ratioY);
                   const measuredTextWidth = Math.ceil(ctx.measureText(self._text).width);
@@ -2343,7 +2326,7 @@ class PriceTagPrimitive {
                 const pixelRatioY = scope.verticalPixelRatio || 1;
                 const yPos = Math.round(y * pixelRatioY);
                 if (yPos < 0 || yPos > r.height) return;
-                const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
+                const fontPx = Math.max(13, Math.round(13 * pixelRatioY));
                 const padX = Math.max(4, Math.round(4 * pixelRatioX));
                 const padY = Math.max(2, Math.round(2 * pixelRatioY));
                 ctx.save();
@@ -2450,7 +2433,7 @@ class HorizontalPriceLinePrimitive {
 
                 if (self._label) {
                   ctx.setLineDash([]);
-                  const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
+                  const fontPx = Math.max(13, Math.round(13 * pixelRatioY));
                   const padX = Math.max(4, Math.round(4 * pixelRatioX));
                   const padY = Math.max(2, Math.round(2 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
@@ -2590,7 +2573,7 @@ class HorizontalPriceSegmentPrimitive {
 
                 if (self._label && x1 - x0 >= 18) {
                   ctx.setLineDash([]);
-                  const fontPx = Math.max(9, Math.round(9 * pixelRatioY));
+                  const fontPx = Math.max(12, Math.round(12 * pixelRatioY));
                   const padX = Math.max(3, Math.round(3 * pixelRatioX));
                   const padY = Math.max(1, Math.round(1 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
@@ -4650,55 +4633,25 @@ export default function TradeSignalChart({
                   const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
                   const resolvedLineWidth =
                     lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
-                  if (lineScope === "segment" && Number.isFinite(startTimeSec)) {
-                    const intervalSec = Math.max(
-                      60,
-                      Number(intervalToSeconds(interval)) || 60,
-                    );
-                    const segmentEndTime = Number.isFinite(endTimeSec)
-                      ? Math.max(startTimeSec, endTimeSec)
-                      : Math.max(
-                          startTimeSec,
-                          (Number.isFinite(lastCandleTime) ? lastCandleTime : startTimeSec) +
-                            intervalSec * 2000,
-                        );
-                    try {
-                      const overlaySeries = chart.addSeries(LineSeries, {
+                  const linePrimitive = Number.isFinite(startTimeSec)
+                    ? new HorizontalPriceSegmentPrimitive({
+                        price,
+                        startTimeSec,
+                        endTimeSec,
+                        label,
                         color: lineColor,
-                        lineWidth: Math.max(1, resolvedLineWidth),
-                        lineStyle,
-                        priceLineVisible: false,
-                        lastValueVisible: false,
-                        crosshairMarkerVisible: false,
-                        pointMarkersVisible: false,
+                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                        lineWidth: resolvedLineWidth,
+                      })
+                    : new HorizontalPriceLinePrimitive({
+                        price,
+                        label,
+                        color: lineColor,
+                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                        lineWidth: resolvedLineWidth,
                       });
-                      overlaySeries.setData([
-                        { time: startTimeSec, value: price },
-                        { time: segmentEndTime, value: price },
-                      ]);
-                      sharedOverlayLineSeriesRef.current.push(overlaySeries);
-                    } catch {}
-                  } else {
-                    const linePrimitive = Number.isFinite(startTimeSec)
-                      ? new HorizontalPriceSegmentPrimitive({
-                          price,
-                          startTimeSec,
-                          endTimeSec,
-                          label,
-                          color: lineColor,
-                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
-                          lineWidth: resolvedLineWidth,
-                        })
-                      : new HorizontalPriceLinePrimitive({
-                          price,
-                          label,
-                          color: lineColor,
-                          lineDash: obj.line_style === "dot" ? [2, 2] : [],
-                          lineWidth: resolvedLineWidth,
-                        });
-                    candleSeries.attachPrimitive(linePrimitive);
-                    sharedOverlayPrimitivesRef.current.push(linePrimitive);
-                  }
+                  candleSeries.attachPrimitive(linePrimitive);
+                  sharedOverlayPrimitivesRef.current.push(linePrimitive);
                   if (lineScope !== "segment") {
                     const sharedLine = candleSeries.createPriceLine({
                       price,
@@ -4725,13 +4678,15 @@ export default function TradeSignalChart({
                   const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
                   const price = Number(obj.price ?? obj.anchorPrice);
                   if (Number.isFinite(price) && Number.isFinite(timeSec)) {
-                    markers.push({
-                      time: timeSec,
-                      position: String(obj.marker_position || "inBar"),
+                    const pointPrimitive = new EventTimeMarkerPrimitive({
+                      timeSec,
+                      price,
                       color: lineColor,
-                      shape: String(obj.marker_shape || "circle"),
-                      text: String(obj.marker_text ?? "").trim(),
+                      text: String(label || obj.marker_text || obj.type || "").trim(),
+                      placement: String(obj.marker_position || "belowBar"),
                     });
+                    candleSeries.attachPrimitive(pointPrimitive);
+                    sharedOverlayPrimitivesRef.current.push(pointPrimitive);
                   } else if (Number.isFinite(price)) {
                     const pointPrimitive = new HorizontalPriceLinePrimitive({
                         price,
@@ -5532,6 +5487,9 @@ export default function TradeSignalChart({
         position: "relative",
         width: "100%",
         height: wrapperHeight,
+        borderRadius: 0,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
       }}
     >
       {loading && !isReplayActive && (
@@ -5701,7 +5659,7 @@ export default function TradeSignalChart({
         style={{
           width: "100%",
           height: "100%",
-          borderRadius: "8px",
+          borderRadius: 0,
           overflow: "hidden",
           background: isLightUi ? uiTheme.surface : "#0d1117",
           position: "relative",

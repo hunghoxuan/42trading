@@ -473,6 +473,30 @@ function displayTfLabel(tf) {
   return String(tf || "");
 }
 
+function timeframeLookupKeys(tf) {
+  const raw = String(tf || "").trim().toLowerCase();
+  if (!raw) return [];
+  const keys = [raw];
+  if (raw === "1" || raw === "1m") keys.push("1", "1m");
+  else if (raw === "5" || raw === "5m") keys.push("5", "5m");
+  else if (raw === "15" || raw === "15m") keys.push("15", "15m");
+  else if (raw === "60" || raw === "1h") keys.push("60", "1h");
+  else if (raw === "240" || raw === "4h") keys.push("240", "4h");
+  else if (raw === "d" || raw === "1d" || raw === "day") keys.push("d", "1d", "day");
+  return [...new Set(keys)];
+}
+
+function getTimeframeValue(records, tf) {
+  const source = records && typeof records === "object" ? records : null;
+  if (!source) return undefined;
+  for (const key of timeframeLookupKeys(tf)) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      return source[key];
+    }
+  }
+  return undefined;
+}
+
 function toTradingViewSymbol(symRaw, provider = "") {
   const s = String(symRaw || "")
     .trim()
@@ -1213,6 +1237,84 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
   };
 }
 
+function collectStrategyHitLevelReferences(hit = {}) {
+  const levels = [];
+  const pushLevel = (value, source = "") => {
+    const nextValue = Number(value);
+    if (!Number.isFinite(nextValue)) return;
+    levels.push({
+      price: nextValue,
+      source: String(source || "").trim().toLowerCase(),
+    });
+  };
+
+  const latestArtifactPayload =
+    hit?.latestArtifact?.payload && typeof hit.latestArtifact.payload === "object"
+      ? hit.latestArtifact.payload
+      : {};
+  pushLevel(latestArtifactPayload.level, "artifact_level");
+
+  const artifacts = Array.isArray(hit?.artifacts) ? hit.artifacts : [];
+  artifacts.forEach((item) => {
+    const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
+    pushLevel(payload.level, "artifact_level");
+  });
+
+  const ruleMeta = hit?.ruleMeta && typeof hit.ruleMeta === "object" ? hit.ruleMeta : {};
+  pushLevel(ruleMeta.level, "rule_level");
+  const inferredLevels = Array.isArray(ruleMeta.inferred_levels) ? ruleMeta.inferred_levels : [];
+  inferredLevels.forEach((value) => pushLevel(value, "inferred_level"));
+
+  const deduped = [];
+  const seen = new Set();
+  levels.forEach((item) => {
+    const rounded = Number(item?.price);
+    const key = Number.isFinite(rounded) ? rounded.toFixed(8) : "";
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    deduped.push(item);
+  });
+  return deduped;
+}
+
+function strategyHitContextToChartObjects(hit = {}, fallbackTf = "") {
+  const timeSec = Number(hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
+  if (!Number.isFinite(timeSec) || timeSec <= 0) return [];
+  const tfKey = String(hit?.tf || fallbackTf || "").trim().toLowerCase();
+  const eventKey = String(hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase();
+  return collectStrategyHitLevelReferences(hit).map((level, index) => ({
+    id: String(
+      hit?.matchKey
+        ? `${hit.matchKey}:ctx:${index + 1}`
+        : `strategy-context-${eventKey}-${timeSec}-${index + 1}`,
+    ),
+    kind: "line",
+    type: "RULE_LEVEL",
+    label:
+      level.source === "inferred_level"
+        ? "Inferred level"
+        : "Rule level",
+    visible: true,
+    tf: tfKey,
+    color: "rgba(125, 211, 252, 0.65)",
+    price: Number(level.price),
+    time: timeSec,
+    anchorTimeMs: timeSec * 1000,
+    anchorPrice: Number(level.price),
+    line_style: "dot",
+    line_width: 0.2,
+    line_scope: "segment",
+    artifact_family: "strategy",
+    artifact_type: `${eventKey}_level`,
+    artifact_group: "strategy_context",
+    source_tf: tfKey,
+    artifact_payload: {
+      hit,
+      level_source: level.source,
+    },
+  }));
+}
+
 function artifactTimeframeColor(tf = "") {
   const label = artifactSourceTfLabel(tf);
   if (label === "1d") return "#facc15";
@@ -1225,10 +1327,10 @@ function artifactTimeframeColor(tf = "") {
 }
 
 function shouldShowArtifactSourceTf(sourceTf = "", chartTf = "") {
-  const sourceRank = tfRankForLatest(sourceTf);
-  const chartRank = tfRankForLatest(chartTf);
-  if (!Number.isFinite(sourceRank) || !Number.isFinite(chartRank)) return false;
-  return sourceRank >= chartRank;
+  const hasSourceTf = String(sourceTf || "").trim().length > 0;
+  const hasChartTf = String(chartTf || "").trim().length > 0;
+  if (!hasSourceTf || !hasChartTf) return true;
+  return true;
 }
 function defaultTpSlFromEntry(entry, direction) {
   const e = Number(entry);
@@ -2549,6 +2651,7 @@ export default function SymbolChart({
   externalChartData = null,
   chartStrategies = [],
   liveBars = true,
+  bootstrapLiveBarsOnMount = false,
 }) {
   const rootRef = useRef(null);
   const gridRef = useRef(null);
@@ -2720,15 +2823,26 @@ export default function SymbolChart({
   const [hoverInfo, setHoverInfo] = useState(null);
   const [activePlanGroup, setActivePlanGroup] = useState("P1");
   const [drawMode, setDrawMode] = useState(null);
-  const [liveBarsEnabled, setLiveBarsEnabled] = useState(liveBars !== false);
+  const shouldBootstrapLiveBars =
+    bootstrapLiveBarsOnMount === true && liveBars === false;
+  const [liveBarsEnabled, setLiveBarsEnabled] = useState(
+    shouldBootstrapLiveBars ? true : liveBars !== false,
+  );
+  const [hasCompletedLiveBarsBootstrap, setHasCompletedLiveBarsBootstrap] =
+    useState(!shouldBootstrapLiveBars);
+  const hasAutoExpandedBootstrapViewRef = useRef(false);
   const dragRef = useRef(null);
   const liveDebugMenuRef = useRef(null);
   const parentDrivenSelectionRef = useRef(null);
   const lastIncomingPlanGroupRef = useRef(null);
 
   useEffect(() => {
+    if (shouldBootstrapLiveBars && !hasCompletedLiveBarsBootstrap) {
+      setLiveBarsEnabled(true);
+      return;
+    }
     setLiveBarsEnabled(liveBars !== false);
-  }, [liveBars]);
+  }, [hasCompletedLiveBarsBootstrap, liveBars, shouldBootstrapLiveBars]);
 
   const [tvSettings, setTvSettings] = useState({
     sidebar: false,
@@ -2742,6 +2856,7 @@ export default function SymbolChart({
   const [snapshotGridModal, setSnapshotGridModal] = useState(null);
   const [capturingSnapshots, setCapturingSnapshots] = useState(false);
   const lastRenderableBarsByChartIdRef = useRef({});
+  const [artifactLoadStateByTf, setArtifactLoadStateByTf] = useState({});
   const [viewportCommandByChartId, setViewportCommandByChartId] = useState({});
   const [tvEmbedAutoloadEnabled, setTvEmbedAutoloadEnabled] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -2784,7 +2899,9 @@ export default function SymbolChart({
   useEffect(() => {
     loadedMarketUiConfigRef.current = false;
     viewportAutoFitKeyRef.current = "";
+    hasAutoExpandedBootstrapViewRef.current = false;
     lastRenderableBarsByChartIdRef.current = {};
+    setArtifactLoadStateByTf({});
     setLoadedTfs({});
     setSavedTfVisibleBars({});
     setManualTfVisibleBars({});
@@ -3309,6 +3426,7 @@ export default function SymbolChart({
 
   const replayFrozenChartDataRef = useRef(null);
   const frozenLiveBarsChartDataRef = useRef(null);
+  const lastChartDataWithBarsRef = useRef(null);
   const [replaySeedCaptured, setReplaySeedCaptured] = useState(false);
   const isGenericChartReplay = isReplayMode && !hasExternalReplayConfig;
   const canFreezeReplayChartData =
@@ -3332,20 +3450,24 @@ export default function SymbolChart({
     sessionPrefix,
     attachedSnapshotFiles,
     profile,
-    tradeSid,
+    tradeSid:
+      anchorToTradeTime || replayEnabledInChart ? tradeSid : "",
     endTimeSec: effectiveFetchEndTimeSec,
   });
   const liveChartData = effectiveExternalChartData || internalChartData;
   useEffect(() => {
-    if (liveBarsEnabled) {
-      frozenLiveBarsChartDataRef.current = null;
-      return;
-    }
-    if (activeDataMode !== "cache") return;
     if (!liveChartData) return;
     if (!chartDataHasBars(liveChartData)) return;
+    lastChartDataWithBarsRef.current = liveChartData;
+  }, [liveChartData]);
+  useEffect(() => {
+    if (liveBarsEnabled) return;
+    if (activeDataMode !== "cache") return;
+    const nextFrozenChartData =
+      chartDataHasBars(liveChartData) ? liveChartData : lastChartDataWithBarsRef.current;
+    if (!nextFrozenChartData) return;
     if (!frozenLiveBarsChartDataRef.current) {
-      frozenLiveBarsChartDataRef.current = liveChartData;
+      frozenLiveBarsChartDataRef.current = nextFrozenChartData;
     }
   }, [activeDataMode, liveBarsEnabled, liveChartData]);
   useEffect(() => {
@@ -3405,12 +3527,39 @@ export default function SymbolChart({
         .toLowerCase(),
     [timeframes],
   );
-  const primaryDebugBars = Array.isArray(master?.bars?.[primaryDebugTf])
-    ? master.bars[primaryDebugTf]
+  const primaryDebugBars = Array.isArray(getTimeframeValue(master?.bars, primaryDebugTf))
+    ? getTimeframeValue(master?.bars, primaryDebugTf)
     : [];
   const primaryDebugLastBarSec =
     Number(primaryDebugBars?.[primaryDebugBars.length - 1]?.time || 0) || 0;
-
+  const hasVisibleBars = useMemo(
+    () =>
+      (sortedTfs || []).some((tf) => {
+        const bars = Array.isArray(getTimeframeValue(master?.bars, tf))
+          ? getTimeframeValue(master?.bars, tf)
+          : [];
+        return bars.length > 0;
+      }),
+    [master, sortedTfs],
+  );
+  const hasVisibleSnapshots = useMemo(
+    () =>
+      (sortedTfs || []).some((tf) => {
+        return Boolean(getTimeframeValue(master?.snapshots, tf));
+      }),
+    [master, sortedTfs],
+  );
+  useEffect(() => {
+    if (!shouldBootstrapLiveBars || hasCompletedLiveBarsBootstrap) return;
+    if (!hasVisibleBars && primaryDebugLastBarSec <= 0) return;
+    setLiveBarsEnabled(false);
+    setHasCompletedLiveBarsBootstrap(true);
+  }, [
+    hasCompletedLiveBarsBootstrap,
+    hasVisibleBars,
+    primaryDebugLastBarSec,
+    shouldBootstrapLiveBars,
+  ]);
   useEffect(() => {
     if (!cleanSym) {
       lastRenderableBarsByChartIdRef.current = {};
@@ -3422,7 +3571,7 @@ export default function SymbolChart({
       const chartId = `${cleanSym}-${String(tf || "").trim().toLowerCase()}`;
       const tfKey = String(tf || "").trim().toLowerCase();
       if (!chartId || !tfKey) return;
-      const barsForTf = Array.isArray(master?.bars?.[tfKey]) ? master.bars[tfKey] : [];
+      const barsForTf = getTimeframeValue(master?.bars, tfKey) || [];
       if (barsForTf.length > 0) {
         nextCache[chartId] = barsForTf;
         changed = true;
@@ -3939,16 +4088,14 @@ export default function SymbolChart({
       (isReplayMode && canFreezeReplayChartData) ||
       !autoLoadOnMount ||
       !cleanSym ||
-      skipFetch
+      skipFetch ||
+      isCacheLikeMode
     ) {
       return;
     }
+    if (anchorToTradeTime && !isBacktestChartReplay) return;
     if (mode === "live" || pendingMode) return;
-    const hasBars = Object.values(master?.bars || {}).some(
-      (bars) => Array.isArray(bars) && bars.length > 0,
-    );
-    const hasSnapshots = Object.values(master?.snapshots || {}).some(Boolean);
-    if (hasBars || hasSnapshots || status === "LOADING") return;
+    if (hasVisibleBars || hasVisibleSnapshots || status === "LOADING") return;
     const loadKey = [
       cleanSym,
       mode,
@@ -3958,12 +4105,14 @@ export default function SymbolChart({
     ].join("|");
     if (autoLoadKeyRef.current === loadKey) return;
     autoLoadKeyRef.current = loadKey;
-    refresh({ force: false }).catch(() => {});
+    refresh({ force: true }).catch(() => {});
   }, [
     autoLoadOnMount,
     canFreezeReplayChartData,
     cleanSym,
     isReplayMode,
+    anchorToTradeTime,
+    isBacktestChartReplay,
     skipFetch,
     mode,
     pendingMode,
@@ -3974,9 +4123,12 @@ export default function SymbolChart({
     localBarsCount,
     isCacheLikeMode,
     refresh,
+    hasVisibleBars,
+    hasVisibleSnapshots,
   ]);
 
   const autoHydrateCacheKeyRef = useRef("");
+  const hasAttemptedAutoLoad = Boolean(autoLoadKeyRef.current);
   useEffect(() => {
     if (
       (isReplayMode && canFreezeReplayChartData) ||
@@ -3987,10 +4139,8 @@ export default function SymbolChart({
     ) {
       return;
     }
-    const hasBars = Object.values(master?.bars || {}).some(
-      (bars) => Array.isArray(bars) && bars.length > 0,
-    );
-    if (hasBars) return;
+    if (anchorToTradeTime && !isBacktestChartReplay) return;
+    if (hasVisibleBars) return;
     const cacheKey = [
       cleanSym,
       tradeSid,
@@ -4004,6 +4154,8 @@ export default function SymbolChart({
     cleanSym,
     canFreezeReplayChartData,
     isReplayMode,
+    anchorToTradeTime,
+    isBacktestChartReplay,
     skipFetch,
     mode,
     isCacheLikeMode,
@@ -4013,6 +4165,7 @@ export default function SymbolChart({
     timeframes,
     localBarsCount,
     refresh,
+    hasVisibleBars,
   ]);
 
   useEffect(() => {
@@ -4027,10 +4180,8 @@ export default function SymbolChart({
     ) {
       return;
     }
-    const hasBars = Object.values(master?.bars || {}).some(
-      (bars) => Array.isArray(bars) && bars.length > 0,
-    );
-    if (!hasBars) return;
+    if (anchorToTradeTime && !isBacktestChartReplay) return;
+    if (!hasVisibleBars) return;
     const refreshKey = [
       cleanSym,
       mode,
@@ -4045,6 +4196,8 @@ export default function SymbolChart({
     cleanSym,
     canFreezeReplayChartData,
     isReplayMode,
+    anchorToTradeTime,
+    isBacktestChartReplay,
     skipFetch,
     isCacheLikeMode,
     mode,
@@ -4055,6 +4208,7 @@ export default function SymbolChart({
     timeframes,
     localBarsCount,
     refresh,
+    hasVisibleBars,
   ]);
 
   const prevStatus = useRef(status);
@@ -4115,6 +4269,47 @@ export default function SymbolChart({
     if (!expectedLoadedTfKeys.length) return false;
     return expectedLoadedTfKeys.every((tf) => Number(loadedTfs?.[tf] || 0) > 0);
   }, [expectedLoadedTfKeys, loadedTfs]);
+
+  const areBootstrapArtifactsLoaded = useMemo(() => {
+    if (!expectedLoadedTfKeys.length) return false;
+    return expectedLoadedTfKeys.every((tf) => {
+      const loadedAt = artifactLoadStateByTf?.[tf]?.loadedAt;
+      return Number.isFinite(Number(loadedAt)) && Number(loadedAt) > 0;
+    });
+  }, [artifactLoadStateByTf, expectedLoadedTfKeys]);
+
+  useEffect(() => {
+    if (!shouldBootstrapLiveBars || !hasCompletedLiveBarsBootstrap) return;
+    if (liveBarsEnabled) return;
+    if (hasAutoExpandedBootstrapViewRef.current) return;
+    if (!areAllRenderedChartsLoaded) return;
+    if (!areBootstrapArtifactsLoaded) return;
+    const targetTfs = expectedLoadedTfKeys.filter(Boolean);
+    if (!targetTfs.length) return;
+    const timer = window.setTimeout(() => {
+      hasAutoExpandedBootstrapViewRef.current = true;
+      setViewportCommandByChartId((prev) => {
+        const next = { ...(prev || {}) };
+        targetTfs.forEach((tfKey, index) => {
+          const chartId = `${cleanSym}-${tfKey}`;
+          next[chartId] = {
+            action: "show_all_loaded",
+            nonce: Date.now() + index,
+          };
+        });
+        return next;
+      });
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [
+    areBootstrapArtifactsLoaded,
+    areAllRenderedChartsLoaded,
+    cleanSym,
+    expectedLoadedTfKeys,
+    hasCompletedLiveBarsBootstrap,
+    liveBarsEnabled,
+    shouldBootstrapLiveBars,
+  ]);
 
   useEffect(() => {
     if (!isCacheLikeMode || pendingMode || !liveBarsEnabled) return;
@@ -5114,6 +5309,26 @@ export default function SymbolChart({
         if (currentSig === nextSig) return prev;
         return { ...prev, [chartId]: resolvedObjects };
       });
+      if (scope === "loaded") {
+        setArtifactLoadStateByTf((prev) => {
+          const nextLoadedAt = Date.now();
+          const previous = prev?.[tfKey];
+          if (
+            previous?.requestKey === requestKey &&
+            Number(previous?.itemCount) === nextObjects.length
+          ) {
+            return prev;
+          }
+          return {
+            ...(prev || {}),
+            [tfKey]: {
+              requestKey,
+              itemCount: nextObjects.length,
+              loadedAt: nextLoadedAt,
+            },
+          };
+        });
+      }
       return response;
     },
     [artifactGroupVisibility, cleanSym, master?.bars, viewports],
@@ -5630,7 +5845,9 @@ export default function SymbolChart({
     liveBarsEnabled,
   ]);
 
-  const handleRefreshChartsAndArtifacts = useCallback(async () => {
+  const handleRefreshChartsAndArtifacts = useCallback(async (opts = {}) => {
+    const silent = opts?.silent === true;
+    const summaryToast = opts?.summaryToast !== false;
     const targetTfs = Array.isArray(requestedSortedTfs) ? requestedSortedTfs : [];
     if (!targetTfs.length) return;
     await Promise.allSettled(
@@ -5648,6 +5865,7 @@ export default function SymbolChart({
                 : undefined;
         return handleRefreshTf(tfKey, {
           force: true,
+          silent,
           ...(Number.isFinite(requestedBars) && requestedBars > 0
             ? { bars: requestedBars }
             : {}),
@@ -5668,11 +5886,13 @@ export default function SymbolChart({
               : null;
           return sum + (Array.isArray(items) ? items.length : 0);
         }, 0);
-        const tfList = formatTfListForToast(targetTfs);
-        showToast({
-          message: `${cleanSym || "symbol"} refreshed: ${tfList || `${targetTfs.length} TFs`} and artifacts${itemCount > 0 ? ` (${itemCount} items)` : ""}.`,
-          type: "success",
-        });
+        if (!silent && summaryToast) {
+          const tfList = formatTfListForToast(targetTfs);
+          showToast({
+            message: `${cleanSym || "symbol"} refreshed: ${tfList || `${targetTfs.length} TFs`} and artifacts${itemCount > 0 ? ` (${itemCount} items)` : ""}.`,
+            type: "success",
+          });
+        }
       }, 250);
     }
   }, [
@@ -5684,6 +5904,50 @@ export default function SymbolChart({
     savedTfVisibleBars,
     requestedSortedTfs,
     showToast,
+  ]);
+
+  useEffect(() => {
+    if (
+      (isReplayMode && canFreezeReplayChartData) ||
+      !autoLoadOnMount ||
+      !cleanSym ||
+      skipFetch ||
+      mode === "live" ||
+      pendingMode
+    ) {
+      return;
+    }
+    if (hasVisibleBars || hasVisibleSnapshots || status === "LOADING") return;
+    const loadKey = [
+      "fallback",
+      cleanSym,
+      mode,
+      tradeSid,
+      timeframes.join(","),
+      localBarsCount,
+    ].join("|");
+    if (autoLoadKeyRef.current === loadKey) return;
+    autoLoadKeyRef.current = loadKey;
+    handleRefreshChartsAndArtifacts({
+      silent: true,
+      summaryToast: false,
+    }).catch(() => {});
+  }, [
+    autoLoadOnMount,
+    canFreezeReplayChartData,
+    cleanSym,
+    handleRefreshChartsAndArtifacts,
+    isReplayMode,
+    localBarsCount,
+    master,
+    mode,
+    pendingMode,
+    skipFetch,
+    status,
+    timeframes,
+    tradeSid,
+    hasVisibleBars,
+    hasVisibleSnapshots,
   ]);
 
   const handleRecalcArtifacts = useCallback(async () => {
@@ -5801,7 +6065,10 @@ export default function SymbolChart({
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       if (!hits.length) return;
       output[String(tfKey || "").trim().toLowerCase()] = hits
-        .map((hit) => strategyHitToChartObject(hit, tfKey))
+        .flatMap((hit) => [
+          strategyHitToChartObject(hit, tfKey),
+          ...strategyHitContextToChartObjects(hit, tfKey),
+        ])
         .filter(Boolean);
     });
     return output;
@@ -5867,7 +6134,10 @@ export default function SymbolChart({
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       output[tf] = hits
-        .map((hit) => strategyHitToChartObject(hit, tf))
+        .flatMap((hit) => [
+          strategyHitToChartObject(hit, tf),
+          ...strategyHitContextToChartObjects(hit, tf),
+        ])
         .filter(Boolean);
     });
     return output;
@@ -7557,7 +7827,7 @@ export default function SymbolChart({
             {displayTfs.map((tf) => {
               const isLive = mode === "live";
               const isSvg = mode === "svg";
-              const context = master?.context?.[tf.toLowerCase()];
+              const context = getTimeframeValue(master?.context, tf);
               const chartId = `${cleanSym}-${String(tf).toLowerCase()}`;
               const manualVisibleBars = Number(manualTfVisibleBars?.[chartId]);
               const savedVisibleBars = Number(savedTfVisibleBars?.[chartId]);
@@ -7574,13 +7844,13 @@ export default function SymbolChart({
                 manualVisibleBars > 0
                   ? manualVisibleBars
                   : baseVisibleBars;
-              const barsForTf = master?.bars?.[tf.toLowerCase()]?.length
-                ? master.bars[tf.toLowerCase()]
+              const barsForTf = Array.isArray(getTimeframeValue(master?.bars, tf))
+                ? getTimeframeValue(master?.bars, tf)
                 : [];
               const createdAtSec = effectiveCreatedAtSec;
               const openedAtSec = effectiveOpenedAtSec;
               const closedAtSec = effectiveClosedAtSec;
-              const tradeFocusedBarsForTf =
+              const anchoredBarsForTf =
                 anchorToTradeTime &&
                 !isBacktestChartReplay &&
                 !(manualVisibleBars > 0) &&
@@ -7594,6 +7864,10 @@ export default function SymbolChart({
                       closedAtSec,
                       requestedBars: initialVisibleBars,
                     })
+                  : barsForTf;
+              const tradeFocusedBarsForTf =
+                Array.isArray(anchoredBarsForTf) && anchoredBarsForTf.length > 0
+                  ? anchoredBarsForTf
                   : barsForTf;
               const replayBarsForTf =
                 isBacktestChartReplay &&
@@ -7656,7 +7930,7 @@ export default function SymbolChart({
                 !Number.isFinite(closedAtSec) ||
                 (Number.isFinite(replayCurrentBarTimeSec) &&
                   replayCurrentBarTimeSec >= closedAtSec);
-              const hasBars = status !== "LOADING" && barsToRender.length > 0;
+              const hasBars = barsToRender.length > 0;
               const noData = !isLive && !hasBars && status !== "LOADING";
               const tfViewport = viewports[chartId] || null;
               const tfRange = barsRange(barsToRender);
@@ -8335,7 +8609,10 @@ export default function SymbolChart({
                             ? "No saved snapshots"
                             : "Loading chart data..."}
                       </div>
-                      {mode !== "live" && mode !== "snapshots" && status !== "LOADING" ? (
+                      {mode !== "live" &&
+                      mode !== "snapshots" &&
+                      status !== "LOADING" &&
+                      (!autoLoadOnMount || hasAttemptedAutoLoad) ? (
                         <button
                           type="button"
                           className="secondary-button"

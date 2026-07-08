@@ -936,6 +936,10 @@ export function evaluateChartStrategies({
         if (strategyEventFunctions.isArtifactResult(ruleResult)) {
           hit.artifacts = ruleResult.matches;
           hit.latestArtifact = ruleResult.latest || null;
+          hit.ruleMeta =
+            ruleResult?.meta && typeof ruleResult.meta === "object"
+              ? ruleResult.meta
+              : null;
         }
         const markerMeta = resolveStrategyMarkerMeta(
           hit.actions,

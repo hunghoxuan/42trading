@@ -1908,7 +1908,7 @@ export default function TradesPage() {
                   return (
                     <article
                       key={t.sid || t.id || `row-${i}`}
-                      className="card-flat compact-list-card"
+                      className="card-flat card-item"
                       onClick={() => {
                         const k = tradeKeyOf(t);
                         selectedTradeIdRef.current = k;

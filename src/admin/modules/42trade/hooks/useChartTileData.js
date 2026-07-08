@@ -583,14 +583,48 @@ export function useSymbolChartData({
                     out?.snapshot && typeof out.snapshot === "object"
                       ? out.snapshot
                       : null;
-                  if (snap) {
+                  if (Array.isArray(snap?.bars) && snap.bars.length > 0) {
                     out = {
                       ...out,
                       source: "realtime_bootstrap",
                       cached_at: Date.now(),
                     };
+                  } else {
+                    snap = null;
                   }
                 } catch {
+                  out = null;
+                  snap = null;
+                }
+                if (!Array.isArray(snap?.bars) || snap.bars.length === 0) {
+                  try {
+                    out = await api.brokerBars(sym, tf, requestedBars, null);
+                    const normalizedBars = normalizeBrokerHistoryBars(out?.bars);
+                    if (normalizedBars.length > 0) {
+                      snap = {
+                        bars: normalizedBars,
+                        bar_start: normalizedBars[0]?.time || null,
+                        bar_end: normalizedBars[normalizedBars.length - 1]?.time || null,
+                        last_price: Number(
+                          normalizedBars[normalizedBars.length - 1]?.close,
+                        ) || null,
+                        metadata:
+                          out?.metadata && typeof out.metadata === "object"
+                            ? out.metadata
+                            : null,
+                      };
+                      out = {
+                        ...out,
+                        source: out?.source || "broker_bars_latest",
+                        cached_at: out?.cached_at || Date.now(),
+                      };
+                    }
+                  } catch {
+                    out = null;
+                    snap = null;
+                  }
+                }
+                if (!Array.isArray(snap?.bars) || snap.bars.length === 0) {
                   out = await api.chartCandles(
                     sym,
                     tf,
@@ -1217,16 +1251,34 @@ export function useSymbolChartData({
           }
           if (hasAnchoredEndTime) {
             if (force && !isSocketHistoryRequest) {
-              Promise.resolve(
-                api.chartCandles(
+              try {
+                const forcedRefreshOut = await api.chartCandles(
                   sym,
                   tfKey,
                   requestedBars,
                   true,
                   tradeSid,
                   direction,
-                ),
-              ).catch(() => null);
+                );
+                const forcedRefreshSnap =
+                  forcedRefreshOut?.snapshot &&
+                  typeof forcedRefreshOut.snapshot === "object"
+                    ? forcedRefreshOut.snapshot
+                    : null;
+                if (Array.isArray(forcedRefreshSnap?.bars) && forcedRefreshSnap.bars.length > 0) {
+                  out = {
+                    ...forcedRefreshOut,
+                    source:
+                      forcedRefreshOut?.source ||
+                      "chart_candles_trade_copy",
+                    cached_at:
+                      forcedRefreshOut?.cached_at || Date.now(),
+                  };
+                  snap = forcedRefreshSnap;
+                }
+              } catch {
+                // Fall through to anchored bootstrap / broker history fallbacks.
+              }
             }
             if (!snap) {
               try {
@@ -1376,14 +1428,53 @@ export function useSymbolChartData({
                   out?.snapshot && typeof out.snapshot === "object"
                     ? out.snapshot
                     : null;
-                if (snap) {
+                if (Array.isArray(snap?.bars) && snap.bars.length > 0) {
                   out = {
                     ...out,
                     source: "realtime_bootstrap",
                     cached_at: Date.now(),
                   };
+                } else {
+                  snap = null;
                 }
               } catch {
+                out = null;
+                snap = null;
+              }
+              if (!Array.isArray(snap?.bars) || snap.bars.length === 0) {
+                try {
+                  out = await api.brokerBars(
+                    sym,
+                    tfKey,
+                    requestedBars,
+                    null,
+                  );
+                  const normalizedBars = normalizeBrokerHistoryBars(out?.bars);
+                  if (normalizedBars.length > 0) {
+                    snap = {
+                      bars: normalizedBars,
+                      bar_start: normalizedBars[0]?.time || null,
+                      bar_end: normalizedBars[normalizedBars.length - 1]?.time || null,
+                      last_price: Number(
+                        normalizedBars[normalizedBars.length - 1]?.close,
+                      ) || null,
+                      metadata:
+                        out?.metadata && typeof out.metadata === "object"
+                          ? out.metadata
+                          : null,
+                    };
+                    out = {
+                      ...out,
+                      source: out?.source || "broker_bars_latest",
+                      cached_at: out?.cached_at || Date.now(),
+                    };
+                  }
+                } catch {
+                  out = null;
+                  snap = null;
+                }
+              }
+              if (!Array.isArray(snap?.bars) || snap.bars.length === 0) {
                 out = await api.chartCandles(
                   sym,
                   tfKey,
@@ -1402,7 +1493,7 @@ export function useSymbolChartData({
                 ...out,
                 source: "socket_history",
                 cached_at: Date.now(),
-              };
+              }
             }
           }
           const tfData = {
@@ -1598,6 +1689,7 @@ export function useSymbolChartData({
                 }
                 return next;
               });
+              setError(null);
               setStatus("READY");
               return {
                 ...tfData,
@@ -1614,36 +1706,24 @@ export function useSymbolChartData({
                 [tfKey]: { ...tfData, created_at: Date.now() },
               };
             } else {
-              const reloaded = await fetchAll({ force: true });
-              const nextEntries =
-                reloaded?.entries && typeof reloaded.entries === "object"
-                  ? reloaded.entries
-                  : null;
-              if (nextEntries) {
-                setData(nextEntries);
-                lastChartDataRef.current = nextEntries;
-              } else {
-                chartFetchManager.set(sym, tfKey, tfData);
-                setData((prev) => {
-                  const next = {
-                    ...(prev || {}),
-                    [tfKey]: { ...tfData, created_at: Date.now() },
-                  };
-                  const aligned = alignLatestPriceAcrossTf(next, tfs);
-                  for (const tf of tfs) {
-                    const key = tfNorm(tf);
-                    if (Array.isArray(aligned?.[key]?.bars) && aligned[key].bars.length) {
-                      chartFetchManager.set(sym, key, aligned[key]);
-                    }
-                  }
-                  return aligned;
-                });
-                lastChartDataRef.current = {
-                  ...(lastChartDataRef.current || {}),
+              chartFetchManager.set(sym, tfKey, tfData);
+              setData((prev) => {
+                const next = {
+                  ...(prev || {}),
                   [tfKey]: { ...tfData, created_at: Date.now() },
                 };
-              }
+                const aligned = alignLatestPriceAcrossTf(next, tfs);
+                lastChartDataRef.current = aligned;
+                for (const tf of tfs) {
+                  const key = tfNorm(tf);
+                  if (Array.isArray(aligned?.[key]?.bars) && aligned[key].bars.length) {
+                    chartFetchManager.set(sym, key, aligned[key]);
+                  }
+                }
+                return aligned;
+              });
             }
+            setError(null);
             setStatus("READY");
           }
           if (hasAnchoredEndTime && tfData.bars.length === 0) {
@@ -1656,6 +1736,7 @@ export function useSymbolChartData({
               ...(lastChartDataRef.current || {}),
               [tfKey]: emptyEntry,
             };
+            setError(null);
             setStatus("READY");
           }
           return {

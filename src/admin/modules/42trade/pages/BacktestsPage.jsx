@@ -818,8 +818,8 @@ function buildBacktestsStrategyUrl(strategyId = "", hash = "#edit") {
   const normalizedId = String(strategyId || "").trim();
   const nextHash = String(hash || "#edit").trim() || "#edit";
   return normalizedId
-    ? `/backtests?strategy=${encodeURIComponent(normalizedId)}${nextHash}`
-    : `/backtests${nextHash}`;
+    ? `/trades/backtests?strategy=${encodeURIComponent(normalizedId)}${nextHash}`
+    : `/trades/backtests${nextHash}`;
 }
 
 function formatBacktestDateLabel(value) {
@@ -1005,7 +1005,7 @@ function TradeListCard({
     <div
       role="button"
       tabIndex={0}
-      className="secondary-button"
+      className={`backtests-item-card card-item${active ? " selected-item backtests-item-card--active-soft" : ""}`}
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -1014,15 +1014,13 @@ function TradeListCard({
       }}
       style={{
         width: "100%",
-        padding: "10px",
-        justifyContent: "flex-start",
-        textAlign: "left",
+        borderWidth: 1,
+        borderStyle: "solid",
         borderColor: active ? "var(--accent)" : "var(--border)",
         background: active ? "rgba(255,255,255,0.05)" : "transparent",
-        borderRadius: 6,
       }}
     >
-      <div className="stack-layout" style={{ gap: 2, width: "100%" }}>
+      <div className="stack-layout backtests-item-card__body backtests-item-card__body--trade" style={{ gap: 2, width: "100%" }}>
         <div
           style={{
             display: "flex",
@@ -1796,6 +1794,18 @@ export default function BacktestsPage() {
     }
   }
 
+  function handleOpenStrategyEditor(strategyOrId) {
+    const nextId = String(
+      strategyOrId?.id || strategyOrId?.key || strategyOrId || "",
+    ).trim();
+    if (!nextId) return;
+    setDraftStrategySeed(null);
+    setSelectedStrategyId(nextId);
+    setForm((prev) => ({ ...prev, strategy_key: nextId }));
+    setActiveTab("strategies");
+    navigate(buildBacktestsStrategyUrl(nextId, "#edit"), { replace: false });
+  }
+
   function handleRuleTesterRun() {
     const nextStrategy = createRuleTestStrategy({
       symbol: ruleTester.symbol,
@@ -1963,7 +1973,7 @@ export default function BacktestsPage() {
 
   const runnerControls = (
     <form onSubmit={handleRun}>
-      <div className="stack-layout" style={{ gap: 12 }}>
+      <div className="stack-layout form-item" style={{ gap: 12 }}>
         <div
           style={{
             display: "grid",
@@ -2136,7 +2146,7 @@ export default function BacktestsPage() {
               key={run.run_id}
               role="button"
               tabIndex={0}
-              className="secondary-button"
+              className={`backtests-item-card card-item${isActive ? " selected-item backtests-item-card--active" : ""}`}
               onClick={openRun}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
@@ -2144,15 +2154,13 @@ export default function BacktestsPage() {
                 openRun();
               }}
               style={{
-                textAlign: "left",
-                justifyContent: "flex-start",
-                padding: 10,
-                minHeight: 62,
+                borderWidth: 1,
+                borderStyle: "solid",
                 borderColor: isActive ? "var(--accent)" : "var(--border)",
                 background: isActive ? "var(--accent-soft)" : "transparent",
               }}
             >
-              <div className="stack-layout" style={{ gap: 2, width: "100%" }}>
+              <div className="stack-layout backtests-item-card__body backtests-item-card__body--run" style={{ gap: 2, width: "100%" }}>
                 <div
                   style={{
                     display: "flex",
@@ -2183,24 +2191,22 @@ export default function BacktestsPage() {
                   >
                     <button
                       type="button"
-                      className="secondary-button"
+                      className="backtests-item-card__action"
                       onClick={(event) => {
                         event.stopPropagation();
                         setActiveTab("backtest");
                         openRun();
                       }}
-                      style={{ minHeight: 24, padding: "0 8px", fontSize: 10 }}
                     >
                       &gt;&gt;
                     </button>
                     <button
                       type="button"
-                      className="danger-button"
+                      className="backtests-item-card__action backtests-item-card__action--danger"
                       onClick={async (event) => {
                         event.stopPropagation();
                         await handleDeleteRun(run);
                       }}
-                      style={{ minHeight: 24, padding: "0 8px", fontSize: 10 }}
                       title="Delete backtest"
                     >
                       X
@@ -2268,32 +2274,28 @@ export default function BacktestsPage() {
         return (
           <div
             key={`${String(id || "strategy").trim() || "strategy"}:${String(item.kind || item.status || "item").trim()}:${String(item.name || "").trim()}`}
-            className="secondary-button"
             role="button"
             tabIndex={0}
+            className={`backtests-item-card card-item${active ? " selected-item backtests-item-card--active" : ""}`}
             onClick={async () => {
-              handleStrategySelect(id);
+              handleOpenStrategyEditor(id);
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                handleStrategySelect(id);
+                handleOpenStrategyEditor(id);
               }
             }}
             style={{
-              textAlign: "left",
-              minHeight: 56,
-              padding: 10,
+              marginBottom: 3,
+              borderWidth: 1,
+              borderStyle: "solid",
               borderColor: active ? "var(--accent)" : "var(--border)",
               background: active ? "var(--accent-soft)" : "transparent",
-              display: "flex",
-              alignItems: "stretch",
-              justifyContent: "flex-start",
-              width: "100%",
-              cursor: "pointer",
             }}
           >
             <div
+              className="backtests-item-card__body backtests-item-card__body--strategy"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -2363,12 +2365,11 @@ export default function BacktestsPage() {
               </div>
               <button
                 type="button"
-                className="secondary-button"
+                className="backtests-item-card__action"
                 onClick={(event) => {
                   event.stopPropagation();
                   handleOpenStrategyBacktest(id);
                 }}
-                style={{ minHeight: 24, padding: "0 8px", fontSize: 10, flex: "0 0 auto" }}
                 title="Open Backtest tab"
               >
                 &gt;
@@ -2515,30 +2516,26 @@ export default function BacktestsPage() {
               <button
                 key={item.id}
                 type="button"
-                className="secondary-button"
+                className="backtests-item-card card-item"
                 onClick={() => handleRuleLibraryPick(item)}
-                style={{
-                  minHeight: 34,
-                  padding: "0 10px",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  fontSize: 11,
-                }}
                 title={`Load ${item.label}`}
               >
-                <span
-                  style={{
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {item.label}
-                </span>
-                <span className="minor-text" style={{ fontSize: 10, flex: "0 0 auto" }}>
-                  {item.source === "strategy" ? "Strategy" : "Popular"}
-                </span>
+                <div className="backtests-item-card__body backtests-item-card__body--rule">
+                  <span
+                    className="backtests-item-card__label"
+                    style={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.label}
+                  </span>
+                  <span className="minor-text backtests-item-card__tag" style={{ fontSize: 10, flex: "0 0 auto" }}>
+                    {item.source === "strategy" ? "Strategy" : "Popular"}
+                  </span>
+                </div>
               </button>
             ))
           ) : (
@@ -2559,7 +2556,7 @@ export default function BacktestsPage() {
         <>
           <ResponsivePanel
             showToggle={false}
-            border="always"
+            border="none"
             bodyClassName="stack-layout"
           >
             {runnerControls}
@@ -2832,6 +2829,8 @@ export default function BacktestsPage() {
                     key={`rules:${ruleTester.symbol}:${ruleTester.tf}:${ruleTesterBarsCount}:${ruleTestRunKey}`}
                     symbol={ruleTester.symbol}
                     timeframes={[ruleTester.tf]}
+                    liveBars={false}
+                    bootstrapLiveBarsOnMount
                     defaultMode="cache"
                     syncModeWithLocationHash={false}
                     initialGridCols={1}
@@ -2869,6 +2868,7 @@ export default function BacktestsPage() {
                     symbol={activeRun.symbol}
                     timeframes={[activeRun.tf]}
                     liveBars={false}
+                    bootstrapLiveBarsOnMount
                     defaultMode="cache"
                     syncModeWithLocationHash={false}
                     initialGridCols={1}
@@ -2906,7 +2906,7 @@ export default function BacktestsPage() {
                     }
                     trades={sortedActiveTrades}
                     animateTradeViewport
-                    anchorToTradeTime={true}
+                    anchorToTradeTime={Boolean(backtestReplayConfig?.enabled && backtestReplayConfig?.playing)}
                     onReplayActiveTradeChange={(tradeSid) => {
                       if (!tradeSid) return;
                       setReplayActiveTradeSid(String(tradeSid));
