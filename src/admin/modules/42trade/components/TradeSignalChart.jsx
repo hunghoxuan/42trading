@@ -701,8 +701,8 @@ function applyShowAllLoadedViewport(chart, candleSeries, candles = []) {
   }
   const lastIndex = candles.length - 1;
   const rightPaddingBars = Math.max(
-    2,
-    Math.min(24, Math.round(candles.length * 0.03)),
+    6,
+    Math.min(32, Math.round(candles.length * 0.08)),
   );
   try {
     candleSeries.priceScale().setAutoScale(true);
@@ -1306,6 +1306,42 @@ function toEpochSec(value) {
   return Math.floor(parsed / 1000);
 }
 
+function resolveReplayTradeCreatedSec(trade = {}) {
+  return (
+    (Number.isFinite(Number(trade?.createdAtSec)) && Number(trade.createdAtSec) > 0
+      ? Number(trade.createdAtSec)
+      : null) ??
+    toEpochSec(trade?.createdAt) ??
+    toEpochSec(trade?.signal_bar_time) ??
+    toEpochSec(trade?.signalBarTime) ??
+    (Number.isFinite(Number(trade?.openedAtSec)) && Number(trade.openedAtSec) > 0
+      ? Number(trade.openedAtSec)
+      : null) ??
+    toEpochSec(trade?.openedAt) ??
+    null
+  );
+}
+
+function resolveReplayTradeOpenSec(trade = {}) {
+  return (
+    (Number.isFinite(Number(trade?.openedAtSec)) && Number(trade.openedAtSec) > 0
+      ? Number(trade.openedAtSec)
+      : null) ??
+    toEpochSec(trade?.openedAt) ??
+    resolveReplayTradeCreatedSec(trade)
+  );
+}
+
+function resolveReplayTradeCloseSec(trade = {}) {
+  return (
+    (Number.isFinite(Number(trade?.closedAtSec)) && Number(trade.closedAtSec) > 0
+      ? Number(trade.closedAtSec)
+      : null) ??
+    toEpochSec(trade?.closedAt) ??
+    resolveReplayTradeOpenSec(trade)
+  );
+}
+
 function lwTimeToEpochSec(value) {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.floor(value);
@@ -1848,6 +1884,18 @@ function resolveEventMarkerTimeSec(
   if (target < minTime - outsideTolerance || target > maxTime + outsideTolerance) {
     return null;
   }
+  for (let index = 0; index < candles.length; index += 1) {
+    const currentBarTime = Number(candles[index]?.time);
+    if (!Number.isFinite(currentBarTime)) continue;
+    const nextBarTime = Number(candles[index + 1]?.time);
+    const effectiveBarEnd =
+      Number.isFinite(nextBarTime) && nextBarTime > currentBarTime
+        ? nextBarTime
+        : currentBarTime + intervalSec;
+    if (target >= currentBarTime && target < effectiveBarEnd) {
+      return currentBarTime;
+    }
+  }
   let nearestBarTime = null;
   let nearestDistance = Infinity;
   for (const candle of candles) {
@@ -1860,7 +1908,7 @@ function resolveEventMarkerTimeSec(
     }
   }
   if (!Number.isFinite(nearestBarTime)) return null;
-  const snapTolerance = Math.max(60, Math.round(intervalSec * 0.75));
+  const snapTolerance = Math.max(60, intervalSec);
   return nearestDistance <= snapTolerance ? nearestBarTime : null;
 }
 
@@ -3023,6 +3071,144 @@ export default function TradeSignalChart({
     }
     sharedOverlayPrimitivesRef.current = [];
   }, []);
+
+  const formatTradePnlMarkerText = useCallback((value, fallback = "") => {
+    const pnl = Number(value);
+    if (!Number.isFinite(pnl)) return String(fallback || "").trim() || "Closed";
+    const absValue = Math.abs(pnl);
+    const decimals = absValue >= 10 ? 0 : absValue >= 1 ? 1 : 2;
+    return `${pnl > 0 ? "+" : pnl < 0 ? "-" : ""}${absValue.toFixed(decimals)}`;
+  }, []);
+
+  const buildTimelineTradeMarkers = useCallback(
+    (candles = []) => {
+      if (
+        isReplayActive ||
+        !Array.isArray(candles) ||
+        !candles.length ||
+        !normalizedTrades.length
+      ) {
+        return [];
+      }
+      const selectedSid = String(selectedTradeSid || "").trim();
+      const replayNowSec = Number(replayClockTimeSec);
+      const markers = [];
+      for (const trade of normalizedTrades) {
+        if (selectedSid && String(trade?.sid || "") === selectedSid) continue;
+        const tradeSide = String(
+          trade?.side ||
+            inferTradeSide({
+              side: trade?.side,
+              action: trade?.action,
+              entryPrice: trade?.entry,
+              tpPrice: trade?.tp,
+              slPrice: trade?.sl,
+            }) ||
+            "BUY",
+        )
+          .trim()
+          .toUpperCase();
+        const openedSec = resolveReplayTradeOpenSec(trade);
+        if (
+          Number.isFinite(openedSec) &&
+          (!isReplayActive ||
+            !Number.isFinite(replayNowSec) ||
+            replayNowSec >= Number(openedSec))
+        ) {
+          const openedTs = resolveEventMarkerTimeSec(candles, openedSec, interval);
+          if (Number.isFinite(openedTs)) {
+            markers.push({
+              time: openedTs,
+              position: tradeSide === "SELL" ? "aboveBar" : "belowBar",
+              color: TRADE_MARKER_YELLOW,
+              shape: tradeSide === "SELL" ? "arrowDown" : "arrowUp",
+              text: tradeSide === "SELL" ? "S" : "B",
+            });
+          }
+        }
+        const closedSec = resolveReplayTradeCloseSec(trade);
+        const hasClosedEvent = Boolean(
+          (Number.isFinite(Number(trade?.closedAtSec)) &&
+            Number(trade?.closedAtSec) > 0) ||
+            trade?.closedAt ||
+            String(trade?.closeStatus || "").trim(),
+        );
+        if (
+          hasClosedEvent &&
+          Number.isFinite(closedSec) &&
+          (!isReplayActive ||
+            !Number.isFinite(replayNowSec) ||
+            replayNowSec >= Number(closedSec))
+        ) {
+          const closedTs = resolveEventMarkerTimeSec(candles, closedSec, interval);
+          if (Number.isFinite(closedTs)) {
+            const closeBadge = resolveTradeBadgeMeta({
+              side: tradeSide,
+              closeStatus: trade?.closeStatus,
+              pnlRealized: trade?.pnlRealized,
+              kind: "close",
+            });
+            const closeText = formatTradePnlMarkerText(
+              trade?.pnlRealized,
+              closeBadge.label || "Closed",
+            );
+            markers.push({
+              time: closedTs,
+              position:
+                Number(trade?.pnlRealized) > 0
+                  ? "aboveBar"
+                  : Number(trade?.pnlRealized) < 0
+                    ? "belowBar"
+                    : "inBar",
+              color: closeBadge.color,
+              shape: "circle",
+              text: closeText,
+            });
+          }
+        }
+      }
+      return markers;
+    },
+    [
+      formatTradePnlMarkerText,
+      interval,
+      isReplayActive,
+      normalizedTrades,
+      replayClockTimeSec,
+      selectedTradeSid,
+    ],
+  );
+
+  const applyTimelineTradeMarkers = useCallback(
+    (candles = []) => {
+      const candleSeries = seriesRef.current;
+      if (!candleSeries) return;
+      const markers = buildTimelineTradeMarkers(candles);
+      if (!markers.length) {
+        if (seriesMarkersRef.current) {
+          try {
+            seriesMarkersRef.current.setMarkers([]);
+          } catch {}
+          try {
+            seriesMarkersRef.current.detach();
+          } catch {}
+        }
+        seriesMarkersRef.current = null;
+        return;
+      }
+      if (seriesMarkersRef.current) {
+        try {
+          seriesMarkersRef.current.setMarkers(markers);
+          return;
+        } catch {}
+        try {
+          seriesMarkersRef.current.detach();
+        } catch {}
+      }
+      seriesMarkersRef.current = createSeriesMarkers(candleSeries, markers);
+    },
+    [buildTimelineTradeMarkers],
+  );
 
   const renderSharedOverlayArtifacts = useCallback(
     ({
@@ -4488,6 +4674,23 @@ export default function TradeSignalChart({
           currentBarsRef.current = candles;
 
           if (!candles.length) {
+            currentBarsRef.current = [];
+            clearPlanPriceLines();
+            clearTradeOverlayArtifacts();
+            clearSharedOverlayArtifacts();
+            clearCandleHoverPriceLine();
+            clearIndicatorHoverPriceLines();
+            try {
+              candleSeries.setData([]);
+            } catch {}
+            Object.values(indicatorSeriesRefs.current || {}).forEach((series) => {
+              if (!series) return;
+              try {
+                series.setData([]);
+              } catch {}
+            });
+            indicatorDataRef.current = {};
+            setIndicatorValues({});
             console.warn(
               `No chart bars available for ${String(symbol || "").toUpperCase() || "symbol"} ${String(interval || "").trim() || "timeframe"} from historicalData, snapshot, or cache.`,
             );
@@ -4605,7 +4808,6 @@ export default function TradeSignalChart({
             updatePlanOverlays(snapshot);
 
             // --- MARKERS: creation/open/close markers ---
-            const markers = [];
             const createdTs = resolveEventMarkerTimeSec(
               candles,
               normalizedCreatedAtEpochSec,
@@ -4836,9 +5038,7 @@ export default function TradeSignalChart({
               bars: candles,
             });
 
-            if (markers.length > 0) {
-              seriesMarkersRef.current = createSeriesMarkers(candleSeries, markers);
-            }
+            applyTimelineTradeMarkers(candles);
 
             const enableLevelDrag =
               typeof onPlanLevelChange === "function" &&
@@ -5334,7 +5534,9 @@ export default function TradeSignalChart({
     renderTradeOverlays(candles, [], {
       canRenderTradeOverlay: canRenderTradeOverlay === true,
     });
+    applyTimelineTradeMarkers(candles);
   }, [
+    applyTimelineTradeMarkers,
     clearTradeOverlayArtifacts,
     historicalDataSignature,
     side,

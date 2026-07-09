@@ -1214,6 +1214,41 @@ function compareReplayTradeOrder(left, right) {
   return String(left?.sid || "").localeCompare(String(right?.sid || ""));
 }
 
+function tradeWindowBufferBarsForTf(tf) {
+  const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
+  if (tfSeconds >= 24 * 60 * 60) return 2;
+  if (tfSeconds >= 4 * 60 * 60) return 6;
+  if (tfSeconds >= 60 * 60) return 10;
+  if (tfSeconds >= 15 * 60) return 16;
+  if (tfSeconds >= 5 * 60) return 24;
+  return 40;
+}
+
+function resolveTradeRunStartSec(trades = []) {
+  let earliestSec = null;
+  for (const trade of Array.isArray(trades) ? trades : []) {
+    const startSec =
+      resolveReplayTradeOpenSec(trade) ?? resolveReplayTradeCreatedSec(trade);
+    if (!Number.isFinite(Number(startSec)) || Number(startSec) <= 0) continue;
+    if (earliestSec == null || Number(startSec) < earliestSec) {
+      earliestSec = Number(startSec);
+    }
+  }
+  return earliestSec;
+}
+
+function resolveTradeRunEndSec(trades = [], fallbackNowSec = null) {
+  let latestSec = null;
+  for (const trade of Array.isArray(trades) ? trades : []) {
+    const endSec = resolveReplayWindowEndSec(trade, fallbackNowSec);
+    if (!Number.isFinite(Number(endSec)) || Number(endSec) <= 0) continue;
+    if (latestSec == null || Number(endSec) > latestSec) {
+      latestSec = Number(endSec);
+    }
+  }
+  return latestSec;
+}
+
 function barsRange(bars) {
   const arr = Array.isArray(bars) ? bars : [];
   if (!arr.length) return null;
@@ -3762,6 +3797,20 @@ export default function SymbolChart({
   const shouldLoadTradeFocusedData = Boolean(
     tradeSid && (showEventMarkers || anchorToTradeTime || replayEnabledInChart),
   );
+  const tradeRunStartTimeSec = useMemo(
+    () =>
+      showEventMarkers && normalizedTrades.length > 0
+        ? resolveTradeRunStartSec(normalizedTrades)
+        : null,
+    [normalizedTrades, showEventMarkers],
+  );
+  const tradeRunEndTimeSec = useMemo(
+    () =>
+      showEventMarkers && normalizedTrades.length > 0
+        ? resolveTradeRunEndSec(normalizedTrades, Math.floor(Date.now() / 1000))
+        : null,
+    [normalizedTrades, showEventMarkers],
+  );
   const selectedTradeViewportEndTimeSec = useMemo(() => {
     if (!anchorToTradeTime) return null;
     return resolveTradeViewportEndTimeSec({
@@ -3781,6 +3830,9 @@ export default function SymbolChart({
     timeframes,
   ]);
   const selectedTradeFetchEndTimeSec = useMemo(() => {
+    if (Number.isFinite(tradeRunEndTimeSec) && tradeRunEndTimeSec > 0) {
+      return Number(tradeRunEndTimeSec);
+    }
     if (!shouldLoadTradeFocusedData) return null;
     return resolveTradeFetchEndTimeSec({
       createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
@@ -3795,6 +3847,7 @@ export default function SymbolChart({
     normalizedSelectedTrade?.createdAt,
     normalizedSelectedTrade?.openedAt,
     openedAt,
+    tradeRunEndTimeSec,
   ]);
   const selectedTradeFetchBarsCountByTf = useMemo(() => {
     if (!shouldLoadTradeFocusedData) return null;
@@ -3806,6 +3859,23 @@ export default function SymbolChart({
         Number(localBarsCount) > 0
           ? Number(localBarsCount)
           : visibleBarsDefaultForTf(masterChartConfig, tf);
+      const tfSeconds = Math.max(1, Number(timeframeToSeconds(tfKey)) || 60);
+      const bufferBars = tradeWindowBufferBarsForTf(tfKey);
+      if (
+        Number.isFinite(tradeRunStartTimeSec) &&
+        tradeRunStartTimeSec > 0 &&
+        Number.isFinite(tradeRunEndTimeSec) &&
+        tradeRunEndTimeSec > 0 &&
+        tradeRunEndTimeSec >= tradeRunStartTimeSec
+      ) {
+        const bufferSec = tfSeconds * bufferBars;
+        const fetchStartSec = Math.max(0, Number(tradeRunStartTimeSec) - bufferSec);
+        const fetchEndSec = Number(tradeRunEndTimeSec) + bufferSec;
+        const spanBars =
+          Math.ceil(Math.max(0, fetchEndSec - fetchStartSec) / tfSeconds) + 1;
+        next[tfKey] = Math.max(requestedBarsBase, spanBars);
+        continue;
+      }
       const anchoredBars = resolveTradeFetchBarsCount({
         createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
         openedAt: normalizedSelectedTrade?.openedAt ?? openedAt,
@@ -3828,6 +3898,8 @@ export default function SymbolChart({
     normalizedSelectedTrade?.openedAt,
     openedAt,
     timeframes,
+    tradeRunEndTimeSec,
+    tradeRunStartTimeSec,
   ]);
   const effectiveBarsCountByTf = useMemo(() => {
     const next = {
@@ -4087,7 +4159,9 @@ export default function SymbolChart({
   const resolvedChartData =
     canFreezeReplayChartData
       ? replayFrozenChartDataRef.current
-      : !effectiveLiveBarsEnabled &&
+      : !replayEnabledInChart &&
+          !isReplayMode &&
+          !effectiveLiveBarsEnabled &&
           activeDataMode === "cache" &&
           frozenLiveBarsChartDataRef.current
         ? frozenLiveBarsChartDataRef.current
@@ -4633,6 +4707,10 @@ export default function SymbolChart({
     if (!isBacktestChartReplay) return;
     onReplayActiveTradeChangeRef.current(activeReplayTrade?.sid || "");
   }, [activeReplayTrade?.sid, isBacktestChartReplay]);
+  const lastTradeViewportFocusSidRef = useRef("");
+  useEffect(() => {
+    lastTradeViewportFocusSidRef.current = "";
+  }, [cleanSym, tradeLabel]);
 
   const effectiveOverlayTrade =
     replayEnabledInChart
@@ -4720,6 +4798,35 @@ export default function SymbolChart({
   const disableViewportPersistence = Boolean(
     anchorToTradeTime && !isBacktestChartReplay,
   );
+
+  useEffect(() => {
+    if (isBacktestChartReplay || !showEventMarkers) return;
+    const selectedSid = String(effectiveTradeSid || "").trim();
+    if (!selectedSid) return;
+    if (lastTradeViewportFocusSidRef.current === selectedSid) return;
+    lastTradeViewportFocusSidRef.current = selectedSid;
+    const tfKeys = (Array.isArray(timeframes) ? timeframes : [])
+      .map((tf) => String(tf || "").trim().toLowerCase())
+      .filter(Boolean);
+    if (!cleanSym || !tfKeys.length) return;
+    setViewportCommandByChartId((prev) => {
+      const next = { ...(prev || {}) };
+      const nonceBase = Date.now();
+      tfKeys.forEach((tfKey, index) => {
+        next[`${cleanSym}-${tfKey}`] = {
+          action: "fit_trade",
+          nonce: nonceBase + index,
+        };
+      });
+      return next;
+    });
+  }, [
+    cleanSym,
+    effectiveTradeSid,
+    isBacktestChartReplay,
+    showEventMarkers,
+    timeframes,
+  ]);
 
   const barsCachedAt = useMemo(() => {
     const hasBars = Object.values(master?.bars || {}).some(
@@ -8766,6 +8873,10 @@ export default function SymbolChart({
                 Array.isArray(anchoredBarsForTf) && anchoredBarsForTf.length > 0
                   ? anchoredBarsForTf
                   : barsForTf;
+              const shouldRenderFullTradeRun =
+                showEventMarkers &&
+                normalizedTrades.length > 1 &&
+                !isBacktestChartReplay;
               const replayBarsForTf =
                 isBacktestChartReplay &&
                 Array.isArray(replayBarsByTf?.[tf]) &&
@@ -8773,8 +8884,14 @@ export default function SymbolChart({
                   ? replayBarsByTf[tf]
                   : tradeFocusedBarsForTf;
               const tradeChartBarsForTf = resolveTradeChartRenderBars({
-                loadedBars: barsForTf,
-                focusedBars: tradeFocusedBarsForTf,
+                loadedBars:
+                  shouldRenderFullTradeRun && Array.isArray(barsForTf)
+                    ? barsForTf
+                    : barsForTf,
+                focusedBars:
+                  shouldRenderFullTradeRun && Array.isArray(barsForTf)
+                    ? barsForTf
+                    : tradeFocusedBarsForTf,
                 replayBars: replayBarsForTf,
                 replayActive: isBacktestChartReplay,
               });
@@ -8799,7 +8916,12 @@ export default function SymbolChart({
                 ? Number(replayClockTimeSec) || null
                 : null;
               const tradeDisplayEventSec =
-                createdAtSec || openedAtSec || closedAtSec || null;
+                (Number.isFinite(openedAtSec) && openedAtSec > 0
+                  ? openedAtSec
+                  : null) ||
+                createdAtSec ||
+                closedAtSec ||
+                null;
               const tradeObjectsVisible =
                 !isBacktestChartReplay ||
                 !Number.isFinite(replayCurrentBarTimeSec) ||

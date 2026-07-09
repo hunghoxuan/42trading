@@ -726,6 +726,7 @@ export function useSymbolChartData({
       tfs,
       mode,
       barsCount,
+      normalizedBarsCountByTf,
       provider,
       sessionPrefix,
       profile,
