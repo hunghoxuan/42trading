@@ -8779,6 +8779,7 @@ export default function SymbolChart({
                           isBacktestChartReplay ? false : animateTradeViewport
                         }
                         autoFitNonce={viewportAutoFitNonce}
+                        preserveViewportOnBarsChange={!isBacktestChartReplay}
                         preferTradeAnchoredViewport={preferTradeAnchoredViewport}
                         showPrimaryPlan={overlays.plan1}
                         showExtraPlans={overlays.plan2}
@@ -8795,13 +8796,17 @@ export default function SymbolChart({
                         onCrosshairSync={
                           isCacheLikeMode ? handleCrosshairSync : undefined
                         }
-                        onBarsLoaded={handleBarsLoaded}
+                        onBarsLoaded={
+                          isBacktestChartReplay ? undefined : handleBarsLoaded
+                        }
                         sharedObjects={sharedChartObjects}
                         onContextRequest={
                           isCacheLikeMode ? handleContextRequest : undefined
                         }
                         onViewportChange={
-                          isCacheLikeMode && !disableViewportPersistence
+                          !isBacktestChartReplay &&
+                          isCacheLikeMode &&
+                          !disableViewportPersistence
                             ? handleViewportChange
                             : undefined
                         }
