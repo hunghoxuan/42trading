@@ -248,8 +248,8 @@ export default function Pay42OrdersPage({ authUser }) {
                 <Link className="secondary-button" to="/admin/42pay/topup">
                   Top Up Wallet
                 </Link>
-                <Link className="secondary-button" to="/admin/42pay/offers">
-                  Browse Offers
+                <Link className="secondary-button" to="/admin/42pay/dashboard">
+                  Points
                 </Link>
               </div>
             </div>

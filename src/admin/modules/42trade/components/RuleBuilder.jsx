@@ -53,7 +53,7 @@ const COMPARATOR_OPTIONS = (Array.isArray(strategyFunctions?.operators)
   .filter((item) => item.value);
 
 const RULE_BIAS_OPTIONS = [
-  { value: "neutral", label: "Neutral" },
+  { value: "neutral", label: "Auto" },
   { value: "bullish", label: "Bullish" },
   { value: "bearish", label: "Bearish" },
 ];
@@ -90,6 +90,7 @@ const BIAS_ARG_OPTIONS = [
 
 const TF_ARG_OPTIONS = [
   { value: "", label: "Current TF" },
+  { value: "all", label: "All TFs" },
   { value: "1", label: "1m" },
   { value: "5", label: "5m" },
   { value: "15", label: "15m" },
@@ -124,6 +125,7 @@ function normalizeRuleBias(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
   if (["bull", "bullish", "buy", "long"].includes(normalized)) return "bullish";
   if (["bear", "bearish", "sell", "short"].includes(normalized)) return "bearish";
+  if (["auto", "both", "neutral", "any"].includes(normalized)) return "neutral";
   return "neutral";
 }
 
@@ -538,10 +540,18 @@ function functionArgKey(functionMeta = null, index = 0) {
     .toLowerCase();
 }
 
-function functionArgSelectOptions(functionMeta = null, index = 0) {
+function functionArgSelectOptions(functionMeta = null, index = 0, currentTimeframeLabel = "") {
   const key = functionArgKey(functionMeta, index);
   if (key === "bias") return BIAS_ARG_OPTIONS;
-  if (key === "tf") return TF_ARG_OPTIONS;
+  if (key === "tf") {
+    const nextLabel = String(currentTimeframeLabel || "").trim();
+    if (!nextLabel) return TF_ARG_OPTIONS;
+    return TF_ARG_OPTIONS.map((option, optionIndex) =>
+      optionIndex === 0
+        ? { ...option, label: `Current TF (${nextLabel})` }
+        : option,
+    );
+  }
   return [];
 }
 
@@ -679,6 +689,7 @@ function RuleConditionEditor({
   onChange,
   onRemove,
   variableOptions,
+  currentTimeframeLabel = "",
 }) {
   const draft = ensureConditionDraft(node);
   const isWrapperMode = WRAPPER_FUNCTION_MODES.has(draft.mode);
@@ -774,7 +785,11 @@ function RuleConditionEditor({
               </div>
             ) : functionArgs.map((arg, index) => {
               const argMeta = functionArgMeta(functionMeta, index);
-              const argOptions = functionArgSelectOptions(functionMeta, index);
+              const argOptions = functionArgSelectOptions(
+                functionMeta,
+                index,
+                currentTimeframeLabel,
+              );
               if (argOptions.length) {
                 return (
                   <InputComboSelect
@@ -880,6 +895,7 @@ function RuleTreeEditor({
   onRemove,
   variableOptions,
   depth = 0,
+  currentTimeframeLabel = "",
 }) {
   if (!node) return null;
   if (node.type === "condition") {
@@ -889,6 +905,7 @@ function RuleTreeEditor({
         onChange={onChange}
         onRemove={onRemove}
         variableOptions={variableOptions}
+        currentTimeframeLabel={currentTimeframeLabel}
       />
     );
   }
@@ -950,6 +967,7 @@ function RuleTreeEditor({
                 node={child}
                 variableOptions={variableOptions}
                 depth={depth + 1}
+                currentTimeframeLabel={currentTimeframeLabel}
                 onChange={(nextChild) =>
                   onChange(updateTreeNode(node, child.id, () => nextChild))
                 }
@@ -1142,6 +1160,7 @@ export default function RuleBuilder({
   showName = true,
   showMeta = true,
   showActions = true,
+  currentTimeframeLabel = "",
 }) {
   const normalizedRule = useMemo(() => normalizeRuleDraft(rule), [rule]);
   const tree = useMemo(
@@ -1239,6 +1258,7 @@ export default function RuleBuilder({
           <RuleTreeEditor
             node={tree}
             variableOptions={variableOptions}
+            currentTimeframeLabel={currentTimeframeLabel}
             onChange={(nextNode) =>
               updateRule({ when: buildExpressionFromVisualNode(nextNode) || { and: [] } })
             }

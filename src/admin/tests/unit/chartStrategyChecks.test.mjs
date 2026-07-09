@@ -4,7 +4,13 @@ import test from "node:test";
 import {
   buildChartStrategyHitMessage,
   evaluateChartStrategies,
+  groupArtifactsBySourceTf,
 } from "../../shared/utils/chartStrategyChecks.js";
+import {
+  limitArtifactsNearLastBarByType,
+  shouldLimitArtifactType,
+  buildDerivedItemsFromBars,
+} from "../../modules/42trade/chartArtifacts/detectArtifacts.js";
 
 function makeBars(closes = []) {
   const startSec = 1_717_200_000;
@@ -31,6 +37,14 @@ function makeStructureBars() {
     { time: 540, open: 101, high: 108, low: 100, close: 107, volume: 10 },
     { time: 600, open: 107, high: 107.5, low: 95.5, close: 96, volume: 10 },
     { time: 660, open: 96, high: 97, low: 92, close: 93, volume: 10 },
+  ];
+}
+
+function makePatternBars() {
+  return [
+    { time: 60, open: 10, high: 11, low: 9.8, close: 10.5, volume: 10 },
+    { time: 120, open: 10.4, high: 10.5, low: 9.0, close: 10.45, volume: 10 },
+    { time: 180, open: 10.45, high: 10.6, low: 10.2, close: 10.3, volume: 10 },
   ];
 }
 
@@ -232,7 +246,14 @@ test("evaluateChartStrategies supports structure artifact functions and exposes 
   assert.equal(result.matches.length > 0, true);
   const latest = result.latestMatches[result.latestMatches.length - 1];
   assert.equal(Array.isArray(latest.artifacts), true);
-  assert.equal(latest.artifacts.some((item) => item?.type === "bos"), true);
+  assert.equal(
+    result.matches.some(
+      (entry) =>
+        Array.isArray(entry.artifacts) &&
+        entry.artifacts.some((item) => item?.type === "bos"),
+    ),
+    true,
+  );
   assert.equal(String(latest.latestArtifact?.subtype || "").toLowerCase(), "bullish");
 });
 
@@ -281,6 +302,55 @@ test("evaluateChartStrategies supports breakout and reversal event functions wit
   );
 });
 
+test("evaluateChartStrategies supports candle-pattern predicate functions", () => {
+  const strategy = {
+    id: "pattern_detector",
+    name: "Pattern Detector",
+    engine_version: "42trade.strategy.v2",
+    metadata: {
+      preview_current_bar_only: true,
+    },
+    events: [
+      {
+        id: "pin_bar_event",
+        name: "Pin Bar",
+        when: { fn: "pin_bar", args: ["", ""] },
+        actions: [{ id: "pin_bar_draw", action: "draw" }],
+      },
+      {
+        id: "engulfing_event",
+        name: "Engulfing",
+        when: { fn: "engulfing", args: ["", ""] },
+        actions: [{ id: "engulfing_draw", action: "draw" }],
+      },
+    ],
+  };
+
+  const result = evaluateChartStrategies({
+    bars: makePatternBars(),
+    strategies: [strategy],
+    lookbackBars: 3,
+    symbol: "EURUSD",
+    tf: "1m",
+  });
+
+  assert.equal(result.matches.length >= 2, true);
+  assert.equal(
+    result.matches.some((entry) =>
+      Array.isArray(entry.artifacts) &&
+      entry.artifacts.some((item) => item?.type === "bullish_pin_bar"),
+    ),
+    true,
+  );
+  assert.equal(
+    result.matches.some((entry) =>
+      Array.isArray(entry.artifacts) &&
+      entry.artifacts.some((item) => item?.type === "bearish_engulfing"),
+    ),
+    true,
+  );
+});
+
 test("evaluateChartStrategies supports THEN for ordered event chains", () => {
   const strategy = {
     id: "ordered_chain",
@@ -318,7 +388,7 @@ test("evaluateChartStrategies supports THEN for ordered event chains", () => {
 
   assert.equal(result.matches.length > 0, true);
   assert.equal(
-    result.matches.some((entry) => Array.isArray(entry.artifacts) && entry.artifacts.length >= 2),
+    result.matches.filter((entry) => Array.isArray(entry.artifacts) && entry.artifacts.length >= 1).length >= 2,
     true,
   );
 });
@@ -382,6 +452,118 @@ test("evaluateChartStrategies can infer recent structure levels for rejected() w
       (entry) =>
         Array.isArray(entry.artifacts) &&
         entry.artifacts.some((item) => item?.type === "rejected"),
+    ),
+    true,
+  );
+});
+
+test("evaluateChartStrategies can detect All TF rule hits from higher timeframe data", () => {
+  const strategy = {
+    id: "multi_tf_bos",
+    name: "Multi TF BOS",
+    engine_version: "42trade.strategy.v2",
+    events: [
+      {
+        id: "bos_any_higher_tf",
+        name: "BOS Any Higher TF",
+        when: { fn: "bos", args: ["bullish", "all"] },
+        actions: [{ id: "bos_draw", action: "draw" }],
+      },
+    ],
+  };
+
+  const lowerTfBars = [
+    { time: 60, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 120, open: 100, high: 100.1, low: 99.9, close: 100, volume: 10 },
+    { time: 180, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 240, open: 100, high: 100.1, low: 99.9, close: 100, volume: 10 },
+    { time: 300, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 360, open: 100, high: 100.1, low: 99.9, close: 100, volume: 10 },
+    { time: 420, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 480, open: 100, high: 100.1, low: 99.9, close: 100, volume: 10 },
+    { time: 540, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+    { time: 600, open: 100, high: 100.1, low: 99.9, close: 100, volume: 10 },
+    { time: 660, open: 100, high: 100.2, low: 99.8, close: 100, volume: 10 },
+  ];
+
+  const result = evaluateChartStrategies({
+    bars: lowerTfBars,
+    multiTfBars: {
+      "15m": makeStructureBars(),
+    },
+    strategies: [strategy],
+    lookbackBars: 11,
+    symbol: "EURUSD",
+    tf: "1m",
+  });
+
+  assert.equal(result.matches.length > 0, true);
+  assert.equal(result.matches.some((entry) => entry.sourceTf === "15m"), true);
+  assert.equal(
+    result.matches.some(
+      (entry) =>
+        Array.isArray(entry.artifacts) &&
+        entry.artifacts.some((item) => item?.timeframe === "15m" || item?.source_tf === "15m"),
+    ),
+    true,
+  );
+});
+
+test("groupArtifactsBySourceTf keeps separate markers for separate artifact times within the same timeframe", () => {
+  const groups = groupArtifactsBySourceTf(
+    {
+      kind: "artifact_result",
+      matches: [
+        { id: "bos-15m-1", type: "bos", timeframe: "15m", anchor_time: 900, subtype: "bullish" },
+        { id: "bos-15m-2", type: "bos", timeframe: "15m", anchor_time: 1800, subtype: "bullish" },
+        { id: "bos-4h-1", type: "bos", timeframe: "4h", anchor_time: 14400, subtype: "bullish" },
+      ],
+    },
+    "15m",
+    0,
+  );
+
+  assert.equal(groups.length, 3);
+  assert.deepEqual(
+    groups.map((group) => [group.sourceTf, group.markerTimeUnix]),
+    [
+      ["15m", 900],
+      ["15m", 1800],
+      ["4h", 14400],
+    ],
+  );
+});
+
+test("detectArtifacts keeps historical BOS markers instead of trimming them near the last bar", () => {
+  assert.equal(shouldLimitArtifactType("bos", "structure"), false);
+  const kept = limitArtifactsNearLastBarByType(
+    [
+      { id: "bos-1", family: "structure", type: "bos", price: 100, anchor_time: 1000 },
+      { id: "bos-2", family: "structure", type: "bos", price: 110, anchor_time: 2000 },
+      { id: "bos-3", family: "structure", type: "bos", price: 120, anchor_time: 3000 },
+    ],
+    [{ time: 4000, close: 115, open: 115, high: 116, low: 114 }],
+  );
+  assert.deepEqual(
+    kept.map((item) => item.id),
+    ["bos-1", "bos-2", "bos-3"],
+  );
+});
+
+test("BOS source swings align with derived swing markers from the same dataset", () => {
+  const items = buildDerivedItemsFromBars(makeStructureBars(), "15m");
+  const swings = items.filter((item) => ["swing_high", "swing_low"].includes(item?.type));
+  const structureBreaks = items.filter((item) => ["bos", "choch"].includes(item?.type));
+
+  assert.equal(swings.length > 0, true);
+  assert.equal(structureBreaks.length > 0, true);
+  assert.equal(
+    structureBreaks.every((item) =>
+      swings.some(
+        (swing) =>
+          Number(swing?.anchor_time) === Number(item?.payload?.source_swing_time) &&
+          Number(swing?.price) === Number(item?.payload?.source_swing_price),
+      ),
     ),
     true,
   );

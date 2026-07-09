@@ -337,6 +337,14 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("has_choch", args, ctx, evaluate),
   breakout: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("breakout", args, ctx, evaluate),
+  pin_bar: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("pin_bar", args, ctx, evaluate),
+  engulfing: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("engulfing", args, ctx, evaluate),
+  inside_bar: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("inside_bar", args, ctx, evaluate),
+  outside_bar: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("outside_bar", args, ctx, evaluate),
   reversal: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("reversal", args, ctx, evaluate),
   trend: (args, ctx, evaluate) =>
@@ -666,6 +674,7 @@ function buildRuleContext({
   currentIndicators,
   prevIndicators,
   derivedArtifacts,
+  multiTf,
   tf = "",
 }) {
   return {
@@ -676,6 +685,10 @@ function buildRuleContext({
     strategy,
     tf,
     derivedArtifacts: Array.isArray(derivedArtifacts) ? derivedArtifacts : [],
+    multiTf:
+      multiTf && typeof multiTf === "object" && !Array.isArray(multiTf)
+        ? multiTf
+        : {},
     params:
       strategy?.params && typeof strategy.params === "object"
         ? strategy.params
@@ -696,6 +709,24 @@ function buildRuleContext({
   };
 }
 
+function buildMultiTfContextEntries(multiTfBars = null, currentTf = "") {
+  if (!multiTfBars || typeof multiTfBars !== "object" || Array.isArray(multiTfBars)) {
+    return {};
+  }
+  const normalizedCurrentTf = normalizeTfKey(currentTf);
+  const next = {};
+  Object.entries(multiTfBars).forEach(([tfRaw, barsRaw]) => {
+    const tf = normalizeTfKey(tfRaw);
+    const bars = Array.isArray(barsRaw) ? barsRaw : [];
+    if (!tf || !bars.length || tf === normalizedCurrentTf) return;
+    next[tf] = {
+      bars,
+      derivedArtifacts: sharedArtifactDetection.buildDerivedItemsFromBars(bars, tf),
+    };
+  });
+  return next;
+}
+
 function artifactMatchTime(item = {}) {
   return Number(
     item?.anchor_time ??
@@ -704,6 +735,70 @@ function artifactMatchTime(item = {}) {
       item?.time ??
       0,
   ) || 0;
+}
+
+function artifactSourceTf(item = {}, fallbackTf = "") {
+  return normalizeTfKey(
+    item?.timeframe || item?.tf || item?.source_tf || fallbackTf || "",
+  );
+}
+
+export function groupArtifactsBySourceTf(ruleResult, fallbackTf = "", fallbackTimeUnix = 0) {
+  const groups = new Map();
+  (Array.isArray(ruleResult?.matches) ? ruleResult.matches : []).forEach((item) => {
+    const sourceTf = artifactSourceTf(item, fallbackTf) || normalizeTfKey(fallbackTf);
+    const markerTimeUnix =
+      Number(artifactMatchTime(item) || fallbackTimeUnix) || fallbackTimeUnix;
+    const artifactId = String(item?.id || "").trim();
+    const key = [
+      sourceTf || "current",
+      markerTimeUnix || 0,
+      artifactId || String(item?.type || "").trim().toLowerCase(),
+    ].join("|");
+    if (!groups.has(key)) {
+      groups.set(key, {
+        sourceTf: sourceTf || normalizeTfKey(fallbackTf),
+        markerTimeUnix,
+        artifacts: [],
+        groupKey: key,
+      });
+    }
+    groups.get(key).artifacts.push(item);
+  });
+  return Array.from(groups.values())
+    .map((group) => {
+      const ordered = [...group.artifacts].sort(
+        (left, right) => artifactMatchTime(left) - artifactMatchTime(right),
+      );
+      const latestArtifact = ordered[ordered.length - 1] || null;
+      return {
+        sourceTf: group.sourceTf || normalizeTfKey(fallbackTf),
+        artifacts: ordered,
+        latestArtifact,
+        groupKey: group.groupKey,
+        markerTimeUnix:
+          Number(group.markerTimeUnix || artifactMatchTime(latestArtifact) || fallbackTimeUnix) ||
+          fallbackTimeUnix,
+      };
+    })
+    .sort((left, right) => {
+      if (left.markerTimeUnix !== right.markerTimeUnix) {
+        return Number(left.markerTimeUnix) - Number(right.markerTimeUnix);
+      }
+      return String(left.sourceTf || "").localeCompare(String(right.sourceTf || ""));
+    });
+}
+
+function dedupeStrategyHits(hits = []) {
+  const map = new Map();
+  (Array.isArray(hits) ? hits : []).forEach((hit) => {
+    const key = String(hit?.matchKey || "").trim();
+    if (!key) return;
+    map.set(key, hit);
+  });
+  return Array.from(map.values()).sort(
+    (left, right) => Number(left?.barTimeUnix || 0) - Number(right?.barTimeUnix || 0),
+  );
 }
 
 export function buildChartStrategyHitMessage({
@@ -854,6 +949,7 @@ export function evaluateChartStrategies({
   lookbackBars = 100,
   symbol = "",
   tf = "",
+  multiTfBars = null,
 } = {}) {
   const normalizedBars = Array.isArray(bars) ? bars : [];
   const normalizedStrategies = (Array.isArray(strategies) ? strategies : []).filter(
@@ -875,6 +971,10 @@ export function evaluateChartStrategies({
     const derivedArtifacts = sharedArtifactDetection.buildDerivedItemsFromBars(
       normalizedBars,
       chartTf || strategyTf || "",
+    );
+    const multiTf = buildMultiTfContextEntries(
+      multiTfBars,
+      chartTf || strategyTf || tf,
     );
     const indicators = {};
     (Array.isArray(strategy?.indicators) ? strategy.indicators : []).forEach(
@@ -904,6 +1004,7 @@ export function evaluateChartStrategies({
           currentIndicators,
           prevIndicators,
           derivedArtifacts,
+          multiTf,
           tf: chartTf || strategyTf || tf,
         });
         const ruleResult = evaluateRule(event.when, ctx);
@@ -917,7 +1018,7 @@ export function evaluateChartStrategies({
             .some((item) => artifactMatchTime(item) === currentTime);
           if (!hasCurrentBarArtifact) continue;
         }
-        const hit = {
+        const baseHit = {
           strategyId: String(strategy?.id || strategy?.key || "").trim(),
           strategyName:
             String(strategy?.name || strategy?.id || strategy?.key || "Strategy").trim() ||
@@ -933,44 +1034,66 @@ export function evaluateChartStrategies({
           symbol: String(symbol || strategy?.market?.symbol || "").trim().toUpperCase(),
           tf: String(tf || strategy?.market?.tf || "").trim(),
         };
-        if (strategyEventFunctions.isArtifactResult(ruleResult)) {
-          hit.artifacts = ruleResult.matches;
-          hit.latestArtifact = ruleResult.latest || null;
-          hit.ruleMeta =
-            ruleResult?.meta && typeof ruleResult.meta === "object"
-              ? ruleResult.meta
-              : null;
-        }
-        const markerMeta = resolveStrategyMarkerMeta(
-          hit.actions,
-          hit.eventName,
-          event.bias,
-          hit.latestArtifact,
-        );
-        hit.displayText = buildChartStrategyHitMessage(hit);
-        hit.markerText = hit.strategyName;
-        hit.markerDirection = markerMeta.direction;
-        hit.markerColor = markerMeta.color;
-        hit.markerShape = markerMeta.shape;
-        hit.markerPosition = markerMeta.position;
-        hit.matchKey = [
-          hit.symbol,
-          hit.tf,
-          hit.strategyId,
-          hit.eventId,
-          hit.barTimeUnix,
-        ].join("|");
-        matches.push(hit);
-        latestHit = hit;
+        const hitGroups = strategyEventFunctions.isArtifactResult(ruleResult)
+          ? groupArtifactsBySourceTf(
+              ruleResult,
+              chartTf || strategyTf || tf,
+              Number(normalizedBars[index]?.time || 0),
+            )
+          : [
+              {
+                sourceTf: normalizeTfKey(chartTf || strategyTf || tf),
+                artifacts: null,
+                latestArtifact: null,
+                markerTimeUnix: Number(normalizedBars[index]?.time || 0),
+              },
+            ];
+        hitGroups.forEach((group) => {
+          const hit = {
+            ...baseHit,
+            barTimeUnix: group.markerTimeUnix || baseHit.barTimeUnix,
+            sourceTf: group.sourceTf || normalizeTfKey(chartTf || strategyTf || tf),
+          };
+          if (group.artifacts) {
+            hit.artifacts = group.artifacts;
+            hit.latestArtifact = group.latestArtifact || null;
+            hit.ruleMeta =
+              ruleResult?.meta && typeof ruleResult.meta === "object"
+                ? ruleResult.meta
+                : null;
+          }
+          const markerMeta = resolveStrategyMarkerMeta(
+            hit.actions,
+            hit.eventName,
+            event.bias,
+            hit.latestArtifact,
+          );
+          hit.displayText = buildChartStrategyHitMessage(hit);
+          hit.markerText = hit.strategyName;
+          hit.markerDirection = markerMeta.direction;
+          hit.markerColor = markerMeta.color;
+          hit.markerShape = markerMeta.shape;
+          hit.markerPosition = markerMeta.position;
+          hit.matchKey = [
+            hit.symbol,
+            hit.tf,
+            hit.sourceTf || "",
+            hit.strategyId,
+            hit.eventId,
+            hit.barTimeUnix,
+            group.groupKey || "",
+          ].join("|");
+          matches.push(hit);
+          latestHit = hit;
+        });
       }
       if (!latestHit) return;
       latestMatches.push(latestHit);
     });
   });
 
-  matches.sort((left, right) => Number(left.barTimeUnix || 0) - Number(right.barTimeUnix || 0));
-  latestMatches.sort(
-    (left, right) => Number(left.barTimeUnix || 0) - Number(right.barTimeUnix || 0),
-  );
-  return { matches, latestMatches };
+  return {
+    matches: dedupeStrategyHits(matches),
+    latestMatches: dedupeStrategyHits(latestMatches),
+  };
 }

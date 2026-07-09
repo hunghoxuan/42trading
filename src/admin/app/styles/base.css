@@ -119,13 +119,13 @@ html {
 }
 
 *::-webkit-scrollbar-track {
-    background: var(--bg);
+    background: transparent;
 }
 
 *::-webkit-scrollbar-thumb {
     background: rgba(159, 176, 196, 0.55);
     border-radius: 999px;
-    border: 2px solid var(--bg);
+    border: 2px solid transparent;
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -2369,7 +2369,7 @@ body.ai-chat-layout-panel-open .app-shell {
     color: #10b981 !important;
 }
 .money-neg {
-    color: #ef4444 !important;
+    color: var(--muted) !important;
 }
 .money-neutral {
     color: var(--muted);
@@ -3034,7 +3034,40 @@ input[type="checkbox"]:disabled {
 .card-item {
     border-radius: 12px !important;
     padding: 10px !important;
-    margin-bottom: 10px !important;
+    margin-bottom: 3px !important;
+}
+
+.list-items {
+    max-height: 1000px;
+    overflow: hidden auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+    background: var(--surface);
+    scrollbar-color: rgba(159, 176, 196, 0.55) var(--surface);
+}
+
+.list-items::-webkit-scrollbar-track {
+    background: var(--surface);
+}
+
+.list-items::-webkit-scrollbar-thumb {
+    border: 2px solid var(--surface);
+}
+
+.list-items--rule-library {
+    gap: 6px;
+    max-height: 420px;
+}
+
+.list-items--run-trades {
+    max-height: 700px;
+}
+
+.list-items--strategy-events {
+    max-height: 320px;
+    padding-right: 0;
 }
 
 .form-item {
@@ -3061,6 +3094,13 @@ input[type="checkbox"]:disabled {
     text-align: left;
     cursor: pointer;
     transition: border-color 120ms ease, background 120ms ease;
+}
+
+.strategy-event-card {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.02);
 }
 
 .backtests-item-card__body {
@@ -5267,7 +5307,7 @@ input[type="checkbox"]:disabled {
     gap: 3px;
 }
 .snapshot-activity-card-v4.compact.card-item {
-    margin-bottom: 10px !important;
+    margin-bottom: 3px !important;
 }
 .snapshot-activity-row-top {
     display: grid;

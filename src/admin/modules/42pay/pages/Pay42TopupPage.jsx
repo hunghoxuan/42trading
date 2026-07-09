@@ -7,6 +7,14 @@ import { formatMoney, statusTone } from "./pay42Ui";
 
 const TOPUP_METHODS = [
   {
+    value: "SEPA",
+    label: "SEPA IBAN •• 0148",
+    subtitle: "1–3 business days · No fee",
+    arrival: "1–3 business days",
+    fee: "$0.00",
+    icon: "🏦",
+  },
+  {
     value: "CARD",
     label: "Visa •• 4291",
     subtitle: "Instant · No fee",
@@ -15,16 +23,8 @@ const TOPUP_METHODS = [
     icon: "💳",
   },
   {
-    value: "SEPA",
-    label: "Chase Checking •• 0148",
-    subtitle: "1–3 business days · No fee",
-    arrival: "1–3 business days",
-    fee: "$0.00",
-    icon: "🏦",
-  },
-  {
     value: "PAYPAL",
-    label: "On-chain deposit",
+    label: "Gift Card Topup",
     subtitle: "USDC · ~10 min · Network fee applies",
     arrival: "~10 min",
     fee: "Network fee",

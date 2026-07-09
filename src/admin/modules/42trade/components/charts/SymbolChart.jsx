@@ -48,6 +48,7 @@ const REPLAY_MODE = "replay";
 const TRADINGVIEW_EMBED_AUTLOAD_PREF_KEY = "tv_embed_autoload_enabled";
 const HISTORY_BARS_ACTION_COUNT = 2000;
 const MAX_HISTORY_BARS = 20000;
+const SYMBOL_CHART_MIN_LOADED_BARS = 5000;
 const MODE_LABELS = {
   live: "Live",
   cache: "Chart",
@@ -1142,6 +1143,17 @@ function artifactSourceTfTag(tf = "") {
 function artifactTypeAbbr(typeRaw = "") {
   const type = String(typeRaw || "").trim().toLowerCase();
   if (!type) return "";
+  if (type === "ifvg" || type === "i_fvg" || type === "inverse_fvg" || type === "inversion_fvg") {
+    return "iFVG";
+  }
+  if (
+    type === "bb" ||
+    type === "breaker" ||
+    type === "breaker_block" ||
+    type === "breakerblock"
+  ) {
+    return "BB";
+  }
   if (type === "swing_low") return "SL";
   if (type === "swing_high") return "SH";
   if (type === "liquidity_low") return "LL";
@@ -1160,15 +1172,71 @@ function artifactTypeAbbr(typeRaw = "") {
   return type.replaceAll("_", " ");
 }
 
-function artifactInlineLabel(item = {}, fallbackTf = "") {
-  const type = artifactTypeAbbr(item?.type || item?.artifact_type || "");
-  return type;
-}
-
-function artifactMarkerText(item = {}) {
+function artifactDisplayTypeKey(item = {}) {
   const type = String(item?.type || item?.artifact_type || "")
     .trim()
     .toLowerCase();
+  const subtype = String(item?.subtype || item?.artifact_payload?.subtype || "")
+    .trim()
+    .toLowerCase();
+  const label = String(item?.label || item?.artifact_payload?.label || "")
+    .trim()
+    .toLowerCase();
+  const patternType = String(
+    item?.payload?.pattern_type ||
+      item?.artifact_payload?.payload?.pattern_type ||
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  const text = [type, subtype, label, patternType].filter(Boolean).join(" ");
+
+  if (
+    /\bifvg\b/.test(text) ||
+    /\bi_fvg\b/.test(text) ||
+    /inverse\s*fvg/.test(text) ||
+    /inversion\s*fvg/.test(text)
+  ) {
+    return "ifvg";
+  }
+  if (
+    /\bbb\b/.test(text) ||
+    /\bbreaker\b/.test(text) ||
+    /\bbreaker block\b/.test(text) ||
+    /\bbreaker_block\b/.test(text)
+  ) {
+    return "bb";
+  }
+  return type;
+}
+
+function artifactInlineLabel(item = {}, fallbackTf = "") {
+  const structureLabel = String(
+    item?.payload?.structure_label ||
+      item?.artifact_payload?.payload?.structure_label ||
+      "",
+  )
+    .trim()
+    .toUpperCase();
+  const typeRaw = String(item?.type || item?.artifact_type || "")
+    .trim()
+    .toLowerCase();
+  if (
+    structureLabel &&
+    (typeRaw === "swing_high" || typeRaw === "swing_low")
+  ) {
+    return structureLabel;
+  }
+  const type = artifactTypeAbbr(artifactDisplayTypeKey(item));
+  return type;
+}
+
+function artifactLevelLabel(item = {}, fallbackTf = "") {
+  return artifactInlineLabel(item, fallbackTf);
+}
+
+function artifactMarkerText(item = {}) {
+  const type = artifactDisplayTypeKey(item);
   if (type === "bos") return "BOS";
   if (type === "choch") return "CH";
   if (type === "sweep_high" || type === "sweep_low") return "SW";
@@ -1176,6 +1244,17 @@ function artifactMarkerText(item = {}) {
 }
 
 function strategyHitMarkerText(hit = {}) {
+  const latestArtifactPayload =
+    hit?.latestArtifact?.payload && typeof hit.latestArtifact.payload === "object"
+      ? hit.latestArtifact.payload
+      : {};
+  const sourceType = String(latestArtifactPayload.source_artifact_type || "")
+    .trim()
+    .toLowerCase();
+  if (sourceType) {
+    const shortType = artifactTypeAbbr(sourceType).slice(0, 4).toUpperCase();
+    if (shortType) return shortType;
+  }
   const explicitLabel = (Array.isArray(hit?.actions) ? hit.actions : [])
     .map((action) => String(action?.label || "").trim())
     .find(Boolean);
@@ -1195,6 +1274,8 @@ function strategyHitMarkerText(hit = {}) {
 function strategyHitToChartObject(hit = {}, fallbackTf = "") {
   const timeSec = Number(hit?.barTimeUnix ?? hit?.bar_time_unix ?? 0);
   if (!Number.isFinite(timeSec) || timeSec <= 0) return null;
+  const sourceTf = String(hit?.sourceTf || hit?.source_tf || hit?.tf || fallbackTf || "").trim();
+  const sourceTfColor = artifactTimeframeColor(sourceTf);
   const price = Number(
     hit?.latestArtifact?.price ??
       hit?.latestArtifact?.payload?.level ??
@@ -1219,7 +1300,10 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
       "Strategy",
     visible: true,
     tf: String(hit?.tf || fallbackTf || "").trim(),
-    color: String(hit?.markerColor || "#38bdf8"),
+    color: String(sourceTfColor || hit?.markerColor || "#38bdf8"),
+    text_color: String(
+      hit?.markerTextColor || sourceTfColor,
+    ),
     price: Number.isFinite(price) ? price : null,
     time: timeSec,
     anchorTimeMs: timeSec * 1000,
@@ -1232,19 +1316,21 @@ function strategyHitToChartObject(hit = {}, fallbackTf = "") {
     artifact_family: "strategy",
     artifact_type: String(hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase(),
     artifact_group: "strategy",
-    source_tf: String(hit?.tf || fallbackTf || "").trim(),
+    source_tf: sourceTf,
     artifact_payload: hit,
   };
 }
 
 function collectStrategyHitLevelReferences(hit = {}) {
   const levels = [];
-  const pushLevel = (value, source = "") => {
+  const pushLevel = (value, source = "", sourceTime = 0, sourceType = "") => {
     const nextValue = Number(value);
     if (!Number.isFinite(nextValue)) return;
     levels.push({
       price: nextValue,
       source: String(source || "").trim().toLowerCase(),
+      sourceTime: Number(sourceTime) || 0,
+      sourceType: String(sourceType || "").trim().toLowerCase(),
     });
   };
 
@@ -1252,16 +1338,37 @@ function collectStrategyHitLevelReferences(hit = {}) {
     hit?.latestArtifact?.payload && typeof hit.latestArtifact.payload === "object"
       ? hit.latestArtifact.payload
       : {};
-  pushLevel(latestArtifactPayload.level, "artifact_level");
+  const latestArtifactSourceTime = Number(latestArtifactPayload.source_artifact_time) || 0;
+  const latestArtifactSourceType = String(latestArtifactPayload.source_artifact_type || "").trim().toLowerCase();
+  if (Number.isFinite(Number(latestArtifactPayload.level))) {
+    levels.push({
+      price: Number(latestArtifactPayload.level),
+      source: "artifact_level",
+      sourceTime: latestArtifactSourceTime,
+      sourceType: latestArtifactSourceType,
+    });
+  }
 
   const artifacts = Array.isArray(hit?.artifacts) ? hit.artifacts : [];
   artifacts.forEach((item) => {
     const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
-    pushLevel(payload.level, "artifact_level");
+    if (Number.isFinite(Number(payload.level))) {
+      levels.push({
+        price: Number(payload.level),
+        source: "artifact_level",
+        sourceTime: Number(payload.source_artifact_time) || 0,
+        sourceType: String(payload.source_artifact_type || "").trim().toLowerCase(),
+      });
+    }
   });
 
   const ruleMeta = hit?.ruleMeta && typeof hit.ruleMeta === "object" ? hit.ruleMeta : {};
-  pushLevel(ruleMeta.level, "rule_level");
+  pushLevel(
+    ruleMeta.level,
+    "rule_level",
+    Number(ruleMeta.source_artifact_time) || 0,
+    String(ruleMeta.source_artifact_type || "").trim().toLowerCase(),
+  );
   const inferredLevels = Array.isArray(ruleMeta.inferred_levels) ? ruleMeta.inferred_levels : [];
   inferredLevels.forEach((value) => pushLevel(value, "inferred_level"));
 
@@ -1269,7 +1376,9 @@ function collectStrategyHitLevelReferences(hit = {}) {
   const seen = new Set();
   levels.forEach((item) => {
     const rounded = Number(item?.price);
-    const key = Number.isFinite(rounded) ? rounded.toFixed(8) : "";
+    const key = Number.isFinite(rounded)
+      ? `${rounded.toFixed(8)}|${String(item?.sourceType || "").trim().toLowerCase()}|${Number(item?.sourceTime) || 0}`
+      : "";
     if (!key || seen.has(key)) return;
     seen.add(key);
     deduped.push(item);
@@ -1282,37 +1391,88 @@ function strategyHitContextToChartObjects(hit = {}, fallbackTf = "") {
   if (!Number.isFinite(timeSec) || timeSec <= 0) return [];
   const tfKey = String(hit?.tf || fallbackTf || "").trim().toLowerCase();
   const eventKey = String(hit?.eventId || hit?.event_id || "strategy").trim().toLowerCase();
-  return collectStrategyHitLevelReferences(hit).map((level, index) => ({
-    id: String(
+  const markerPrice = Number(
+    hit?.latestArtifact?.payload?.marker_price ??
+      hit?.latestArtifact?.price ??
+      hit?.barClose ??
+      hit?.bar_close ??
+      null,
+  );
+  const markerPosition =
+    Number.isFinite(markerPrice) && Number.isFinite(Number(hit?.barClose ?? hit?.bar_close))
+      ? markerPrice <= Number(hit?.barClose ?? hit?.bar_close)
+        ? "belowBar"
+        : "aboveBar"
+      : "aboveBar";
+  return collectStrategyHitLevelReferences(hit).flatMap((level, index) => {
+    const baseId = String(
       hit?.matchKey
         ? `${hit.matchKey}:ctx:${index + 1}`
         : `strategy-context-${eventKey}-${timeSec}-${index + 1}`,
-    ),
-    kind: "line",
-    type: "RULE_LEVEL",
-    label:
-      level.source === "inferred_level"
-        ? "Inferred level"
-        : "Rule level",
-    visible: true,
-    tf: tfKey,
-    color: "rgba(125, 211, 252, 0.65)",
-    price: Number(level.price),
-    time: timeSec,
-    anchorTimeMs: timeSec * 1000,
-    anchorPrice: Number(level.price),
-    line_style: "dot",
-    line_width: 0.2,
-    line_scope: "segment",
-    artifact_family: "strategy",
-    artifact_type: `${eventKey}_level`,
-    artifact_group: "strategy_context",
-    source_tf: tfKey,
-    artifact_payload: {
-      hit,
-      level_source: level.source,
-    },
-  }));
+    );
+    const levelLabel =
+      level.source === "artifact_level"
+        ? String(level.sourceType || "Artifact level")
+            .replaceAll("_", " ")
+            .trim()
+            .toUpperCase() || "ARTIFACT LEVEL"
+        : level.source === "inferred_level"
+          ? "INFERRED LEVEL"
+          : "RULE LEVEL";
+    const lineObject = {
+      id: baseId,
+      kind: "line",
+      type: "RULE_LEVEL",
+      label: levelLabel,
+      visible: true,
+      tf: tfKey,
+      color: "rgba(125, 211, 252, 0.95)",
+      price: Number(level.price),
+      time: timeSec,
+      anchorTimeMs:
+        Number.isFinite(Number(level.sourceTime)) && Number(level.sourceTime) > 0
+          ? Number(level.sourceTime) * 1000
+          : timeSec * 1000,
+      anchorTimeMs2: timeSec * 1000,
+      anchorPrice: Number(level.price),
+      line_style: "solid",
+      line_width: 1.2,
+      line_scope: "segment",
+      artifact_family: "strategy",
+      artifact_type: `${eventKey}_level`,
+      artifact_group: "strategy_context",
+      source_tf: tfKey,
+      artifact_payload: {
+        hit,
+        level_source: level.source,
+      },
+    };
+    const levelPointObject = {
+      id: `${baseId}:target`,
+      kind: "point",
+      type: "RULE_LEVEL_TARGET",
+      label: levelLabel,
+      visible: true,
+      tf: tfKey,
+      color: "rgba(125, 211, 252, 1)",
+      price: Number(level.price),
+      time: timeSec,
+      anchorTimeMs: timeSec * 1000,
+      anchorPrice: Number(level.price),
+      marker_shape: "circle",
+      marker_text: "LVL",
+      marker_position: markerPosition,
+      artifact_family: "strategy",
+      artifact_type: `${eventKey}_level_target`,
+      artifact_group: "strategy_context",
+      source_tf: tfKey,
+      artifact_payload: {
+        hit,
+        level_source: level.source,
+      },
+    };
+    return [lineObject, levelPointObject];
+  });
 }
 
 function artifactTimeframeColor(tf = "") {
@@ -1432,8 +1592,8 @@ function artifactColorForItem(item = {}) {
   const group = artifactGroupKeyForItem(item);
   if (group === "pdh" || group === "pdl") return "#94a3b8";
   if (group === "support" || group === "demand") return "#94a3b8";
-  if (group === "fvg") return "#94a3b8";
-  if (group === "ob") return "#f59e0b";
+  if (group === "fvg" || group === "ifvg") return "#94a3b8";
+  if (group === "ob" || group === "bb") return "#f59e0b";
   if (group === "liquidity") return "#14b8a6";
   if (group === "swings") return "#60a5fa";
   if (group === "patterns") return "#a855f7";
@@ -1445,11 +1605,28 @@ function artifactGroupKeyForItem(item = {}) {
   const type = String(item?.type || item?.artifact_type || "").trim().toLowerCase();
   const label = String(item?.label || "").trim().toLowerCase();
   const subtype = String(item?.subtype || "").trim().toLowerCase();
-  const text = [family, type, label, subtype].filter(Boolean).join(" ");
+  const patternType = String(item?.payload?.pattern_type || "").trim().toLowerCase();
+  const text = [family, type, label, subtype, patternType].filter(Boolean).join(" ");
   if (/\bpdh\b/.test(text)) return "pdh";
   if (/\bpdl\b/.test(text)) return "pdl";
   if (type.includes("support") || label.includes("support")) return "support";
   if (type.includes("demand") || label.includes("demand")) return "demand";
+  if (
+    /\bifvg\b/.test(text) ||
+    /\bi_fvg\b/.test(text) ||
+    /inverse\s*fvg/.test(text) ||
+    /inversion\s*fvg/.test(text)
+  ) {
+    return "ifvg";
+  }
+  if (
+    /\bbb\b/.test(text) ||
+    /\bbreaker\b/.test(text) ||
+    /\bbreaker block\b/.test(text) ||
+    /\bbreaker_block\b/.test(text)
+  ) {
+    return "bb";
+  }
   if (type.includes("fvg") || label.includes("fvg")) return "fvg";
   if (type.includes("ob") || /\border block\b/.test(text)) return "ob";
   if (type.includes("liquidity") || label.includes("liquidity")) return "liquidity";
@@ -1469,7 +1646,9 @@ function artifactGroupLabel(groupKey = "") {
   if (key === "pdl") return "PDL";
   if (key === "support") return "Support";
   if (key === "demand") return "Demand";
+  if (key === "ifvg") return "iFVG";
   if (key === "fvg") return "FVG";
+  if (key === "bb") return "BB";
   if (key === "ob") return "OB";
   if (key === "liquidity") return "Liquidity";
   if (key === "bos") return "BOS";
@@ -1521,6 +1700,49 @@ function resolveArtifactWindow(
   };
 }
 
+function artifactSourceTfSeconds(item = {}, fallbackTf = "") {
+  const tf = String(
+    item?.timeframe || item?.tf || item?.source_tf || fallbackTf || "",
+  ).trim();
+  return Math.max(1, Number(timeframeToSeconds(tf)) || 60);
+}
+
+function artifactSourceSpanBars(item = {}, startTimeSec = null, fallbackTf = "") {
+  const startSec = Number(startTimeSec);
+  if (!Number.isFinite(startSec)) return null;
+  const tfSec = artifactSourceTfSeconds(item, fallbackTf);
+  const payload =
+    item?.payload && typeof item.payload === "object" ? item.payload : {};
+  const explicitEndCandidates = [
+    item?.bar_end,
+    payload?.confirmation_bar_time,
+    payload?.middle_bar_time,
+    payload?.end_time,
+    payload?.source_end_time,
+  ]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= startSec);
+  if (!explicitEndCandidates.length) return null;
+  const furthestEndSec = Math.max(...explicitEndCandidates);
+  const deltaBars = Math.ceil(Math.max(0, furthestEndSec - startSec) / tfSec);
+  return Math.max(1, deltaBars + 1);
+}
+
+function artifactSourceSpanEndTimeSec(item = {}, startTimeSec = null, fallbackTf = "") {
+  const startSec = Number(startTimeSec);
+  if (!Number.isFinite(startSec)) return null;
+  const tfSec = artifactSourceTfSeconds(item, fallbackTf);
+  const extensionBarsRaw =
+    Number(item?.payload?.extension_bars ?? item?.metrics?.extension_bars) || null;
+  if (Number.isFinite(extensionBarsRaw)) {
+    const extensionBars = Math.max(1, Math.min(240, Math.round(extensionBarsRaw)));
+    return startSec + tfSec * extensionBars;
+  }
+  const spanBars = artifactSourceSpanBars(item, startSec, fallbackTf);
+  if (Number.isFinite(spanBars)) return startSec + tfSec * spanBars;
+  return null;
+}
+
 function artifactItemToChartObject(item = {}, fallbackTf = "") {
   if (!item || typeof item !== "object") return null;
   const family = String(item.family || "").trim().toLowerCase();
@@ -1542,28 +1764,91 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
 
   if (groupKey === "swings") {
     if (!Number.isFinite(price) || !Number.isFinite(timeSec)) return null;
-    return {
+    const tfSeconds = Math.max(1, Number(timeframeToSeconds(tf)) || 60);
+    const swingLevelEndTimeSec = timeSec + tfSeconds * 20;
+    const previousSameTypeTime = Number(
+      item?.payload?.previous_same_type_time ??
+        item?.payload?.previousSameTypeTime,
+    );
+    const previousSameTypePrice = Number(
+      item?.payload?.previous_same_type_price ??
+        item?.payload?.previousSameTypePrice,
+    );
+    const swingPoint = {
       id: String(item.id || `${family}-${type}-${timeSec}`),
-      kind: "line",
-      type: type.toUpperCase() || "LEVEL",
-      label: artifactInlineLabel(item, tf),
+      kind: "point",
+      type: "",
+      label: "",
       visible: true,
       tf,
       color,
       price,
       time: timeSec,
       anchorTimeMs: timeSec * 1000,
-      anchorTimeMs2: null,
       anchorPrice: price,
       line_style: "dot",
-      line_width: 0.5,
-      line_scope: "segment",
+      line_width: 0.1,
+      marker_shape: "circle",
+      marker_text: formatArtifactExactPrice(price),
+      marker_position: "price",
       artifact_family: family,
       artifact_type: type,
       artifact_group: groupKey,
       source_tf: tf,
       artifact_payload: item,
     };
+    const swingLevelLine = {
+      id: `${String(item.id || `${family}-${type}-${timeSec}`)}:level`,
+      kind: "line",
+      type: "",
+      label: artifactLevelLabel(item, tf),
+      visible: true,
+      tf,
+      color,
+      price,
+      time: timeSec,
+      anchorTimeMs: timeSec * 1000,
+      anchorTimeMs2: swingLevelEndTimeSec * 1000,
+      anchorPrice: price,
+      anchorPrice2: price,
+      line_style: "dot",
+      line_width: 0.5,
+      line_scope: "segment_to_scale",
+      artifact_family: family,
+      artifact_type: `${type}_level`,
+      artifact_group: groupKey,
+      source_tf: tf,
+      artifact_payload: item,
+    };
+    const swingConnection =
+      Number.isFinite(previousSameTypeTime) && Number.isFinite(previousSameTypePrice)
+        ? {
+            id: `${String(item.id || `${family}-${type}-${timeSec}`)}:segment`,
+            kind: "line",
+            type: "",
+            label: "",
+            visible: true,
+            tf,
+            color,
+            price: previousSameTypePrice,
+            time: previousSameTypeTime,
+            anchorTimeMs: previousSameTypeTime * 1000,
+            anchorTimeMs2: timeSec * 1000,
+            anchorPrice: previousSameTypePrice,
+            anchorPrice2: price,
+            line_style: "dot",
+            line_width: 0.6,
+            line_scope: "segment",
+            artifact_family: family,
+            artifact_type: `${type}_segment`,
+            artifact_group: groupKey,
+            source_tf: tf,
+            artifact_payload: item,
+          }
+        : null;
+    return swingConnection
+      ? [swingConnection, swingLevelLine, swingPoint]
+      : [swingLevelLine, swingPoint];
   }
 
   if (Number.isFinite(priceLow) || Number.isFinite(priceHigh)) {
@@ -1578,19 +1863,13 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
         ? price
         : null;
     if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
-    const zoneExtensionBarsRaw =
-      Number(item?.payload?.extension_bars ?? item?.metrics?.extension_bars) || null;
     const defaultZoneExtensionBars =
-      groupKey === "fvg" ? 5 : groupKey === "ob" ? 28 : 20;
-    const zoneExtensionBars = Number.isFinite(zoneExtensionBarsRaw)
-      ? Math.max(8, Math.min(240, Math.round(zoneExtensionBarsRaw)))
-      : defaultZoneExtensionBars;
+      groupKey === "fvg" || groupKey === "ifvg" ? 5 : groupKey === "ob" || groupKey === "bb" ? 28 : 20;
     const computedEndTimeSec =
-      Number.isFinite(endTimeSec) && groupKey !== "fvg"
-        ? endTimeSec
-        : Number.isFinite(timeSec)
-          ? timeSec + Math.max(1, Number(timeframeToSeconds(tf)) || 60) * zoneExtensionBars
-          : null;
+      Number.isFinite(timeSec)
+        ? artifactSourceSpanEndTimeSec(item, timeSec, tf) ??
+          (timeSec + artifactSourceTfSeconds(item, tf) * defaultZoneExtensionBars)
+        : null;
     return {
       id: String(item.id || `${family}-${type}-${timeSec || top}`),
       kind: "zone",
@@ -1628,7 +1907,7 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
     )
       .trim()
       .toLowerCase();
-    return {
+    const basePoint = {
       id: String(item.id || `${family}-${type}-${timeSec}`),
       kind: "point",
       type: type.toUpperCase() || "POINT",
@@ -1653,6 +1932,37 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       source_tf: tf,
       artifact_payload: item,
     };
+    if (type === "bos" || type === "choch") {
+      const sourceSwingTime = Number(item?.payload?.source_swing_time);
+      const sourceSwingPrice = Number(item?.payload?.source_swing_price);
+      const connection =
+        Number.isFinite(sourceSwingTime) && Number.isFinite(sourceSwingPrice)
+          ? {
+              id: `${String(item.id || `${family}-${type}-${timeSec}`)}:source`,
+              kind: "line",
+              type: `${type.toUpperCase()}_SOURCE`,
+              label: "",
+              visible: true,
+              tf,
+              color,
+              price: sourceSwingPrice,
+              time: sourceSwingTime,
+              anchorTimeMs: sourceSwingTime * 1000,
+              anchorTimeMs2: timeSec * 1000,
+              anchorPrice: sourceSwingPrice,
+              line_style: "dot",
+              line_width: 0.5,
+              line_scope: "segment",
+              artifact_family: family,
+              artifact_type: `${type}_source`,
+              artifact_group: groupKey,
+              source_tf: tf,
+              artifact_payload: item,
+            }
+          : null;
+      return connection ? [connection, basePoint] : basePoint;
+    }
+    return basePoint;
   }
 
   if (Number.isFinite(price)) {
@@ -1689,7 +1999,10 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
 function artifactEnvelopeToChartObjects(artifacts, fallbackTf = "") {
   const items = Array.isArray(artifacts?.items) ? artifacts.items : [];
   return items
-    .map((item) => artifactItemToChartObject(item, fallbackTf))
+    .flatMap((item) => {
+      const mapped = artifactItemToChartObject(item, fallbackTf);
+      return Array.isArray(mapped) ? mapped : [mapped];
+    })
     .filter(Boolean);
 }
 
@@ -1741,7 +2054,19 @@ function limitArtifactObjectsNearLastBar(objects = [], bars = []) {
     groups.get(key).push(item);
   }
   const keepIds = new Set();
-  for (const entries of groups.values()) {
+  for (const [groupKey, entries] of groups.entries()) {
+    const normalizedGroupKey = String(groupKey || "").trim().toLowerCase();
+    if (
+      normalizedGroupKey === "bos" ||
+      normalizedGroupKey === "choch" ||
+      normalizedGroupKey.startsWith("bos|") ||
+      normalizedGroupKey.startsWith("choch|")
+    ) {
+      entries.forEach((entry) => {
+        if (entry?.id) keepIds.add(String(entry.id));
+      });
+      continue;
+    }
     const ordered = [...entries].sort((a, b) => {
       const ta = artifactObjectReferenceTime(a) || 0;
       const tb = artifactObjectReferenceTime(b) || 0;
@@ -1963,6 +2288,11 @@ function TfHeader({
             } is selected, but the realtime stream is not currently connected.`
           : "This timeframe is not currently backed by realtime stream data.",
       };
+  const symbolLabel = String(symbol || "")
+    .trim()
+    .toUpperCase();
+  const tfLabel = displayTfLabel(tf);
+  const tfColor = artifactTimeframeColor(tf);
   const updatedBars =
     Number(metadata?.updated_bars) > 0 ? Number(metadata.updated_bars) : null;
   const storedBars =
@@ -1999,6 +2329,29 @@ function TfHeader({
     `storage ${fileTypeValue}`,
     storedBars ? `${storedBars} total bars in file` : null,
     loadedBars > 0 ? `${loadedBars} bars currently loaded in chart memory` : null,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const liveStatusTooltip = [
+    `Status: ${liveBadge?.label || "Static"}`,
+    liveBadge?.title || null,
+    `Symbol: ${symbolLabel || "-"}`,
+    `Timeframe: ${tfLabel}`,
+    `Source: ${sourceValue || "unknown"}`,
+    `Storage: ${fileTypeValue || "unknown"}`,
+    `Stream source: ${streamSourceActive ? "yes" : "no"}`,
+    `Stream connected: ${streamConnected ? "yes" : "no"}`,
+    updatedAtValue
+      ? `Updated: ${showDateTime(updatedAtValue)} (${cacheTimeText || "now"})`
+      : null,
+    storedBars ? `Stored bars: ${storedBars}` : null,
+    loadedBars > 0 ? `Loaded bars: ${loadedBars}` : null,
+    loadedStartMs && loadedEndMs
+      ? `Loaded range: ${showDateTime(loadedStartMs)} -> ${showDateTime(loadedEndMs)}`
+      : null,
+    viewportStartMs && viewportEndMs
+      ? `Visible range: ${showDateTime(viewportStartMs)} -> ${showDateTime(viewportEndMs)}`
+      : null,
   ]
     .filter(Boolean)
     .join(" | ");
@@ -2190,13 +2543,15 @@ function TfHeader({
           {shouldShowStatusBadge ? (
             <StatusDisplay
               status={liveBadge?.status || "neutral"}
-              label={liveBadge?.label || "Static"}
+              label=""
               size="mini"
-              title={liveBadge?.title || "Live status unavailable"}
-              tooltipContent={liveBadge?.title || "Live status unavailable"}
+              title={liveStatusTooltip || "Live status unavailable"}
+              tooltipContent={liveStatusTooltip || "Live status unavailable"}
             />
           ) : null}
-          <span>{displayTfLabel(tf)}</span>
+          <span style={{ color: tfColor }}>
+            {[symbolLabel, tfLabel].filter(Boolean).join(" ")}
+          </span>
         </span>
       </button>
       {htfBias && (
@@ -2537,6 +2892,12 @@ function normalizeLinePriceKey(value) {
   return num.toFixed(8);
 }
 
+function formatArtifactExactPrice(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  return Math.abs(num) >= 1000 ? num.toFixed(2) : num.toFixed(5);
+}
+
 function isDedupableManualLine(item = {}) {
   if (!item || typeof item !== "object") return false;
   if (String(item.kind || "").trim().toLowerCase() !== "line") return false;
@@ -2650,6 +3011,7 @@ export default function SymbolChart({
   autoStartReplay = false,
   externalChartData = null,
   chartStrategies = [],
+  extraRequestedTimeframes = [],
   liveBars = true,
   bootstrapLiveBarsOnMount = false,
 }) {
@@ -2724,11 +3086,14 @@ export default function SymbolChart({
   });
   const [syncedCrosshair, setSyncedCrosshair] = useState(null);
   const [localBarsCount, setLocalBarsCount] = useState(() =>
-    savedBarsCountForSymbol(
-      cleanSym,
-      Number.isFinite(Number(initialBarsCount)) && Number(initialBarsCount) > 0
-        ? Number(initialBarsCount)
-        : 0,
+    Math.max(
+      SYMBOL_CHART_MIN_LOADED_BARS,
+      savedBarsCountForSymbol(
+        cleanSym,
+        Number.isFinite(Number(initialBarsCount)) && Number(initialBarsCount) > 0
+          ? Number(initialBarsCount)
+          : 0,
+      ),
     ),
   );
   const [annotations, setAnnotations] = useState([]);
@@ -2984,7 +3349,7 @@ export default function SymbolChart({
       Number.isFinite(Number(initialBarsCount)) &&
       Number(initialBarsCount) > 0
     ) {
-      setLocalBarsCount(Number(initialBarsCount));
+      setLocalBarsCount(Math.max(SYMBOL_CHART_MIN_LOADED_BARS, Number(initialBarsCount)));
     }
   }, [cleanSym, initialBarsCount]);
 
@@ -3392,18 +3757,27 @@ export default function SymbolChart({
   ]);
   const effectiveBarsCount =
     replayEnabledInChart && Number.isFinite(Number(replayRequestedBarsCount))
-      ? Math.max(Number(localBarsCount) || 0, Number(replayRequestedBarsCount))
-      : localBarsCount;
-  const shouldAlwaysLoadClientAnalysisTfs =
-    activeDataMode === "cache" && !replayEnabledInChart;
+      ? Math.max(
+          SYMBOL_CHART_MIN_LOADED_BARS,
+          Number(localBarsCount) || 0,
+          Number(replayRequestedBarsCount),
+        )
+      : Math.max(SYMBOL_CHART_MIN_LOADED_BARS, Number(localBarsCount) || 0);
   const requestedDataTimeframes = useMemo(
-    () => buildRequestedDataTimeframes(timeframes, shouldAlwaysLoadClientAnalysisTfs),
-    [shouldAlwaysLoadClientAnalysisTfs, timeframes],
+    () =>
+      buildRequestedDataTimeframes(
+        [
+          ...(Array.isArray(timeframes) ? timeframes : []),
+          ...(Array.isArray(extraRequestedTimeframes) ? extraRequestedTimeframes : []),
+        ],
+        true,
+      ),
+    [extraRequestedTimeframes, timeframes],
   );
   const internalRealtimeChartData = useRealtimeSymbolChartMatrix({
     enabled: isStreamingMode && !isReplayMode && !externalChartData && !replayEnabledInChart,
     symbol: cleanSym,
-    timeframes,
+    timeframes: requestedDataTimeframes,
     bars: effectiveBarsCount,
   });
   const effectiveExternalChartData =
@@ -3414,15 +3788,15 @@ export default function SymbolChart({
       effectiveBarsCountByTf && typeof effectiveBarsCountByTf === "object"
         ? { ...effectiveBarsCountByTf }
         : {};
-    if (!shouldAlwaysLoadClientAnalysisTfs) {
-      return Object.keys(next).length ? next : null;
-    }
-    const fallbackBars = Math.max(300, Number(localBarsCount) || 0);
-    for (const tfKey of CLIENT_ANALYSIS_ARTIFACT_TFS) {
+    const fallbackBars = Math.max(
+      SYMBOL_CHART_MIN_LOADED_BARS,
+      Number(effectiveBarsCount) || 0,
+    );
+    for (const tfKey of requestedDataTimeframes) {
       next[tfKey] = Math.max(Number(next?.[tfKey]) || 0, fallbackBars);
     }
     return Object.keys(next).length ? next : null;
-  }, [effectiveBarsCountByTf, localBarsCount, shouldAlwaysLoadClientAnalysisTfs]);
+  }, [effectiveBarsCount, effectiveBarsCountByTf, requestedDataTimeframes]);
 
   const replayFrozenChartDataRef = useRef(null);
   const frozenLiveBarsChartDataRef = useRef(null);
@@ -4457,7 +4831,19 @@ export default function SymbolChart({
             line_width: 0.1,
             bg_color: "#8b5cf6",
           },
+          BB: {
+            line_style: "dot",
+            color: "#8b5cf6",
+            line_width: 0.1,
+            bg_color: "#8b5cf6",
+          },
           FVG: {
+            line_style: "dot",
+            color: "#f59e0b",
+            line_width: 0.1,
+            bg_color: "#f59e0b",
+          },
+          IFVG: {
             line_style: "dot",
             color: "#f59e0b",
             line_width: 0.1,
@@ -6061,6 +6447,7 @@ export default function SymbolChart({
         lookbackBars: bars.length,
         symbol: cleanSym,
         tf: tfKey,
+        multiTfBars: master?.bars,
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       if (!hits.length) return;
@@ -6131,6 +6518,7 @@ export default function SymbolChart({
         lookbackBars: replayBars.length,
         symbol: cleanSym,
         tf,
+        multiTfBars: master?.bars,
       });
       const hits = Array.isArray(evaluation?.matches) ? evaluation.matches : [];
       output[tf] = hits
@@ -9212,7 +9600,7 @@ export default function SymbolChart({
                         updateSelectedField("type", e.target.value)
                       }
                     >
-                      {["buy", "sell", "line", "segment", "zone", "s/r", "ob", "fvg"].map(
+                      {["buy", "sell", "line", "segment", "zone", "s/r", "ob", "bb", "fvg", "ifvg"].map(
                         (x) => (
                           <option key={x} value={x}>
                             {x}

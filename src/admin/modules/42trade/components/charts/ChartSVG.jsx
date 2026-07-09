@@ -1337,7 +1337,12 @@ export default function ChartSVG({
                     stroke={marker.selected ? "#ffffff" : "none"}
                     strokeWidth={marker.selected ? 1.2 : 0}
                   />
-                  <text x={x + 7} y={y - 7} fontSize="10" fill={marker.color}>
+                  <text
+                    x={x + 7}
+                    y={y - 7}
+                    fontSize="10"
+                    fill={marker.textColor || marker.color}
+                  >
                     {marker.text}
                   </text>
                 </g>
@@ -1356,7 +1361,12 @@ export default function ChartSVG({
                   stroke={marker.selected ? "#ffffff" : "none"}
                   strokeWidth={marker.selected ? 1.2 : 0}
                 />
-                <text x={x + 7} y={y - 7} fontSize="10" fill={marker.color}>
+                <text
+                  x={x + 7}
+                  y={y - 7}
+                  fontSize="10"
+                  fill={marker.textColor || marker.color}
+                >
                   {marker.text}
                 </text>
               </g>

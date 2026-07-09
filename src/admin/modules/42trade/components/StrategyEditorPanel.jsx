@@ -88,6 +88,7 @@ const TIMEFRAME_OPTIONS = [
 
 const STRATEGY_FUNCTION_TF_OPTIONS = [
   { value: "", label: "Current TF" },
+  { value: "all", label: "All TFs" },
   ...TIMEFRAME_OPTIONS,
 ];
 

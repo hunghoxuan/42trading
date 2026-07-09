@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-
-const MOBILE_BREAKPOINT = 768;
+import useIsMobile from "../hooks/useIsMobile.js";
 
 export default function AppShell({
   topbar,
@@ -10,17 +9,8 @@ export default function AppShell({
   children,
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(
-    () => window.innerWidth < MOBILE_BREAKPOINT,
-  );
+  const isMobile = useIsMobile();
   const useMobileBottomBar = Boolean(isMobile && mobileBottomBar);
-
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = (e) => setIsMobile(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
 
   useEffect(() => {
     const onClose = () => setMobileOpen(false);
@@ -29,13 +19,26 @@ export default function AppShell({
   }, []);
 
   const close = useCallback(() => setMobileOpen(false), []);
+  const handleTopbarClickCapture = useCallback(
+    (event) => {
+      if (!isMobile || !useMobileBottomBar) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const brandLink = target.closest(".site-navigation__brand-link");
+      if (!brandLink) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMobileOpen(true);
+    },
+    [isMobile, useMobileBottomBar],
+  );
 
   return (
     <div
       className={`app-shell${useMobileBottomBar ? " app-shell--mobile-bottom-bar" : ""}`}
     >
       {/* Desktop: sticky topbar. Mobile: hamburger toggle */}
-      <header className="topbar">
+      <header className="topbar" onClickCapture={handleTopbarClickCapture}>
         {isMobile && !useMobileBottomBar && (
           <>
             <button
@@ -54,7 +57,7 @@ export default function AppShell({
       </header>
 
       {/* Mobile slide-out drawer */}
-      {isMobile && !useMobileBottomBar && mobileOpen && (
+      {isMobile && mobileOpen && (
         <>
           <div className="mobile-nav-backdrop" onClick={close} />
           <nav className="mobile-nav-drawer">

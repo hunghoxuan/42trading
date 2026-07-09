@@ -470,6 +470,13 @@ function walletView(wallet = null, userId = "") {
   };
 }
 
+function ensureWalletOwnerActor(actor = {}) {
+  const userId = text(actor.user_id);
+  if (!userId) throw new Error("Wallet owner is required");
+  if (isBuyer(actor) || isSeller(actor) || isAdmin(actor)) return;
+  throw new Error("Wallet permission is required");
+}
+
 function ensureSellerActor(actor = {}) {
   if (!isSeller(actor)) throw new Error("Seller permission is required");
 }
@@ -1087,15 +1094,40 @@ function create42PayRepo(options = {}) {
       const userId = text(actor.user_id);
       const wallet = await resolveWalletForActor(accountsAdapter, actor);
       const topups = await this.listWalletTopups({ actor, limit: 5 });
+      const allTopupRows = await listType(repo, TOPUP_TYPE);
+      const orders = await this.listOrders({ actor });
+      const totalTopup = allTopupRows
+        .filter((row) => text(row.user_id) === userId)
+        .reduce((sumValue, row) => sumValue + asNumber(row.amount, 0), 0);
+      const totalEarned = orders.items.reduce((sumValue, order) => {
+        const totalAmount = Number(
+          (asNumber(order.profit, 0) + asNumber(order.tax, 0)).toFixed(2),
+        );
+        return sumValue + (isSeller(actor) ? totalAmount : 0);
+      }, 0);
+      const totalSpent = orders.items.reduce((sumValue, order) => {
+        const totalAmount = Number(
+          (asNumber(order.profit, 0) + asNumber(order.tax, 0)).toFixed(2),
+        );
+        return sumValue + (!isSeller(actor) ? totalAmount : 0);
+      }, 0);
       return {
         ok: true,
         wallet: walletView(wallet, userId),
         recent_topups: topups.items,
+        wallet_totals: {
+          total_topup: Number(totalTopup.toFixed(2)),
+          total_earned: Number(totalEarned.toFixed(2)),
+          total_spent: Number(totalSpent.toFixed(2)),
+          total_balance: Number(
+            (totalTopup + totalEarned - totalSpent).toFixed(2),
+          ),
+        },
       };
     },
 
     async listWalletTopups({ actor = {}, limit = 50 } = {}) {
-      ensureBuyerActor(actor);
+      ensureWalletOwnerActor(actor);
       const rows = await listType(repo, TOPUP_TYPE);
       const userId = text(actor.user_id);
       return {
@@ -1203,6 +1235,7 @@ function create42PayRepo(options = {}) {
       const products = await this.listProducts({ actor: isSeller(actor) ? actor : { roles: ["admin"] } });
       const offers = await this.listOffers({ actor });
       const orders = await this.listOrders({ actor });
+      const walletSummary = !isAdmin(actor) ? await this.getWalletSummary({ actor }) : null;
       const activeOffers = offers.items.filter((offer) => statusActiveForDate(offer));
       if (isAdmin(actor)) {
         const userRows = Array.isArray(users) ? users : [];
@@ -1224,6 +1257,7 @@ function create42PayRepo(options = {}) {
         return {
           ok: true,
           role: "seller",
+          wallet_summary: walletSummary?.wallet_totals || null,
           cards: [
             { key: "products", label: "Products", value: products.items.length },
             { key: "active_offers", label: "Active Offers", value: activeOffers.length },
@@ -1236,6 +1270,7 @@ function create42PayRepo(options = {}) {
       return {
         ok: true,
         role: "buyer",
+        wallet_summary: walletSummary?.wallet_totals || null,
         cards: [
           { key: "offers", label: "Available Offers", value: activeOffers.length },
           { key: "orders", label: "My Orders", value: orders.items.length },

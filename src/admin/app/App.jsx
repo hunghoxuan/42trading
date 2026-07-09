@@ -337,7 +337,7 @@ export default function App() {
   const pay42MenuItems = [
     { to: "/admin/42pay/dashboard", label: navIsBuyer ? "Wallet" : "Dashboard", permission: "pages.42pay.dashboard" },
     { to: "/admin/42pay/products", label: "Products", permission: "pages.42pay.products" },
-    { to: "/admin/42pay/offers", label: navIsBuyer ? "Browse Offers" : "Offers", permission: "pages.42pay.offers" },
+    { to: "/admin/42pay/offers", label: navIsBuyer ? "Points" : "Offers", permission: "pages.42pay.offers" },
     ...(Array.isArray(navigationUser?.roles) &&
     navigationUser.roles.length === 1 &&
     String(navigationUser.roles[0] || "").trim().toLowerCase() === "buyer"

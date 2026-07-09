@@ -1,4 +1,4 @@
-export const RESPONSIVE_PANEL_MOBILE_BREAKPOINT = 768;
+export { MOBILE_VIEWPORT_BREAKPOINT as RESPONSIVE_PANEL_MOBILE_BREAKPOINT } from "../utils/viewport.js";
 
 export function normalizeResponsivePanelWidth(width) {
   if (typeof width === "number" && Number.isFinite(width)) return `${width}px`;

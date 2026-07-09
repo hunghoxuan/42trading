@@ -8539,6 +8539,56 @@ function mt5NormalizeTradeStatus(value) {
     .toUpperCase();
 }
 
+function readJsonFileSafe(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function resolveTradeFolderCancellation(folderPath) {
+  if (!folderPath || !fs.existsSync(folderPath)) {
+    return { cancelled: false, reason: null, symbol: "" };
+  }
+  const logsDir = path.join(folderPath, "logs");
+  const candidates = [
+    readJsonFileSafe(path.join(logsDir, "ai_response.json")),
+    readJsonFileSafe(path.join(logsDir, "response.json")),
+    readJsonFileSafe(path.join(logsDir, "payload.json")),
+    readJsonFileSafe(path.join(folderPath, "data.json")),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const directive = mt5ResolveSkipTradeDirective(
+      candidate?.parsed_json && typeof candidate.parsed_json === "object"
+        ? {
+            ...candidate,
+            raw_json:
+              candidate?.raw_json && typeof candidate.raw_json === "object"
+                ? candidate.raw_json
+                : candidate.parsed_json,
+          }
+        : candidate,
+    );
+    if (directive.cancelled) {
+      return {
+        cancelled: true,
+        reason: directive.reason,
+        symbol: normalizeTradeFolderSymbol(
+          candidate?.symbol ||
+            candidate?.parsed_json?.symbol ||
+            candidate?.raw_json?.symbol ||
+            "",
+        ),
+      };
+    }
+  }
+
+  return { cancelled: false, reason: null, symbol: "" };
+}
+
 async function archiveTradeTerminalArtifacts(
   tradeRow = {},
   { captureSnapshot = false, statusOverride = null } = {},
@@ -8602,9 +8652,11 @@ async function reconcileTradeFolders() {
       rows = await repo.listTradeFolderStates(null);
     }
     const stats = { moved: 0, archived: 0, created: 0, total: rows.length };
+    const knownSids = new Set();
     for (const r of rows) {
       const sid = String(r?.sid || "").trim();
       if (!sid) continue;
+      knownSids.add(sid);
       const symbol = String(r?.symbol || "").trim();
       const status = String(r?.execution_status || "").toUpperCase();
       const currentCat = findTradeFolderCategory(sid);
@@ -8633,6 +8685,29 @@ async function reconcileTradeFolders() {
           },
         );
         if (res.archived) stats.archived++;
+      }
+    }
+    for (const [currentCat, baseDir] of [
+      ["active", TRADE_ACTIVE_DIR],
+      ["draft", TRADE_DRAFT_DIR],
+    ]) {
+      if (!fs.existsSync(baseDir)) continue;
+      for (const name of fs.readdirSync(baseDir)) {
+        const folderPath = path.join(baseDir, name);
+        let st = null;
+        try {
+          st = fs.statSync(folderPath);
+        } catch {
+          continue;
+        }
+        if (!st?.isDirectory()) continue;
+        const sid = normalizeTradeFolderSid(name);
+        if (!sid || knownSids.has(sid)) continue;
+        const directive = resolveTradeFolderCancellation(folderPath);
+        if (!directive.cancelled) continue;
+        if (moveTradeFolder(sid, currentCat, "closed", directive.symbol)) {
+          stats.archived++;
+        }
       }
     }
     if (stats.moved + stats.archived + stats.created > 0) {
@@ -17256,6 +17331,17 @@ function mt5IsNoTradeOrderType(rawValue) {
   );
 }
 
+function mt5IsAbortSuggestedAction(rawValue) {
+  const normalized = mt5NormalizeSkipDecisionText(rawValue);
+  return (
+    normalized === "no trade abort" ||
+    normalized === "notrade abort" ||
+    normalized === "abort" ||
+    normalized === "abort trade" ||
+    normalized === "do not trade abort"
+  );
+}
+
 function mt5CollectTradeIntentNodes(root) {
   const out = [];
   const queue = [root];
@@ -17275,6 +17361,7 @@ function mt5CollectTradeIntentNodes(root) {
     queue.push(node.trade_plan);
     queue.push(node.position_management);
     queue.push(node.risk_management);
+    queue.push(node.execution_verdict);
     queue.push(node.analysis_result);
     queue.push(node.analysis_snapshot);
     queue.push(node.final_verdict);
@@ -17292,6 +17379,9 @@ function mt5ResolveSkipTradeDirective(root = {}) {
     }
     if (mt5IsSkipTradeDecision(node?.skip_decision)) {
       return { cancelled: true, reason: "SKIP" };
+    }
+    if (mt5IsAbortSuggestedAction(node?.suggested_action)) {
+      return { cancelled: true, reason: "NO_TRADE_ABORT" };
     }
     if (mt5IsNoTradeOrderType(node?.order_type)) {
       return { cancelled: true, reason: "NO_TRADE" };

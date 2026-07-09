@@ -90,6 +90,56 @@
       ]
     },
     {
+      "value": "breakout",
+      "label": "Breakout",
+      "kind": "predicate",
+      "family": "price_action",
+      "args": [
+        { "key": "level", "label": "Level (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "pin_bar",
+      "label": "Pin Bar",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "engulfing",
+      "label": "Engulfing",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "inside_bar",
+      "label": "Inside Bar",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
+      "value": "outside_bar",
+      "label": "Outside Bar",
+      "kind": "predicate",
+      "family": "patterns",
+      "args": [
+        { "key": "bias", "label": "Bias (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
       "value": "has_sweep",
       "label": "Has Sweep",
       "kind": "predicate",
@@ -136,16 +186,6 @@
       "family": "structure",
       "args": [
         { "key": "bias", "label": "Bias (optional)" },
-        { "key": "tf", "label": "TF (optional)" }
-      ]
-    },
-    {
-      "value": "breakout",
-      "label": "Breakout",
-      "kind": "predicate",
-      "family": "price_action",
-      "args": [
-        { "key": "level", "label": "Level (optional)" },
         { "key": "tf", "label": "TF (optional)" }
       ]
     },

@@ -15,6 +15,23 @@ function normalizeTfKey(tfRaw = "") {
   return raw;
 }
 
+function timeframeWeight(tfRaw = "") {
+  const tf = normalizeTfKey(tfRaw);
+  if (tf === "1m") return 1;
+  if (tf === "5m") return 5;
+  if (tf === "15m") return 15;
+  if (tf === "1h") return 60;
+  if (tf === "4h") return 240;
+  if (tf === "1d") return 1440;
+  if (tf === "1w") return 10080;
+  return 0;
+}
+
+function isAllTimeframesSelection(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "all" || normalized === "all_tfs";
+}
+
 function clone(value) {
   if (value === null || value === undefined) return value;
   return JSON.parse(JSON.stringify(value));
@@ -99,10 +116,26 @@ function currentTimeframe(ctx = {}) {
 
 function resolveFunctionTimeframe(evaluatedArgs = [], ctx = {}) {
   const rawTf = evaluatedArgs.length > 1 ? evaluatedArgs[evaluatedArgs.length - 1] : "";
+  if (isAllTimeframesSelection(rawTf)) return "all";
   const requested = normalizeTfKey(rawTf);
   const current = currentTimeframe(ctx);
   if (!requested) return current;
   return requested;
+}
+
+function availableRequestedTimeframesForAll(ctx = {}) {
+  const current = currentTimeframe(ctx);
+  const currentWeight = timeframeWeight(current);
+  const available = [
+    current,
+    ...Object.keys(ctx?.multiTf && typeof ctx.multiTf === "object" ? ctx.multiTf : {}),
+  ]
+    .map((tf) => normalizeTfKey(tf))
+    .filter(Boolean)
+    .filter((tf) => timeframeWeight(tf) >= currentWeight);
+  return Array.from(new Set(available)).sort(
+    (left, right) => timeframeWeight(left) - timeframeWeight(right),
+  );
 }
 
 function contextAnchorTime(ctx = {}) {
@@ -179,7 +212,8 @@ function matchArtifactBias(item = {}, requestedBias = "") {
   const wanted = String(requestedBias || "").trim().toLowerCase();
   if (!wanted) return true;
   const subtype = String(item?.subtype || "").trim().toLowerCase();
-  const bias = String(item?.payload?.bias || item?.direction || subtype || "").trim().toLowerCase();
+  const type = String(item?.type || "").trim().toLowerCase();
+  const bias = String(item?.payload?.bias || item?.direction || subtype || type || "").trim().toLowerCase();
   if (!bias) return false;
   if (["buy", "bull", "bullish", "long", "up"].includes(wanted)) {
     return ["buy", "bull", "bullish", "long", "up"].includes(bias);
@@ -284,16 +318,12 @@ function extractArtifactLevels(item = {}) {
     .filter((value) => Number.isFinite(value));
 }
 
-function resolveImplicitLevels(ctx = {}) {
+function resolveImplicitLevelEntries(ctx = {}) {
   const supportedTypes = new Set([
-    "swing_high",
-    "swing_low",
     "liquidity_high",
     "liquidity_low",
-    "sweep_high",
-    "sweep_low",
-    "bos",
-    "choch",
+    "fvg",
+    "ob",
     "support",
     "demand",
     "pdh",
@@ -315,11 +345,22 @@ function resolveImplicitLevels(ctx = {}) {
       const key = roundLevelKey(level);
       if (!key || seen.has(key)) continue;
       seen.add(key);
-      levels.push(level);
+      levels.push({
+        price: level,
+        sourceId: String(item?.id || "").trim(),
+        sourceType: String(item?.type || "").trim().toLowerCase(),
+        sourceTime: Number(item?.anchor_time ?? item?.bar_end ?? item?.bar_start ?? item?.time) || 0,
+      });
       if (levels.length >= 8) return levels;
     }
   }
   return levels;
+}
+
+function resolveImplicitLevels(ctx = {}) {
+  return resolveImplicitLevelEntries(ctx)
+    .map((entry) => Number(entry?.price))
+    .filter((value) => Number.isFinite(value));
 }
 
 function findLevelMatches(functionName = "", level = null, ctx = {}, predicate = () => false) {
@@ -374,6 +415,124 @@ function findLevelMatches(functionName = "", level = null, ctx = {}, predicate =
   });
 }
 
+function findCurrentBarLevelMatch(functionName = "", level = null, ctx = {}, predicate = () => false) {
+  const tfContext = resolveTfContext(currentTimeframe(ctx), ctx);
+  const timeframe = tfContext.timeframe;
+  const bars = tfContext.bars;
+  const endIndex = tfContext.currentIndex;
+  if (!bars.length || endIndex <= 0) return false;
+  const explicitLevel = normalizeLevel(level);
+  const candidateEntries = Number.isFinite(explicitLevel)
+    ? [
+        {
+          price: explicitLevel,
+          sourceId: "",
+          sourceType: "explicit_level",
+          sourceTime: 0,
+        },
+      ]
+    : resolveImplicitLevelEntries({
+        ...ctx,
+        tf: tfContext.timeframe,
+        bars: tfContext.bars,
+        bar: tfContext.currentBar,
+        index: tfContext.currentIndex,
+        derivedArtifacts: tfContext.derivedArtifacts,
+      });
+  if (!candidateEntries.length) return false;
+  const bar = bars[endIndex];
+  const prev = bars[endIndex - 1];
+  if (!bar || !prev) return false;
+  const currentClose = Number(bar?.close);
+  let bestMatch = null;
+  for (const entry of candidateEntries) {
+    const candidateLevel = Number(entry?.price);
+    if (!Number.isFinite(candidateLevel)) continue;
+    const result = predicate({
+      bar,
+      prev,
+      level: candidateLevel,
+      index: endIndex,
+      bars,
+      sourceEntry: entry,
+    });
+    if (!result) continue;
+    if (result?.first_hit_only === true) {
+      const sourceTime = Number(entry?.sourceTime);
+      let startIndex = 1;
+      if (Number.isFinite(sourceTime) && sourceTime > 0) {
+        const sourceBarIndex = bars.findIndex(
+          (candidateBar) => Number(candidateBar?.time) >= sourceTime,
+        );
+        if (sourceBarIndex >= 1) startIndex = sourceBarIndex;
+      }
+      let alreadyMatched = false;
+      for (let previousIndex = startIndex; previousIndex < endIndex; previousIndex += 1) {
+        const previousBar = bars[previousIndex];
+        const previousPrevBar = bars[previousIndex - 1];
+        if (!previousBar || !previousPrevBar) continue;
+        const previousResult = predicate({
+          bar: previousBar,
+          prev: previousPrevBar,
+          level: candidateLevel,
+          index: previousIndex,
+          bars,
+          sourceEntry: entry,
+        });
+        if (previousResult) {
+          alreadyMatched = true;
+          break;
+        }
+      }
+      if (alreadyMatched) continue;
+    }
+    const distance = Number.isFinite(currentClose)
+      ? Math.abs(currentClose - Number(candidateLevel))
+      : Math.abs(Number(candidateLevel));
+    if (!bestMatch || distance < bestMatch.distance) {
+      bestMatch = {
+        candidateLevel,
+        result,
+        distance,
+        sourceEntry: entry,
+      };
+    }
+  }
+  if (!bestMatch) return false;
+  const result = bestMatch.result;
+  const bias =
+    typeof result === "string" ? result :
+    result?.bias || result?.subtype || "";
+  const markerPriceRaw =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? result.marker_price
+      : null;
+  const markerPrice = Number(markerPriceRaw);
+  const match = buildSyntheticMatch({
+    functionName,
+    timeframe,
+    bar,
+    price: Number.isFinite(markerPrice) ? markerPrice : bestMatch.candidateLevel,
+    bias,
+    level: bestMatch.candidateLevel,
+    payload: {
+      ...(typeof result === "object" && !Array.isArray(result) ? result : {}),
+      level: bestMatch.candidateLevel,
+      marker_price: Number.isFinite(markerPrice) ? markerPrice : null,
+      source_artifact_id: String(bestMatch?.sourceEntry?.sourceId || "").trim(),
+      source_artifact_type: String(bestMatch?.sourceEntry?.sourceType || "").trim(),
+      source_artifact_time: Number(bestMatch?.sourceEntry?.sourceTime) || null,
+    },
+  });
+  if (!match?.id) return false;
+  return buildArtifactResult(functionName, [match], {
+    timeframe,
+    level: Number.isFinite(explicitLevel) ? explicitLevel : null,
+    source_artifact_id: String(bestMatch?.sourceEntry?.sourceId || "").trim(),
+    source_artifact_type: String(bestMatch?.sourceEntry?.sourceType || "").trim(),
+  });
+}
+
 function latestArtifactByType({ types = [], bias = "", ctx = {} }) {
   const items = filterArtifactsBeforeCurrentBar(selectArtifactsForContext(ctx), ctx).filter((item) =>
     (Array.isArray(types) ? types : [types]).includes(String(item?.type || "").trim().toLowerCase()) &&
@@ -416,12 +575,22 @@ function latestReversalMatch(level = null, ctx = {}) {
       .map((item) => [Number(item?.anchor_time || item?.bar_start || 0), item]),
   );
   if (Number.isFinite(normalizeLevel(level))) {
-    const rejected = findLevelMatches("reversal", level, ctx, ({ bar, level: target }) => {
+    const rejected = findCurrentBarLevelMatch("reversal", level, ctx, ({ bar, level: target }) => {
       if (Number(bar.low) <= target && Number(bar.close) > target) {
-        return { bias: "bullish", reversal_kind: "level_reclaim" };
+        return {
+          bias: "bullish",
+          reversal_kind: "level_reclaim",
+          marker_price: Number(bar.low),
+          first_hit_only: true,
+        };
       }
       if (Number(bar.high) >= target && Number(bar.close) < target) {
-        return { bias: "bearish", reversal_kind: "level_reject" };
+        return {
+          bias: "bearish",
+          reversal_kind: "level_reject",
+          marker_price: Number(bar.high),
+          first_hit_only: true,
+        };
       }
       return false;
     });
@@ -522,22 +691,26 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
   }
 
   const evaluatedArgs = (Array.isArray(rawArgs) ? rawArgs : []).map((arg) => resolve(arg));
-  const timeframe = resolveFunctionTimeframe(evaluatedArgs, ctx);
-  if (!timeframe) return false;
-  const tfContext = resolveTfContext(timeframe, ctx);
-  if (!tfContext.currentBar || !tfContext.bars.length) return false;
-  const nextCtx = {
-    ...ctx,
-    tf: tfContext.timeframe,
-    bars: tfContext.bars,
-    bar: tfContext.currentBar,
-    index: tfContext.currentIndex,
-    derivedArtifacts: tfContext.derivedArtifacts,
-  };
+  const requestedTfRaw =
+    evaluatedArgs.length > 1 ? String(evaluatedArgs[evaluatedArgs.length - 1] || "").trim() : "";
   const level = evaluatedArgs.length ? normalizeLevel(evaluatedArgs[0]) : null;
   const biasArg = evaluatedArgs.length ? String(evaluatedArgs[0] || "").trim().toLowerCase() : "";
 
-  switch (lowerName) {
+  const evaluateForTimeframe = (forcedTf = "") => {
+    const timeframe = String(forcedTf || resolveFunctionTimeframe(evaluatedArgs, ctx)).trim();
+    if (!timeframe || timeframe === "all") return false;
+    const tfContext = resolveTfContext(timeframe, ctx);
+    if (!tfContext.currentBar || !tfContext.bars.length) return false;
+    const nextCtx = {
+      ...ctx,
+      tf: tfContext.timeframe,
+      bars: tfContext.bars,
+      bar: tfContext.currentBar,
+      index: tfContext.currentIndex,
+      derivedArtifacts: tfContext.derivedArtifacts,
+    };
+
+    switch (lowerName) {
     case "touches":
       return findLevelMatches("touches", level, nextCtx, ({ bar, level: target }) =>
         Number(bar.low) <= target && Number(bar.high) >= target ? { bias: "" } : false,
@@ -551,9 +724,23 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         return false;
       });
     case "rejected":
-      return findLevelMatches("rejected", level, nextCtx, ({ bar, level: target }) => {
-        if (Number(bar.low) <= target && Number(bar.close) > target) return { bias: "bullish" };
-        if (Number(bar.high) >= target && Number(bar.close) < target) return { bias: "bearish" };
+      return findCurrentBarLevelMatch("rejected", level, nextCtx, ({ bar, level: target }) => {
+        if (Number(bar.low) <= target && Number(bar.close) > target) {
+          return {
+            bias: "bullish",
+            rejection_side: "below",
+            marker_price: Number(bar.low),
+            first_hit_only: true,
+          };
+        }
+        if (Number(bar.high) >= target && Number(bar.close) < target) {
+          return {
+            bias: "bearish",
+            rejection_side: "above",
+            marker_price: Number(bar.high),
+            first_hit_only: true,
+          };
+        }
         return false;
       });
     case "holds_above":
@@ -579,6 +766,44 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         resultMatches(latestArtifactByType({ types: ["sweep_high", "sweep_low"], bias: biasArg, ctx: nextCtx })),
         { timeframe, bias: biasArg },
       );
+    case "breakout":
+      return latestBreakoutMatch(level, nextCtx);
+    case "pin_bar":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(
+          latestArtifactByType({
+            types: ["bullish_pin_bar", "bearish_pin_bar"],
+            bias: biasArg,
+            ctx: nextCtx,
+          }),
+        ),
+        { timeframe, bias: biasArg },
+      );
+    case "engulfing":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(
+          latestArtifactByType({
+            types: ["bullish_engulfing", "bearish_engulfing"],
+            bias: biasArg,
+            ctx: nextCtx,
+          }),
+        ),
+        { timeframe, bias: biasArg },
+      );
+    case "inside_bar":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(latestArtifactByType({ types: ["inside_bar"], ctx: nextCtx })),
+        { timeframe },
+      );
+    case "outside_bar":
+      return buildArtifactResult(
+        lowerName,
+        resultMatches(latestArtifactByType({ types: ["outside_bar"], ctx: nextCtx })),
+        { timeframe },
+      );
     case "bos":
     case "has_bos":
       return buildArtifactResult(
@@ -593,8 +818,6 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
         resultMatches(latestArtifactByType({ types: ["choch"], bias: biasArg, ctx: nextCtx })),
         { timeframe, bias: biasArg },
       );
-    case "breakout":
-      return latestBreakoutMatch(level, nextCtx);
     case "reversal":
       return latestReversalMatch(level, nextCtx);
     case "trend":
@@ -609,7 +832,33 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
     }
     default:
       return null;
+    }
+  };
+
+  if (isAllTimeframesSelection(requestedTfRaw)) {
+    const requestedTfs = availableRequestedTimeframesForAll(ctx);
+    const mergedMatches = [];
+    const seen = new Set();
+    requestedTfs.forEach((requestedTf) => {
+      const result = evaluateForTimeframe(requestedTf);
+      resultMatches(result).forEach((match) => {
+        const key = String(
+          match?.id ||
+            `${match?.type || lowerName}:${match?.timeframe || requestedTf}:${match?.anchor_time || match?.time || ""}:${match?.price || ""}`,
+        );
+        if (seen.has(key)) return;
+        seen.add(key);
+        mergedMatches.push(match);
+      });
+    });
+    return buildArtifactResult(lowerName, mergedMatches, {
+      timeframe: currentTimeframe(ctx),
+      bias: biasArg,
+      source_timeframes: requestedTfs,
+    });
   }
+
+  return evaluateForTimeframe();
 }
 
 export {

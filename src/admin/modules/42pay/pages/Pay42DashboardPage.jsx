@@ -9,13 +9,15 @@ import Pay42MediaThumb from "./Pay42MediaThumb";
 import { formatMetric, formatMoney, roleLabel, statusTone } from "./pay42Ui";
 
 const PERIOD_DISPLAY = [
-  { key: "open", lab: "Now" },
+  { key: "open", lab: "Balance" },
+  { key: "points", lab: "Points" },
   { key: "today", lab: "Today" },
-  { key: "week", lab: "This Week" },
   { key: "month", lab: "This Month" },
   { key: "year", lab: "This Year" },
   { key: "all", lab: "All Times" },
 ];
+
+const POINTS_PER_PAYMENT = 1;
 
 const CHART_UNIT_OPTIONS = [
   { value: "day", label: "Day" },
@@ -255,11 +257,10 @@ export default function Pay42DashboardPage({ authUser }) {
       try {
         setLoading(true);
         setError("");
-        const isBuyerView = currentRole === "buyer";
         const [summaryOut, ordersOut, walletOut] = await Promise.all([
           api.pay42Dashboard(),
           api.pay42Orders(),
-          isBuyerView ? api.pay42Wallet() : Promise.resolve(null),
+          api.pay42Wallet(),
         ]);
         if (!cancelled) {
           setSummary(summaryOut || { cards: [], recent_orders: [], role: "" });
@@ -276,10 +277,18 @@ export default function Pay42DashboardPage({ authUser }) {
     }
 
     load();
-    const timer = window.setInterval(load, 30000);
+    const handleForegroundRefresh = () => {
+      if (document.visibilityState === "hidden") return;
+      load();
+    };
+    const timer = window.setInterval(load, 5000);
+    window.addEventListener("focus", handleForegroundRefresh);
+    document.addEventListener("visibilitychange", handleForegroundRefresh);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.removeEventListener("focus", handleForegroundRefresh);
+      document.removeEventListener("visibilitychange", handleForegroundRefresh);
     };
   }, [currentRole]);
 
@@ -324,6 +333,16 @@ export default function Pay42DashboardPage({ authUser }) {
 
   const cards = summary.cards || [];
   const recentOrders = summary.recent_orders || [];
+  const walletTotals =
+    summary.wallet_summary && typeof summary.wallet_summary === "object"
+      ? summary.wallet_summary
+      : {};
+  const totalBalance = Number(
+    walletTotals.total_balance ?? wallet?.balance ?? 0,
+  );
+  const totalTopup = Number(walletTotals.total_topup ?? 0);
+  const totalEarned = Number(walletTotals.total_earned ?? 0);
+  const totalSpent = Number(walletTotals.total_spent ?? 0);
 
   const columns = useMemo(
     () => [
@@ -432,23 +451,27 @@ export default function Pay42DashboardPage({ authUser }) {
 
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = startOfWeek(todayStart);
   const monthStart = startOfMonth(todayStart);
   const yearStart = startOfYear(todayStart);
-  const openRows = signedOrders.filter((order) => !["PAID", "COMPLETED"].includes(String(order.status || "").toUpperCase()));
-  const openPnl = openRows.reduce((sum, order) => sum + Number(order.signed_amount || 0), 0);
-  const openWins = openRows.filter((order) => Number(order.signed_amount || 0) > 0).length;
-  const openLosses = openRows.filter((order) => Number(order.signed_amount || 0) < 0).length;
+  const completedOrders = signedOrders.filter((order) =>
+    ["PAID", "COMPLETED"].includes(String(order.status || "").toUpperCase()),
+  );
+  const totalPoints = completedOrders.length * POINTS_PER_PAYMENT;
 
   const displayPeriodTotals = {
     open: {
-      total_pnl: Number(openPnl.toFixed(2)),
-      total_trades: openRows.length,
-      total_wins: openWins,
-      total_losses: openLosses,
+      total_pnl: Number(totalBalance.toFixed(2)),
+      total_trades: 0,
+      total_wins: 0,
+      total_losses: 0,
+    },
+    points: {
+      total_pnl: totalPoints,
+      total_trades: completedOrders.length,
+      total_wins: completedOrders.length,
+      total_losses: 0,
     },
     today: sumCalendarPnlInRange(calendarData, todayStart, todayStart),
-    week: sumCalendarPnlInRange(calendarData, weekStart, todayStart),
     month: sumCalendarPnlInRange(calendarData, monthStart, todayStart),
     year: sumCalendarPnlInRange(calendarData, yearStart, todayStart),
     all: sumCalendarPnlInRange(
@@ -460,17 +483,17 @@ export default function Pay42DashboardPage({ authUser }) {
     ),
   };
   const periodBreakdowns = {
-    open: amountBreakdown(openRows),
+    open: {
+      earned: totalEarned,
+      spent: totalSpent,
+      topup: totalTopup,
+    },
+    points: {
+      payments: completedOrders.length,
+      points: totalPoints,
+    },
     today: amountBreakdown(
       signedOrders.filter((order) => normalizeDateKey(order?.create_at) === toDateKeyLocal(todayStart)),
-    ),
-    week: amountBreakdown(
-      signedOrders.filter((order) => {
-        const raw = normalizeDateKey(order?.create_at);
-        if (!raw) return false;
-        const at = new Date(`${raw}T00:00:00`);
-        return at >= weekStart && at <= todayStart;
-      }),
     ),
     month: amountBreakdown(
       signedOrders.filter((order) => {
@@ -604,6 +627,8 @@ export default function Pay42DashboardPage({ authUser }) {
         {PERIOD_DISPLAY.map((conf) => {
           const v = displayPeriodTotals[conf.key] || {};
           const breakdown = periodBreakdowns[conf.key] || { earned: 0, spent: 0 };
+          const isBalanceCard = conf.key === "open";
+          const isPointsCard = conf.key === "points";
           return (
             <article className="kpi-card" key={conf.key}>
               <div
@@ -626,15 +651,26 @@ export default function Pay42DashboardPage({ authUser }) {
                     textAlign: "right",
                   }}
                 >
-                  t: {v.total_trades || 0} | {v.total_wins || 0}
-                  <span className="minor-text"> / </span>
-                  {v.total_losses || 0}
+                  {isBalanceCard ? (
+                    <span>Total Topup + Earn - Spent</span>
+                  ) : isPointsCard ? (
+                    <span>{POINTS_PER_PAYMENT} point per payment</span>
+                  ) : (
+                    <>
+                      t: {v.total_trades || 0} | {v.total_wins || 0}
+                      <span className="minor-text"> / </span>
+                      {v.total_losses || 0}
+                    </>
+                  )}
                 </div>
               </div>
               <div style={{ marginTop: "4px", height: 1 }} />
               <div className="period-big-line">
-                <span className={`kpi-value ${moneyClass(v.total_pnl)}`} style={{ fontSize: "24px" }}>
-                  {asMoneySigned(v.total_pnl || 0)}
+                <span
+                  className={`kpi-value ${isPointsCard ? "money-neutral" : moneyClass(v.total_pnl)}`}
+                  style={{ fontSize: "24px" }}
+                >
+                  {isPointsCard ? `${Number(v.total_pnl || 0)} pts` : asMoneySigned(v.total_pnl || 0)}
                 </span>
               </div>
               <div
@@ -650,11 +686,30 @@ export default function Pay42DashboardPage({ authUser }) {
                 }}
               >
                 <span className={moneyClass(v.total_pnl)}>
-                  {dashboardRole === "buyer" ? "Buyer spend" : "Sales flow"}
+                  {isBalanceCard
+                    ? "Total balance"
+                    : isPointsCard
+                      ? "Reward points"
+                    : dashboardRole === "buyer"
+                      ? "Buyer spend"
+                      : "Sales flow"}
                 </span>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <span className="money-pos">Earn {formatMoney(breakdown.earned || 0)}</span>
-                  <span className="money-neg">Spent {formatMoney(breakdown.spent || 0)}</span>
+                  {isBalanceCard ? (
+                    <span className="money-neutral">
+                      Topup {formatMoney(breakdown.topup || 0)}
+                    </span>
+                  ) : null}
+                  {isPointsCard ? (
+                    <span className="money-neutral">
+                      Payments {breakdown.payments || 0}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="money-pos">Earn {formatMoney(breakdown.earned || 0)}</span>
+                      <span className="money-neg">Spent {formatMoney(breakdown.spent || 0)}</span>
+                    </>
+                  )}
                 </div>
               </div>
             </article>

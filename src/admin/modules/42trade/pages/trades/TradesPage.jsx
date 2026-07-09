@@ -16,6 +16,7 @@ import CronRunLauncher from "../../components/CronRunLauncher";
 import BulkActionsButton from "../../../../shared/components/BulkActionsButton";
 import PageHeader from "../../../../shared/components/PageHeader";
 import ResponsivePanel from "../../../../shared/components/ResponsivePanel";
+import ListItems from "../../../../shared/components/ListItems";
 import { useConfirmDialog } from "../../../../shared/components/ConfirmDialog";
 import AdminPageToolbar from "../../../../shared/components/AdminPageToolbar";
 import { realtimeClient } from "../../realtime/realtimeClientSingleton";
@@ -1877,7 +1878,7 @@ export default function TradesPage() {
           {error ? <div className="error">{error}</div> : null}
           <div className="events-table-wrap">
             {listMode === "compact" ? (
-              <div style={{ padding: 4, overflow: "auto", height: "100%" }}>
+              <ListItems style={{ padding: 4, height: "100%" }}>
                 {sortedRows.map((t, i) => {
                   const isActive = tradeKeyOf(selectedTrade) === tradeKeyOf(t);
                   const action = String(t.action || t.side || "").toUpperCase();
@@ -1908,7 +1909,7 @@ export default function TradesPage() {
                   return (
                     <article
                       key={t.sid || t.id || `row-${i}`}
-                      className="card-flat card-item"
+                      className={`card-flat card-item${isActive ? " selected-item" : ""}`}
                       onClick={() => {
                         const k = tradeKeyOf(t);
                         selectedTradeIdRef.current = k;
@@ -1918,12 +1919,6 @@ export default function TradesPage() {
                       style={{
                         cursor: "pointer",
                         fontSize: 10,
-                        border: isActive
-                          ? "1px solid var(--accent)"
-                          : "1px solid var(--border)",
-                        background: isActive
-                          ? "rgba(255,255,255,0.05)"
-                          : "transparent",
                       }}
                     >
                       <div
@@ -2009,7 +2004,7 @@ export default function TradesPage() {
                     </article>
                   );
                 })}
-              </div>
+              </ListItems>
             ) : (
               <DataTable
                 columns={columns}

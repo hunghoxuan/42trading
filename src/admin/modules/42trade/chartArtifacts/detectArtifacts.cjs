@@ -217,15 +217,79 @@ function buildZigZagPivotPoints(bars = [], pivot = 5) {
   return pivots;
 }
 
+function classifyStructurePivots(pivots = [], tolerance = 0) {
+  const nextTolerance = Math.max(0, Number(tolerance) || 0);
+  let previousHigh = null;
+  let previousLow = null;
+  return (Array.isArray(pivots) ? pivots : []).map((pivotPoint) => {
+    const next = { ...pivotPoint };
+    if (next.type === "swing_high") {
+      if (previousHigh) {
+        if (Number(next.price) > Number(previousHigh.price) + nextTolerance) {
+          next.structureTag = "hh";
+        } else if (Number(next.price) < Number(previousHigh.price) - nextTolerance) {
+          next.structureTag = "lh";
+        } else {
+          next.structureTag = "eqh";
+        }
+        next.previousSameTypeTime = Number(previousHigh.time);
+        next.previousSameTypePrice = Number(previousHigh.price);
+      } else {
+        next.structureTag = "";
+      }
+      previousHigh = next;
+      return next;
+    }
+    if (next.type === "swing_low") {
+      if (previousLow) {
+        if (Number(next.price) > Number(previousLow.price) + nextTolerance) {
+          next.structureTag = "hl";
+        } else if (Number(next.price) < Number(previousLow.price) - nextTolerance) {
+          next.structureTag = "ll";
+        } else {
+          next.structureTag = "eql";
+        }
+        next.previousSameTypeTime = Number(previousLow.time);
+        next.previousSameTypePrice = Number(previousLow.price);
+      } else {
+        next.structureTag = "";
+      }
+      previousLow = next;
+      return next;
+    }
+    next.structureTag = "";
+    return next;
+  });
+}
+
+function inferPivotStructureBias(lastHigh = null, lastLow = null, fallback = "") {
+  const highTag = String(lastHigh?.structureTag || "").trim().toLowerCase();
+  const lowTag = String(lastLow?.structureTag || "").trim().toLowerCase();
+  if (highTag === "hh" || lowTag === "hl") return "bullish";
+  if (highTag === "lh" || lowTag === "ll") return "bearish";
+  return String(fallback || "").trim().toLowerCase();
+}
+
 function candleRangeSize(bar = {}) {
   return Math.max(0, Number(bar?.high) - Number(bar?.low));
 }
 
 function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
-  return buildZigZagPivotPoints(bars, pivot)
+  const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
+  const recentBarRanges = (Array.isArray(bars) ? bars : [])
+    .slice(-40)
+    .map((bar) => candleRangeSize(bar))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const tolerance = Math.max((medianNumber(recentBarRanges) || 1) * 0.03, 0.0000001);
+  return classifyStructurePivots(
+    buildZigZagPivotPoints(bars, effectivePivot),
+    tolerance,
+  )
     .map((pivotPoint) => {
       const bar = pivotPoint?.bar || {};
       const range = candleRangeSize(bar);
+      const structureTag = String(pivotPoint?.structureTag || "").trim().toLowerCase();
+      const structureLabel = structureTag ? structureTag.toUpperCase() : "";
       return normalizeChartArtifactItem({
         id: buildItemId([
           "level",
@@ -252,7 +316,11 @@ function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
           ),
           extension_bars: 3,
           swing_algo: "zigzag",
-          pivot_strength: pivot,
+          pivot_strength: effectivePivot,
+          structure_tag: structureTag,
+          structure_label: structureLabel,
+          previous_same_type_time: Number(pivotPoint?.previousSameTypeTime) || null,
+          previous_same_type_price: Number(pivotPoint?.previousSameTypePrice) || null,
         },
       });
     })
@@ -635,18 +703,33 @@ function buildSweepItems(bars = [], timeframe = "", pivot = 5) {
 function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
   const out = [];
   const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
-  const pivots = buildZigZagPivotPoints(bars, effectivePivot);
+  const recentBarRanges = bars
+    .slice(-40)
+    .map((bar) => candleRangeSize(bar))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const medianRange = medianNumber(recentBarRanges) || 1;
+  const pivots = classifyStructurePivots(
+    buildZigZagPivotPoints(bars, effectivePivot),
+    Math.max(medianRange * 0.03, 0.0000001),
+  );
   if (!pivots.length) return out;
   let pivotIndex = 0;
   let lastHigh = null;
   let lastLow = null;
   let lastBreakBias = "";
+  let lastBullBreak = null;
+  let lastBearBreak = null;
   const consumed = new Set();
-  const recentBarRanges = bars
-    .slice(-40)
-    .map((bar) => candleRangeSize(bar))
+  const tolerance = Math.max(medianRange * 0.02, 0.0000001);
+  const sameLevelTolerance = Math.max(medianRange * 0.2, tolerance * 6);
+  const barSpacingCandidates = bars
+    .slice(-80)
+    .map((bar, index, list) =>
+      index > 0 ? Number(bar?.time) - Number(list[index - 1]?.time) : null,
+    )
     .filter((value) => Number.isFinite(value) && value > 0);
-  const tolerance = Math.max((medianNumber(recentBarRanges) || 1) * 0.02, 0.0000001);
+  const barSpacingSec = medianNumber(barSpacingCandidates) || 60;
+  const repeatWindowSec = Math.max(barSpacingSec * effectivePivot * 6, barSpacingSec * 3);
 
   for (let index = 0; index < bars.length; index += 1) {
     const bar = bars[index];
@@ -664,9 +747,22 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
       !consumed.has(`bos-high:${lastHigh.time}`) &&
       Number(bar.close) > Number(lastHigh.price) + tolerance
     ) {
-      const isChoch = lastBreakBias === "bearish";
+      const structureBias = inferPivotStructureBias(lastHigh, lastLow, lastBreakBias);
+      const isChoch = structureBias === "bearish";
+      const isDuplicateLevel =
+        lastBullBreak &&
+        Math.abs(Number(lastHigh.price) - Number(lastBullBreak.level)) <= sameLevelTolerance &&
+        Math.abs(Number(bar.time) - Number(lastBullBreak.time)) <= repeatWindowSec;
+      if (isDuplicateLevel) {
+        consumed.add(`bos-high:${lastHigh.time}`);
+        continue;
+      }
       consumed.add(`bos-high:${lastHigh.time}`);
       lastBreakBias = "bullish";
+      lastBullBreak = {
+        level: Number(lastHigh.price),
+        time: Number(bar.time),
+      };
       out.push(
         normalizeChartArtifactItem({
           id: buildItemId([
@@ -695,6 +791,7 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
             source_swing_time: Number(lastHigh.time),
             source_swing_price: Number(lastHigh.price),
             confirmed_by_close: true,
+            source_swing_structure_tag: String(lastHigh?.structureTag || "").trim().toLowerCase(),
           },
         }),
       );
@@ -705,9 +802,22 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
       !consumed.has(`bos-low:${lastLow.time}`) &&
       Number(bar.close) < Number(lastLow.price) - tolerance
     ) {
-      const isChoch = lastBreakBias === "bullish";
+      const structureBias = inferPivotStructureBias(lastHigh, lastLow, lastBreakBias);
+      const isChoch = structureBias === "bullish";
+      const isDuplicateLevel =
+        lastBearBreak &&
+        Math.abs(Number(lastLow.price) - Number(lastBearBreak.level)) <= sameLevelTolerance &&
+        Math.abs(Number(bar.time) - Number(lastBearBreak.time)) <= repeatWindowSec;
+      if (isDuplicateLevel) {
+        consumed.add(`bos-low:${lastLow.time}`);
+        continue;
+      }
       consumed.add(`bos-low:${lastLow.time}`);
       lastBreakBias = "bearish";
+      lastBearBreak = {
+        level: Number(lastLow.price),
+        time: Number(bar.time),
+      };
       out.push(
         normalizeChartArtifactItem({
           id: buildItemId([
@@ -736,6 +846,7 @@ function buildStructureBreakItems(bars = [], timeframe = "", pivot = 5) {
             source_swing_time: Number(lastLow.time),
             source_swing_price: Number(lastLow.price),
             confirmed_by_close: true,
+            source_swing_structure_tag: String(lastLow?.structureTag || "").trim().toLowerCase(),
           },
         }),
       );
@@ -892,7 +1003,15 @@ function artifactReferenceTime(item = {}) {
   return Number.isFinite(time) ? time : null;
 }
 
-function shouldLimitArtifactType() {
+function shouldLimitArtifactType(type = "", family = "") {
+  const normalizedType = String(type || "").trim().toLowerCase();
+  const normalizedFamily = String(family || "").trim().toLowerCase();
+  if (normalizedFamily === "pattern") return false;
+  if (normalizedFamily === "swing") return false;
+  if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
+  if (normalizedType === "bos" || normalizedType === "choch") return false;
+  if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;
+  if (normalizedType === "liquidity_high" || normalizedType === "liquidity_low") return false;
   return true;
 }
 

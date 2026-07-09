@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 
-const MOBILE_BREAKPOINT = 768;
-
-function getIsMobile() {
-  if (typeof window === "undefined") return false;
-  return window.innerWidth < MOBILE_BREAKPOINT;
-}
+import useIsMobile from "../hooks/useIsMobile.js";
 
 export default function MobileCollapseSection({
   title,
@@ -15,17 +10,10 @@ export default function MobileCollapseSection({
   bodyClassName = "",
   children,
 }) {
-  const [isMobile, setIsMobile] = useState(getIsMobile);
+  const isMobile = useIsMobile();
   const [open, setOpen] = useState(() =>
-    getIsMobile() ? defaultOpenMobile : defaultOpenDesktop,
+    isMobile ? defaultOpenMobile : defaultOpenDesktop,
   );
-
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = (event) => setIsMobile(event.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
 
   useEffect(() => {
     setOpen(isMobile ? defaultOpenMobile : defaultOpenDesktop);

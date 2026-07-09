@@ -2127,7 +2127,7 @@ class TimeRangeBoxPrimitive {
                 if (self._label && x1 - x0 >= 20) {
                   ctx.setLineDash([]);
                   ctx.shadowBlur = 0;
-                  const fontPx = Math.max(12, Math.round(12 * pixelRatioY));
+                  const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
                   ctx.textBaseline = "top";
                   const textWidth = ctx.measureText(self._label).width;
@@ -2242,7 +2242,7 @@ class EventTimeMarkerPrimitive {
 
                 if (self._text) {
                   ctx.fillStyle = self._color;
-                  const fontSize = Math.max(14, Math.round(14 * ratioY));
+                  const fontSize = Math.max(10, Math.round(10 * ratioY));
                   ctx.font = `${fontSize}px sans-serif`;
                   const labelY = markerY + Math.round(textOffsetY * ratioY);
                   const measuredTextWidth = Math.ceil(ctx.measureText(self._text).width);
@@ -2326,7 +2326,7 @@ class PriceTagPrimitive {
                 const pixelRatioY = scope.verticalPixelRatio || 1;
                 const yPos = Math.round(y * pixelRatioY);
                 if (yPos < 0 || yPos > r.height) return;
-                const fontPx = Math.max(13, Math.round(13 * pixelRatioY));
+                const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
                 const padX = Math.max(4, Math.round(4 * pixelRatioX));
                 const padY = Math.max(2, Math.round(2 * pixelRatioY));
                 ctx.save();
@@ -2433,7 +2433,7 @@ class HorizontalPriceLinePrimitive {
 
                 if (self._label) {
                   ctx.setLineDash([]);
-                  const fontPx = Math.max(13, Math.round(13 * pixelRatioY));
+                  const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
                   const padX = Math.max(4, Math.round(4 * pixelRatioX));
                   const padY = Math.max(2, Math.round(2 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
@@ -2470,6 +2470,7 @@ class HorizontalPriceSegmentPrimitive {
     startTimeSec,
     endTimeSec = null,
     label = "",
+    labelAlign = "left",
     color = "#60a5fa",
     lineDash = [4, 4],
     lineWidth = 1,
@@ -2481,6 +2482,9 @@ class HorizontalPriceSegmentPrimitive {
       ? Number(endTimeSec)
       : NaN;
     this._label = String(label || "").trim();
+    this._labelAlign = String(labelAlign || "left").trim().toLowerCase() === "right"
+      ? "right"
+      : "left";
     this._color = color;
     this._lineDash = Array.isArray(lineDash) ? lineDash : [4, 4];
     this._lineWidth = Number.isFinite(Number(lineWidth))
@@ -2521,27 +2525,9 @@ class HorizontalPriceSegmentPrimitive {
                 const r = scope.bitmapSize;
                 const ts = self._chart.timeScale();
                 const y = self._series.priceToCoordinate(self._price);
-                const visibleRange =
-                  typeof ts.getVisibleLogicalRange === "function"
-                    ? ts.getVisibleLogicalRange()
-                    : null;
-                const logicalStart =
-                  visibleRange && Number.isFinite(Number(visibleRange.from))
-                    ? Number(visibleRange.from)
-                    : null;
-                const visibleStartTime =
-                  Number.isFinite(logicalStart) &&
-                  typeof ts.coordinateToTime === "function"
-                    ? Number(ts.coordinateToTime(logicalStart))
-                    : null;
                 const rawXStart = ts.timeToCoordinate(self._startTime);
                 if (y == null) return;
-                const xStart =
-                  rawXStart == null
-                    ? Number.isFinite(visibleStartTime) && self._startTime < visibleStartTime
-                      ? 0
-                      : null
-                    : rawXStart;
+                const xStart = rawXStart == null ? 0 : rawXStart;
                 const xEnd = Number.isFinite(self._endTime)
                   ? ts.timeToCoordinate(self._endTime)
                   : r.width / (scope.horizontalPixelRatio || 1);
@@ -2573,14 +2559,16 @@ class HorizontalPriceSegmentPrimitive {
 
                 if (self._label && x1 - x0 >= 18) {
                   ctx.setLineDash([]);
-                  const fontPx = Math.max(12, Math.round(12 * pixelRatioY));
+                  const fontPx = Math.max(10, Math.round(10 * pixelRatioY));
                   const padX = Math.max(3, Math.round(3 * pixelRatioX));
                   const padY = Math.max(1, Math.round(1 * pixelRatioY));
                   ctx.font = `${fontPx}px sans-serif`;
                   const textWidth = ctx.measureText(self._label).width;
                   const chipW = Math.ceil(textWidth + padX * 2);
                   const chipH = fontPx + padY * 2;
-                  const chipX = x0 + padX;
+                  const chipX = self._labelAlign === "right"
+                    ? Math.max(x0 + padX, x1 - chipW - padX)
+                    : x0 + padX;
                   const chipY = Math.max(0, yPos - chipH - padY);
                   ctx.fillStyle = self._background;
                   ctx.fillRect(chipX, chipY, chipW, chipH);
@@ -4631,14 +4619,18 @@ export default function TradeSignalChart({
                   const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
                   const endTimeSec = toEpochSec(obj.anchorTimeMs2);
                   const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+                  const extendToPriceScale = lineScope === "segment_to_scale";
                   const resolvedLineWidth =
-                    lineScope === "segment" ? Math.max(1, rawLineWidth) : rawLineWidth;
+                    lineScope === "segment" || extendToPriceScale
+                      ? Math.max(1, rawLineWidth)
+                      : rawLineWidth;
                   const linePrimitive = Number.isFinite(startTimeSec)
                     ? new HorizontalPriceSegmentPrimitive({
                         price,
                         startTimeSec,
-                        endTimeSec,
+                        endTimeSec: extendToPriceScale ? null : endTimeSec,
                         label,
+                        labelAlign: extendToPriceScale ? "right" : "left",
                         color: lineColor,
                         lineDash: obj.line_style === "dot" ? [2, 2] : [],
                         lineWidth: resolvedLineWidth,
@@ -4658,8 +4650,9 @@ export default function TradeSignalChart({
                       color: lineColor,
                       lineWidth: resolvedLineWidth,
                       lineStyle,
-                      axisLabelVisible: false,
-                      title: "",
+                      lineVisible: true,
+                      axisLabelVisible: extendToPriceScale,
+                      title: extendToPriceScale ? label : "",
                     });
                     sharedOverlayPriceLinesRef.current.push(sharedLine);
                   }

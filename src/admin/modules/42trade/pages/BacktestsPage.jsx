@@ -12,9 +12,11 @@ import SymbolChart from "../components/charts/SymbolChart";
 import PageHeader from "../../../shared/components/PageHeader";
 import MasterDetailLayout from "../../../shared/components/MasterDetailLayout";
 import ResponsivePanel from "../../../shared/components/ResponsivePanel";
+import ListItems from "../../../shared/components/ListItems";
 import InputComboSelect from "../../../shared/components/InputComboSelect";
 import TabBar from "../../../shared/components/TabBar";
 import { useConfirmDialog } from "../../../shared/components/ConfirmDialog";
+import useIsMobile from "../../../shared/hooks/useIsMobile.js";
 import strategyFunctions from "../../../../config/strategyFunctions.json";
 import { deriveBacktestFormFromRun } from "../../../shared/utils/backtestForm";
 import {
@@ -43,6 +45,15 @@ function timeframeLabel(tfRaw) {
   if (tf === "240" || tf === "4h") return "4h";
   if (tf === "1440" || tf === "1d") return "1d";
   return String(tfRaw || "-");
+}
+
+const BACKTEST_TF_SEQUENCE = ["1m", "5m", "15m", "1h", "4h", "1d"];
+
+function higherBacktestTimeframes(tfRaw = "") {
+  const normalizedTf = timeframeLabel(tfRaw);
+  const startIndex = BACKTEST_TF_SEQUENCE.indexOf(normalizedTf);
+  if (startIndex < 0) return [];
+  return BACKTEST_TF_SEQUENCE.slice(startIndex + 1);
 }
 
 function strategySourceMeta(strategy = {}) {
@@ -258,6 +269,14 @@ function buildRuleOperand(rawValue = "") {
   return parsed;
 }
 
+function buildRuleFunctionArgOperand(argKey = "", rawValue = "") {
+  const normalizedKey = String(argKey || "").trim().toLowerCase();
+  if (normalizedKey === "bias" || normalizedKey === "tf") {
+    return String(rawValue ?? "").trim();
+  }
+  return buildRuleOperand(rawValue);
+}
+
 function buildRuleExpressionFromDraft(node) {
   if (!node || typeof node !== "object") return null;
   if (node.type === "group") {
@@ -282,9 +301,13 @@ function buildRuleExpressionFromDraft(node) {
     if (!functionName) return null;
     const functionMeta =
       RULE_FUNCTION_OPTIONS.find((item) => item.value === functionName) || null;
-    const args = (Array.isArray(functionMeta?.args) ? functionMeta.args : []).map((arg) =>
-      buildRuleOperand(node?.args?.[String(arg?.key || "").trim()] ?? ""),
-    );
+    const args = (Array.isArray(functionMeta?.args) ? functionMeta.args : []).map((arg) => {
+      const argKey = String(arg?.key || "").trim();
+      return buildRuleFunctionArgOperand(
+        argKey,
+        node?.args?.[argKey] ?? "",
+      );
+    });
     const expression = { fn: functionName, args };
     return mode === "if_not" ? { not: expression } : expression;
   }
@@ -612,6 +635,7 @@ function RuleTestConditionEditor({
                   ) : argKey === "tf" ? (
                     <>
                       <option value="">Current TF</option>
+                      <option value="all">All TFs</option>
                       {TIMEFRAME_OPTIONS.map((option) => (
                         <option key={option.value} value={timeframeLabel(option.value)}>
                           {option.label}
@@ -1012,13 +1036,6 @@ function TradeListCard({
         event.preventDefault();
         onClick?.();
       }}
-      style={{
-        width: "100%",
-        borderWidth: 1,
-        borderStyle: "solid",
-        borderColor: active ? "var(--accent)" : "var(--border)",
-        background: active ? "rgba(255,255,255,0.05)" : "transparent",
-      }}
     >
       <div className="stack-layout backtests-item-card__body backtests-item-card__body--trade" style={{ gap: 2, width: "100%" }}>
         <div
@@ -1076,6 +1093,7 @@ export default function BacktestsPage() {
   const location = useLocation();
   const params = useParams();
   const confirm = useConfirmDialog();
+  const isMobile = useIsMobile();
   const routeRunId = String(params.runId || "").trim();
   const routeStrategyId = strategyIdFromLocation(location);
 
@@ -1086,6 +1104,7 @@ export default function BacktestsPage() {
     if (hash === "#history") return "history";
     return "backtest";
   });
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
   const [runs, setRuns] = useState([]);
   const [strategies, setStrategies] = useState([]);
   const [customStrategies, setCustomStrategies] = useState([]);
@@ -1386,6 +1405,62 @@ export default function BacktestsPage() {
           mode: "if_true",
           functionName: "rejected",
           args: { level: "levels.pd_mid" },
+        },
+      }),
+    );
+    pushItem(
+      buildRuleLibraryEntry({
+        id: "popular_breakout",
+        label: "Breakout",
+        source: "popular",
+        tree: {
+          id: createRuleTestNodeId("condition"),
+          type: "condition",
+          mode: "if_true",
+          functionName: "breakout",
+          args: { level: "levels.pd_mid", tf: "" },
+        },
+      }),
+    );
+    pushItem(
+      buildRuleLibraryEntry({
+        id: "popular_pin_bar",
+        label: "Pin Bar",
+        source: "popular",
+        tree: {
+          id: createRuleTestNodeId("condition"),
+          type: "condition",
+          mode: "if_true",
+          functionName: "pin_bar",
+          args: { bias: "", tf: "" },
+        },
+      }),
+    );
+    pushItem(
+      buildRuleLibraryEntry({
+        id: "popular_engulfing",
+        label: "Engulfing",
+        source: "popular",
+        tree: {
+          id: createRuleTestNodeId("condition"),
+          type: "condition",
+          mode: "if_true",
+          functionName: "engulfing",
+          args: { bias: "", tf: "" },
+        },
+      }),
+    );
+    pushItem(
+      buildRuleLibraryEntry({
+        id: "popular_inside_bar",
+        label: "Inside Bar",
+        source: "popular",
+        tree: {
+          id: createRuleTestNodeId("condition"),
+          type: "condition",
+          mode: "if_true",
+          functionName: "inside_bar",
+          args: { bias: "", tf: "" },
           left: "bar.close",
           comparator: ">",
           right: "bar.open",
@@ -2132,7 +2207,7 @@ export default function BacktestsPage() {
   );
 
   const runList = (
-    <div className="stack-layout" style={{ gap: 8 }}>
+    <ListItems>
       {runs.length ? (
         runs.map((run) => {
           const isActive = selectedRunId === run.run_id;
@@ -2152,12 +2227,6 @@ export default function BacktestsPage() {
                 if (event.key !== "Enter" && event.key !== " ") return;
                 event.preventDefault();
                 openRun();
-              }}
-              style={{
-                borderWidth: 1,
-                borderStyle: "solid",
-                borderColor: isActive ? "var(--accent)" : "var(--border)",
-                background: isActive ? "var(--accent-soft)" : "transparent",
               }}
             >
               <div className="stack-layout backtests-item-card__body backtests-item-card__body--run" style={{ gap: 2, width: "100%" }}>
@@ -2247,11 +2316,11 @@ export default function BacktestsPage() {
       ) : (
         <div className="empty-state">No backtest runs yet.</div>
       )}
-    </div>
+    </ListItems>
   );
 
   const strategiesList = (
-    <div className="stack-layout" style={{ gap: 8 }}>
+    <ListItems>
       {allStrategies.map((item) => {
         const id = item.key || item.id;
         const active = String(selectedStrategyId || form.strategy_key || "") === String(id || "");
@@ -2285,13 +2354,6 @@ export default function BacktestsPage() {
                 event.preventDefault();
                 handleOpenStrategyEditor(id);
               }
-            }}
-            style={{
-              marginBottom: 3,
-              borderWidth: 1,
-              borderStyle: "solid",
-              borderColor: active ? "var(--accent)" : "var(--border)",
-              background: active ? "var(--accent-soft)" : "transparent",
             }}
           >
             <div
@@ -2378,7 +2440,7 @@ export default function BacktestsPage() {
           </div>
         );
       })}
-    </div>
+    </ListItems>
   );
 
   const ruleTesterHeaderControls = (
@@ -2477,46 +2539,41 @@ export default function BacktestsPage() {
   );
 
   const ruleLibraryPanel = (
-    <div className="stack-layout" style={{ gap: 12 }}>
-      <div className="stack-layout" style={{ gap: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-          }}
-        >
-          <div className="minor-text" style={{ fontSize: 11 }}>Rule Library</div>
-          <TabBar
-            value={ruleLibraryTab}
-            options={[
-              { value: "popular", label: "Popular" },
-              { value: "strategy", label: "Strategy" },
-            ]}
-            onChange={(nextValue) =>
-              setRuleLibraryTab(String(nextValue || "popular"))
-            }
-            size="sm"
-            ariaLabel="Rule library tabs"
-          />
-        </div>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            maxHeight: 420,
-            overflowY: "auto",
-            paddingRight: 4,
-          }}
-        >
-          {visibleRuleLibraryItems.length ? (
-            visibleRuleLibraryItems.map((item) => (
+    <div className="stack-layout" style={{ gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          width: "100%",
+        }}
+      >
+        <div className="minor-text" style={{ fontSize: 11 }}>Rule Library</div>
+        <TabBar
+          value={ruleLibraryTab}
+          options={[
+            { value: "popular", label: "Popular" },
+            { value: "strategy", label: "Strategy" },
+          ]}
+          onChange={(nextValue) =>
+            setRuleLibraryTab(String(nextValue || "popular"))
+          }
+          size="sm"
+          ariaLabel="Rule library tabs"
+        />
+      </div>
+      <ListItems className="list-items--rule-library">
+        {visibleRuleLibraryItems.length ? (
+          visibleRuleLibraryItems.map((item) => {
+            const isActive =
+              String(ruleTester?.rule?.name || "").trim().toLowerCase() ===
+              String(item.label || "").trim().toLowerCase();
+            return (
               <button
                 key={item.id}
                 type="button"
-                className="backtests-item-card card-item"
+                className={`backtests-item-card card-item${isActive ? " selected-item" : ""}`}
                 onClick={() => handleRuleLibraryPick(item)}
                 title={`Load ${item.label}`}
               >
@@ -2537,16 +2594,16 @@ export default function BacktestsPage() {
                   </span>
                 </div>
               </button>
-            ))
-          ) : (
-            <div className="minor-text" style={{ fontSize: 11 }}>
-              {ruleLibraryTab === "strategy"
-                ? "No strategy-derived rules available yet."
-                : "No popular rules available."}
-            </div>
-          )}
-        </div>
-      </div>
+            );
+          })
+        ) : (
+          <div className="minor-text" style={{ fontSize: 11 }}>
+            {ruleLibraryTab === "strategy"
+              ? "No strategy-derived rules available yet."
+              : "No popular rules available."}
+          </div>
+        )}
+      </ListItems>
     </div>
   );
 
@@ -2654,17 +2711,7 @@ export default function BacktestsPage() {
             bodyClassName="stack-layout"
           >
             {activeRun && sortedActiveTrades.length ? (
-              <div
-                style={{
-                  maxHeight: 700,
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 8,
-                  paddingRight: 4,
-                }}
-              >
+              <ListItems className="list-items--run-trades">
                 {sortedActiveTrades.map((trade) => (
                   <TradeListCard
                     key={trade.sid}
@@ -2674,7 +2721,7 @@ export default function BacktestsPage() {
                     onClick={() => setSelectedTradeSid(String(trade?.sid || ""))}
                   />
                 ))}
-              </div>
+              </ListItems>
             ) : (
               <div className="empty-state">
                 {activeRun ? "No trades found for this run." : "Select a run to inspect trades."}
@@ -2726,13 +2773,7 @@ export default function BacktestsPage() {
         </div>
       ) : null}
       {activeTab === "rules" ? (
-        <ResponsivePanel
-          showToggle={false}
-          border="always"
-          bodyClassName="stack-layout"
-        >
-          {ruleLibraryPanel}
-        </ResponsivePanel>
+        ruleLibraryPanel
       ) : null}
     </div>
   );
@@ -2747,7 +2788,12 @@ export default function BacktestsPage() {
         </div>
       ) : null}
 
-      <MasterDetailLayout sidebarWidth={360} gap={18}>
+      <MasterDetailLayout
+        sidebarWidth={360}
+        sidebarCollapsed={!isMobile && !isLeftPanelOpen}
+        collapsedSidebarWidth={44}
+        gap={18}
+      >
         <ResponsivePanel
           headerContent={
             <TabBar
@@ -2759,7 +2805,10 @@ export default function BacktestsPage() {
               style={{ width: "100%" }}
             />
           }
-          showToggle={false}
+          showToggle
+          collapseDirection="left-right"
+          open={isLeftPanelOpen}
+          onOpenChange={setIsLeftPanelOpen}
           border="always"
           bodyClassName="stack-layout"
           style={{ minHeight: 720 }}
@@ -2796,11 +2845,12 @@ export default function BacktestsPage() {
                     bodyClassName="stack-layout"
                   >
                     {ruleEditorTab === "edit" ? (
-                        <RuleBuilder
+                      <RuleBuilder
                         key={String(ruleTester?.rule?.id || "rule-editor-root")}
                         rule={ruleTester.rule}
                         variableOptions={RULE_DEFAULT_VARIABLE_VALUES}
                         showActions={false}
+                        currentTimeframeLabel={timeframeLabel(ruleTester.tf)}
                         onChange={(nextRule) => {
                           setRuleTester((prev) => ({ ...prev, rule: nextRule }));
                           setTestedRuleStrategy(null);
@@ -2828,7 +2878,8 @@ export default function BacktestsPage() {
                   <SymbolChart
                     key={`rules:${ruleTester.symbol}:${ruleTester.tf}:${ruleTesterBarsCount}:${ruleTestRunKey}`}
                     symbol={ruleTester.symbol}
-                    timeframes={[ruleTester.tf]}
+                    timeframes={[timeframeLabel(ruleTester.tf)]}
+                    extraRequestedTimeframes={higherBacktestTimeframes(ruleTester.tf)}
                     liveBars={false}
                     bootstrapLiveBarsOnMount
                     defaultMode="cache"
@@ -2866,7 +2917,8 @@ export default function BacktestsPage() {
                 <div className="stack-layout" style={{ gap: 14 }}>
                   <SymbolChart
                     symbol={activeRun.symbol}
-                    timeframes={[activeRun.tf]}
+                    timeframes={[timeframeLabel(activeRun.tf)]}
+                    extraRequestedTimeframes={higherBacktestTimeframes(activeRun.tf)}
                     liveBars={false}
                     bootstrapLiveBarsOnMount
                     defaultMode="cache"
@@ -2922,15 +2974,7 @@ export default function BacktestsPage() {
                     bodyClassName="stack-layout"
                   >
                     {visibleBacktestEvents.length ? (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 8,
-                          maxHeight: 320,
-                          overflowY: "auto",
-                        }}
-                      >
+                      <ListItems className="list-items--strategy-events">
                         {visibleBacktestEvents.map((entry, index) => {
                           const artifacts = Array.isArray(entry?.artifacts)
                             ? entry.artifacts
@@ -2938,12 +2982,7 @@ export default function BacktestsPage() {
                           return (
                             <div
                               key={`${entry?.event_id || "event"}:${entry?.bar_time_unix || index}:${index}`}
-                              style={{
-                                border: "1px solid rgba(148, 163, 184, 0.18)",
-                                borderRadius: 10,
-                                padding: "10px 12px",
-                                background: "rgba(255,255,255,0.02)",
-                              }}
+                              className="strategy-event-card"
                             >
                               <div
                                 style={{
@@ -2996,7 +3035,7 @@ export default function BacktestsPage() {
                             </div>
                           );
                         })}
-                      </div>
+                      </ListItems>
                     ) : (
                       <div className="empty-state">
                         No strategy events available for this run yet.

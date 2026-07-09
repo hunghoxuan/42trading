@@ -666,7 +666,35 @@ export default function Pay42ScanPage() {
 
             {activeTab === "qr-sepa" ? (
               <div className="stack-layout" style={{ gap: 18 }}>
-                <div className="pay42-pay-qr-card">
+                <div
+                  className="pay42-pay-qr-card"
+                  role={!cameraOpen && !sepaEnabled ? "button" : undefined}
+                  tabIndex={!cameraOpen && !sepaEnabled ? 0 : undefined}
+                  onClick={
+                    !cameraOpen && !sepaEnabled
+                      ? () => {
+                          if (previewing || settling || localSubmitting) return;
+                          startCamera();
+                        }
+                      : undefined
+                  }
+                  onKeyDown={
+                    !cameraOpen && !sepaEnabled
+                      ? (event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          if (previewing || settling || localSubmitting) return;
+                          startCamera();
+                        }
+                      : undefined
+                  }
+                  style={{
+                    cursor:
+                      !cameraOpen && !sepaEnabled && !previewing && !settling && !localSubmitting
+                        ? "pointer"
+                        : undefined,
+                  }}
+                >
                   <div className="pay42-scan-stage pay42-pay-qr-stage">
                     <div className="pay42-scan-viewport pay42-pay-qr-viewport">
                       <video

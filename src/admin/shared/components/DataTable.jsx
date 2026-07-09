@@ -5,14 +5,9 @@ import {
   getFilteredRowModel,
   flexRender,
 } from "@tanstack/react-table";
-import { useMemo, useCallback, useEffect, useState } from "react";
+import { useMemo, useCallback, useState } from "react";
 
-const MOBILE_BREAKPOINT = 768;
-
-function getIsMobile() {
-  if (typeof window === "undefined") return false;
-  return window.innerWidth < MOBILE_BREAKPOINT;
-}
+import useIsMobile from "../hooks/useIsMobile.js";
 
 function getFallbackInitials(input) {
   const parts = String(input || "")
@@ -96,16 +91,7 @@ export default function DataTable({
   className,
   mobileCard = null,
 }) {
-  const [isMobile, setIsMobile] = useState(getIsMobile);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const mq = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = (event) => setIsMobile(event.matches);
-    setIsMobile(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  const isMobile = useIsMobile();
 
   const tableState = useMemo(
     () => ({

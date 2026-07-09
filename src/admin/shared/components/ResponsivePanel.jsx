@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import "./ResponsivePanel.css";
 import {
-  RESPONSIVE_PANEL_MOBILE_BREAKPOINT,
   normalizeResponsivePanelWidth,
   resolveResponsivePanelBorderClass,
   resolveResponsivePanelMotionClass,
 } from "./ResponsivePanel.utils.js";
+import useIsMobile from "../hooks/useIsMobile.js";
 
 function getToggleGlyph(direction, open) {
   const raw = String(direction || "").trim().toLowerCase();
@@ -13,11 +13,6 @@ function getToggleGlyph(direction, open) {
   if (raw === "zoom" || raw === "zoom-in-out") return open ? "−" : "+";
   if (raw === "left-right") return open ? "◂" : "▸";
   return open ? "▴" : "▾";
-}
-
-function getIsMobile() {
-  if (typeof window === "undefined") return false;
-  return window.innerWidth < RESPONSIVE_PANEL_MOBILE_BREAKPOINT;
 }
 
 export default function ResponsivePanel({
@@ -38,7 +33,7 @@ export default function ResponsivePanel({
   border = "desktop",
   headerMode = "always",
 }) {
-  const [isMobile, setIsMobile] = useState(getIsMobile);
+  const isMobile = useIsMobile();
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const isControlled = typeof open === "boolean";
   const isOpen = isControlled ? open : internalOpen;
@@ -62,17 +57,6 @@ export default function ResponsivePanel({
   );
   const hideTitleWhenCollapsed =
     !isOpen && effectiveDirection === "left-right";
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const mq = window.matchMedia(
-      `(max-width: ${RESPONSIVE_PANEL_MOBILE_BREAKPOINT - 1}px)`,
-    );
-    const onChange = (event) => setIsMobile(event.matches);
-    setIsMobile(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
 
   const handleToggle = () => {
     const next = !isOpen;

@@ -100,6 +100,16 @@
   transform: translateX(8px);
 }
 
+.responsive-panel--motion-horizontal.is-collapsed .responsive-panel__toggle {
+  width: 28px;
+  height: 28px;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  margin-right: 2px;
+  background: transparent;
+  border-color: transparent;
+}
+
 .responsive-panel--motion-vertical.is-collapsed .responsive-panel__body {
   transform: translateY(-8px);
 }
