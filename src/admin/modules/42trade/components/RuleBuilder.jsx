@@ -88,6 +88,15 @@ const BIAS_ARG_OPTIONS = [
   { value: "bearish", label: "Bearish" },
 ];
 
+const PHASE_ARG_OPTIONS = [
+  { value: "", label: "Any Phase" },
+  { value: "impulse", label: "Impulse" },
+  { value: "pullback", label: "Pullback" },
+  { value: "continuation", label: "Continuation" },
+  { value: "reversal", label: "Reversal" },
+  { value: "consolidation", label: "Consolidation" },
+];
+
 const TF_ARG_OPTIONS = [
   { value: "", label: "Current TF" },
   { value: "all", label: "All TFs" },
@@ -205,7 +214,7 @@ function createDefaultFunctionArg(meta = null, index = 0) {
   if (argKey === "level" || argLabel.includes("level")) {
     return { kind: "var", value: "levels.pd_mid" };
   }
-  if (argKey === "bias" || argKey === "tf") {
+  if (argKey === "bias" || argKey === "tf" || argKey === "phase") {
     return { kind: "literal", value: "" };
   }
   return { kind: "var", value: "" };
@@ -442,7 +451,7 @@ function ensureConditionDraft(node) {
       : base?.args && typeof base.args === "object"
         ? base.args[argKey]
         : null;
-    if (argKey === "bias" || argKey === "tf") {
+    if (argKey === "bias" || argKey === "tf" || argKey === "phase") {
       const normalizedSelectValue =
         currentArg &&
         typeof currentArg === "object" &&
@@ -543,6 +552,7 @@ function functionArgKey(functionMeta = null, index = 0) {
 function functionArgSelectOptions(functionMeta = null, index = 0, currentTimeframeLabel = "") {
   const key = functionArgKey(functionMeta, index);
   if (key === "bias") return BIAS_ARG_OPTIONS;
+  if (key === "phase") return PHASE_ARG_OPTIONS;
   if (key === "tf") {
     const nextLabel = String(currentTimeframeLabel || "").trim();
     if (!nextLabel) return TF_ARG_OPTIONS;

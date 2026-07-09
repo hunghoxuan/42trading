@@ -8,6 +8,7 @@ const marketDataRepo = require("./marketDataRepo");
 const { buildChartTopic, normalizeTimeframe } = require("../realtime/realtimeCore");
 const { loadChartSnapshot } = require("../realtime/chartStreamService");
 const { emitRealtimeTopic } = require("../realtime/realtimeTopicHub");
+const { buildMultiTfAnalysis } = require("../../../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
 
 const ENCRYPTION_ALGO = "aes-256-gcm";
 const ENCRYPTION_KEY_SECRET =
@@ -25,6 +26,14 @@ const REALTIME_TF_BY_STORAGE = {
   "60": "1h",
   "240": "4h",
   "1440": "d",
+};
+const ANALYSIS_BARS_BY_REALTIME_TF = {
+  "1m": 240,
+  "5m": 320,
+  "15m": 360,
+  "1h": 320,
+  "4h": 240,
+  d: 180,
 };
 const CFD_SYMBOLS = new Set([
   "XAUUSD",
@@ -192,6 +201,36 @@ function buildEnvelope(topic, type, data, extra = {}) {
     transport: "sse",
     ...extra,
     data,
+  };
+}
+
+function buildRealtimeAnalysisPayload(symbol, options = {}) {
+  const dataRoot = options.dataRoot;
+  const duckdbPath = options.duckdbPath;
+  const barsByTf = {};
+  for (const realtimeTf of Object.values(REALTIME_TF_BY_STORAGE)) {
+    const tfKey = normalizeTimeframe(realtimeTf);
+    if (!tfKey) continue;
+    const snapshot = loadChartSnapshot({
+      symbol,
+      timeframe: tfKey,
+      bars: ANALYSIS_BARS_BY_REALTIME_TF[tfKey] || 240,
+      dataRoot,
+      duckdbPath,
+    });
+    if (Array.isArray(snapshot?.bars) && snapshot.bars.length) {
+      barsByTf[tfKey] = snapshot.bars;
+    }
+  }
+  const analysis = buildMultiTfAnalysis(barsByTf);
+  return {
+    symbol: String(symbol || "").trim().toUpperCase(),
+    analysis,
+    timeframes: Object.keys(analysis),
+    metadata: {
+      source: "forex_live_ingestor",
+      generated_at: Date.now(),
+    },
   };
 }
 
@@ -397,10 +436,12 @@ function publishChangedChartBars(symbol, beforeBars = {}, afterBars = {}, option
     typeof options.publishRealtimeTopic === "function"
       ? options.publishRealtimeTopic
       : emitRealtimeTopic;
+  let anyChanged = false;
   for (const tf of TF_CHAIN) {
     const previous = beforeBars?.[tf] || null;
     const next = afterBars?.[tf] || null;
     if (!next || barsEqual(previous, next)) continue;
+    anyChanged = true;
     const realtimeTf = REALTIME_TF_BY_STORAGE[tf];
     if (!realtimeTf) continue;
     const snapshot = loadChartSnapshot({
@@ -425,6 +466,18 @@ function publishChangedChartBars(symbol, beforeBars = {}, afterBars = {}, option
       buildEnvelope(buildChartTopic("*"), "bar_update", payload),
     );
   }
+  if (!anyChanged) return;
+  const topic = buildChartTopic(symbol);
+  if (!topic) return;
+  const analysisPayload = buildRealtimeAnalysisPayload(symbol, {
+    dataRoot,
+    duckdbPath,
+  });
+  publishRealtimeTopic(topic, buildEnvelope(topic, "analysis_update", analysisPayload));
+  publishRealtimeTopic(
+    buildChartTopic("*"),
+    buildEnvelope(buildChartTopic("*"), "analysis_update", analysisPayload),
+  );
 }
 
 class ForexLiveIngestorService {

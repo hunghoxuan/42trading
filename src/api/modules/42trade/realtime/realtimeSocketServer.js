@@ -21,6 +21,7 @@ function createRealtimeSocketServer({
   path = "/socket.io",
   parseTopic,
   authorize,
+  authorizeTopic,
   getReplaySession,
   registerStreamSink,
   registerRealtimeBroadcaster,
@@ -182,6 +183,21 @@ function createRealtimeSocketServer({
       if (!parsedTopic?.topic) {
         ack({ ok: false, error: `Unsupported topic: ${topicRaw || "empty"}` });
         return;
+      }
+      if (typeof authorizeTopic === "function") {
+        try {
+          const allowed = authorizeTopic(socket, parsedTopic, payload);
+          if (allowed?.ok === false) {
+            ack({ ok: false, error: allowed.error || "TOPIC_FORBIDDEN" });
+            return;
+          }
+        } catch (error) {
+          ack({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error || "TOPIC_FORBIDDEN"),
+          });
+          return;
+        }
       }
       const topicKey = parsedTopic.topic;
       const pollMs = Math.max(

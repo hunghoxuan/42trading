@@ -159,6 +159,10 @@ export function useRealtimeSymbolChartMatrix({
       bars: {},
       context: {},
       snapshots: {},
+      analysis:
+        topicState?.analysis && typeof topicState.analysis === "object" && !Array.isArray(topicState.analysis)
+          ? topicState.analysis
+          : {},
       cached_at: cachedAt || Date.now(),
     };
     for (const entry of states) {

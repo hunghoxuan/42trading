@@ -259,6 +259,9 @@ body.ai-chat-layout-panel-open .app-shell {
 }
 .ai-hub-top-tabs {
     width: 100%;
+    min-height: 35px;
+    flex: 0 0 auto;
+    align-self: stretch;
 }
 .ai-hub-top-tabs .group-buttons__item {
     justify-content: center;
@@ -3058,7 +3061,7 @@ input[type="checkbox"]:disabled {
 
 .list-items--rule-library {
     gap: 6px;
-    max-height: 420px;
+    max-height: 800px;
 }
 
 .list-items--run-trades {

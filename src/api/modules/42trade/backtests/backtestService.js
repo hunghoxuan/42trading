@@ -1546,6 +1546,7 @@ function buildMultiTimeframeContext(symbol = "", tf = "", limit = 0, strategy = 
         normalized.bars,
         tfKey,
       ),
+      analysis: null,
     };
   });
   return out;
@@ -1918,6 +1919,8 @@ const RULE_FUNCTION_EVALUATORS = {
     strategyEventFunctions.evaluateNamedFunction("trend", args, ctx, evaluate),
   bias: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("bias", args, ctx, evaluate),
+  phase: (args, ctx, evaluate) =>
+    strategyEventFunctions.evaluateNamedFunction("phase", args, ctx, evaluate),
   get_artifacts: (args, ctx, evaluate) =>
     strategyEventFunctions.evaluateNamedFunction("get_artifacts", args, ctx, evaluate),
   is_true: (args, ctx, evaluate) =>
@@ -2087,6 +2090,8 @@ function buildRuleContext({
   action = "",
   extraContext = null,
   derivedArtifacts = [],
+  multiTf = null,
+  analysis = null,
   tf = "",
 }) {
   return {
@@ -2097,6 +2102,14 @@ function buildRuleContext({
     strategy,
     tf,
     derivedArtifacts: Array.isArray(derivedArtifacts) ? derivedArtifacts : [],
+    analysis:
+      analysis && typeof analysis === "object" && !Array.isArray(analysis)
+        ? analysis
+        : null,
+    multiTf:
+      multiTf && typeof multiTf === "object" && !Array.isArray(multiTf)
+        ? multiTf
+        : {},
     session: {
       current: normalizeBacktestSession(barSessionName((bars[index] || {}).time), "Any"),
     },
@@ -2759,7 +2772,9 @@ async function runBacktest(userId, payload = {}) {
     Number(strategy.min_bars || strategy?.params?.slow_period || 20),
   );
   if (bars.length < minBars) {
-    throw new Error("Not enough bars available for the selected strategy");
+    throw new Error(
+      `Not enough bars for strategy "${String(strategy?.name || strategy?.key || strategyKey || "selected strategy").trim()}" on ${symbol} ${tf}: loaded ${bars.length}, required ${minBars}.`,
+    );
   }
 
   const brokerCalibration = await fetchBrokerCalibration(symbol, payload);

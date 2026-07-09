@@ -69,6 +69,9 @@ const {
   emitTradeRealtimeUpdate,
 } = require("../modules/42trade/realtime/tradeRealtime");
 const { ForexLiveIngestorService } = require("../modules/42trade/marketData/forexLiveIngestorService");
+const {
+  buildMultiTfAnalysis,
+} = require("../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
 const settingsStore = settingsDomain.settingsStore;
 const barsStorage = marketDataDomain.marketDataRepo;
 const marketDataAuditService = marketDataDomain.marketDataAuditService;
@@ -115,6 +118,8 @@ const {
   objectLogsDir,
 } = objectStore;
 const {
+  buildChatConversationTopic,
+  buildChatConversationsTopic,
   buildChartTopic,
   buildLogTopic,
   buildMt5Topic,
@@ -721,7 +726,44 @@ function captureChartRealtimeSnapshots(symbol, timeframes = []) {
   return snapshots;
 }
 
+const REALTIME_ANALYSIS_BARS_BY_TF = {
+  "1m": 240,
+  "5m": 320,
+  "15m": 360,
+  "1h": 320,
+  "4h": 240,
+  d: 180,
+};
+
+function buildChartRealtimeAnalysisPayload(symbol, timeframes = []) {
+  const uniqueTfs = [...new Set(Array.isArray(timeframes) ? timeframes : [])]
+    .map((tf) => String(tf || "").trim())
+    .filter(Boolean);
+  const barsByTf = {};
+  for (const tfKey of uniqueTfs) {
+    const snapshot = loadChartRealtimeSnapshotSafe(
+      symbol,
+      tfKey,
+      REALTIME_ANALYSIS_BARS_BY_TF[String(tfKey).trim().toLowerCase()] || 240,
+    );
+    if (Array.isArray(snapshot?.bars) && snapshot.bars.length) {
+      barsByTf[String(snapshot.timeframe || tfKey).trim().toLowerCase()] = snapshot.bars;
+    }
+  }
+  const analysis = buildMultiTfAnalysis(barsByTf);
+  return {
+    symbol: String(symbol || "").trim().toUpperCase(),
+    analysis,
+    timeframes: Object.keys(analysis),
+    metadata: {
+      source: "chart_realtime_diff",
+      generated_at: Date.now(),
+    },
+  };
+}
+
 function emitChartRealtimeDiffs(symbol, previousSnapshots = {}, timeframes = []) {
+  let emitted = false;
   for (const tf of [...new Set(Array.isArray(timeframes) ? timeframes : [])]) {
     const tfKey = String(tf || "").trim();
     if (!tfKey) continue;
@@ -736,8 +778,16 @@ function emitChartRealtimeDiffs(symbol, previousSnapshots = {}, timeframes = [])
       const payload =
         diff?.data && typeof diff.data === "object" ? diff.data : null;
       if (!payload) continue;
+      emitted = true;
       emitChartRealtimeEvent(symbol, diff.type, payload);
     }
+  }
+  if (emitted) {
+    emitChartRealtimeEvent(
+      symbol,
+      "analysis_update",
+      buildChartRealtimeAnalysisPayload(symbol, timeframes),
+    );
   }
 }
 
@@ -767,6 +817,74 @@ async function emitNewsRealtimeSnapshot(scope = "today") {
 async function emitNewsRealtimeSnapshots() {
   await emitNewsRealtimeSnapshot("today");
   await emitNewsRealtimeSnapshot("week");
+}
+
+async function emitChatConversationListSnapshot(userId, limit = 24) {
+  const safeUserId = String(userId || CFG.mt5DefaultUserId || "").trim();
+  if (!safeUserId) return [];
+  const items = await CHAT_STORE.listConversations(userId, limit);
+  emitRealtimeTopic(
+    buildChatConversationsTopic(safeUserId),
+    createRealtimeEnvelope(
+      buildChatConversationsTopic(safeUserId),
+      "snapshot",
+      {
+        user_id: safeUserId,
+        conversations: Array.isArray(items) ? items : [],
+        count: Array.isArray(items) ? items.length : 0,
+      },
+    ),
+  );
+  return Array.isArray(items) ? items : [];
+}
+
+async function emitChatConversationSnapshot(userId, conversationId) {
+  const safeUserId = String(userId || CFG.mt5DefaultUserId || "").trim();
+  const safeConversationId = String(conversationId || "").trim();
+  if (!safeUserId || !safeConversationId) return null;
+  const loaded = await CHAT_STORE.getConversationWithMessages(
+    safeUserId,
+    safeConversationId,
+  );
+  emitRealtimeTopic(
+    buildChatConversationTopic(safeUserId, safeConversationId),
+    createRealtimeEnvelope(
+      buildChatConversationTopic(safeUserId, safeConversationId),
+      "snapshot",
+      {
+        user_id: safeUserId,
+        conversation_id: safeConversationId,
+        conversation: loaded?.conversation || null,
+        messages: Array.isArray(loaded?.messages)
+          ? loaded.messages.map((message) => toUiChatMessage(message))
+          : [],
+      },
+    ),
+  );
+  return loaded || null;
+}
+
+async function emitChatRealtimeSync(userId, conversationId) {
+  await Promise.all([
+    emitChatConversationListSnapshot(userId),
+    emitChatConversationSnapshot(userId, conversationId),
+  ]);
+}
+
+function emitChatConversationRealtimeEvent(userId, conversationId, type, data = {}, extra = {}) {
+  const safeUserId = String(userId || CFG.mt5DefaultUserId || "").trim();
+  const safeConversationId = String(conversationId || "").trim();
+  if (!safeUserId || !safeConversationId) return 0;
+  const topic = buildChatConversationTopic(safeUserId, safeConversationId);
+  if (!topic) return 0;
+  return emitRealtimeTopic(
+    topic,
+    createRealtimeEnvelope(topic, type, {
+      user_id: safeUserId,
+      conversation_id: safeConversationId,
+      ...(data && typeof data === "object" ? data : {}),
+    }, extra),
+  );
 }
 
 function emitLogRealtimeAppendFromPath(fullPath, line, extra = {}) {
@@ -995,6 +1113,16 @@ function authorizeRealtimeSocket(socket) {
     isAdmin,
     session: sess,
   };
+}
+
+function canAccessRealtimeChatTopic(authResult, parsedTopic) {
+  if (String(parsedTopic?.kind || "").trim().toLowerCase() !== "chat") return true;
+  const auth = authResult && typeof authResult === "object" ? authResult : {};
+  if (auth.isAdmin) return true;
+  const sessionUserId =
+    String(auth?.session?.user_id || CFG.mt5DefaultUserId || "").trim();
+  const topicUserId = String(parsedTopic?.userId || "").trim();
+  return Boolean(sessionUserId && topicUserId && sessionUserId === topicUserId);
 }
 
 // --- File-based logging ---
@@ -2247,10 +2375,13 @@ function writeMarketDataMetadata(symbol, tf, metadata) {
   } catch {}
 }
 
-function readBrokerBarsFromCsv(symbol, tf, limit = 300) {
+function readBrokerBarsFromCsv(symbol, tf, limit = 300, endTimeSec = null) {
   return barsStorage.readBrokerBarsFromFile(symbol, tf, limit, {
     dataRoot: GLOBAL_DATA_DIR,
     duckdbPath: process.env.BARS_DUCKDB_PATH,
+    endTimeSec: Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0
+      ? Number(endTimeSec)
+      : null,
   });
 }
 
@@ -12397,15 +12528,29 @@ async function streamCodexUiChat({
     ts: new Date().toISOString(),
   });
   const emitActivity = (partial = {}) => {
-    writeSseEvent(response, {
+    const event = {
       type: "codex-activity",
       entry: activityEntry(partial),
-    });
+    };
+    writeSseEvent(response, event);
+    emitChatConversationRealtimeEvent(
+      userId,
+      conversationId,
+      "codex-activity",
+      event,
+    );
   };
   const emitAssistant = (text = "") => {
     const content = String(text || "").trim();
     if (!content) return;
-    writeSseEvent(response, { type: "codex-assistant", text: content });
+    const event = { type: "codex-assistant", text: content };
+    writeSseEvent(response, event);
+    emitChatConversationRealtimeEvent(
+      userId,
+      conversationId,
+      "codex-assistant",
+      event,
+    );
   };
   const summarizeCommand = (command = "") => {
     const text = String(command || "").trim();
@@ -12509,16 +12654,25 @@ async function streamCodexUiChat({
     });
   }
 
+  await emitChatRealtimeSync(userId, conversationId);
+
   emitActivity({
     kind: "session",
     status: result?.stopped ? "cancelled" : "completed",
     label: result?.stopped ? "Codex run stopped" : "Codex run completed",
   });
-  writeSseEvent(response, {
+  const finishEvent = {
     type: "codex-finish",
     reply: finalReply,
     stopped: Boolean(result?.stopped),
-  });
+  };
+  writeSseEvent(response, finishEvent);
+  emitChatConversationRealtimeEvent(
+    userId,
+    conversationId,
+    "codex-finish",
+    finishEvent,
+  );
   writeSseEvent(response, { type: "finish" });
   response.end();
 }
@@ -18709,6 +18863,7 @@ async function refreshSelectedTimeframeBars({
   requestedTfNorm,
   requestedBars,
   direction = "latest",
+  endTimeSec = null,
 }) {
   const symbolNorm = normalizeMarketDataSymbol(symbol);
   if (!symbolNorm) {
@@ -18765,6 +18920,20 @@ async function refreshSelectedTimeframeBars({
       ? existingSourceBars
       : [];
     const earliestStoredBarTime = Number(existingStoredBarsList?.[0]?.time || 0);
+    const requestedHistoryEndSec =
+      refreshDirection === "history" &&
+      Number.isFinite(Number(endTimeSec)) &&
+      Number(endTimeSec) > 0
+        ? Math.floor(Number(endTimeSec))
+        : null;
+    const remoteHistoryCursorSec =
+      refreshDirection === "history"
+        ? earliestStoredBarTime > 0 && requestedHistoryEndSec > 0
+          ? Math.min(earliestStoredBarTime, requestedHistoryEndSec)
+          : earliestStoredBarTime > 0
+            ? earliestStoredBarTime
+            : requestedHistoryEndSec
+        : null;
     emitHistoryStep(
       "storage_scan",
       `Load history storage scan: ${symbolNorm} ${selectedTfNorm} (${existingStoredBarsList.length} bars in file)`,
@@ -18790,8 +18959,8 @@ async function refreshSelectedTimeframeBars({
           requested_source_bars: requestedSourceBars,
           remote_request_bars: barsToFetch,
           remote_end_time_ms:
-            refreshDirection === "history" && earliestStoredBarTime > 0
-              ? earliestStoredBarTime * 1000 - 1
+            Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
+              ? remoteHistoryCursorSec * 1000 - 1
               : null,
         },
       );
@@ -18801,8 +18970,8 @@ async function refreshSelectedTimeframeBars({
         barsToFetch,
         {
           endTimeMs:
-            refreshDirection === "history" && earliestStoredBarTime > 0
-              ? earliestStoredBarTime * 1000 - 1
+            Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
+              ? remoteHistoryCursorSec * 1000 - 1
               : null,
         },
       );
@@ -18830,8 +18999,8 @@ async function refreshSelectedTimeframeBars({
           requested_source_bars: requestedSourceBars,
           remote_request_bars: barsToFetch,
           remote_end_time:
-            refreshDirection === "history" && earliestStoredBarTime > 0
-              ? formatUnixSecForProvider(earliestStoredBarTime - 1)
+            Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
+              ? formatUnixSecForProvider(remoteHistoryCursorSec - 1)
               : "",
         },
       );
@@ -18842,8 +19011,8 @@ async function refreshSelectedTimeframeBars({
         twelveKey,
         {
           endDate:
-            refreshDirection === "history" && earliestStoredBarTime > 0
-              ? formatUnixSecForProvider(earliestStoredBarTime - 1)
+            Number.isFinite(remoteHistoryCursorSec) && remoteHistoryCursorSec > 0
+              ? formatUnixSecForProvider(remoteHistoryCursorSec - 1)
               : "",
         },
       );
@@ -19773,6 +19942,8 @@ async function buildAnalysisSnapshotFromTwelve({
   traceId,
 }) {
   const outputsize = parseSnapshotBarsLimit(payload);
+  const requestedEndTimeSec =
+    Number(payload?.end_time_sec ?? payload?.endTimeSec ?? payload?.end_time_unix) || 0;
   const forceRefresh = asBool(
     payload?.force_refresh ?? payload?.forceRefresh ?? false,
     false,
@@ -19792,7 +19963,12 @@ async function buildAnalysisSnapshotFromTwelve({
   // Even on "refresh", broker-fed local bars remain the source of truth for
   // intraday chart rendering; refresh should bypass remote caches, not bypass
   // trustworthy local broker data and replace it with a worse provider.
-  const brokerBars = readBrokerBarsFromCsv(symbolNorm, tfNorm, outputsize);
+  const brokerBars = readBrokerBarsFromCsv(
+    symbolNorm,
+    tfNorm,
+    outputsize,
+    requestedEndTimeSec,
+  );
   const brokerGapCandidates = detectMarketDataGapCandidates(brokerBars, tfNorm);
   const brokerBarsSynthetic = brokerBarsLookSynthetic(brokerBars, tfNorm);
   if (!forceRefresh && brokerBars.length && !brokerBarsSynthetic) {
@@ -19832,6 +20008,7 @@ async function buildAnalysisSnapshotFromTwelve({
       requestedTfNorm: tfNorm,
       requestedBars: outputsize,
       direction: refreshDirection,
+      endTimeSec: requestedEndTimeSec,
     }).catch((error) => ({
       ok: false,
       reason: String(error?.message || error || "canonical_refresh_failed"),
@@ -19840,6 +20017,7 @@ async function buildAnalysisSnapshotFromTwelve({
       symbolNorm,
       tfNorm,
       outputsize,
+      requestedEndTimeSec,
     );
     if (
       refreshedBrokerBars.length &&
@@ -24359,6 +24537,9 @@ const appHandler = async (req, res) => {
         error: `Unsupported topic: ${params.topicRaw || "empty"}`,
       });
     }
+    if (!canAccessRealtimeChatTopic({ isAdmin, session: sess }, params.topic)) {
+      return json(res, 403, { ok: false, error: "CHAT_TOPIC_FORBIDDEN" });
+    }
     const runtime = await getAppRuntime();
     let pollTimer = null;
     const topicStream = runtime.streaming.openTopicStream({
@@ -24414,6 +24595,40 @@ const appHandler = async (req, res) => {
           scope: params.topic.scope,
           events,
           count: events.length,
+        });
+      } catch (error) {
+        pushEnvelope("error", {
+          message: error instanceof Error ? error.message : String(error),
+          topic: params.topic.topic,
+        });
+      }
+    };
+
+    const pushChatSnapshot = async () => {
+      try {
+        if (params.topic.scope === "conversations") {
+          const conversations = await CHAT_STORE.listConversations(
+            params.topic.userId,
+            24,
+          );
+          pushEnvelope("snapshot", {
+            user_id: params.topic.userId,
+            conversations: Array.isArray(conversations) ? conversations : [],
+            count: Array.isArray(conversations) ? conversations.length : 0,
+          });
+          return;
+        }
+        const loaded = await CHAT_STORE.getConversationWithMessages(
+          params.topic.userId,
+          params.topic.conversationId,
+        );
+        pushEnvelope("snapshot", {
+          user_id: params.topic.userId,
+          conversation_id: params.topic.conversationId,
+          conversation: loaded?.conversation || null,
+          messages: Array.isArray(loaded?.messages)
+            ? loaded.messages.map((message) => toUiChatMessage(message))
+            : [],
         });
       } catch (error) {
         pushEnvelope("error", {
@@ -24524,6 +24739,9 @@ const appHandler = async (req, res) => {
     } else if (params.topic.kind === "news") {
       topicStream.registerTopic(params.topic.topic);
       pushNewsSnapshot().catch(() => {});
+    } else if (params.topic.kind === "chat") {
+      topicStream.registerTopic(params.topic.topic);
+      pushChatSnapshot().catch(() => {});
     } else if (params.topic.kind === "logs") {
       topicStream.registerTopic(params.topic.topic);
       pushLogSnapshot();
@@ -28706,6 +28924,7 @@ const appHandler = async (req, res) => {
           toStoredChatMessage(lastRawUserMessage, "user"),
         );
       }
+      await emitChatRealtimeSync(userId, conversationId);
 
       if (mode === "codex") {
         const canUseCodex = Boolean(isAdmin || userRole === "system");
@@ -28758,6 +28977,7 @@ const appHandler = async (req, res) => {
               mode,
               route,
             });
+            await emitChatRealtimeSync(userId, conversationId);
           },
         });
       }
@@ -28798,6 +29018,7 @@ const appHandler = async (req, res) => {
         mode,
         route,
       });
+      await emitChatRealtimeSync(userId, conversationId);
       return streamStaticUiTextResponse(res, aiResult.reply);
     } catch (error) {
       initSseResponse(res);
@@ -30991,6 +31212,11 @@ const appHandler = async (req, res) => {
       const direction = normalizeBarsDownloadDirection(
         url.searchParams.get("direction"),
       );
+      const endTimeSec = Number(
+        url.searchParams.get("end_time_unix") ||
+          url.searchParams.get("endTimeUnix") ||
+          0,
+      );
       if (!requestedSymbols.length)
         return json(res, 400, { ok: false, error: "symbol is required" });
       if (requestedSymbols.length > 1 && tradeSid) {
@@ -31005,7 +31231,13 @@ const appHandler = async (req, res) => {
           requestedSymbols.map(async (requestedSymbol) => {
             const snapshot = await buildAnalysisSnapshotFromTwelve({
               userId,
-              payload: { bars, force_refresh: forceRefresh, direction },
+              payload: {
+                bars,
+                force_refresh: forceRefresh,
+                direction,
+                end_time_sec:
+                  Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+              },
               symbol: requestedSymbol,
               timeframe,
             });
@@ -31074,7 +31306,13 @@ const appHandler = async (req, res) => {
       }
       const snapshot = await buildAnalysisSnapshotFromTwelve({
         userId,
-        payload: { bars, force_refresh: forceRefresh, direction },
+        payload: {
+          bars,
+          force_refresh: forceRefresh,
+          direction,
+          end_time_sec:
+            Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+        },
         symbol,
         timeframe,
       });
@@ -39253,6 +39491,13 @@ async function start() {
           isAdmin,
           session: sess,
         };
+      },
+      authorizeTopic: (socket, topic) => {
+        const auth = socket?.data?.auth || {};
+        if (canAccessRealtimeChatTopic(auth, topic)) {
+          return { ok: true };
+        }
+        return { ok: false, error: "CHAT_TOPIC_FORBIDDEN" };
       },
       getReplaySession,
     });

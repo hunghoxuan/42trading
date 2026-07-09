@@ -271,6 +271,7 @@ export function useSymbolChartData({
   tradeSid = "",
   endTimeSec = null,
 }) {
+  const [, setStreamVersion] = useState(0);
   const [status, setStatus] = useState("IDLE");
   const [data, setData] = useState({}); // { "4h": { bars, snapshot, created_at }, ... }
   const [error, setError] = useState(null);
@@ -960,6 +961,7 @@ export function useSymbolChartData({
                     true,
                     tradeSid,
                     "history",
+                    historyEndTimeSec,
                   );
                   forcedRefreshSnap =
                     forcedRefreshOut?.snapshot &&
@@ -1174,6 +1176,7 @@ export function useSymbolChartData({
                 true,
                 tradeSid,
                 "history",
+                historyRequestEndTimeSec,
               );
               const historyRefreshSnap =
                 historyRefreshOut?.snapshot &&
@@ -1996,6 +1999,7 @@ export function useSymbolChartData({
     if (topic) {
       unsubscribers.push(
         chartStreamStore.subscribe(topic, (state) => {
+          setStreamVersion((prev) => prev + 1);
           for (const tf of tfs) {
             const tfKey = tfNorm(tf);
             updateTfFromStream(tfKey, topic, state);
@@ -2162,6 +2166,7 @@ export function useSymbolChartData({
   // Build master-compatible shape for existing components
   const master = useMemo(() => {
     if (!data || !Object.keys(data).length) return null;
+    const streamState = sym ? chartStreamStore.getState(buildRealtimeChartTopic(sym)) : null;
     const bars = {},
       context = {},
       snapshots = {};
@@ -2182,9 +2187,15 @@ export function useSymbolChartData({
       bars,
       context,
       snapshots,
+      analysis:
+        streamState?.analysis &&
+        typeof streamState.analysis === "object" &&
+        !Array.isArray(streamState.analysis)
+          ? streamState.analysis
+          : {},
       cached_at: Object.values(data)[0]?.created_at,
     };
-  }, [data]);
+  }, [data, sym]);
 
   return {
     status,

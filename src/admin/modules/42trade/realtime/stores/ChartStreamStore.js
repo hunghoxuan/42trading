@@ -101,6 +101,8 @@ function createDefaultState(topic) {
     loadedHistoryRanges: [],
     exhaustedHistoryRanges: [],
     pendingHistoryRequests: [],
+    analysis: {},
+    analysisMeta: null,
     version: 0,
   };
 }
@@ -473,6 +475,30 @@ export class ChartStreamStore {
 
     if (type === "snapshot") {
       this.setBootstrap(topic, payload);
+      return;
+    }
+
+    if (type === "analysis_update") {
+      this.#commit(topic, {
+        ...current,
+        connected: true,
+        connectionState: "connected",
+        everConnected: true,
+        status: stateHasBars(current) ? "READY" : current.status,
+        error: "",
+        analysis:
+          payload?.analysis && typeof payload.analysis === "object" && !Array.isArray(payload.analysis)
+            ? payload.analysis
+            : current.analysis || {},
+        analysisMeta:
+          payload?.metadata && typeof payload.metadata === "object"
+            ? payload.metadata
+            : current.analysisMeta,
+        lastEventType: type,
+        lastUpdatedAt: Date.now(),
+        lastDataAt: Date.now(),
+        version: nextVersion,
+      });
       return;
     }
 

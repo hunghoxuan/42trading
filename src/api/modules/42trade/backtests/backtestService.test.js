@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 
 const backtestService = require("./backtestService");
 const sharedArtifactDetection = require("../../../../admin/modules/42trade/chartArtifacts/detectArtifacts.cjs");
+const realtimeAnalysis = require("../../../../admin/modules/42trade/chartArtifacts/realtimeAnalysis.cjs");
 
 function makeStructureBars() {
   return [
@@ -95,4 +96,60 @@ test("simulateStrategy preserves detector-style events with draw actions in the 
   assert.equal(result.event_log.length > 0, true);
   assert.equal(result.event_log.some((entry) => entry?.action_type === "draw"), true);
   assert.equal(result.event_log.some((entry) => entry?.event_id === "bos_event"), true);
+});
+
+test("realtime analysis derives phase and artifact buckets from timeframe bars", () => {
+  const analysis = realtimeAnalysis.buildTfAnalysis({
+    bars: makeStructureBars(),
+    timeframe: "1h",
+  });
+
+  assert.equal(analysis.bias, "bearish");
+  assert.equal(analysis.trend, "down");
+  assert.equal(analysis.phase, "reversal");
+  assert.equal(analysis.structure_state, "choch");
+  assert.equal(Array.isArray(analysis.order_blocks), true);
+  assert.equal(Array.isArray(analysis.fvgs), true);
+  assert.equal(Array.isArray(analysis.structure), true);
+});
+
+test("evaluateRule supports phase lookups on the current timeframe", () => {
+  const bars = makeStructureBars();
+  const ctx = {
+    bars,
+    index: bars.length - 1,
+    bar: bars[bars.length - 1],
+    prev: bars[bars.length - 2],
+    tf: "1h",
+    strategy: {},
+    params: {},
+    risk: {},
+    indicators: {},
+    prev_indicators: {},
+    derivedArtifacts: sharedArtifactDetection.buildDerivedItemsFromBars(bars, "1h"),
+    multiTf: {},
+  };
+  const result = backtestService.__test.evaluateRule(
+    { fn: "phase", args: ["reversal"] },
+    ctx,
+  );
+
+  assert.equal(Boolean(result), true);
+  assert.equal(String(result?.meta?.phase || ""), "reversal");
+  assert.equal(String(result?.meta?.trend || ""), "down");
+  assert.equal(String(result?.matches?.[0]?.payload?.structure_state || ""), "choch");
+});
+
+test("runBacktest reports loaded vs required bars when the dataset is too short", async () => {
+  await assert.rejects(
+    () =>
+      backtestService.runBacktest("default", {
+        symbol: "BTCUSD",
+        tf: "1",
+        limit: 30,
+        strategy: "golden_cross_v1",
+        persist: false,
+      }),
+    /loaded 100, required 240/i,
+  );
 });

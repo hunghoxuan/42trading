@@ -81,6 +81,7 @@ const TRADE_MARKER_YELLOW = "#facc15";
 const COMPACT_VIEWPORT_MIN_BARS = 50;
 const COMPACT_VIEWPORT_STEP_BARS = 50;
 const COMPACT_VIEWPORT_DEFAULT_BARS = 50;
+const SHOW_ALL_LOADED_VIEWPORT_MAX_BARS = 2000;
 const TRADE_ENTRY_VIBRANT = "#22d3ee";
 const TRADE_TP_DARK = "#166534";
 const TRADE_SL_DARK = "#7f1d1d";
@@ -692,6 +693,47 @@ function applyFirstBarsViewport(chart, candles = [], visibleBarsCount = 0) {
   return Boolean(
     animateVisibleLogicalRange(chart, nextRange),
   );
+}
+
+function applyShowAllLoadedViewport(chart, candleSeries, candles = []) {
+  if (!chart || !candleSeries || !Array.isArray(candles) || !candles.length) {
+    return false;
+  }
+  const lastIndex = candles.length - 1;
+  const rightPaddingBars = Math.max(
+    2,
+    Math.min(24, Math.round(candles.length * 0.03)),
+  );
+  try {
+    candleSeries.priceScale().setAutoScale(true);
+  } catch {}
+  try {
+    chart.applyOptions({
+      timeScale: {
+        rightOffset: rightPaddingBars,
+        lockVisibleTimeRangeOnResize: true,
+      },
+    });
+    const nextRange = {
+      from: 0,
+      to: lastIndex + rightPaddingBars,
+    };
+    chart.timeScale().setVisibleLogicalRange(nextRange);
+    rememberLogicalRange(chart, nextRange);
+    // Match the native double-click-on-price-scale behavior by leaving the
+    // vertical range on autoscale instead of pinning a manual visible range.
+    try {
+      candleSeries.priceScale().setAutoScale(true);
+      window.requestAnimationFrame(() => {
+        try {
+          candleSeries.priceScale().setAutoScale(true);
+        } catch {}
+      });
+    } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function resolvePresetTradeViewportWindow(
@@ -2656,6 +2698,7 @@ export default function TradeSignalChart({
   const suppressCrosshairSyncRef = useRef(false);
   const runtimeViewportRef = useRef(null);
   const lastRenderedBarsSignatureRef = useRef("");
+  const lastSharedOverlayRenderSignatureRef = useRef("");
   const lastAutoFitSignatureRef = useRef("");
   const pricePrecisionRef = useRef(5);
   const hoverPriceLinesRef = useRef({ lines: [] });
@@ -2675,6 +2718,10 @@ export default function TradeSignalChart({
     sl: null,
   });
   const compactViewportBarsRef = useRef(COMPACT_VIEWPORT_DEFAULT_BARS);
+  const explicitVisibleBarsTarget = Math.max(
+    0,
+    Math.round(Number(visibleBarsCount) || 0),
+  );
   const [loading, setLoading] = useState(false);
   const debugChartLog = useCallback(() => {}, []);
   const [dataSource, setDataSource] = useState("");
@@ -2976,6 +3023,215 @@ export default function TradeSignalChart({
     }
     sharedOverlayPrimitivesRef.current = [];
   }, []);
+
+  const renderSharedOverlayArtifacts = useCallback(
+    ({
+      sharedLinesList = [],
+      sharedObjectsList = [],
+      bars = [],
+      renderSignature = "",
+    } = {}) => {
+      const candleSeries = seriesRef.current;
+      if (!candleSeries) return false;
+      const nextRenderSignature =
+        String(renderSignature || "").trim() ||
+        [
+          buildBarsSignature(Array.isArray(bars) ? bars : []),
+          sharedLinesSignature,
+          sharedObjectsSignature,
+        ].join("|");
+      if (
+        nextRenderSignature &&
+        nextRenderSignature === lastSharedOverlayRenderSignatureRef.current
+      ) {
+        return false;
+      }
+
+      clearSharedOverlayArtifacts();
+      hoverPriceLinesRef.current.lines = (
+        hoverPriceLinesRef.current.lines || []
+      ).filter((line) => line?.overlayType !== "shared");
+
+      if (Array.isArray(sharedLinesList) && sharedLinesList.length > 0) {
+        sharedLinesList.forEach((ln, idx) => {
+          const p = Number(ln?.price);
+          if (!Number.isFinite(p)) return;
+          const sharedLine = candleSeries.createPriceLine({
+            price: p,
+            color: String(ln?.color || "#60a5fa"),
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: ln?.label || `L${idx + 1}`,
+          });
+          sharedOverlayPriceLinesRef.current.push(sharedLine);
+          hoverPriceLinesRef.current.lines.push({
+            overlayType: "shared",
+            price: p,
+            label: ln?.label || `L${idx + 1}`,
+            priceText: formatPriceWithPrecision(p, pricePrecisionRef.current),
+          });
+        });
+      }
+
+      if (!Array.isArray(sharedObjectsList) || sharedObjectsList.length <= 0) {
+        lastSharedOverlayRenderSignatureRef.current = nextRenderSignature;
+        return true;
+      }
+
+      const cleanBars = Array.isArray(bars) ? bars : [];
+      const firstCandleTime = cleanBars.length
+        ? toEpochSec(cleanBars[0]?.time)
+        : null;
+      const lastCandleTime = cleanBars.length
+        ? toEpochSec(cleanBars[cleanBars.length - 1]?.time)
+        : null;
+
+      sharedObjectsList.forEach((obj, idx) => {
+        if (!obj || obj.visible === false) return;
+        const label = formatSharedObjectLabel(obj.type, obj.label || "");
+        const lineColor = String(obj.color || "#60a5fa");
+        const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
+        const lineStyle = lineStyleToChartValue(obj.line_style);
+        if (obj.kind === "line") {
+          const price = Number(obj.price ?? obj.anchorPrice);
+          if (!Number.isFinite(price)) return;
+          const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+          const endTimeSec = toEpochSec(obj.anchorTimeMs2);
+          const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
+          const extendToPriceScale = lineScope === "segment_to_scale";
+          const resolvedLineWidth =
+            lineScope === "segment" || extendToPriceScale
+              ? Math.max(1, rawLineWidth)
+              : rawLineWidth;
+          const linePrimitive = Number.isFinite(startTimeSec)
+            ? new HorizontalPriceSegmentPrimitive({
+                price,
+                startTimeSec,
+                endTimeSec: extendToPriceScale ? null : endTimeSec,
+                label,
+                labelAlign: extendToPriceScale ? "right" : "left",
+                color: lineColor,
+                lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                lineWidth: resolvedLineWidth,
+              })
+            : new HorizontalPriceLinePrimitive({
+                price,
+                label,
+                color: lineColor,
+                lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                lineWidth: resolvedLineWidth,
+              });
+          candleSeries.attachPrimitive(linePrimitive);
+          sharedOverlayPrimitivesRef.current.push(linePrimitive);
+          if (lineScope !== "segment") {
+            const sharedLine = candleSeries.createPriceLine({
+              price,
+              color: lineColor,
+              lineWidth: resolvedLineWidth,
+              lineStyle,
+              lineVisible: true,
+              axisLabelVisible: extendToPriceScale,
+              title: extendToPriceScale ? label : "",
+            });
+            sharedOverlayPriceLinesRef.current.push(sharedLine);
+          }
+          hoverPriceLinesRef.current.lines.push({
+            overlayType: "shared",
+            price,
+            label: label || obj.type || `L${idx + 1}`,
+            priceText: formatPriceWithPrecision(price, pricePrecisionRef.current),
+          });
+          return;
+        }
+        if (obj.kind === "point") {
+          const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
+          const price = Number(obj.price ?? obj.anchorPrice);
+          if (Number.isFinite(price) && Number.isFinite(timeSec)) {
+            const pointPrimitive = new EventTimeMarkerPrimitive({
+              timeSec,
+              price,
+              color: lineColor,
+              text: String(label || obj.marker_text || obj.type || "").trim(),
+              placement: String(obj.marker_position || "belowBar"),
+            });
+            candleSeries.attachPrimitive(pointPrimitive);
+            sharedOverlayPrimitivesRef.current.push(pointPrimitive);
+          } else if (Number.isFinite(price)) {
+            const pointPrimitive = new HorizontalPriceLinePrimitive({
+              price,
+              label: label || obj.type || `P${idx + 1}`,
+              color: lineColor,
+              lineDash: obj.line_style === "dot" ? [4, 4] : [],
+              lineWidth: rawLineWidth,
+            });
+            candleSeries.attachPrimitive(pointPrimitive);
+            sharedOverlayPrimitivesRef.current.push(pointPrimitive);
+            const sharedLine = candleSeries.createPriceLine({
+              price,
+              color: lineColor,
+              lineWidth: rawLineWidth,
+              lineStyle,
+              axisLabelVisible: false,
+              title: "",
+            });
+            sharedOverlayPriceLinesRef.current.push(sharedLine);
+            hoverPriceLinesRef.current.lines.push({
+              overlayType: "shared",
+              price,
+              label: label || obj.type || `P${idx + 1}`,
+              priceText: formatPriceWithPrecision(price, pricePrecisionRef.current),
+            });
+          }
+          return;
+        }
+        if (obj.kind === "zone") {
+          const top = Number(obj.price_top ?? obj.anchorPrice ?? obj.price);
+          const bottom = Number(
+            obj.price_bottom ?? obj.anchorPrice2 ?? obj.price,
+          );
+          if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
+          const startTimeSec =
+            toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
+          const endTimeSec =
+            toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
+          if (!Number.isFinite(startTimeSec)) return;
+          const isFvg = obj.artifact_group === "fvg";
+          const isOb = obj.artifact_group === "ob";
+          const zoneFillColor = String(obj.bg_color || "").trim()
+            || (isFvg
+              ? withAlpha(lineColor, "08")
+              : isOb
+                ? withAlpha(lineColor, "0a")
+                : withAlpha(lineColor, "12"));
+          const zonePrimitive = new TimeRangeBoxPrimitive({
+            startTimeSec,
+            endTimeSec,
+            priceLow: Math.min(top, bottom),
+            priceHigh: Math.max(top, bottom),
+            lineColor,
+            fillColor: zoneFillColor,
+            extendRight: !Number.isFinite(endTimeSec),
+            lineDash: isFvg ? [] : obj.line_style === "dot" ? [3, 3] : [],
+            lineWidth: isFvg ? 0 : isOb ? 0.25 : 0.5,
+            shadowBlur: isFvg ? 8 : isOb ? 10 : 0,
+            shadowColor: isFvg
+              ? withAlpha(lineColor, "14")
+              : isOb
+                ? withAlpha(lineColor, "18")
+                : "",
+            label,
+          });
+          candleSeries.attachPrimitive(zonePrimitive);
+          sharedOverlayPrimitivesRef.current.push(zonePrimitive);
+        }
+      });
+
+      lastSharedOverlayRenderSignatureRef.current = nextRenderSignature;
+      return true;
+    },
+    [clearSharedOverlayArtifacts, sharedLinesSignature, sharedObjectsSignature],
+  );
 
   const clearCandleHoverPriceLine = useCallback(() => {
     const candleSeries = seriesRef.current;
@@ -4233,7 +4489,7 @@ export default function TradeSignalChart({
 
           if (!candles.length) {
             console.warn(
-              "No valid snapshot/Twelve bars available for this symbol/timeframe.",
+              `No chart bars available for ${String(symbol || "").toUpperCase() || "symbol"} ${String(interval || "").trim() || "timeframe"} from historicalData, snapshot, or cache.`,
             );
             setLoading(false);
             return;
@@ -4574,188 +4830,11 @@ export default function TradeSignalChart({
               }
             }
 
-            // Shared horizontal lines (added from context menu, replicated per TF)
-            if (Array.isArray(sharedLines) && sharedLines.length > 0) {
-              sharedLines.forEach((ln, idx) => {
-                const p = Number(ln?.price);
-                if (!Number.isFinite(p)) return;
-                candleSeries.createPriceLine({
-                  price: p,
-                  color: String(ln?.color || "#60a5fa"),
-                  lineWidth: 1,
-                  lineStyle: 2,
-                  axisLabelVisible: true,
-                  title: ln?.label || `L${idx + 1}`,
-                });
-                hoverPriceLinesRef.current.lines.push({
-                  overlayType: "shared",
-                  price: p,
-                  label: ln?.label || `L${idx + 1}`,
-                  priceText: formatPriceWithPrecision(
-                    p,
-                    pricePrecisionRef.current,
-                  ),
-                });
-              });
-            }
-
-            clearSharedOverlayArtifacts();
-            if (Array.isArray(sharedObjects) && sharedObjects.length > 0) {
-              const firstCandleTime = candles.length
-                ? toEpochSec(candles[0]?.time)
-                : null;
-              const lastCandleTime = candles.length
-                ? toEpochSec(candles[candles.length - 1]?.time)
-                : null;
-              sharedObjects.forEach((obj, idx) => {
-                if (!obj || obj.visible === false) return;
-                const label = formatSharedObjectLabel(obj.type, obj.label || "");
-                const lineColor = String(obj.color || "#60a5fa");
-                const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
-                const lineStyle = lineStyleToChartValue(obj.line_style);
-                if (obj.kind === "line") {
-                  const price = Number(obj.price ?? obj.anchorPrice);
-                  if (!Number.isFinite(price)) return;
-                  const startTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
-                  const endTimeSec = toEpochSec(obj.anchorTimeMs2);
-                  const lineScope = String(obj.line_scope || "full").trim().toLowerCase();
-                  const extendToPriceScale = lineScope === "segment_to_scale";
-                  const resolvedLineWidth =
-                    lineScope === "segment" || extendToPriceScale
-                      ? Math.max(1, rawLineWidth)
-                      : rawLineWidth;
-                  const linePrimitive = Number.isFinite(startTimeSec)
-                    ? new HorizontalPriceSegmentPrimitive({
-                        price,
-                        startTimeSec,
-                        endTimeSec: extendToPriceScale ? null : endTimeSec,
-                        label,
-                        labelAlign: extendToPriceScale ? "right" : "left",
-                        color: lineColor,
-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
-                        lineWidth: resolvedLineWidth,
-                      })
-                    : new HorizontalPriceLinePrimitive({
-                        price,
-                        label,
-                        color: lineColor,
-                        lineDash: obj.line_style === "dot" ? [2, 2] : [],
-                        lineWidth: resolvedLineWidth,
-                      });
-                  candleSeries.attachPrimitive(linePrimitive);
-                  sharedOverlayPrimitivesRef.current.push(linePrimitive);
-                  if (lineScope !== "segment") {
-                    const sharedLine = candleSeries.createPriceLine({
-                      price,
-                      color: lineColor,
-                      lineWidth: resolvedLineWidth,
-                      lineStyle,
-                      lineVisible: true,
-                      axisLabelVisible: extendToPriceScale,
-                      title: extendToPriceScale ? label : "",
-                    });
-                    sharedOverlayPriceLinesRef.current.push(sharedLine);
-                  }
-                  hoverPriceLinesRef.current.lines.push({
-                    overlayType: "shared",
-                    price,
-                    label: label || obj.type || `L${idx + 1}`,
-                    priceText: formatPriceWithPrecision(
-                      price,
-                      pricePrecisionRef.current,
-                    ),
-                  });
-                  return;
-                }
-                if (obj.kind === "point") {
-                  const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
-                  const price = Number(obj.price ?? obj.anchorPrice);
-                  if (Number.isFinite(price) && Number.isFinite(timeSec)) {
-                    const pointPrimitive = new EventTimeMarkerPrimitive({
-                      timeSec,
-                      price,
-                      color: lineColor,
-                      text: String(label || obj.marker_text || obj.type || "").trim(),
-                      placement: String(obj.marker_position || "belowBar"),
-                    });
-                    candleSeries.attachPrimitive(pointPrimitive);
-                    sharedOverlayPrimitivesRef.current.push(pointPrimitive);
-                  } else if (Number.isFinite(price)) {
-                    const pointPrimitive = new HorizontalPriceLinePrimitive({
-                        price,
-                        label: label || obj.type || `P${idx + 1}`,
-                        color: lineColor,
-                        lineDash: obj.line_style === "dot" ? [4, 4] : [],
-                        lineWidth: 1,
-                      });
-                    candleSeries.attachPrimitive(pointPrimitive);
-                    sharedOverlayPrimitivesRef.current.push(pointPrimitive);
-                    const sharedLine = candleSeries.createPriceLine({
-                      price,
-                      color: lineColor,
-                      lineWidth,
-                      lineStyle,
-                      axisLabelVisible: false,
-                      title: "",
-                    });
-                    sharedOverlayPriceLinesRef.current.push(sharedLine);
-                    hoverPriceLinesRef.current.lines.push({
-                      overlayType: "shared",
-                      price,
-                      label: label || obj.type || `P${idx + 1}`,
-                      priceText: formatPriceWithPrecision(
-                        price,
-                        pricePrecisionRef.current,
-                      ),
-                    });
-                  }
-                  return;
-                }
-                if (obj.kind === "zone") {
-                  const top = Number(
-                    obj.price_top ?? obj.anchorPrice ?? obj.price,
-                  );
-                  const bottom = Number(
-                    obj.price_bottom ?? obj.anchorPrice2 ?? obj.price,
-                  );
-                  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
-                  const startTimeSec =
-                    toEpochSec(obj.anchorTimeMs ?? obj.time) || firstCandleTime;
-                  const endTimeSec =
-                    toEpochSec(obj.anchorTimeMs2) || lastCandleTime || null;
-                  if (!Number.isFinite(startTimeSec)) return;
-                  const isFvg = obj.artifact_group === "fvg";
-                  const isOb = obj.artifact_group === "ob";
-                  const zoneFillColor = String(obj.bg_color || "").trim()
-                    || (isFvg
-                      ? withAlpha(lineColor, "08")
-                      : isOb
-                        ? withAlpha(lineColor, "0a")
-                        : withAlpha(lineColor, "12"));
-                  const zonePrimitive = new TimeRangeBoxPrimitive({
-                      startTimeSec,
-                      endTimeSec,
-                      priceLow: Math.min(top, bottom),
-                      priceHigh: Math.max(top, bottom),
-                      lineColor,
-                      fillColor: zoneFillColor,
-                      extendRight: !Number.isFinite(endTimeSec),
-                      lineDash: isFvg ? [] : obj.line_style === "dot" ? [3, 3] : [],
-                      lineWidth: isFvg ? 0 : isOb ? 0.25 : 0.5,
-                      shadowBlur: isFvg ? 8 : isOb ? 10 : 0,
-                      shadowColor: isFvg
-                        ? withAlpha(lineColor, "14")
-                        : isOb
-                          ? withAlpha(lineColor, "18")
-                          : "",
-                      label,
-                    });
-                  candleSeries.attachPrimitive(zonePrimitive);
-                  sharedOverlayPrimitivesRef.current.push(zonePrimitive);
-                  return;
-                }
-              });
-            }
+            renderSharedOverlayArtifacts({
+              sharedLinesList: sharedLines,
+              sharedObjectsList: sharedObjects,
+              bars: candles,
+            });
 
             if (markers.length > 0) {
               seriesMarkersRef.current = createSeriesMarkers(candleSeries, markers);
@@ -4994,13 +5073,11 @@ export default function TradeSignalChart({
             // Prefer the user's current viewport during plan/overlay updates.
             const viewportToRestore = preferTradeAnchoredViewport
               ? null
-              : barsChanged
-                ? initialViewport
-                : runtimeViewportRef.current || initialViewport;
+              : runtimeViewportRef.current || initialViewport;
             const shouldAutoFitOnLoad =
               autoFitNonce > 0 ||
               !viewportToRestore ||
-              barsChanged;
+              (barsChanged && !preserveViewportOnBarsChangeRef.current);
             const restoredViewport = applyStoredViewport(
               chart,
               candleSeries,
@@ -5023,28 +5100,39 @@ export default function TradeSignalChart({
                 Number(tradeViewportAnchors.lastAnchorTimeSec) > 0
                   ? Number(tradeViewportAnchors.lastAnchorTimeSec)
                   : Number(candles[candles.length - 1]?.time) || null;
-              const usedTradeViewport = preferTradeAnchoredViewport
-                ? autoFitWindow(
-                    chart,
-                    candleSeries,
-                    candles,
-                    visibleBarsCount,
-                    {
-                      ...tradeViewportAnchors,
-                      lastAnchorTimeSec: anchoredLastBarTimeSec,
-                    },
-                    {
-                      rightRatio: 1 / 12,
-                      requiredPrices: [
-                        effectiveEntryPrice,
-                        slPrice,
-                        tp1Price ?? tpPrice,
-                      ],
-                    },
-                  )
-                : false;
+              const usedTradeViewport =
+                explicitVisibleBarsTarget > 0
+                  ? applyLatestBarsViewport(
+                      chart,
+                      candles,
+                      explicitVisibleBarsTarget,
+                    )
+                  : preferTradeAnchoredViewport
+                    ? autoFitWindow(
+                        chart,
+                        candleSeries,
+                        candles,
+                        visibleBarsCount,
+                        {
+                          ...tradeViewportAnchors,
+                          lastAnchorTimeSec: anchoredLastBarTimeSec,
+                        },
+                        {
+                          rightRatio: 1 / 12,
+                          requiredPrices: [
+                            effectiveEntryPrice,
+                            slPrice,
+                            tp1Price ?? tpPrice,
+                          ],
+                        },
+                      )
+                    : false;
               debugChartLog("viewport-apply-primary", {
-                mode: usedTradeViewport ? "trade-anchor" : "compact-default",
+                mode: usedTradeViewport
+                  ? explicitVisibleBarsTarget > 0
+                    ? "explicit-visible-bars"
+                    : "trade-anchor"
+                  : "compact-default",
                 anchoredLastBarTimeSec,
                 preferTradeAnchoredViewport,
               });
@@ -5063,28 +5151,39 @@ export default function TradeSignalChart({
                 );
               }
               requestAnimationFrame(() => {
-                const reappliedTradeViewport = preferTradeAnchoredViewport
-                  ? autoFitWindow(
-                      chart,
-                      candleSeries,
-                      candles,
-                      visibleBarsCount,
-                      {
-                        ...tradeViewportAnchors,
-                        lastAnchorTimeSec: anchoredLastBarTimeSec,
-                      },
-                      {
-                        rightRatio: 1 / 12,
-                        requiredPrices: [
-                          effectiveEntryPrice,
-                          slPrice,
-                          tp1Price ?? tpPrice,
-                        ],
-                      },
-                    )
-                  : false;
+                const reappliedTradeViewport =
+                  explicitVisibleBarsTarget > 0
+                    ? applyLatestBarsViewport(
+                        chart,
+                        candles,
+                        explicitVisibleBarsTarget,
+                      )
+                    : preferTradeAnchoredViewport
+                      ? autoFitWindow(
+                          chart,
+                          candleSeries,
+                          candles,
+                          visibleBarsCount,
+                          {
+                            ...tradeViewportAnchors,
+                            lastAnchorTimeSec: anchoredLastBarTimeSec,
+                          },
+                          {
+                            rightRatio: 1 / 12,
+                            requiredPrices: [
+                              effectiveEntryPrice,
+                              slPrice,
+                              tp1Price ?? tpPrice,
+                            ],
+                          },
+                        )
+                      : false;
                 debugChartLog("viewport-apply-raf", {
-                  mode: reappliedTradeViewport ? "trade-anchor" : "compact-default",
+                  mode: reappliedTradeViewport
+                    ? explicitVisibleBarsTarget > 0
+                      ? "explicit-visible-bars"
+                      : "trade-anchor"
+                    : "compact-default",
                   anchoredLastBarTimeSec,
                   preferTradeAnchoredViewport,
                 });
@@ -5155,6 +5254,7 @@ export default function TradeSignalChart({
         } catch {}
         clearPlanPriceLines();
         clearTradeOverlayArtifacts();
+        clearSharedOverlayArtifacts();
         clearCandleHoverPriceLine();
         clearIndicatorHoverPriceLines();
         hoverPriceLinesRef.current.lines = [];
@@ -5162,6 +5262,7 @@ export default function TradeSignalChart({
         seriesRef.current = null;
         indicatorSeriesRefs.current = {};
         indicatorDataRef.current = {};
+        lastSharedOverlayRenderSignatureRef.current = "";
         try {
           chart.remove();
         } catch {}
@@ -5178,7 +5279,6 @@ export default function TradeSignalChart({
   }, [
     symbol,
     interval,
-    historicalDataSignature,
     live,
     chartId,
     lwTimeToMs,
@@ -5189,8 +5289,7 @@ export default function TradeSignalChart({
     showPrimaryPlan,
     showExtraPlans,
     analysisSnapshotSignature,
-    sharedLinesSignature,
-    sharedObjectsSignature,
+    renderSharedOverlayArtifacts,
     side,
     action,
     entryPrice,
@@ -5209,13 +5308,241 @@ export default function TradeSignalChart({
     tradeViewportAnchors,
     preferTradeAnchoredViewport,
     clearTradeOverlayArtifacts,
+    clearSharedOverlayArtifacts,
     clearCandleHoverPriceLine,
     clearIndicatorHoverPriceLines,
     setCandleHoverGuide,
     setIndicatorHoverGuides,
     isReplayActive,
-    replayClockTimeSec,
-    autoFitNonce,
+  ]);
+
+  useEffect(() => {
+    const candles = currentBarsRef.current;
+    if (!seriesRef.current || !Array.isArray(candles) || !candles.length) {
+      return;
+    }
+
+    clearTradeOverlayArtifacts();
+    const candleBarBounds = computePriceBoundsFromBars(candles);
+    const canRenderTradeOverlay =
+      candleBarBounds &&
+      [entryPrice, slPrice, tpPrice, tp1Price, exitPrice]
+        .filter((price) => Number.isFinite(Number(price)))
+        .every((price) =>
+          isPriceCompatibleWithBarBounds(Number(price), candleBarBounds),
+        );
+    renderTradeOverlays(candles, [], {
+      canRenderTradeOverlay: canRenderTradeOverlay === true,
+    });
+  }, [
+    clearTradeOverlayArtifacts,
+    historicalDataSignature,
+    side,
+    action,
+    entryPrice,
+    slPrice,
+    tpPrice,
+    tp1Price,
+    exitPrice,
+    createdAt,
+    openedAt,
+    closedAt,
+    closeStatus,
+    pnlRealized,
+    tradeLabel,
+    selectedTradeSid,
+    renderTradeOverlays,
+  ]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = seriesRef.current;
+    if (!chart || !candleSeries) return;
+
+    const candles = ensureValidBars(historicalData);
+    if (!candles.length) return;
+
+    const nextBarsSignature = buildBarsSignature(candles);
+    if (nextBarsSignature === lastRenderedBarsSignatureRef.current) {
+      return;
+    }
+
+    const previousBars = Array.isArray(currentBarsRef.current)
+      ? currentBarsRef.current
+      : [];
+    const preserveViewport = preserveViewportOnBarsChangeRef.current;
+    const runtimeViewport = runtimeViewportRef.current;
+    let logicalRange = null;
+    try {
+      logicalRange = chart.timeScale().getVisibleLogicalRange();
+    } catch {
+      logicalRange = null;
+    }
+
+    if (!preserveViewport) {
+      runtimeViewportRef.current = null;
+    }
+
+    const precisionCandidates = [];
+    for (const bar of candles) {
+      precisionCandidates.push(bar?.open, bar?.high, bar?.low, bar?.close);
+    }
+    precisionCandidates.push(entryPrice, slPrice, tpPrice, tp1Price, exitPrice);
+    const nextPrecision = resolveChartPricePrecision(
+      symbol,
+      precisionCandidates,
+      null,
+      null,
+    );
+    pricePrecisionRef.current = nextPrecision;
+    candleSeries.applyOptions({
+      priceFormat: {
+        type: "price",
+        precision: nextPrecision,
+        minMove: 1 / 10 ** nextPrecision,
+      },
+    });
+    chart.applyOptions({
+      localization: {
+        priceFormatter: (price) =>
+          formatPriceWithPrecision(price, pricePrecisionRef.current),
+        timeFormatter: (time) =>
+          formatChartDateTime(Number(time) * 1000, displayTimezone),
+      },
+    });
+
+    const isSamePrefix =
+      previousBars.length > 0 &&
+      candles.length >= previousBars.length &&
+      previousBars.every(
+        (bar, idx) =>
+          Number(bar?.time) === Number(candles[idx]?.time),
+      );
+    const canPatchLatest =
+      isSamePrefix && candles.length <= previousBars.length + 1;
+
+    try {
+      if (canPatchLatest) {
+        candleSeries.update(candles[candles.length - 1]);
+      } else {
+        candleSeries.setData(candles);
+      }
+    } catch (err) {
+      console.error("Chart incremental data update failed:", err?.message || err);
+      try {
+        candleSeries.setData(candles);
+      } catch {}
+    }
+
+    currentBarsRef.current = candles;
+    lastRenderedBarsSignatureRef.current = nextBarsSignature;
+
+    if (typeof onBarsLoaded === "function") {
+      onBarsLoaded(interval, candles.length);
+    }
+
+    if (showIndicators) {
+      const cachedIndicators = normalizeIndicatorPayload(
+        chartFetchManager.get(symbol, interval)?.indicators,
+      );
+      const replayIndicators =
+        isReplayActive && cachedIndicators
+          ? sliceIndicatorPayloadToBars(cachedIndicators, candles)
+          : null;
+      const computedIndicators = replayIndicators
+        ? null
+        : buildIndicatorSeries(candles);
+      const builtIndicators = replayIndicators
+        ? replayIndicators
+        : cachedIndicators
+          ? { ...computedIndicators, ...cachedIndicators }
+          : computedIndicators;
+      Object.entries(builtIndicators).forEach(([key, data]) => {
+        const targetSeries = indicatorSeriesRefs.current?.[key];
+        if (!targetSeries || !Array.isArray(data) || !data.length) return;
+        try {
+          targetSeries.setData(data);
+          targetSeries.applyOptions({
+            visible: Boolean(effectiveIndicatorVisibility[key]),
+          });
+        } catch {}
+      });
+      indicatorDataRef.current = builtIndicators;
+      if (showRsiPanel) {
+        setIndicatorValues({
+          rsi: getLastSeriesValue(builtIndicators.rsi),
+          rsiEma9: getLastSeriesValue(builtIndicators.rsiEma9),
+          rsiWma45: getLastSeriesValue(builtIndicators.rsiWma45),
+          stochK: getLastSeriesValue(builtIndicators.stochK),
+          stochD: getLastSeriesValue(builtIndicators.stochD),
+        });
+      } else {
+        setIndicatorValues({});
+      }
+    } else {
+      indicatorDataRef.current = {};
+      setIndicatorValues({});
+    }
+
+    renderSharedOverlayArtifacts({
+      sharedLinesList: sharedLines,
+      sharedObjectsList: sharedObjects,
+      bars: candles,
+      renderSignature: `${nextBarsSignature}|${sharedLinesSignature}|${sharedObjectsSignature}`,
+    });
+
+    if (preserveViewport) {
+      const restoreViewport = () => {
+        if (
+          logicalRange &&
+          Number.isFinite(Number(logicalRange.from)) &&
+          Number.isFinite(Number(logicalRange.to))
+        ) {
+          try {
+            chart.timeScale().setVisibleLogicalRange(logicalRange);
+          } catch {}
+        }
+        if (runtimeViewport) {
+          applyStoredViewport(chart, candleSeries, runtimeViewport);
+        }
+      };
+      restoreViewport();
+      requestAnimationFrame(restoreViewport);
+    }
+  }, [
+    historicalData,
+    historicalDataSignature,
+    symbol,
+    interval,
+    displayTimezone,
+    entryPrice,
+    slPrice,
+    tpPrice,
+    tp1Price,
+    exitPrice,
+    showIndicators,
+    showRsiPanel,
+    effectiveIndicatorVisibility,
+    isReplayActive,
+    onBarsLoaded,
+    renderSharedOverlayArtifacts,
+    sharedLines,
+    sharedObjects,
+  ]);
+
+  useEffect(() => {
+    renderSharedOverlayArtifacts({
+      sharedLinesList: sharedLines,
+      sharedObjectsList: sharedObjects,
+      bars: currentBarsRef.current,
+      renderSignature: `${buildBarsSignature(currentBarsRef.current || [])}|${sharedLinesSignature}|${sharedObjectsSignature}`,
+    });
+  }, [
+    renderSharedOverlayArtifacts,
+    sharedLines,
+    sharedLinesSignature,
+    sharedObjects,
+    sharedObjectsSignature,
   ]);
 
   useEffect(() => {
@@ -5301,17 +5628,11 @@ export default function TradeSignalChart({
       return;
     }
     if (action === "show_all_loaded") {
-      applyPresetTradeViewport(
+      runtimeViewportRef.current = null;
+      applyShowAllLoadedViewport(
         chartRef.current,
         seriesRef.current,
         bars,
-        interval,
-        1000,
-        tradeViewportAnchors,
-        {
-          tpPrice: tp1Price ?? tpPrice,
-          slPrice,
-        },
       );
       return;
     }
@@ -5397,6 +5718,7 @@ export default function TradeSignalChart({
   }, [
     viewportCommand,
     visibleBarsCount,
+    explicitVisibleBarsTarget,
     tradeViewportAnchors,
     effectiveEntryPrice,
     slPrice,

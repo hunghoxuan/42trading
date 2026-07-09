@@ -220,6 +220,16 @@
       ]
     },
     {
+      "value": "phase",
+      "label": "Phase",
+      "kind": "predicate",
+      "family": "context",
+      "args": [
+        { "key": "phase", "label": "Phase (optional)" },
+        { "key": "tf", "label": "TF (optional)" }
+      ]
+    },
+    {
       "value": "is_true",
       "label": "IS_TRUE",
       "kind": "predicate",

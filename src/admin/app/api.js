@@ -1365,13 +1365,14 @@ export const api = {
     refresh = false,
     tradeSid = "",
     direction = "latest",
+    endTimeSec = null,
   ) => {
     const symbolParam = Array.isArray(symbol)
       ? symbol.map((value) => String(value || "").trim()).filter(Boolean).join(",")
       : String(symbol || "");
     return (
     get(
-      `/api/chart/candles?symbol=${encodeURIComponent(symbolParam)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${refresh ? "&force=1" : ""}&direction=${encodeURIComponent(direction || "latest")}${String(tradeSid || "").trim() ? `&trade_sid=${encodeURIComponent(tradeSid)}` : ""}`,
+      `/api/chart/candles?symbol=${encodeURIComponent(symbolParam)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${refresh ? "&force=1" : ""}&direction=${encodeURIComponent(direction || "latest")}${String(tradeSid || "").trim() ? `&trade_sid=${encodeURIComponent(tradeSid)}` : ""}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}`,
     )
     );
   },

@@ -1,6 +1,7 @@
 "use strict";
 
 import * as artifactDetection from "./detectArtifacts.js";
+import { buildTfAnalysis } from "./realtimeAnalysis.js";
 
 function normalizeTfKey(tfRaw = "") {
   const raw = String(tfRaw || "").trim().toLowerCase();
@@ -666,6 +667,19 @@ function deriveStructureBias(ctx = {}) {
   };
 }
 
+function deriveTfAnalysisForContext(ctx = {}) {
+  const bars = resolveBars(ctx);
+  const endIndex = resolveCurrentIndex(ctx);
+  if (!Array.isArray(bars) || endIndex < 0) return null;
+  const scopedBars = bars.slice(0, endIndex + 1);
+  const scopedArtifacts = filterArtifactsBeforeCurrentBar(selectArtifactsForContext(ctx), ctx);
+  return buildTfAnalysis({
+    bars: scopedBars,
+    timeframe: currentTimeframe(ctx),
+    derivedArtifacts: scopedArtifacts,
+  });
+}
+
 function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evaluateRule = null) {
   const lowerName = String(functionName || "").trim().toLowerCase();
   const resolve = typeof evaluateRule === "function"
@@ -694,7 +708,9 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
   const requestedTfRaw =
     evaluatedArgs.length > 1 ? String(evaluatedArgs[evaluatedArgs.length - 1] || "").trim() : "";
   const level = evaluatedArgs.length ? normalizeLevel(evaluatedArgs[0]) : null;
-  const biasArg = evaluatedArgs.length ? String(evaluatedArgs[0] || "").trim().toLowerCase() : "";
+  const firstArg = evaluatedArgs.length ? String(evaluatedArgs[0] || "").trim().toLowerCase() : "";
+  const biasArg = firstArg;
+  const phaseArg = firstArg;
 
   const evaluateForTimeframe = (forcedTf = "") => {
     const timeframe = String(forcedTf || resolveFunctionTimeframe(evaluatedArgs, ctx)).trim();
@@ -822,13 +838,58 @@ function evaluateNamedFunction(functionName = "", rawArgs = [], ctx = {}, evalua
       return latestReversalMatch(level, nextCtx);
     case "trend":
     case "bias": {
+      const analysis = deriveTfAnalysisForContext(nextCtx);
       const derived = deriveStructureBias(nextCtx);
-      if (!derived?.item) return false;
-      if (biasArg && !matchArtifactBias({ subtype: derived.bias }, biasArg)) return false;
-      return buildArtifactResult(lowerName, [derived.item], {
-        timeframe,
-        bias: derived.bias,
+      const effectiveBias = String(analysis?.bias || derived?.bias || "").trim().toLowerCase();
+      if (!effectiveBias) return false;
+      if (biasArg && !matchArtifactBias({ subtype: effectiveBias }, biasArg)) return false;
+      const item = derived?.item || buildSyntheticMatch({
+        functionName: lowerName,
+        timeframe: currentTimeframe(nextCtx),
+        bar: resolveCurrentBar(nextCtx),
+        price: resolveCurrentBar(nextCtx)?.close,
+        bias: effectiveBias,
+        payload: {
+          trend: analysis?.trend || "",
+          phase: analysis?.phase || "",
+          structure_state: analysis?.structure_state || "",
+        },
       });
+      return buildArtifactResult(lowerName, [item], {
+        timeframe,
+        bias: effectiveBias,
+        trend: analysis?.trend || "",
+        phase: analysis?.phase || "",
+      });
+    }
+    case "phase": {
+      const analysis = deriveTfAnalysisForContext(nextCtx);
+      const phase = String(analysis?.phase || "").trim().toLowerCase();
+      if (!phase) return false;
+      if (phaseArg && phaseArg !== phase) return false;
+      return buildArtifactResult(
+        lowerName,
+        [
+          buildSyntheticMatch({
+            functionName: "phase",
+            timeframe: currentTimeframe(nextCtx),
+            bar: resolveCurrentBar(nextCtx),
+            price: resolveCurrentBar(nextCtx)?.close,
+            bias: String(analysis?.bias || "").trim().toLowerCase(),
+            payload: {
+              phase,
+              trend: analysis?.trend || "",
+              structure_state: analysis?.structure_state || "",
+            },
+          }),
+        ],
+        {
+          timeframe,
+          bias: String(analysis?.bias || "").trim().toLowerCase(),
+          phase,
+          trend: analysis?.trend || "",
+        },
+      );
     }
     default:
       return null;

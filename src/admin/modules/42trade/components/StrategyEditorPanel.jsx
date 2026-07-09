@@ -98,6 +98,15 @@ const STRATEGY_FUNCTION_BIAS_OPTIONS = [
   { value: "bearish", label: "Bearish" },
 ];
 
+const STRATEGY_FUNCTION_PHASE_OPTIONS = [
+  { value: "", label: "Any Phase" },
+  { value: "impulse", label: "Impulse" },
+  { value: "pullback", label: "Pullback" },
+  { value: "continuation", label: "Continuation" },
+  { value: "reversal", label: "Reversal" },
+  { value: "consolidation", label: "Consolidation" },
+];
+
 const WEBHOOK_METHOD_OPTIONS = [
   { value: "POST", label: "POST" },
   { value: "GET", label: "GET" },
@@ -364,7 +373,7 @@ function createDefaultFunctionArg(meta = null, index = 0) {
   if (argKey === "level" || argLabel.includes("level")) {
     return { kind: "var", value: "levels.pd_mid" };
   }
-  if (argKey === "bias" || argKey === "tf") {
+  if (argKey === "bias" || argKey === "tf" || argKey === "phase") {
     return { kind: "literal", value: "" };
   }
   return { kind: "var", value: "" };
@@ -396,6 +405,7 @@ function functionArgSelectOptions(functionMeta = null, index = 0) {
   const key = functionArgKey(functionMeta, index);
   if (key === "tf") return STRATEGY_FUNCTION_TF_OPTIONS;
   if (key === "bias") return STRATEGY_FUNCTION_BIAS_OPTIONS;
+  if (key === "phase") return STRATEGY_FUNCTION_PHASE_OPTIONS;
   return [];
 }
 
@@ -403,6 +413,7 @@ function functionArgHint(functionMeta = null, index = 0) {
   const key = functionArgKey(functionMeta, index);
   if (key === "tf") return "Leave empty to use the current strategy or chart timeframe.";
   if (key === "bias") return "Optional bullish or bearish direction filter.";
+  if (key === "phase") return "Optional phase filter like pullback, impulse, or reversal.";
   if (key === "level") return "Use a level variable or fixed price.";
   return "";
 }

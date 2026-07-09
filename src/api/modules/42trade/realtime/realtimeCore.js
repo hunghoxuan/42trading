@@ -70,6 +70,18 @@ function buildNewsTopic(scope = "today") {
   return `news:${target}`;
 }
 
+function buildChatConversationsTopic(userId) {
+  const id = normalizeTopicSegment(userId || "*", "*");
+  return `chat:${id}:conversations`;
+}
+
+function buildChatConversationTopic(userId, conversationId) {
+  const id = normalizeTopicSegment(userId || "*", "*");
+  const convoId = normalizeTopicSegment(conversationId);
+  if (!convoId) return "";
+  return `chat:${id}:conversation:${convoId}`;
+}
+
 function buildLogTopic(source, objectId, file) {
   const safeSource = normalizeTopicSegment(source).toLowerCase();
   const safeObjectId = normalizeTopicSegment(objectId);
@@ -138,6 +150,30 @@ function parseTopic(rawTopic) {
       scope,
     };
   }
+  if (kind === "chat" && parts.length >= 3) {
+    const userId = normalizeTopicSegment(parts[1], "*") || "*";
+    const scope = String(parts[2] || "").trim().toLowerCase();
+    if (scope === "conversations") {
+      return {
+        kind: "chat",
+        scope: "conversations",
+        userId,
+        topic: buildChatConversationsTopic(userId),
+      };
+    }
+    if (scope === "conversation" && parts.length >= 4) {
+      const conversationId = normalizeTopicSegment(parts[3]);
+      const topicKey = buildChatConversationTopic(userId, conversationId);
+      if (!topicKey) return null;
+      return {
+        kind: "chat",
+        scope: "conversation",
+        userId,
+        conversationId,
+        topic: topicKey,
+      };
+    }
+  }
   if (kind === "logs" && parts.length >= 4) {
     const source = normalizeTopicSegment(parts[1]).toLowerCase();
     const objectId = normalizeTopicSegment(parts[2]);
@@ -167,6 +203,8 @@ function normalizeBars(rows = []) {
 }
 
 module.exports = {
+  buildChatConversationTopic,
+  buildChatConversationsTopic,
   buildChartTopic,
   buildLogTopic,
   buildBrokerTopic,

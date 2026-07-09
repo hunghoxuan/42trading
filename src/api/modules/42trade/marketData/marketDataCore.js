@@ -5,8 +5,9 @@ const path = require("path");
 const os = require("os");
 const { spawn, spawnSync } = require("child_process");
 
-const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..");
+const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..", "..", "..");
 const DEFAULT_DATA_ROOT = path.join(PROJECT_ROOT, "data");
+const LEGACY_DATA_ROOT = path.join(path.resolve(__dirname, "..", "..", ".."), "data");
 const DUCKDB_WORKER_PATH = path.join(
   __dirname,
   "providers",
@@ -32,7 +33,10 @@ function getDataRoot(options = {}) {
   const explicit = String(options.dataRoot || "").trim();
   if (explicit) return explicit;
   const envRoot = String(process.env.DATA_ROOT || "").trim();
-  return envRoot || DEFAULT_DATA_ROOT;
+  if (envRoot) return envRoot;
+  if (fs.existsSync(DEFAULT_DATA_ROOT)) return DEFAULT_DATA_ROOT;
+  if (fs.existsSync(LEGACY_DATA_ROOT)) return LEGACY_DATA_ROOT;
+  return DEFAULT_DATA_ROOT;
 }
 
 function getMarketDataRoot(options = {}) {

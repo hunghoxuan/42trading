@@ -76,6 +76,16 @@ function strategySourceMeta(strategy = {}) {
   };
 }
 
+function formatStrategyOptionLabel(strategy = {}) {
+  const name = String(strategy?.name || strategy?.key || strategy?.id || "Strategy").trim();
+  const kind = String(strategy?.kind || "").trim().toLowerCase();
+  const status = String(strategy?.status || "").trim().toLowerCase();
+  if (kind === "custom" && status === "draft") return `${name} (Custom Draft)`;
+  if (kind === "custom") return `${name} (Custom)`;
+  if (kind === "preset") return `${name} (Preset)`;
+  return name;
+}
+
 function toTimeMs(value) {
   const ms = new Date(value || 0).getTime();
   return Number.isFinite(ms) && ms > 0 ? ms : null;
@@ -121,6 +131,7 @@ const LEFT_TABS = [
 ];
 
 const DEFAULT_EDIT_STRATEGY_ID = "price_action_fvg_context_v1";
+const DEFAULT_BACKTEST_STRATEGY_ID = "ema_cross_v1";
 
 const TIMEFRAME_OPTIONS = [
   { value: "1", label: "1m" },
@@ -1149,7 +1160,7 @@ export default function BacktestsPage() {
     limit_preset: "today",
     limit_start_date: "",
     limit_end_date: "",
-    strategy_key: DEFAULT_EDIT_STRATEGY_ID,
+    strategy_key: DEFAULT_BACKTEST_STRATEGY_ID,
     direction: "all",
     session: "Any",
     one_r_value: "100",
@@ -1742,14 +1753,31 @@ export default function BacktestsPage() {
     const exists = allStrategies.some(
       (item) => String(item.key || item.id || "") === preferredId,
     );
-    if (preferredId && exists) return;
+    if (preferredId && exists) {
+      if (form.strategy_key !== preferredId) {
+        setForm((prev) => ({ ...prev, strategy_key: preferredId }));
+      }
+      return;
+    }
     const fallbackId = String(
-      form.strategy_key ||
+      allStrategies.find(
+        (item) =>
+          String(item.key || item.id || "") === DEFAULT_BACKTEST_STRATEGY_ID,
+      )?.key ||
+        allStrategies.find(
+          (item) =>
+            String(item.key || item.id || "") === DEFAULT_BACKTEST_STRATEGY_ID,
+        )?.id ||
+        form.strategy_key ||
         allStrategies[0]?.key ||
         allStrategies[0]?.id ||
         "",
     ).trim();
-    if (fallbackId) setSelectedStrategyId(fallbackId);
+    if (!fallbackId) return;
+    setSelectedStrategyId(fallbackId);
+    if (form.strategy_key !== fallbackId) {
+      setForm((prev) => ({ ...prev, strategy_key: fallbackId }));
+    }
   }, [allStrategies, form.strategy_key, selectedStrategyId]);
 
   useEffect(() => {
@@ -1802,6 +1830,12 @@ export default function BacktestsPage() {
       const payload = {
         ...form,
         symbol: form.symbol,
+        strategy_key: String(
+          selectedStrategy?.key ||
+            selectedStrategy?.id ||
+            form.strategy_key ||
+            DEFAULT_BACKTEST_STRATEGY_ID,
+        ).trim(),
         limit: form.limit === "all" ? 0 : Number(form.limit || 500),
         direction: String(form.direction || "all").trim().toLowerCase(),
         session: String(form.session || "Any").trim() || "Any",
@@ -2061,16 +2095,11 @@ export default function BacktestsPage() {
             <InputComboSelect
               value={form.strategy_key}
               searchable
-              onChange={(event) =>
-                setForm((prev) => ({
-                  ...prev,
-                  strategy_key: event.target.value,
-                }))
-              }
+              onChange={(event) => handleStrategySelect(event.target.value)}
             >
               {strategyOptions.map((item) => (
                 <option key={item.key || item.id} value={item.key || item.id}>
-                  {item.name || item.key || item.id}
+                  {formatStrategyOptionLabel(item)}
                 </option>
               ))}
             </InputComboSelect>

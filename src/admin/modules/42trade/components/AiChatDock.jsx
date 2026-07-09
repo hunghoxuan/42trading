@@ -6,6 +6,7 @@ import {
   getRuntimeActiveUserId,
   getRuntimeApiKey,
 } from "../../../app/api";
+import { realtimeClient } from "../realtime/realtimeClientSingleton";
 import GroupButtons from "../../../shared/components/GroupButtons";
 import Tooltip from "../../../shared/components/Tooltip";
 import {
@@ -237,6 +238,18 @@ function buildChatMessage(role = "user", text = "") {
   };
 }
 
+function buildChatConversationsTopic(userId = "") {
+  const safeUserId = String(userId || "").trim();
+  return safeUserId ? `chat:${safeUserId}:conversations` : "";
+}
+
+function buildChatConversationTopic(userId = "", conversationId = "") {
+  const safeUserId = String(userId || "").trim();
+  const safeConversationId = String(conversationId || "").trim();
+  if (!safeUserId || !safeConversationId) return "";
+  return `chat:${safeUserId}:conversation:${safeConversationId}`;
+}
+
 function parseSseEventBlocks(buffer = "") {
   const events = [];
   let rest = String(buffer || "");
@@ -323,11 +336,23 @@ function filterEventsByView(events, viewKey, now) {
   });
 }
 
+function shouldIgnoreRealtimeWarning(error) {
+  const type = String(error?.type || "").trim().toLowerCase();
+  const reason = String(error?.reason || "").trim().toLowerCase();
+  const message = String(error?.message || "").trim().toLowerCase();
+  return (
+    type === "disconnect" ||
+    reason === "ping timeout" ||
+    message === "realtime socket disconnected"
+  );
+}
+
 function DockNewsPane() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [viewKey, setViewKey] = useState("today");
+  const unsubscribeRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -344,6 +369,32 @@ function DockNewsPane() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    unsubscribeRef.current = realtimeClient.subscribe(
+      "news:week",
+      {},
+      (envelope) => {
+        if (envelope?.type !== "snapshot") return;
+        const nextEvents = Array.isArray(envelope?.data?.events)
+          ? envelope.data.events
+          : [];
+        setEvents(nextEvents);
+      },
+      {
+        onError: (error) => {
+          if (shouldIgnoreRealtimeWarning(error)) return;
+          console.warn("[DockNewsPane] realtime news error:", error);
+        },
+      },
+    );
+    return () => {
+      if (typeof unsubscribeRef.current === "function") {
+        unsubscribeRef.current();
+      }
+      unsubscribeRef.current = null;
+    };
   }, []);
 
   const visibleEvents = useMemo(() => {
@@ -655,10 +706,10 @@ function AiChatThread({
   selectedMode,
   setSelectedMode,
   canUseCodex,
+  realtimeChatUserId,
   conversationId,
   contextSummary,
   initialMessages,
-  onConversationActivity,
 }) {
   const [draft, setDraft] = useState("");
   const [manualMessages, setManualMessages] = useState(initialMessages);
@@ -668,6 +719,8 @@ function AiChatThread({
   const listRef = useRef(null);
   const codexRequestRef = useRef(null);
   const codexLiveAssistantIdRef = useRef("");
+  const codexAssistantFlushFrameRef = useRef(0);
+  const codexAssistantPendingTextRef = useRef("");
   const allowedMode =
     selectedMode === "codex" && !canUseCodex ? "ask" : selectedMode;
 
@@ -685,9 +738,6 @@ function AiChatThread({
     id: conversationId,
     messages: initialMessages,
     transport,
-    onFinish: () => {
-      onConversationActivity?.();
-    },
   });
 
   useEffect(() => {
@@ -696,6 +746,11 @@ function AiChatThread({
     setManualError("");
     setCodexActivities([]);
     codexLiveAssistantIdRef.current = "";
+    codexAssistantPendingTextRef.current = "";
+    if (codexAssistantFlushFrameRef.current) {
+      window.cancelAnimationFrame(codexAssistantFlushFrameRef.current);
+      codexAssistantFlushFrameRef.current = 0;
+    }
     codexRequestRef.current = null;
   }, [conversationId, initialMessages]);
 
@@ -714,6 +769,50 @@ function AiChatThread({
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [pending, visibleMessages, codexActivities]);
+
+  useEffect(() => {
+    if (allowedMode !== "codex" || pending) return undefined;
+    const topic = buildChatConversationTopic(realtimeChatUserId, conversationId);
+    if (!topic) return undefined;
+    return realtimeClient.subscribe(
+      topic,
+      {},
+      (envelope) => {
+        if (!envelope || typeof envelope !== "object") return;
+        if (envelope.type === "snapshot") {
+          const nextMessages = Array.isArray(envelope?.data?.messages)
+            ? envelope.data.messages
+            : [];
+          if (nextMessages.length) {
+            codexLiveAssistantIdRef.current = "";
+            setManualMessages(nextMessages);
+          }
+          return;
+        }
+        if (envelope.type === "codex-activity" && envelope?.data?.entry) {
+          appendCodexActivity(envelope.data.entry);
+          return;
+        }
+        if (envelope.type === "codex-assistant") {
+          setManualStatus("streaming");
+          scheduleLiveCodexAssistant(envelope?.data?.text || "");
+          return;
+        }
+        if (envelope.type === "codex-finish") {
+          if (envelope?.data?.reply) {
+            flushLiveCodexAssistant(envelope.data.reply);
+          }
+          setManualStatus("idle");
+        }
+      },
+      {
+        onError: (error) => {
+          if (shouldIgnoreRealtimeWarning(error)) return;
+          console.warn("[AiChatThread] realtime chat error:", error);
+        },
+      },
+    );
+  }, [allowedMode, conversationId, pending, realtimeChatUserId]);
 
   function appendCodexActivity(entry = {}) {
     const normalized = {
@@ -755,6 +854,41 @@ function AiChatThread({
       return next;
     });
   }
+
+  function flushLiveCodexAssistant(text = "") {
+    const content = String(text || "").trim();
+    if (codexAssistantFlushFrameRef.current) {
+      window.cancelAnimationFrame(codexAssistantFlushFrameRef.current);
+      codexAssistantFlushFrameRef.current = 0;
+    }
+    codexAssistantPendingTextRef.current = "";
+    if (!content) return;
+    upsertLiveCodexAssistant(content);
+  }
+
+  function scheduleLiveCodexAssistant(text = "") {
+    const content = String(text || "").trim();
+    if (!content) return;
+    codexAssistantPendingTextRef.current = content;
+    if (codexAssistantFlushFrameRef.current) return;
+    codexAssistantFlushFrameRef.current = window.requestAnimationFrame(() => {
+      codexAssistantFlushFrameRef.current = 0;
+      const nextContent = codexAssistantPendingTextRef.current;
+      codexAssistantPendingTextRef.current = "";
+      if (nextContent) {
+        upsertLiveCodexAssistant(nextContent);
+      }
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (codexAssistantFlushFrameRef.current) {
+        window.cancelAnimationFrame(codexAssistantFlushFrameRef.current);
+        codexAssistantFlushFrameRef.current = 0;
+      }
+    };
+  }, []);
 
   async function submitCodexMessage(text) {
     const trimmed = String(text || "").trim();
@@ -820,11 +954,11 @@ function AiChatThread({
           }
           if (event.type === "codex-assistant") {
             setManualStatus("streaming");
-            upsertLiveCodexAssistant(event.text || "");
+            scheduleLiveCodexAssistant(event.text || "");
             continue;
           }
           if (event.type === "codex-finish") {
-            if (event.reply) upsertLiveCodexAssistant(event.reply);
+            if (event.reply) flushLiveCodexAssistant(event.reply);
             setManualStatus("idle");
             appendCodexActivity({
               kind: "session",
@@ -832,7 +966,6 @@ function AiChatThread({
               label: event.stopped ? "Codex stopped" : "Codex finished",
             });
             finished = true;
-            onConversationActivity?.();
             continue;
           }
           if (event.type === "error") {
@@ -869,7 +1002,6 @@ function AiChatThread({
       });
     } finally {
       codexRequestRef.current = null;
-      onConversationActivity?.();
     }
   }
 
@@ -1086,6 +1218,17 @@ export default function AiChatDock({
   const safeLayoutMode =
     layoutMode === "modal" || layoutMode === "overlay" ? layoutMode : "panel";
   const effectiveLayoutMode = safeLayoutMode;
+  const realtimeChatUserId = useMemo(
+    () =>
+      String(
+        getRuntimeActiveUserId() ||
+          authUser?.user_id ||
+          authUser?.id ||
+          authUser?.username ||
+          "",
+      ).trim(),
+    [authUser?.id, authUser?.user_id, authUser?.username],
+  );
 
   const contextSummary = useMemo(
     () => ({
@@ -1131,9 +1274,39 @@ export default function AiChatDock({
   }
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || activeTab !== "ai") return;
     refreshConversations();
-  }, [open]);
+  }, [activeTab, open]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "ai") return undefined;
+    const topic = buildChatConversationsTopic(realtimeChatUserId);
+    if (!topic) return undefined;
+    return realtimeClient.subscribe(
+      topic,
+      {},
+      (envelope) => {
+        if (envelope?.type !== "snapshot") return;
+        const items = Array.isArray(envelope?.data?.conversations)
+          ? envelope.data.conversations
+          : [];
+        setConversationItems(items);
+        setHistoryError("");
+        setLoadingConversations(false);
+        if (!items.some((item) => item.conversation_id === selectedConversationId)) {
+          if (items[0]?.conversation_id) {
+            setSelectedConversationId(items[0].conversation_id);
+          }
+        }
+      },
+      {
+        onError: (error) => {
+          if (shouldIgnoreRealtimeWarning(error)) return;
+          console.warn("[AiChatDock] realtime conversations error:", error);
+        },
+      },
+    );
+  }, [activeTab, open, realtimeChatUserId, selectedConversationId]);
 
   const refreshNotificationBadge = async () => {
     const merged = await NotificationFacade.listMerged(
@@ -1381,10 +1554,10 @@ export default function AiChatDock({
                     selectedMode={selectedMode}
                     setSelectedMode={setSelectedMode}
                     canUseCodex={canUseCodex}
+                    realtimeChatUserId={realtimeChatUserId}
                     conversationId={selectedConversationId || makeConversationId()}
                     contextSummary={contextSummary}
                     initialMessages={initialMessages}
-                    onConversationActivity={refreshConversations}
                   />
                 )}
               </>
