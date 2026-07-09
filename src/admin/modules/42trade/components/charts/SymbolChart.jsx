@@ -3100,6 +3100,7 @@ export default function SymbolChart({
   const [artifactObjectsByChartId, setArtifactObjectsByChartId] = useState({});
   const [artifactGroupVisibility, setArtifactGroupVisibility] = useState({});
   const [artifactTfVisibility, setArtifactTfVisibility] = useState({});
+  const [showStrategyMarkers, setShowStrategyMarkers] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [editObjects, setEditObjects] = useState(false);
 
@@ -3544,6 +3545,9 @@ export default function SymbolChart({
     activeMode === replayActiveMode &&
     (isTradeAnchoredReplay || !hasExternalReplayConfig),
   );
+  const shouldLoadTradeFocusedData = Boolean(
+    tradeSid && (showEventMarkers || anchorToTradeTime || replayEnabledInChart),
+  );
   const selectedTradeViewportEndTimeSec = useMemo(() => {
     if (!anchorToTradeTime) return null;
     return resolveTradeViewportEndTimeSec({
@@ -3553,7 +3557,7 @@ export default function SymbolChart({
       timeframes,
     });
   }, [
-    anchorToTradeTime,
+    shouldLoadTradeFocusedData,
     closedAt,
     createdAt,
     normalizedSelectedTrade?.closedAt,
@@ -3563,14 +3567,14 @@ export default function SymbolChart({
     timeframes,
   ]);
   const selectedTradeFetchEndTimeSec = useMemo(() => {
-    if (!anchorToTradeTime) return null;
+    if (!shouldLoadTradeFocusedData) return null;
     return resolveTradeFetchEndTimeSec({
       createdAt: normalizedSelectedTrade?.createdAt ?? createdAt,
       openedAt: normalizedSelectedTrade?.openedAt ?? openedAt,
       closedAt: normalizedSelectedTrade?.closedAt ?? closedAt,
     });
   }, [
-    anchorToTradeTime,
+    shouldLoadTradeFocusedData,
     closedAt,
     createdAt,
     normalizedSelectedTrade?.closedAt,
@@ -3579,7 +3583,7 @@ export default function SymbolChart({
     openedAt,
   ]);
   const selectedTradeFetchBarsCountByTf = useMemo(() => {
-    if (!anchorToTradeTime) return null;
+    if (!shouldLoadTradeFocusedData) return null;
     const next = {};
     for (const tf of Array.isArray(timeframes) ? timeframes : []) {
       const tfKey = String(tf || "").trim().toLowerCase();
@@ -3825,7 +3829,7 @@ export default function SymbolChart({
     attachedSnapshotFiles,
     profile,
     tradeSid:
-      anchorToTradeTime || replayEnabledInChart ? tradeSid : "",
+      shouldLoadTradeFocusedData ? tradeSid : "",
     endTimeSec: effectiveFetchEndTimeSec,
   });
   const liveChartData = effectiveExternalChartData || internalChartData;
@@ -7694,6 +7698,44 @@ export default function SymbolChart({
                           >
                             <input
                               type="checkbox"
+                              checked={showStrategyMarkers}
+                              onChange={(evt) =>
+                                setShowStrategyMarkers(evt.target.checked)
+                              }
+                            />
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: 999,
+                                  background: "#38bdf8",
+                                  boxShadow: "0 0 0 3px #38bdf822",
+                                }}
+                              />
+                              Strategy Buy/Sell Markers
+                            </span>
+                          </label>
+                          <label
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "18px minmax(0, 1fr)",
+                              alignItems: "center",
+                              gap: 12,
+                              padding: "6px 0",
+                              fontSize: 12,
+                              color: "#e2e8f0",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
                               checked={indicatorVisibility.zigzag !== false}
                               onChange={(evt) =>
                                 setIndicatorVisibility((prev) => ({
@@ -8223,7 +8265,9 @@ export default function SymbolChart({
               const baseVisibleBars =
                 manualVisibleBars > 0
                   ? manualVisibleBars
-                  : anchorToTradeTime && Number.isFinite(fetchedVisibleBars) && fetchedVisibleBars > 0
+                  : shouldLoadTradeFocusedData &&
+                      Number.isFinite(fetchedVisibleBars) &&
+                      fetchedVisibleBars > 0
                     ? Math.max(savedVisibleBars > 0 ? savedVisibleBars : 0, fetchedVisibleBars)
                     : savedVisibleBars > 0
                       ? savedVisibleBars
@@ -8239,7 +8283,7 @@ export default function SymbolChart({
               const openedAtSec = effectiveOpenedAtSec;
               const closedAtSec = effectiveClosedAtSec;
               const anchoredBarsForTf =
-                anchorToTradeTime &&
+                shouldLoadTradeFocusedData &&
                 !isBacktestChartReplay &&
                 !(manualVisibleBars > 0) &&
                 barsForTf.length > 0

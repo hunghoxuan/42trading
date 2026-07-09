@@ -30,6 +30,16 @@ export function toTradePriceNumber(value) {
   return Number.isFinite(num) && num > 0 ? num : null;
 }
 
+function unixSecToIso(value) {
+  const sec = Number(value);
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  try {
+    return new Date(sec * 1000).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 function toNullableNumber(value) {
   if (value == null || value === "") return null;
   const num = Number(value);
@@ -91,26 +101,66 @@ export function normalizeTradeRowsForChart(trades = [], defaultTradeLabel = "") 
           trade?.createdAt ??
           trade?.signal_bar_time ??
           trade?.signalBarTime ??
+          unixSecToIso(
+            trade?.signal_time_unix ??
+              trade?.signalTimeUnix ??
+              trade?.signal_bar_time_unix ??
+              trade?.signalBarTimeUnix,
+          ) ??
           null,
-        openedAt: trade?.opened_at ?? trade?.openedAt ?? null,
-        closedAt: trade?.closed_at ?? trade?.closedAt ?? null,
+        openedAt:
+          trade?.opened_at ??
+          trade?.openedAt ??
+          unixSecToIso(trade?.entry_time_unix ?? trade?.entryTimeUnix) ??
+          null,
+        closedAt:
+          trade?.closed_at ??
+          trade?.closedAt ??
+          unixSecToIso(trade?.exit_time_unix ?? trade?.exitTimeUnix) ??
+          null,
         openedAtSec:
           trade?.openedAtSec != null &&
           Number.isFinite(Number(trade?.openedAtSec)) &&
           Number(trade?.openedAtSec) > 0
             ? Number(trade?.openedAtSec)
+            : Number.isFinite(Number(trade?.entry_time_unix ?? trade?.entryTimeUnix)) &&
+                Number(trade?.entry_time_unix ?? trade?.entryTimeUnix) > 0
+              ? Number(trade?.entry_time_unix ?? trade?.entryTimeUnix)
             : null,
         closedAtSec:
           trade?.closedAtSec != null &&
           Number.isFinite(Number(trade?.closedAtSec)) &&
           Number(trade?.closedAtSec) > 0
             ? Number(trade?.closedAtSec)
+            : Number.isFinite(Number(trade?.exit_time_unix ?? trade?.exitTimeUnix)) &&
+                Number(trade?.exit_time_unix ?? trade?.exitTimeUnix) > 0
+              ? Number(trade?.exit_time_unix ?? trade?.exitTimeUnix)
             : null,
         createdAtSec:
           trade?.createdAtSec != null &&
           Number.isFinite(Number(trade?.createdAtSec)) &&
           Number(trade?.createdAtSec) > 0
             ? Number(trade?.createdAtSec)
+            : Number.isFinite(
+                  Number(
+                    trade?.signal_time_unix ??
+                      trade?.signalTimeUnix ??
+                      trade?.signal_bar_time_unix ??
+                      trade?.signalBarTimeUnix,
+                  ),
+                ) &&
+                Number(
+                  trade?.signal_time_unix ??
+                    trade?.signalTimeUnix ??
+                    trade?.signal_bar_time_unix ??
+                    trade?.signalBarTimeUnix,
+                ) > 0
+              ? Number(
+                  trade?.signal_time_unix ??
+                    trade?.signalTimeUnix ??
+                    trade?.signal_bar_time_unix ??
+                    trade?.signalBarTimeUnix,
+                )
             : null,
         pnlRealized: toNullableNumber(trade?.pnl_realized ?? trade?.pnlRealized),
         rMultiple: toNullableNumber(

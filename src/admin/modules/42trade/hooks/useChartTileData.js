@@ -1852,7 +1852,7 @@ export function useSymbolChartData({
     return () => {
       mountedRef.current = false;
     };
-  }, [sym, mode, skipFetch, tfs, endTimeSec]);
+  }, [sym, mode, skipFetch, tfs, tradeSid, endTimeSec]);
 
   useEffect(() => {
     const hasAnchoredEndTime =
@@ -2026,7 +2026,7 @@ export function useSymbolChartData({
         if (typeof unsubscribe === "function") unsubscribe();
       });
     };
-  }, [barsCount, endTimeSec, liveBars, mode, profile, skipFetch, sym, tfs]);
+  }, [barsCount, tradeSid, endTimeSec, liveBars, mode, profile, skipFetch, sym, tfs]);
 
   useEffect(() => {
     const hasAnchoredEndTime =
@@ -2157,7 +2157,7 @@ export function useSymbolChartData({
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
-  }, [endTimeSec, liveBars, mode, skipFetch, sym, tfs]);
+  }, [tradeSid, endTimeSec, liveBars, mode, skipFetch, sym, tfs]);
 
   // Build master-compatible shape for existing components
   const master = useMemo(() => {
