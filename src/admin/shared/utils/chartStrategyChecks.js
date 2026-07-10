@@ -1031,8 +1031,13 @@ export function evaluateChartStrategies({
           strategyName:
             String(strategy?.name || strategy?.id || strategy?.key || "Strategy").trim() ||
             "Strategy",
+          strategyDescription: String(strategy?.description || "").trim(),
           eventId: String(event.id || "").trim(),
           eventName: String(event.name || event.id || "Rule").trim() || "Rule",
+          eventBias: String(event.bias || "").trim(),
+          eventPriority: String(event.priority || "").trim(),
+          ruleDefinition:
+            event?.when && typeof event.when === "object" ? event.when : null,
           actions: Array.isArray(event.actions) ? event.actions : [],
           barIndex: index,
           barTimeUnix: Number(normalizedBars[index]?.time || 0),

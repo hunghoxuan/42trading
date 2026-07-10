@@ -18928,11 +18928,11 @@ async function refreshSelectedTimeframeBars({
         : null;
     const remoteHistoryCursorSec =
       refreshDirection === "history"
-        ? earliestStoredBarTime > 0 && requestedHistoryEndSec > 0
-          ? Math.min(earliestStoredBarTime, requestedHistoryEndSec)
+        ? requestedHistoryEndSec > 0
+          ? requestedHistoryEndSec
           : earliestStoredBarTime > 0
             ? earliestStoredBarTime
-            : requestedHistoryEndSec
+            : null
         : null;
     emitHistoryStep(
       "storage_scan",
@@ -24176,7 +24176,25 @@ const appHandler = async (req, res) => {
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     }
     try {
-      const symbol = String(url.searchParams.get("symbol") || "").trim();
+      const requestedSymbols = [
+        ...new Set(
+          String(url.searchParams.get("symbols") || url.searchParams.get("symbol") || "")
+            .split(",")
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      const requestedTimeframes = [
+        ...new Set(
+          String(
+            url.searchParams.get("timeframe") || url.searchParams.get("tf") || "",
+          )
+            .split(",")
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      const symbol = requestedSymbols[0] || "";
       const timeframe = String(
         url.searchParams.get("timeframe") || url.searchParams.get("tf") || "",
       ).trim();
@@ -24192,9 +24210,50 @@ const appHandler = async (req, res) => {
           url.searchParams.get("endTimeUnix") ||
           0,
       );
+      if (!requestedSymbols.length || !requestedTimeframes.length) {
+        return json(res, 400, { ok: false, error: "symbol and timeframe are required" });
+      }
+      if (requestedSymbols.length > 1 || requestedTimeframes.length > 1) {
+        const items = [];
+        for (const requestedSymbol of requestedSymbols) {
+          for (const requestedTimeframe of requestedTimeframes) {
+            try {
+              const snapshot = loadChartSnapshot({
+                symbol: requestedSymbol,
+                timeframe: requestedTimeframe,
+                bars,
+                dataRoot: GLOBAL_DATA_DIR,
+                duckdbPath: process.env.BARS_DUCKDB_PATH,
+                endTimeSec:
+                  Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+              });
+              items.push({
+                ok: true,
+                symbol: requestedSymbol,
+                timeframe: requestedTimeframe,
+                tf: requestedTimeframe,
+                snapshot,
+              });
+            } catch (error) {
+              items.push({
+                ok: false,
+                symbol: requestedSymbol,
+                timeframe: requestedTimeframe,
+                tf: requestedTimeframe,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+        return json(res, 200, {
+          ok: items.some((item) => item?.ok === true),
+          count: items.length,
+          items,
+        });
+      }
       const snapshot = loadChartSnapshot({
         symbol,
-        timeframe,
+        timeframe: requestedTimeframes[0],
         bars,
         dataRoot: GLOBAL_DATA_DIR,
         duckdbPath: process.env.BARS_DUCKDB_PATH,
@@ -24203,6 +24262,90 @@ const appHandler = async (req, res) => {
       return json(res, 200, {
         ok: true,
         snapshot,
+      });
+    } catch (error) {
+      return json(res, 400, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/realtime/chart/bootstrap/batch" ||
+      url.pathname === "/api/realtime/chart/bootstrap/batch")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin) {
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    }
+    try {
+      const body = await readJson(req);
+      const symbol = String(body?.symbol || "").trim();
+      const requests = Array.isArray(body?.requests) ? body.requests : [];
+      if (!symbol) {
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      }
+      if (!requests.length) {
+        return json(res, 400, { ok: false, error: "requests are required" });
+      }
+      const items = await Promise.all(
+        requests.map(async (requestRaw = {}) => {
+          const timeframe = String(
+            requestRaw?.timeframe || requestRaw?.tf || "",
+          ).trim();
+          const bars = Math.max(
+            50,
+            Math.min(
+              CHART_HISTORY_MAX_BARS,
+              Number(requestRaw?.bars || 300) || 300,
+            ),
+          );
+          const endTimeSec = Number(
+            requestRaw?.endTimeSec ??
+              requestRaw?.end_time_unix ??
+              requestRaw?.endTimeUnix ??
+              0,
+          );
+          try {
+            const snapshot = loadChartSnapshot({
+              symbol,
+              timeframe,
+              bars,
+              dataRoot: GLOBAL_DATA_DIR,
+              duckdbPath: process.env.BARS_DUCKDB_PATH,
+              endTimeSec:
+                Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+            });
+            return {
+              ok: true,
+              timeframe,
+              tf: timeframe,
+              bars,
+              end_time_unix:
+                Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+              snapshot,
+            };
+          } catch (error) {
+            return {
+              ok: false,
+              timeframe,
+              tf: timeframe,
+              bars,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+      return json(res, 200, {
+        ok: items.some((item) => item?.ok === true),
+        symbol,
+        count: items.length,
+        items,
       });
     } catch (error) {
       return json(res, 400, {
@@ -31168,7 +31311,11 @@ const appHandler = async (req, res) => {
     }
   }
 
-  if (req.method === "GET" && url.pathname === "/v2/chart/candles") {
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/chart/candles" ||
+      url.pathname === "/api/chart/candles")
+  ) {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
       (req.headers["x-api-key"] || url.searchParams.get("key")) ===
@@ -31188,11 +31335,19 @@ const appHandler = async (req, res) => {
         ),
       ];
       const symbol = requestedSymbols[0] || "";
-      const timeframe = String(
-        url.searchParams.get("timeframe") ||
-          url.searchParams.get("tf") ||
-          "1m",
-      ).trim();
+      const requestedTimeframes = [
+        ...new Set(
+          String(
+            url.searchParams.get("timeframe") ||
+              url.searchParams.get("tf") ||
+              "1m",
+          )
+            .split(",")
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      const timeframe = requestedTimeframes[0] || "1m";
       const tradeSid = String(
         url.searchParams.get("trade_sid") ||
           url.searchParams.get("tradeSid") ||
@@ -31219,16 +31374,17 @@ const appHandler = async (req, res) => {
       );
       if (!requestedSymbols.length)
         return json(res, 400, { ok: false, error: "symbol is required" });
-      if (requestedSymbols.length > 1 && tradeSid) {
+      if ((requestedSymbols.length > 1 || requestedTimeframes.length > 1) && tradeSid) {
         return json(res, 400, {
           ok: false,
           error: "trade_sid only supported for single-symbol requests",
         });
       }
       const userId = sess.user_id || CFG.mt5DefaultUserId;
-      if (requestedSymbols.length > 1) {
+      if (requestedSymbols.length > 1 || requestedTimeframes.length > 1) {
         const results = await Promise.allSettled(
-          requestedSymbols.map(async (requestedSymbol) => {
+          requestedSymbols.flatMap((requestedSymbol) =>
+            requestedTimeframes.map(async (requestedTimeframe) => {
             const snapshot = await buildAnalysisSnapshotFromTwelve({
               userId,
               payload: {
@@ -31239,12 +31395,14 @@ const appHandler = async (req, res) => {
                   Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
               },
               symbol: requestedSymbol,
-              timeframe,
+              timeframe: requestedTimeframe,
             });
             if (String(snapshot?.status || "").toLowerCase() !== "ok") {
               return {
                 ok: false,
                 symbol: requestedSymbol,
+                timeframe: requestedTimeframe,
+                tf: requestedTimeframe,
                 error: snapshot?.reason || "twelve_data_failed",
                 snapshot,
               };
@@ -31255,14 +31413,16 @@ const appHandler = async (req, res) => {
                 ? new Date(snapshot.fetched_at).getTime()
                 : Date.now());
             const source = snapshot.cache_source || "remote_api";
-            const auto_refresh = parseTfTokenToSeconds(timeframe) || 60;
+            const auto_refresh = parseTfTokenToSeconds(requestedTimeframe) || 60;
             const displaySource = snapshot.cache_source || source || "twelvedata";
-            const tfNorm = normalizeMarketDataTf(timeframe);
+            const tfNorm = normalizeMarketDataTf(requestedTimeframe);
             const redisKey = `tf:${tfCacheKey(normalizeMarketDataSymbol(requestedSymbol), tfNorm)}`;
             const ttlSec = Math.ceil(tfToMs(tfNorm) / 1000);
             return {
               ok: true,
               symbol: requestedSymbol,
+              timeframe: requestedTimeframe,
+              tf: requestedTimeframe,
               snapshot,
               source: displaySource,
               updated_time,
@@ -31279,13 +31439,18 @@ const appHandler = async (req, res) => {
                 binance_api_url: snapshot?.api_url || null,
               },
             };
-          }),
+            }),
+          ),
         );
         const items = results.map((result, index) => {
           if (result.status === "fulfilled") return result.value;
+          const symbolIndex = Math.floor(index / Math.max(1, requestedTimeframes.length));
+          const timeframeIndex = index % Math.max(1, requestedTimeframes.length);
           return {
             ok: false,
-            symbol: requestedSymbols[index],
+            symbol: requestedSymbols[symbolIndex],
+            timeframe: requestedTimeframes[timeframeIndex],
+            tf: requestedTimeframes[timeframeIndex],
             error:
               result.reason instanceof Error
                 ? result.reason.message
@@ -31296,7 +31461,7 @@ const appHandler = async (req, res) => {
         return json(res, 200, {
           ok: successCount > 0,
           symbols: requestedSymbols,
-          timeframe,
+          timeframes: requestedTimeframes,
           bars,
           count: items.length,
           success_count: successCount,
@@ -31364,6 +31529,147 @@ const appHandler = async (req, res) => {
           binance_api_url: snapshot?.api_url || null,
           binance_interval: snapshot?.api_interval || null,
         },
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/chart/candles/batch" ||
+      url.pathname === "/api/chart/candles/batch")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const symbol = String(body?.symbol || "").trim();
+      const tradeSid = String(body?.trade_sid || body?.tradeSid || "").trim();
+      const requests = Array.isArray(body?.requests) ? body.requests : [];
+      if (!symbol) {
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      }
+      if (!requests.length) {
+        return json(res, 400, { ok: false, error: "requests are required" });
+      }
+      const userId = sess.user_id || CFG.mt5DefaultUserId;
+      const items = await Promise.all(
+        requests.map(async (requestRaw = {}) => {
+          const timeframe = String(
+            requestRaw?.timeframe || requestRaw?.tf || "1m",
+          ).trim();
+          const bars = Math.max(
+            50,
+            Math.min(
+              Number(requestRaw?.bars || 1000) || 1000,
+              CHART_HISTORY_MAX_BARS,
+            ),
+          );
+          const forceRefresh = asBool(
+            requestRaw?.force ?? requestRaw?.refresh,
+            false,
+          );
+          const direction = normalizeBarsDownloadDirection(
+            requestRaw?.direction,
+          );
+          const endTimeSec = Number(
+            requestRaw?.endTimeSec ??
+              requestRaw?.end_time_unix ??
+              requestRaw?.endTimeUnix ??
+              0,
+          );
+          try {
+            const snapshot = await buildAnalysisSnapshotFromTwelve({
+              userId,
+              payload: {
+                bars,
+                force_refresh: forceRefresh,
+                direction,
+                end_time_sec:
+                  Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+              },
+              symbol,
+              timeframe,
+            });
+            if (String(snapshot?.status || "").toLowerCase() !== "ok") {
+              return {
+                ok: false,
+                timeframe,
+                tf: timeframe,
+                bars,
+                error: snapshot?.reason || "twelve_data_failed",
+                snapshot,
+              };
+            }
+            let tradeBarsCopied = false;
+            if (tradeSid) {
+              tradeBarsCopied = mirrorTradeBarsFromMarketData(
+                tradeSid,
+                symbol,
+                timeframe,
+              );
+            }
+            const updated_time =
+              snapshot.updated_time ||
+              (snapshot.fetched_at
+                ? new Date(snapshot.fetched_at).getTime()
+                : Date.now());
+            const source = snapshot.cache_source || "remote_api";
+            const auto_refresh = parseTfTokenToSeconds(timeframe) || 60;
+            const displaySource = snapshot.cache_source || source || "twelvedata";
+            const tfNorm = normalizeMarketDataTf(timeframe);
+            const redisKey = `tf:${tfCacheKey(normalizeMarketDataSymbol(symbol), tfNorm)}`;
+            const ttlSec = Math.ceil(tfToMs(tfNorm) / 1000);
+            return {
+              ok: true,
+              timeframe,
+              tf: timeframe,
+              bars,
+              snapshot,
+              source: displaySource,
+              updated_time,
+              auto_refresh,
+              trade_sid: tradeSid || null,
+              trade_bars_copied: tradeBarsCopied,
+              cache_debug: {
+                redis_key: redisKey,
+                ttl_sec: ttlSec,
+                timeframe_input: timeframe,
+                timeframe_normalized: tfNorm,
+                direction,
+                cache_source: displaySource,
+                binance_api_url: snapshot?.api_url || null,
+                binance_interval: snapshot?.api_interval || null,
+              },
+            };
+          } catch (error) {
+            return {
+              ok: false,
+              timeframe,
+              tf: timeframe,
+              bars,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+      const successCount = items.filter((item) => item?.ok).length;
+      return json(res, 200, {
+        ok: successCount > 0,
+        symbol,
+        trade_sid: tradeSid || null,
+        count: items.length,
+        success_count: successCount,
+        error_count: items.length - successCount,
+        items,
       });
     } catch (error) {
       return json(res, 500, {
@@ -31755,7 +32061,11 @@ const appHandler = async (req, res) => {
   }
 
   // GET /v2/market-data/broker-bars — read OHLCV bars from the active file provider
-  if (req.method === "GET" && url.pathname === "/v2/market-data/broker-bars") {
+  if (
+    req.method === "GET" &&
+    (url.pathname === "/v2/market-data/broker-bars" ||
+      url.pathname === "/api/market-data/broker-bars")
+  ) {
     const sess = getUiSessionFromReq(req);
     const isAdmin =
       (req.headers["x-api-key"] || url.searchParams.get("key")) ===
@@ -31763,10 +32073,26 @@ const appHandler = async (req, res) => {
     if (!sess.ok && !isAdmin)
       return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
     try {
-      const symbol = String(url.searchParams.get("symbol") || "")
-        .trim()
-        .toUpperCase();
-      const tfInput = String(url.searchParams.get("tf") || "").trim();
+      const requestedSymbols = [
+        ...new Set(
+          String(url.searchParams.get("symbols") || url.searchParams.get("symbol") || "")
+            .split(",")
+            .map((value) => String(value || "").trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ];
+      const requestedTfInputs = [
+        ...new Set(
+          String(
+            url.searchParams.get("tf") || url.searchParams.get("timeframe") || "",
+          )
+            .split(",")
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      const symbol = requestedSymbols[0] || "";
+      const tfInput = requestedTfInputs[0] || "";
       const tf = normalizeCsvTfKey(tfInput);
       const limit = Math.max(
         10,
@@ -31777,8 +32103,68 @@ const appHandler = async (req, res) => {
           url.searchParams.get("endTimeUnix") ||
           0,
       );
-      if (!symbol || !tf)
+      if (!requestedSymbols.length || !requestedTfInputs.length)
         return json(res, 400, { ok: false, error: "symbol and tf required" });
+      if (requestedSymbols.length > 1 || requestedTfInputs.length > 1) {
+        const items = [];
+        for (const requestedSymbol of requestedSymbols) {
+          for (const requestedTfInput of requestedTfInputs) {
+            const requestedTf = normalizeCsvTfKey(requestedTfInput);
+            if (!requestedTf) {
+              items.push({
+                ok: false,
+                symbol: requestedSymbol,
+                tf: requestedTfInput,
+                timeframe: requestedTfInput,
+                error: "invalid tf",
+              });
+              continue;
+            }
+            try {
+              const rows = barsStorage.readBrokerBarsFromFile(requestedSymbol, requestedTf, limit, {
+                dataRoot: GLOBAL_DATA_DIR,
+                duckdbPath: process.env.BARS_DUCKDB_PATH,
+                endTimeSec:
+                  Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+              });
+              const metadata = buildBrokerStorageMetadata(
+                requestedSymbol,
+                requestedTf,
+                readMarketDataMetadata(requestedSymbol, requestedTf),
+              );
+              items.push({
+                ok: true,
+                symbol: requestedSymbol,
+                tf: requestedTf,
+                timeframe: requestedTf,
+                bars: rows.map((row) => ({
+                  t: Number(row.time),
+                  o: Number(row.open),
+                  h: Number(row.high),
+                  l: Number(row.low),
+                  c: Number(row.close),
+                  v: Number(row.volume || 0),
+                })),
+                source: rows.length ? barsStorage.getBarsStorageProvider() : "cache",
+                metadata: { ...metadata, updated_bars: 0 },
+              });
+            } catch (error) {
+              items.push({
+                ok: false,
+                symbol: requestedSymbol,
+                tf: requestedTf,
+                timeframe: requestedTf,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+        return json(res, 200, {
+          ok: items.some((item) => item?.ok === true),
+          count: items.length,
+          items,
+        });
+      }
       const rows = barsStorage.readBrokerBarsFromFile(symbol, tf, limit, {
         dataRoot: GLOBAL_DATA_DIR,
         duckdbPath: process.env.BARS_DUCKDB_PATH,
@@ -31813,6 +32199,107 @@ const appHandler = async (req, res) => {
         })),
         source: barsStorage.getBarsStorageProvider(),
         metadata: { ...metadata, updated_bars: 0 },
+      });
+    } catch (error) {
+      return json(res, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (
+    req.method === "POST" &&
+    (url.pathname === "/v2/market-data/broker-bars/batch" ||
+      url.pathname === "/api/market-data/broker-bars/batch")
+  ) {
+    const sess = getUiSessionFromReq(req);
+    const isAdmin =
+      (req.headers["x-api-key"] || url.searchParams.get("key")) ===
+      CFG.adminKey;
+    if (!sess.ok && !isAdmin)
+      return json(res, 401, { ok: false, error: "AUTH_REQUIRED" });
+    try {
+      const body = await readJson(req);
+      const symbol = String(body?.symbol || "").trim().toUpperCase();
+      const requests = Array.isArray(body?.requests) ? body.requests : [];
+      if (!symbol) {
+        return json(res, 400, { ok: false, error: "symbol is required" });
+      }
+      if (!requests.length) {
+        return json(res, 400, { ok: false, error: "requests are required" });
+      }
+      const items = requests.map((requestRaw = {}) => {
+        const tfInput = String(
+          requestRaw?.tf || requestRaw?.timeframe || "",
+        ).trim();
+        const tf = normalizeCsvTfKey(tfInput);
+        const limit = Math.max(
+          10,
+          Math.min(5000, Number(requestRaw?.limit || requestRaw?.bars || 300) || 300),
+        );
+        const endTimeSec = Number(
+          requestRaw?.endTimeSec ??
+            requestRaw?.end_time_unix ??
+            requestRaw?.endTimeUnix ??
+            0,
+        );
+        if (!tf) {
+          return {
+            ok: false,
+            tf: tfInput,
+            timeframe: tfInput,
+            error: "tf required",
+          };
+        }
+        try {
+          const rows = barsStorage.readBrokerBarsFromFile(symbol, tf, limit, {
+            dataRoot: GLOBAL_DATA_DIR,
+            duckdbPath: process.env.BARS_DUCKDB_PATH,
+            endTimeSec:
+              Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+          });
+          const metadata = buildBrokerStorageMetadata(
+            symbol,
+            tf,
+            readMarketDataMetadata(symbol, tf),
+          );
+          return {
+            ok: true,
+            symbol,
+            tf,
+            timeframe: tf,
+            bars: rows.map((row) => ({
+              t: Number(row.time),
+              o: Number(row.open),
+              h: Number(row.high),
+              l: Number(row.low),
+              c: Number(row.close),
+              v: Number(row.volume || 0),
+            })),
+            source: barsStorage.getBarsStorageProvider(),
+            metadata: { ...metadata, updated_bars: 0 },
+            end_time_unix:
+              Number.isFinite(endTimeSec) && endTimeSec > 0 ? endTimeSec : null,
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            symbol,
+            tf,
+            timeframe: tf,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
+      const successCount = items.filter((item) => item?.ok).length;
+      return json(res, 200, {
+        ok: successCount > 0,
+        symbol,
+        count: items.length,
+        success_count: successCount,
+        error_count: items.length - successCount,
+        items,
       });
     } catch (error) {
       return json(res, 500, {

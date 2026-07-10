@@ -2112,7 +2112,7 @@ export default function TradeDetailCard({
       closedAt: chartClosedAt,
       openedAtSec: chartOpenedAtUnix,
       closedAtSec: chartClosedAtUnix,
-      closeStatus: chartCloseStatusForClosedTrade,
+      closeStatus: chartCloseStatus,
       pnlRealized: chartPnlRealizedForClosedTrade,
       tradeLabel: chartTradeLabel,
     });
@@ -2143,11 +2143,12 @@ export default function TradeDetailCard({
         chartCreatedAtUnix ||
         toEpochSec(chartCreatedAt) ||
         null,
-      execution_status: chartCloseStatusForClosedTrade,
+      execution_status: chartCloseStatus,
       pnl_realized: normalizedTrade.pnlRealized,
       tradeLabel: chartTradeLabel,
     };
   }, [
+    chartCloseStatus,
     chartCloseStatusForClosedTrade,
     chartClosedAt,
     chartClosedAtUnix,
@@ -3945,7 +3946,7 @@ export default function TradeDetailCard({
             createdAtSec={chartCreatedAtUnix}
             openedAtSec={chartOpenedAtUnix}
             closedAtSec={chartClosedAtUnix}
-            closeStatus={chartCloseStatusForClosedTrade}
+            closeStatus={chartCloseStatus}
             exitPrice={chartExitPriceForClosedTrade}
             pnlRealized={chartPnlRealizedForClosedTrade}
             tradeLabel={chartTradeLabel}

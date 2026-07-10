@@ -1,0 +1,969 @@
+//@version=6
+// ══════════════════════════════════════════════════════════
+// SMART BREAKOUT TARGETS [WillyAlgoTrader]
+// ══════════════════════════════════════════════════════════
+// Author:  Willy | WillyAlgoTrader
+// Version: 1.5.0
+
+indicator(
+    title             = "Smart Breakout Targets [WillyAlgoTrader]",
+    shorttitle        = "Smart Breakout",
+    overlay           = true,
+    max_lines_count   = 500,
+    max_labels_count  = 500,
+    max_boxes_count   = 500,
+    max_bars_back     = 5000)
+
+// ══════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════
+GRP_MAIN    = "⚙️ Main Settings"
+GRP_TARGETS = "🎯 Targets"
+GRP_FILTER  = "🔍 Filters"
+GRP_VISUAL  = "🎨 Visual Settings"
+GRP_DASH    = "📊 Dashboard"
+GRP_ALERT   = "🔔 Alerts"
+GRP_COLORS  = "🎨 Colors"
+
+INDICATOR_VERSION = "v1.5.0"
+FORM_LEN          = 10    // recent-form strip length
+MAX_TRACKED_BOXES = 50    // bounded range-box memory
+
+// ══════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════
+
+// ── Main Settings ───────────────────────────────────────
+squeezeLengthInput = input.int(20, "Squeeze Detection Length", minval = 10, maxval = 100, group = GRP_MAIN, tooltip = "Lookback period for Bollinger Band Width and ATR compression detection.\n• Higher = detects longer consolidations, fewer signals\n• Lower = catches short squeezes, more signals\n• Recommended: 15–30")
+bbMultInput         = input.float(2.0, "BB Multiplier", minval = 1.0, maxval = 4.0, step = 0.1, group = GRP_MAIN, tooltip = "Bollinger Band standard deviation multiplier.\n• Higher = wider bands, stricter squeeze detection\n• Lower = tighter bands, more squeezes detected\n• Recommended: 1.5–2.5")
+squeezeThreshInput  = input.float(0.6, "Squeeze Threshold", minval = 0.1, maxval = 1.0, step = 0.05, group = GRP_MAIN, tooltip = "BB Width percentile threshold for squeeze detection.\nWhen BB Width falls below this fraction of its SMA, a squeeze is active.\n• Lower = stricter, catches only tight squeezes\n• Higher = looser, more ranges detected\n• Recommended: 0.4–0.7")
+atrCompressInput    = input.float(0.75, "ATR Compression Ratio", minval = 0.3, maxval = 1.0, step = 0.05, group = GRP_MAIN, tooltip = "ATR must be below this fraction of its SMA for squeeze confirmation.\nDual-engine: both BB squeeze AND ATR compression must agree.\n• Lower = stricter compression filter\n• Higher = allows moderate volatility squeezes\n• Recommended: 0.6–0.85")
+minSqueezeInput     = input.int(5, "Min Squeeze Bars", minval = 2, maxval = 50, group = GRP_MAIN, tooltip = "Minimum consecutive bars in squeeze to form a valid range.\nFilters out momentary dips in volatility.\n• Higher = only well-established ranges\n• Lower = catches quick consolidations\n• Recommended: 4–10")
+impulseMultInput    = input.float(0.8, "Impulse Body Threshold", minval = 0.2, maxval = 3.0, step = 0.1, group = GRP_MAIN, tooltip = "Breakout candle body must exceed ATR × this multiplier.\nConfirms the breakout has genuine momentum.\nNOTE: a close beyond a range boundary WITHOUT impulse consumes the range silently — a breakout must be fresh.\n• Higher = stricter, fewer but stronger breakouts\n• Lower = more breakouts, includes weaker ones\n• Recommended: 0.5–1.2")
+preventOverlapInput = input.bool(true, "Prevent Overlap", group = GRP_MAIN, tooltip = "If enabled, a new range box is skipped when its PRICE span intersects an existing (unbroken) range box.\nKeeps the chart clean and avoids duplicate signals from nested ranges.")
+
+// ── Targets ─────────────────────────────────────────────
+showTargetsInput = input.bool(true, "Show Entry/SL/TP Levels", group = GRP_TARGETS, tooltip = "Toggle visibility of entry, stop loss, and take profit levels after breakout.")
+slBufferInput    = input.float(0.5, "SL ATR Buffer", minval = 0.0, maxval = 3.0, step = 0.1, group = GRP_TARGETS, tooltip = "Extra ATR-based buffer added beyond the opposite range boundary for SL.\n• Higher = wider stop, more room to breathe\n• Lower = tighter stop, better R:R but more stops\n• Recommended: 0.3–1.0")
+tp1RRInput       = input.float(1.0, "TP1 Risk:Reward", minval = 0.1, maxval = 5.0, step = 0.1, group = GRP_TARGETS, tooltip = "TP1 = Entry + Risk × this multiplier.\n• 1.0 = 1:1 R:R\n• Recommended: 0.75–1.5")
+tp2RRInput       = input.float(2.0, "TP2 Risk:Reward", minval = 0.5, maxval = 10.0, step = 0.1, group = GRP_TARGETS, tooltip = "TP2 = Entry + Risk × this multiplier.\n• 2.0 = 1:2 R:R\n• Recommended: 1.5–3.0")
+tp3RRInput       = input.float(3.0, "TP3 Risk:Reward", minval = 1.0, maxval = 15.0, step = 0.1, group = GRP_TARGETS, tooltip = "TP3 = Entry + Risk × this multiplier.\n• 3.0 = 1:3 R:R\n• Recommended: 2.5–5.0")
+
+// ── Filters ─────────────────────────────────────────────
+useVolFilterInput = input.bool(false, "Volume Breakout Filter", group = GRP_FILTER, tooltip = "Require above-average volume on breakout candle.\nDisabled by default (works on forex where volume = 0).\nEnable for stocks/crypto for cleaner signals.")
+volMultInput      = input.float(1.5, "Volume Surge Multiplier", minval = 1.0, maxval = 5.0, step = 0.1, group = GRP_FILTER, tooltip = "Breakout bar volume must exceed SMA(volume,20) × this multiplier.\n• Higher = stricter volume confirmation\n• Recommended: 1.2–2.0")
+useHtfInput       = input.bool(false, "HTF Trend Filter", group = GRP_FILTER, tooltip = "Only take breakouts aligned with the higher timeframe trend.\nBullish breakout = HTF uptrend, Bearish breakout = HTF downtrend.")
+htfInput          = input.timeframe("D", "Higher Timeframe", group = GRP_FILTER, tooltip = "Timeframe for trend bias filter.\nLeave at 'D' for daily trend on intraday charts.\n• Use 4H on 15M chart, D on 1H chart, W on D chart")
+htfMaLenInput     = input.int(50, "HTF MA Length", minval = 10, maxval = 200, group = GRP_FILTER, tooltip = "Moving average length on the HTF for trend determination.\n• Recommended: 50 (standard)")
+
+// ── Visual Settings ─────────────────────────────────────
+showBoxesInput     = input.bool(true, "Show Range Boxes", group = GRP_VISUAL, tooltip = "Show consolidation range boxes on chart.")
+showSignalsInput   = input.bool(true, "Show Breakout Signals", group = GRP_VISUAL, tooltip = "Show breakout arrow labels.")
+showCenterInput    = input.bool(true, "Show Range Centerline", group = GRP_VISUAL, tooltip = "Show dashed centerline inside range boxes.")
+showBgInput        = input.bool(false, "Show Squeeze Background", group = GRP_VISUAL, tooltip = "Highlight background when squeeze is active.")
+showCloseLabelsInput = input.bool(true, "Show Close Labels", group = GRP_VISUAL, tooltip = "Show ✔/✘/◼ labels when trade closes at TP3, SL, or by a new signal.")
+signalSizeInput    = input.string("Small", "Signal Label Size", options = ["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group = GRP_VISUAL, tooltip = "Size of Long/Short breakout labels on chart.\n• Small: compact, good for lower TFs with many signals\n• Normal: balanced visibility\n• Large: easy to spot on higher TFs")
+targetSizeInput    = input.string("Small", "Target Label Size", options = ["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group = GRP_VISUAL, tooltip = "Size of Entry/SL/TP labels on target lines.\n• Small: minimal, keeps chart clean\n• Normal: easy to read prices\n• Tiny: maximum compactness")
+closeSizeInput     = input.string("Small", "Close Label Size", options = ["Auto", "Tiny", "Small", "Normal", "Large", "Huge"], group = GRP_VISUAL, tooltip = "Size of ✔ TP3 / ✘ SL / ◼ Exit close labels.\n• Matches signal labels by default")
+showWatermarkInput = input.bool(true, "Show Watermark", group = GRP_VISUAL, tooltip = "Display 'WillyAlgoTrader - by Willy' watermark on chart.")
+themeInput         = input.string("Auto", "Theme", options = ["Auto", "Dark", "Light"], group = GRP_VISUAL, tooltip = "Chart color theme.\n• Auto: detects from chart background\n• Dark: optimized for dark backgrounds\n• Light: optimized for light/white backgrounds")
+
+// ── Dashboard ───────────────────────────────────────────
+showDashInput      = input.bool(true, "Show Dashboard", group = GRP_DASH)
+dashPosStr         = input.string("Top Right", "Dashboard Position",
+     options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right", "Middle Right"], group = GRP_DASH)
+dashFontSizeInput  = input.string("Small", "Dashboard Font Size",
+     options = ["Small", "Normal", "Large", "Huge"], group = GRP_DASH,
+     tooltip = "Font size for the dashboard table. Section dividers and the\nversion footer render one step smaller to preserve hierarchy.")
+showMarketSecInput = input.bool(true, "  ├ Market section", group = GRP_DASH,
+     tooltip = "Trend, HTF bias, Signal, Strength, Squeeze, Timeframe.")
+showTradeSecInput  = input.bool(true, "  ├ Trade section", group = GRP_DASH,
+     tooltip = "Entry, SL, TP1-3, R:R, SL distance. Collapses to one row when flat.")
+showStatsSecInput  = input.bool(true, "  └ Stats section", group = GRP_DASH,
+     tooltip = "Trades, W/L (+Early), Win Rate (+gauge), Last P&L, recent Form.\nHonest methodology: Win Rate = TP3 wins ÷ (TP3 wins + SL losses).\nEarly closes (trade replaced by a new signal) are EXCLUDED.")
+
+// ── Alerts ──────────────────────────────────────────────
+webhookInput = input.bool(false, "Webhook JSON Format", group = GRP_ALERT, tooltip = "Send ALL alerts (entries, TP1/TP2/TP3, SL, early close) in JSON format for webhook integrations (3Commas, Autoview, etc.)")
+
+// ── Colors ──────────────────────────────────────────────
+bullColorInput    = input.color(#00E676, "Bull", inline = "colors", group = GRP_COLORS, tooltip = "Color for bullish breakouts and targets.")
+bearColorInput    = input.color(#FF5252, "Bear", inline = "colors", group = GRP_COLORS, tooltip = "Color for bearish breakouts and targets.")
+neutralColorInput = input.color(#FFEB3B, "Neutral", inline = "colors", group = GRP_COLORS, tooltip = "Color for neutral/squeeze state.")
+
+// ══════════════════════════════════════
+// THEME DETECTION & COLORS
+// ══════════════════════════════════════
+isDark = switch themeInput
+    "Dark"  => true
+    "Light" => false
+    =>         color.r(chart.bg_color) < 128
+
+TEXT_COLOR   = isDark ? #E0E0E0 : #1A1A1A
+TEXT_MUTED   = isDark ? color.new(#9E9E9E, 0) : color.new(#757575, 0)
+TABLE_BG      = isDark ? color.new(#131722, 5) : color.new(#FFFFFF, 5)
+TABLE_BORDER  = isDark ? color.new(#2A2E39, 0) : color.new(#D0D0D0, 0)
+TABLE_ROW_ALT = isDark ? color.new(#1C2030, 0) : color.new(#F0F4F8, 0)
+LINE_SUBTLE = isDark ? color.new(#555555, 0) : color.new(#AAAAAA, 0)
+RANGE_BG    = isDark ? color.new(#FFFFFF, 92) : color.new(#000000, 92)
+WM_COLOR    = isDark ? color.new(#FFFFFF, 80) : color.new(#000000, 80)
+LABEL_TEXT = #FFFFFF
+
+// Mirage-style dashboard palette
+BULL_TEXT    = isDark ? #00E676 : #00A152
+BEAR_TEXT    = isDark ? #FF5252 : #D32F2F
+NEUTRAL_TEXT = isDark ? #FFEB3B : #F57F17
+HEADER_TEXT  = #FFFFFF
+FORM_COLOR   = isDark ? #5C8AAE : #34495E
+
+HEADER_BG_BULL = color.new(#0F6E56, 0)
+HEADER_BG_BEAR = color.new(#A32D2D, 0)
+HEADER_BG_FLAT = color.new(#2962FF, 0)
+
+// ══════════════════════════════════════
+// FUNCTIONS
+// ══════════════════════════════════════
+safeDiv(float num, float den, float fallback = 0.0) =>
+    den != 0 and not na(num) and not na(den) ? num / den : fallback
+
+// Convert string input to size constant
+toSize(string s) =>
+    switch s
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        "Huge"   => size.huge
+        => size.auto
+
+// One step smaller — used for section dividers and the version footer
+sizeDownFromString(string s) =>
+    s == "Small" ? size.tiny : s == "Normal" ? size.small : s == "Large" ? size.normal : s == "Huge" ? size.large : size.tiny
+
+buildGauge(float value, float maxVal, int width) =>
+    string result = ""
+    int filled = maxVal <= 0 ? 0 : math.round(math.min(width, math.max(0.0, value / maxVal * width)))
+    for i = 0 to width - 1
+        result += i < filled ? "▰" : "▱"
+    result
+
+fmtPrice(float v) =>
+    na(v) ? "—" : str.tostring(v, format.mintick)
+
+// Resolved label sizes
+SIGNAL_SIZE = toSize(signalSizeInput)
+TARGET_SIZE = toSize(targetSizeInput)
+CLOSE_SIZE  = toSize(closeSizeInput)
+dashFontSize    = toSize(dashFontSizeInput)
+dashFontSizeSub = sizeDownFromString(dashFontSizeInput)
+
+// ══════════════════════════════════════
+// DASHBOARD POSITION
+// ══════════════════════════════════════
+dashPos = switch dashPosStr
+    "Top Left"     => position.top_left
+    "Top Right"    => position.top_right
+    "Bottom Left"  => position.bottom_left
+    "Bottom Right" => position.bottom_right
+    "Middle Right" => position.middle_right
+    => position.top_right
+
+// ══════════════════════════════════════
+// CALCULATIONS
+// ══════════════════════════════════════
+
+int WARMUP_BARS = math.max(squeezeLengthInput, 50)
+bool isWarmedUp = bar_index >= WARMUP_BARS
+
+// ── ATR ─────────────────────────────────────────────────
+int atrPeriod   = math.max(squeezeLengthInput / 2, 7)
+float rawAtr    = ta.atr(atrPeriod)
+float atrVal    = nz(rawAtr, 0.0)
+float atrSma    = nz(ta.sma(rawAtr, squeezeLengthInput), atrVal)
+
+// ── Bollinger Band Width ────────────────────────────────
+float bbBasis    = nz(ta.sma(close, squeezeLengthInput), close)
+float bbStdev    = nz(ta.stdev(close, squeezeLengthInput), 0.0)
+float bbUpper    = bbBasis + bbMultInput * bbStdev
+float bbLower    = bbBasis - bbMultInput * bbStdev
+float bbWidth    = safeDiv(bbUpper - bbLower, bbBasis)
+float bbWidthSma = nz(ta.sma(bbWidth, squeezeLengthInput), bbWidth)
+
+// ── Squeeze Detection (dual engine) ─────────────────────
+bool bbSqueeze   = bbWidth < bbWidthSma * squeezeThreshInput
+bool atrCompress = atrSma != 0 ? atrVal < atrSma * atrCompressInput : false
+bool isSqueeze   = bbSqueeze and atrCompress and isWarmedUp
+
+// ── Squeeze duration counter ────────────────────────────
+var int squeezeBars = 0
+squeezeBars := isSqueeze ? squeezeBars + 1 : 0
+bool validSqueeze = squeezeBars >= minSqueezeInput
+
+// ── Adaptive Donchian boundaries during squeeze ─────────
+var float squeezeHigh     = na
+var float squeezeLow      = na
+var int   squeezeStartBar = na
+
+if isSqueeze and not isSqueeze[1]
+    squeezeHigh     := high
+    squeezeLow      := low
+    squeezeStartBar := bar_index
+
+if isSqueeze
+    squeezeHigh := math.max(nz(squeezeHigh, high), high)
+    squeezeLow  := math.min(nz(squeezeLow, low), low)
+
+if not isSqueeze and isSqueeze[1]
+    squeezeHigh := na
+    squeezeLow  := na
+
+// ── Volume data ─────────────────────────────────────────
+// [FIX-11] SMA computed unconditionally every bar (series consistency).
+// Measured independently of the filter toggle so Strength scoring can
+// use it even when the filter is off.
+bool  hasVolume  = nz(volume, 0) > 0
+float volSmaRaw  = ta.sma(volume, 20)
+float volSma     = hasVolume ? nz(volSmaRaw, volume) : 0.0
+bool  volSurge   = hasVolume and volSma > 0 and volume > volSma * volMultInput
+bool  volConfirm = useVolFilterInput ? (hasVolume ? volSurge : true) : true
+
+// ── HTF Trend Filter (non-repainting) ───────────────────
+float htfMa        = request.security(syminfo.tickerid, htfInput, ta.sma(close, htfMaLenInput)[1], barmerge.gaps_off, barmerge.lookahead_on)
+float safeHtfMa    = nz(htfMa, close)
+float htfClose     = request.security(syminfo.tickerid, htfInput, close[1], barmerge.gaps_off, barmerge.lookahead_on)
+float safeHtfClose = nz(htfClose, close)
+bool htfBullish    = safeHtfClose > safeHtfMa
+bool htfBearish    = safeHtfClose < safeHtfMa
+bool htfBullOk     = useHtfInput ? htfBullish : true
+bool htfBearOk     = useHtfInput ? htfBearish : true
+
+// ── Impulse candle detection ────────────────────────────
+float bodySize    = math.abs(close - open)
+bool isBullCandle = close > open
+bool isBearCandle = close < open
+bool impulseUp    = isBullCandle and bodySize > atrVal * impulseMultInput
+bool impulseDown  = isBearCandle and bodySize > atrVal * impulseMultInput
+
+// ══════════════════════════════════════
+// RANGE BOX MANAGEMENT
+// ══════════════════════════════════════
+var array<box>  rangeBoxes   = array.new_box()
+var array<box>  resistBoxes  = array.new_box()
+var array<box>  supportBoxes = array.new_box()
+var array<line> centerLines  = array.new_line()
+var array<int>  rangeSqzLen  = array.new<int>()   // [FIX-9] squeeze duration per box
+
+// ── Create new range box when squeeze ends ──────────────
+bool squeezeEnd = not isSqueeze and isSqueeze[1] and validSqueeze[1] and isWarmedUp and barstate.isconfirmed
+
+float sqzHighSnap = squeezeHigh[1]
+float sqzLowSnap  = squeezeLow[1]
+
+if squeezeEnd and not na(sqzHighSnap) and not na(sqzLowSnap) and sqzHighSnap > sqzLowSnap
+    int startBar = nz(squeezeStartBar[1], bar_index - minSqueezeInput)
+    float rangeSpan    = sqzHighSnap - sqzLowSnap
+    float rangeCenterV = (sqzHighSnap + sqzLowSnap) / 2.0
+    float maxRangeSpan = atrVal * 6.0
+    float fHigh = rangeSpan > maxRangeSpan and atrVal > 0 ? rangeCenterV + atrVal * 3.0 : sqzHighSnap
+    float fLow  = rangeSpan > maxRangeSpan and atrVal > 0 ? rangeCenterV - atrVal * 3.0 : sqzLowSnap
+
+    // [FIX-1] Price-based overlap check: skip creation only when the
+    // new range's price span actually intersects an existing live box.
+    bool overlapsExisting = false
+    if preventOverlapInput and rangeBoxes.size() > 0
+        for k = 0 to rangeBoxes.size() - 1
+            box eb = rangeBoxes.get(k)
+            if not (fHigh < eb.get_bottom() or fLow > eb.get_top())
+                overlapsExisting := true
+                break
+
+    if not overlapsExisting
+        rangeBoxes.unshift(box.new(startBar, fHigh, bar_index, fLow, bgcolor = showBoxesInput ? RANGE_BG : na, border_color = showBoxesInput ? LINE_SUBTLE : na, border_width = showBoxesInput ? 1 : 0))
+        float rZoneBot = fHigh - atrVal * 0.5
+        resistBoxes.unshift(box.new(startBar, fHigh, bar_index, rZoneBot, bgcolor = showBoxesInput ? color.new(bearColorInput, 85) : na, border_color = na))
+        float sZoneTop = fLow + atrVal * 0.5
+        supportBoxes.unshift(box.new(startBar, sZoneTop, bar_index, fLow, bgcolor = showBoxesInput ? color.new(bullColorInput, 85) : na, border_color = na))
+        float mid = (fHigh + fLow) / 2.0
+        centerLines.unshift(line.new(startBar, mid, bar_index, mid, color = showBoxesInput and showCenterInput ? LINE_SUBTLE : na, width = 1, style = line.style_dashed))
+        rangeSqzLen.unshift(squeezeBars[1])   // [FIX-9] duration of the squeeze that built this range
+
+// ══════════════════════════════════════
+// TRADE STATE
+// ══════════════════════════════════════
+var line entryLine = na
+var line slLine    = na
+var line tp1Line   = na
+var line tp2Line   = na
+var line tp3Line   = na
+var label entryLbl = na
+var label slLbl    = na
+var label tp1Lbl   = na
+var label tp2Lbl   = na
+var label tp3Lbl   = na
+var linefill lfRisk   = na
+var linefill lfReward = na
+
+var int   tradeDir    = 0       // 0 = no trade, 1 = long, -1 = short
+var bool  tradeActive = false   // true while trade is open
+var float lastEntry   = na
+var float lastSL      = na
+var float lastTP1     = na
+var float lastTP2     = na
+var float lastTP3     = na
+
+// [FIX-2] Latched per-level hit flags — each level can fire only once
+// per trade, and a touch counts even if the previous bar was already
+// beyond the level.
+var bool tp1Done = false
+var bool tp2Done = false
+
+// ── Trade outcome tracking ──────────────────────────────
+var string lastResult    = "—"  // "Win (TP3)" / "Loss (SL)" / "—"
+var color  lastResultClr = color.gray
+var float  lastPnl       = na   // P&L in price units
+
+// Honest trade statistics
+var int    winCount   = 0       // trades closed at TP3
+var int    lossCount  = 0       // trades closed at SL
+var int    earlyCount = 0       // trades replaced by a new signal (excluded from win rate)
+var string formStr    = ""      // last N resolved trades: ▰ win / ▱ loss
+
+bool bullBreak  = false
+bool bearBreak  = false
+bool earlyClose = false
+float earlyPnl  = na
+int   sigSqzLen = 0             // [FIX-9] squeeze duration of the broken box
+
+// ══════════════════════════════════════
+// BREAKOUT DETECTION
+// ══════════════════════════════════════
+// [FIX-8] Consumption rule: the FIRST close beyond a boundary decides
+// the box's fate. Qualified (impulse + filters) → signal. Unqualified →
+// box is consumed silently: no late "breakouts" many bars after price
+// already left the range with the stop stranded at the far side.
+if rangeBoxes.size() > 0 and barstate.isconfirmed and isWarmedUp
+    for i = rangeBoxes.size() - 1 to 0
+        box b = rangeBoxes.get(i)
+        float bTop = b.get_top()
+        float bBot = b.get_bottom()
+        bool brokeUp = close > bTop
+        bool brokeDn = close < bBot
+
+        if brokeUp and impulseUp and volConfirm and htfBullOk
+            // ── Bullish Breakout ────────────────────────────
+            // [FIX-4] Close a still-active trade explicitly before overwriting
+            if tradeActive
+                earlyClose := true
+                earlyPnl   := tradeDir == 1 ? close - lastEntry : lastEntry - close
+                earlyCount += 1
+
+            bullBreak     := true
+            tradeDir      := 1
+            tradeActive   := true
+            tp1Done       := false
+            tp2Done       := false
+            sigSqzLen     := rangeSqzLen.get(i)
+            float entryPrice = close
+            float slPrice    = bBot - atrVal * slBufferInput
+            float risk       = math.abs(entryPrice - slPrice)
+            float tp1Price   = entryPrice + risk * tp1RRInput
+            float tp2Price   = entryPrice + risk * tp2RRInput
+            float tp3Price   = entryPrice + risk * tp3RRInput
+
+            lastEntry := entryPrice
+            lastSL    := slPrice
+            lastTP1   := tp1Price
+            lastTP2   := tp2Price
+            lastTP3   := tp3Price
+            lastPnl   := na
+
+            rangeBoxes.remove(i)
+            resistBoxes.remove(i)
+            supportBoxes.remove(i)
+            centerLines.remove(i)
+            rangeSqzLen.remove(i)
+
+            // [FIX-7] Delete old visuals unconditionally
+            line.delete(entryLine)
+            line.delete(slLine)
+            line.delete(tp1Line)
+            line.delete(tp2Line)
+            line.delete(tp3Line)
+            label.delete(entryLbl)
+            label.delete(slLbl)
+            label.delete(tp1Lbl)
+            label.delete(tp2Lbl)
+            label.delete(tp3Lbl)
+            linefill.delete(lfRisk)
+            linefill.delete(lfReward)
+
+            if showTargetsInput
+                entryLine := line.new(bar_index, entryPrice, bar_index, entryPrice, color = bullColorInput, width = 2)
+                entryLbl  := label.new(bar_index, entryPrice, "Entry " + str.tostring(entryPrice, format.mintick), style = label.style_label_left, color = bullColorInput, textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                slLine    := line.new(bar_index, slPrice, bar_index, slPrice, color = color.new(bearColorInput, 50), width = 2, style = line.style_dashed)
+                slLbl     := label.new(bar_index, slPrice, "SL " + str.tostring(slPrice, format.mintick), style = label.style_label_left, color = color.new(bearColorInput, 50), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp1Line   := line.new(bar_index, tp1Price, bar_index, tp1Price, color = color.new(bullColorInput, 60), width = 1, style = line.style_dotted)
+                tp1Lbl    := label.new(bar_index, tp1Price, "TP1 " + str.tostring(tp1Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 60), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp2Line   := line.new(bar_index, tp2Price, bar_index, tp2Price, color = color.new(bullColorInput, 50), width = 1, style = line.style_dotted)
+                tp2Lbl    := label.new(bar_index, tp2Price, "TP2 " + str.tostring(tp2Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 50), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp3Line   := line.new(bar_index, tp3Price, bar_index, tp3Price, color = color.new(bullColorInput, 40), width = 1, style = line.style_dotted)
+                tp3Lbl    := label.new(bar_index, tp3Price, "TP3 " + str.tostring(tp3Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 40), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                lfRisk    := linefill.new(entryLine, slLine, color.new(bearColorInput, 93))
+                lfReward  := linefill.new(entryLine, tp3Line, color.new(bullColorInput, 93))
+            break
+
+        else if brokeDn and impulseDown and volConfirm and htfBearOk
+            // ── Bearish Breakout ────────────────────────────
+            // [FIX-4] Close a still-active trade explicitly before overwriting
+            if tradeActive
+                earlyClose := true
+                earlyPnl   := tradeDir == 1 ? close - lastEntry : lastEntry - close
+                earlyCount += 1
+
+            bearBreak     := true
+            tradeDir      := -1
+            tradeActive   := true
+            tp1Done       := false
+            tp2Done       := false
+            sigSqzLen     := rangeSqzLen.get(i)
+            float entryPrice = close
+            float slPrice    = bTop + atrVal * slBufferInput
+            float risk       = math.abs(slPrice - entryPrice)
+            float tp1Price   = entryPrice - risk * tp1RRInput
+            float tp2Price   = entryPrice - risk * tp2RRInput
+            float tp3Price   = entryPrice - risk * tp3RRInput
+
+            lastEntry := entryPrice
+            lastSL    := slPrice
+            lastTP1   := tp1Price
+            lastTP2   := tp2Price
+            lastTP3   := tp3Price
+            lastPnl   := na
+
+            rangeBoxes.remove(i)
+            resistBoxes.remove(i)
+            supportBoxes.remove(i)
+            centerLines.remove(i)
+            rangeSqzLen.remove(i)
+
+            // [FIX-7] Delete old visuals unconditionally
+            line.delete(entryLine)
+            line.delete(slLine)
+            line.delete(tp1Line)
+            line.delete(tp2Line)
+            line.delete(tp3Line)
+            label.delete(entryLbl)
+            label.delete(slLbl)
+            label.delete(tp1Lbl)
+            label.delete(tp2Lbl)
+            label.delete(tp3Lbl)
+            linefill.delete(lfRisk)
+            linefill.delete(lfReward)
+
+            if showTargetsInput
+                entryLine := line.new(bar_index, entryPrice, bar_index, entryPrice, color = bearColorInput, width = 2)
+                entryLbl  := label.new(bar_index, entryPrice, "Entry " + str.tostring(entryPrice, format.mintick), style = label.style_label_left, color = bearColorInput, textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                slLine    := line.new(bar_index, slPrice, bar_index, slPrice, color = color.new(bearColorInput, 50), width = 2, style = line.style_dashed)
+                slLbl     := label.new(bar_index, slPrice, "SL " + str.tostring(slPrice, format.mintick), style = label.style_label_left, color = color.new(bearColorInput, 50), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp1Line   := line.new(bar_index, tp1Price, bar_index, tp1Price, color = color.new(bullColorInput, 60), width = 1, style = line.style_dotted)
+                tp1Lbl    := label.new(bar_index, tp1Price, "TP1 " + str.tostring(tp1Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 60), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp2Line   := line.new(bar_index, tp2Price, bar_index, tp2Price, color = color.new(bullColorInput, 50), width = 1, style = line.style_dotted)
+                tp2Lbl    := label.new(bar_index, tp2Price, "TP2 " + str.tostring(tp2Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 50), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                tp3Line   := line.new(bar_index, tp3Price, bar_index, tp3Price, color = color.new(bullColorInput, 40), width = 1, style = line.style_dotted)
+                tp3Lbl    := label.new(bar_index, tp3Price, "TP3 " + str.tostring(tp3Price, format.mintick), style = label.style_label_left, color = color.new(bullColorInput, 40), textcolor = LABEL_TEXT, size = TARGET_SIZE)
+                lfRisk    := linefill.new(entryLine, slLine, color.new(bearColorInput, 93))
+                lfReward  := linefill.new(entryLine, tp3Line, color.new(bullColorInput, 93))
+            break
+
+        else if brokeUp or brokeDn
+            // [FIX-8] Boundary crossed without a qualifying signal →
+            // range consumed. Drawings stay (frozen) for history;
+            // tracking stops so no stale breakout can fire later.
+            rangeBoxes.remove(i)
+            resistBoxes.remove(i)
+            supportBoxes.remove(i)
+            centerLines.remove(i)
+            rangeSqzLen.remove(i)
+
+        else
+            b.set_right(bar_index)
+            resistBoxes.get(i).set_right(bar_index)
+            supportBoxes.get(i).set_right(bar_index)
+            centerLines.get(i).set_x2(bar_index)
+
+// Extend remaining boxes after breakout
+if (bullBreak or bearBreak) and rangeBoxes.size() > 0
+    for j = 0 to rangeBoxes.size() - 1
+        rangeBoxes.get(j).set_right(bar_index)
+        resistBoxes.get(j).set_right(bar_index)
+        supportBoxes.get(j).set_right(bar_index)
+        centerLines.get(j).set_x2(bar_index)
+
+// ── Early close label (trade replaced by new signal) ────
+if earlyClose and showCloseLabelsInput
+    label.new(bar_index, close, "◼ Exit",
+        color = color.new(neutralColorInput, 20), textcolor = #1A1A1A,
+        style = label.style_label_left,
+        size = CLOSE_SIZE,
+        tooltip = "Trade closed early: replaced by a new breakout signal\nP&L at close: " + str.tostring(nz(earlyPnl, 0.0), format.mintick) + "\nExcluded from Win Rate stats")
+
+// ══════════════════════════════════════
+// TP/SL HIT DETECTION & TRADE CLOSE
+// ══════════════════════════════════════
+// [FIX-2] Latched flags instead of cross-conditions: each level fires
+//         once per trade; a touch counts even if the previous bar's
+//         extreme was already beyond the level.
+// [FIX-3] HONEST-STATS RULE: SL is checked FIRST. If one bar touches
+//         both SL and any TP, the trade counts as a LOSS — intrabar
+//         order is unknowable on closed bars, so ambiguity always
+//         resolves AGAINST the system, never in its favor.
+bool tp1HitCond = false
+bool tp2HitCond = false
+bool tp3HitCond = false
+bool slHitCond  = false
+bool tradeClosed = false
+
+if tradeActive and not bullBreak and not bearBreak and barstate.isconfirmed
+
+    if tradeDir == 1
+        // ── Long trade: SL first (conservative) ─────────
+        if not na(lastSL) and low <= lastSL
+            slHitCond   := true
+            tradeClosed := true
+            lastResult  := "Loss (SL)"
+            lastResultClr := BEAR_TEXT
+            lastPnl     := lastSL - lastEntry
+            lossCount   += 1
+
+        if not tradeClosed
+            if not tp1Done and not na(lastTP1) and high >= lastTP1
+                tp1HitCond := true
+                tp1Done    := true
+            if not tp2Done and not na(lastTP2) and high >= lastTP2
+                tp2HitCond := true
+                tp2Done    := true
+            if not na(lastTP3) and high >= lastTP3
+                tp3HitCond := true
+                tradeClosed := true
+                lastResult  := "Win (TP3)"
+                lastResultClr := BULL_TEXT
+                lastPnl     := lastTP3 - lastEntry
+                winCount    += 1
+
+    if tradeDir == -1
+        // ── Short trade: SL first (conservative) ────────
+        if not na(lastSL) and high >= lastSL
+            slHitCond   := true
+            tradeClosed := true
+            lastResult  := "Loss (SL)"
+            lastResultClr := BEAR_TEXT
+            lastPnl     := lastEntry - lastSL
+            lossCount   += 1
+
+        if not tradeClosed
+            if not tp1Done and not na(lastTP1) and low <= lastTP1
+                tp1HitCond := true
+                tp1Done    := true
+            if not tp2Done and not na(lastTP2) and low <= lastTP2
+                tp2HitCond := true
+                tp2Done    := true
+            if not na(lastTP3) and low <= lastTP3
+                tp3HitCond := true
+                tradeClosed := true
+                lastResult  := "Win (TP3)"
+                lastResultClr := BULL_TEXT
+                lastPnl     := lastEntry - lastTP3
+                winCount    += 1
+
+// ── Execute trade close: delete visuals, reset state ────
+if tradeClosed
+    // Recent-form strip: ▰ win / ▱ loss, newest right
+    formStr := formStr + (tp3HitCond ? "▰" : "▱")
+    if str.length(formStr) > FORM_LEN
+        formStr := str.substring(formStr, str.length(formStr) - FORM_LEN)
+
+    // [FIX-7] Delete all target lines and labels UNCONDITIONALLY
+    line.delete(entryLine)
+    line.delete(slLine)
+    line.delete(tp1Line)
+    line.delete(tp2Line)
+    line.delete(tp3Line)
+    label.delete(entryLbl)
+    label.delete(slLbl)
+    label.delete(tp1Lbl)
+    label.delete(tp2Lbl)
+    label.delete(tp3Lbl)
+    linefill.delete(lfRisk)
+    linefill.delete(lfReward)
+    entryLine := na
+    slLine    := na
+    tp1Line   := na
+    tp2Line   := na
+    tp3Line   := na
+    entryLbl  := na
+    slLbl     := na
+    tp1Lbl    := na
+    tp2Lbl    := na
+    tp3Lbl    := na
+    lfRisk    := na
+    lfReward  := na
+
+    // Place close label on chart
+    if showCloseLabelsInput
+        if slHitCond
+            label.new(bar_index, tradeDir == 1 ? low : high, "✘ SL",
+                color = bearColorInput, textcolor = LABEL_TEXT,
+                style = tradeDir == 1 ? label.style_label_up : label.style_label_down,
+                size = CLOSE_SIZE,
+                tooltip = "Trade stopped out\nEntry: " + str.tostring(lastEntry, format.mintick) + "\nSL: " + str.tostring(lastSL, format.mintick) + "\nP&L: " + str.tostring(nz(lastPnl, 0.0), format.mintick))
+        else if tp3HitCond
+            label.new(bar_index, tradeDir == 1 ? high : low, "✔ TP3",
+                color = bullColorInput, textcolor = LABEL_TEXT,
+                style = tradeDir == 1 ? label.style_label_down : label.style_label_up,
+                size = CLOSE_SIZE,
+                tooltip = "Trade closed at TP3\nEntry: " + str.tostring(lastEntry, format.mintick) + "\nTP3: " + str.tostring(lastTP3, format.mintick) + "\nP&L: " + str.tostring(nz(lastPnl, 0.0), format.mintick))
+
+    // Reset trade state
+    tradeActive := false
+    tradeDir    := 0
+    tp1Done     := false
+    tp2Done     := false
+
+// ── Extend target lines while trade is active ───────────
+if tradeActive and not bullBreak and not bearBreak and showTargetsInput and not na(entryLine)
+    line.set_x2(entryLine, bar_index)
+    label.set_x(entryLbl, bar_index)
+    line.set_x2(slLine, bar_index)
+    label.set_x(slLbl, bar_index)
+    line.set_x2(tp1Line, bar_index)
+    label.set_x(tp1Lbl, bar_index)
+    line.set_x2(tp2Line, bar_index)
+    label.set_x(tp2Lbl, bar_index)
+    line.set_x2(tp3Line, bar_index)
+    label.set_x(tp3Lbl, bar_index)
+
+// ── Clean up old objects ────────────────────────────────
+if rangeBoxes.size() > MAX_TRACKED_BOXES
+    box.delete(rangeBoxes.pop())
+    box.delete(resistBoxes.pop())
+    box.delete(supportBoxes.pop())
+    line.delete(centerLines.pop())
+    rangeSqzLen.pop()
+
+// ══════════════════════════════════════
+// SIGNAL LOGIC
+// ══════════════════════════════════════
+bool confirmedBullBreak = bullBreak
+bool confirmedBearBreak = bearBreak
+
+// ══════════════════════════════════════
+// PLOTS & VISUALS
+// ══════════════════════════════════════
+bgcolor(showBgInput and isSqueeze ? color.new(neutralColorInput, 92) : na, title = "Squeeze Background")
+
+// ══════════════════════════════════════
+// SIGNAL LABELS
+// ══════════════════════════════════════
+if showSignalsInput and confirmedBullBreak
+    label.new(bar_index, low, "Long",
+        color     = bullColorInput,
+        textcolor = LABEL_TEXT,
+        style     = label.style_label_up,
+        size      = SIGNAL_SIZE,
+        tooltip   = "Bullish Breakout\nEntry: " + str.tostring(close, format.mintick))
+
+if showSignalsInput and confirmedBearBreak
+    label.new(bar_index, high, "Short",
+        color     = bearColorInput,
+        textcolor = LABEL_TEXT,
+        style     = label.style_label_down,
+        size      = SIGNAL_SIZE,
+        tooltip   = "Bearish Breakout\nEntry: " + str.tostring(close, format.mintick))
+
+// ══════════════════════════════════════
+// DASHBOARD STATUS TRACKING
+// ══════════════════════════════════════
+var string lastSignalStr = "Wait"
+var color  lastSignalClr = color.gray
+var int    barsSinceSignal = 0
+var int    signalTrend   = 0        // last signal direction (header/trend)
+
+if confirmedBullBreak
+    lastSignalStr  := "Buy"
+    lastSignalClr  := BULL_TEXT
+    barsSinceSignal := 0
+    signalTrend    := 1
+else if confirmedBearBreak
+    lastSignalStr  := "Sell"
+    lastSignalClr  := BEAR_TEXT
+    barsSinceSignal := 0
+    signalTrend    := -1
+else
+    barsSinceSignal += 1
+
+// [FIX-6] Strength scoring: all criteria measured independently of
+// filter toggles, and none is trivially true on a breakout bar.
+// [FIX-9] Squeeze-duration criterion uses the broken box's own stored
+// duration — works no matter how many bars passed since the squeeze.
+// Max score = 4. Strong >= 3, Medium = 2, Normal <= 1.
+var int signalStrength = 0
+if confirmedBullBreak or confirmedBearBreak
+    signalStrength := 0
+    // Extra-large impulse body (1.5x the minimum threshold)
+    if bodySize > atrVal * impulseMultInput * 1.5
+        signalStrength += 1
+    // Genuine volume surge (measured even when the filter is off)
+    if volSurge
+        signalStrength += 1
+    // HTF trend alignment (measured even when the filter is off)
+    if (confirmedBullBreak and htfBullish) or (confirmedBearBreak and htfBearish)
+        signalStrength += 1
+    // Extended squeeze duration of the broken range (2x minimum)
+    if sigSqzLen >= minSqueezeInput * 2
+        signalStrength += 1
+
+string strengthStr = signalStrength >= 3 ? "Strong" : signalStrength >= 2 ? "Medium" : "Normal"
+color strengthClr  = signalStrength >= 3 ? BULL_TEXT : signalStrength >= 2 ? NEUTRAL_TEXT : TEXT_MUTED
+
+// ══════════════════════════════════════════════════════════
+// DASHBOARD (Mirage-style: sectioned, dynamic height, gauge, tooltips)
+// ══════════════════════════════════════════════════════════
+var table dashTable = na
+
+if showDashInput and barstate.islast
+    // ── Header / trend ──────────────────────────────────
+    int    headTrend = tradeActive ? tradeDir : signalTrend
+    string trendWord = headTrend == 1 ? "Bullish" : headTrend == -1 ? "Bearish" : "Neutral"
+    color  trendCol  = headTrend == 1 ? BULL_TEXT : headTrend == -1 ? BEAR_TEXT : NEUTRAL_TEXT
+    color  headerBg  = headTrend == 1 ? HEADER_BG_BULL : headTrend == -1 ? HEADER_BG_BEAR : HEADER_BG_FLAT
+
+    // ── Market values ───────────────────────────────────
+    string biasStr = not useHtfInput ? "Off" : (htfBullish ? "Bullish" : htfBearish ? "Bearish" : "—")
+    color  biasCol = not useHtfInput ? TEXT_MUTED : (htfBullish ? BULL_TEXT : htfBearish ? BEAR_TEXT : TEXT_MUTED)
+
+    string sigDashStr = lastSignalStr + (lastSignalStr != "Wait" and barsSinceSignal > 0 ? " (" + str.tostring(barsSinceSignal) + " ago)" : "")
+
+    string sqzStr = isSqueeze ? "ACTIVE (" + str.tostring(squeezeBars) + ")" : "None"
+    color  sqzCol = isSqueeze ? NEUTRAL_TEXT : TEXT_MUTED
+
+    // ── Trade values ────────────────────────────────────
+    string dashEntry = tradeActive ? fmtPrice(lastEntry) : "—"
+    string dashSL    = tradeActive ? fmtPrice(lastSL)  : "—"
+    string dashTP1   = tradeActive ? (tp1Done ? "✓ " : "") + fmtPrice(lastTP1) : "—"
+    string dashTP2   = tradeActive ? (tp2Done ? "✓ " : "") + fmtPrice(lastTP2) : "—"
+    string dashTP3   = tradeActive ? fmtPrice(lastTP3) : "—"
+    color  dashTp1Col = tp1Done ? BULL_TEXT : TEXT_COLOR
+    color  dashTp2Col = tp2Done ? BULL_TEXT : TEXT_COLOR
+
+    float  slDistPct = tradeActive and not na(lastEntry) and lastEntry != 0 ? math.abs(lastEntry - lastSL) / lastEntry * 100 : 0.0
+    string dashRR    = str.tostring(tp1RRInput, "#.#") + "R"
+    string dashDist  = str.tostring(slDistPct, "#.##") + "%"
+    color  rrColor   = tp1RRInput >= 1.5 ? BULL_TEXT : tp1RRInput >= 1.0 ? NEUTRAL_TEXT : BEAR_TEXT
+    color  distColor = slDistPct > 3.0 ? BEAR_TEXT : slDistPct > 1.0 ? NEUTRAL_TEXT : BULL_TEXT
+
+    // [CLEAN] Flat row shows the last trade outcome
+    string flatStr = lastResult == "—" ? "Flat · waiting for breakout" : "Flat · last: " + lastResult
+    color  flatCol = lastResult == "—" ? TEXT_MUTED : lastResultClr
+
+    // ── Stats values (honest methodology) ───────────────
+    int    resolvedTrades = winCount + lossCount
+    float  winRate        = resolvedTrades > 0 ? winCount / float(resolvedTrades) * 100.0 : 0.0
+    string dashWL         = str.tostring(winCount) + " / " + str.tostring(lossCount) + (earlyCount > 0 ? " (+" + str.tostring(earlyCount) + "E)" : "")
+    string dashWR         = resolvedTrades > 0 ? str.tostring(winRate, "#.#") + "%  " + buildGauge(winRate, 100, 8) : "—"
+    color  wrCol          = resolvedTrades == 0 ? TEXT_MUTED : winRate >= 55.0 ? BULL_TEXT : winRate >= 45.0 ? NEUTRAL_TEXT : BEAR_TEXT
+    string dashForm       = formStr == "" ? "—" : formStr
+    string pnlStr = na(lastPnl) ? "—" : (lastPnl >= 0 ? "+" : "") + str.tostring(lastPnl, format.mintick)
+    color  pnlClr = na(lastPnl) ? TEXT_MUTED : (lastPnl >= 0 ? BULL_TEXT : BEAR_TEXT)
+
+    // ── Dynamic height ──────────────────────────────────
+    int marketRows = showMarketSecInput ? 7 : 0
+    int tradeRows  = showTradeSecInput  ? (tradeActive ? 8 : 2) : 0
+    int statsRows  = showStatsSecInput  ? 6 : 0
+    int totalRows  = 2 + marketRows + tradeRows + statsRows
+
+    if not na(dashTable)
+        table.delete(dashTable)
+    dashTable := table.new(dashPos, 2, totalRows, bgcolor = TABLE_BG, border_color = TABLE_BORDER, border_width = 1, frame_color = TABLE_BORDER, frame_width = 1)
+
+    int  r   = 0
+    bool zeb = false
+    color rb = TABLE_BG
+
+    table.cell(dashTable, 0, r, "◆ Breakout · " + trendWord, text_color = HEADER_TEXT, bgcolor = headerBg, text_size = dashFontSize, text_halign = text.align_center)
+    table.merge_cells(dashTable, 0, r, 1, r)
+    r += 1
+
+    // ── Market section ──────────────────────────────────
+    if showMarketSecInput
+        table.cell(dashTable, 0, r, "— Market —", text_color = TEXT_MUTED, bgcolor = TABLE_ROW_ALT, text_size = dashFontSizeSub, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+        r += 1
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Trend", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Direction of the active trade, or the most recent breakout signal when flat.")
+        table.cell(dashTable, 1, r, trendWord, text_color = trendCol, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "HTF Bias", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Higher-timeframe MA bias (breakout direction filter).")
+        table.cell(dashTable, 1, r, biasStr, text_color = biasCol, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Signal", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Most recent breakout signal and how many bars ago it fired.")
+        table.cell(dashTable, 1, r, sigDashStr, text_color = lastSignalClr, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Strength", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Quality of the last breakout (0-4):\nextra-large body, volume surge, HTF alignment, extended squeeze.")
+        table.cell(dashTable, 1, r, strengthStr, text_color = strengthClr, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Squeeze", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Volatility compression state (bars in squeeze).\nA valid range forms after " + str.tostring(minSqueezeInput) + "+ bars.")
+        table.cell(dashTable, 1, r, sqzStr, text_color = sqzCol, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Timeframe", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb)
+        table.cell(dashTable, 1, r, timeframe.period, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+
+    // ── Trade section ───────────────────────────────────
+    if showTradeSecInput
+        table.cell(dashTable, 0, r, "— Trade —", text_color = TEXT_MUTED, bgcolor = TABLE_ROW_ALT, text_size = dashFontSizeSub, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+        r += 1
+        if tradeActive
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "Entry", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb)
+            table.cell(dashTable, 1, r, dashEntry, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "SL", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Active stop-loss.")
+            table.cell(dashTable, 1, r, dashSL, text_color = BEAR_TEXT, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "TP1", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "✓ = touched.")
+            table.cell(dashTable, 1, r, dashTP1, text_color = dashTp1Col, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "TP2", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "✓ = touched.")
+            table.cell(dashTable, 1, r, dashTP2, text_color = dashTp2Col, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "TP3", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Final target. Touching it closes the trade (Win).")
+            table.cell(dashTable, 1, r, dashTP3, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "R:R (TP1)", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Reward-to-risk at TP1.")
+            table.cell(dashTable, 1, r, dashRR, text_color = rrColor, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, "SL Dist %", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Stop distance as % of entry (not position risk).")
+            table.cell(dashTable, 1, r, dashDist, text_color = distColor, text_size = dashFontSize, bgcolor = rb)
+            r += 1
+            zeb := not zeb
+        else
+            rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+            table.cell(dashTable, 0, r, flatStr, text_color = flatCol, text_size = dashFontSize, text_halign = text.align_center, bgcolor = rb)
+            table.merge_cells(dashTable, 0, r, 1, r)
+            r += 1
+            zeb := not zeb
+
+    // ── Stats section ───────────────────────────────────
+    if showStatsSecInput
+        table.cell(dashTable, 0, r, "— Stats —", text_color = TEXT_MUTED, bgcolor = TABLE_ROW_ALT, text_size = dashFontSizeSub, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, r, 1, r)
+        r += 1
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Trades", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Resolved trades this session (TP3 wins + SL losses).")
+        table.cell(dashTable, 1, r, str.tostring(resolvedTrades), text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "W / L", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "W = closed at TP3, L = closed at SL.\n+E = early closes (replaced by a new signal, excluded from Win Rate).\nSame-bar TP3+SL ambiguity is always counted as LOSS.")
+        table.cell(dashTable, 1, r, dashWL, text_color = TEXT_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Win rate", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Win Rate = TP3 wins ÷ (TP3 wins + SL losses).\nFull TP3-or-SL methodology — no partial-TP win counting,\nno stat padding, early closes excluded.")
+        table.cell(dashTable, 1, r, dashWR, text_color = wrCol, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Last P&L", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "P&L of the last resolved trade, in price units.")
+        table.cell(dashTable, 1, r, pnlStr, text_color = pnlClr, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+        rb := zeb ? TABLE_ROW_ALT : TABLE_BG
+        table.cell(dashTable, 0, r, "Form", text_color = TEXT_MUTED, text_size = dashFontSize, bgcolor = rb, tooltip = "Last " + str.tostring(FORM_LEN) + " resolved trades.  ▰ = win · ▱ = loss (newest right).")
+        table.cell(dashTable, 1, r, dashForm, text_color = FORM_COLOR, text_size = dashFontSize, bgcolor = rb)
+        r += 1
+        zeb := not zeb
+
+    // ── Footer ──────────────────────────────────────────
+    table.cell(dashTable, 0, r, "Smart Breakout · " + INDICATOR_VERSION, text_color = TEXT_MUTED, text_size = dashFontSizeSub, text_halign = text.align_center)
+    table.merge_cells(dashTable, 0, r, 1, r)
+
+// ══════════════════════════════════════
+// WATERMARK — WillyAlgoTrader
+// ══════════════════════════════════════
+if barstate.islast and showWatermarkInput
+    var wmTable = table.new(position = position.bottom_center, columns = 1, rows = 1, bgcolor = color.new(color.black, 100), border_color = color.new(color.black, 100), border_width = 0, frame_color = color.new(color.black, 100), frame_width = 0)
+    table.cell(wmTable, 0, 0, "WillyAlgoTrader", text_color = WM_COLOR, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(color.black, 100))
+
+// ══════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════
+// [FIX-10] Level-based prices: TP/SL/close alerts report the actual
+// level, not the bar close — bots receive true fill references.
+string tickerStr   = syminfo.tickerid
+string tfStr       = timeframe.period
+string priceStr    = str.tostring(close, format.mintick)
+string slAlertStr  = na(lastSL)  ? "0" : str.tostring(lastSL, format.mintick)
+string tp1AlertStr = na(lastTP1) ? "0" : str.tostring(lastTP1, format.mintick)
+string tp2AlertStr = na(lastTP2) ? "0" : str.tostring(lastTP2, format.mintick)
+string tp3AlertStr = na(lastTP3) ? "0" : str.tostring(lastTP3, format.mintick)
+
+// [FIX-4] Early close alert (exit at market → close price is correct here)
+if earlyClose
+    string jsonMsg = '{"action":"close","ticker":"' + tickerStr + '","reason":"new_signal","price":' + priceStr + ',"pnl":' + str.tostring(nz(earlyPnl, 0.0), format.mintick) + ',"tf":"' + tfStr + '"}'
+    string textMsg = "◼ EARLY CLOSE (new signal) | " + tickerStr + " | TF: " + tfStr + " | P&L: " + str.tostring(nz(earlyPnl, 0.0), format.mintick)
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+if confirmedBullBreak
+    string jsonMsg = '{"action":"buy","ticker":"' + tickerStr + '","price":' + priceStr + ',"sl":' + slAlertStr + ',"tp1":' + tp1AlertStr + ',"tp2":' + tp2AlertStr + ',"tp3":' + tp3AlertStr + ',"tf":"' + tfStr + '"}'
+    string textMsg = "🟢 BULL BREAKOUT | " + tickerStr + " | TF: " + tfStr + " | Price: " + priceStr + " | SL: " + slAlertStr + " | TP1: " + tp1AlertStr + " | TP2: " + tp2AlertStr + " | TP3: " + tp3AlertStr
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+if confirmedBearBreak
+    string jsonMsg = '{"action":"sell","ticker":"' + tickerStr + '","price":' + priceStr + ',"sl":' + slAlertStr + ',"tp1":' + tp1AlertStr + ',"tp2":' + tp2AlertStr + ',"tp3":' + tp3AlertStr + ',"tf":"' + tfStr + '"}'
+    string textMsg = "🔴 BEAR BREAKOUT | " + tickerStr + " | TF: " + tfStr + " | Price: " + priceStr + " | SL: " + slAlertStr + " | TP1: " + tp1AlertStr + " | TP2: " + tp2AlertStr + " | TP3: " + tp3AlertStr
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+// [FIX-5] + [FIX-10] TP alerts: JSON-aware, level-priced
+if tp1HitCond
+    string jsonMsg = '{"action":"tp","ticker":"' + tickerStr + '","level":1,"price":' + tp1AlertStr + ',"tf":"' + tfStr + '"}'
+    string textMsg = "✅ TP1 HIT | " + tickerStr + " | TF: " + tfStr + " | Level: " + tp1AlertStr
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+if tp2HitCond
+    string jsonMsg = '{"action":"tp","ticker":"' + tickerStr + '","level":2,"price":' + tp2AlertStr + ',"tf":"' + tfStr + '"}'
+    string textMsg = "✅ TP2 HIT | " + tickerStr + " | TF: " + tfStr + " | Level: " + tp2AlertStr
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+if tp3HitCond
+    string jsonMsg = '{"action":"close","ticker":"' + tickerStr + '","reason":"tp3","price":' + tp3AlertStr + ',"pnl":' + str.tostring(nz(lastPnl, 0.0), format.mintick) + ',"tf":"' + tfStr + '"}'
+    string textMsg = "✅ TP3 HIT — TRADE CLOSED | " + tickerStr + " | TF: " + tfStr + " | Level: " + tp3AlertStr + " | P&L: " + str.tostring(nz(lastPnl, 0.0), format.mintick)
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)
+
+if slHitCond
+    string jsonMsg = '{"action":"close","ticker":"' + tickerStr + '","reason":"sl","price":' + slAlertStr + ',"pnl":' + str.tostring(nz(lastPnl, 0.0), format.mintick) + ',"tf":"' + tfStr + '"}'
+    string textMsg = "❌ SL HIT — TRADE CLOSED | " + tickerStr + " | TF: " + tfStr + " | Level: " + slAlertStr + " | P&L: " + str.tostring(nz(lastPnl, 0.0), format.mintick)
+    alert(webhookInput ? jsonMsg : textMsg, alert.freq_once_per_bar_close)

@@ -358,6 +358,29 @@ const API_ERROR_NOTIFICATION_TTL_MS = 60 * 1000;
 const API_ERROR_NOTIFICATION_CACHE = new Map();
 const API_GET_REQUEST_DEDUPE_WINDOW_MS = 1000;
 const API_IN_FLIGHT_GET_REQUESTS = new Map();
+const API_UNSUPPORTED_PATHS = new Set();
+
+function isApiPathUnsupported(path = "") {
+  return API_UNSUPPORTED_PATHS.has(String(path || "").trim());
+}
+
+function markApiPathUnsupported(path = "") {
+  const key = String(path || "").trim();
+  if (!key) return;
+  API_UNSUPPORTED_PATHS.add(key);
+}
+
+function getOptionalApiPathAlternatives(path = "") {
+  const normalized = String(path || "").trim();
+  if (!normalized) return [];
+  const variants = [normalized];
+  if (normalized.startsWith("/api/")) {
+    variants.push(`/v2/${normalized.slice(5)}`);
+  } else if (normalized.startsWith("/v2/")) {
+    variants.push(`/api/${normalized.slice(4)}`);
+  }
+  return [...new Set(variants)];
+}
 
 function shouldRecordApiError(meta, message, notifyOnError = false) {
   if (notifyOnError !== true) return false;
@@ -806,6 +829,38 @@ async function post(path, body = {}) {
     },
     cache: "no-store",
   });
+}
+
+async function postOptional(path, body = {}) {
+  const candidates = getOptionalApiPathAlternatives(path).filter(
+    (candidate) => !isApiPathUnsupported(candidate),
+  );
+  if (!candidates.length) {
+    const error = new Error("API endpoint unavailable");
+    error.unsupportedApiPath = true;
+    throw error;
+  }
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      return await post(candidate, body);
+    } catch (error) {
+      lastError = error;
+      const status = Number(error?.apiRequest?.status || 0);
+      if (status === 404) {
+        markApiPathUnsupported(candidate);
+        error.unsupportedApiPath = true;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  const error = new Error("API endpoint unavailable");
+  error.unsupportedApiPath = true;
+  throw error;
 }
 
 async function postWithTimeout(
@@ -1370,12 +1425,17 @@ export const api = {
     const symbolParam = Array.isArray(symbol)
       ? symbol.map((value) => String(value || "").trim()).filter(Boolean).join(",")
       : String(symbol || "");
+    const timeframeParam = Array.isArray(timeframe)
+      ? timeframe.map((value) => String(value || "").trim()).filter(Boolean).join(",")
+      : String(timeframe || "");
     return (
     get(
-      `/api/chart/candles?symbol=${encodeURIComponent(symbolParam)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${refresh ? "&force=1" : ""}&direction=${encodeURIComponent(direction || "latest")}${String(tradeSid || "").trim() ? `&trade_sid=${encodeURIComponent(tradeSid)}` : ""}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}`,
+      `/api/chart/candles?symbol=${encodeURIComponent(symbolParam)}&timeframe=${encodeURIComponent(timeframeParam)}&bars=${encodeURIComponent(bars)}${refresh ? "&force=1" : ""}&direction=${encodeURIComponent(direction || "latest")}${String(tradeSid || "").trim() ? `&trade_sid=${encodeURIComponent(tradeSid)}` : ""}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}`,
     )
     );
   },
+  chartCandlesBatch: (payload = {}) =>
+    postOptional("/api/chart/candles/batch", payload),
   chartSymbols: (q = "", provider = "ICMARKETS", limit = 20) =>
     get(
       `/api/chart/symbols?q=${encodeURIComponent(q)}&provider=${encodeURIComponent(provider)}&limit=${encodeURIComponent(limit)}`,
@@ -1400,20 +1460,38 @@ export const api = {
     post("/api/market-data/fix", payload),
   marketDataRefreshFixChain: (payload = {}) =>
     post("/api/market-data/refresh-fix-chain", payload),
-  brokerBars: (symbol, tf, limit = 300, endTimeSec = null) =>
-    get(
-      `/api/market-data/broker-bars?symbol=${encodeURIComponent(symbol)}&tf=${encodeURIComponent(tf)}&limit=${encodeURIComponent(limit)}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}`,
-    ),
+  brokerBars: (symbol, tf, limit = 300, endTimeSec = null) => {
+    const symbolParam = Array.isArray(symbol)
+      ? symbol.map((value) => String(value || "").trim()).filter(Boolean).join(",")
+      : String(symbol || "");
+    const tfParam = Array.isArray(tf)
+      ? tf.map((value) => String(value || "").trim()).filter(Boolean).join(",")
+      : String(tf || "");
+    return get(
+      `/api/market-data/broker-bars?symbol=${encodeURIComponent(symbolParam)}&tf=${encodeURIComponent(tfParam)}&limit=${encodeURIComponent(limit)}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}`,
+    );
+  },
+  brokerBarsBatch: (payload = {}) =>
+    postOptional("/api/market-data/broker-bars/batch", payload),
   realtimeChartBootstrap: (
     symbol = "",
     timeframe = "5m",
     bars = 300,
     endTimeSec = null,
     direction = "latest",
-  ) =>
-    get(
-      `/api/realtime/chart/bootstrap?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&bars=${encodeURIComponent(bars)}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}&direction=${encodeURIComponent(direction || "latest")}`,
-    ),
+  ) => {
+    const symbolParam = Array.isArray(symbol)
+      ? symbol.map((value) => String(value || "").trim()).filter(Boolean).join(",")
+      : String(symbol || "");
+    const timeframeParam = Array.isArray(timeframe)
+      ? timeframe.map((value) => String(value || "").trim()).filter(Boolean).join(",")
+      : String(timeframe || "");
+    return get(
+      `/api/realtime/chart/bootstrap?symbol=${encodeURIComponent(symbolParam)}&timeframe=${encodeURIComponent(timeframeParam)}&bars=${encodeURIComponent(bars)}${Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0 ? `&end_time_unix=${encodeURIComponent(Number(endTimeSec))}` : ""}&direction=${encodeURIComponent(direction || "latest")}`,
+    );
+  },
+  realtimeChartBootstrapBatch: (payload = {}) =>
+    postOptional("/api/realtime/chart/bootstrap/batch", payload),
   createReplaySession: (payload = {}) =>
     post("/api/realtime/replay/session", payload),
   getReplaySession: (sessionId) =>

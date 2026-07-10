@@ -41,8 +41,10 @@ import {
   resolveTradeViewportEndTimeSec,
 } from "../../../../shared/utils/tradeAnchor";
 import { evaluateChartStrategies } from "../../../../shared/utils/chartStrategyChecks";
-import * as sharedArtifactDetection from "../../chartArtifacts/detectArtifacts.js";
-import { buildMultiTfAnalysis } from "../../chartArtifacts/realtimeAnalysis.js";
+import {
+  buildClientChartArtifactEnvelope,
+  buildClientChartMultiTfAnalysis,
+} from "../../chartArtifacts/clientChartAnalysis.js";
 
 const BASE_MODES = ["live", "cache", "svg"];
 const REPLAY_MODE = "replay";
@@ -155,6 +157,131 @@ function formatAnalysisLabel(value = "", fallback = "N/A") {
   return formatted === "N/A" ? fallback : formatted;
 }
 
+function formatAnalysisNumber(value = null, decimals = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  return numeric.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function formatAnalysisSignedNumber(value = null, decimals = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "n/a";
+  const formatted = formatAnalysisNumber(Math.abs(numeric), decimals);
+  if (numeric > 0) return `+${formatted}`;
+  if (numeric < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function formatAnalysisComponent(component = {}) {
+  const name = formatAnalysisLabel(component?.name, "Signal");
+  const value = formatAnalysisLabel(component?.value, "n/a");
+  const weight = Number(component?.weight);
+  const weightText = Number.isFinite(weight) ? ` (${formatAnalysisSignedNumber(weight, 0)})` : "";
+  return `${name}: ${value}${weightText}`;
+}
+
+function phaseLogicText(entry = {}) {
+  const phase = String(entry?.phase || "").trim().toLowerCase();
+  const source = String(entry?.phase_source || "").trim().toLowerCase();
+  const detail = String(entry?.phase_detail || "").trim().toLowerCase();
+  if (phase === "reversal") {
+    return "Triggered by CHOCH structure flip.";
+  }
+  if (phase === "impulse") {
+    return "Triggered by BOS plus displacement candle expansion.";
+  }
+  if (phase === "pullback") {
+    return "Triggered when trend stays aligned and price retests zone / EMA20 / liquidity sweep.";
+  }
+  if (phase === "continuation") {
+    if (source === "vwap_ema_reclaim") return "Triggered by aligned reclaim of VWAP and EMA20 with bias intact.";
+    return "Triggered when bias stays aligned and continuation evidence confirms trend resumption.";
+  }
+  if (phase === "consolidation") {
+    if (detail === "consolidation") return "Triggered when signals are mixed, neutral, or compressed.";
+    return "Triggered when trend is unclear and price is behaving like a range.";
+  }
+  return "Phase is derived from structure, trend, bias, and zone context.";
+}
+
+function buildBiasTooltip(entry = {}, tf = "") {
+  const indicators = entry?.indicators || {};
+  const components = Array.isArray(entry?.score_components?.bias) ? entry.score_components.bias : [];
+  const lines = [
+    `${displayTfLabel(tf)} Bias`,
+    `State: ${formatAnalysisLabel(entry?.bias, "Neutral")}`,
+    `Strength: ${formatAnalysisLabel(entry?.bias_strength, "Neutral")}`,
+    `Score: ${formatAnalysisSignedNumber(entry?.bias_score, 0)}`,
+    `Source: ${formatAnalysisLabel(entry?.bias_source, "Score")}`,
+    "",
+    "Logic:",
+    "Bias combines structure, VWAP, EMA20, EMA50, EMA stack, EMA20 slope, active zone, and recent price slope.",
+    ...(components.length
+      ? ["", "Signals:", ...components.map((component) => `- ${formatAnalysisComponent(component)}`)]
+      : []),
+    "",
+    "Technical values:",
+    `- Close: ${formatAnalysisNumber(indicators?.close, 2)}`,
+    `- VWAP: ${formatAnalysisNumber(indicators?.vwap, 2)} (${indicators?.above_vwap === true ? "price above" : indicators?.above_vwap === false ? "price below" : "n/a"})`,
+    `- EMA20: ${formatAnalysisNumber(indicators?.ema_20, 2)} (${indicators?.above_ema_20 === true ? "price above" : indicators?.above_ema_20 === false ? "price below" : "n/a"})`,
+    `- EMA50: ${formatAnalysisNumber(indicators?.ema_50, 2)} (${indicators?.above_ema_50 === true ? "price above" : indicators?.above_ema_50 === false ? "price below" : "n/a"})`,
+    `- EMA stack: ${formatAnalysisLabel(indicators?.ema_stack, "Flat")}`,
+    `- EMA20 slope: ${formatAnalysisLabel(indicators?.ema_20_slope, "Flat")}`,
+    `- EMA50 slope: ${formatAnalysisLabel(indicators?.ema_50_slope, "Flat")}`,
+    `- Structure state: ${formatAnalysisLabel(entry?.structure_state, "None")}`,
+  ];
+  return lines.join("\n");
+}
+
+function buildTrendTooltip(entry = {}, tf = "") {
+  const indicators = entry?.indicators || {};
+  const components = Array.isArray(entry?.score_components?.trend) ? entry.score_components.trend : [];
+  const lines = [
+    `${displayTfLabel(tf)} Trend`,
+    `State: ${formatAnalysisLabel(entry?.trend, "Range")}`,
+    `Strength: ${formatAnalysisLabel(entry?.trend_strength, "Neutral")}`,
+    `Score: ${formatAnalysisSignedNumber(entry?.trend_score, 0)}`,
+    `Source: ${formatAnalysisLabel(entry?.trend_source, "Mixed Signals")}`,
+    "",
+    "Logic:",
+    "Trend combines bias direction, recent swing structure, EMA stack, EMA slopes, and recent price drift.",
+    ...(components.length
+      ? ["", "Signals:", ...components.map((component) => `- ${formatAnalysisComponent(component)}`)]
+      : []),
+    "",
+    "Technical values:",
+    `- Close: ${formatAnalysisNumber(indicators?.close, 2)}`,
+    `- EMA20: ${formatAnalysisNumber(indicators?.ema_20, 2)}`,
+    `- EMA50: ${formatAnalysisNumber(indicators?.ema_50, 2)}`,
+    `- EMA stack: ${formatAnalysisLabel(indicators?.ema_stack, "Flat")}`,
+    `- EMA20 slope: ${formatAnalysisLabel(indicators?.ema_20_slope, "Flat")}`,
+    `- EMA50 slope: ${formatAnalysisLabel(indicators?.ema_50_slope, "Flat")}`,
+    `- Structure state: ${formatAnalysisLabel(entry?.structure_state, "Mixed")}`,
+  ];
+  return lines.join("\n");
+}
+
+function buildPhaseTooltip(entry = {}, tf = "") {
+  const lines = [
+    `${displayTfLabel(tf)} Phase`,
+    `State: ${formatAnalysisLabel(entry?.phase, "Unknown")}`,
+    `Detail: ${formatAnalysisLabel(entry?.phase_detail, formatAnalysisLabel(entry?.phase, "Unknown"))}`,
+    `Source: ${formatAnalysisLabel(entry?.phase_source, "Derived")}`,
+    "",
+    "Logic:",
+    phaseLogicText(entry),
+    "",
+    "Inputs used:",
+    `- Bias: ${formatAnalysisLabel(entry?.bias, "Neutral")} (${formatAnalysisLabel(entry?.bias_strength, "Neutral")}, score ${formatAnalysisSignedNumber(entry?.bias_score, 0)})`,
+    `- Trend: ${formatAnalysisLabel(entry?.trend, "Range")} (${formatAnalysisLabel(entry?.trend_strength, "Neutral")}, score ${formatAnalysisSignedNumber(entry?.trend_score, 0)})`,
+    `- Structure state: ${formatAnalysisLabel(entry?.structure_state, "None")}`,
+  ];
+  return lines.join("\n");
+}
+
 function compactPhaseLabel(value = "") {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return "NA";
@@ -226,7 +353,7 @@ function RealtimeTfAnalysisOverlay({
         top: 44,
         left: 8,
         zIndex: 11,
-        pointerEvents: "none",
+        pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
         gap: 3,
@@ -243,6 +370,9 @@ function RealtimeTfAnalysisOverlay({
         const entry = analysisByTf[tf];
         const isActive = String(activeTf || "").trim().toLowerCase() === tf;
         const accent = analysisAccentColor(entry);
+        const biasTooltip = buildBiasTooltip(entry, tf);
+        const trendTooltip = buildTrendTooltip(entry, tf);
+        const phaseTooltip = buildPhaseTooltip(entry, tf);
         return (
           <div
             key={tf}
@@ -257,11 +387,19 @@ function RealtimeTfAnalysisOverlay({
               fontWeight: isActive ? 700 : 600,
             }}
           >
-            <span style={{ color: isActive ? "#f8fafc" : "#cbd5e1" }}>
+            <span
+              style={{ color: isActive ? "#f8fafc" : "#cbd5e1" }}
+              title={`${displayTfLabel(tf)} analysis summary`}
+            >
               {displayTfLabel(tf)}
             </span>
-            <span style={{ color: accent }}>{analysisArrow(entry)}</span>
-            <span style={{ color: trendColor(entry?.trend) }}>
+            <span style={{ color: accent, cursor: "help", pointerEvents: "auto" }} title={biasTooltip}>
+              {analysisArrow(entry)}
+            </span>
+            <span
+              style={{ color: trendColor(entry?.trend), cursor: "help", pointerEvents: "auto" }}
+              title={trendTooltip}
+            >
               {trendGlyph(entry?.trend)}
             </span>
             <span
@@ -280,7 +418,10 @@ function RealtimeTfAnalysisOverlay({
                   borderRadius: 999,
                   padding: "1px 5px",
                   letterSpacing: 0.15,
+                  cursor: "help",
+                  pointerEvents: "auto",
                 }}
+                title={phaseTooltip}
               >
                 {compactPhaseLabel(entry?.phase)}
               </span>
@@ -354,6 +495,8 @@ const BACKTEST_REPLAY_MAX_BARS = 400;
 const MIN_REPLAY_BUFFER_SECONDS = 60 * 60;
 const REPLAY_HISTORY_BUFFER_SECONDS = 24 * 60 * 60;
 const ARTIFACT_AUTO_DEBOUNCE_MS = 350;
+const DEFAULT_SYMBOL_CHART_TFS = Object.freeze(["D", "4h", "15m", "5m"]);
+const EMPTY_ARRAY = Object.freeze([]);
 
 const MASTER_CHART_CONFIG_STORAGE_KEY = "market_chart_master_config";
 const MASTER_CHART_SETTING_TYPE = "ui";
@@ -1335,6 +1478,12 @@ function artifactSourceTfTag(tf = "") {
 function artifactTypeAbbr(typeRaw = "") {
   const type = String(typeRaw || "").trim().toLowerCase();
   if (!type) return "";
+  if (type === "trendline_support" || type === "trendline_resistance" || type === "trendline") {
+    return "TL";
+  }
+  if (type === "bullish_divergence" || type === "bearish_divergence" || type === "divergence") {
+    return "DIV";
+  }
   if (type === "ifvg" || type === "i_fvg" || type === "inverse_fvg" || type === "inversion_fvg") {
     return "iFVG";
   }
@@ -1788,6 +1937,8 @@ function artifactColorForItem(item = {}) {
   if (group === "ob" || group === "bb") return "#f59e0b";
   if (group === "liquidity") return "#14b8a6";
   if (group === "swings") return "#60a5fa";
+  if (group === "trendline") return "#22c55e";
+  if (group === "divergence") return "#f472b6";
   if (group === "patterns") return "#a855f7";
   return "#94a3b8";
 }
@@ -1828,6 +1979,12 @@ function artifactGroupKeyForItem(item = {}) {
   if (type.includes("swing_high") || type.includes("swing_low") || label.includes("swing")) {
     return "swings";
   }
+  if (family === "trendline" || type.includes("trendline") || label.includes("trendline")) {
+    return "trendline";
+  }
+  if (family === "divergence" || type.includes("divergence") || label.includes("divergence")) {
+    return "divergence";
+  }
   if (family === "pattern") return "patterns";
   return type || family || "other";
 }
@@ -1847,6 +2004,8 @@ function artifactGroupLabel(groupKey = "") {
   if (key === "choch") return "CHOCH";
   if (key === "sweep") return "Sweep";
   if (key === "swings") return "Swings";
+  if (key === "trendline") return "Trendlines";
+  if (key === "divergence") return "Divergence";
   if (key === "patterns") return "Candle Patterns";
   return key.toUpperCase() || "Other";
 }
@@ -2043,6 +2202,82 @@ function artifactItemToChartObject(item = {}, fallbackTf = "") {
       : [swingLevelLine, swingPoint];
   }
 
+  if (groupKey === "trendline" || groupKey === "divergence") {
+    const fromTimeSec = Number(
+      item?.payload?.from_time ?? item?.bar_start ?? item?.anchor_time ?? item?.time,
+    );
+    const toTimeSec = Number(
+      item?.payload?.to_time ?? item?.bar_end ?? item?.anchor_time ?? item?.time,
+    );
+    const fromPrice = Number(
+      item?.payload?.from_price ?? item?.payload?.previous_same_type_price ?? item?.price,
+    );
+    const toPrice = Number(
+      item?.payload?.to_price ?? item?.price,
+    );
+    if (
+      !Number.isFinite(fromTimeSec) ||
+      !Number.isFinite(toTimeSec) ||
+      !Number.isFinite(fromPrice) ||
+      !Number.isFinite(toPrice)
+    ) {
+      return null;
+    }
+    const segment = {
+      id: String(item.id || `${family}-${type}-${fromTimeSec}-${toTimeSec}`),
+      kind: "segment",
+      type: type.toUpperCase() || "SEGMENT",
+      label: groupKey === "divergence" ? artifactInlineLabel(item, tf) : "",
+      visible: true,
+      tf,
+      color,
+      time: fromTimeSec,
+      time2: toTimeSec,
+      price: fromPrice,
+      price2: toPrice,
+      anchorTimeMs: fromTimeSec * 1000,
+      anchorTimeMs2: toTimeSec * 1000,
+      anchorPrice: fromPrice,
+      anchorPrice2: toPrice,
+      line_style: groupKey === "divergence" ? "dot" : "solid",
+      line_width: groupKey === "divergence" ? 1.25 : 1,
+      artifact_family: family,
+      artifact_type: type,
+      artifact_group: groupKey,
+      source_tf: tf,
+      artifact_payload: item,
+    };
+    if (groupKey !== "divergence") return segment;
+    return [
+      segment,
+      {
+        id: `${String(item.id || `${family}-${type}-${toTimeSec}`)}:point`,
+        kind: "point",
+        type: "",
+        label: "",
+        visible: true,
+        tf,
+        color,
+        price: toPrice,
+        time: toTimeSec,
+        anchorTimeMs: toTimeSec * 1000,
+        anchorPrice: toPrice,
+        line_style: "dot",
+        line_width: 0.1,
+        marker_shape: String(item?.direction || item?.payload?.divergence_class || "").toLowerCase().includes("bear")
+          ? "arrowDown"
+          : "arrowUp",
+        marker_text: "DIV",
+        marker_position: String(item?.direction || "").toLowerCase() === "sell" ? "aboveBar" : "belowBar",
+        artifact_family: family,
+        artifact_type: `${type}_point`,
+        artifact_group: groupKey,
+        source_tf: tf,
+        artifact_payload: item,
+      },
+    ];
+  }
+
   if (Number.isFinite(priceLow) || Number.isFinite(priceHigh)) {
     const top = Number.isFinite(priceHigh)
       ? priceHigh
@@ -2214,6 +2449,51 @@ function artifactObjectReferenceTime(item = {}) {
   if (Number.isFinite(timeSec)) return timeSec;
   const timeMs = Number(item?.anchorTimeMs);
   return Number.isFinite(timeMs) ? Math.floor(timeMs / 1000) : null;
+}
+
+function artifactObjectReferenceEndTime(item = {}) {
+  const timeSec = Number(item?.time2);
+  if (Number.isFinite(timeSec)) return timeSec;
+  const timeMs = Number(item?.anchorTimeMs2);
+  return Number.isFinite(timeMs) ? Math.floor(timeMs / 1000) : null;
+}
+
+function projectArtifactObjectForReplay(item = {}, replayTimeSec = null) {
+  if (!item || !Number.isFinite(replayTimeSec)) return item;
+  const startTimeSec = artifactObjectReferenceTime(item);
+  if (Number.isFinite(startTimeSec) && startTimeSec > replayTimeSec) return null;
+  const endTimeSec = artifactObjectReferenceEndTime(item);
+  if (!Number.isFinite(endTimeSec) || endTimeSec <= replayTimeSec) return item;
+
+  if (String(item?.kind || "").trim().toLowerCase() === "segment") {
+    const startPrice = Number(item?.anchorPrice ?? item?.price);
+    const endPrice = Number(item?.anchorPrice2 ?? item?.price2);
+    if (
+      Number.isFinite(startTimeSec) &&
+      Number.isFinite(endTimeSec) &&
+      Number.isFinite(startPrice) &&
+      Number.isFinite(endPrice) &&
+      endTimeSec > startTimeSec
+    ) {
+      const ratio = Math.max(
+        0,
+        Math.min(1, (replayTimeSec - startTimeSec) / (endTimeSec - startTimeSec)),
+      );
+      return {
+        ...item,
+        anchorTimeMs2: replayTimeSec * 1000,
+        time2: replayTimeSec,
+        anchorPrice2: startPrice + (endPrice - startPrice) * ratio,
+        price2: startPrice + (endPrice - startPrice) * ratio,
+      };
+    }
+  }
+
+  return {
+    ...item,
+    anchorTimeMs2: replayTimeSec * 1000,
+    time2: replayTimeSec,
+  };
 }
 
 function artifactObjectTypeKey(item = {}) {
@@ -2415,9 +2695,10 @@ function TfHeader({
   const allLoadedBars = Array.isArray(master?.bars?.[tf.toLowerCase()])
     ? master.bars[tf.toLowerCase()]
     : headerBars;
-  const loadedBars = headerBars.length;
-  const loadedStartSec = Number(headerBars?.[0]?.time);
-  const loadedEndSec = Number(headerBars?.[loadedBars - 1]?.time);
+  const loadedBars = allLoadedBars.length;
+  const renderedBarsCount = headerBars.length;
+  const loadedStartSec = Number(allLoadedBars?.[0]?.time);
+  const loadedEndSec = Number(allLoadedBars?.[loadedBars - 1]?.time);
   const allLoadedEndSec = Number(allLoadedBars?.[allLoadedBars.length - 1]?.time);
   const allLoadedEndMs =
     Number.isFinite(allLoadedEndSec) && allLoadedEndSec > 0
@@ -2524,6 +2805,7 @@ function TfHeader({
     `storage ${fileTypeValue}`,
     storedBars ? `${storedBars} total bars in file` : null,
     loadedBars > 0 ? `${loadedBars} bars currently loaded in chart memory` : null,
+    renderedBarsCount > 0 ? `${renderedBarsCount} bars currently rendered` : null,
   ]
     .filter(Boolean)
     .join(" | ");
@@ -2541,6 +2823,7 @@ function TfHeader({
       : null,
     storedBars ? `Stored bars: ${storedBars}` : null,
     loadedBars > 0 ? `Loaded bars: ${loadedBars}` : null,
+    renderedBarsCount > 0 ? `Rendered bars: ${renderedBarsCount}` : null,
     loadedStartMs && loadedEndMs
       ? `Loaded range: ${showDateTime(loadedStartMs)} -> ${showDateTime(loadedEndMs)}`
       : null,
@@ -3169,9 +3452,9 @@ function dedupeManualLinesByPrice(items = [], preferredId = "") {
 
 export default function SymbolChart({
   symbol,
-  timeframes = ["D", "4h", "15m", "5m"],
-  timeframePresets = [],
-  timeframeOptions = [],
+  timeframes = DEFAULT_SYMBOL_CHART_TFS,
+  timeframePresets = EMPTY_ARRAY,
+  timeframeOptions = EMPTY_ARRAY,
   onTimeframesChange = null,
   defaultMode = "live",
   initialGridCols = null,
@@ -3213,7 +3496,7 @@ export default function SymbolChart({
   provider = "ICMARKETS",
   sessionPrefix = "",
   profile = "day",
-  attachedSnapshotFiles = [],
+  attachedSnapshotFiles = EMPTY_ARRAY,
   tradeSid = "",
   onQuickTradeIntent = null,
   onTrade = null,
@@ -3233,15 +3516,15 @@ export default function SymbolChart({
   syncModeWithLocationHash = true,
   persistMarketUiConfig = true,
   analysisHeaderStatusMode = "live",
-  trades = [],
-  backtestTrades = [],
+  trades = EMPTY_ARRAY,
+  backtestTrades = EMPTY_ARRAY,
   onReplayActiveTradeChange = null,
   backtestReplay = null,
   anchorToTradeTime = false,
   autoStartReplay = false,
   externalChartData = null,
-  chartStrategies = [],
-  extraRequestedTimeframes = [],
+  chartStrategies = EMPTY_ARRAY,
+  extraRequestedTimeframes = EMPTY_ARRAY,
   liveBars = true,
   bootstrapLiveBarsOnMount = false,
 }) {
@@ -3285,6 +3568,15 @@ export default function SymbolChart({
     status: "idle",
   });
   const cleanSym = useMemo(() => normSym(symbol), [symbol]);
+  const chartSessionTradeSid = useMemo(
+    () =>
+      String(
+        backtestReplay?.enabled
+          ? backtestReplay?.startTradeSid || tradeSid || ""
+          : tradeSid || "",
+      ).trim(),
+    [backtestReplay?.enabled, backtestReplay?.startTradeSid, tradeSid],
+  );
   const defaultGridCols = useMemo(() => {
     const maxCols = Math.max(1, timeframes?.length || 4);
     if (
@@ -3429,6 +3721,7 @@ export default function SymbolChart({
   const [hasCompletedLiveBarsBootstrap, setHasCompletedLiveBarsBootstrap] =
     useState(!shouldBootstrapLiveBars);
   const hasAutoExpandedBootstrapViewRef = useRef(false);
+  const historyExhaustedNoticeRef = useRef({});
   const dragRef = useRef(null);
   const liveDebugMenuRef = useRef(null);
   const parentDrivenSelectionRef = useRef(null);
@@ -3528,7 +3821,7 @@ export default function SymbolChart({
     parentDrivenSelectionRef.current = null;
     lastIncomingPlanGroupRef.current = null;
     lastPropagatedPlanGroupRef.current = "";
-  }, [cleanSym, tradeSid]);
+  }, [chartSessionTradeSid, cleanSym]);
 
   useEffect(() => {
     const onTimezoneUiChanged = () => setTimezoneTick((n) => n + 1);
@@ -4183,42 +4476,14 @@ export default function SymbolChart({
     () => sortTimeframes(timeframes, "desc"),
     [timeframes],
   );
-  const multiTfAnalysisFallbackSignature = useMemo(() => {
-    const barsByTf =
-      master?.bars && typeof master.bars === "object" && !Array.isArray(master.bars)
-        ? master.bars
-        : {};
-    const tfKeys = sortTimeframes(Object.keys(barsByTf), "desc");
-    return tfKeys
-      .map((tf) => {
-        const bars = Array.isArray(barsByTf?.[tf]) ? barsByTf[tf] : [];
-        const firstTime = Number(bars?.[0]?.time || 0);
-        const lastBar = bars.length ? bars[bars.length - 1] : null;
-        const lastTime = Number(lastBar?.time || 0);
-        const lastClose = Number(lastBar?.close || 0);
-        return `${tf}:${bars.length}:${firstTime}:${lastTime}:${lastClose}`;
-      })
-      .join("|");
-  }, [master?.bars]);
   const multiTfAnalysisByTf = useMemo(() => {
     if (replayDisablesLive) return {};
     const streamedAnalysis =
       master?.analysis && typeof master.analysis === "object" && !Array.isArray(master.analysis)
         ? master.analysis
         : null;
-    if (streamedAnalysis && Object.keys(streamedAnalysis).length) {
-      return streamedAnalysis;
-    }
-    const barsByTf =
-      master?.bars && typeof master.bars === "object" && !Array.isArray(master.bars)
-        ? master.bars
-        : {};
-    const availableBarsByTf = Object.fromEntries(
-      Object.entries(barsByTf).filter(([, bars]) => Array.isArray(bars) && bars.length > 0),
-    );
-    if (!Object.keys(availableBarsByTf).length) return {};
-    return buildMultiTfAnalysis(availableBarsByTf);
-  }, [master?.analysis, master?.bars, multiTfAnalysisFallbackSignature, replayDisablesLive]);
+    return buildClientChartMultiTfAnalysis(master?.bars, streamedAnalysis);
+  }, [master?.analysis, master?.bars, replayDisablesLive]);
   const analysisOrderedTfs = useMemo(() => {
     const analysisKeys = Object.keys(
       multiTfAnalysisByTf &&
@@ -4396,7 +4661,6 @@ export default function SymbolChart({
     });
     return labels.length ? labels.join(" / ") : "Select TFs";
   }, [activeTimeframePreset, normalizedSelectedTfs, timeframeOptions]);
-
   useEffect(() => {
     if (!timeframeMenuOpen) return undefined;
     const handlePointerDown = (event) => {
@@ -4655,6 +4919,16 @@ export default function SymbolChart({
       1
     );
   }, [replayCurrentTimeSec, replayPrimaryTfSeconds]);
+  const effectiveReplayBarsClockTimeSec = useMemo(() => {
+    if (!isBacktestChartReplay) return null;
+    if (Number.isFinite(Number(replayClockTimeSec))) {
+      return Number(replayClockTimeSec);
+    }
+    if (Number.isFinite(Number(effectiveReplayStartTimeSec))) {
+      return Number(effectiveReplayStartTimeSec);
+    }
+    return null;
+  }, [effectiveReplayStartTimeSec, isBacktestChartReplay, replayClockTimeSec]);
   const replayClockLabel = useMemo(() => {
     if (!Number.isFinite(replayClockTimeSec)) return "";
     return showDateTime(Number(replayClockTimeSec) * 1000);
@@ -4863,7 +5137,7 @@ export default function SymbolChart({
     const loadKey = [
       cleanSym,
       mode,
-      tradeSid,
+      chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
     ].join("|");
@@ -4882,7 +5156,7 @@ export default function SymbolChart({
     pendingMode,
     master,
     status,
-    tradeSid,
+    chartSessionTradeSid,
     timeframes,
     localBarsCount,
     isCacheLikeMode,
@@ -4907,7 +5181,7 @@ export default function SymbolChart({
     if (hasVisibleBars) return;
     const cacheKey = [
       cleanSym,
-      tradeSid,
+      chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
     ].join("|");
@@ -4925,7 +5199,7 @@ export default function SymbolChart({
     isCacheLikeMode,
     status,
     master,
-    tradeSid,
+    chartSessionTradeSid,
     timeframes,
     localBarsCount,
     refresh,
@@ -4949,7 +5223,7 @@ export default function SymbolChart({
     const refreshKey = [
       cleanSym,
       mode,
-      tradeSid,
+      chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
     ].join("|");
@@ -4968,7 +5242,7 @@ export default function SymbolChart({
     pendingMode,
     status,
     master,
-    tradeSid,
+    chartSessionTradeSid,
     timeframes,
     localBarsCount,
     refresh,
@@ -5077,6 +5351,7 @@ export default function SymbolChart({
 
   useEffect(() => {
     if (!isCacheLikeMode || pendingMode || !liveBarsEnabled) return;
+    if (isBacktestChartReplay || isReplayMode) return;
     if (!(status === "READY" || status === "STALE")) return;
     if (!hasAnyBars) return;
     if (!areAllRenderedChartsLoaded) return;
@@ -5089,7 +5364,7 @@ export default function SymbolChart({
       .join("|");
     const fixKey = [
       cleanSym,
-      tradeSid || "",
+      chartSessionTradeSid || "",
       mode,
       pendingMode || "",
       status,
@@ -5105,12 +5380,14 @@ export default function SymbolChart({
   }, [
     barsCachedAt,
     cleanSym,
-    tradeSid,
+    chartSessionTradeSid,
     areAllRenderedChartsLoaded,
     hasAnyBars,
     master,
     mode,
     isCacheLikeMode,
+    isBacktestChartReplay,
+    isReplayMode,
     liveBarsEnabled,
     pendingMode,
     sortedTfs,
@@ -6032,6 +6309,7 @@ export default function SymbolChart({
 
   const artifactRequestKeyRef = useRef({});
   const artifactRequestSeqRef = useRef({});
+  const replayArtifactLoadKeyRef = useRef("");
   const loadArtifactsForTf = useCallback(
     async (tf, { force = false, scope = "visible", replaceExisting = false } = {}) => {
       const tfKey = String(tf || "").trim().toLowerCase();
@@ -6069,14 +6347,9 @@ export default function SymbolChart({
         timeframe: tfKey,
         start_time: Number(windowRange.startTime) || null,
         end_time: Number(windowRange.endTime) || null,
-        artifacts: {
-          items: sharedArtifactDetection.buildDerivedItemsFromBars(scopedBars, tfKey),
-          meta: {
-            artifact_source: "client_shared_detector",
-            calculated_at: new Date().toISOString(),
-            replace_existing: Boolean(replaceExisting),
-          },
-        },
+        artifacts: buildClientChartArtifactEnvelope(scopedBars, tfKey, {
+          replaceExisting,
+        }),
       };
       if (artifactRequestSeqRef.current[chartScopeKey] !== nextSeq) return null;
       const artifacts = response?.artifacts;
@@ -6523,6 +6796,10 @@ export default function SymbolChart({
     async (tf, opts = {}) => {
       const requestedTf = String(tf || "").trim().toLowerCase();
       if (!cleanSym || !requestedTf || repairingTfKey === requestedTf) return null;
+      const firstLoadedBarSec =
+        Number(master?.bars?.[requestedTf]?.[0]?.time || 0) || 0;
+      const exhaustionKey = `${cleanSym}|${requestedTf}|${firstLoadedBarSec || "na"}`;
+      const lastExhaustedAt = Number(historyExhaustedNoticeRef.current?.[exhaustionKey] || 0);
       const requestedBars = Math.max(
         50,
         Math.min(
@@ -6540,13 +6817,27 @@ export default function SymbolChart({
           silent: true,
         });
         const storageSummary = storageResult?.summary || null;
-        const storageAddedBars = Math.max(
+        const storageMergedBars = Math.max(
           0,
-          Number(storageSummary?.storedAddedBars ?? storageSummary?.addedBars) || 0,
+          Number(storageSummary?.addedBars) || 0,
         );
-        const remainingBars = Math.max(0, requestedBars - storageAddedBars);
+        const initialStoredBars = Math.max(
+          0,
+          Number(storageSummary?.previousStoredBars) || 0,
+        );
+        const storageExtendedBars = Math.max(
+          0,
+          Number(storageSummary?.historyExtendedBars) || 0,
+        );
+        const effectiveStorageExtendedBars = Math.max(
+          storageExtendedBars,
+          storageMergedBars,
+        );
+        const remainingBars = Math.max(0, requestedBars - effectiveStorageExtendedBars);
         const storageAdded =
-          storageAddedBars > 0 || Number(storageSummary?.updatedBars) > 0;
+          effectiveStorageExtendedBars > 0 ||
+          storageMergedBars > 0 ||
+          Number(storageSummary?.updatedBars) > 0;
         let remoteResult = null;
         if (remainingBars > 0) {
           remoteResult = await handleRefreshTf(requestedTf, {
@@ -6558,32 +6849,71 @@ export default function SymbolChart({
           });
         }
         const remoteSummary = remoteResult?.summary || null;
-        const remoteAddedBars = Math.max(
+        const remoteMergedBars = Math.max(
           0,
-          Number(remoteSummary?.storedAddedBars ?? remoteSummary?.addedBars) || 0,
+          Number(remoteSummary?.addedBars) || 0,
+        );
+        const remoteExtendedBars = Math.max(
+          0,
+          Number(remoteSummary?.historyExtendedBars) || 0,
+        );
+        const effectiveRemoteExtendedBars = Math.max(
+          remoteExtendedBars,
+          remoteMergedBars,
         );
         const remoteAdded =
-          remoteAddedBars > 0 || Number(remoteSummary?.updatedBars) > 0;
+          effectiveRemoteExtendedBars > 0 ||
+          remoteMergedBars > 0 ||
+          Number(remoteSummary?.updatedBars) > 0;
+        const remoteAttempted =
+          remoteResult != null ||
+          remoteSummary?.remoteAttempted === true ||
+          remoteSummary?.remote_attempted === true;
+        const remoteReason = String(
+          remoteSummary?.remoteReason ||
+            remoteSummary?.remote_reason ||
+            storageSummary?.remoteReason ||
+            storageSummary?.remote_reason ||
+            "",
+        ).trim();
         if (storageAdded || remoteAdded) {
+          delete historyExhaustedNoticeRef.current[exhaustionKey];
           handleLoadMoreTf(requestedTf, requestedBars);
           applyPostLoadRecenter(sortedTfs);
         }
-        const addedBars = storageAddedBars + remoteAddedBars;
+        const extendedBars =
+          effectiveStorageExtendedBars + effectiveRemoteExtendedBars;
+        const finalStoredBars = Math.max(
+          0,
+          Number(remoteSummary?.storedBars ?? storageSummary?.storedBars) || 0,
+        );
+        const storedBarsDelta = Math.max(0, finalStoredBars - initialStoredBars);
         const sourceLabel =
-          storageAddedBars > 0 && remoteAddedBars > 0
-            ? `local storage (${storageAddedBars}) + remote history (${remoteAddedBars})`
-            : storageAddedBars > 0
+          storageMergedBars > 0 && remoteMergedBars > 0
+            ? `local storage (${storageMergedBars}) + remote history (${remoteMergedBars})`
+            : storageMergedBars > 0
               ? "local storage"
-              : remoteAddedBars > 0
+              : remoteMergedBars > 0
                 ? "remote history"
-                : "latest data";
-        showToast({
-          message:
-            addedBars > 0
-              ? `${cleanSym} ${formatTfForToast(requestedTf)} loaded ${addedBars} older bars from ${sourceLabel}.`
-              : `${cleanSym} ${formatTfForToast(requestedTf)} has no older bars available.`,
-          type: addedBars > 0 ? "success" : "info",
-        });
+                : "remote history";
+        if (extendedBars > 0) {
+          showToast({
+            message:
+              `${cleanSym} ${formatTfForToast(requestedTf)} extended chart history by ${extendedBars} bars from ${sourceLabel}.` +
+              (storedBarsDelta > 0 ? ` File +${storedBarsDelta} bars.` : ""),
+            type: "success",
+          });
+        } else if (!storageAdded && remoteAttempted) {
+          if (!(lastExhaustedAt > 0 && Date.now() - lastExhaustedAt < 30_000)) {
+            historyExhaustedNoticeRef.current[exhaustionKey] = Date.now();
+            showToast({
+              message: remoteReason
+                ? `${cleanSym} ${formatTfForToast(requestedTf)} has no more older remote bars (${remoteReason}).`
+                : `${cleanSym} ${formatTfForToast(requestedTf)} has no more older remote bars.`,
+              type: "info",
+            });
+          }
+        }
         return {
           ok: storageResult?.ok !== false && remoteResult?.ok !== false,
           storageResult,
@@ -6603,6 +6933,7 @@ export default function SymbolChart({
     },
     [
       cleanSym,
+      master?.bars,
       applyPostLoadRecenter,
       handleLoadMoreTf,
       handleRefreshTf,
@@ -6926,7 +7257,7 @@ export default function SymbolChart({
       "fallback",
       cleanSym,
       mode,
-      tradeSid,
+      chartSessionTradeSid,
       timeframes.join(","),
       localBarsCount,
     ].join("|");
@@ -6949,7 +7280,7 @@ export default function SymbolChart({
     skipFetch,
     status,
     timeframes,
-    tradeSid,
+    chartSessionTradeSid,
     hasVisibleBars,
     hasVisibleSnapshots,
   ]);
@@ -6998,6 +7329,7 @@ export default function SymbolChart({
   useEffect(() => {
     artifactRequestKeyRef.current = {};
     artifactRequestSeqRef.current = {};
+    replayArtifactLoadKeyRef.current = "";
     setArtifactObjectsByChartId({});
   }, [cleanSym]);
 
@@ -7089,17 +7421,17 @@ export default function SymbolChart({
   }, [chartStrategies, cleanSym, master?.bars]);
   const replayBarsByTf = useMemo(() => {
     if (!isBacktestChartReplay || !master?.bars) return {};
-    if (!Number.isFinite(replayClockTimeSec)) return {};
+    if (!Number.isFinite(effectiveReplayBarsClockTimeSec)) return {};
     const output = {};
     (sortedTfs || []).forEach((tfRaw) => {
       const tf = String(tfRaw || "").trim().toLowerCase();
       const barsForTf = Array.isArray(master?.bars?.[tf]) ? master.bars[tf] : [];
-      if (!barsForTf.length || !Number.isFinite(replayClockTimeSec)) return;
+      if (!barsForTf.length || !Number.isFinite(effectiveReplayBarsClockTimeSec)) return;
       const replayBars = buildReplayBarsForTf({
         bars: barsForTf,
         baseBars: primaryReplayBars,
         tf,
-        replayClockTimeSec,
+        replayClockTimeSec: effectiveReplayBarsClockTimeSec,
         replayStartTimeSec: effectiveReplayStartTimeSec,
         maxBars: BACKTEST_REPLAY_MAX_BARS,
       });
@@ -7108,11 +7440,50 @@ export default function SymbolChart({
     });
     return output;
   }, [
+    effectiveReplayBarsClockTimeSec,
     effectiveReplayStartTimeSec,
     isBacktestChartReplay,
     master?.bars,
     primaryReplayBars,
-    replayClockTimeSec,
+    sortedTfs,
+  ]);
+  const replayArtifactLoadKey = useMemo(() => {
+    if (!isBacktestChartReplay) return "";
+    return (sortedTfs || [])
+      .map((tfRaw) => {
+        const tf = String(tfRaw || "").trim().toLowerCase();
+        const bars = Array.isArray(master?.bars?.[tf]) ? master.bars[tf] : [];
+        if (!tf || !bars.length) return "";
+        const firstTime = Number(bars[0]?.time) || 0;
+        const lastTime = Number(bars[bars.length - 1]?.time) || 0;
+        return `${tf}:${bars.length}:${firstTime}:${lastTime}`;
+      })
+      .filter(Boolean)
+      .join("|");
+  }, [isBacktestChartReplay, master?.bars, sortedTfs]);
+
+  useEffect(() => {
+    if (!isBacktestChartReplay || !cleanSym || !replayArtifactLoadKey) return;
+    if (replayArtifactLoadKeyRef.current === replayArtifactLoadKey) return;
+    replayArtifactLoadKeyRef.current = replayArtifactLoadKey;
+    const targetTfs = (sortedTfs || [])
+      .map((tfRaw) => String(tfRaw || "").trim().toLowerCase())
+      .filter((tf) => Array.isArray(master?.bars?.[tf]) && master.bars[tf].length > 0);
+    if (!targetTfs.length) return;
+    Promise.allSettled(
+      targetTfs.map((tf) =>
+        loadArtifactsForTf(tf, {
+          force: true,
+          scope: "loaded",
+        }),
+      ),
+    ).catch(() => {});
+  }, [
+    cleanSym,
+    isBacktestChartReplay,
+    loadArtifactsForTf,
+    master?.bars,
+    replayArtifactLoadKey,
     sortedTfs,
   ]);
 
@@ -9078,15 +9449,24 @@ export default function SymbolChart({
                   return artifactTfVisibility?.[itemTfKey] !== false;
                 });
               });
+              const strategyMarkerObjects =
+                showStrategyMarkers &&
+                Array.isArray(strategyMarkerObjectsByTf?.[tf.toLowerCase()])
+                  ? strategyMarkerObjectsByTf[tf.toLowerCase()]
+                  : [];
+              const replaySharedObjects = isBacktestChartReplay
+                ? [
+                    ...strategyMarkerObjects,
+                    ...artifactObjects,
+                    ...annotationObjects,
+                  ]
+                    .map((item) => projectArtifactObjectForReplay(item, replayCurrentBarTimeSec))
+                    .filter(Boolean)
+                : [];
               const sharedChartObjects = isBacktestChartReplay
-                ? []
+                ? replaySharedObjects
                 : [
-                    ...(
-                      showStrategyMarkers &&
-                      Array.isArray(strategyMarkerObjectsByTf?.[tf.toLowerCase()])
-                        ? strategyMarkerObjectsByTf[tf.toLowerCase()]
-                        : []
-                    ),
+                    ...strategyMarkerObjects,
                     ...artifactObjects,
                     ...annotationObjects,
                   ];

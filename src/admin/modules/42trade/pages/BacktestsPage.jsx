@@ -1690,10 +1690,14 @@ export default function BacktestsPage() {
   const summaryWinRateValue = replaySummary
     ? replaySummary.winRate
     : activeSummary?.win_rate_pct || 0;
+  const summaryTotalPnlValue = replaySummary
+    ? replaySummary.totalPnl
+    : activeSummary?.total_pnl || 0;
   const activeRunSummaryTitle = [
     `${Math.round(Number(summaryTradesCount || 0))} trades`,
     `WR ${formatNumber(summaryWinRateValue, 0)}%`,
     `RR ${formatNumber(summaryRrValue, 1)}`,
+    `$${formatNumber(summaryTotalPnlValue, 0)}`,
     summaryRangeText,
   ]
     .filter(Boolean)
@@ -2725,6 +2729,7 @@ export default function BacktestsPage() {
                 leadLabel={`${Math.round(Number(summaryTradesCount || 0))} trades`}
                 winRateValue={summaryWinRateValue}
                 rrValue={summaryRrValue}
+                totalPnlValue={summaryTotalPnlValue}
                 rangeLabel={summaryRangeText}
                 title={activeRunSummaryTitle}
               />

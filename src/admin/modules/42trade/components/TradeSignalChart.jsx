@@ -82,9 +82,16 @@ const COMPACT_VIEWPORT_MIN_BARS = 50;
 const COMPACT_VIEWPORT_STEP_BARS = 50;
 const COMPACT_VIEWPORT_DEFAULT_BARS = 50;
 const SHOW_ALL_LOADED_VIEWPORT_MAX_BARS = 2000;
+const ARTIFACT_LINE_DASH = [1.5, 3.5];
+const ARTIFACT_LINE_WIDTH = 0.2;
+const ARTIFACT_ZONE_LINE_WIDTH = 0.18;
 const TRADE_ENTRY_VIBRANT = "#22d3ee";
 const TRADE_TP_DARK = "#166534";
 const TRADE_SL_DARK = "#7f1d1d";
+const TIMELINE_TRADE_ACTIVE_REWARD_FILL = "rgba(34, 197, 94, 0.08)";
+const TIMELINE_TRADE_ACTIVE_RISK_FILL = "rgba(239, 68, 68, 0.07)";
+const TIMELINE_TRADE_PENDING_REWARD_FILL = "rgba(59, 130, 246, 0.08)";
+const TIMELINE_TRADE_PENDING_RISK_FILL = "rgba(245, 158, 11, 0.08)";
 const PLAN_COLORS = {
   buy: {
     entry: TRADE_ENTRY_VIBRANT,
@@ -1162,6 +1169,224 @@ function formatPriceWithPrecision(value, precision) {
   if (!Number.isFinite(n)) return "-";
   const safePrecision = Math.min(Math.max(Number(precision) || 0, 0), 8);
   return n.toFixed(safePrecision);
+}
+
+function normalizeTradeStatusKey(status) {
+  return String(status || "").trim().toUpperCase();
+}
+
+function isClosedTradeStatus(status) {
+  const key = normalizeTradeStatusKey(status);
+  return [
+    "CLOSED",
+    "TP",
+    "SL",
+    "WIN",
+    "LOSS",
+    "PROFIT",
+    "STOPPED",
+    "REJECTED",
+    "CANCELLED",
+    "EXPIRED",
+  ].includes(key);
+}
+
+function isPendingTradeStatus(status) {
+  const key = normalizeTradeStatusKey(status);
+  return [
+    "PENDING",
+    "NEW",
+    "PLACED",
+    "ORDERED",
+    "DRAFT",
+  ].includes(key);
+}
+
+function escapeTooltipHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function compactTooltipText(value, fallback = "n/a") {
+  if (value == null) return fallback;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || fallback;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : fallback;
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => compactTooltipText(item, ""))
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    return parts.length ? parts.join(", ") : fallback;
+  }
+  if (typeof value === "object") {
+    try {
+      const json = JSON.stringify(value);
+      return json && json !== "{}" ? json : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function renderTooltipCardHtml({ title = "", subtitle = "", sections = [] } = {}) {
+  const safeTitle = escapeTooltipHtml(title || "Marker");
+  const safeSubtitle = String(subtitle || "").trim()
+    ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8;">${escapeTooltipHtml(subtitle)}</div>`
+    : "";
+  const safeSections = (Array.isArray(sections) ? sections : [])
+    .map((section) => {
+      const label = String(section?.label || "").trim();
+      const value = String(section?.value || "").trim();
+      if (!label || !value) return "";
+      return (
+        `<div style="margin-top:6px;">` +
+        `<div style="font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#64748b;">${escapeTooltipHtml(label)}</div>` +
+        `<div style="margin-top:2px;font-size:12px;line-height:1.4;color:#e2e8f0;white-space:pre-wrap;word-break:break-word;">${escapeTooltipHtml(value)}</div>` +
+        `</div>`
+      );
+    })
+    .filter(Boolean)
+    .join("");
+  return (
+    `<div style="min-width:220px;max-width:360px;">` +
+    `<div style="font-size:12px;font-weight:700;color:#f8fafc;">${safeTitle}</div>` +
+    safeSubtitle +
+    safeSections +
+    `</div>`
+  );
+}
+
+function buildTradeBoxSpecs({
+  entryPrice = null,
+  tpPrice = null,
+  slPrice = null,
+  status = "",
+  pnlRealized = null,
+  startTimeSec = null,
+  closedTimeSec = null,
+  latestBarTimeSec = null,
+} = {}) {
+  const entry = Number(entryPrice);
+  if (!Number.isFinite(entry)) return [];
+
+  const start = Number(startTimeSec);
+  if (!Number.isFinite(start) || start <= 0) return [];
+
+  const latest = Number(latestBarTimeSec);
+  const closed = Number(closedTimeSec);
+  const safeEnd =
+    Number.isFinite(closed) && closed > 0
+      ? closed
+      : Number.isFinite(latest) && latest > 0
+        ? latest
+        : null;
+  if (!Number.isFinite(safeEnd) || safeEnd <= 0) return [];
+
+  const endTimeSec = Math.max(start, safeEnd);
+  const statusKey = normalizeTradeStatusKey(status);
+  const isPending = isPendingTradeStatus(statusKey);
+  const isClosed =
+    isClosedTradeStatus(statusKey) && Number.isFinite(closed) && closed > 0;
+  const pnl = Number(pnlRealized);
+  const closedWithProfit =
+    isClosed &&
+    ((Number.isFinite(pnl) && pnl > 0) ||
+      ["TP", "WIN", "PROFIT"].includes(statusKey));
+  const closedWithLoss =
+    isClosed &&
+    ((Number.isFinite(pnl) && pnl < 0) ||
+      ["SL", "LOSS", "STOPPED"].includes(statusKey));
+
+  const dotLineDash = [1.5, 2.5];
+  const pendingRewardFill = TIMELINE_TRADE_PENDING_REWARD_FILL;
+  const pendingRiskFill = TIMELINE_TRADE_PENDING_RISK_FILL;
+  const activeRewardFill = TIMELINE_TRADE_ACTIVE_REWARD_FILL;
+  const activeRiskFill = TIMELINE_TRADE_ACTIVE_RISK_FILL;
+  const rewardInactiveFill = isPending ? pendingRewardFill : activeRewardFill;
+  const riskInactiveFill = isPending ? pendingRiskFill : activeRiskFill;
+
+  const specs = [];
+  const tp = Number(tpPrice);
+  if (Number.isFinite(tp) && tp !== entry) {
+    specs.push({
+      key: "tp",
+      startTimeSec: start,
+      endTimeSec,
+      priceLow: Math.min(entry, tp),
+      priceHigh: Math.max(entry, tp),
+      lineColor: BACKTEST_CHART_THEME.plannedTp,
+      fillColor: closedWithProfit
+        ? BACKTEST_CHART_THEME.tradeBoxProfit
+        : closedWithLoss
+          ? "rgba(34, 197, 94, 0.035)"
+          : rewardInactiveFill,
+      lineWidth: closedWithProfit ? 0.5 : 0.25,
+      lineDash: closedWithProfit ? [] : dotLineDash,
+      shadowBlur: 0,
+      label: "",
+    });
+  }
+
+  const sl = Number(slPrice);
+  if (Number.isFinite(sl) && sl !== entry) {
+    specs.push({
+      key: "sl",
+      startTimeSec: start,
+      endTimeSec,
+      priceLow: Math.min(entry, sl),
+      priceHigh: Math.max(entry, sl),
+      lineColor: BACKTEST_CHART_THEME.plannedSl,
+      fillColor: closedWithLoss
+        ? BACKTEST_CHART_THEME.tradeBoxLoss
+        : closedWithProfit
+          ? "rgba(239, 68, 68, 0.035)"
+          : riskInactiveFill,
+      lineWidth: closedWithLoss ? 0.5 : 0.25,
+      lineDash: closedWithLoss ? [] : dotLineDash,
+      shadowBlur: 0,
+      label: "",
+    });
+  }
+
+  if (!specs.length) {
+    const fallbackHeight = Math.max(Math.abs(entry) * 0.0015, 1e-6);
+    specs.push({
+      key: "entry",
+      startTimeSec: start,
+      endTimeSec,
+      priceLow: entry - fallbackHeight,
+      priceHigh: entry + fallbackHeight,
+      lineColor: BACKTEST_CHART_THEME.buy,
+      fillColor: "rgba(56, 189, 248, 0.05)",
+      lineWidth: 0.25,
+      lineDash: dotLineDash,
+      shadowBlur: 0,
+      label: "",
+    });
+  }
+
+  return specs;
+}
+
+function attachTradeBoxSpecs(series, primitivesRef, specs = []) {
+  if (!series || !primitivesRef || !Array.isArray(specs) || !specs.length) return;
+  for (const spec of specs) {
+    if (!spec || !Number.isFinite(Number(spec.startTimeSec))) continue;
+    if (!Number.isFinite(Number(spec.endTimeSec))) continue;
+    const primitive = new TimeRangeBoxPrimitive(spec);
+    series.attachPrimitive(primitive);
+    primitivesRef.current.push(primitive);
+  }
 }
 
 function parsePdZoneBounds(item) {
@@ -2257,12 +2482,14 @@ class EventTimeMarkerPrimitive {
     color = "#facc15",
     text = "",
     placement = "aboveBar",
+    shape = "auto",
   }) {
     this._timeSec = Number(timeSec);
     this._price = Number(price);
     this._color = String(color || "#facc15");
     this._text = String(text || "").trim();
     this._placement = String(placement || "aboveBar");
+    this._shape = String(shape || "auto").trim().toLowerCase();
     this._series = null;
     this._chart = null;
   }
@@ -2304,37 +2531,42 @@ class EventTimeMarkerPrimitive {
                 const bitmapWidth = scope.bitmapSize?.width ?? null;
                 const x = Math.round(xCoord * ratioX);
                 const baseY = Math.round(priceY * ratioY);
-                const direction = self._placement === "belowBar" ? 1 : -1;
+                const direction =
+                  self._shape === "arrowup"
+                    ? 1
+                    : self._shape === "arrowdown"
+                      ? -1
+                      : self._placement === "belowBar"
+                        ? 1
+                        : -1;
                 const markerOffset = Math.round(26 * ratioY);
                 const markerY = baseY + direction * markerOffset;
-                const diamondRadius = Math.max(3, Math.round(3 * ratioY));
-                const lineTop = Math.min(baseY, markerY);
-                const lineBottom = Math.max(baseY, markerY);
+                const arrowTipGap = Math.max(2, Math.round(2 * ratioY));
+                const arrowHeight = Math.max(8, Math.round(9 * ratioY));
+                const arrowHalfWidth = Math.max(4, Math.round(5 * ratioX));
+                const arrowTipY = baseY + direction * arrowTipGap;
+                const arrowBaseY = arrowTipY + direction * arrowHeight;
                 const textOffsetX = Math.round(8 * ratioX);
                 const textOffsetY = direction < 0 ? -6 : 12;
+                const shape =
+                  self._shape === "auto"
+                    ? direction < 0
+                      ? "arrowdown"
+                      : "arrowup"
+                    : self._shape;
 
                 ctx.save();
                 ctx.strokeStyle = `${self._color}99`;
                 ctx.lineWidth = Math.max(1, Math.round(ratioX));
                 ctx.beginPath();
-                ctx.moveTo(x, lineTop);
-                ctx.lineTo(x, lineBottom);
+                ctx.moveTo(x, baseY);
+                ctx.lineTo(x, markerY);
                 ctx.stroke();
 
-                ctx.fillStyle = self._color;
-                ctx.beginPath();
-                ctx.moveTo(x, markerY - diamondRadius);
-                ctx.lineTo(x + diamondRadius, markerY);
-                ctx.lineTo(x, markerY + diamondRadius);
-                ctx.lineTo(x - diamondRadius, markerY);
-                ctx.closePath();
-                ctx.fill();
-
+                const fontSize = Math.max(10, Math.round(10 * ratioY));
+                const labelY = markerY + Math.round(textOffsetY * ratioY);
                 if (self._text) {
-                  ctx.fillStyle = self._color;
-                  const fontSize = Math.max(10, Math.round(10 * ratioY));
                   ctx.font = `${fontSize}px sans-serif`;
-                  const labelY = markerY + Math.round(textOffsetY * ratioY);
                   const measuredTextWidth = Math.ceil(ctx.measureText(self._text).width);
                   const safePadding = Math.round(8 * ratioX);
                   let labelX = x + textOffsetX;
@@ -2348,15 +2580,119 @@ class EventTimeMarkerPrimitive {
                   }
                   if (Number.isFinite(bitmapWidth)) {
                     const minX = safePadding;
-                    const maxX = Math.max(
-                      minX,
-                      bitmapWidth - safePadding,
-                    );
+                    const maxX = Math.max(minX, bitmapWidth - safePadding);
                     labelX = Math.min(Math.max(labelX, minX), maxX);
                   }
+
+                  ctx.fillStyle = self._color;
                   ctx.textAlign = textAlign;
                   ctx.textBaseline = direction < 0 ? "bottom" : "top";
                   ctx.fillText(self._text, labelX, labelY);
+                }
+
+                ctx.fillStyle = self._color;
+                ctx.beginPath();
+                if (shape === "arrowdown") {
+                  ctx.moveTo(x, arrowTipY);
+                  ctx.lineTo(x - arrowHalfWidth, arrowBaseY);
+                  ctx.lineTo(x + arrowHalfWidth, arrowBaseY);
+                } else {
+                  ctx.moveTo(x, arrowTipY);
+                  ctx.lineTo(x - arrowHalfWidth, arrowBaseY);
+                  ctx.lineTo(x + arrowHalfWidth, arrowBaseY);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+              });
+            },
+          };
+        },
+      },
+    ];
+  }
+}
+
+class SegmentLinePrimitive {
+  constructor({
+    startTimeSec,
+    endTimeSec,
+    startPrice,
+    endPrice,
+    color = "#60a5fa",
+    lineDash = [],
+    lineWidth = 1,
+    label = "",
+  }) {
+    this._startTimeSec = Number(startTimeSec);
+    this._endTimeSec = Number(endTimeSec);
+    this._startPrice = Number(startPrice);
+    this._endPrice = Number(endPrice);
+    this._color = String(color || "#60a5fa");
+    this._lineDash = Array.isArray(lineDash) ? lineDash : [];
+    this._lineWidth = Number.isFinite(Number(lineWidth))
+      ? Math.max(0.2, Number(lineWidth))
+      : ARTIFACT_LINE_WIDTH;
+    this._label = String(label || "").trim();
+    this._series = null;
+    this._chart = null;
+  }
+
+  attached({ series, chart }) {
+    this._series = series;
+    this._chart = chart;
+  }
+
+  detached() {
+    this._series = null;
+    this._chart = null;
+  }
+
+  updateAllViews() {}
+
+  priceAxisViews() {
+    return [];
+  }
+
+  paneViews() {
+    const self = this;
+    return [
+      {
+        renderer() {
+          return {
+            draw: (target) => {
+              if (!self._series || !self._chart) return;
+              target.useBitmapCoordinateSpace((scope) => {
+                const ts = self._chart.timeScale();
+                const ps = self._series;
+                const x1Coord = ts.timeToCoordinate(self._startTimeSec);
+                const x2Coord = ts.timeToCoordinate(self._endTimeSec);
+                const y1Coord = ps.priceToCoordinate(self._startPrice);
+                const y2Coord = ps.priceToCoordinate(self._endPrice);
+                if (x1Coord == null || x2Coord == null || y1Coord == null || y2Coord == null) return;
+                const ctx = scope.context;
+                const ratioX = scope.horizontalPixelRatio || 1;
+                const ratioY = scope.verticalPixelRatio || 1;
+                const x1 = Math.round(x1Coord * ratioX);
+                const x2 = Math.round(x2Coord * ratioX);
+                const y1 = Math.round(y1Coord * ratioY);
+                const y2 = Math.round(y2Coord * ratioY);
+                ctx.save();
+                ctx.strokeStyle = self._color;
+                ctx.lineWidth = Math.max(0.6, self._lineWidth * ratioY);
+                if (self._lineDash.length) ctx.setLineDash(self._lineDash);
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+                if (self._label) {
+                  const fontPx = Math.max(10, Math.round(10 * ratioY));
+                  ctx.setLineDash([]);
+                  ctx.font = `${fontPx}px sans-serif`;
+                  ctx.fillStyle = self._color;
+                  ctx.textBaseline = y2 <= y1 ? "bottom" : "top";
+                  ctx.textAlign = "left";
+                  ctx.fillText(self._label, x2 + Math.round(6 * ratioX), y2);
                 }
                 ctx.restore();
               });
@@ -2452,17 +2788,17 @@ class HorizontalPriceLinePrimitive {
     price,
     label = "",
     color = "#60a5fa",
-    lineDash = [4, 4],
-    lineWidth = 1,
+    lineDash = ARTIFACT_LINE_DASH,
+    lineWidth = ARTIFACT_LINE_WIDTH,
     background = "rgba(2, 6, 23, 0.82)",
   }) {
     this._price = Number(price);
     this._label = String(label || "").trim();
     this._color = color;
-    this._lineDash = Array.isArray(lineDash) ? lineDash : [4, 4];
+    this._lineDash = Array.isArray(lineDash) ? lineDash : ARTIFACT_LINE_DASH;
     this._lineWidth = Number.isFinite(Number(lineWidth))
-      ? Math.max(1, Number(lineWidth))
-      : 1;
+      ? Math.max(0.2, Number(lineWidth))
+      : ARTIFACT_LINE_WIDTH;
     this._background = background;
     this._series = null;
     this._chart = null;
@@ -2504,7 +2840,7 @@ class HorizontalPriceLinePrimitive {
 
                 ctx.save();
                 ctx.strokeStyle = self._color;
-                const strokeWidth = Math.max(1, self._lineWidth * pixelRatioY);
+                const strokeWidth = Math.max(0.6, self._lineWidth * pixelRatioY);
                 const strokeDash = self._lineDash.length
                   ? self._lineDash.map((part) =>
                       Math.max(1, Number(part || 0) * pixelRatioX),
@@ -2562,8 +2898,8 @@ class HorizontalPriceSegmentPrimitive {
     label = "",
     labelAlign = "left",
     color = "#60a5fa",
-    lineDash = [4, 4],
-    lineWidth = 1,
+    lineDash = ARTIFACT_LINE_DASH,
+    lineWidth = ARTIFACT_LINE_WIDTH,
     background = "rgba(2, 6, 23, 0.82)",
   }) {
     this._price = Number(price);
@@ -2576,10 +2912,10 @@ class HorizontalPriceSegmentPrimitive {
       ? "right"
       : "left";
     this._color = color;
-    this._lineDash = Array.isArray(lineDash) ? lineDash : [4, 4];
+    this._lineDash = Array.isArray(lineDash) ? lineDash : ARTIFACT_LINE_DASH;
     this._lineWidth = Number.isFinite(Number(lineWidth))
-      ? Math.max(1, Number(lineWidth))
-      : 1;
+      ? Math.max(0.2, Number(lineWidth))
+      : ARTIFACT_LINE_WIDTH;
     this._background = background;
     this._series = null;
     this._chart = null;
@@ -2630,7 +2966,7 @@ class HorizontalPriceSegmentPrimitive {
                 const x1 = Math.min(r.width, Math.round(Math.max(xStart, xEnd) * pixelRatioX));
                 if (yPos < 0 || yPos > r.height || x1 <= x0) return;
 
-                const strokeWidth = Math.max(1, self._lineWidth * pixelRatioY);
+                const strokeWidth = Math.max(0.6, self._lineWidth * pixelRatioY);
                 const strokeDash = self._lineDash.length
                   ? self._lineDash.map((part) =>
                       Math.max(1, Number(part || 0) * pixelRatioX),
@@ -2756,6 +3092,7 @@ export default function TradeSignalChart({
   const sharedOverlayPriceLinesRef = useRef([]);
   const sharedOverlayLineSeriesRef = useRef([]);
   const sharedOverlayPrimitivesRef = useRef([]);
+  const hoverMarkersRef = useRef([]);
   const seriesMarkersRef = useRef(null);
   const candleHoverPriceLineRef = useRef(null);
   const indicatorHoverPriceLinesRef = useRef({});
@@ -2808,6 +3145,10 @@ export default function TradeSignalChart({
   const normalizedTrades = useMemo(() => {
     return normalizeTradeRowsForChart(trades, tradeLabel).map((trade) => ({
       ...trade,
+      sourceTrade:
+        trades?.find(
+          (row) => String(row?.sid || row?.id || "") === String(trade.sid),
+        ) || null,
       openedAtSec:
         trade.openedAtSec ??
         (trade?.openedAt ? toEpochSec(trade.openedAt) : null),
@@ -2828,6 +3169,299 @@ export default function TradeSignalChart({
         })(),
     }));
   }, [trades, tradeLabel]);
+  const formatMarkerTimeLabel = useCallback(
+    (timeSec) => {
+      const numeric = Number(timeSec);
+      if (!Number.isFinite(numeric) || numeric <= 0) return "n/a";
+      return formatChartDateTime(numeric * 1000, displayTimezone);
+    },
+    [displayTimezone],
+  );
+  const summarizeRuleExpression = useCallback((node) => {
+    if (node == null) return "";
+    if (Array.isArray(node)) {
+      return node
+        .map((item) => summarizeRuleExpression(item))
+        .filter(Boolean)
+        .join(" AND ");
+    }
+    if (typeof node === "string" || typeof node === "number" || typeof node === "boolean") {
+      return String(node);
+    }
+    if (typeof node !== "object") return "";
+    const fn = String(node?.fn || "").trim();
+    if (fn) {
+      const args = Array.isArray(node?.args)
+        ? node.args
+            .map((arg) => {
+              if (arg == null) return "";
+              if (typeof arg === "string") return arg;
+              if (typeof arg === "object") {
+                const key = String(arg?.key || arg?.name || arg?.field || "").trim();
+                const value = compactTooltipText(
+                  arg?.value ?? arg?.tf ?? arg?.bias ?? arg?.level ?? "",
+                  "",
+                );
+                return [key, value].filter(Boolean).join(": ");
+              }
+              return String(arg);
+            })
+            .filter(Boolean)
+            .join(", ")
+        : "";
+      return `${fn}${args ? `(${args})` : "()"}`;
+    }
+    const op = String(node?.op || node?.operator || "").trim().toLowerCase();
+    if (op && Array.isArray(node?.conditions) && node.conditions.length) {
+      const parts = node.conditions
+        .map((item) => summarizeRuleExpression(item))
+        .filter(Boolean);
+      return parts.length ? `(${parts.join(` ${op.toUpperCase()} `)})` : op.toUpperCase();
+    }
+    if (op === "not" && node?.condition) {
+      return `NOT (${summarizeRuleExpression(node.condition)})`;
+    }
+    const left = summarizeRuleExpression(node?.left ?? node?.lhs ?? node?.a);
+    const right = summarizeRuleExpression(node?.right ?? node?.rhs ?? node?.b);
+    if (op && left && right) {
+      return `${left} ${op} ${right}`;
+    }
+    const variable = String(node?.var || node?.field || node?.path || "").trim();
+    if (variable) return variable;
+    return compactTooltipText(node, "");
+  }, []);
+  const summarizeMarkerActions = useCallback((actions = []) => {
+    const parts = (Array.isArray(actions) ? actions : [])
+      .map((actionItem) => {
+        const label = String(
+          actionItem?.label ||
+            actionItem?.message ||
+            actionItem?.action ||
+            actionItem?.type ||
+            "",
+        ).trim();
+        const direction = String(actionItem?.trade_plan?.direction || "").trim();
+        return [label, direction].filter(Boolean).join(" · ");
+      })
+      .filter(Boolean);
+    return parts.length ? parts.join("\n") : "";
+  }, []);
+  const registerHoverMarker = useCallback((marker = {}) => {
+    const timeSec = Number(marker?.timeSec);
+    const price = Number(marker?.price);
+    if (!Number.isFinite(timeSec) || !Number.isFinite(price)) return;
+    hoverMarkersRef.current.push({
+      id: String(marker?.id || `${marker?.overlayType || "marker"}-${timeSec}-${price}`),
+      overlayType: String(marker?.overlayType || "marker"),
+      timeSec,
+      price,
+      tooltipHtml: String(marker?.tooltipHtml || "").trim(),
+      tooltipText: String(marker?.tooltipText || "").trim(),
+    });
+  }, []);
+  const clearHoverMarkers = useCallback((overlayTypes = []) => {
+    const blocked = new Set(
+      (Array.isArray(overlayTypes) ? overlayTypes : [overlayTypes])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    );
+    if (!blocked.size) {
+      hoverMarkersRef.current = [];
+      return;
+    }
+    hoverMarkersRef.current = hoverMarkersRef.current.filter(
+      (item) => !blocked.has(String(item?.overlayType || "").trim()),
+    );
+  }, []);
+  const buildTradeMarkerTooltipHtml = useCallback(
+    ({
+      trade = {},
+      markerKind = "trade",
+      markerLabel = "",
+      eventTimeSec = null,
+    } = {}) => {
+      const source = trade?.sourceTrade && typeof trade.sourceTrade === "object"
+        ? trade.sourceTrade
+        : trade || {};
+      const strategyName = compactTooltipText(
+        source?.strategy_name ||
+          source?.strategyName ||
+          source?.tradeLabel ||
+          trade?.tradeLabel ||
+          "",
+        "Trade",
+      );
+      const tradeDecision = compactTooltipText(
+        source?.trade_decision ||
+          source?.tradeDecision ||
+          source?.action_decision ||
+          source?.actionDecision ||
+          source?.decision ||
+          source?.position_management?.trade_decision ||
+          source?.plan?.trade_decision ||
+          "",
+        "",
+      );
+      const rulesChecked = compactTooltipText(
+        source?.rules_checked ||
+          source?.rulesChecked ||
+          source?.rule_checks ||
+          source?.ruleChecks ||
+          "",
+        "",
+      );
+      const reasons = compactTooltipText(
+        source?.close_reason ||
+          source?.closeReason ||
+          source?.rejection_reason ||
+          source?.rejectionReason ||
+          source?.reason ||
+          source?.skip_reason ||
+          source?.skipReason ||
+          source?.reasons_to_skip ||
+          source?.reasonsToSkip ||
+          "",
+        "",
+      );
+      const sideText = compactTooltipText(trade?.side || source?.side, "n/a");
+      const sections = [
+        { label: "Marker", value: compactTooltipText(markerKind, "trade") },
+        { label: "Strategy", value: strategyName },
+        { label: "Side", value: sideText },
+        {
+          label: "Decision",
+          value: tradeDecision || "No explicit trade decision stored",
+        },
+        {
+          label: "Rules",
+          value: rulesChecked || "No rules summary stored",
+        },
+        {
+          label: "Entry / SL / TP",
+          value: [
+            `Entry ${formatPriceWithPrecision(trade?.entry, pricePrecisionRef.current)}`,
+            Number.isFinite(Number(trade?.sl))
+              ? `SL ${formatPriceWithPrecision(trade?.sl, pricePrecisionRef.current)}`
+              : "",
+            Number.isFinite(Number(trade?.tp))
+              ? `TP ${formatPriceWithPrecision(trade?.tp, pricePrecisionRef.current)}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        },
+        {
+          label: "Timing",
+          value: [
+            eventTimeSec ? `Marker ${formatMarkerTimeLabel(eventTimeSec)}` : "",
+            trade?.createdAtSec ? `Created ${formatMarkerTimeLabel(trade.createdAtSec)}` : "",
+            trade?.openedAtSec ? `Opened ${formatMarkerTimeLabel(trade.openedAtSec)}` : "",
+            trade?.closedAtSec ? `Closed ${formatMarkerTimeLabel(trade.closedAtSec)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+        {
+          label: "Outcome",
+          value: [
+            trade?.closeStatus ? `Status ${trade.closeStatus}` : "",
+            Number.isFinite(Number(trade?.exitPrice))
+              ? `Exit ${formatPriceWithPrecision(trade.exitPrice, pricePrecisionRef.current)}`
+              : "",
+            Number.isFinite(Number(trade?.pnlRealized))
+              ? `PnL ${compactTooltipText(trade.pnlRealized, "")}`
+              : "",
+            Number.isFinite(Number(trade?.rMultiple))
+              ? `R ${compactTooltipText(trade.rMultiple, "")}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        },
+        {
+          label: "Reason",
+          value: reasons || "No stored reason",
+        },
+      ].filter((section) => String(section?.value || "").trim());
+      return renderTooltipCardHtml({
+        title: `${compactTooltipText(markerLabel || markerKind, "Trade")} · ${strategyName}`,
+        subtitle: compactTooltipText(trade?.sid || source?.sid || "", ""),
+        sections,
+      });
+    },
+    [formatMarkerTimeLabel],
+  );
+  const buildStrategyMarkerTooltipHtml = useCallback(
+    (payload = {}) => {
+      const hit = payload?.hit && typeof payload.hit === "object"
+        ? payload.hit
+        : payload?.artifact_payload && typeof payload.artifact_payload === "object"
+          ? payload.artifact_payload
+          : payload || {};
+      const artifactList = (Array.isArray(hit?.artifacts) ? hit.artifacts : [])
+        .map((item) => {
+          const type = compactTooltipText(item?.type || item?.artifact_type || "", "");
+          const bias = compactTooltipText(item?.direction || item?.payload?.bias || "", "");
+          const tf = compactTooltipText(item?.timeframe || item?.tf || item?.source_tf || "", "");
+          return [type, bias, tf].filter(Boolean).join(" · ");
+        })
+        .filter(Boolean);
+      const sections = [
+        { label: "Strategy", value: compactTooltipText(hit?.strategyName, "Strategy") },
+        {
+          label: "Description",
+          value: compactTooltipText(hit?.strategyDescription, ""),
+        },
+        { label: "Rule", value: compactTooltipText(hit?.eventName, "Rule") },
+        {
+          label: "Priority",
+          value: compactTooltipText(hit?.eventPriority, ""),
+        },
+        {
+          label: "Decision",
+          value:
+            compactTooltipText(
+              hit?.eventBias || hit?.bias || hit?.markerDirection || "",
+              "",
+            ) ||
+            "No explicit decision bias",
+        },
+        {
+          label: "Logic",
+          value:
+            summarizeRuleExpression(hit?.ruleDefinition) ||
+            compactTooltipText(hit?.displayText, "No stored rule logic"),
+        },
+        {
+          label: "Actions",
+          value: summarizeMarkerActions(hit?.actions) || "No actions attached",
+        },
+        {
+          label: "Matched Artifacts",
+          value: artifactList.length ? artifactList.join("\n") : "No artifact matches attached",
+        },
+        {
+          label: "Rule Meta",
+          value: compactTooltipText(hit?.ruleMeta, "No rule meta"),
+        },
+        {
+          label: "When",
+          value: formatMarkerTimeLabel(hit?.barTimeUnix),
+        },
+      ];
+      return renderTooltipCardHtml({
+        title: `${compactTooltipText(hit?.markerText || hit?.eventName, "Rule")} · ${compactTooltipText(hit?.strategyName, "Strategy")}`,
+        subtitle: [
+          compactTooltipText(hit?.symbol, ""),
+          compactTooltipText(hit?.sourceTf || hit?.tf, ""),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        sections,
+      });
+    },
+    [formatMarkerTimeLabel, summarizeMarkerActions, summarizeRuleExpression],
+  );
   const overlayTrade = useMemo(() => {
     if (!normalizedTrades.length) return null;
     const selected = String(selectedTradeSid || "").trim();
@@ -3020,6 +3654,7 @@ export default function TradeSignalChart({
   }, []);
 
   const clearTradeOverlayArtifacts = useCallback(() => {
+    clearHoverMarkers(["timeline-trade", "trade-event"]);
     const series = seriesRef.current;
     if (!series) return;
     for (const line of tradeOverlayPriceLinesRef.current) {
@@ -3043,9 +3678,10 @@ export default function TradeSignalChart({
       } catch {}
     }
     seriesMarkersRef.current = null;
-  }, []);
+  }, [clearHoverMarkers]);
 
   const clearSharedOverlayArtifacts = useCallback(() => {
+    clearHoverMarkers(["shared-point"]);
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (chart) {
@@ -3070,7 +3706,7 @@ export default function TradeSignalChart({
       } catch {}
     }
     sharedOverlayPrimitivesRef.current = [];
-  }, []);
+  }, [clearHoverMarkers]);
 
   const formatTradePnlMarkerText = useCallback((value, fallback = "") => {
     const pnl = Number(value);
@@ -3079,6 +3715,89 @@ export default function TradeSignalChart({
     const decimals = absValue >= 10 ? 0 : absValue >= 1 ? 1 : 2;
     return `${pnl > 0 ? "+" : pnl < 0 ? "-" : ""}${absValue.toFixed(decimals)}`;
   }, []);
+
+  const renderTimelineTradeBoxes = useCallback(
+    (candles = []) => {
+      const candleSeries = seriesRef.current;
+      if (
+        !candleSeries ||
+        !Array.isArray(candles) ||
+        !candles.length ||
+        !normalizedTrades.length
+      ) {
+        return;
+      }
+      const selectedSid = String(selectedTradeSid || "").trim();
+      const latestBarTimeSec = Number(candles[candles.length - 1]?.time || 0) || 0;
+      const replayNowSec = Number(replayClockTimeSec);
+      const visibleNowSec =
+        isReplayActive && Number.isFinite(replayNowSec) && replayNowSec > 0
+          ? replayNowSec
+          : latestBarTimeSec;
+      if (!latestBarTimeSec) return;
+
+      for (const trade of normalizedTrades) {
+        if (selectedSid && String(trade?.sid || "") === selectedSid) continue;
+
+        const entry = Number(trade?.entry);
+        const sl = Number(trade?.sl);
+        const tp = Number(trade?.tp);
+        if (!Number.isFinite(entry)) continue;
+
+        const createdSec = resolveReplayTradeCreatedSec(trade);
+        const openedSec = resolveReplayTradeOpenSec(trade);
+        const closedSec = resolveReplayTradeCloseSec(trade);
+        const statusUpper = normalizeTradeStatusKey(trade?.closeStatus);
+        const isPendingStatus = isPendingTradeStatus(statusUpper);
+        const isTerminalStatus = isClosedTradeStatus(statusUpper);
+        const hasOpened =
+          !isPendingStatus &&
+          Number.isFinite(Number(openedSec)) &&
+          Number(openedSec) > 0;
+        const hasClosed =
+          Boolean(isTerminalStatus || Number.isFinite(Number(trade?.pnlRealized))) &&
+          Number.isFinite(Number(closedSec)) &&
+          Number(closedSec) > 0;
+        const closeAlreadyVisible =
+          !isReplayActive ||
+          !Number.isFinite(replayNowSec) ||
+          Number(closedSec) <= replayNowSec;
+        const effectiveHasClosed = hasClosed && closeAlreadyVisible;
+
+        const startAnchorSec = hasOpened ? Number(openedSec) : Number(createdSec);
+        if (!Number.isFinite(startAnchorSec) || startAnchorSec <= 0) continue;
+        if (Number(startAnchorSec) > Number(visibleNowSec)) continue;
+        const startTimeSec = resolveEventMarkerTimeSec(candles, startAnchorSec, interval);
+        if (!Number.isFinite(startTimeSec) || startTimeSec <= 0) continue;
+        const resolvedClosedTime = effectiveHasClosed
+          ? resolveEventMarkerTimeSec(candles, Number(closedSec), interval) ||
+            latestBarTimeSec
+          : null;
+        const tradeBoxSpecs = buildTradeBoxSpecs({
+          entryPrice: entry,
+          tpPrice: tp,
+          slPrice: sl,
+          status: trade?.closeStatus,
+          pnlRealized: trade?.pnlRealized,
+          startTimeSec,
+          closedTimeSec: effectiveHasClosed ? resolvedClosedTime : null,
+          latestBarTimeSec: visibleNowSec,
+        });
+        attachTradeBoxSpecs(
+          candleSeries,
+          tradeOverlayPrimitivesRef,
+          tradeBoxSpecs,
+        );
+      }
+    },
+    [
+      interval,
+      isReplayActive,
+      normalizedTrades,
+      replayClockTimeSec,
+      selectedTradeSid,
+    ],
+  );
 
   const buildTimelineTradeMarkers = useCallback(
     (candles = []) => {
@@ -3108,8 +3827,10 @@ export default function TradeSignalChart({
         )
           .trim()
           .toUpperCase();
+        const statusUpper = normalizeTradeStatusKey(trade?.closeStatus);
         const openedSec = resolveReplayTradeOpenSec(trade);
         if (
+          !isPendingTradeStatus(statusUpper) &&
           Number.isFinite(openedSec) &&
           (!isReplayActive ||
             !Number.isFinite(replayNowSec) ||
@@ -3118,20 +3839,21 @@ export default function TradeSignalChart({
           const openedTs = resolveEventMarkerTimeSec(candles, openedSec, interval);
           if (Number.isFinite(openedTs)) {
             markers.push({
+              id: `timeline-open-${String(trade?.sid || trade?.key || openedTs)}`,
               time: openedTs,
               position: tradeSide === "SELL" ? "aboveBar" : "belowBar",
               color: TRADE_MARKER_YELLOW,
               shape: tradeSide === "SELL" ? "arrowDown" : "arrowUp",
               text: tradeSide === "SELL" ? "S" : "B",
+              markerKind: "trade_open",
+              trade,
             });
           }
         }
         const closedSec = resolveReplayTradeCloseSec(trade);
         const hasClosedEvent = Boolean(
-          (Number.isFinite(Number(trade?.closedAtSec)) &&
-            Number(trade?.closedAtSec) > 0) ||
-            trade?.closedAt ||
-            String(trade?.closeStatus || "").trim(),
+          isClosedTradeStatus(statusUpper) ||
+            Number.isFinite(Number(trade?.pnlRealized)),
         );
         if (
           hasClosedEvent &&
@@ -3153,6 +3875,7 @@ export default function TradeSignalChart({
               closeBadge.label || "Closed",
             );
             markers.push({
+              id: `timeline-close-${String(trade?.sid || trade?.key || closedTs)}`,
               time: closedTs,
               position:
                 Number(trade?.pnlRealized) > 0
@@ -3163,6 +3886,8 @@ export default function TradeSignalChart({
               color: closeBadge.color,
               shape: "circle",
               text: closeText,
+              markerKind: "trade_close",
+              trade,
             });
           }
         }
@@ -3183,7 +3908,9 @@ export default function TradeSignalChart({
     (candles = []) => {
       const candleSeries = seriesRef.current;
       if (!candleSeries) return;
+      renderTimelineTradeBoxes(candles);
       const markers = buildTimelineTradeMarkers(candles);
+      clearHoverMarkers(["timeline-trade"]);
       if (!markers.length) {
         if (seriesMarkersRef.current) {
           try {
@@ -3196,6 +3923,26 @@ export default function TradeSignalChart({
         seriesMarkersRef.current = null;
         return;
       }
+      markers.forEach((marker) => {
+        registerHoverMarker({
+          id: marker?.id || `timeline-${marker?.time}-${marker?.text}`,
+          overlayType: "timeline-trade",
+          timeSec: Number(marker?.time),
+          price: Number(
+            marker?.trade?.entry ??
+              marker?.trade?.exitPrice ??
+              marker?.trade?.sl ??
+              marker?.trade?.tp ??
+              candles.find((bar) => Number(bar?.time) === Number(marker?.time))?.close,
+          ),
+          tooltipHtml: buildTradeMarkerTooltipHtml({
+            trade: marker?.trade || {},
+            markerKind: marker?.markerKind || "trade",
+            markerLabel: marker?.text || marker?.markerKind || "Trade",
+            eventTimeSec: Number(marker?.time),
+          }),
+        });
+      });
       if (seriesMarkersRef.current) {
         try {
           seriesMarkersRef.current.setMarkers(markers);
@@ -3207,7 +3954,13 @@ export default function TradeSignalChart({
       }
       seriesMarkersRef.current = createSeriesMarkers(candleSeries, markers);
     },
-    [buildTimelineTradeMarkers],
+    [
+      buildTimelineTradeMarkers,
+      buildTradeMarkerTooltipHtml,
+      clearHoverMarkers,
+      registerHoverMarker,
+      renderTimelineTradeBoxes,
+    ],
   );
 
   const renderSharedOverlayArtifacts = useCallback(
@@ -3242,11 +3995,22 @@ export default function TradeSignalChart({
         sharedLinesList.forEach((ln, idx) => {
           const p = Number(ln?.price);
           if (!Number.isFinite(p)) return;
+          const lineColor = String(ln?.color || "#60a5fa");
+          const artifactLinePrimitive = new HorizontalPriceLinePrimitive({
+            price: p,
+            label: ln?.label || `L${idx + 1}`,
+            color: lineColor,
+            lineDash: ARTIFACT_LINE_DASH,
+            lineWidth: ARTIFACT_LINE_WIDTH,
+          });
+          candleSeries.attachPrimitive(artifactLinePrimitive);
+          sharedOverlayPrimitivesRef.current.push(artifactLinePrimitive);
           const sharedLine = candleSeries.createPriceLine({
             price: p,
-            color: String(ln?.color || "#60a5fa"),
+            color: lineColor,
             lineWidth: 1,
-            lineStyle: 2,
+            lineStyle: LineStyle.Dotted,
+            lineVisible: false,
             axisLabelVisible: true,
             title: ln?.label || `L${idx + 1}`,
           });
@@ -3277,8 +4041,60 @@ export default function TradeSignalChart({
         if (!obj || obj.visible === false) return;
         const label = formatSharedObjectLabel(obj.type, obj.label || "");
         const lineColor = String(obj.color || "#60a5fa");
-        const rawLineWidth = Math.max(0.5, Number(obj.line_width) || 0.5);
-        const lineStyle = lineStyleToChartValue(obj.line_style);
+        const rawLineWidth = Math.max(
+          ARTIFACT_LINE_WIDTH,
+          Number(obj.line_width) || ARTIFACT_LINE_WIDTH,
+        );
+        const lineStyle = LineStyle.Dotted;
+        if (obj.kind === "segment") {
+          const baseStartTimeSec = toEpochSec(obj.anchorTimeMs ?? obj.time);
+          const baseEndTimeSec = toEpochSec(obj.anchorTimeMs2 ?? obj.time2);
+          const baseStartPrice = Number(obj.anchorPrice ?? obj.price);
+          const baseEndPrice = Number(obj.anchorPrice2 ?? obj.price2);
+          const isTrendlineArtifact =
+            String(obj?.artifact_group || "").trim().toLowerCase() === "trendline";
+          let startTimeSec = baseStartTimeSec;
+          let endTimeSec = baseEndTimeSec;
+          let startPrice = baseStartPrice;
+          let endPrice = baseEndPrice;
+          if (
+            isTrendlineArtifact &&
+            Number.isFinite(baseStartTimeSec) &&
+            Number.isFinite(baseEndTimeSec) &&
+            Number.isFinite(baseStartPrice) &&
+            Number.isFinite(baseEndPrice) &&
+            Number.isFinite(lastCandleTime) &&
+            lastCandleTime > baseEndTimeSec
+          ) {
+            const timeSpan = Math.max(1, baseEndTimeSec - baseStartTimeSec);
+            const slope =
+              Number(obj?.artifact_payload?.metrics?.slope) ||
+              (baseEndPrice - baseStartPrice) / timeSpan;
+            endTimeSec = Number(lastCandleTime);
+            endPrice = baseEndPrice + slope * (endTimeSec - baseEndTimeSec);
+          }
+          if (
+            !Number.isFinite(startTimeSec) ||
+            !Number.isFinite(endTimeSec) ||
+            !Number.isFinite(startPrice) ||
+            !Number.isFinite(endPrice)
+          ) {
+            return;
+          }
+          const segmentPrimitive = new SegmentLinePrimitive({
+            startTimeSec,
+            endTimeSec,
+            startPrice,
+            endPrice,
+            color: lineColor,
+            lineDash: ARTIFACT_LINE_DASH,
+            lineWidth: rawLineWidth,
+            label,
+          });
+          candleSeries.attachPrimitive(segmentPrimitive);
+          sharedOverlayPrimitivesRef.current.push(segmentPrimitive);
+          return;
+        }
         if (obj.kind === "line") {
           const price = Number(obj.price ?? obj.anchorPrice);
           if (!Number.isFinite(price)) return;
@@ -3288,7 +4104,7 @@ export default function TradeSignalChart({
           const extendToPriceScale = lineScope === "segment_to_scale";
           const resolvedLineWidth =
             lineScope === "segment" || extendToPriceScale
-              ? Math.max(1, rawLineWidth)
+              ? rawLineWidth
               : rawLineWidth;
           const linePrimitive = Number.isFinite(startTimeSec)
             ? new HorizontalPriceSegmentPrimitive({
@@ -3298,14 +4114,14 @@ export default function TradeSignalChart({
                 label,
                 labelAlign: extendToPriceScale ? "right" : "left",
                 color: lineColor,
-                lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                lineDash: ARTIFACT_LINE_DASH,
                 lineWidth: resolvedLineWidth,
               })
             : new HorizontalPriceLinePrimitive({
                 price,
                 label,
                 color: lineColor,
-                lineDash: obj.line_style === "dot" ? [2, 2] : [],
+                lineDash: ARTIFACT_LINE_DASH,
                 lineWidth: resolvedLineWidth,
               });
           candleSeries.attachPrimitive(linePrimitive);
@@ -3314,9 +4130,9 @@ export default function TradeSignalChart({
             const sharedLine = candleSeries.createPriceLine({
               price,
               color: lineColor,
-              lineWidth: resolvedLineWidth,
+              lineWidth: 1,
               lineStyle,
-              lineVisible: true,
+              lineVisible: false,
               axisLabelVisible: extendToPriceScale,
               title: extendToPriceScale ? label : "",
             });
@@ -3334,21 +4150,56 @@ export default function TradeSignalChart({
           const timeSec = toEpochSec(obj.time ?? obj.anchorTimeMs);
           const price = Number(obj.price ?? obj.anchorPrice);
           if (Number.isFinite(price) && Number.isFinite(timeSec)) {
+            const tooltipPayload =
+              obj?.artifact_family === "strategy"
+                ? buildStrategyMarkerTooltipHtml(obj?.artifact_payload || obj)
+                : renderTooltipCardHtml({
+                    title: compactTooltipText(
+                      label || obj.marker_text || obj.type || "Marker",
+                      "Marker",
+                    ),
+                    subtitle: compactTooltipText(obj?.source_tf || obj?.tf || "", ""),
+                    sections: [
+                      {
+                        label: "Type",
+                        value: compactTooltipText(
+                          obj?.artifact_type || obj?.type || obj?.artifact_group || "",
+                          "point",
+                        ),
+                      },
+                      {
+                        label: "Price",
+                        value: formatPriceWithPrecision(price, pricePrecisionRef.current),
+                      },
+                      {
+                        label: "Time",
+                        value: formatMarkerTimeLabel(timeSec),
+                      },
+                    ],
+                  });
             const pointPrimitive = new EventTimeMarkerPrimitive({
               timeSec,
               price,
               color: lineColor,
               text: String(label || obj.marker_text || obj.type || "").trim(),
               placement: String(obj.marker_position || "belowBar"),
+              shape: String(obj.marker_shape || "auto"),
             });
             candleSeries.attachPrimitive(pointPrimitive);
             sharedOverlayPrimitivesRef.current.push(pointPrimitive);
+            registerHoverMarker({
+              id: String(obj?.id || `shared-point-${timeSec}-${price}`),
+              overlayType: "shared-point",
+              timeSec,
+              price,
+              tooltipHtml: tooltipPayload,
+            });
           } else if (Number.isFinite(price)) {
             const pointPrimitive = new HorizontalPriceLinePrimitive({
               price,
               label: label || obj.type || `P${idx + 1}`,
               color: lineColor,
-              lineDash: obj.line_style === "dot" ? [4, 4] : [],
+              lineDash: ARTIFACT_LINE_DASH,
               lineWidth: rawLineWidth,
             });
             candleSeries.attachPrimitive(pointPrimitive);
@@ -3356,8 +4207,9 @@ export default function TradeSignalChart({
             const sharedLine = candleSeries.createPriceLine({
               price,
               color: lineColor,
-              lineWidth: rawLineWidth,
+              lineWidth: 1,
               lineStyle,
+              lineVisible: false,
               axisLabelVisible: false,
               title: "",
             });
@@ -3398,8 +4250,8 @@ export default function TradeSignalChart({
             lineColor,
             fillColor: zoneFillColor,
             extendRight: !Number.isFinite(endTimeSec),
-            lineDash: isFvg ? [] : obj.line_style === "dot" ? [3, 3] : [],
-            lineWidth: isFvg ? 0 : isOb ? 0.25 : 0.5,
+            lineDash: isFvg ? [] : ARTIFACT_LINE_DASH,
+            lineWidth: isFvg ? 0 : isOb ? ARTIFACT_ZONE_LINE_WIDTH : 0.25,
             shadowBlur: isFvg ? 8 : isOb ? 10 : 0,
             shadowColor: isFvg
               ? withAlpha(lineColor, "14")
@@ -3416,7 +4268,14 @@ export default function TradeSignalChart({
       lastSharedOverlayRenderSignatureRef.current = nextRenderSignature;
       return true;
     },
-    [clearSharedOverlayArtifacts, sharedLinesSignature, sharedObjectsSignature],
+    [
+      buildStrategyMarkerTooltipHtml,
+      clearSharedOverlayArtifacts,
+      formatMarkerTimeLabel,
+      registerHoverMarker,
+      sharedLinesSignature,
+      sharedObjectsSignature,
+    ],
   );
 
   const clearCandleHoverPriceLine = useCallback(() => {
@@ -3503,6 +4362,17 @@ export default function TradeSignalChart({
   const rsiHoverPriceLineRef = indicatorHoverPriceLinesRef;
   const clearRsiHoverPriceLine = clearIndicatorHoverPriceLines;
   const setRsiHoverPriceLine = setIndicatorHoverGuides;
+
+  const clearIndicatorSeriesData = useCallback(() => {
+    Object.values(indicatorSeriesRefs.current || {}).forEach((series) => {
+      if (!series) return;
+      try {
+        series.setData([]);
+      } catch {}
+    });
+    indicatorDataRef.current = {};
+    setIndicatorValues({});
+  }, []);
 
   const updatePlanOverlays = useCallback(
     (snapshotOverride = effectiveAnalysisSnapshot) => {
@@ -3856,6 +4726,25 @@ export default function TradeSignalChart({
         });
         candleSeries.attachPrimitive(createdMarkerPrimitive);
         tradeOverlayPrimitivesRef.current.push(createdMarkerPrimitive);
+        registerHoverMarker({
+          id: `trade-created-${String(overlayTrade?.sid || effectiveTradeLabel || createdTs)}`,
+          overlayType: "trade-event",
+          timeSec: Number(createdTs),
+          price: Number(createdMarkerPrice),
+          tooltipHtml: buildTradeMarkerTooltipHtml({
+            trade: overlayTrade || {
+              side: effectiveSide,
+              tradeLabel: effectiveTradeLabel,
+              entry: effectiveEntryPrice,
+              sl: slPrice,
+              tp: tp1Price ?? tpPrice,
+              createdAtSec: normalizedCreatedAtEpochSec,
+            },
+            markerKind: "trade_created",
+            markerLabel: buildTradeCreatedLabel(effectiveTradeLabel, effectiveSide),
+            eventTimeSec: Number(createdTs),
+          }),
+        });
       }
 
       if (Number.isFinite(openedTs)) {
@@ -3899,7 +4788,60 @@ export default function TradeSignalChart({
           });
           candleSeries.attachPrimitive(openedMarkerPrimitive);
           tradeOverlayPrimitivesRef.current.push(openedMarkerPrimitive);
+          registerHoverMarker({
+            id: `trade-opened-${String(overlayTrade?.sid || effectiveTradeLabel || openedTs)}`,
+            overlayType: "trade-event",
+            timeSec: Number(openedTs),
+            price: Number(openedMarkerPrice),
+            tooltipHtml: buildTradeMarkerTooltipHtml({
+              trade: overlayTrade || {
+                side: effectiveSide,
+                tradeLabel: effectiveTradeLabel,
+                entry: effectiveEntryPrice,
+                sl: slPrice,
+                tp: tp1Price ?? tpPrice,
+                openedAtSec: effectiveOpenedAtEpochSec,
+              },
+              markerKind: "trade_opened",
+              markerLabel: buildTradeOpenedLabel(),
+              eventTimeSec: Number(openedTs),
+            }),
+          });
         }
+      }
+
+      const selectedStatusUpper = normalizeTradeStatusKey(effectiveCloseStatus);
+      const selectedIsClosed =
+        isClosedTradeStatus(selectedStatusUpper) &&
+        Number.isFinite(Number(effectiveClosedAtEpochSec)) &&
+        Number(effectiveClosedAtEpochSec) > 0;
+      const selectedProjectedStartTimeSec =
+        Number.isFinite(Number(openedTs)) && Number(openedTs) > 0
+          ? Number(openedTs)
+          : Number.isFinite(Number(createdTs)) && Number(createdTs) > 0
+            ? Number(createdTs)
+            : null;
+      const selectedLatestBarTimeSec =
+        Number(candles[candles.length - 1]?.time || 0) || null;
+      if (
+        !selectedIsClosed &&
+        Number.isFinite(Number(selectedProjectedStartTimeSec)) &&
+        Number(selectedProjectedStartTimeSec) > 0
+      ) {
+        const selectedProjectedSpecs = buildTradeBoxSpecs({
+          entryPrice: effectiveEntryPrice,
+          tpPrice: tp1Price ?? tpPrice,
+          slPrice,
+          status: effectiveCloseStatus,
+          pnlRealized: effectivePnlRealized,
+          startTimeSec: Number(selectedProjectedStartTimeSec),
+          latestBarTimeSec: selectedLatestBarTimeSec,
+        });
+        attachTradeBoxSpecs(
+          candleSeries,
+          tradeOverlayPrimitivesRef,
+          selectedProjectedSpecs,
+        );
       }
 
       if (Number.isFinite(effectiveClosedAtEpochSec)) {
@@ -3908,6 +4850,15 @@ export default function TradeSignalChart({
           effectiveClosedAtEpochSec,
           interval,
         );
+        const fallbackSelectedCloseTs =
+          Number(candles[candles.length - 1]?.time || 0) || null;
+        const resolvedSelectedCloseTs =
+          Number.isFinite(Number(closeTs)) && Number(closeTs) > 0
+            ? Number(closeTs)
+            : Number.isFinite(Number(fallbackSelectedCloseTs)) &&
+                Number(fallbackSelectedCloseTs) > 0
+              ? Number(fallbackSelectedCloseTs)
+              : null;
         const closeBadge = resolveTradeBadgeMeta({
           side: effectiveSide,
           closeStatus: effectiveCloseStatus,
@@ -3987,6 +4938,28 @@ export default function TradeSignalChart({
           });
           candleSeries.attachPrimitive(closeMarkerPrimitive);
           tradeOverlayPrimitivesRef.current.push(closeMarkerPrimitive);
+          registerHoverMarker({
+            id: `trade-closed-${String(overlayTrade?.sid || effectiveTradeLabel || closeTs)}`,
+            overlayType: "trade-event",
+            timeSec: Number(closeTs),
+            price: Number(closeMarkerPrice),
+            tooltipHtml: buildTradeMarkerTooltipHtml({
+              trade: overlayTrade || {
+                side: effectiveSide,
+                tradeLabel: effectiveTradeLabel,
+                entry: effectiveEntryPrice,
+                exitPrice: resolvedCloseBadgePrice,
+                sl: slPrice,
+                tp: tp1Price ?? tpPrice,
+                closedAtSec: effectiveClosedAtEpochSec,
+                pnlRealized: effectivePnlRealized,
+                closeStatus: effectiveCloseStatus,
+              },
+              markerKind: "trade_closed",
+              markerLabel: closeBadge.label || "Closed",
+              eventTimeSec: Number(closeTs),
+            }),
+          });
         }
 
         if (Number.isFinite(closeLine?.value)) {
@@ -4001,6 +4974,30 @@ export default function TradeSignalChart({
             axisLabelTextColor: "#ffffff",
           });
           tradeOverlayPriceLinesRef.current.push(closePriceLine);
+        }
+
+        if (
+          selectedIsClosed &&
+          Number.isFinite(Number(openedTs)) &&
+          Number(openedTs) > 0 &&
+          Number.isFinite(Number(resolvedSelectedCloseTs)) &&
+          Number(resolvedSelectedCloseTs) > 0
+        ) {
+          const selectedClosedSpecs = buildTradeBoxSpecs({
+            entryPrice: effectiveEntryPrice,
+            tpPrice: tp1Price ?? tpPrice,
+            slPrice,
+            status: effectiveCloseStatus,
+            pnlRealized: effectivePnlRealized,
+            startTimeSec: Number(openedTs),
+            closedTimeSec: Number(resolvedSelectedCloseTs),
+            latestBarTimeSec: selectedLatestBarTimeSec,
+          });
+          attachTradeBoxSpecs(
+            candleSeries,
+            tradeOverlayPrimitivesRef,
+            selectedClosedSpecs,
+          );
         }
 
         if (
@@ -4048,6 +5045,9 @@ export default function TradeSignalChart({
       isReplayActive,
       normalizedCreatedAtEpochSec,
       overlayTrade?.rMultiple,
+      overlayTrade?.sid,
+      buildTradeMarkerTooltipHtml,
+      registerHoverMarker,
       replayClockTimeSec,
       slPrice,
       tp1Price,
@@ -4588,8 +5588,47 @@ export default function TradeSignalChart({
       // --- Price line tooltip ---
       const tooltipEl = document.createElement("div");
       tooltipEl.style.cssText =
-        `display:none;position:absolute;z-index:100;background:${theme.panel};color:${theme.text};padding:4px 8px;border-radius:4px;font-size:11px;pointer-events:none;white-space:nowrap;border:1px solid ${theme.border};`;
+        `display:none;position:absolute;z-index:100;background:${theme.panel};color:${theme.text};padding:8px 10px;border-radius:8px;font-size:11px;pointer-events:none;white-space:normal;border:1px solid ${theme.border};box-shadow:0 14px 32px rgba(2,6,23,0.45);max-width:360px;`;
       chartElement.appendChild(tooltipEl);
+
+      const placeTooltip = (leftPx, topPx) => {
+        const bounds = chartElement.getBoundingClientRect();
+        const maxLeft = Math.max(8, bounds.width - tooltipEl.offsetWidth - 8);
+        const maxTop = Math.max(8, bounds.height - tooltipEl.offsetHeight - 8);
+        tooltipEl.style.left = `${Math.min(Math.max(leftPx, 8), maxLeft)}px`;
+        tooltipEl.style.top = `${Math.min(Math.max(topPx, 8), maxTop)}px`;
+      };
+
+      const handleMarkerHover = (param) => {
+        if (!param?.point || !candleSeries) return false;
+        const markers = hoverMarkersRef.current;
+        if (!Array.isArray(markers) || !markers.length) return false;
+        const timeScale = chart.timeScale();
+        let closest = null;
+        let closestScore = Infinity;
+        for (const marker of markers) {
+          const x = timeScale.timeToCoordinate(Number(marker?.timeSec));
+          const y = candleSeries.priceToCoordinate(Number(marker?.price));
+          if (x == null || y == null) continue;
+          const dx = Math.abs(Number(param.point.x) - Number(x));
+          const dy = Math.abs(Number(param.point.y) - Number(y));
+          if (dx > 24 || dy > 38) continue;
+          const score = dx * 1.15 + dy;
+          if (score < closestScore) {
+            closestScore = score;
+            closest = { ...marker, x, y };
+          }
+        }
+        if (!closest) return false;
+        tooltipEl.style.display = "block";
+        tooltipEl.innerHTML =
+          closest.tooltipHtml ||
+          renderTooltipCardHtml({
+            title: closest.tooltipText || "Marker",
+          });
+        placeTooltip(Number(param.point.x) + 14, Number(closest.y) - 18);
+        return true;
+      };
 
       const handlePriceLineHover = (param) => {
         if (!param?.point || !candleSeries) {
@@ -4610,16 +5649,26 @@ export default function TradeSignalChart({
         }
         if (closest) {
           tooltipEl.style.display = "block";
-          tooltipEl.style.left = param.point.x + 10 + "px";
-          tooltipEl.style.top = closest.y - 20 + "px";
-          tooltipEl.textContent = `${closest.label} ${closest.priceText}`;
+          tooltipEl.innerHTML = renderTooltipCardHtml({
+            title: compactTooltipText(closest.label, "Price line"),
+            sections: [
+              {
+                label: "Price",
+                value: compactTooltipText(closest.priceText, "-"),
+              },
+            ],
+          });
+          placeTooltip(Number(param.point.x) + 10, Number(closest.y) - 20);
         } else {
           tooltipEl.style.display = "none";
         }
       };
 
       chart.subscribeCrosshairMove((param) => {
-        handlePriceLineHover(param);
+        const markerVisible = handleMarkerHover(param);
+        if (!markerVisible) {
+          handlePriceLineHover(param);
+        }
         handleCrosshairMove(param);
       });
       // Remove the old subscription (replaced by combined one above)
@@ -4633,6 +5682,7 @@ export default function TradeSignalChart({
       // 3. Fetch History + Start Live
       async function initData() {
         hoverPriceLinesRef.current.lines = [];
+        hoverMarkersRef.current = [];
         clearPlanPriceLines();
         clearTradeOverlayArtifacts();
         let snapshot = effectiveAnalysisSnapshot;
@@ -4683,14 +5733,7 @@ export default function TradeSignalChart({
             try {
               candleSeries.setData([]);
             } catch {}
-            Object.values(indicatorSeriesRefs.current || {}).forEach((series) => {
-              if (!series) return;
-              try {
-                series.setData([]);
-              } catch {}
-            });
-            indicatorDataRef.current = {};
-            setIndicatorValues({});
+            clearIndicatorSeriesData();
             console.warn(
               `No chart bars available for ${String(symbol || "").toUpperCase() || "symbol"} ${String(interval || "").trim() || "timeframe"} from historicalData, snapshot, or cache.`,
             );
@@ -4777,6 +5820,7 @@ export default function TradeSignalChart({
                 : cachedIndicators
                   ? { ...computedIndicators, ...cachedIndicators }
                   : computedIndicators;
+              clearIndicatorSeriesData();
               Object.entries(builtIndicators).forEach(([key, data]) => {
                 const targetSeries = indicatorSeriesRefs.current?.[key];
                 if (!targetSeries || !Array.isArray(data) || !data.length) return;
@@ -4800,8 +5844,7 @@ export default function TradeSignalChart({
                 setIndicatorValues({});
               }
             } else {
-              indicatorDataRef.current = {};
-              setIndicatorValues({});
+              clearIndicatorSeriesData();
             }
 
             // --- ENTRY / TP / SL for all plans ---
@@ -5458,6 +6501,7 @@ export default function TradeSignalChart({
         clearCandleHoverPriceLine();
         clearIndicatorHoverPriceLines();
         hoverPriceLinesRef.current.lines = [];
+        hoverMarkersRef.current = [];
         chartRef.current = null;
         seriesRef.current = null;
         indicatorSeriesRefs.current = {};
@@ -5511,6 +6555,7 @@ export default function TradeSignalChart({
     clearSharedOverlayArtifacts,
     clearCandleHoverPriceLine,
     clearIndicatorHoverPriceLines,
+    clearIndicatorSeriesData,
     setCandleHoverGuide,
     setIndicatorHoverGuides,
     isReplayActive,
@@ -5659,6 +6704,7 @@ export default function TradeSignalChart({
         : cachedIndicators
           ? { ...computedIndicators, ...cachedIndicators }
           : computedIndicators;
+      clearIndicatorSeriesData();
       Object.entries(builtIndicators).forEach(([key, data]) => {
         const targetSeries = indicatorSeriesRefs.current?.[key];
         if (!targetSeries || !Array.isArray(data) || !data.length) return;
@@ -5682,8 +6728,7 @@ export default function TradeSignalChart({
         setIndicatorValues({});
       }
     } else {
-      indicatorDataRef.current = {};
-      setIndicatorValues({});
+      clearIndicatorSeriesData();
     }
 
     renderSharedOverlayArtifacts({
@@ -5712,6 +6757,7 @@ export default function TradeSignalChart({
       requestAnimationFrame(restoreViewport);
     }
   }, [
+    clearIndicatorSeriesData,
     historicalData,
     historicalDataSignature,
     symbol,
@@ -5749,6 +6795,7 @@ export default function TradeSignalChart({
 
   useEffect(() => {
     if (!chartRef.current || !currentBarsRef.current?.length) return;
+    if (isReplayActive) return;
     const nextSignature = [
       chartId,
       interval,
@@ -5813,6 +6860,7 @@ export default function TradeSignalChart({
     preferTradeAnchoredViewport,
     autoFitNonce,
     debugChartLog,
+    isReplayActive,
   ]);
 
   useEffect(() => {

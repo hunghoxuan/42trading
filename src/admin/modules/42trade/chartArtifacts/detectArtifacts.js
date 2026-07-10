@@ -327,6 +327,232 @@ function buildSwingLevelItems(bars = [], timeframe = "", pivot = 5) {
     .slice(-80);
 }
 
+function computeRsiSeries(bars = [], period = 14) {
+  const source = Array.isArray(bars) ? bars : [];
+  if (!source.length) return [];
+  const closes = source.map((bar) => Number(bar?.close)).filter((value) => Number.isFinite(value));
+  if (!closes.length) return new Array(source.length).fill(null);
+  const output = new Array(source.length).fill(null);
+  if (closes.length <= period) return output;
+  let gainSum = 0;
+  let lossSum = 0;
+  for (let index = 1; index <= period; index += 1) {
+    const delta = closes[index] - closes[index - 1];
+    if (delta >= 0) gainSum += delta;
+    else lossSum += Math.abs(delta);
+  }
+  let avgGain = gainSum / period;
+  let avgLoss = lossSum / period;
+  const firstRs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+  output[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + firstRs);
+  for (let index = period + 1; index < closes.length; index += 1) {
+    const delta = closes[index] - closes[index - 1];
+    const gain = delta > 0 ? delta : 0;
+    const loss = delta < 0 ? Math.abs(delta) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    const rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+    output[index] = avgLoss === 0 ? 100 : 100 - 100 / (1 + rs);
+  }
+  return output;
+}
+
+function buildRecentStructurePivots(bars = [], pivot = 5) {
+  const effectivePivot = resolveAdaptiveStructurePivot(bars, pivot);
+  const recentBarRanges = (Array.isArray(bars) ? bars : [])
+    .slice(-40)
+    .map((bar) => candleRangeSize(bar))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const tolerance = Math.max((medianNumber(recentBarRanges) || 1) * 0.03, 0.0000001);
+  return classifyStructurePivots(
+    buildZigZagPivotPoints(bars, effectivePivot),
+    tolerance,
+  );
+}
+
+function buildTrendlineItems(bars = [], timeframe = "", pivot = 5) {
+  const pivots = buildRecentStructurePivots(bars, pivot);
+  const lows = pivots.filter((item) => item?.type === "swing_low").slice(-3);
+  const highs = pivots.filter((item) => item?.type === "swing_high").slice(-3);
+  const out = [];
+  const latestLow = lows[lows.length - 1];
+  const previousLow = lows[lows.length - 2];
+  if (
+    latestLow &&
+    previousLow &&
+    Number(latestLow.price) > Number(previousLow.price)
+  ) {
+    const slope = (Number(latestLow.price) - Number(previousLow.price))
+      / Math.max(1, Number(latestLow.time) - Number(previousLow.time));
+    out.push(
+      normalizeChartArtifactItem({
+        id: buildItemId(["trendline", timeframe, "support", previousLow.time, latestLow.time]),
+        family: "trendline",
+        type: "trendline_support",
+        subtype: "bullish",
+        label: "Bull Trendline",
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: "BUY",
+        price: latestLow.price,
+        anchor_time: latestLow.time,
+        bar_start: previousLow.time,
+        bar_end: latestLow.time,
+        metrics: {
+          slope,
+        },
+        payload: {
+          from_time: Number(previousLow.time),
+          from_price: Number(previousLow.price),
+          to_time: Number(latestLow.time),
+          to_price: Number(latestLow.price),
+          pivot_strength: pivot,
+          previous_tag: String(previousLow?.structureTag || "").trim().toLowerCase(),
+          current_tag: String(latestLow?.structureTag || "").trim().toLowerCase(),
+        },
+      }),
+    );
+  }
+  const latestHigh = highs[highs.length - 1];
+  const previousHigh = highs[highs.length - 2];
+  if (
+    latestHigh &&
+    previousHigh &&
+    Number(latestHigh.price) < Number(previousHigh.price)
+  ) {
+    const slope = (Number(latestHigh.price) - Number(previousHigh.price))
+      / Math.max(1, Number(latestHigh.time) - Number(previousHigh.time));
+    out.push(
+      normalizeChartArtifactItem({
+        id: buildItemId(["trendline", timeframe, "resistance", previousHigh.time, latestHigh.time]),
+        family: "trendline",
+        type: "trendline_resistance",
+        subtype: "bearish",
+        label: "Bear Trendline",
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: "SELL",
+        price: latestHigh.price,
+        anchor_time: latestHigh.time,
+        bar_start: previousHigh.time,
+        bar_end: latestHigh.time,
+        metrics: {
+          slope,
+        },
+        payload: {
+          from_time: Number(previousHigh.time),
+          from_price: Number(previousHigh.price),
+          to_time: Number(latestHigh.time),
+          to_price: Number(latestHigh.price),
+          pivot_strength: pivot,
+          previous_tag: String(previousHigh?.structureTag || "").trim().toLowerCase(),
+          current_tag: String(latestHigh?.structureTag || "").trim().toLowerCase(),
+        },
+      }),
+    );
+  }
+  return out.slice(-2);
+}
+
+function buildRsiDivergenceItems(bars = [], timeframe = "", pivot = 5) {
+  const source = Array.isArray(bars) ? bars : [];
+  if (source.length < 24) return [];
+  const pivots = buildRecentStructurePivots(source, pivot);
+  const rsiSeries = computeRsiSeries(source, 14);
+  const rsiByTime = new Map(
+    source.map((bar, index) => [Number(bar?.time), Number(rsiSeries[index])]),
+  );
+  const lows = pivots.filter((item) => item?.type === "swing_low").slice(-3);
+  const highs = pivots.filter((item) => item?.type === "swing_high").slice(-3);
+  const out = [];
+
+  const latestLow = lows[lows.length - 1];
+  const previousLow = lows[lows.length - 2];
+  const latestLowRsi = Number(rsiByTime.get(Number(latestLow?.time)));
+  const previousLowRsi = Number(rsiByTime.get(Number(previousLow?.time)));
+  if (
+    latestLow &&
+    previousLow &&
+    Number.isFinite(latestLowRsi) &&
+    Number.isFinite(previousLowRsi) &&
+    Number(latestLow.price) < Number(previousLow.price) &&
+    latestLowRsi > previousLowRsi + 2
+  ) {
+    out.push(
+      normalizeChartArtifactItem({
+        id: buildItemId(["divergence", timeframe, "bullish_rsi", previousLow.time, latestLow.time]),
+        family: "divergence",
+        type: "bullish_divergence",
+        subtype: "rsi",
+        label: "Bullish RSI Divergence",
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: "BUY",
+        price: latestLow.price,
+        anchor_time: latestLow.time,
+        bar_start: previousLow.time,
+        bar_end: latestLow.time,
+        payload: {
+          from_time: Number(previousLow.time),
+          from_price: Number(previousLow.price),
+          to_time: Number(latestLow.time),
+          to_price: Number(latestLow.price),
+          indicator: "rsi",
+          indicator_previous: previousLowRsi,
+          indicator_current: latestLowRsi,
+          divergence_class: "regular_bullish",
+        },
+      }),
+    );
+  }
+
+  const latestHigh = highs[highs.length - 1];
+  const previousHigh = highs[highs.length - 2];
+  const latestHighRsi = Number(rsiByTime.get(Number(latestHigh?.time)));
+  const previousHighRsi = Number(rsiByTime.get(Number(previousHigh?.time)));
+  if (
+    latestHigh &&
+    previousHigh &&
+    Number.isFinite(latestHighRsi) &&
+    Number.isFinite(previousHighRsi) &&
+    Number(latestHigh.price) > Number(previousHigh.price) &&
+    latestHighRsi < previousHighRsi - 2
+  ) {
+    out.push(
+      normalizeChartArtifactItem({
+        id: buildItemId(["divergence", timeframe, "bearish_rsi", previousHigh.time, latestHigh.time]),
+        family: "divergence",
+        type: "bearish_divergence",
+        subtype: "rsi",
+        label: "Bearish RSI Divergence",
+        timeframe,
+        source: "derived",
+        origin: "bars",
+        direction: "SELL",
+        price: latestHigh.price,
+        anchor_time: latestHigh.time,
+        bar_start: previousHigh.time,
+        bar_end: latestHigh.time,
+        payload: {
+          from_time: Number(previousHigh.time),
+          from_price: Number(previousHigh.price),
+          to_time: Number(latestHigh.time),
+          to_price: Number(latestHigh.price),
+          indicator: "rsi",
+          indicator_previous: previousHighRsi,
+          indicator_current: latestHighRsi,
+          divergence_class: "regular_bearish",
+        },
+      }),
+    );
+  }
+
+  return out.slice(-2);
+}
+
 function utcDayKeyFromUnixSec(value) {
   const sec = Number(value);
   if (!Number.isFinite(sec) || sec <= 0) return "";
@@ -1008,6 +1234,8 @@ function shouldLimitArtifactType(type = "", family = "") {
   const normalizedFamily = String(family || "").trim().toLowerCase();
   if (normalizedFamily === "pattern") return false;
   if (normalizedFamily === "swing") return false;
+  if (normalizedFamily === "trendline") return false;
+  if (normalizedFamily === "divergence") return false;
   if (normalizedType === "swing_high" || normalizedType === "swing_low") return false;
   if (normalizedType === "bos" || normalizedType === "choch") return false;
   if (normalizedType === "sweep_high" || normalizedType === "sweep_low") return false;
@@ -1076,6 +1304,8 @@ function buildDerivedItemsFromBars(bars = [], timeframe = "") {
       ...buildStructureBreakItems(normalizedBars, timeframe),
       ...buildFvgZoneItems(normalizedBars, timeframe),
       ...buildOrderBlockItems(normalizedBars, timeframe),
+      ...buildTrendlineItems(normalizedBars, timeframe),
+      ...buildRsiDivergenceItems(normalizedBars, timeframe),
       ...buildCandlePatternItems(normalizedBars, timeframe),
     ]),
     normalizedBars,

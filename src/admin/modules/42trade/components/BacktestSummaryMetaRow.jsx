@@ -15,6 +15,7 @@ export default function BacktestSummaryMetaRow({
   leadTone = "var(--muted)",
   winRateValue = null,
   rrValue = null,
+  totalPnlValue = null,
   rangeLabel = "",
   title = "",
 }) {
@@ -22,6 +23,7 @@ export default function BacktestSummaryMetaRow({
   const resolvedRange = String(rangeLabel || "").trim();
   const safeWinRate = Number(winRateValue);
   const safeRr = Number(rrValue);
+  const safeTotalPnl = Number(totalPnlValue);
 
   return (
     <div
@@ -53,6 +55,16 @@ export default function BacktestSummaryMetaRow({
       >
         RR {formatSummaryNumber(safeRr, 1)}
       </span>
+      {Number.isFinite(safeTotalPnl) ? (
+        <span
+          style={{
+            fontWeight: 700,
+            color: metricColor(safeTotalPnl, 0),
+          }}
+        >
+          ${formatSummaryNumber(safeTotalPnl, 0)}
+        </span>
+      ) : null}
       <span>{resolvedRange || "Data -"}</span>
     </div>
   );

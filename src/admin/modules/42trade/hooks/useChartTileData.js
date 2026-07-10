@@ -14,6 +14,8 @@ import {
 const DEFAULT_BARS_COUNT = 2000;
 const MAX_CHART_HISTORY_BARS = 20000;
 const BROKER_HISTORY_PAGE_SIZE = 5000;
+const DEFAULT_TIMEFRAMES = Object.freeze(["D", "4H", "15M", "5M"]);
+const EMPTY_ATTACHED_SNAPSHOT_FILES = Object.freeze([]);
 
 function tfNorm(tf) {
   return String(tf || "")
@@ -257,7 +259,7 @@ function applyStreamLifecycleState(topic, error = null) {
 
 export function useSymbolChartData({
   symbol,
-  timeframes = ["D", "4H", "15M", "5M"],
+  timeframes = DEFAULT_TIMEFRAMES,
   mode = "fixed",
   liveBars = true,
   barsCount = DEFAULT_BARS_COUNT,
@@ -267,7 +269,7 @@ export function useSymbolChartData({
   provider = "ICMARKETS",
   sessionPrefix = "",
   profile = "day",
-  attachedSnapshotFiles = [],
+  attachedSnapshotFiles = EMPTY_ATTACHED_SNAPSHOT_FILES,
   tradeSid = "",
   endTimeSec = null,
 }) {
@@ -487,11 +489,74 @@ export function useSymbolChartData({
         }
       } else {
         // Cache mode: fetch bars per TF via Twelve Data (parallel)
+        const hasAnchoredEndTime =
+          Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0;
+        const requestMetaByTf = new Map(
+          tfs.map((tf) => {
+            const key = tfNorm(tf);
+            const requestedBars =
+              normalizedBarsCountByTf[key] || barsForTf(tf, barsCount, profile);
+            return [key, { tf, key, requestedBars }];
+          }),
+        );
+        let forcedBatchCandlesByTf = new Map();
+        if (force && tfs.length > 1) {
+          forcedBatchCandlesByTf = new Map(
+            (
+              await Promise.all(
+                tfs.map(async (tf) => {
+                  const key = tfNorm(tf);
+                  const requestedBars =
+                    requestMetaByTf.get(key)?.requestedBars ||
+                    barsForTf(tf, barsCount, profile);
+                  try {
+                    const response = await api.chartCandles(
+                      sym,
+                      tf,
+                      requestedBars,
+                      true,
+                      tradeSid,
+                      "latest",
+                      hasAnchoredEndTime ? endTimeSec : null,
+                    );
+                    return [key, { ...response, timeframe: tf, tf }];
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter(Boolean),
+          );
+        }
+        let anchoredBrokerBarsByTf = new Map();
+        if (hasAnchoredEndTime && tfs.length > 1) {
+          anchoredBrokerBarsByTf = new Map(
+            (
+              await Promise.all(
+                tfs.map(async (tf) => {
+                  const key = tfNorm(tf);
+                  const requestedBars =
+                    requestMetaByTf.get(key)?.requestedBars ||
+                    barsForTf(tf, barsCount, profile);
+                  try {
+                    const response = await api.brokerBars(
+                      sym,
+                      tf,
+                      requestedBars,
+                      Number(endTimeSec),
+                    );
+                    return [key, { ...response, timeframe: tf, tf }];
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter(Boolean),
+          );
+        }
         const results = await Promise.allSettled(
           tfs.map(async (tf) => {
             const key = tfNorm(tf);
-            const hasAnchoredEndTime =
-              Number.isFinite(Number(endTimeSec)) && Number(endTimeSec) > 0;
             try {
               if (!force && !hasAnchoredEndTime) {
                 const local = chartFetchManager.get(sym, tf);
@@ -522,11 +587,15 @@ export function useSymbolChartData({
                 }
               }
               const requestedBars =
-                normalizedBarsCountByTf[key] || barsForTf(tf, barsCount, profile);
+                requestMetaByTf.get(key)?.requestedBars ||
+                normalizedBarsCountByTf[key] ||
+                barsForTf(tf, barsCount, profile);
               let out = null;
               let snap = null;
+              const forcedBatchItem = forcedBatchCandlesByTf.get(key) || null;
+              const anchoredBrokerBatchItem = anchoredBrokerBarsByTf.get(key) || null;
               if (hasAnchoredEndTime) {
-                if (force) {
+                if (force && !forcedBatchItem) {
                   Promise.resolve(
                     api.chartCandles(
                       sym,
@@ -538,7 +607,10 @@ export function useSymbolChartData({
                     ),
                   ).catch(() => null);
                 }
-                out = await api.brokerBars(sym, tf, requestedBars, endTimeSec);
+                out =
+                  anchoredBrokerBatchItem?.ok === true
+                    ? anchoredBrokerBatchItem
+                    : await api.brokerBars(sym, tf, requestedBars, endTimeSec);
                 const normalizedBars = Array.isArray(out?.bars)
                   ? out.bars.map((bar) => ({
                       time: Number(bar?.t ?? bar?.time),
@@ -566,8 +638,12 @@ export function useSymbolChartData({
                   source: out?.source || "broker_bars_anchored",
                   cached_at: out?.cached_at || Date.now(),
                 };
+                if (forcedBatchItem?.ok && forcedBatchItem?.snapshot) {
+                  out = forcedBatchItem;
+                  snap = forcedBatchItem.snapshot;
+                }
               } else {
-                if (force) {
+                if (force && !forcedBatchItem) {
                   Promise.resolve(
                     api.chartCandles(
                       sym,
@@ -626,17 +702,22 @@ export function useSymbolChartData({
                   }
                 }
                 if (!Array.isArray(snap?.bars) || snap.bars.length === 0) {
-                  out = await api.chartCandles(
-                    sym,
-                    tf,
-                    requestedBars,
-                    false,
-                    tradeSid,
-                  );
-                  snap =
-                    out?.snapshot && typeof out.snapshot === "object"
-                      ? out.snapshot
-                      : null;
+                  if (forcedBatchItem?.ok && forcedBatchItem?.snapshot) {
+                    out = forcedBatchItem;
+                    snap = forcedBatchItem.snapshot;
+                  } else {
+                    out = await api.chartCandles(
+                      sym,
+                      tf,
+                      requestedBars,
+                      false,
+                      tradeSid,
+                    );
+                    snap =
+                      out?.snapshot && typeof out.snapshot === "object"
+                        ? out.snapshot
+                        : null;
+                  }
                 }
               }
               const tfData = {
@@ -833,6 +914,11 @@ export function useSymbolChartData({
       const previousChartBars = Array.isArray(previousEntry?.bars)
         ? previousEntry.bars.length
         : 0;
+      const previousFirstBarSec =
+        Array.isArray(previousEntry?.bars) && previousEntry.bars.length
+          ? Number(previousEntry.bars[0]?.time || 0) || 0
+          : 0;
+      const tfSeconds = Math.max(60, tfRankMinutes(tfKey) * 60 || 60);
       let historyTopic = "";
       let historyRequestKey = "";
       let historyRequestRange = null;
@@ -864,7 +950,6 @@ export function useSymbolChartData({
             const previousBars = Array.isArray(previousEntry?.bars) ? previousEntry.bars : [];
             const firstLoadedBarSec = Number(previousBars[0]?.time);
             historyFirstLoadedBarSec = firstLoadedBarSec;
-            const tfSeconds = Math.max(60, tfRankMinutes(tfKey) * 60 || 60);
             const historyEndTimeSec =
               Number.isFinite(firstLoadedBarSec) && firstLoadedBarSec > tfSeconds
                 ? firstLoadedBarSec - tfSeconds
@@ -1643,6 +1728,25 @@ export function useSymbolChartData({
           const mergedChartBars = Array.isArray(historyMergedBars?.bars)
             ? historyMergedBars.bars.length
             : previousChartBars;
+          const mergedFirstBarSec =
+            Array.isArray(historyMergedBars?.bars) && historyMergedBars.bars.length
+              ? Number(historyMergedBars.bars[0]?.time || 0) || 0
+              : Array.isArray(tfData?.bars) && tfData.bars.length
+                ? Number(tfData.bars[0]?.time || 0) || 0
+                : previousFirstBarSec;
+          const extendedLeftEdge =
+            Number.isFinite(previousFirstBarSec) &&
+            previousFirstBarSec > 0 &&
+            Number.isFinite(mergedFirstBarSec) &&
+            mergedFirstBarSec > 0 &&
+            mergedFirstBarSec < previousFirstBarSec;
+          const historyExtendedBars =
+            extendedLeftEdge && tfSeconds > 0
+              ? Math.max(
+                  0,
+                  Math.round((previousFirstBarSec - mergedFirstBarSec) / tfSeconds),
+                )
+              : 0;
           const storedAddedBars = Math.max(0, nextStoredBars - previousStoredBars);
           const refreshResult = {
             tf: tfKey,
@@ -1662,6 +1766,10 @@ export function useSymbolChartData({
             remoteRefreshed: tfData?.metadata?.remote_refreshed ?? null,
             remoteReason: tfData?.metadata?.remote_reason || null,
             historyStatus: tfData?.metadata?.history_status || null,
+            previousFirstBarSec: previousFirstBarSec || null,
+            mergedFirstBarSec: mergedFirstBarSec || null,
+            extendedLeftEdge,
+            historyExtendedBars,
           };
           if (tfData.bars.length > 0) {
             debugChartHistory("refreshTf:loaded", {

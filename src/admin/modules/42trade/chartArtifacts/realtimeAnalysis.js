@@ -100,6 +100,153 @@ function median(values = []) {
   return (normalized[middle - 1] + normalized[middle]) / 2;
 }
 
+function average(values = []) {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!normalized.length) return 0;
+  return normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeEmaSeries(values = [], length = 20) {
+  const normalized = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (!normalized.length) return [];
+  const safeLength = Math.max(1, Math.round(Number(length) || 1));
+  const multiplier = 2 / (safeLength + 1);
+  const out = [];
+  let ema = normalized[0];
+  out.push(ema);
+  for (let index = 1; index < normalized.length; index += 1) {
+    ema = normalized[index] * multiplier + ema * (1 - multiplier);
+    out.push(ema);
+  }
+  return out;
+}
+
+function latestFromSeries(values = []) {
+  if (!Array.isArray(values) || !values.length) return null;
+  const value = Number(values[values.length - 1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function computeAnchoredVwap(bars = []) {
+  let cumulativeVolume = 0;
+  let cumulativeValue = 0;
+  for (const bar of Array.isArray(bars) ? bars : []) {
+    const high = Number(bar?.high);
+    const low = Number(bar?.low);
+    const close = Number(bar?.close);
+    const volume = Math.max(0, Number(bar?.volume || 0));
+    if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) continue;
+    const typical = (high + low + close) / 3;
+    const effectiveVolume = volume > 0 ? volume : 1;
+    cumulativeVolume += effectiveVolume;
+    cumulativeValue += typical * effectiveVolume;
+  }
+  if (cumulativeVolume <= 0) return null;
+  return cumulativeValue / cumulativeVolume;
+}
+
+function slopeDirection(series = [], lookback = 3) {
+  if (!Array.isArray(series) || series.length <= lookback) return "flat";
+  const latest = Number(series[series.length - 1]);
+  const previous = Number(series[series.length - 1 - lookback]);
+  if (!Number.isFinite(latest) || !Number.isFinite(previous) || latest === previous) {
+    return "flat";
+  }
+  return latest > previous ? "up" : "down";
+}
+
+function computeIndicatorSnapshot(bars = []) {
+  const closes = (Array.isArray(bars) ? bars : [])
+    .map((bar) => Number(bar?.close))
+    .filter((value) => Number.isFinite(value));
+  const lastClose = closes.length ? closes[closes.length - 1] : null;
+  const ema20Series = computeEmaSeries(closes, 20);
+  const ema50Series = computeEmaSeries(closes, 50);
+  const ema20 = latestFromSeries(ema20Series);
+  const ema50 = latestFromSeries(ema50Series);
+  const vwap = computeAnchoredVwap(bars);
+  return {
+    close: Number.isFinite(lastClose) ? lastClose : null,
+    ema_20: ema20,
+    ema_50: ema50,
+    ema_20_slope: slopeDirection(ema20Series, 3),
+    ema_50_slope: slopeDirection(ema50Series, 5),
+    vwap,
+    above_ema_20:
+      Number.isFinite(lastClose) && Number.isFinite(ema20) ? lastClose > ema20 : null,
+    above_ema_50:
+      Number.isFinite(lastClose) && Number.isFinite(ema50) ? lastClose > ema50 : null,
+    above_vwap:
+      Number.isFinite(lastClose) && Number.isFinite(vwap) ? lastClose > vwap : null,
+    ema_stack:
+      Number.isFinite(ema20) && Number.isFinite(ema50)
+        ? ema20 > ema50
+          ? "bullish"
+          : ema20 < ema50
+            ? "bearish"
+            : "flat"
+        : "flat",
+  };
+}
+
+function computeRecentStructureState(bars = []) {
+  const normalized = Array.isArray(bars) ? bars : [];
+  if (normalized.length < 8) return { state: "range", source: "insufficient_swings", score: 0 };
+  const recent = normalized.slice(-4);
+  const previous = normalized.slice(-8, -4);
+  const recentHigh = Math.max(...recent.map((bar) => Number(bar?.high)).filter((value) => Number.isFinite(value)));
+  const recentLow = Math.min(...recent.map((bar) => Number(bar?.low)).filter((value) => Number.isFinite(value)));
+  const previousHigh = Math.max(...previous.map((bar) => Number(bar?.high)).filter((value) => Number.isFinite(value)));
+  const previousLow = Math.min(...previous.map((bar) => Number(bar?.low)).filter((value) => Number.isFinite(value)));
+  if (![recentHigh, recentLow, previousHigh, previousLow].every((value) => Number.isFinite(value))) {
+    return { state: "range", source: "invalid_swings", score: 0 };
+  }
+  if (recentHigh > previousHigh && recentLow > previousLow) {
+    return { state: "up", source: "hh_hl", score: 2 };
+  }
+  if (recentHigh < previousHigh && recentLow < previousLow) {
+    return { state: "down", source: "ll_lh", score: -2 };
+  }
+  return { state: "range", source: "mixed_swings", score: 0 };
+}
+
+function zoneContext(artifacts = [], close = null) {
+  const summary = {
+    in_bullish_zone: false,
+    in_bearish_zone: false,
+    nearest_bullish_zone: null,
+    nearest_bearish_zone: null,
+  };
+  const summaries = (Array.isArray(artifacts) ? artifacts : []).map((item) => toItemSummary(item, close));
+  const bullish = summaries.filter((item) =>
+    item.bias === "bullish" &&
+    ["demand", "fvg", "ob", "support"].includes(item.type),
+  );
+  const bearish = summaries.filter((item) =>
+    item.bias === "bearish" &&
+    ["supply", "fvg", "ob", "resistance"].includes(item.type),
+  );
+  const sortByProximity = (items = []) =>
+    [...items].sort((left, right) => {
+      const leftDistance = Math.abs(Number(left?.distance));
+      const rightDistance = Math.abs(Number(right?.distance));
+      return leftDistance - rightDistance;
+    });
+  summary.nearest_bullish_zone = sortByProximity(bullish)[0] || null;
+  summary.nearest_bearish_zone = sortByProximity(bearish)[0] || null;
+  summary.in_bullish_zone = bullish.some((item) => activeZoneHit(item, close));
+  summary.in_bearish_zone = bearish.some((item) => activeZoneHit(item, close));
+  return summary;
+}
+
 function toItemSummary(item = {}, lastClose = null) {
   const low = finiteNumber(item?.price_low);
   const high = finiteNumber(item?.price_high);
@@ -153,31 +300,120 @@ function latestByTypes(artifacts = [], types = []) {
 }
 
 function computeBias(bars = [], artifacts = []) {
+  const indicators = computeIndicatorSnapshot(bars);
+  const zoneInfo = zoneContext(artifacts, indicators.close);
   const latestStructural = latestByTypes(artifacts, ["bos", "choch", "sweep_high", "sweep_low"]);
   const structuralBias = artifactBias(latestStructural);
-  if (structuralBias !== "neutral") {
-    return {
-      bias: structuralBias,
-      source: String(latestStructural?.type || "structure").trim().toLowerCase(),
-      item: latestStructural,
-    };
+  const components = [];
+  let score = 0;
+  if (structuralBias === "bullish") {
+    score += 3;
+    components.push({ name: "structure", value: "bullish", weight: 3 });
+  } else if (structuralBias === "bearish") {
+    score -= 3;
+    components.push({ name: "structure", value: "bearish", weight: -3 });
+  }
+  if (indicators.above_vwap === true) {
+    score += 1;
+    components.push({ name: "vwap", value: "above", weight: 1 });
+  } else if (indicators.above_vwap === false) {
+    score -= 1;
+    components.push({ name: "vwap", value: "below", weight: -1 });
+  }
+  if (indicators.above_ema_20 === true) {
+    score += 1;
+    components.push({ name: "ema20", value: "above", weight: 1 });
+  } else if (indicators.above_ema_20 === false) {
+    score -= 1;
+    components.push({ name: "ema20", value: "below", weight: -1 });
+  }
+  if (indicators.above_ema_50 === true) {
+    score += 1;
+    components.push({ name: "ema50", value: "above", weight: 1 });
+  } else if (indicators.above_ema_50 === false) {
+    score -= 1;
+    components.push({ name: "ema50", value: "below", weight: -1 });
+  }
+  if (indicators.ema_stack === "bullish") {
+    score += 1;
+    components.push({ name: "ema_stack", value: "bullish", weight: 1 });
+  } else if (indicators.ema_stack === "bearish") {
+    score -= 1;
+    components.push({ name: "ema_stack", value: "bearish", weight: -1 });
+  }
+  if (indicators.ema_20_slope === "up") {
+    score += 1;
+    components.push({ name: "ema20_slope", value: "up", weight: 1 });
+  } else if (indicators.ema_20_slope === "down") {
+    score -= 1;
+    components.push({ name: "ema20_slope", value: "down", weight: -1 });
+  }
+  if (zoneInfo.in_bullish_zone) {
+    score += 1;
+    components.push({ name: "active_zone", value: "bullish_zone", weight: 1 });
+  } else if (zoneInfo.in_bearish_zone) {
+    score -= 1;
+    components.push({ name: "active_zone", value: "bearish_zone", weight: -1 });
   }
   const window = bars.slice(-5);
-  if (window.length < 2) return { bias: "neutral", source: "insufficient_bars", item: null };
+  if (window.length < 2) {
+    return {
+      bias: score >= 2 ? "bullish" : score <= -2 ? "bearish" : "neutral",
+      source: structuralBias !== "neutral" ? String(latestStructural?.type || "structure").trim().toLowerCase() : "insufficient_bars",
+      item: latestStructural,
+      score,
+      strength: Math.abs(score) >= 5 ? "strong" : Math.abs(score) >= 3 ? "medium" : Math.abs(score) >= 1 ? "weak" : "neutral",
+      components,
+      indicators,
+      zones: zoneInfo,
+    };
+  }
   const firstClose = Number(window[0]?.close);
   const lastClose = Number(window[window.length - 1]?.close);
-  if (!Number.isFinite(firstClose) || !Number.isFinite(lastClose) || firstClose === lastClose) {
-    return { bias: "neutral", source: "flat_close", item: null };
+  if (Number.isFinite(firstClose) && Number.isFinite(lastClose) && firstClose !== lastClose) {
+    if (lastClose > firstClose) {
+      score += 1;
+      components.push({ name: "price_slope", value: "up", weight: 1 });
+    } else {
+      score -= 1;
+      components.push({ name: "price_slope", value: "down", weight: -1 });
+    }
   }
+  const bias = score >= 2 ? "bullish" : score <= -2 ? "bearish" : "neutral";
   return {
-    bias: lastClose > firstClose ? "bullish" : "bearish",
-    source: "price_slope",
-    item: null,
+    bias,
+    source:
+      structuralBias !== "neutral"
+        ? String(latestStructural?.type || "structure").trim().toLowerCase()
+        : indicators.ema_stack !== "flat"
+          ? "ema_stack"
+          : score === 0
+            ? "flat_close"
+            : "score",
+    item: latestStructural,
+    score,
+    strength:
+      Math.abs(score) >= 5
+        ? "strong"
+        : Math.abs(score) >= 3
+          ? "medium"
+          : Math.abs(score) >= 1
+            ? "weak"
+            : "neutral",
+    components,
+    indicators,
+    zones: zoneInfo,
   };
 }
 
 function computeTrend(bars = [], biasInfo = {}) {
-  if (bars.length < 4) return { trend: "range", source: "insufficient_bars" };
+  if (bars.length < 4) {
+    return { trend: "range", source: "insufficient_bars", score: 0, strength: "neutral", components: [] };
+  }
+  const indicators = biasInfo?.indicators || computeIndicatorSnapshot(bars);
+  const structureState = computeRecentStructureState(bars);
+  const components = [];
+  let score = 0;
   const closes = bars.slice(-8).map((bar) => Number(bar?.close)).filter((value) => Number.isFinite(value));
   const firstClose = closes[0];
   const lastClose = closes[closes.length - 1];
@@ -185,11 +421,75 @@ function computeTrend(bars = [], biasInfo = {}) {
   const avgRange = median(recentRanges) || 0;
   const drift = Number.isFinite(firstClose) && Number.isFinite(lastClose) ? lastClose - firstClose : 0;
   if (Math.abs(drift) <= Math.max(avgRange * 0.35, Math.abs(lastClose || 0) * 0.0004)) {
-    return { trend: "range", source: "compression" };
+    return {
+      trend: "range",
+      source: "compression",
+      score: 0,
+      strength: "neutral",
+      components: [{ name: "compression", value: "true", weight: 0 }],
+      structure: structureState,
+      indicators,
+    };
   }
-  if (biasInfo?.bias === "bullish") return { trend: "up", source: biasInfo.source || "bias" };
-  if (biasInfo?.bias === "bearish") return { trend: "down", source: biasInfo.source || "bias" };
-  return { trend: drift > 0 ? "up" : "down", source: "price_drift" };
+  if (biasInfo?.bias === "bullish") {
+    score += 2;
+    components.push({ name: "bias", value: "bullish", weight: 2 });
+  } else if (biasInfo?.bias === "bearish") {
+    score -= 2;
+    components.push({ name: "bias", value: "bearish", weight: -2 });
+  }
+  if (structureState.state === "up") {
+    score += 2;
+    components.push({ name: "structure", value: "hh_hl", weight: 2 });
+  } else if (structureState.state === "down") {
+    score -= 2;
+    components.push({ name: "structure", value: "ll_lh", weight: -2 });
+  }
+  if (indicators.ema_stack === "bullish") {
+    score += 1;
+    components.push({ name: "ema_stack", value: "bullish", weight: 1 });
+  } else if (indicators.ema_stack === "bearish") {
+    score -= 1;
+    components.push({ name: "ema_stack", value: "bearish", weight: -1 });
+  }
+  if (indicators.ema_20_slope === "up" && indicators.ema_50_slope !== "down") {
+    score += 1;
+    components.push({ name: "ema_slope", value: "up", weight: 1 });
+  } else if (indicators.ema_20_slope === "down" && indicators.ema_50_slope !== "up") {
+    score -= 1;
+    components.push({ name: "ema_slope", value: "down", weight: -1 });
+  }
+  if (drift > Math.max(avgRange * 0.8, Math.abs(lastClose || 0) * 0.0006)) {
+    score += 1;
+    components.push({ name: "drift", value: "up", weight: 1 });
+  } else if (drift < -Math.max(avgRange * 0.8, Math.abs(lastClose || 0) * 0.0006)) {
+    score -= 1;
+    components.push({ name: "drift", value: "down", weight: -1 });
+  }
+  const trend = score >= 3 ? "up" : score <= -3 ? "down" : "range";
+  return {
+    trend,
+    source:
+      trend === "range"
+        ? "mixed_signals"
+        : Math.abs(structureState.score) >= 2
+          ? structureState.source
+          : indicators.ema_stack !== "flat"
+            ? "ema_stack"
+            : "price_drift",
+    score,
+    strength:
+      Math.abs(score) >= 5
+        ? "strong"
+        : Math.abs(score) >= 3
+          ? "medium"
+          : trend === "range"
+            ? "neutral"
+            : "weak",
+    components,
+    structure: structureState,
+    indicators,
+  };
 }
 
 function activeZoneHit(item = {}, close = null) {
@@ -204,46 +504,81 @@ function computePhase({ bars = [], artifacts = [], bias = "neutral", trend = "ra
   const latestPattern = latestByTypes(artifacts, ["bullish_engulfing", "bearish_engulfing", "bullish_pin_bar", "bearish_pin_bar"]);
   const currentBar = bars[bars.length - 1] || null;
   const lastClose = finiteNumber(currentBar?.close);
+  const indicators = computeIndicatorSnapshot(bars);
+  const zones = zoneContext(artifacts, lastClose);
   const recentRanges = bars.slice(-8).map((bar) => candleRange(bar)).filter((value) => Number.isFinite(value) && value > 0);
   const avgRange = median(recentRanges) || 0;
   const currentRange = candleRange(currentBar);
   const body = Math.abs(Number(currentBar?.close) - Number(currentBar?.open));
   const displacement = currentRange > 0 && body / currentRange >= 0.6 && currentRange >= avgRange * 1.1;
-  const bullishZones = artifacts.filter((item) => {
-    const type = String(item?.type || "").trim().toLowerCase();
-    return (
-      artifactBias(item) === "bullish" &&
-      ["demand", "fvg", "ob", "support"].includes(type)
-    );
-  });
-  const bearishZones = artifacts.filter((item) => {
-    const type = String(item?.type || "").trim().toLowerCase();
-    return (
-      artifactBias(item) === "bearish" &&
-      ["supply", "fvg", "ob", "resistance"].includes(type)
-    );
-  });
-  const inBullishZone = bullishZones.some((item) => activeZoneHit(item, lastClose));
-  const inBearishZone = bearishZones.some((item) => activeZoneHit(item, lastClose));
+  const inBullishZone = zones.in_bullish_zone;
+  const inBearishZone = zones.in_bearish_zone;
+  const pullbackToEma20 =
+    Number.isFinite(lastClose) &&
+    Number.isFinite(indicators.ema_20) &&
+    Math.abs(lastClose - indicators.ema_20) <= Math.max(avgRange * 0.6, Math.abs(lastClose) * 0.0006);
+  const reclaimedVwapBullish =
+    bias === "bullish" &&
+    indicators.above_vwap === true &&
+    indicators.above_ema_20 === true;
+  const reclaimedVwapBearish =
+    bias === "bearish" &&
+    indicators.above_vwap === false &&
+    indicators.above_ema_20 === false;
 
   if (String(latestStructural?.type || "").trim().toLowerCase() === "choch") {
-    return { phase: "reversal", source: "choch" };
+    return { phase: "reversal", source: "choch", detail: bias === "bearish" ? "reversal_down" : bias === "bullish" ? "reversal_up" : "reversal" };
   }
   if (String(latestStructural?.type || "").trim().toLowerCase() === "bos" && displacement) {
-    return { phase: "impulse", source: "bos" };
+    return {
+      phase: "impulse",
+      source: "bos",
+      detail: trend === "down" || bias === "bearish" ? "impulse_down" : "impulse_up",
+    };
   }
-  if (bias === "bullish" && (inBullishZone || String(latestStructural?.type || "") === "sweep_low")) {
-    return { phase: "pullback", source: inBullishZone ? "bullish_zone" : "sweep_low" };
+  if (
+    bias === "bullish" &&
+    trend === "up" &&
+    (inBullishZone || pullbackToEma20 || String(latestStructural?.type || "").trim().toLowerCase() === "sweep_low")
+  ) {
+    return {
+      phase: "pullback",
+      source: inBullishZone ? "bullish_zone" : pullbackToEma20 ? "ema20_retest" : "sweep_low",
+      detail: "pullback_uptrend",
+    };
   }
-  if (bias === "bearish" && (inBearishZone || String(latestStructural?.type || "") === "sweep_high")) {
-    return { phase: "pullback", source: inBearishZone ? "bearish_zone" : "sweep_high" };
+  if (
+    bias === "bearish" &&
+    trend === "down" &&
+    (inBearishZone || pullbackToEma20 || String(latestStructural?.type || "").trim().toLowerCase() === "sweep_high")
+  ) {
+    return {
+      phase: "pullback",
+      source: inBearishZone ? "bearish_zone" : pullbackToEma20 ? "ema20_retest" : "sweep_high",
+      detail: "pullback_downtrend",
+    };
   }
   if (latestPattern && artifactBias(latestPattern) === bias && bias !== "neutral") {
-    return { phase: "continuation", source: String(latestPattern?.type || "pattern").trim().toLowerCase() };
+    return {
+      phase: "continuation",
+      source: String(latestPattern?.type || "pattern").trim().toLowerCase(),
+      detail: bias === "bearish" ? "continuation_down" : "continuation_up",
+    };
   }
-  if (trend === "range") return { phase: "consolidation", source: "range" };
-  if (bias === "neutral") return { phase: "consolidation", source: "neutral_bias" };
-  return { phase: "continuation", source: "trend_bias" };
+  if (reclaimedVwapBullish || reclaimedVwapBearish) {
+    return {
+      phase: "continuation",
+      source: "vwap_ema_reclaim",
+      detail: reclaimedVwapBearish ? "continuation_down" : "continuation_up",
+    };
+  }
+  if (trend === "range") return { phase: "consolidation", source: "range", detail: "consolidation" };
+  if (bias === "neutral") return { phase: "consolidation", source: "neutral_bias", detail: "consolidation" };
+  return {
+    phase: "continuation",
+    source: "trend_bias",
+    detail: bias === "bearish" ? "continuation_down" : "continuation_up",
+  };
 }
 
 function summarizeArtifacts(artifacts = [], lastClose = null) {
@@ -339,14 +674,24 @@ function buildTfAnalysis({
     timeframe: normalizedTf,
     bias: biasInfo.bias,
     bias_source: biasInfo.source,
+    bias_score: Number(biasInfo?.score || 0),
+    bias_strength: String(biasInfo?.strength || "neutral"),
     trend: trendInfo.trend,
     trend_source: trendInfo.source,
+    trend_score: Number(trendInfo?.score || 0),
+    trend_strength: String(trendInfo?.strength || "neutral"),
     phase: phaseInfo.phase,
     phase_source: phaseInfo.source,
+    phase_detail: String(phaseInfo?.detail || phaseInfo?.phase || "").trim().toLowerCase(),
     structure_state: String(latestStructural?.type || "").trim().toLowerCase() || "",
     last_bar_time: Number(currentBar?.time || 0) || null,
     last_close: lastClose,
     last_range: Number.isFinite(candleRange(currentBar)) ? candleRange(currentBar) : null,
+    indicators: clone(biasInfo?.indicators || trendInfo?.indicators || computeIndicatorSnapshot(normalizedBars)),
+    score_components: {
+      bias: clone(biasInfo?.components || []),
+      trend: clone(trendInfo?.components || []),
+    },
     supports: artifactSummary.supports,
     resistances: artifactSummary.resistances,
     demands: artifactSummary.demands,

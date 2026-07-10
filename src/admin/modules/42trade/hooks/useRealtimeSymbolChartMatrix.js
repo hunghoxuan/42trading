@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../../app/api";
 import { chartStreamStore, realtimeClient } from "../realtime/realtimeClientSingleton";
 
+const EMPTY_TIMEFRAMES = Object.freeze([]);
+
 function normalizeSymbol(rawSymbol = "") {
   const base = String(rawSymbol || "")
     .trim()
@@ -58,7 +60,7 @@ const EMPTY_STATE = {
 export function useRealtimeSymbolChartMatrix({
   enabled = false,
   symbol = "",
-  timeframes = [],
+  timeframes = EMPTY_TIMEFRAMES,
   bars = 300,
   pollMs = 2500,
 }) {
@@ -68,6 +70,7 @@ export function useRealtimeSymbolChartMatrix({
       [...new Set((Array.isArray(timeframes) ? timeframes : []).map(normalizeTimeframe).filter(Boolean))],
     [timeframes],
   );
+  const tfKeySignature = tfKeys.join("|");
   const topicKey = useMemo(() => buildChartTopic(symbolNorm), [symbolNorm]);
   const [, setVersion] = useState(0);
 
@@ -78,18 +81,52 @@ export function useRealtimeSymbolChartMatrix({
       setVersion((prev) => prev + 1);
     });
     chartStreamStore.setConnected(topicKey, false);
-    tfKeys.forEach((timeframe) => {
-      const bootstrapBars = bootstrapBarsForTimeframe(timeframe, bars);
-      api
-        .realtimeChartBootstrap(symbolNorm, timeframe, bootstrapBars)
-        .then((response) => {
-          if (cancelled || !response?.snapshot) return;
-          chartStreamStore.setBootstrap(topicKey, response.snapshot);
-        })
-        .catch((error) => {
-          if (cancelled) return;
-          chartStreamStore.setError(topicKey, error?.message || error, timeframe);
-        });
+    const applyBootstrapItem = (item) => {
+      const timeframe = normalizeTimeframe(item?.timeframe || item?.tf || "");
+      if (!timeframe) return;
+      if (item?.ok && item?.snapshot) {
+        chartStreamStore.setBootstrap(topicKey, item.snapshot);
+        return;
+      }
+      chartStreamStore.setError(
+        topicKey,
+        item?.error || "Bootstrap failed",
+        timeframe,
+      );
+    };
+
+    const runFallbackBootstrap = async () => {
+      const items = await Promise.all(
+        tfKeys.map(async (timeframe) => {
+          try {
+            const response = await api.realtimeChartBootstrap(
+              symbolNorm,
+              timeframe,
+              bootstrapBarsForTimeframe(timeframe, bars),
+            );
+            return {
+              ok: true,
+              timeframe,
+              snapshot: response?.snapshot || null,
+            };
+          } catch (error) {
+            return {
+              ok: false,
+              timeframe,
+              error: error?.message || String(error || "Bootstrap failed"),
+            };
+          }
+        }),
+      );
+      if (cancelled) return;
+      items.forEach(applyBootstrapItem);
+    };
+
+    runFallbackBootstrap().catch((error) => {
+      if (cancelled) return;
+      tfKeys.forEach((timeframe) => {
+        chartStreamStore.setError(topicKey, error?.message || error, timeframe);
+      });
     });
     const unsubscribeRealtime = realtimeClient.subscribe(
       topicKey,
@@ -124,7 +161,7 @@ export function useRealtimeSymbolChartMatrix({
       unsubscribeRealtime?.();
       unsubscribeStore?.();
     };
-  }, [bars, enabled, pollMs, symbolNorm, tfKeys, topicKey]);
+  }, [bars, enabled, pollMs, symbolNorm, tfKeySignature, topicKey]);
 
   return useMemo(() => {
     if (!enabled || !symbolNorm || !tfKeys.length || !topicKey) return EMPTY_STATE;
@@ -208,5 +245,5 @@ export function useRealtimeSymbolChartMatrix({
       refreshTf: async () => null,
       master,
     };
-  }, [enabled, symbolNorm, tfKeys, topicKey]);
+  }, [enabled, symbolNorm, tfKeySignature, topicKey]);
 }
