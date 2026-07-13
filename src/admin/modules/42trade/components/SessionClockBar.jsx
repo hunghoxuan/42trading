@@ -12,67 +12,45 @@ import {
   normalizeDisplayTimezone,
   setDisplayTimezoneMode,
 } from "../../../shared/utils/format";
+import {
+  KILL_ZONE_WINDOWS_UTC,
+  SESSION_WINDOWS_UTC,
+} from "./sessionTimeWindows";
 
-/**
- * Sessions and Kill Zones defined in UTC hours (0-24)
- */
-const SESSIONS = [
-  {
-    id: "asia",
-    label: "Asian Session",
-    start: 0,
-    end: 9,
-    color: "rgba(59, 130, 246, 0.15)",
-    borderColor: "rgba(59, 130, 246, 0.4)",
-  },
-  {
-    id: "london",
-    label: "London Session",
-    start: 8,
-    end: 17,
-    color: "rgba(16, 185, 129, 0.15)",
-    borderColor: "rgba(16, 185, 129, 0.4)",
-  },
-  {
-    id: "ny",
-    label: "NY Session",
-    start: 13,
-    end: 22,
+const SESSIONS = SESSION_WINDOWS_UTC.map((item) => {
+  if (item.id === "asia") {
+    return {
+      ...item,
+      color: "rgba(59, 130, 246, 0.15)",
+      borderColor: "rgba(59, 130, 246, 0.4)",
+    };
+  }
+  if (item.id === "london") {
+    return {
+      ...item,
+      color: "rgba(16, 185, 129, 0.15)",
+      borderColor: "rgba(16, 185, 129, 0.4)",
+    };
+  }
+  return {
+    ...item,
     color: "rgba(249, 115, 22, 0.15)",
     borderColor: "rgba(249, 115, 22, 0.4)",
-  },
-];
+  };
+});
 
-const KILL_ZONES = [
-  {
-    id: "asia_kz",
-    label: "Asian Kill Zone",
-    start: 1,
-    end: 5,
-    color: "rgba(59, 130, 246, 0.3)",
-  },
-  {
-    id: "london_kz",
-    label: "London Kill Zone",
-    start: 7,
-    end: 10,
-    color: "rgba(16, 185, 129, 0.3)",
-  },
-  {
-    id: "ny_kz",
-    label: "New York Kill Zone",
-    start: 12,
-    end: 15,
-    color: "rgba(249, 115, 22, 0.3)",
-  },
-  {
-    id: "london_close_kz",
-    label: "London Close KZ",
-    start: 15,
-    end: 17,
-    color: "rgba(239, 68, 68, 0.3)",
-  },
-];
+const KILL_ZONES = KILL_ZONE_WINDOWS_UTC.map((item) => {
+  if (item.id === "asia_kz") {
+    return { ...item, color: "rgba(59, 130, 246, 0.3)" };
+  }
+  if (item.id === "london_kz") {
+    return { ...item, color: "rgba(16, 185, 129, 0.3)" };
+  }
+  if (item.id === "london_close_kz") {
+    return { ...item, color: "rgba(239, 68, 68, 0.3)" };
+  }
+  return { ...item, color: "rgba(249, 115, 22, 0.3)" };
+});
 
 const DISPLAY_TIMEZONE_CYCLE = [
   "Local",
